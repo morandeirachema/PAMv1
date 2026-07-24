@@ -961,6 +961,154 @@ func (s *PGStore) ListSSHCerts(ctx context.Context, limit int) ([]store.SSHCert,
 	})
 }
 
+// scanVendorGrant maps one vendor_grants row into a store.VendorGrant.
+func scanVendorGrant(row pgx.CollectableRow) (store.VendorGrant, error) {
+	var g store.VendorGrant
+	err := row.Scan(&g.ID, &g.VendorID, &g.TargetID, &g.Principal, &g.Status,
+		&g.NotBefore, &g.NotAfter, &g.Approver, &g.ApprovedAt, &g.RevokedAt, &g.CreatedAt)
+	return g, err
+}
+
+// CreateVendor registers a vendor (Phase 29); ErrConflict on a duplicate username.
+func (s *PGStore) CreateVendor(ctx context.Context, v *store.Vendor) error {
+	err := s.pool.QueryRow(ctx,
+		`INSERT INTO vendors (username, org, disabled) VALUES ($1, $2, $3) RETURNING id, created_at`,
+		v.Username, v.Org, v.Disabled).Scan(&v.ID, &v.CreatedAt)
+	if pgCode(err) == pgUniqueViolation {
+		return store.ErrConflict
+	}
+	return err
+}
+
+// GetVendorByUsername returns the vendor for a login, or ErrNotFound.
+func (s *PGStore) GetVendorByUsername(ctx context.Context, username string) (*store.Vendor, error) {
+	return getOne(ctx, s.pool, func(row pgx.CollectableRow) (store.Vendor, error) {
+		var v store.Vendor
+		err := row.Scan(&v.ID, &v.Username, &v.Org, &v.Disabled, &v.CreatedAt)
+		return v, err
+	}, `SELECT id, username, org, disabled, created_at FROM vendors WHERE username = $1`, username)
+}
+
+// ListVendors returns all vendors, ordered by ID.
+func (s *PGStore) ListVendors(ctx context.Context) ([]store.Vendor, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, username, org, disabled, created_at FROM vendors ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.Vendor, error) {
+		var v store.Vendor
+		err := row.Scan(&v.ID, &v.Username, &v.Org, &v.Disabled, &v.CreatedAt)
+		return v, err
+	})
+}
+
+// SetVendorDisabled enables/disables a vendor by id, or ErrNotFound.
+func (s *PGStore) SetVendorDisabled(ctx context.Context, id int64, disabled bool) error {
+	return execExpectingRow(ctx, s.pool, `UPDATE vendors SET disabled = $2 WHERE id = $1`, id, disabled)
+}
+
+// CreateVendorGrant records a pending contract grant; ErrNotFound if the vendor
+// or target is missing.
+func (s *PGStore) CreateVendorGrant(ctx context.Context, g *store.VendorGrant) error {
+	if g.Status == "" {
+		g.Status = "pending"
+	}
+	err := s.pool.QueryRow(ctx,
+		`INSERT INTO vendor_grants (vendor_id, target_id, principal, status, not_before, not_after)
+		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
+		g.VendorID, g.TargetID, g.Principal, g.Status, g.NotBefore, g.NotAfter).Scan(&g.ID, &g.CreatedAt)
+	if pgCode(err) == pgForeignKeyViolation {
+		return store.ErrNotFound
+	}
+	return err
+}
+
+// ApproveVendorGrant flips a pending grant to approved; ErrNotFound if unknown,
+// ErrConflict if not pending.
+func (s *PGStore) ApproveVendorGrant(ctx context.Context, id int64, approver string, at time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE vendor_grants SET status = 'approved', approver = $2, approved_at = $3
+		 WHERE id = $1 AND status = 'pending'`, id, approver, at.UTC())
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		var exists bool
+		if e := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM vendor_grants WHERE id = $1)`, id).Scan(&exists); e != nil {
+			return e
+		}
+		if exists {
+			return store.ErrConflict
+		}
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+// RevokeVendorGrant marks a grant revoked; ErrNotFound if unknown.
+func (s *PGStore) RevokeVendorGrant(ctx context.Context, id int64, at time.Time) error {
+	return execExpectingRow(ctx, s.pool,
+		`UPDATE vendor_grants SET status = 'revoked', revoked_at = $2 WHERE id = $1`, id, at.UTC())
+}
+
+// ListVendorGrants lists a vendor's grants, newest first.
+func (s *PGStore) ListVendorGrants(ctx context.Context, vendorID int64) ([]store.VendorGrant, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, vendor_id, target_id, principal, status, not_before, not_after, approver, approved_at, revoked_at, created_at
+		 FROM vendor_grants WHERE vendor_id = $1 ORDER BY id DESC`, vendorID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanVendorGrant)
+}
+
+// OffboardVendor disables the vendor and revokes all its grants atomically.
+func (s *PGStore) OffboardVendor(ctx context.Context, id int64, at time.Time) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `UPDATE vendors SET disabled = TRUE WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE vendor_grants SET status = 'revoked', revoked_at = $2 WHERE vendor_id = $1 AND status <> 'revoked'`,
+		id, at.UTC()); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// VendorSessionAllowed reports whether username is a vendor and, if so, whether an
+// active contract grant to targetName exists as of now.
+func (s *PGStore) VendorSessionAllowed(ctx context.Context, username, targetName string, now time.Time) (bool, bool, error) {
+	var vendorID int64
+	var disabled bool
+	err := s.pool.QueryRow(ctx, `SELECT id, disabled FROM vendors WHERE username = $1`, username).Scan(&vendorID, &disabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, true, nil // not a vendor — unaffected
+	}
+	if err != nil {
+		return false, false, err
+	}
+	if disabled {
+		return true, false, nil
+	}
+	var allowed bool
+	err = s.pool.QueryRow(ctx,
+		`SELECT EXISTS(
+			SELECT 1 FROM vendor_grants g JOIN targets t ON t.id = g.target_id
+			WHERE g.vendor_id = $1 AND t.name = $2 AND g.status = 'approved' AND g.revoked_at IS NULL
+			  AND g.not_after > $3 AND (g.not_before IS NULL OR g.not_before <= $3))`,
+		vendorID, targetName, now.UTC()).Scan(&allowed)
+	return true, allowed, err
+}
+
 // scanAppKey scans one app_keys row into a store.AppKey.
 func scanAppKey(row pgx.CollectableRow) (store.AppKey, error) {
 	var k store.AppKey

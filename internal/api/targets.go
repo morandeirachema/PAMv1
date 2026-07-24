@@ -240,7 +240,8 @@ func (s *Server) gateCredentialAccess(w http.ResponseWriter, r *http.Request, ta
 		writeError(w, http.StatusForbidden, "access requires an approved access request")
 		return false
 	}
-	return true
+	// Vendor contract gate (Phase 29): a vendor reaches the target only in-contract.
+	return s.vendorGate(w, r, target, action+"_denied")
 }
 
 // --- credentials ---

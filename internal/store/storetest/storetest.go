@@ -755,6 +755,70 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("ListSSHCerts newest-first: %+v err %v", certs, err)
 	}
 
+	// --- vendor access gate (Phase 29) ---
+	ven := &store.Vendor{Username: "acme-tech", Org: "ACME"}
+	if err := st.CreateVendor(ctx, ven); err != nil {
+		t.Fatalf("CreateVendor: %v", err)
+	}
+	if err := st.CreateVendor(ctx, &store.Vendor{Username: "acme-tech"}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate vendor: want ErrConflict, got %v", err)
+	}
+	if v, err := st.GetVendorByUsername(ctx, "acme-tech"); err != nil || v.Org != "ACME" {
+		t.Fatalf("GetVendorByUsername: %+v err %v", v, err)
+	}
+	if _, err := st.GetVendorByUsername(ctx, "nobody"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown vendor: want ErrNotFound, got %v", err)
+	}
+	// A non-vendor login is unaffected by the gate.
+	if isV, ok, err := st.VendorSessionAllowed(ctx, "alice", tgt.Name, now); err != nil || isV || !ok {
+		t.Fatalf("non-vendor gate: isVendor=%v allowed=%v err=%v (want false,true)", isV, ok, err)
+	}
+	// A vendor with no grant is a vendor but not allowed.
+	if isV, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, now); !isV || ok {
+		t.Fatalf("vendor no grant: isVendor=%v allowed=%v (want true,false)", isV, ok)
+	}
+	// A grant to a missing vendor/target is ErrNotFound.
+	if err := st.CreateVendorGrant(ctx, &store.VendorGrant{VendorID: 999999, TargetID: tgt.ID, NotAfter: future}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("grant on missing vendor: want ErrNotFound, got %v", err)
+	}
+	grant := &store.VendorGrant{VendorID: ven.ID, TargetID: tgt.ID, Principal: "root", NotAfter: future}
+	if err := st.CreateVendorGrant(ctx, grant); err != nil {
+		t.Fatalf("CreateVendorGrant: %v", err)
+	}
+	// Pending grant does not yet allow access.
+	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, now); ok {
+		t.Fatal("a pending grant must not allow access")
+	}
+	if err := st.ApproveVendorGrant(ctx, grant.ID, "customer-appr", now); err != nil {
+		t.Fatalf("ApproveVendorGrant: %v", err)
+	}
+	if err := st.ApproveVendorGrant(ctx, grant.ID, "customer-appr", now); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("re-approve: want ErrConflict, got %v", err)
+	}
+	// Approved, in-window: allowed. Past the window: not allowed.
+	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, now); !ok {
+		t.Fatal("an approved in-window grant must allow access")
+	}
+	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, future.Add(time.Minute)); ok {
+		t.Fatal("a grant past its window must not allow access")
+	}
+	// Offboard cascade: disables the vendor and revokes the grant.
+	if err := st.OffboardVendor(ctx, ven.ID, now); err != nil {
+		t.Fatalf("OffboardVendor: %v", err)
+	}
+	if v, _ := st.GetVendorByUsername(ctx, "acme-tech"); v == nil || !v.Disabled {
+		t.Fatalf("offboarded vendor must be disabled: %+v", v)
+	}
+	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, now); ok {
+		t.Fatal("an offboarded vendor must not have access")
+	}
+	if grants, err := st.ListVendorGrants(ctx, ven.ID); err != nil || len(grants) != 1 || grants[0].Status != "revoked" {
+		t.Fatalf("ListVendorGrants after offboard: %+v err %v", grants, err)
+	}
+	if err := st.OffboardVendor(ctx, 999999, now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("offboard unknown vendor: want ErrNotFound, got %v", err)
+	}
+
 	// Application-secrets API (Phase 24): app keys + per-app secret grants
 	// (default-deny; grants cascade on credential or app delete).
 	appTarget := &store.Target{Name: "app-host", Host: "10.9.9.9", Port: 22, OSType: "linux", Protocol: "ssh"}

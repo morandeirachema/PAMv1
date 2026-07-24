@@ -32,6 +32,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/ticket"
 	"github.com/morandeirachema/pamv1/internal/vault"
+	"github.com/morandeirachema/pamv1/internal/vendor"
 	"github.com/morandeirachema/pamv1/internal/web"
 	"github.com/morandeirachema/pamv1/internal/winrm"
 	"golang.org/x/crypto/ssh"
@@ -203,6 +204,9 @@ type Options struct {
 	// backs operator-issued certificates (Phase 28), capped at SSHOperatorCertTTL.
 	CA                 *sshca.CertAuthority
 	SSHOperatorCertTTL time.Duration
+	// VendorAttestor (optional) validates a vendor's live employment attestation
+	// before a contract grant is approved (Phase 29); nil accepts every vendor.
+	VendorAttestor *vendor.Attestor
 	// Analytics (optional) enables privileged threat analytics (Phase 23): the
 	// GET /api/analytics/risk endpoint and, when AnalyticsInterval > 0, a
 	// background risk-scoring worker. nil disables both. AnalyticsWindow is how
@@ -248,6 +252,7 @@ type Server struct {
 	discoveryDial      func(ctx context.Context, network, addr string) (net.Conn, error)
 	sshCA              *sshca.CertAuthority
 	sshOperatorCertTTL time.Duration
+	vendorAttestor     *vendor.Attestor
 	analytics          *analytics.Engine
 	analyticsWindow    time.Duration
 	analyticsCooldown  time.Duration
@@ -438,6 +443,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		auditSignKey:       opts.AuditSignKey,
 		sshCA:              opts.CA,
 		sshOperatorCertTTL: opts.SSHOperatorCertTTL,
+		vendorAttestor:     opts.VendorAttestor,
 		analytics:          opts.Analytics,
 		analyticsWindow:    opts.AnalyticsWindow,
 		analyticsAutoKill:  opts.AnalyticsAutoKill,
@@ -689,6 +695,16 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/login-sessions", s.authz(auth.CapManageUsers, s.listLoginSessions))
 	s.mux.Handle("POST /api/login-sessions/revoke", s.authz(auth.CapManageUsers, s.revokeLoginSessions))
 	s.mux.Handle("POST /api/identity/reconcile", s.authz(auth.CapManageUsers, s.reconcileIdentities))
+
+	// Third-party vendor access gate (Phase 29).
+	s.mux.Handle("POST /api/vendors", s.authz(auth.CapManageUsers, s.createVendor))
+	s.mux.Handle("GET /api/vendors", s.authz(auth.CapReadInventory, s.listVendors))
+	s.mux.Handle("POST /api/vendors/{id}/offboard", s.authz(auth.CapManageUsers, s.offboardVendor))
+	s.mux.Handle("POST /api/vendors/{id}/grants", s.authz(auth.CapManageTargets, s.createVendorGrant))
+	s.mux.Handle("GET /api/vendors/{id}/grants", s.authz(auth.CapReadInventory, s.listVendorGrants))
+	s.mux.Handle("GET /api/vendors/{id}/evidence", s.authz(auth.CapReadAudit, s.vendorEvidence))
+	s.mux.Handle("POST /api/vendor-grants/{gid}/approve", s.authz(auth.CapApprove, s.approveVendorGrant))
+	s.mux.Handle("POST /api/vendor-grants/{gid}/revoke", s.authz(auth.CapManageTargets, s.revokeVendorGrant))
 
 	// Access certification / attestation campaigns (Phase 19): a periodic review
 	// of who has access to what; a revoke decision removes the underlying grant.
