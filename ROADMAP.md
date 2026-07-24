@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–27 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
+**Phases 0–28 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
 with command control, safes, dependent-account propagation), optional CyberArk Conjur
@@ -393,6 +393,17 @@ The AI-agent access broker (Phase 13) ported the [pam-research](https://github.c
 - [x] **Threat model doc**: [docs/AGENT-THREAT-MODEL.md](docs/AGENT-THREAT-MODEL.md) maps the OWASP LLM Top 10 (2025) and MITRE ATLAS techniques to the broker's controls, and states the boundaries (admin bypass, in-band truncation limit) honestly
 - [x] **Tests**: auditchain (checkpoints emitted + verified, key-compromise edit caught by the signature, rotation overlap, truncation floor), `ocsf` (classification + envelope), and API end-to-end (SoD refuses an out-of-group approver and admits a member; JWKS shape; verify floor; OCSF JSON + NDJSON; a full MCP SSE + elicitation round-trip where a decline withdraws the call and injects no credential)
 - Deferred (documented, infra-bound): SPIRE workload attestation and RFC 8693 token-**exchange** minting (need an STS/SPIRE), a real OAuth 2.1 AS behind RFC 9728, and Vault-custodied signing keys — see [EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)
+
+## Phase 28 — Operator-issued SSH certificates (JIT certs for humans) ✅
+
+Extends the Phase 22 Zero-Standing-Privilege CA from proxy-internal minting to a public **issuance API for an operator's own key** — the [pam-research](https://github.com/morandeirachema/pam-research) Solution-02 model (Teleport `tsh login`-style): an operator authenticates to pamv1, gets a short-lived certificate scoped to a target account, and uses it with their normal SSH client for direct access, revocable early via a KRL. Built entirely in process and verified against real OpenSSH.
+
+- [x] **Proof of possession**: `POST /api/ca/ssh/challenge` (`CapConnect`) mints a stateless, self-authenticating challenge (HMAC keyed off the CA private key — HA-safe across replicas, unforgeable without the CA key); `POST /api/ca/ssh/sign` verifies the operator signed it with the private key of the public key they present, so pamv1 only certifies a key the requester actually holds
+- [x] **Scoped issuance**: `sshca.IssueForKey` signs the operator's **public** key (no secret is generated or stored) into a user certificate scoped to a single **principal** with an optional **`source-address`** critical option, capped at `PAM_SSH_OPERATOR_CERT_TTL_MIN` (default 10m). The same connect authorization as the proxy applies (per-target grants + the approval gate — a one-time approval is consumed), and the principal must be a **managed account** on the target, so an operator can't mint a cert for an arbitrary login
+- [x] **KRL revocation**: issued certificates are recorded (migration `0020` `ssh_certificates`; the serial is the revocation handle, returned as a JSON **string** so a large uint64 survives float parsing). `POST /api/ca/ssh/revoke` (`CapManageTargets`) revokes a serial; `GET /api/ca/ssh/krl` (`CapReadInventory`) emits a real **OpenSSH Key Revocation List** (`sshca.KRL`, per PROTOCOL.krl) a target installs as sshd `RevokedKeys` to cut a still-valid cert off early
+- [x] **Audit vocabulary**: `ssh.cert_issued` (serial · principal · target · valid-before · source-address, never the key) · `ssh.cert_denied` (failed proof of possession) · `ssh.cert_revoked`
+- [x] **Tests**: `internal/sshca` (a scoped cert accepted by an `ssh.CertChecker` for its principal only, the proof-of-possession challenge round-trip, and — the honest real-tool check — the generated **KRL verified against `ssh-keygen -Q`**: a revoked serial reports revoked, a different serial does not), store contract (record/revoke/list-revoked, duplicate/already-revoked/unknown errors), and an API end-to-end (challenge → operator signs → sign → the returned cert authenticates for its principal → revoke → KRL served; a bad proof of possession, an unmanaged principal, and a non-connect role are all refused)
+- Deferred (documented, infra-bound): ephemeral **local accounts** (create/destroy the OS account per session — needs a real host), host-certificate issuance, and per-principal certificate options beyond source-address — see [EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)
 
 ## Portal: keyboard-first navigation ✅
 

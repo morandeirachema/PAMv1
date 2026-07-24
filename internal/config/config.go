@@ -33,6 +33,10 @@ type Config struct {
 	// validity (a small window, since it is minted fresh per session).
 	SSHCAKeyPath string
 	SSHCertTTL   time.Duration
+	// SSHOperatorCertTTL caps an operator-issued SSH certificate (Phase 28): pamv1
+	// signs an operator's own public key for direct target access. Longer than the
+	// per-session ZSP TTL (an operator uses it interactively) but still short.
+	SSHOperatorCertTTL time.Duration
 	// SSHKnownHosts pins upstream target host keys (an OpenSSH known_hosts file).
 	// Empty = trust any upstream key (insecure; logged loudly).
 	SSHKnownHosts string
@@ -321,6 +325,7 @@ func Load() (*Config, error) {
 		SSHHostKeyPath:      os.Getenv("PAM_SSH_HOST_KEY"),
 		SSHCAKeyPath:        os.Getenv("PAM_SSH_CA_KEY"),
 		SSHCertTTL:          time.Duration(integer("PAM_SSH_CERT_TTL_MIN", 2)) * time.Minute,
+		SSHOperatorCertTTL:  time.Duration(integer("PAM_SSH_OPERATOR_CERT_TTL_MIN", 10)) * time.Minute,
 		SSHKnownHosts:       os.Getenv("PAM_SSH_KNOWN_HOSTS"),
 		SSHJumpHost:         os.Getenv("PAM_SSH_JUMP_HOST"),
 		SSHJumpUser:         os.Getenv("PAM_SSH_JUMP_USER"),

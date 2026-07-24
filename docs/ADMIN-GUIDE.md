@@ -226,6 +226,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_SSH_HOST_KEY` | | (ephemeral) | Path to persist the proxy SSH host key. |
 | `PAM_SSH_CA_KEY` | | (ZSP off) | Path to the Zero Standing Privilege SSH CA key (Phase 22); presence enables `ssh_ca` credentials (mint short-lived certs). See §6. |
 | `PAM_SSH_CERT_TTL_MIN` | | `2` | Validity (minutes) of a minted ZSP certificate. |
+| `PAM_SSH_OPERATOR_CERT_TTL_MIN` | | `10` | Cap (minutes) on an operator-issued SSH certificate (Phase 28: `POST /api/ca/ssh/sign`). See §6. |
 | `PAM_SSH_KNOWN_HOSTS` | | (trust-any + warn) | OpenSSH known_hosts file pinning **upstream target** host keys. |
 | `PAM_RECORDING_DIR` | | `recordings` | Where session recordings are written. |
 | `PAM_LOG_LEVEL` | | `info` | `debug` \| `info` \| `warn` \| `error`. |
@@ -437,6 +438,36 @@ nothing is ever stored for the account. Each issuance is audited
 `session.cert_issued` (serial, principal, validity, key-id — never the key).
 Because there is no stored secret, an `ssh_ca` credential is never rotated or
 reconciled (reconcile reports it as `unsupported`).
+
+**Operator certificates for direct access (Phase 28).** The same CA can also sign
+an operator's **own** SSH key so they connect **directly** to a target (bypassing
+the proxy) with a short-lived, revocable certificate — the Teleport `tsh login`
+model. The operator proves they hold the key, then gets a cert scoped to one
+principal (capped at `PAM_SSH_OPERATOR_CERT_TTL_MIN`, default 10m):
+
+```bash
+# 1. get a proof-of-possession challenge, sign it with your private key
+CH=$(curl -s -XPOST -H "X-API-Key: $KEY" $PAM/api/ca/ssh/challenge | jq -r .challenge)
+SIG=$(printf %s "$CH" | ssh-keygen -Y sign -n pamv1 -f ~/.ssh/id_ed25519 /dev/stdin ...)  # (client tooling)
+# 2. exchange it for a certificate scoped to the "svc" account on web-01
+curl -s -XPOST -H "X-API-Key: $KEY" $PAM/api/ca/ssh/sign \
+  -d '{"public_key":"ssh-ed25519 AAAA... me","challenge":"'"$CH"'","signature":"<base64>",
+       "target":"web-01","principal":"svc","source_address":"10.0.0.0/8","ttl_minutes":10}'
+# → {"certificate":"ssh-ed25519-cert-v01@openssh.com AAAA...","serial":"...","valid_before":"..."}
+```
+
+The principal must be a **managed account** on the target, and the same connect
+authorization as the proxy applies (per-target grants + approval, consuming a
+one-time approval). Revoke a cert before it expires by serial, and publish the
+KRL for your targets' `RevokedKeys`:
+
+```bash
+curl -s -XPOST -H "X-API-Key: $KEY" $PAM/api/ca/ssh/revoke -d '{"serial":"<serial>"}'
+curl -s -H "X-API-Key: $KEY" $PAM/api/ca/ssh/krl -o pamv1-ssh.krl   # install as sshd RevokedKeys
+```
+
+Audit: `ssh.cert_issued` / `ssh.cert_denied` (bad proof of possession) /
+`ssh.cert_revoked`.
 
 ### Windows targets (WinRM)
 

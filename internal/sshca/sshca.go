@@ -14,12 +14,18 @@ package sshca
 
 import (
 	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -39,6 +45,8 @@ const clockSkew = 1 * time.Minute
 type CertAuthority struct {
 	signer ssh.Signer
 	serial atomic.Uint64
+	chOnce sync.Once
+	chKey  []byte // HMAC key for proof-of-possession challenges (derived from the CA key)
 }
 
 // New builds a CertAuthority from an existing SSH signer (the CA private key).
@@ -145,6 +153,174 @@ func (ca *CertAuthority) IssueUser(principal string, ttl time.Duration, keyID st
 		return nil, nil, fmt.Errorf("sshca: cert signer: %w", err)
 	}
 	return certSigner, cert, nil
+}
+
+// IssueOpts scopes an operator-facing certificate (Phase 28). The operator holds
+// the private key; pamv1 signs only their public key, so no secret is generated
+// or stored. Principals must be non-empty; SourceAddress / ForceCommand become
+// OpenSSH critical options that a target's sshd enforces.
+type IssueOpts struct {
+	Principals    []string      // ValidPrincipals the cert authorizes login as
+	TTL           time.Duration // validity (clamped by the caller); default 2m
+	KeyID         string        // key-id stamped for audit correlation (actor·target)
+	SourceAddress string        // optional "source-address" critical option (comma CIDR list)
+	ForceCommand  string        // optional "force-command" critical option
+}
+
+// IssueForKey signs a caller-supplied public key into a short-lived user
+// certificate scoped by opts, and returns the signed certificate (the operator
+// already holds the matching private key). Unlike IssueUser this generates no key
+// and stores no secret; the certificate simply expires. The serial (unique per
+// issue, shared with the proxy's ZSP minting) is the handle for later revocation.
+func (ca *CertAuthority) IssueForKey(pub ssh.PublicKey, opts IssueOpts) (*ssh.Certificate, error) {
+	if pub == nil {
+		return nil, errors.New("sshca: nil public key")
+	}
+	if len(opts.Principals) == 0 {
+		return nil, errors.New("sshca: at least one certificate principal is required")
+	}
+	ttl := opts.TTL
+	if ttl <= 0 {
+		ttl = 2 * time.Minute
+	}
+	crit := map[string]string{}
+	if opts.SourceAddress != "" {
+		crit["source-address"] = opts.SourceAddress
+	}
+	if opts.ForceCommand != "" {
+		crit["force-command"] = opts.ForceCommand
+	}
+	now := time.Now()
+	cert := &ssh.Certificate{
+		Key:             pub,
+		Serial:          ca.serial.Add(1),
+		CertType:        ssh.UserCert,
+		KeyId:           opts.KeyID,
+		ValidPrincipals: append([]string(nil), opts.Principals...),
+		ValidAfter:      uint64(now.Add(-clockSkew).Unix()),
+		ValidBefore:     uint64(now.Add(ttl).Unix()),
+		Permissions: ssh.Permissions{
+			CriticalOptions: crit,
+			Extensions:      standardExtensions(),
+		},
+	}
+	if err := cert.SignCert(rand.Reader, ca.signer); err != nil {
+		return nil, fmt.Errorf("sshca: sign certificate: %w", err)
+	}
+	return cert, nil
+}
+
+// challengeMACKey derives a stable, secret HMAC key for proof-of-possession
+// challenges from the CA private key (a deterministic ed25519 signature over a
+// fixed label). All replicas sharing the CA key derive the same key, so a
+// challenge minted on one is verifiable on another; a party without the CA
+// private key cannot forge one.
+func (ca *CertAuthority) challengeMACKey() []byte {
+	ca.chOnce.Do(func() {
+		sig, err := ca.signer.Sign(rand.Reader, []byte("pamv1-ssh-cert-challenge-key-v1"))
+		if err != nil {
+			// Fall back to a per-process random key (challenges then don't cross
+			// replicas — acceptable, they are short-lived).
+			k := make([]byte, 32)
+			_, _ = rand.Read(k)
+			ca.chKey = k
+			return
+		}
+		sum := sha256.Sum256(sig.Blob)
+		ca.chKey = sum[:]
+	})
+	return ca.chKey
+}
+
+// MintChallenge returns an opaque, self-authenticating proof-of-possession
+// challenge valid for ttl: the operator signs it with their private key and
+// returns the signature to /sign, proving they hold the key they want certified.
+// The challenge carries its own expiry and HMAC, so verification is stateless
+// (no server-side nonce store) and HA-safe.
+func (ca *CertAuthority) MintChallenge(ttl time.Duration) string {
+	if ttl == 0 {
+		ttl = 2 * time.Minute
+	}
+	payload := make([]byte, 8+16)
+	binary.BigEndian.PutUint64(payload[:8], uint64(time.Now().Add(ttl).Unix()))
+	_, _ = rand.Read(payload[8:])
+	mac := hmac.New(sha256.New, ca.challengeMACKey())
+	mac.Write(payload)
+	token := append(payload, mac.Sum(nil)[:16]...)
+	return "pamv1chal-" + base64.RawURLEncoding.EncodeToString(token)
+}
+
+// VerifyChallenge reports whether challenge is one this CA minted and has not
+// expired. It does NOT verify the operator's signature — the caller does that
+// against the presented public key.
+func (ca *CertAuthority) VerifyChallenge(challenge string) bool {
+	const prefix = "pamv1chal-"
+	if !strings.HasPrefix(challenge, prefix) {
+		return false
+	}
+	token, err := base64.RawURLEncoding.DecodeString(challenge[len(prefix):])
+	if err != nil || len(token) != 8+16+16 {
+		return false
+	}
+	payload, tag := token[:24], token[24:]
+	mac := hmac.New(sha256.New, ca.challengeMACKey())
+	mac.Write(payload)
+	if subtle.ConstantTimeCompare(mac.Sum(nil)[:16], tag) != 1 {
+		return false
+	}
+	exp := int64(binary.BigEndian.Uint64(payload[:8]))
+	return time.Now().Unix() < exp
+}
+
+// KRL builds an OpenSSH Key Revocation List revoking the given certificate
+// serials, scoped to this CA (per PROTOCOL.krl). A target installs it via sshd's
+// RevokedKeys so a still-valid certificate can be cut off before it expires. An
+// empty serial list yields a valid KRL that revokes nothing.
+func (ca *CertAuthority) KRL(serials []uint64, krlVersion uint64, now time.Time) []byte {
+	var b []byte
+	b = append(b, []byte("SSHKRL\n\x00")...) // magic (8 bytes)
+	b = putU32(b, 1)                         // format_version
+	b = putU64(b, krlVersion)                // krl_version
+	b = putU64(b, uint64(now.Unix()))        // generated_date
+	b = putU64(b, 0)                         // flags
+	b = putString(b, nil)                    // reserved
+	b = putString(b, []byte("pamv1"))        // comment
+
+	if len(serials) > 0 {
+		// CERTIFICATES section body: ca_key, reserved, then a SERIAL_LIST subsection.
+		var body []byte
+		body = putString(body, ca.signer.PublicKey().Marshal())
+		body = putString(body, nil) // reserved
+		var serialData []byte
+		for _, s := range serials {
+			serialData = putU64(serialData, s)
+		}
+		body = append(body, 0x20) // KRL_SECTION_CERT_SERIAL_LIST
+		body = putString(body, serialData)
+
+		b = append(b, 0x01) // KRL_SECTION_CERTIFICATES
+		b = putString(b, body)
+	}
+	return b
+}
+
+// putU32 / putU64 / putString append SSH-wire primitives (big-endian ints, and
+// a uint32-length-prefixed byte string) used by the KRL encoder.
+func putU32(b []byte, v uint32) []byte {
+	var x [4]byte
+	binary.BigEndian.PutUint32(x[:], v)
+	return append(b, x[:]...)
+}
+
+func putU64(b []byte, v uint64) []byte {
+	var x [8]byte
+	binary.BigEndian.PutUint64(x[:], v)
+	return append(b, x[:]...)
+}
+
+func putString(b, s []byte) []byte {
+	b = putU32(b, uint32(len(s)))
+	return append(b, s...)
 }
 
 // standardExtensions returns the permissive extension set OpenSSH grants a user

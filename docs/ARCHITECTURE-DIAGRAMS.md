@@ -277,6 +277,17 @@ erDiagram
     arr_string Capabilities
     time_Time CreatedAt
   }
+  SSHCert {
+    int64 ID
+    int64 Serial
+    string KeyID
+    string Principal
+    string Actor
+    time_Time IssuedAt
+    ptr_time_Time ValidBefore
+    ptr_time_Time RevokedAt
+    string RevokedBy
+  }
   Safe {
     int64 ID
     string Name
@@ -342,7 +353,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 103 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 107 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -360,6 +371,10 @@ The 103 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/auth/oidc/start` | public (rate-limited) |
 | POST | `/api/breakglass/unseal` | public (rate-limited) |
 | GET | `/api/ca/ssh` | CapReadInventory |
+| POST | `/api/ca/ssh/challenge` | CapConnect |
+| GET | `/api/ca/ssh/krl` | CapReadInventory |
+| POST | `/api/ca/ssh/revoke` | CapManageTargets |
+| POST | `/api/ca/ssh/sign` | CapConnect |
 | GET | `/api/campaigns` | CapReadAudit |
 | POST | `/api/campaigns` | CapManageUsers |
 | GET | `/api/campaigns/{id}` | CapReadAudit |

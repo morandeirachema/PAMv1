@@ -267,6 +267,23 @@ type AppKey struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// SSHCert records an operator-issued SSH certificate (Phase 28): pamv1 signed the
+// operator's own public key into a short-lived cert scoped to a target account.
+// The row is the revocation handle — a KRL revoking Serial is published so a
+// target's sshd cuts the cert off before ValidBefore. RevokedAt is nil until
+// revoked.
+type SSHCert struct {
+	ID          int64      `json:"id"`
+	Serial      int64      `json:"serial"`
+	KeyID       string     `json:"key_id"`
+	Principal   string     `json:"principal"`
+	Actor       string     `json:"actor"`
+	IssuedAt    time.Time  `json:"issued_at"`
+	ValidBefore *time.Time `json:"valid_before,omitempty"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
+	RevokedBy   string     `json:"revoked_by,omitempty"`
+}
+
 // AppSecretGrant authorizes an application (AppKey) to retrieve one specific
 // credential's secret through the application-secrets API. Access is
 // default-deny: an app may fetch only the credentials it has an explicit grant
@@ -527,6 +544,19 @@ type Store interface {
 	ListAgentKeys(ctx context.Context) ([]AgentKey, error)
 	// DeleteAgentKey removes an agent key by ID, or ErrNotFound.
 	DeleteAgentKey(ctx context.Context, id int64) error
+
+	// Operator-issued SSH certificates + KRL revocation (Phase 28).
+	// RecordSSHCert stores an issued certificate (its serial is the revocation
+	// handle), populating ID and IssuedAt.
+	RecordSSHCert(ctx context.Context, c *SSHCert) error
+	// RevokeSSHCert stamps a certificate serial revoked; ErrNotFound if unknown,
+	// ErrConflict if already revoked.
+	RevokeSSHCert(ctx context.Context, serial int64, by string, at time.Time) error
+	// ListRevokedSSHCertSerials returns the serials of every revoked certificate,
+	// for KRL generation.
+	ListRevokedSSHCertSerials(ctx context.Context) ([]int64, error)
+	// ListSSHCerts returns recent issued certificates (newest first, capped).
+	ListSSHCerts(ctx context.Context, limit int) ([]SSHCert, error)
 
 	// CreateAppKey inserts an application identity key, populating ID and CreatedAt
 	// (ErrConflict on a duplicate token hash).

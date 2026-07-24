@@ -893,6 +893,74 @@ func (s *PGStore) DeleteAgentKey(ctx context.Context, id int64) error {
 	return execExpectingRow(ctx, s.pool, `DELETE FROM agent_keys WHERE id = $1`, id)
 }
 
+// RecordSSHCert stores an issued operator SSH certificate (Phase 28); ErrConflict
+// if the serial is already recorded.
+func (s *PGStore) RecordSSHCert(ctx context.Context, c *store.SSHCert) error {
+	err := s.pool.QueryRow(ctx,
+		`INSERT INTO ssh_certificates (serial, key_id, principal, actor, valid_before)
+		 VALUES ($1, $2, $3, $4, $5) RETURNING id, issued_at`,
+		c.Serial, c.KeyID, c.Principal, c.Actor, c.ValidBefore,
+	).Scan(&c.ID, &c.IssuedAt)
+	if pgCode(err) == pgUniqueViolation {
+		return store.ErrConflict
+	}
+	return err
+}
+
+// RevokeSSHCert stamps a certificate serial revoked; ErrNotFound if unknown,
+// ErrConflict if already revoked.
+func (s *PGStore) RevokeSSHCert(ctx context.Context, serial int64, by string, at time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE ssh_certificates SET revoked_at = $2, revoked_by = $3
+		 WHERE serial = $1 AND revoked_at IS NULL`, serial, at.UTC(), by)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		// Distinguish "unknown serial" from "already revoked".
+		var exists bool
+		if e := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM ssh_certificates WHERE serial = $1)`, serial).Scan(&exists); e != nil {
+			return e
+		}
+		if exists {
+			return store.ErrConflict
+		}
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+// ListRevokedSSHCertSerials returns the serials of every revoked certificate.
+func (s *PGStore) ListRevokedSSHCertSerials(ctx context.Context) ([]int64, error) {
+	rows, err := s.pool.Query(ctx, `SELECT serial FROM ssh_certificates WHERE revoked_at IS NOT NULL ORDER BY serial`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (int64, error) {
+		var serial int64
+		err := row.Scan(&serial)
+		return serial, err
+	})
+}
+
+// ListSSHCerts returns recent issued certificates, newest first (capped).
+func (s *PGStore) ListSSHCerts(ctx context.Context, limit int) ([]store.SSHCert, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, serial, key_id, principal, actor, issued_at, valid_before, revoked_at, revoked_by
+		 FROM ssh_certificates ORDER BY id DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.SSHCert, error) {
+		var c store.SSHCert
+		err := row.Scan(&c.ID, &c.Serial, &c.KeyID, &c.Principal, &c.Actor, &c.IssuedAt, &c.ValidBefore, &c.RevokedAt, &c.RevokedBy)
+		return c, err
+	})
+}
+
 // scanAppKey scans one app_keys row into a store.AppKey.
 func scanAppKey(row pgx.CollectableRow) (store.AppKey, error) {
 	var k store.AppKey
