@@ -65,6 +65,7 @@ flowchart LR
   subgraph n_Other["Other"]
     n_analytics[analytics]
     n_conjur[conjur]
+    n_ocsf[ocsf]
     n_ratelimit[ratelimit]
     n_sshca[sshca]
     n_ticket[ticket]
@@ -86,6 +87,7 @@ flowchart LR
   n_api --> n_mcp
   n_api --> n_metrics
   n_api --> n_mfa
+  n_api --> n_ocsf
   n_api --> n_oidc
   n_api --> n_policy
   n_api --> n_ratelimit
@@ -112,6 +114,7 @@ flowchart LR
   n_maint --> n_store
   n_maint --> n_vault
   n_memstore --> n_store
+  n_ocsf --> n_store
   n_pam_server --> n_agentid
   n_pam_server --> n_alert
   n_pam_server --> n_analytics
@@ -339,7 +342,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 100 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 103 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -351,6 +354,7 @@ The 100 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/audit` | CapReadAudit |
 | GET | `/api/audit/export` | CapReadAudit |
 | GET | `/api/audit/head` | CapReadAudit |
+| GET | `/api/audit/ocsf` | CapReadAudit |
 | GET | `/api/audit/verify` | CapReadAudit |
 | GET | `/api/auth/oidc/callback` | public (rate-limited) |
 | GET | `/api/auth/oidc/start` | public (rate-limited) |
@@ -420,6 +424,7 @@ The 100 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/users` | CapManageUsers |
 | DELETE | `/api/users/{id}` | CapManageUsers |
 | GET | `/healthz` | public |
+| GET | `/mcp` | public |
 | POST | `/mcp` | public |
 | GET | `/metrics` | public |
 | GET | `/readyz` | public |
@@ -438,6 +443,7 @@ The 100 routes registered on the API mux, with the capability or guard each enfo
 | DELETE | `/v1/apps/{id}/grants/{gid}` | CapRevealSecret |
 | GET | `/v1/audit` | CapReadAudit |
 | GET | `/v1/audit/head` | CapReadAudit |
+| GET | `/v1/audit/jwks` | CapReadAudit |
 | GET | `/v1/audit/verify` | CapReadAudit |
 | POST | `/v1/tool-calls` | public |
 | GET | `/v1/tool-calls/{id}` | public |

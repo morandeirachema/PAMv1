@@ -198,6 +198,29 @@ func buildBroker(cfg *config.Config) (*policy.Engine, []byte, ed25519.PrivateKey
 	return engine, key, ed25519.NewKeyFromSeed(seed), nil
 }
 
+// parseEd25519PubKeys decodes a comma-separated list of base64 ed25519 public
+// keys (32 bytes each), for the rotated-out checkpoint signers still trusted
+// during a signing-key rotation overlap. An empty string yields no keys.
+func parseEd25519PubKeys(s string) ([]ed25519.PublicKey, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	var out []ed25519.PublicKey
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		raw, err := base64.StdEncoding.DecodeString(part)
+		if err != nil || len(raw) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("each key must be base64 of %d bytes", ed25519.PublicKeySize)
+		}
+		out = append(out, ed25519.PublicKey(raw))
+	}
+	return out, nil
+}
+
 // runRotateKEK re-encrypts every vaulted secret from the CURRENT KEK to a NEW one
 // and records the rotation in the audit trail. The current KEK is read from the
 // usual PAM_KEK_*/PAM_MASTER_KEY variables (any provider — local, vault-transit,
@@ -549,6 +572,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// Rotated-out checkpoint signers still trusted during a signing-key rotation
+	// overlap (Phase 27): comma-separated base64 ed25519 public keys.
+	brokerSignPrevKeys, err := parseEd25519PubKeys(cfg.BrokerAuditSignPrev)
+	if err != nil {
+		return fmt.Errorf("PAM_BROKER_AUDIT_SIGN_PREV: %w", err)
+	}
 
 	// SPIFFE JWT-SVID agent identity (Phase 13d): accepted alongside static agent
 	// keys when a trust-domain JWKS is configured. Load-time failure is fatal.
@@ -631,51 +660,53 @@ func run() error {
 	}
 
 	handler, err := api.New(st, v, resolver, authn, api.Options{
-		Sessions:            sessions,
-		Live:                liveHub,
-		SSHHostKeyCallback:  upstreamHostKey,
-		MFARequired:         cfg.MFARequired,
-		RecordingDir:        cfg.RecordingDir,
-		WinRM:               winrmClient,
-		OIDC:                oidcProvider,
-		OIDCRoleMap:         roleMap(cfg.OIDCRoleAdmin, cfg.OIDCRoleUser, cfg.OIDCRoleAuditor, cfg.OIDCRoleApprover),
-		PortalURL:           cfg.PortalURL,
-		GuacdAddr:           cfg.GuacdAddr,
-		GuacdRecordingPath:  cfg.GuacdRecordingPath,
-		GuacdRDPSecurity:    cfg.GuacdRDPSecurity,
-		GuacdIgnoreCert:     cfg.GuacdIgnoreCert,
-		AuthRatePerMin:      cfg.AuthRatePerMin,
-		TrustedProxyHops:    cfg.TrustedProxyHops,
-		RevealDisabled:      cfg.RevealDisabled,
-		BreakGlassHashHex:   cfg.BreakGlassKeyHash,
-		BreakGlassThreshold: cfg.BreakGlassThreshold,
-		BreakGlassTTL:       cfg.BreakGlassTTL,
-		Alerter:             alerter,
-		RequireApproval:     cfg.RequireApproval,
-		ApprovalWindow:      cfg.ApprovalWindow,
-		TicketValidator:     ticketValidator,
-		RequireTicket:       cfg.RequireTicket,
-		ApprovalsRequired:   cfg.ApprovalsRequired,
-		RequireReason:       cfg.RequireReason,
-		OneTimeAccess:       cfg.OneTimeAccess,
-		AirGap:              cfg.AirGap,
-		CheckoutTTL:         cfg.CheckoutTTL,
-		AllowedProtocols:    splitAndTrim(cfg.AllowedProtocols),
-		Directory:           directory,
-		Reconfigure:         reconfigure,
-		AuditSignKey:        auditSignKey,
-		BrokerPolicy:        brokerPolicy,
-		BrokerAuditKey:      brokerAuditKey,
-		BrokerAuditSignKey:  brokerSignKey,
-		BrokerTokenTTL:      cfg.BrokerTokenTTL,
-		BrokerMaxArgBytes:   cfg.BrokerMaxArgBytes,
-		BrokerRatePerMin:    cfg.BrokerRatePerMin,
-		BrokerSVIDVerifier:  svidVerifier,
-		CA:                  sshCA,
-		Analytics:           analyticsEngine,
-		AnalyticsWindow:     cfg.AnalyticsWindow,
-		AnalyticsAutoKill:   cfg.AnalyticsAutoKill,
-		AppSecretsEnabled:   cfg.AppSecretsEnabled,
+		Sessions:                sessions,
+		Live:                    liveHub,
+		SSHHostKeyCallback:      upstreamHostKey,
+		MFARequired:             cfg.MFARequired,
+		RecordingDir:            cfg.RecordingDir,
+		WinRM:                   winrmClient,
+		OIDC:                    oidcProvider,
+		OIDCRoleMap:             roleMap(cfg.OIDCRoleAdmin, cfg.OIDCRoleUser, cfg.OIDCRoleAuditor, cfg.OIDCRoleApprover),
+		PortalURL:               cfg.PortalURL,
+		GuacdAddr:               cfg.GuacdAddr,
+		GuacdRecordingPath:      cfg.GuacdRecordingPath,
+		GuacdRDPSecurity:        cfg.GuacdRDPSecurity,
+		GuacdIgnoreCert:         cfg.GuacdIgnoreCert,
+		AuthRatePerMin:          cfg.AuthRatePerMin,
+		TrustedProxyHops:        cfg.TrustedProxyHops,
+		RevealDisabled:          cfg.RevealDisabled,
+		BreakGlassHashHex:       cfg.BreakGlassKeyHash,
+		BreakGlassThreshold:     cfg.BreakGlassThreshold,
+		BreakGlassTTL:           cfg.BreakGlassTTL,
+		Alerter:                 alerter,
+		RequireApproval:         cfg.RequireApproval,
+		ApprovalWindow:          cfg.ApprovalWindow,
+		TicketValidator:         ticketValidator,
+		RequireTicket:           cfg.RequireTicket,
+		ApprovalsRequired:       cfg.ApprovalsRequired,
+		RequireReason:           cfg.RequireReason,
+		OneTimeAccess:           cfg.OneTimeAccess,
+		AirGap:                  cfg.AirGap,
+		CheckoutTTL:             cfg.CheckoutTTL,
+		AllowedProtocols:        splitAndTrim(cfg.AllowedProtocols),
+		Directory:               directory,
+		Reconfigure:             reconfigure,
+		AuditSignKey:            auditSignKey,
+		BrokerPolicy:            brokerPolicy,
+		BrokerAuditKey:          brokerAuditKey,
+		BrokerAuditSignKey:      brokerSignKey,
+		BrokerTokenTTL:          cfg.BrokerTokenTTL,
+		BrokerMaxArgBytes:       cfg.BrokerMaxArgBytes,
+		BrokerRatePerMin:        cfg.BrokerRatePerMin,
+		BrokerCheckpointEvery:   cfg.BrokerCheckpointEvery,
+		BrokerAuditSignPrevKeys: brokerSignPrevKeys,
+		BrokerSVIDVerifier:      svidVerifier,
+		CA:                      sshCA,
+		Analytics:               analyticsEngine,
+		AnalyticsWindow:         cfg.AnalyticsWindow,
+		AnalyticsAutoKill:       cfg.AnalyticsAutoKill,
+		AppSecretsEnabled:       cfg.AppSecretsEnabled,
 	})
 	if err != nil {
 		return err

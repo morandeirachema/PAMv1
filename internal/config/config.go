@@ -194,6 +194,9 @@ type Config struct {
 	BrokerTokenTTL      time.Duration // PAM_BROKER_TOKEN_TTL_MIN — approval resume-token lifetime (default 15m)
 	BrokerMaxArgBytes   int           // PAM_BROKER_MAX_ARG_BYTES — cap on a tool call's serialized args (0 = off)
 	BrokerRatePerMin    int           // PAM_BROKER_RATE_PER_MIN — per-agent tool-call rate limit (0 = off)
+	// Audit-chain checkpoints + signing-key rotation (Phase 27).
+	BrokerCheckpointEvery int    // PAM_BROKER_AUDIT_CHECKPOINT_EVERY — emit a signed in-chain checkpoint every N events (0 = off)
+	BrokerAuditSignPrev   string // PAM_BROKER_AUDIT_SIGN_PREV — comma-separated base64 ed25519 PUBLIC keys still trusted after a signing-key rotation (overlap window)
 	// SPIFFE JWT-SVID agent identity (Phase 13d). Setting the JWKS path enables it.
 	BrokerTrustDomainJWKS string // PAM_BROKER_TRUST_DOMAIN_JWKS — file with the trust-domain JWKS
 	BrokerTrustDomain     string // PAM_BROKER_TRUST_DOMAIN — SPIFFE trust domain host (e.g. example.org)
@@ -381,6 +384,8 @@ func Load() (*Config, error) {
 		BrokerTokenTTL:         time.Duration(integer("PAM_BROKER_TOKEN_TTL_MIN", 15)) * time.Minute,
 		BrokerMaxArgBytes:      integer("PAM_BROKER_MAX_ARG_BYTES", 16384),
 		BrokerRatePerMin:       integer("PAM_BROKER_RATE_PER_MIN", 0),
+		BrokerCheckpointEvery:  integer("PAM_BROKER_AUDIT_CHECKPOINT_EVERY", 0),
+		BrokerAuditSignPrev:    getenv("PAM_BROKER_AUDIT_SIGN_PREV", ""),
 
 		BrokerTrustDomainJWKS: os.Getenv("PAM_BROKER_TRUST_DOMAIN_JWKS"),
 		BrokerTrustDomain:     os.Getenv("PAM_BROKER_TRUST_DOMAIN"),

@@ -160,3 +160,106 @@ func TestSignedHeadDetectsTruncation(t *testing.T) {
 		t.Fatalf("truncation not simulated: %d visible >= checkpoint %d", len(visible), cp.LastID)
 	}
 }
+
+// TestInChainCheckpointsEmitted proves periodic in-chain checkpoints are appended
+// at the configured interval and all verify against the trusted key.
+func TestInChainCheckpointsEmitted(t *testing.T) {
+	ctx := context.Background()
+	st := memstore.New()
+	c := newChain(t, st).WithCheckpointEvery(3)
+	appendN(t, c, 6) // 6 events → a checkpoint after #3 and after #6
+
+	res, err := c.VerifyFloor(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.OK || res.BrokeAtID != 0 || res.BadCheckpoint != 0 {
+		t.Fatalf("verify: %+v", res)
+	}
+	if res.Checkpoints != 2 {
+		t.Fatalf("checkpoints = %d, want 2", res.Checkpoints)
+	}
+	// 6 tool events + 2 checkpoint events = 8 rows.
+	if res.Count != 8 {
+		t.Fatalf("count = %d, want 8", res.Count)
+	}
+}
+
+// TestCheckpointCatchesKeyCompromiseEdit proves the ed25519 checkpoint layer is
+// defense-in-depth over the HMAC: an attacker who edits history AND recomputes
+// every downstream HMAC (i.e. the HMAC key leaked) still cannot forge the
+// checkpoint's signed head — the anchored head no longer matches, so the
+// checkpoint is flagged even though the HMAC chain reproduces.
+func TestCheckpointCatchesKeyCompromiseEdit(t *testing.T) {
+	ts := &tamperStore{Memstore: memstore.New()}
+	c := newChain(t, ts).WithCheckpointEvery(3)
+	appendN(t, c, 5) // events 1..5 + a checkpoint after #3 (id 4)
+
+	ts.mutate = func(evs []store.BrokerAuditEvent) []store.BrokerAuditEvent {
+		out := append([]store.BrokerAuditEvent(nil), evs...)
+		out[0].Detail = "EVIL" // edit the first event's content
+		// Recompute every HMAC with the (compromised) key so the HMAC walk passes.
+		var head []byte
+		for i := range out {
+			out[i].HMAC = c.mac(head, out[i])
+			out[i].PrevHash = head
+			head = out[i].HMAC
+		}
+		return out
+	}
+	res, err := c.VerifyFloor(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.BrokeAtID != 0 {
+		t.Fatalf("HMAC walk should pass (attacker recomputed): broke at %d", res.BrokeAtID)
+	}
+	if res.OK || res.BadCheckpoint == 0 {
+		t.Fatalf("checkpoint signature must catch the edit: %+v", res)
+	}
+}
+
+// TestRotationTrustsPreviousSigner proves that after a signing-key rotation a
+// checkpoint signed by the rotated-out key still verifies when the old public key
+// is trusted via WithRotation — and fails without it.
+func TestRotationTrustsPreviousSigner(t *testing.T) {
+	ctx := context.Background()
+	st := memstore.New()
+	// Chain A signs a checkpoint with key1.
+	c1 := newChain(t, st).WithCheckpointEvery(2)
+	oldPub := c1.TrustedKeys()[0]
+	appendN(t, c1, 2) // → one checkpoint signed by key1
+
+	// "Rotate": a new Chain over the same store with a fresh signing key.
+	key := c1.key // reuse the HMAC key so the chain stays continuous
+	_, newPriv, _ := ed25519.GenerateKey(rand.Reader)
+	c2, err := New(ctx, key, newPriv, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Without trusting the old key, the old checkpoint is untrusted → flagged.
+	if res, _ := c2.VerifyFloor(ctx, 0); res.OK || res.BadCheckpoint == 0 {
+		t.Fatalf("old checkpoint must be untrusted after rotation without overlap: %+v", res)
+	}
+	// With the overlap (old public key trusted), it verifies again.
+	c2.WithRotation(oldPub)
+	if res, _ := c2.VerifyFloor(ctx, 0); !res.OK || res.BadCheckpoint != 0 {
+		t.Fatalf("old checkpoint must verify during the rotation overlap: %+v", res)
+	}
+}
+
+// TestTruncationFloor proves the min-entries floor detects tail truncation.
+func TestTruncationFloor(t *testing.T) {
+	ctx := context.Background()
+	c := newChain(t, memstore.New())
+	appendN(t, c, 5)
+	if res, _ := c.VerifyFloor(ctx, 10); !res.Truncated || res.OK {
+		t.Fatalf("floor above count must flag truncation: %+v", res)
+	}
+	if res, _ := c.VerifyFloor(ctx, 5); res.Truncated || !res.OK {
+		t.Fatalf("floor equal to count must pass: %+v", res)
+	}
+	if res, _ := c.VerifyFloor(ctx, 0); res.Truncated || !res.OK {
+		t.Fatalf("no floor must pass: %+v", res)
+	}
+}

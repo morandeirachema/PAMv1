@@ -11,9 +11,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -133,13 +135,15 @@ type TokenStore interface {
 
 // parkedCall is a require_approval tool call awaiting a human decision. It holds
 // the requesting agent identity and arguments so the broker can execute it
-// server-side (JIT) once approved.
+// server-side (JIT) once approved. approvers is the rule's approver-group set:
+// separation of duties requires the deciding human to belong to one of them.
 type parkedCall struct {
 	id        *agentid.Identity
 	call      Call
 	scope     string
 	ruleID    string
 	reason    string
+	approvers []string
 	requested time.Time
 }
 
@@ -153,8 +157,24 @@ type PendingApproval struct {
 	Scope      string    `json:"scope,omitempty"`
 	RuleID     string    `json:"rule_id,omitempty"`
 	Reason     string    `json:"reason,omitempty"`
+	Approvers  []string  `json:"approvers,omitempty"` // groups permitted to decide (SoD)
 	Requested  time.Time `json:"requested_at"`
 }
+
+// Approver identifies the human deciding a parked call, for separation of duties
+// (Phase 27). Groups is the decider's membership set (see auth.Principal.
+// ApproverGroups): their name plus role names. IsAdmin marks a built-in
+// administrator, who may approve any group (the superuser, as everywhere else).
+type Approver struct {
+	Name    string
+	Groups  []string
+	IsAdmin bool
+}
+
+// ErrNotApprover is returned by Decide when the deciding human is not a member of
+// any of the rule's approver groups (separation of duties). The parked call is
+// left intact so an authorized approver can still decide it.
+var ErrNotApprover = errors.New("broker: not a member of the rule's approver group")
 
 // Broker runs the shared policy loop.
 type Broker struct {
@@ -264,7 +284,7 @@ func (b *Broker) ProcessCall(ctx context.Context, id *agentid.Identity, c Call) 
 	case policy.EffectRequireApproval:
 		out.Status = StatusPendingApproval
 		out.ApprovalID = out.CallID
-		b.park(ctx, id, c, &out)
+		b.park(ctx, id, c, d.Approvers, &out)
 	case policy.EffectAllow:
 		tool, ok := b.registry.Get(c.Tool)
 		if !ok {
@@ -314,11 +334,12 @@ func (b *Broker) ProcessCall(ctx context.Context, id *agentid.Identity, c Call) 
 
 // park stores an approval-pending call, notifies an approver, and (when a token
 // store is wired) mints a single-use resume token returned in out.ResumeToken.
-func (b *Broker) park(ctx context.Context, id *agentid.Identity, c Call, out *Outcome) {
+// approvers is the rule's approver-group set, enforced at decision time (SoD).
+func (b *Broker) park(ctx context.Context, id *agentid.Identity, c Call, approvers []string, out *Outcome) {
 	b.mu.Lock()
 	full := len(b.parked) >= maxParked
 	if !full {
-		b.parked[out.CallID] = &parkedCall{id: id, call: c, scope: out.Scope, ruleID: out.RuleID, reason: out.Reason, requested: time.Now().UTC()}
+		b.parked[out.CallID] = &parkedCall{id: id, call: c, scope: out.Scope, ruleID: out.RuleID, reason: out.Reason, approvers: approvers, requested: time.Now().UTC()}
 	}
 	b.mu.Unlock()
 	// Fail closed rather than let unbounded pending approvals exhaust memory.
@@ -354,7 +375,7 @@ func (b *Broker) PendingApprovals() []PendingApproval {
 		out = append(out, PendingApproval{
 			CallID: callID, Tool: p.call.Tool, Args: p.call.Args,
 			Agent: p.id.AgentName, OnBehalfOf: p.id.OnBehalfOf, Scope: p.scope,
-			RuleID: p.ruleID, Reason: p.reason, Requested: p.requested,
+			RuleID: p.ruleID, Reason: p.reason, Approvers: p.approvers, Requested: p.requested,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Requested.Before(out[j].Requested) })
@@ -364,34 +385,45 @@ func (b *Broker) PendingApprovals() []PendingApproval {
 // Decide resolves a parked approval: on approve the broker executes the tool
 // server-side (JIT credential injection) and stores the terminal result; on
 // reject the call becomes denied. Either way the decision is recorded in the
-// tamper-evident chain attributed to the human approver. Unknown/expired call ->
-// ok=false.
-func (b *Broker) Decide(ctx context.Context, callID, approver string, approve bool) (Outcome, bool) {
+// tamper-evident chain attributed to the human approver. Separation of duties
+// (Phase 27): the approver must belong to one of the rule's approver groups, or
+// be an administrator — otherwise the call is left parked and (ErrNotApprover) is
+// returned. Unknown/expired call -> ok=false.
+func (b *Broker) Decide(ctx context.Context, callID string, approver Approver, approve bool) (Outcome, bool, error) {
 	b.mu.Lock()
 	p, ok := b.parked[callID]
-	if ok {
-		delete(b.parked, callID)
-	}
-	b.mu.Unlock()
 	if !ok {
-		return Outcome{}, false
+		b.mu.Unlock()
+		return Outcome{}, false, nil
 	}
+	// SoD check BEFORE consuming the parked call, so a refusal leaves it decidable
+	// by an authorized approver rather than silently discarding it.
+	if !approverPermitted(approver, p.approvers) {
+		b.mu.Unlock()
+		refused := Outcome{CallID: callID, RuleID: p.ruleID, Scope: p.scope}
+		b.chainApproval(ctx, p, approver.Name, "broker.approval.refused", refused)
+		b.log.Warn("broker approval refused: approver not in rule's group",
+			"call", callID, "approver", approver.Name, "required", strings.Join(p.approvers, ","))
+		return Outcome{}, true, ErrNotApprover
+	}
+	delete(b.parked, callID)
+	b.mu.Unlock()
 
 	out := Outcome{CallID: callID, RuleID: p.ruleID, Scope: p.scope}
 	if !approve {
-		out.Status, out.Reason = StatusDenied, "rejected by "+approver
-		b.chainApproval(ctx, p, approver, "broker.approval.denied", out)
+		out.Status, out.Reason = StatusDenied, "rejected by "+approver.Name
+		b.chainApproval(ctx, p, approver.Name, "broker.approval.denied", out)
 		b.remember(out)
-		return out, true
+		return out, true, nil
 	}
 
-	b.chainApproval(ctx, p, approver, "broker.approval.granted", out)
+	b.chainApproval(ctx, p, approver.Name, "broker.approval.granted", out)
 	tool, exists := b.registry.Get(p.call.Tool)
 	if !exists {
 		out.Status, out.Reason = StatusFailed, "unknown tool: "+p.call.Tool
 		b.remember(out)
 		_ = b.chainEvent(ctx, p.id, p.call, "broker.tool_call.failed", out, out.Reason)
-		return out, true
+		return out, true, nil
 	}
 	// Capability backstop: the principal must hold the tool's capability (auth is
 	// the single source of truth; policy is not the only gate).
@@ -399,7 +431,7 @@ func (b *Broker) Decide(ctx context.Context, callID, approver string, approve bo
 		out.Status, out.Reason = StatusDenied, "principal lacks the capability for this tool"
 		b.remember(out)
 		_ = b.chainEvent(ctx, p.id, p.call, "broker.tool_call.denied", out, out.Reason)
-		return out, true
+		return out, true, nil
 	}
 	// Re-check the agent is still valid: a call parked before its key was revoked
 	// (or its SVID expired) must not execute just because a human approved it.
@@ -407,13 +439,13 @@ func (b *Broker) Decide(ctx context.Context, callID, approver string, approve bo
 		out.Status, out.Reason = StatusDenied, "agent identity is no longer valid (revoked or expired)"
 		b.remember(out)
 		_ = b.chainEvent(ctx, p.id, p.call, "broker.tool_call.denied", out, out.Reason)
-		return out, true
+		return out, true, nil
 	}
 	// Record intent before the side effect, fail closed if the chain is down.
 	if err := b.chainEvent(ctx, p.id, p.call, "broker.tool_call.requested", out, ""); err != nil {
 		out.Status, out.Reason = StatusFailed, "audit log unavailable; call refused"
 		b.remember(out)
-		return out, true
+		return out, true, nil
 	}
 	// The human approval satisfies any target-level four-eyes gate for this call.
 	res, err := tool.Execute(WithApproved(ctx), p.id.Principal(), p.call.Args)
@@ -431,6 +463,47 @@ func (b *Broker) Decide(ctx context.Context, callID, approver string, approve bo
 	// agent, once, through the single-use resume token.
 	if res.Sensitive {
 		out.Result = nil
+	}
+	return out, true, nil
+}
+
+// approverPermitted reports whether a decider may resolve a parked call under
+// separation of duties: an administrator always may (the superuser, as
+// everywhere), a rule that named no approver group admits anyone, otherwise the
+// decider must share a group with the rule's approver set (case-insensitive).
+func approverPermitted(a Approver, required []string) bool {
+	if a.IsAdmin || len(required) == 0 {
+		return true
+	}
+	for _, want := range required {
+		for _, have := range a.Groups {
+			if strings.EqualFold(want, have) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Withdraw denies a parked call at the request of its OWN requester (Phase 27:
+// MCP elicitation — the running user declined the confirmation). It needs no
+// approver and does not satisfy four-eyes: it only lets the party that asked for
+// the action take it back, so a still-parked call an out-of-band approver never
+// saw is cleaned up. The requester must match the parked call's agent. Returns
+// ok=false for an unknown call or a requester mismatch.
+func (b *Broker) Withdraw(ctx context.Context, callID, requester string) (Outcome, bool) {
+	b.mu.Lock()
+	p, ok := b.parked[callID]
+	if !ok || !strings.EqualFold(p.id.AgentName, requester) {
+		b.mu.Unlock()
+		return Outcome{}, false
+	}
+	delete(b.parked, callID)
+	b.mu.Unlock()
+	out := Outcome{CallID: callID, RuleID: p.ruleID, Scope: p.scope, Status: StatusDenied, Reason: "withdrawn by requester"}
+	b.remember(out)
+	if err := b.chainEvent(ctx, p.id, p.call, "broker.tool_call.withdrawn", out, out.Reason); err != nil {
+		b.log.Error("broker withdraw audit append failed", "call", callID, "err", err)
 	}
 	return out, true
 }

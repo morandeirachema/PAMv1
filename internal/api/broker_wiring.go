@@ -22,6 +22,7 @@ func (s *Server) setupBroker(opts Options) error {
 	if err != nil {
 		return fmt.Errorf("api: broker audit chain: %w", err)
 	}
+	chain.WithRotation(opts.BrokerAuditSignPrevKeys...).WithCheckpointEvery(opts.BrokerCheckpointEvery)
 	reg := broker.NewRegistry()
 	s.registerBrokerTools(reg)
 	s.auditChain = chain
@@ -30,6 +31,7 @@ func (s *Server) setupBroker(opts Options) error {
 		WithArgCap(opts.BrokerMaxArgBytes).
 		WithRevalidator(s.revalidateAgent)
 	s.brokerLimiter = ratelimit.New(opts.BrokerRatePerMin)
+	s.mcpSessions = newMCPSessionRegistry()
 	// Static agent keys are always accepted; a SPIFFE SVID verifier, when
 	// configured, is tried alongside them (Phase 13d).
 	verifier := agentid.MultiVerifier{agentid.NewStaticVerifier(s.store)}

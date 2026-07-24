@@ -52,6 +52,7 @@
 
 ### Security, compliance & OT
 - **[SECURITY-GAPS.md](SECURITY-GAPS.md)** — a security self-audit: every gap found, and whether it was fixed, mitigated or deferred.
+- **[AGENT-THREAT-MODEL.md](AGENT-THREAT-MODEL.md)** — the AI-agent access broker's threat model: OWASP LLM Top 10 & MITRE ATLAS mapped to broker controls.
 - **[NIS2-COMPLIANCE.md](NIS2-COMPLIANCE.md)** — maps pamv1 features to Directive (EU) 2022/2555 (NIS2) Art. 21/23.
 - **[OT-DEPLOYMENT.md](OT-DEPLOYMENT.md)** — the IEC 62443 / Purdue-model deployment pattern and OT-specific controls.
 
