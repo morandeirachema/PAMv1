@@ -467,8 +467,11 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	}
 
 	// Approval gate (4-eyes / OT maintenance window). Break-glass bypasses.
+	// This is the consume-on-connect hook (Phase 26): a single-use approval is
+	// burned by the connection it admits — even one that later fails upstream —
+	// so it can never authorize a second session.
 	if (p.requireApprv || target.RequireApproval) && ext["break_glass"] != "true" {
-		approved, aerr := p.store.HasActiveApproval(ctx, actor, target.ID, time.Now())
+		approved, consumedID, aerr := p.store.ConsumeApproval(ctx, actor, target.ID, time.Now())
 		if aerr != nil {
 			p.log.Error("approval check failed", "target", target.Name, "err", aerr)
 			rejectAll(chans, ssh.Prohibited, "pamv1: approval check failed")
@@ -479,6 +482,9 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 			p.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:approval-required")
 			rejectAll(chans, ssh.Prohibited, "pamv1: connection requires an approved access request")
 			return
+		}
+		if consumedID != 0 {
+			p.audit(ctx, actor, "access.consumed", fmt.Sprintf("request:%d target:%s", consumedID, target.Name))
 		}
 	}
 

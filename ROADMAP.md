@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–25 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
+**Phases 0–26 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
 with command control, safes, dependent-account propagation), optional CyberArk Conjur
@@ -15,11 +15,14 @@ secret sourcing, the three **Tier-2** access-governance gaps closed
 the two **Tier-3** market-frontier gaps that can be built and verified honestly in
 process — **Zero Standing Privilege** (ephemeral short-lived SSH certificates, Phase 22)
 and **privileged threat analytics** (behavioral risk scoring + automated response,
-Phase 23) — and now the first **Tier-4** ecosystem gap: a **Conjur-style
-application-secrets API** for non-agent apps (Phase 24), and **console parity**
+Phase 23) — the first **Tier-4** ecosystem gap: a **Conjur-style
+application-secrets API** for non-agent apps (Phase 24), **console parity**
 (Phase 25) — 5250 screens for every backend capability that had been API-only
 (safes, certification campaigns, risk analytics, a live session viewer, and the
-Phase 20/21 request-workflow fields). The portal is also **keyboard-first**
+Phase 20/21 request-workflow fields) — and **session-recording playback +
+one-time access** (Phase 26): audited, hash-verified replay of stored session
+recordings from the portal, and single-use approvals consumed by the first
+connection they admit. The portal is also **keyboard-first**
 (mouse optional). See their sections below. Beyond those,
 a number of items genuinely require external infrastructure or a paid account to build
 and verify honestly, so they are left as documented follow-ons rather than faked. The
@@ -300,7 +303,7 @@ The third [Tier-2 competitive-coverage gap](README.md#coverage-vs-commercial-pam
 - [x] **Scheduled / time-boxed windows**: a request may carry `not_before` / `not_after`; an approved request is only **active inside that window** (`HasActiveApproval` honors `not_before`), so access can be pre-approved for a future maintenance window
 - [x] **Mandatory reason codes**: `PAM_REQUIRE_REASON` rejects an access request with no reason (422)
 - [x] **Tests**: store contract (multi-approver accumulation, scheduled-window activation) and end-to-end API tests (a 2-of-N chain — first approval pending, double-approval 409, second distinct approval grants; mandatory reason; a scheduled window round-trips)
-- Deferred (documented): **one-time (single-use) access** — needs a consume-on-connect hook in every connect gate (SSH/DB/WinRM/RDP), so it is a documented follow-on rather than a partial implementation
+- [x] **One-time (single-use) access** — *shipped in Phase 26* (the consume-on-connect hook in every privileged-use gate)
 
 ## Phase 22 — Zero Standing Privilege (ephemeral SSH certificates) ✅
 
@@ -352,10 +355,31 @@ page with no new routes or schema (each screen drives an existing API).
 - [x] **Access-request workflow fields** (Phases 20–21 catch-up): the file-request form now takes a change **ticket**, a requested **N-of-M approval count**, and a **scheduled window** (`not_before`/`not_after`); the approver list shows ticket, approval progress (`n/m` distinct approvers), window start, and expiry
 - [x] Verified end to end against the in-memory server: every screen's exact API calls exercised (safe → member → target assignment; campaign snapshot → certify/revoke-with-teeth → close; risk filters; a ticketed 2-of-N windowed request), plus `node --check` on the embedded script and the full Go test suite
 
+## Phase 26 — Session-recording playback + one-time access ✅
+
+Two follow-ons the backlog had carried since Phases 2 and 21, both fully
+buildable and verifiable in process: recordings existed on disk (hash-chained,
+audited) but nothing could replay them, and an approval — once granted — kept
+admitting connections for its whole window.
+
+**Session-recording playback (the review side of Phase 2's recordings):**
+
+- [x] **Recordings API**: `GET /api/recordings` (`CapReadAudit`) lists the stored recordings newest-first (asciicast `.cast` from the SSH/WinRM/PostgreSQL proxies, `.winrm.log` transcripts from the WinRM run endpoint; dotfiles like the `.chain` head never listed); `GET /api/recordings/{name}` serves one for replay. A strict filename allowlist (the recorder's own `sanitize` alphabet) forecloses path traversal
+- [x] **Tamper evidence at replay**: the served file's SHA-256 is recomputed and searched in the audit trail (`store.FindAuditDetail` — the value stamped by `session.record` / `winrm.run` when the recording was written); the verdict rides `X-PAM-Recording-Audited`, so a file tampered on disk is visibly flagged the moment an auditor replays it. Hash and body cover the same byte range, so a still-recording session replays as a consistent prefix
+- [x] **Every replay is audited** (`session.playback` — file, bytes, sha256, verdict)
+- [x] **5250 replay screen** (menu 19): recordings subfile + a keyboard-first player in the live-viewer pane — Space pause/resume, F5 restart, F6 speed (1x→2x→4x→8x→MAX), long idle gaps capped at 2s (asciinema-style), ANSI-stripped bounded scrollback, and the audit-verification verdict on screen
+
+**One-time (single-use) access (Phase 21's deferred follow-on):**
+
+- [x] **Single-use approvals** (migration `0019`: `one_time`, `consumed_at`): an access request may be filed one-time (`one_time` on `POST /api/access-requests`, or forced globally by `PAM_ACCESS_ONE_TIME`); the first privileged use its approval admits **consumes it** — audited `access.consumed` — and it admits nothing further
+- [x] **Consume-on-use in every gate**: the SSH proxy, the PostgreSQL proxy, the RDP tunnel, and the API's approval gate (reveal, checkout, WinRM run, broker tool calls) all burn a single-use approval via `store.ConsumeApproval` — atomic under racing connects (`FOR UPDATE SKIP LOCKED`; exactly one of two simultaneous dials wins), a standing approval is preferred and never burned, and a consumed approval is inactive everywhere (`HasActiveApproval` honors it). Consumption is deliberately fail-closed: an admitted connection that later fails upstream still spends the approval
+- [x] **Console**: the file-request form takes a one-time flag; the approver list shows `1x` / `used`
+- [x] **Tests**: store contract (round-trip, burn-once, standing-approval preference, an 8-way race admits exactly one consumer), end-to-end SSH and PostgreSQL proxy tests (a single-use approval admits exactly one connection; the second is refused before any upstream contact), API tests (checkout burns the approval; `PAM_ACCESS_ONE_TIME` forces one-time), and playback tests (listing, byte-exact serve, verified/unaudited verdicts, RBAC, name hygiene)
+
 ## Portal: keyboard-first navigation ✅
 
 The 5250 console is now explicitly **keyboard-first** (the mouse is optional), matching the IBM-terminal heritage: focus lands on each screen's primary field after every render, **Esc** cancels/goes back (the twin of F12), **↑/↓** move between subfile option cells, Tab/Enter/F-keys work throughout, and a persistent hint documents the shortcuts. The look is unchanged — only keyboard affordances were added.
 
 ---
 
-**Tier-2 (access-governance depth) is complete** — certification campaigns (19), the ITSM/ticketing gate (20), and richer approval workflows (21). **Tier-3**: Zero Standing Privilege (22) and privileged threat analytics (23) are shipped; connector/plugin breadth, cloud CIEM, and web/SaaS session proxying remain (infra-bound). **Tier-4 is under way**: the application-secrets API (24) is shipped; a Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, and thick-app components remain, each requiring external infrastructure or an account to build honestly (see [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)). The 5250 console has **full parity** with the backend (Phase 25) — every shipped capability is operable from the portal, keyboard-first. See the [competitive-coverage section](README.md#coverage-vs-commercial-pam-cyberark-wallix-) for the full picture.
+**Tier-2 (access-governance depth) is complete** — certification campaigns (19), the ITSM/ticketing gate (20), and richer approval workflows (21), now including one-time access (26). **Tier-3**: Zero Standing Privilege (22) and privileged threat analytics (23) are shipped; connector/plugin breadth, cloud CIEM, and web/SaaS session proxying remain (infra-bound). **Tier-4 is under way**: the application-secrets API (24) is shipped; a Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, and thick-app components remain, each requiring external infrastructure or an account to build honestly (see [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)). The 5250 console has **full parity** with the backend (Phase 25) — every shipped capability is operable from the portal, keyboard-first — and the session-recording loop is closed end to end (Phase 26): record → watch live → replay later, hash-verified. See the [competitive-coverage section](README.md#coverage-vs-commercial-pam-cyberark-wallix-) for the full picture.

@@ -392,8 +392,10 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		d.deny(ctx, backend, actor, login, "not authorized for this target")
 		return
 	}
+	// Consume-on-connect (Phase 26): a single-use approval is burned by the
+	// connection it admits and cannot authorize a second session.
 	if (d.requireApprv || target.RequireApproval) && !principal.BreakGlass {
-		approved, aerr := d.store.HasActiveApproval(ctx, actor, target.ID, time.Now())
+		approved, consumedID, aerr := d.store.ConsumeApproval(ctx, actor, target.ID, time.Now())
 		if aerr != nil {
 			d.log.Error("approval check failed", "target", target.Name, "err", aerr)
 			d.fail(backend, "58000", "pamv1: approval check failed")
@@ -403,6 +405,9 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 			d.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:approval-required")
 			d.fail(backend, "28000", "pamv1: connection requires an approved access request")
 			return
+		}
+		if consumedID != 0 {
+			d.audit(ctx, actor, "access.consumed", fmt.Sprintf("request:%d target:%s", consumedID, target.Name))
 		}
 	}
 

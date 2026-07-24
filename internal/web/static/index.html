@@ -91,6 +91,7 @@
   let campaigns = [], campView = null, risk = null, riskMin = "", riskWin = "";
   let watchSess = null, watchAbort = null, watchText = "";
   let liveTimer = null;
+  let recordings = [], replay = null; // replay = one loaded recording + player state
 
   // The Apache Guacamole client (vendored) powers the in-portal RDP viewer. It is
   // imported on demand — the first time an operator opens RDP — so the ~75KB module
@@ -276,6 +277,96 @@
     }
   }
 
+  // --- session-recording replay (Phase 26) ---
+
+  // openRecordings loads the stored-recordings listing (auditor view of what
+  // the proxies recorded to disk).
+  async function openRecordings() { try { recordings = await api("GET", "/api/recordings"); } catch (e) { recordings = []; } go("recordings"); }
+
+  // openReplay fetches one recording (raw asciicast or transcript — api() JSON
+  // helper does not fit) plus the server's tamper-evidence headers: the
+  // recomputed SHA-256 and whether that hash appears in the audit trail.
+  async function openReplay(rec) {
+    const res = await fetch(`/api/recordings/${encodeURIComponent(rec.name)}`, { headers: { "X-API-Key": apiKey } });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error((d.error || res.statusText).toUpperCase()); }
+    const body = await res.text();
+    const frames = [];
+    if (rec.kind === "asciicast") {
+      // asciicast v2: one JSON value per line — a header object, then
+      // [time, "o", data] output events (our recorders only write "o").
+      for (const line of body.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const ev = JSON.parse(line);
+          if (Array.isArray(ev) && ev[1] === "o") frames.push({ t: ev[0], text: String(ev[2]) });
+        } catch (e) { /* skip an unparsable line rather than lose the replay */ }
+      }
+    } else {
+      frames.push({ t: 0, text: body });
+    }
+    stopReplay();
+    replay = {
+      name: rec.name, kind: rec.kind, frames,
+      total: frames.length ? frames[frames.length - 1].t : 0,
+      sha: res.headers.get("X-PAM-Recording-SHA256") || "",
+      audited: res.headers.get("X-PAM-Recording-Audited") === "true",
+      i: 0, pos: 0, speed: 1, playing: false, timer: null, text: "",
+    };
+    go("recplay");
+    replayPlay();
+  }
+
+  // stopReplay halts the player and drops its state; go() calls it whenever
+  // navigation leaves the replay screen.
+  function stopReplay() { if (replay) { clearTimeout(replay.timer); replay = null; } }
+
+  // replayStatus repaints the player's status line and pane in place (no full
+  // re-render per frame).
+  function replayStatus() {
+    if (!replay) return;
+    const mmss = (s) => { const v = Math.max(0, Math.round(s)); return `${String(Math.floor(v / 60)).padStart(2, "0")}:${String(v % 60).padStart(2, "0")}`; };
+    const st = document.getElementById("rp-status");
+    if (st) st.textContent = `TIME ${mmss(replay.pos)} / ${mmss(replay.total)}   FRAME ${replay.i}/${replay.frames.length}   SPEED ${replay.speed === "MAX" ? "MAX" : replay.speed + "x"}   ${replay.playing ? "PLAYING" : replay.i >= replay.frames.length ? "END OF RECORDING" : "PAUSED"}`;
+    const pane = document.getElementById("replay-pane");
+    if (pane) { pane.textContent = replay.text; pane.scrollTop = pane.scrollHeight; }
+  }
+
+  // replayStep shows the next frame and schedules the one after it, compressing
+  // long idle gaps (asciinema-style) so a quiet session replays briskly.
+  function replayStep() {
+    if (!replay || replay.i >= replay.frames.length) { if (replay) replay.playing = false; replayStatus(); return; }
+    const f = replay.frames[replay.i++];
+    replay.text = (replay.text + stripCtl(f.text)).slice(-65536);
+    replay.pos = f.t;
+    replayStatus();
+    if (replay.i >= replay.frames.length) { replay.playing = false; replayStatus(); return; }
+    if (replay.speed === "MAX") { replayStep(); return; }
+    const gap = Math.min(Math.max(replay.frames[replay.i].t - f.t, 0), 2); // cap idle at 2s
+    replay.timer = setTimeout(replayStep, (gap * 1000) / replay.speed);
+  }
+
+  // replayPlay / replayToggle / replayRestart / replayCycleSpeed are the
+  // keyboard controls: Space pauses, F5 restarts, F6 cycles 1x→2x→4x→8x→MAX.
+  function replayPlay() { if (!replay || replay.playing) return; if (replay.i >= replay.frames.length) return; replay.playing = true; replayStep(); }
+  function replayToggle() {
+    if (!replay) return;
+    if (replay.playing) { clearTimeout(replay.timer); replay.playing = false; replayStatus(); }
+    else replayPlay();
+  }
+  function replayRestart() {
+    if (!replay) return;
+    clearTimeout(replay.timer);
+    replay.i = 0; replay.pos = 0; replay.text = ""; replay.playing = false;
+    replayPlay();
+  }
+  function replayCycleSpeed() {
+    if (!replay) return;
+    const speeds = [1, 2, 4, 8, "MAX"];
+    replay.speed = speeds[(speeds.indexOf(replay.speed) + 1) % speeds.length];
+    if (replay.speed === "MAX" && replay.playing) { clearTimeout(replay.timer); replayStep(); }
+    replayStatus();
+  }
+
   const targetName = (id) => { const t = targets.find((x) => x.id === id); return t ? t.name : id; };
   const safeName = (id) => { if (!id) return "-"; const s = safes.find((x) => x.id === id); return s ? s.name : "safe " + id; };
 
@@ -448,6 +539,7 @@ ${fkeys("")}
           line(16, can("read_inventory"), "Work with safes") +
           line(17, can("read_audit"), "Certification campaigns") +
           line(18, can("read_audit"), "Risk analytics") +
+          line(19, can("read_audit"), "Session recordings (replay)") +
           "90. Sign off\n";
         term.innerHTML = `${head("PAMMAIN", "PAMV1 Main Menu")}
 Select one of the following:
@@ -465,7 +557,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
             "8": openUsers, "9": openMfa, "10": openAudit, "11": () => go("breakglass"),
             "12": openProfiles, "13": openConfig, "14": openEffective,
             "15": openApps, "16": openSafes, "17": openCampaigns, "18": openRisk,
-            "90": signoff,
+            "19": openRecordings, "90": signoff,
           };
           if (routes[c]) { try { await routes[c](); } catch (e) { say("CPF9999: " + e.message, true); render(); } }
           else { say("CPF0001: SELECTION " + c.toUpperCase() + " NOT VALID.", true); render(); }
@@ -721,12 +813,13 @@ ${fkeys("F3=Exit   F12=Stop watching")}`;
         const tn = Object.fromEntries(targets.map((t) => [t.id, t.name]));
         term.innerHTML = `${head("PAMWRKREQ", "Work with Access Requests")}
 ${isApprover ? `Pending 4-eyes requests. Type options, press Enter.
-  <span class="cyan">5=Approve   6=Deny</span>   <span class="cyan">Apprv = distinct approvals so far / required (N-of-M chains)</span>
+  <span class="cyan">5=Approve   6=Deny</span>   <span class="cyan">Apprv = approvals so far / required   Use: 1x = single-use, used = consumed</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Requester</th><th>Target</th><th>Reason</th><th>Ticket</th><th>Status</th><th>Apprv</th><th>Active from</th><th>Expires</th></tr>
+<tr><th>Opt</th><th>ID</th><th>Requester</th><th>Target</th><th>Reason</th><th>Ticket</th><th>Status</th><th>Apprv</th><th>Use</th><th>Active from</th><th>Expires</th></tr>
 ${requests.map((r) => { const n = r.approved_by ? r.approved_by.split(",").filter(Boolean).length : 0;
-  return `<tr><td>${opt(r.id)}</td><td>${esc(r.id)}</td><td>${pad(r.requester, 10)}</td><td>${pad(tn[r.target_id] || r.target_id, 12)}</td><td>${pad(r.reason || "-", 12)}</td><td>${pad(r.ticket || "-", 10)}</td><td class="${r.status === "pending" ? "amber" : ""}">${esc(r.status)}</td><td>${n}/${esc(r.required_approvals || 1)}</td><td class="cyan">${fmtTime(r.not_before)}</td><td class="cyan">${fmtTime(r.expires_at)}</td></tr>`; }).join("")}
+  const use = r.one_time ? (r.consumed_at ? `<span class="cyan">used</span>` : `<span class="amber">1x</span>`) : "-";
+  return `<tr><td>${opt(r.id)}</td><td>${esc(r.id)}</td><td>${pad(r.requester, 10)}</td><td>${pad(tn[r.target_id] || r.target_id, 12)}</td><td>${pad(r.reason || "-", 12)}</td><td>${pad(r.ticket || "-", 10)}</td><td class="${r.status === "pending" ? "amber" : ""}">${esc(r.status)}</td><td>${n}/${esc(r.required_approvals || 1)}</td><td>${use}</td><td class="cyan">${fmtTime(r.not_before)}</td><td class="cyan">${fmtTime(r.expires_at)}</td></tr>`; }).join("")}
 </table>${requests.length ? "" : `<div class="cyan indent">(No pending requests.)</div>`}
 <input type="submit" hidden></form>` : `<div class="cyan">You can file an access request for a target that requires approval.</div>`}
 ${fkeys(`F3=Exit   F5=Refresh   F6=File request   F12=Cancel`)}`;
@@ -758,6 +851,7 @@ Request approval to connect to a target (4-eyes / maintenance window).
 <label>Approvals needed  . :  <input name="approvals" type="number" min="1" size="4">   <span class="cyan">blank = policy default; ask for a stricter N-of-M chain</span></label>
 <label>Active from . . . . :  <input name="not_before" type="datetime-local">   <span class="cyan">optional — pre-approve a future maintenance window</span></label>
 <label>Active until  . . . :  <input name="not_after" type="datetime-local">   <span class="cyan">optional — end of the window (else the policy TTL)</span></label>
+<label>One-time  . . . . . :  <input name="one_time" type="checkbox">   <span class="cyan">single-use — the first connection consumes the approval</span></label>
 <input type="submit" hidden>
 </form>
 ${fkeys("F3=Exit   F12=Cancel")}`;
@@ -769,6 +863,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           if (f.approvals) body.approvals = Number(f.approvals);
           if (f.not_before) body.not_before = new Date(f.not_before).toISOString();
           if (f.not_after) body.not_after = new Date(f.not_after).toISOString();
+          if (f.one_time) body.one_time = true;
           try { await api("POST", "/api/access-requests", body); say("ACCESS REQUEST FILED — awaiting approval."); await openRequests(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
@@ -1436,6 +1531,44 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
           try { await openRisk(); } catch (e) { say("CPF9999: " + e.message, true); render(); }
         };
       },
+
+      recordings() {
+        back = "main";
+        const kb = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + "M" : n >= 1024 ? Math.round(n / 1024) + "K" : n + "B";
+        term.innerHTML = `${head("PAMWRKREC", "Session Recordings (replay)")}
+Stored recordings, newest first. Type options, press Enter.
+  <span class="cyan">5=Replay</span>   <span class="cyan">Every replay is audited (session.playback) and hash-checked against the audit trail.</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>Recording</th><th>Kind</th><th>Size</th><th>Recorded</th></tr>
+${recordings.map((c) => `<tr><td>${opt(c.name)}</td><td class="detail">${esc(c.name)}</td><td>${pad(c.kind, 10)}</td><td>${pad(kb(c.size), 7)}</td><td class="cyan">${fmtTime(c.modified)}</td></tr>`).join("")}
+</table>${recordings.length ? "" : `<div class="cyan indent">(No recordings on disk yet — proxied sessions write asciicasts as they run.)</div>`}
+<input type="submit" hidden></form>
+${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const c of recordings) {
+              const o = optVal(ev.target, c.name);
+              if (o === "5") { return openReplay(c); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            render();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      recplay() {
+        back = "recordings";
+        const rp = replay || { name: "", kind: "", sha: "", audited: false, text: "" };
+        term.innerHTML = `${head("PAMPLYREC", "Replay Recording")}
+Recording <span class="white">${esc(rp.name)}</span>  (${esc(rp.kind)})
+${rp.audited ? `<span class="green">HASH VERIFIED IN AUDIT TRAIL</span>` : `<span class="amber">HASH NOT FOUND IN AUDIT TRAIL — tampered, trimmed, or never audited</span>`}   <span class="cyan">sha256:${esc(rp.sha.slice(0, 16))}…</span>
+<div id="rp-status" class="white"></div>
+<div id="replay-pane" class="watchpane">${esc(rp.text)}</div>
+${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
+        replayStatus();
+      },
     })[screen]();
     focusPrimary();
   }
@@ -1461,12 +1594,13 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
     if (s !== "usercreated") newUser = null;
     if (s !== "appcreated") newApp = null;
     if (s !== "sesswatch") stopWatch();
+    if (s !== "recplay") stopReplay();
     stopLive();
     screen = s; render(); msg = ""; msgErr = false;
   }
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
-  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), risk: openRisk };
+  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), risk: openRisk, recordings: openRecordings };
   const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: () => go("campaignadd") };
 
   window.addEventListener("keydown", async (ev) => {
@@ -1484,6 +1618,14 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         const next = opts[k === "ArrowDown" ? i + 1 : i - 1];
         if (next) next.focus();
       }
+      return;
+    }
+    // Replay player controls (Phase 26): Space pauses/resumes, F5 restarts,
+    // F6 cycles the speed — all without leaving the keyboard.
+    if (screen === "recplay" && k === " ") { ev.preventDefault(); replayToggle(); return; }
+    if (screen === "recplay" && (k === "F5" || k === "F6")) {
+      ev.preventDefault();
+      if (k === "F5") replayRestart(); else replayCycleSpeed();
       return;
     }
     // Esc cancels / goes back (the keyboard twin of F12), except at sign-on/main.

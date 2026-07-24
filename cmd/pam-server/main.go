@@ -657,6 +657,7 @@ func run() error {
 		RequireTicket:       cfg.RequireTicket,
 		ApprovalsRequired:   cfg.ApprovalsRequired,
 		RequireReason:       cfg.RequireReason,
+		OneTimeAccess:       cfg.OneTimeAccess,
 		AirGap:              cfg.AirGap,
 		CheckoutTTL:         cfg.CheckoutTTL,
 		AllowedProtocols:    splitAndTrim(cfg.AllowedProtocols),
