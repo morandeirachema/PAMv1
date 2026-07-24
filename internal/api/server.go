@@ -115,6 +115,9 @@ type Options struct {
 	// Live is the live-session output hub (shared with the proxy) that backs the
 	// GET /api/sessions/{id}/stream monitoring endpoint (Phase 16).
 	Live *session.Hub
+	// StepUp coordinates in-session step-up approvals with the DB proxy (Phase 30):
+	// a supervisor decides a paused statement via POST /api/sessions/{id}/stepup.
+	StepUp *session.StepUp
 	// BreakGlassHashHex is the hex SHA-256 of the emergency key (for quorum unseal).
 	BreakGlassHashHex string
 	// BreakGlassThreshold (M) enables M-of-N quorum unseal when >= 2.
@@ -235,6 +238,7 @@ type Server struct {
 	trustedProxyHops   int
 	sessions           *session.Registry
 	live               *session.Hub
+	stepup             *session.StepUp
 	breakGlassHash     []byte
 	bgThreshold        int
 	bgTTL              time.Duration
@@ -429,6 +433,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		trustedProxyHops:   opts.TrustedProxyHops,
 		sessions:           opts.Sessions,
 		live:               opts.Live,
+		stepup:             opts.StepUp,
 		breakGlassHash:     bgHash,
 		bgThreshold:        opts.BreakGlassThreshold,
 		bgTTL:              bgTTL,
@@ -661,6 +666,8 @@ func (s *Server) routes() {
 
 	s.mux.Handle("GET /api/sessions", s.authz(auth.CapReadAudit, s.listSessions))
 	s.mux.Handle("GET /api/sessions/{id}/stream", s.authz(auth.CapReadAudit, s.streamSession))
+	s.mux.Handle("GET /api/sessions/stepups", s.authz(auth.CapReadAudit, s.listStepUps))       // Phase 30
+	s.mux.Handle("POST /api/sessions/{id}/stepup", s.authz(auth.CapReadAudit, s.decideStepUp)) // Phase 30
 	s.mux.Handle("DELETE /api/sessions/{id}", s.authz(auth.CapManageTargets, s.killSession))
 
 	// Session-recording playback (Phase 26): list stored recordings and serve one

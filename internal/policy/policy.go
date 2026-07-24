@@ -29,12 +29,18 @@ const (
 )
 
 // Condition is a single argument matcher. Exactly one field is set (enforced at
-// load time via UnmarshalYAML). Every condition on a rule must hold (AND).
+// load time via UnmarshalYAML). Every condition on a rule must hold (AND). The
+// gte/gt/lte/lt operators compare the argument value NUMERICALLY (Phase 30), for
+// amount-based rules like "require approval when args.amount >= 5000".
 type Condition struct {
 	Eq    *string  // args.field: value        (equality; matches only when present)
 	Not   *string  // args.field: { not: X }   (differs or absent)
 	In    []string // args.field: { in: [...] }(present and in the allow-list)
 	NotIn []string // args.field: { not_in: [...] } (absent or not in the block-list)
+	Gte   *float64 // args.field: { gte: N }   (present, numeric, and >= N)
+	Gt    *float64 // args.field: { gt: N }    (present, numeric, and >  N)
+	Lte   *float64 // args.field: { lte: N }   (present, numeric, and <= N)
+	Lt    *float64 // args.field: { lt: N }    (present, numeric, and <  N)
 }
 
 // UnmarshalYAML accepts either a scalar (equality) or a one-key mapping with
@@ -51,15 +57,19 @@ func (c *Condition) UnmarshalYAML(value *yaml.Node) error {
 		// accidental clause. value.Decode ignores unknown keys, so check them here.
 		for i := 0; i+1 < len(value.Content); i += 2 {
 			switch value.Content[i].Value {
-			case "not", "in", "not_in":
+			case "not", "in", "not_in", "gte", "gt", "lte", "lt":
 			default:
-				return fmt.Errorf("policy: unknown condition operator %q (want not|in|not_in)", value.Content[i].Value)
+				return fmt.Errorf("policy: unknown condition operator %q (want not|in|not_in|gte|gt|lte|lt)", value.Content[i].Value)
 			}
 		}
 		var m struct {
 			Not   *string  `yaml:"not"`
 			In    []string `yaml:"in"`
 			NotIn []string `yaml:"not_in"`
+			Gte   *float64 `yaml:"gte"`
+			Gt    *float64 `yaml:"gt"`
+			Lte   *float64 `yaml:"lte"`
+			Lt    *float64 `yaml:"lt"`
 		}
 		if err := value.Decode(&m); err != nil {
 			return err
@@ -77,8 +87,24 @@ func (c *Condition) UnmarshalYAML(value *yaml.Node) error {
 			c.NotIn = m.NotIn
 			set++
 		}
+		if m.Gte != nil {
+			c.Gte = m.Gte
+			set++
+		}
+		if m.Gt != nil {
+			c.Gt = m.Gt
+			set++
+		}
+		if m.Lte != nil {
+			c.Lte = m.Lte
+			set++
+		}
+		if m.Lt != nil {
+			c.Lt = m.Lt
+			set++
+		}
 		if set != 1 {
-			return fmt.Errorf("policy: a condition must have exactly one of not/in/not_in")
+			return fmt.Errorf("policy: a condition must have exactly one of not/in/not_in/gte/gt/lte/lt")
 		}
 		return nil
 	default:
@@ -87,6 +113,8 @@ func (c *Condition) UnmarshalYAML(value *yaml.Node) error {
 }
 
 // match reports whether the condition holds for the argument value (val, present).
+// A numeric comparator (gte/gt/lte/lt) fails closed when the value is absent or
+// not a number, so a non-numeric argument can never satisfy an amount rule.
 func (c Condition) match(val string, present bool) bool {
 	switch {
 	case c.Eq != nil:
@@ -97,8 +125,33 @@ func (c Condition) match(val string, present bool) bool {
 		return present && contains(c.In, val)
 	case c.NotIn != nil:
 		return !present || !contains(c.NotIn, val)
+	case c.Gte != nil:
+		n, ok := numeric(val, present)
+		return ok && n >= *c.Gte
+	case c.Gt != nil:
+		n, ok := numeric(val, present)
+		return ok && n > *c.Gt
+	case c.Lte != nil:
+		n, ok := numeric(val, present)
+		return ok && n <= *c.Lte
+	case c.Lt != nil:
+		n, ok := numeric(val, present)
+		return ok && n < *c.Lt
 	}
 	return false
+}
+
+// numeric parses a present argument value as a float; ok=false when absent or
+// non-numeric.
+func numeric(val string, present bool) (float64, bool) {
+	if !present {
+		return 0, false
+	}
+	n, err := strconv.ParseFloat(val, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // Rule is one policy entry. A missing Tool matches every tool (global rule).
