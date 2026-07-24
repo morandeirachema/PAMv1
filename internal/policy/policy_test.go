@@ -150,3 +150,62 @@ func TestLoadErrors(t *testing.T) {
 		}
 	}
 }
+
+// TestNumericComparators proves the gte/gt/lte/lt operators compare argument
+// values numerically and fail closed on absent or non-numeric values (Phase 30).
+func TestNumericComparators(t *testing.T) {
+	rules := `
+rules:
+  - id: big-refund-approval
+    tool: refund
+    when:
+      args.amount: { gte: 5000 }
+    effect: require_approval
+    approvers: [finance]
+  - id: small-refund-allow
+    tool: refund
+    effect: allow
+`
+	eng, err := Load(strings.NewReader(rules))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	// >= 5000 requires approval; below is allowed; a non-numeric amount does not
+	// satisfy the gte rule and falls through to allow (fail-closed on the comparator).
+	cases := []struct {
+		amount any
+		want   Effect
+	}{
+		{5000, EffectRequireApproval},
+		{9999.5, EffectRequireApproval},
+		{4999, EffectAllow},
+		{"not-a-number", EffectAllow},
+		{nil, EffectAllow},
+	}
+	for _, c := range cases {
+		args := map[string]any{}
+		if c.amount != nil {
+			args["amount"] = c.amount
+		}
+		if got := eng.Evaluate("refund", args).Effect; got != c.want {
+			t.Errorf("amount=%v: effect=%s, want %s", c.amount, got, c.want)
+		}
+	}
+}
+
+// TestNumericComparatorRejectsMultipleOps proves a condition with two operators
+// is rejected at load (fail-loud).
+func TestNumericComparatorRejectsMultipleOps(t *testing.T) {
+	rules := "rules:\n  - id: bad\n    tool: t\n    when:\n      args.x: { gte: 1, lt: 9 }\n    effect: allow\n"
+	if _, err := Load(strings.NewReader(rules)); err == nil {
+		t.Fatal("a condition with two operators must fail to load")
+	}
+}
+
+// TestUnknownOperatorRejected proves a typo'd operator is rejected fail-loud.
+func TestUnknownOperatorRejected(t *testing.T) {
+	rules := "rules:\n  - id: bad\n    tool: t\n    when:\n      args.x: { gee: 1 }\n    effect: allow\n"
+	if _, err := Load(strings.NewReader(rules)); err == nil {
+		t.Fatal("an unknown operator must fail to load")
+	}
+}

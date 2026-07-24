@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–29 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
+**Phases 0–30 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
 with command control, safes, dependent-account propagation), optional CyberArk Conjur
@@ -30,7 +30,9 @@ prototype — **operator SSH certificates** (Phase 28): proof-of-possession issu
 short-lived, principal-scoped cert for an operator's own key with KRL revocation — and a
 **third-party vendor access gate** (Phase 29): time-boxed, customer-approved contract
 grants with live employment attestation, an instant-offboard cascade, and per-vendor
-evidence export. The portal is also **keyboard-first**
+evidence export — and **in-session policy + step-up** (Phase 30): numeric policy
+comparators for the agent broker, and a pause-for-supervisor step-up on the
+PostgreSQL session proxy that keeps the session open. The portal is also **keyboard-first**
 (mouse optional). See their sections below. Beyond those,
 a number of items genuinely require external infrastructure or a paid account to build
 and verify honestly, so they are left as documented follow-ons rather than faked. The
@@ -422,6 +424,16 @@ The [pam-research](https://github.com/morandeirachema/pam-research) Solution-05 
 - [x] **Audit vocabulary**: `vendor.create` · `vendor.grant_created` · `vendor.grant_approved` · `vendor.grant_revoked` · `vendor.grant_decision_denied` · `vendor.attestation_failed` · `vendor.offboard` · `vendor.session_expired` · `vendor.evidence_export`
 - [x] **Tests**: store contract (vendor + grant CRUD, window activation, offboard cascade, `VendorSessionAllowed`), the attestation webhook (`internal/vendor`), an API lifecycle (mint → pending grant refused → customer approves → WinRM admitted → offboard blocks again → evidence export, all audited), and an **SSH-proxy gate test** (a vendor is denied a target with no active grant, admitted once one is approved)
 - Deferred (documented): a per-vendor console screen (the API is complete; the 5250 screens are a follow-on like earlier phases) and a first-class connector to a specific vendor-management system (this ships the generic attestation webhook)
+
+## Phase 30 — In-session policy + step-up ✅
+
+The core of the [pam-research](https://github.com/morandeirachema/pam-research) Solution-03 (recorded-session broker): re-evaluate policy **per action inside a session**, gate on **amounts**, and let a supervisor **step up** a risky action **without ending the session**. Applied to pamv1's two policy surfaces — the agent broker and the PostgreSQL session proxy — entirely in process.
+
+- [x] **Numeric policy comparators**: the agent-broker policy engine (`internal/policy`) gains `gte`/`gt`/`lte`/`lt` conditions that compare an argument value **numerically** (fail-closed on an absent or non-numeric value), so a rule can gate on an amount — `when: { args.amount: { gte: 5000 } } → require_approval`, the canonical "refund over $5,000 needs a human" pattern. Load-time validation still enforces exactly one operator per condition and rejects a typo'd operator fail-loud
+- [x] **In-session step-up on the PostgreSQL proxy**: a `PAM_DB_STEPUP_FILE` regex list marks sensitive statements; a matched statement **pauses** (audited `db.stepup_required`, surfaced on the live-monitor hub) and waits for a supervisor's decision — an **approval runs it** (`db.stepup_approved`), a **denial or timeout refuses it** (`db.stepup_denied`) — and the **session stays open** either way, unlike the kill-switch. Coordinated by a new `session.StepUp` (shared with the API, like the live `Hub`), bounded by `PAM_DB_STEPUP_TTL_SEC`
+- [x] **Supervisor endpoints**: `GET /api/sessions/stepups` lists paused statements and `POST /api/sessions/{id}/stepup` decides one (`CapReadAudit` — the same gate as live monitoring, so the watching supervisor decides); audit `session.stepup_decided`
+- [x] **Tests**: policy comparators (amount gating across boundary values + fail-closed on non-numeric, and fail-loud load of a bad/duplicate operator), the `session.StepUp` registry (approve / deny / timeout / one-at-a-time), a DB-proxy **end-to-end** (a matched statement pauses; approval runs it and it reaches the upstream; denial refuses it and it never reaches the upstream; the session survives both), and the API endpoints (listing + decide + 404 when nothing is pending)
+- Deferred (documented): per-action step-up on the interactive SSH PTY path (a raw stream isn't parsed — the same boundary as command control) and numeric comparators over raw SQL (statements aren't structured args; step-up covers the DB path instead)
 
 ## Portal: keyboard-first navigation ✅
 

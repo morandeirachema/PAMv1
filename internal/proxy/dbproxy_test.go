@@ -574,3 +574,99 @@ func TestDBProxyOneTimeApproval(t *testing.T) {
 		}
 	}
 }
+
+// waitPendingStepUp blocks until the step-up coordinator has a paused session and
+// returns its id.
+func waitPendingStepUp(t *testing.T, su *session.StepUp) string {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if p := su.Pending(); len(p) > 0 {
+			return p[0].SessionID
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("no step-up became pending")
+	return ""
+}
+
+// TestDBProxyStepUp proves in-session step-up (Phase 30): a statement matching the
+// step-up guard pauses for a supervisor's decision — an approval runs it (reaches
+// the upstream), a denial refuses it (never reaches the upstream) while the
+// session stays usable.
+func TestDBProxyStepUp(t *testing.T) {
+	st := memstore.New()
+	v := mustVault(t)
+	fake := startFakePostgres(t, upstreamSecret)
+	seedPGTarget(t, st, v, fake.addr)
+	resolver, err := auth.NewResolver(st, proxyAPIKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard, err := proxy.NewCommandGuard([]string{`(?i)delete\s+from`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stepup := session.NewStepUp()
+	dbx, err := proxy.NewDB(st, v, resolver, proxy.DBConfig{
+		RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second,
+		Sessions: session.NewRegistry(), StepUpGuard: guard, StepUp: stepup, StepUpTTL: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := serveDBProxy(t, dbx)
+	fe, conn := openDBSession(t, addr, "dbuser@pg-01", "appdb", proxyAPIKey)
+	defer conn.Close()
+
+	// APPROVE: a step-up statement pauses, a supervisor approves, it runs.
+	fe.Send(&pgproto3.Query{String: "DELETE FROM sessions WHERE id = 1"})
+	if err := fe.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	sid := waitPendingStepUp(t, stepup)
+	if !stepup.Decide(sid, true) {
+		t.Fatal("approve decision returned false")
+	}
+	waitReady(t, fe) // the approved statement ran and the session is ready again
+
+	// DENY: a step-up statement pauses, the supervisor denies, it is refused.
+	fe.Send(&pgproto3.Query{String: "DELETE FROM accounts"})
+	if err := fe.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	sid2 := waitPendingStepUp(t, stepup)
+	if !stepup.Decide(sid2, false) {
+		t.Fatal("deny decision returned false")
+	}
+	msg, err := fe.Receive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := msg.(*pgproto3.ErrorResponse); !ok {
+		t.Fatalf("denied step-up: expected ErrorResponse, got %T", msg)
+	}
+	waitReady(t, fe) // session stays usable after a denial
+	fe.Send(&pgproto3.Terminate{})
+	_ = fe.Flush()
+
+	// The approved DELETE reached the upstream; the denied one did not.
+	var sawApproved, sawDenied bool
+	for _, q := range fake.allQueries() {
+		u := strings.ToUpper(q)
+		if strings.Contains(u, "DELETE FROM SESSIONS") {
+			sawApproved = true
+		}
+		if strings.Contains(u, "DELETE FROM ACCOUNTS") {
+			sawDenied = true
+		}
+	}
+	if !sawApproved {
+		t.Fatal("approved step-up statement did not reach the upstream")
+	}
+	if sawDenied {
+		t.Fatal("denied step-up statement reached the upstream")
+	}
+	assertAuditContains(t, st, "db.stepup_required", "DELETE FROM")
+	assertAuditContains(t, st, "db.stepup_approved", "sessions")
+	assertAuditContains(t, st, "db.stepup_denied", "accounts")
+}

@@ -553,6 +553,25 @@ func run() error {
 		log.Info("command control enabled", "patterns", cmdGuard.Size())
 	}
 
+	// In-session step-up (Phase 30): SQL statements matching the step-up file pause
+	// for a supervisor's live decision. The coordinator is shared by the DB proxy
+	// (which awaits) and the API (which decides).
+	stepUp := session.NewStepUp()
+	var stepupGuard *proxy.CommandGuard
+	if cfg.DBStepUpFile != "" {
+		suBytes, derr := os.ReadFile(cfg.DBStepUpFile)
+		if derr != nil {
+			return fmt.Errorf("db step-up file %q: %w", cfg.DBStepUpFile, derr)
+		}
+		stepupGuard, derr = proxy.NewCommandGuard(proxy.ParseCommandDeny(string(suBytes)))
+		if derr != nil {
+			return fmt.Errorf("db step-up file %q: %w", cfg.DBStepUpFile, derr)
+		}
+		if stepupGuard != nil {
+			log.Info("database in-session step-up enabled", "patterns", stepupGuard.Size())
+		}
+	}
+
 	winrmClient := winrm.Client{HTTPS: cfg.WinRMHTTPS, Insecure: cfg.WinRMInsecure, NTLM: cfg.WinRMNTLM, Timeout: 30 * time.Second}
 
 	alerter := buildAlerter(cfg, log)
@@ -663,6 +682,7 @@ func run() error {
 	handler, err := api.New(st, v, resolver, authn, api.Options{
 		Sessions:                sessions,
 		Live:                    liveHub,
+		StepUp:                  stepUp,
 		SSHHostKeyCallback:      upstreamHostKey,
 		MFARequired:             cfg.MFARequired,
 		RecordingDir:            cfg.RecordingDir,
@@ -857,6 +877,9 @@ func run() error {
 			AuthRatePerMin:    cfg.ProxyAuthRatePerMin,
 			MaxRecordingBytes: maxRecBytes,
 			UpstreamTLS:       dbUpstreamTLS,
+			StepUpGuard:       stepupGuard,
+			StepUp:            stepUp,
+			StepUpTTL:         cfg.DBStepUpTTL,
 		})
 		if err != nil {
 			return err
