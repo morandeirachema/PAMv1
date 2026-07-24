@@ -167,7 +167,13 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 // idParam parses the {id} path value as a positive int64, writing a 422 and
 // returning false when it is missing or invalid.
 func idParam(w http.ResponseWriter, r *http.Request) (int64, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	return idParamNamed(w, r, "id")
+}
+
+// idParamNamed parses a named path value as a positive int64 (for routes with a
+// second id, e.g. {gid}).
+func idParamNamed(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue(name), 10, 64)
 	if err != nil || id < 1 {
 		writeError(w, http.StatusUnprocessableEntity, "invalid id")
 		return 0, false

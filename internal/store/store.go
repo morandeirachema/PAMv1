@@ -267,6 +267,37 @@ type AppKey struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Vendor is a third-party (external) identity whose access is governed by
+// time-boxed contract grants (Phase 29). Username links to a users row (the
+// vendor's login). A disabled vendor is offboarded — every grant is revoked and
+// live sessions are cut.
+type Vendor struct {
+	ID        int64     `json:"id"`
+	Username  string    `json:"username"`
+	Org       string    `json:"org"`
+	Disabled  bool      `json:"disabled"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// VendorGrant is a customer-approved, time-boxed authorization for a vendor to
+// log in as Principal on a target. The vendor may connect only while
+// Status=="approved", RevokedAt is nil, and now is within [NotBefore, NotAfter].
+// Approver is the customer principal who approved it (never the vendor — four
+// eyes).
+type VendorGrant struct {
+	ID         int64      `json:"id"`
+	VendorID   int64      `json:"vendor_id"`
+	TargetID   int64      `json:"target_id"`
+	Principal  string     `json:"principal"`
+	Status     string     `json:"status"` // pending | approved | revoked
+	NotBefore  *time.Time `json:"not_before,omitempty"`
+	NotAfter   time.Time  `json:"not_after"`
+	Approver   string     `json:"approver,omitempty"`
+	ApprovedAt *time.Time `json:"approved_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
 // SSHCert records an operator-issued SSH certificate (Phase 28): pamv1 signed the
 // operator's own public key into a short-lived cert scoped to a target account.
 // The row is the revocation handle — a KRL revoking Serial is published so a
@@ -557,6 +588,34 @@ type Store interface {
 	ListRevokedSSHCertSerials(ctx context.Context) ([]int64, error)
 	// ListSSHCerts returns recent issued certificates (newest first, capped).
 	ListSSHCerts(ctx context.Context, limit int) ([]SSHCert, error)
+
+	// Third-party vendor access gate (Phase 29).
+	// CreateVendor registers a vendor (ErrConflict on a duplicate username).
+	CreateVendor(ctx context.Context, v *Vendor) error
+	// GetVendorByUsername returns the vendor for a login, or ErrNotFound.
+	GetVendorByUsername(ctx context.Context, username string) (*Vendor, error)
+	// ListVendors returns all vendors.
+	ListVendors(ctx context.Context) ([]Vendor, error)
+	// SetVendorDisabled enables/disables a vendor by id, or ErrNotFound.
+	SetVendorDisabled(ctx context.Context, id int64, disabled bool) error
+	// CreateVendorGrant records a pending contract grant, populating ID/CreatedAt;
+	// ErrNotFound if the vendor or target is missing.
+	CreateVendorGrant(ctx context.Context, g *VendorGrant) error
+	// ApproveVendorGrant flips a pending grant to approved by approver; ErrNotFound
+	// if unknown, ErrConflict if not pending.
+	ApproveVendorGrant(ctx context.Context, id int64, approver string, at time.Time) error
+	// RevokeVendorGrant marks a grant revoked; ErrNotFound if unknown.
+	RevokeVendorGrant(ctx context.Context, id int64, at time.Time) error
+	// ListVendorGrants lists a vendor's grants (newest first) — for review + evidence.
+	ListVendorGrants(ctx context.Context, vendorID int64) ([]VendorGrant, error)
+	// OffboardVendor disables the vendor and revokes all its grants atomically; the
+	// caller then kills live sessions. ErrNotFound if the vendor is missing.
+	OffboardVendor(ctx context.Context, id int64, at time.Time) error
+	// VendorSessionAllowed reports, for a login username and a target NAME, whether
+	// username is a vendor and (if so) whether an approved, unrevoked, in-window
+	// grant to that target is active as of now. A non-vendor returns
+	// (isVendor=false, allowed=true) so non-vendor users are unaffected.
+	VendorSessionAllowed(ctx context.Context, username, targetName string, now time.Time) (isVendor, allowed bool, err error)
 
 	// CreateAppKey inserts an application identity key, populating ID and CreatedAt
 	// (ErrConflict on a duplicate token hash).

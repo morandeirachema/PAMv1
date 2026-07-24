@@ -159,6 +159,13 @@ type Config struct {
 	// privileged use its approval admits consumes it. Individual requests can
 	// also opt in per-request regardless of this default.
 	OneTimeAccess bool
+	// VendorAttestURL (Phase 29) is a webhook the vendor-management system answers
+	// 2xx for a currently-employed vendor; checked when a contract grant is
+	// approved. Empty disables attestation (grants approve without it).
+	VendorAttestURL string
+	// VendorSweepInterval runs a background sweep that cuts a vendor's live
+	// sessions once their contract window closes or they are offboarded (0 = off).
+	VendorSweepInterval time.Duration
 	// CheckoutTTL is the lifetime of a credential checkout lease.
 	CheckoutTTL time.Duration
 	// AllowedProtocols restricts which target protocols may be created and
@@ -371,6 +378,8 @@ func Load() (*Config, error) {
 		ApprovalsRequired:   integer("PAM_APPROVALS_REQUIRED", 1),
 		RequireReason:       boolean("PAM_REQUIRE_REASON", false),
 		OneTimeAccess:       boolean("PAM_ACCESS_ONE_TIME", false),
+		VendorAttestURL:     getenv("PAM_VENDOR_ATTEST_URL", ""),
+		VendorSweepInterval: time.Duration(integer("PAM_VENDOR_SWEEP_INTERVAL_MIN", 0)) * time.Minute,
 		AirGap:              boolean("PAM_OT_AIRGAP", false),
 		CheckoutTTL:         time.Duration(integer("PAM_CHECKOUT_TTL_MIN", 30)) * time.Minute,
 		AllowedProtocols:    os.Getenv("PAM_ALLOWED_PROTOCOLS"),

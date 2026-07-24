@@ -10,9 +10,9 @@
 > live. This is the operator's checklist of what you must stand up (and what to
 > re-verify) before relying on each capability in production.
 >
-> Last updated: 2026-07-24 · Reflects: Phases 0–28 + the 2026-07 hardening pass.
-> (Phases 25–28 — console parity, recording playback + one-time access, broker
-> completion, and operator SSH certificates — are fully in-process and add no
+> Last updated: 2026-07-25 · Reflects: Phases 0–29 + the 2026-07 hardening pass.
+> (Phases 25–29 — console parity, recording playback + one-time access, broker
+> completion, operator SSH certificates, and the vendor access gate — are fully in-process and add no
 > external-infrastructure requirements; the operator-cert KRL is even verified
 > against a real `ssh-keygen` in CI.)
 

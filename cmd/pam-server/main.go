@@ -53,6 +53,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/store/pgstore"
 	"github.com/morandeirachema/pamv1/internal/ticket"
 	"github.com/morandeirachema/pamv1/internal/vault"
+	"github.com/morandeirachema/pamv1/internal/vendor"
 	"github.com/morandeirachema/pamv1/internal/winrm"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -704,6 +705,7 @@ func run() error {
 		BrokerSVIDVerifier:      svidVerifier,
 		CA:                      sshCA,
 		SSHOperatorCertTTL:      cfg.SSHOperatorCertTTL,
+		VendorAttestor:          vendor.NewAttestor(cfg.VendorAttestURL),
 		Analytics:               analyticsEngine,
 		AnalyticsWindow:         cfg.AnalyticsWindow,
 		AnalyticsAutoKill:       cfg.AnalyticsAutoKill,
@@ -727,6 +729,9 @@ func run() error {
 	}
 	if cfg.AnalyticsInterval > 0 {
 		go handler.RunAnalyticsWorker(ctx, cfg.AnalyticsInterval)
+	}
+	if cfg.VendorSweepInterval > 0 {
+		go handler.RunVendorSweeper(ctx, cfg.VendorSweepInterval)
 	}
 
 	// errc receives the first fatal listener error (HTTP or SSH proxy); either

@@ -32,6 +32,8 @@ type Memstore struct {
 	auditKey      []byte // set ⇒ chain the primary audit trail
 	agentKeys     map[int64]store.AgentKey
 	sshCerts      map[int64]store.SSHCert
+	vendors       map[int64]store.Vendor
+	vendorGrants  map[int64]store.VendorGrant
 	appKeys       map[int64]store.AppKey
 	appGrants     map[int64]store.AppSecretGrant
 	brokerLog     []store.BrokerAuditEvent
@@ -59,6 +61,8 @@ func New() *Memstore {
 		checkouts:     make(map[int64]store.Checkout),
 		agentKeys:     make(map[int64]store.AgentKey),
 		sshCerts:      make(map[int64]store.SSHCert),
+		vendors:       make(map[int64]store.Vendor),
+		vendorGrants:  make(map[int64]store.VendorGrant),
 		appKeys:       make(map[int64]store.AppKey),
 		appGrants:     make(map[int64]store.AppSecretGrant),
 		brokerTok:     make(map[string]store.BrokerToken),
@@ -1097,6 +1101,199 @@ func (m *Memstore) ListSSHCerts(_ context.Context, limit int) ([]store.SSHCert, 
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// CreateVendor registers a vendor (Phase 29); ErrConflict on a duplicate username.
+func (m *Memstore) CreateVendor(_ context.Context, v *store.Vendor) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range m.vendors {
+		if existing.Username == v.Username {
+			return store.ErrConflict
+		}
+	}
+	v.ID = m.id()
+	v.CreatedAt = time.Now().UTC()
+	m.vendors[v.ID] = *v
+	return nil
+}
+
+// GetVendorByUsername returns the vendor for a login, or ErrNotFound.
+func (m *Memstore) GetVendorByUsername(_ context.Context, username string) (*store.Vendor, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, v := range m.vendors {
+		if v.Username == username {
+			out := v
+			return &out, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+// ListVendors returns all vendors, ordered by ID.
+func (m *Memstore) ListVendors(_ context.Context) ([]store.Vendor, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]store.Vendor, 0, len(m.vendors))
+	for _, v := range m.vendors {
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// SetVendorDisabled enables/disables a vendor by id, or ErrNotFound.
+func (m *Memstore) SetVendorDisabled(_ context.Context, id int64, disabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := m.vendors[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	v.Disabled = disabled
+	m.vendors[id] = v
+	return nil
+}
+
+// CreateVendorGrant records a pending contract grant; ErrNotFound if the vendor
+// or target is missing.
+func (m *Memstore) CreateVendorGrant(_ context.Context, g *store.VendorGrant) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.vendors[g.VendorID]; !ok {
+		return store.ErrNotFound
+	}
+	if _, ok := m.targets[g.TargetID]; !ok {
+		return store.ErrNotFound
+	}
+	if g.Status == "" {
+		g.Status = "pending"
+	}
+	g.ID = m.id()
+	g.CreatedAt = time.Now().UTC()
+	m.vendorGrants[g.ID] = *g
+	return nil
+}
+
+// ApproveVendorGrant flips a pending grant to approved; ErrNotFound if unknown,
+// ErrConflict if not pending.
+func (m *Memstore) ApproveVendorGrant(_ context.Context, id int64, approver string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.vendorGrants[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	if g.Status != "pending" {
+		return store.ErrConflict
+	}
+	g.Status = "approved"
+	g.Approver = approver
+	t := at.UTC()
+	g.ApprovedAt = &t
+	m.vendorGrants[id] = g
+	return nil
+}
+
+// RevokeVendorGrant marks a grant revoked; ErrNotFound if unknown.
+func (m *Memstore) RevokeVendorGrant(_ context.Context, id int64, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.vendorGrants[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	g.Status = "revoked"
+	t := at.UTC()
+	g.RevokedAt = &t
+	m.vendorGrants[id] = g
+	return nil
+}
+
+// ListVendorGrants lists a vendor's grants, newest first.
+func (m *Memstore) ListVendorGrants(_ context.Context, vendorID int64) ([]store.VendorGrant, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []store.VendorGrant
+	for _, g := range m.vendorGrants {
+		if g.VendorID != vendorID {
+			continue
+		}
+		g.NotBefore = cloneTimePtr(g.NotBefore)
+		g.ApprovedAt = cloneTimePtr(g.ApprovedAt)
+		g.RevokedAt = cloneTimePtr(g.RevokedAt)
+		out = append(out, g)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	return out, nil
+}
+
+// OffboardVendor disables the vendor and revokes all its grants.
+func (m *Memstore) OffboardVendor(_ context.Context, id int64, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := m.vendors[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	v.Disabled = true
+	m.vendors[id] = v
+	t := at.UTC()
+	for gid, g := range m.vendorGrants {
+		if g.VendorID == id && g.Status != "revoked" {
+			g.Status = "revoked"
+			rt := t
+			g.RevokedAt = &rt
+			m.vendorGrants[gid] = g
+		}
+	}
+	return nil
+}
+
+// VendorSessionAllowed reports whether username is a vendor and, if so, whether an
+// active contract grant to targetName exists as of now.
+func (m *Memstore) VendorSessionAllowed(_ context.Context, username, targetName string, now time.Time) (bool, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var vendor *store.Vendor
+	for _, v := range m.vendors {
+		if v.Username == username {
+			vv := v
+			vendor = &vv
+			break
+		}
+	}
+	if vendor == nil {
+		return false, true, nil // not a vendor — unaffected
+	}
+	if vendor.Disabled {
+		return true, false, nil
+	}
+	var targetID int64
+	for _, t := range m.targets {
+		if t.Name == targetName {
+			targetID = t.ID
+			break
+		}
+	}
+	if targetID == 0 {
+		return true, false, nil
+	}
+	for _, g := range m.vendorGrants {
+		if g.VendorID == vendor.ID && g.TargetID == targetID && vendorGrantActive(g, now) {
+			return true, true, nil
+		}
+	}
+	return true, false, nil
+}
+
+// vendorGrantActive reports whether a grant is approved, unrevoked, and now within
+// its window.
+func vendorGrantActive(g store.VendorGrant, now time.Time) bool {
+	return g.Status == "approved" && g.RevokedAt == nil &&
+		now.Before(g.NotAfter) &&
+		(g.NotBefore == nil || !now.Before(*g.NotBefore))
 }
 
 // GetAgentKey returns an agent key by ID (regardless of disabled), or ErrNotFound.

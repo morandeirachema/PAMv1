@@ -121,6 +121,15 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 			s.audit(withPrincipal(r.Context(), principal), "access.consumed", fmt.Sprintf("request:%d target:%s", consumedID, target.Name))
 		}
 	}
+	// Vendor contract gate (Phase 29): a vendor reaches the target only in-contract.
+	if isVendor, allowed, verr := s.store.VendorSessionAllowed(r.Context(), principal.Name, target.Name, time.Now()); verr != nil {
+		storeError(w, verr)
+		return
+	} else if isVendor && !allowed {
+		s.audit(withPrincipal(r.Context(), principal), "access.denied", "target:"+target.Name+" reason:vendor-contract")
+		writeError(w, http.StatusForbidden, "vendor access requires an approved, in-window contract grant")
+		return
+	}
 	// Enforce the concurrent-session caps before decrypting a secret, as the SSH and
 	// PostgreSQL proxies do — otherwise a connect-capable user could open unbounded
 	// memory-heavy RDP sessions past PAM_MAX_SESSIONS_PER_USER / _TOTAL.

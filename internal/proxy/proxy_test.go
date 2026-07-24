@@ -692,3 +692,59 @@ func TestSafeMembershipGrantsConnect(t *testing.T) {
 		t.Fatalf("output = %q, want %q", out, targetOutput)
 	}
 }
+
+// TestVendorContractGateProxy proves the Phase 29 vendor gate on the SSH proxy: a
+// vendor is denied a target with no active contract grant, and admitted once a
+// customer-approved, in-window grant exists.
+func TestVendorContractGateProxy(t *testing.T) {
+	host, port := startUpstream(t, upstreamUser, upstreamSecret, targetOutput)
+	st := memstore.New()
+	v := mustVault(t)
+	target := seedTarget(t, st, v, host, port)
+
+	// A vendor login (user role) with a token, plus the vendor record.
+	const vendorTok = "pamt-vendor-token"
+	sum := sha256.Sum256([]byte(vendorTok))
+	if err := st.CreateUser(context.Background(), &store.User{Username: "acme-tech", Role: "user", TokenHash: hex.EncodeToString(sum[:])}); err != nil {
+		t.Fatal(err)
+	}
+	vendor := &store.Vendor{Username: "acme-tech", Org: "ACME"}
+	if err := st.CreateVendor(context.Background(), vendor); err != nil {
+		t.Fatal(err)
+	}
+	addr := startProxy(t, st, v, t.TempDir())
+
+	// No contract grant → the vendor authenticates but the session is denied.
+	client, err := dialProxy(t, addr, "web-01", vendorTok)
+	if err != nil {
+		t.Fatalf("vendor auth should pass: %v", err)
+	}
+	if sess, err := client.NewSession(); err == nil {
+		sess.Close()
+		client.Close()
+		t.Fatal("a vendor with no contract grant must be denied")
+	}
+	client.Close()
+
+	// A customer-approved, in-window grant admits the vendor.
+	grant := &store.VendorGrant{VendorID: vendor.ID, TargetID: target.ID, Principal: upstreamUser, NotAfter: time.Now().Add(time.Hour)}
+	if err := st.CreateVendorGrant(context.Background(), grant); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ApproveVendorGrant(context.Background(), grant.ID, "customer-appr", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	client2, err := dialProxy(t, addr, "web-01", vendorTok)
+	if err != nil {
+		t.Fatalf("vendor auth should pass: %v", err)
+	}
+	defer client2.Close()
+	sess, err := client2.NewSession()
+	if err != nil {
+		t.Fatalf("vendor with an active grant must be admitted: %v", err)
+	}
+	defer sess.Close()
+	if out, err := sess.Output("run"); err != nil || string(out) != targetOutput {
+		t.Fatalf("vendor session output = %q err %v", out, err)
+	}
+}

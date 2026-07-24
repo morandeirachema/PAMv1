@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–28 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
+**Phases 0–29 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
 with command control, safes, dependent-account propagation), optional CyberArk Conjur
@@ -26,7 +26,11 @@ connection they admit — and **AI-agent broker completion** (Phase 27): approve
 separation of duties, periodic ed25519 in-chain audit checkpoints with signing-key
 rotation + JWKS and a truncation floor, OCSF SIEM export, and the MCP SSE transport
 with elicitation, bringing the broker to parity with the [pam-research](https://github.com/morandeirachema/pam-research)
-prototype. The portal is also **keyboard-first**
+prototype — **operator SSH certificates** (Phase 28): proof-of-possession issuance of a
+short-lived, principal-scoped cert for an operator's own key with KRL revocation — and a
+**third-party vendor access gate** (Phase 29): time-boxed, customer-approved contract
+grants with live employment attestation, an instant-offboard cascade, and per-vendor
+evidence export. The portal is also **keyboard-first**
 (mouse optional). See their sections below. Beyond those,
 a number of items genuinely require external infrastructure or a paid account to build
 and verify honestly, so they are left as documented follow-ons rather than faked. The
@@ -404,6 +408,20 @@ Extends the Phase 22 Zero-Standing-Privilege CA from proxy-internal minting to a
 - [x] **Audit vocabulary**: `ssh.cert_issued` (serial · principal · target · valid-before · source-address, never the key) · `ssh.cert_denied` (failed proof of possession) · `ssh.cert_revoked`
 - [x] **Tests**: `internal/sshca` (a scoped cert accepted by an `ssh.CertChecker` for its principal only, the proof-of-possession challenge round-trip, and — the honest real-tool check — the generated **KRL verified against `ssh-keygen -Q`**: a revoked serial reports revoked, a different serial does not), store contract (record/revoke/list-revoked, duplicate/already-revoked/unknown errors), and an API end-to-end (challenge → operator signs → sign → the returned cert authenticates for its principal → revoke → KRL served; a bad proof of possession, an unmanaged principal, and a non-connect role are all refused)
 - Deferred (documented, infra-bound): ephemeral **local accounts** (create/destroy the OS account per session — needs a real host), host-certificate issuance, and per-principal certificate options beyond source-address — see [EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)
+
+## Phase 29 — Third-party vendor access gate ✅
+
+The [pam-research](https://github.com/morandeirachema/pam-research) Solution-05 model: give an external vendor **narrow, time-boxed, evidence-backed** access to specific targets, revocable in one action — built by composing pamv1's existing primitives (grants, approval, the session registry, the audit trail) into a vendor-shaped subsystem, entirely in process.
+
+- [x] **Vendor identity + contract grants** (`internal/vendor`, migration `0021`): a vendor is an external `user`-role login linked by username; a **contract grant** (`POST /api/vendors/{id}/grants`) says which target they may reach, as which account, and the window (`not_before`/`not_after`). A grant starts **pending** and grants nothing until approved
+- [x] **Customer-controlled approval + live attestation**: `POST /api/vendor-grants/{gid}/approve` (`CapApprove`) is the *customer's* decision — four-eyes refuses a vendor approving their own grant — and runs a **live employment-attestation** webhook (`PAM_VENDOR_ATTEST_URL`; the vendor-management system answers `2xx` for a currently-employed technician), so access is refused the moment the vendor's own employer offboards them
+- [x] **Enforced on every connect path**: the SSH proxy, the PostgreSQL proxy, RDP, WinRM runs, and reveal/checkout all call `store.VendorSessionAllowed` — a vendor is admitted **only** while an approved, unrevoked grant is in-window; non-vendor users are unaffected. A vendor reaches nothing outside their contract
+- [x] **Time-boxed with mid-session termination**: a background **sweeper** (`PAM_VENDOR_SWEEP_INTERVAL_MIN`) cuts a vendor's live session to a target once that grant's window closes (`vendor.session_expired`), so access ends when the contract does, not just at the next connect
+- [x] **Instant offboard cascade**: `POST /api/vendors/{id}/offboard` disables the vendor, **revokes every grant atomically**, and **kills all their live sessions** — persisted, so a revoked technician can't return after a restart
+- [x] **Evidence for auditors**: `GET /api/vendors/{id}/evidence` (`CapReadAudit`) bundles the vendor's contract grants + the audit slice attributable to them, with a SHA-256 digest — a SOC 2 / DORA-shaped per-vendor record
+- [x] **Audit vocabulary**: `vendor.create` · `vendor.grant_created` · `vendor.grant_approved` · `vendor.grant_revoked` · `vendor.grant_decision_denied` · `vendor.attestation_failed` · `vendor.offboard` · `vendor.session_expired` · `vendor.evidence_export`
+- [x] **Tests**: store contract (vendor + grant CRUD, window activation, offboard cascade, `VendorSessionAllowed`), the attestation webhook (`internal/vendor`), an API lifecycle (mint → pending grant refused → customer approves → WinRM admitted → offboard blocks again → evidence export, all audited), and an **SSH-proxy gate test** (a vendor is denied a target with no active grant, admitted once one is approved)
+- Deferred (documented): a per-vendor console screen (the API is complete; the 5250 screens are a follow-on like earlier phases) and a first-class connector to a specific vendor-management system (this ships the generic attestation webhook)
 
 ## Portal: keyboard-first navigation ✅
 

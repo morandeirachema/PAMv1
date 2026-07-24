@@ -69,6 +69,7 @@ flowchart LR
     n_ratelimit[ratelimit]
     n_sshca[sshca]
     n_ticket[ticket]
+    n_vendor[vendor]
   end
   n_agentid --> n_auth
   n_agentid --> n_store
@@ -98,6 +99,7 @@ flowchart LR
   n_api --> n_store
   n_api --> n_ticket
   n_api --> n_vault
+  n_api --> n_vendor
   n_api --> n_web
   n_api --> n_winrm
   n_auditchain --> n_store
@@ -136,6 +138,7 @@ flowchart LR
   n_pam_server --> n_store
   n_pam_server --> n_ticket
   n_pam_server --> n_vault
+  n_pam_server --> n_vendor
   n_pam_server --> n_winrm
   n_pgstore --> n_logging
   n_pgstore --> n_store
@@ -339,6 +342,26 @@ erDiagram
     string Role
     time_Time CreatedAt
   }
+  Vendor {
+    int64 ID
+    string Username
+    string Org
+    bool Disabled
+    time_Time CreatedAt
+  }
+  VendorGrant {
+    int64 ID
+    int64 VendorID
+    int64 TargetID
+    string Principal
+    string Status
+    ptr_time_Time NotBefore
+    time_Time NotAfter
+    string Approver
+    ptr_time_Time ApprovedAt
+    ptr_time_Time RevokedAt
+    time_Time CreatedAt
+  }
   Campaign ||--o{ CampaignItem : "has"
   Credential ||--o{ AppSecretGrant : "has"
   Credential ||--o{ Checkout : "has"
@@ -349,11 +372,13 @@ erDiagram
   Target ||--o{ Checkout : "has"
   Target ||--o{ Credential : "has"
   Target ||--o{ TargetGrant : "has"
+  Target ||--o{ VendorGrant : "has"
+  Vendor ||--o{ VendorGrant : "has"
 ```
 
 ## 3. REST API surface
 
-The 107 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 115 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -438,6 +463,14 @@ The 107 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/users` | CapManageUsers |
 | POST | `/api/users` | CapManageUsers |
 | DELETE | `/api/users/{id}` | CapManageUsers |
+| POST | `/api/vendor-grants/{gid}/approve` | CapApprove |
+| POST | `/api/vendor-grants/{gid}/revoke` | CapManageTargets |
+| GET | `/api/vendors` | CapReadInventory |
+| POST | `/api/vendors` | CapManageUsers |
+| GET | `/api/vendors/{id}/evidence` | CapReadAudit |
+| GET | `/api/vendors/{id}/grants` | CapReadInventory |
+| POST | `/api/vendors/{id}/grants` | CapManageTargets |
+| POST | `/api/vendors/{id}/offboard` | CapManageUsers |
 | GET | `/healthz` | public |
 | GET | `/mcp` | public |
 | POST | `/mcp` | public |
