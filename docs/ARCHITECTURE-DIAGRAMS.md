@@ -64,6 +64,7 @@ flowchart LR
   end
   subgraph n_Other["Other"]
     n_analytics[analytics]
+    n_blast[blast]
     n_conjur[conjur]
     n_ocsf[ocsf]
     n_ratelimit[ratelimit]
@@ -80,6 +81,7 @@ flowchart LR
   n_api --> n_analytics
   n_api --> n_auditchain
   n_api --> n_auth
+  n_api --> n_blast
   n_api --> n_broker
   n_api --> n_config
   n_api --> n_discovery
@@ -378,7 +380,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 117 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 118 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -394,6 +396,7 @@ The 117 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/audit/verify` | CapReadAudit |
 | GET | `/api/auth/oidc/callback` | public (rate-limited) |
 | GET | `/api/auth/oidc/start` | public (rate-limited) |
+| POST | `/api/blast/analyze` | CapReadAudit |
 | POST | `/api/breakglass/unseal` | public (rate-limited) |
 | GET | `/api/ca/ssh` | CapReadInventory |
 | POST | `/api/ca/ssh/challenge` | CapConnect |
