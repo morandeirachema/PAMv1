@@ -10,9 +10,9 @@
 > live. This is the operator's checklist of what you must stand up (and what to
 > re-verify) before relying on each capability in production.
 >
-> Last updated: 2026-07-25 · Reflects: Phases 0–30 + the 2026-07 hardening pass.
-> (Phases 25–30 — console parity, recording playback + one-time access, broker
-> completion, operator SSH certificates, the vendor access gate, and in-session step-up — are fully in-process and add no
+> Last updated: 2026-07-25 · Reflects: Phases 0–31 + the 2026-07 hardening pass.
+> (Phases 25–31 — console parity, recording playback + one-time access, broker
+> completion, operator SSH certificates, the vendor access gate, in-session step-up, and the CIEM blast-radius engine — are fully in-process and add no
 > external-infrastructure requirements; the operator-cert KRL is even verified
 > against a real `ssh-keygen` in CI.)
 
@@ -120,15 +120,17 @@ Air-gapped deployments (`PAM_OT_AIRGAP`) disable all outbound alerting by design
 
 ## 7. Tier-3 market-frontier gaps not yet built (need infra to build honestly)
 
-Two Tier-3 gaps **shipped** and are tested in-process — **Zero Standing
-Privilege** (Phase 22, §3) and **privileged threat analytics** (Phase 23). The
-remaining three cannot be *built and verified honestly* without external systems,
-so they are scoped here rather than stubbed:
+Three Tier-3 gaps **shipped** and are tested in-process — **Zero Standing
+Privilege** (Phase 22, §3), **privileged threat analytics** (Phase 23), and the
+**identity blast-radius / CIEM engine** (Phase 31; `internal/blast` — a real AWS
+IAM effective-permission evaluator + escalation-path analysis over a normalized
+graph). The remaining pieces cannot be *built and verified honestly* without
+external systems, so they are scoped here rather than stubbed:
 
 | Gap | What it needs to build honestly | Fit in pamv1 |
 |---|---|---|
 | **Connector / plugin breadth** — network devices (Cisco/Juniper/F5/Palo Alto), MySQL/MSSQL/Oracle, VMware/SAP/mainframe | The real devices/databases (network gear speaks SSH and already rides the existing proxy; new DB wire protocols each need a real server to prove interop) | New `Rotator`/`Verifier` connectors and new DB wire-protocol proxies on the Phase 15 pattern |
-| **Cloud privileged access (CIEM-lite)** — federated console + short-lived cloud credentials, entitlement right-sizing | A cloud account (AWS STS `AssumeRole` / Azure / GCP) to mint and verify short-lived credentials | A broker tool that mints short-lived cloud creds JIT (mirrors the ZSP philosophy for cloud IAM) |
+| **Cloud CIEM — live ingestion + credential brokering** (the analytical **engine shipped** in Phase 31) | A cloud account + API clients (boto3 `GetAccountAuthorizationDetails`, Okta, GitHub, Workspace) to **ingest** the identity graph the engine consumes, and AWS STS `AssumeRole` (or Azure/GCP) to **mint** short-lived cloud creds | An ingester that produces `blast.Graph`, and a broker tool that mints short-lived cloud creds JIT (mirrors ZSP for cloud IAM) |
 | **Web / SaaS session proxying** — record + inject into web admin consoles | A headless browser + a real SaaS console to drive and record | The heaviest lift; a reverse-proxy/browser-isolation layer alongside SSH/RDP |
 
 ---

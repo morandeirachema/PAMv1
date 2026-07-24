@@ -319,12 +319,14 @@ existing chokepoint architecture, and they map to candidate future phases.
 | ~~**Zero Standing Privilege**~~ **✅ shipped (Phase 22)** — ephemeral short-lived SSH certificates instead of a stored standing secret | [CyberArk ZSP](https://www.cyberark.com/what-is/zero-standing-privileges/), Teleport | an `ssh_ca` credential stores **no secret**; the proxy mints a short-lived cert (`PAM_SSH_CA_KEY`) signed by the pamv1 CA per session — the account has no standing credential |
 | ~~**Privileged threat analytics**~~ **✅ shipped (Phase 23)** — behavioural risk scoring + automated response | CyberArk PTA, Wallix | `internal/analytics` scores the audit trail into explainable per-actor risk (`GET /api/analytics/risk`); a worker alerts on and can auto-kill a critical actor's sessions |
 | **Connector / plugin breadth** — network devices (Cisco/Juniper/F5/Palo Alto), database accounts, cloud IAM, VMware/SAP/mainframe | CyberArk's core moat | SSH (incl. network devices) / WinRM / PostgreSQL / ssh_key rotation — **needs real devices/DBs** to extend honestly |
-| **Cloud privileged access (CIEM-lite)** — federated console + short-lived cloud credentials, entitlement right-sizing | CyberArk, Wallix | AWS KMS for the KEK only — **needs a cloud account** to broker short-lived cloud creds |
+| ~~**Cloud CIEM (identity blast-radius)**~~ **✅ engine shipped (Phase 31)** — effective-permission analysis + escalation-path detection | CyberArk, Wallix, Sonrai/Wiz | `internal/blast` is a real **AWS IAM effective-permission evaluator** + blast-radius traversal, toxic-combination findings and remediation-as-code over a normalized identity graph (`POST /api/blast/analyze`). The **engine** is complete and tested; only **live cloud ingestion** (boto3/Okta/GitHub) needs an account and stays external. (Short-lived cloud-credential *brokering* — the CIEM-lite mint path — remains the cloud-account-bound part) |
 | **Web / SaaS session proxying** — record + inject into web admin consoles | CyberArk Secure Web Sessions, Wallix | SSH/WinRM/RDP only (the heaviest lift; **needs a browser + SaaS console**) |
 
-Two of the five Tier-3 gaps are closed. The remaining three each require external
-infrastructure or an account to build and verify honestly — catalogued, with what to
-stand up, in **[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)**.
+Three of the five Tier-3 gaps are closed (Zero Standing Privilege, threat
+analytics, and the cloud-CIEM blast-radius **engine**); connector breadth and web/SaaS
+proxying — plus **live** CIEM ingestion and short-lived cloud-credential brokering —
+each still require external infrastructure or an account to build and verify honestly,
+catalogued in **[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)**.
 
 ### Tier 4 — ecosystem
 

@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–30 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
+**Phases 0–31 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
 with command control, safes, dependent-account propagation), optional CyberArk Conjur
@@ -434,6 +434,17 @@ The core of the [pam-research](https://github.com/morandeirachema/pam-research) 
 - [x] **Supervisor endpoints**: `GET /api/sessions/stepups` lists paused statements and `POST /api/sessions/{id}/stepup` decides one (`CapReadAudit` — the same gate as live monitoring, so the watching supervisor decides); audit `session.stepup_decided`
 - [x] **Tests**: policy comparators (amount gating across boundary values + fail-closed on non-numeric, and fail-loud load of a bad/duplicate operator), the `session.StepUp` registry (approve / deny / timeout / one-at-a-time), a DB-proxy **end-to-end** (a matched statement pauses; approval runs it and it reaches the upstream; denial refuses it and it never reaches the upstream; the session survives both), and the API endpoints (listing + decide + 404 when nothing is pending)
 - Deferred (documented): per-action step-up on the interactive SSH PTY path (a raw stream isn't parsed — the same boundary as command control) and numeric comparators over raw SQL (statements aren't structured args; step-up covers the DB path instead)
+
+## Phase 31 — Identity blast-radius / CIEM engine ✅
+
+The [pam-research](https://github.com/morandeirachema/pam-research) Solution-04 (identity-blast-radius) — and the third [Tier-3 competitive-coverage gap](README.md#coverage-vs-commercial-pam-cyberark-wallix-) (cloud CIEM), opened **honestly**: the analytical engine is what can be built and verified in process, so it ships complete and tested; only **live cloud ingestion** (boto3 / Okta / GitHub / Workspace API calls) needs an account and stays an external follow-on. pamv1 consumes a **normalized identity graph** an ingester produces and answers "if this identity is compromised, what can it actually reach?"
+
+- [x] **Real AWS IAM effective-permission evaluator** (`internal/blast/iam.go`): implements the true AWS evaluation order — an explicit **Deny** anywhere wins, an **SCP** is a ceiling, a **permission boundary** is a ceiling, then an identity **Allow** grants, else implicit deny — with `*`/`?` wildcard matching (an iterative glob, so a hostile pattern can't cause catastrophic backtracking) and a condition it **cannot evaluate modeled as `uncertain`** rather than guessed. "An edge means a permission that really holds."
+- [x] **Normalized identity graph + blast-radius traversal** (`internal/blast/blast.go`): a provider-agnostic graph of principals and directed edges. **Pivot** edges (`can_assume`, `member_of`, `can_escalate_to`, `credential_for`) expand an attacker's reach; **containment** edges (`contains`, `reads`) do not. `BlastRadius` (BFS, shortest path first) computes what a principal can reach; `WhoCanReach` is the reverse query. A conditional edge on a path marks the reach **uncertain**
+- [x] **Toxic-combination findings + remediation-as-code**: `Findings` flags a non-admin that can pivot to an **effective admin** (privilege escalation) and any **cross-provider** pivot (lateral movement across trust domains), with **derived severity** (cross-provider + admin = critical). Each finding carries a **remediation** that cuts the **earliest** pivot edge on the path (the least-disruptive break), flagged **needs-review** when the path is uncertain
+- [x] **API**: `POST /api/blast/analyze` (`CapReadAudit`) analyzes a submitted graph (4 MiB cap) and returns findings + a summary, plus an optional `source` blast-radius and `target` who-can-reach query; audited `blast.analyze`. Pure read-only analysis — no cloud credentials or persisted state
+- [x] **Tests**: the IAM evaluator (explicit-deny precedence, SCP + boundary ceilings, wildcard semantics, conditional → uncertain), traversal + who-can-reach (a read edge must **not** expand reach), findings + earliest-cut remediation over a **canonical cross-provider "Drift"-shaped 4-hop chain** (a low-priv GitHub credential → Okta → an AWS deploy role → AWS admin), malformed-graph rejection (an edge to an unknown principal is fail-loud), and an API test
+- Deferred (documented, infra-bound): **live ingestion** from AWS/Okta/GitHub/Workspace (needs accounts + API clients), a persisted snapshot store, and peer-baseline entitlement right-sizing — see [EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)
 
 ## Portal: keyboard-first navigation ✅
 

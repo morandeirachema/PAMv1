@@ -666,6 +666,7 @@ func (s *Server) routes() {
 
 	s.mux.Handle("GET /api/sessions", s.authz(auth.CapReadAudit, s.listSessions))
 	s.mux.Handle("GET /api/sessions/{id}/stream", s.authz(auth.CapReadAudit, s.streamSession))
+	s.mux.Handle("POST /api/blast/analyze", s.authz(auth.CapReadAudit, s.analyzeBlast))        // Phase 31 (CIEM)
 	s.mux.Handle("GET /api/sessions/stepups", s.authz(auth.CapReadAudit, s.listStepUps))       // Phase 30
 	s.mux.Handle("POST /api/sessions/{id}/stepup", s.authz(auth.CapReadAudit, s.decideStepUp)) // Phase 30
 	s.mux.Handle("DELETE /api/sessions/{id}", s.authz(auth.CapManageTargets, s.killSession))
