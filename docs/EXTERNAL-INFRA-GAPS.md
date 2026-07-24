@@ -10,7 +10,9 @@
 > live. This is the operator's checklist of what you must stand up (and what to
 > re-verify) before relying on each capability in production.
 >
-> Last updated: 2026-07-23 · Reflects: Phases 0–24 + the 2026-07 hardening pass.
+> Last updated: 2026-07-24 · Reflects: Phases 0–26 + the 2026-07 hardening pass.
+> (Phases 25–26 — console parity and recording playback + one-time access — are
+> fully in-process and add no external-infrastructure requirements.)
 
 ## Legend
 

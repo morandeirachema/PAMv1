@@ -104,8 +104,12 @@ is a phase each, out of scope for a security *fix*:
   item; it is now closed. **Tail-truncation detection** is also covered: set
   `PAM_AUDIT_SIGN_SEED` and archive the ed25519-signed checkpoints from
   `GET /api/audit/head` out-of-band.
-- **Session-recording playback** (recordings are written to disk; no API/portal
-  replays them), **JIT ephemeral account provisioning** on targets, **FIDO2/
+- ~~**Session-recording playback**~~ **Shipped (Phase 26).** `GET /api/recordings`
+  + `GET /api/recordings/{name}` (`CapReadAudit`) list and replay the stored
+  recordings, the served file's SHA-256 verified against the audited value
+  (`X-PAM-Recording-Audited`), every replay audited `session.playback`, with a
+  5250 player (portal menu 19).
+- **JIT ephemeral account provisioning** on targets, **FIDO2/
   WebAuthn**, **CIEM / cloud-IAM brokering**, **Kubernetes secret/SA delivery**,
   **other DB engines** (MySQL/MSSQL/Oracle), **native audit→SIEM forwarding**
   (syslog/CEF/LEEF), **HSM/KMS-backed SSH-CA signing**, **rotation webhooks**, and

@@ -141,7 +141,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–25, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–26, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -278,6 +278,7 @@ Se han entregado las veintiséis fases (0–25) — detalle por fase en **[ROADM
 | 23 | Analítica de amenazas privilegiadas (riesgo conductual + respuesta automática) | ✅ entregada |
 | 24 | API de secretos para aplicaciones (entrega estilo Conjur para apps sin agente) | ✅ entregada |
 | 25 | Paridad de la consola (safes, campañas, analítica de riesgo, visor de sesiones en directo) | ✅ entregada |
+| 26 | Reproducción de grabaciones de sesión (verificada por hash) + acceso de un solo uso | ✅ entregada |
 
 ## Cobertura frente al PAM comercial (CyberArk, Wallix, …)
 
@@ -311,7 +312,7 @@ posibles fases futuras.
 
 - ~~**Campañas de certificación / atestación de accesos**~~ **✅ entregado (Fase 19)** — una campaña toma una instantánea del acceso actual (concesiones por objetivo + miembros de safes); un revisor certifica o revoca cada elemento, y una revocación borra la concesión subyacente (`POST /api/campaigns`). El control de revisión de accesos de SOX / ISO 27001 / NIS2.
 - ~~**Pasarela ITSM / tickets**~~ **✅ entregado (Fase 20)** — una solicitud de acceso puede exigir un ticket de cambio/incidencia, validado por un regex de formato y/o un webhook que el ITSM responde `2xx` para un ticket válido (`PAM_REQUIRE_TICKET`), y grabado en la auditoría.
-- ~~**Flujos de aprobación más ricos**~~ **✅ entregado (Fase 21)** — cadenas multinivel **N-de-M** (`PAM_APPROVALS_REQUIRED`), ventanas de acceso **programadas** (`not_before`/`not_after`) y códigos de motivo obligatorios. *(El acceso de un solo uso es el único seguimiento documentado.)*
+- ~~**Flujos de aprobación más ricos**~~ **✅ entregado (Fase 21)** — cadenas multinivel **N-de-M** (`PAM_APPROVALS_REQUIRED`), ventanas de acceso **programadas** (`not_before`/`not_after`) y códigos de motivo obligatorios. *(El acceso de un solo uso se entregó en la Fase 26: una aprobación de un solo uso se consume con la primera conexión que admite, en todas las pasarelas.)*
 
 **Las tres brechas de gobierno de accesos de Nivel 2 están cerradas.**
 
@@ -359,7 +360,7 @@ por diseño.
 2. ~~**Fase 16 — Monitorización en vivo + control de comandos**~~ ✅ **entregada** (stream SSE en vivo + control de comandos regex en exec/WinRM/SQL).
 3. ~~**Fase 17 — Safes / contenedores + propagación a cuentas dependientes**~~ ✅ **entregada** — la mejora de autorización para el uso multiequipo y la rotación *segura* de cuentas de servicio.
 
-**Las cuatro brechas de Nivel 1 y las tres de Nivel 2 están cerradas**, **dos de las cinco de Nivel 3** (Privilegio Cero Permanente, analítica de amenazas) y la **primera de Nivel 4** (la API de secretos para aplicaciones). El resto del Nivel 3 (amplitud de conectores, CIEM en la nube, proxy web) y del Nivel 4 (provider de Terraform, sincronización Secrets-Hub, descubrimiento de claves SSH, componentes para apps de escritorio) son la siguiente frontera — cada uno condicionado a infraestructura externa o cuentas, catalogado en [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
+**Las cuatro brechas de Nivel 1 y las tres de Nivel 2 están cerradas** (incluido el acceso de un solo uso, Fase 26), **dos de las cinco de Nivel 3** (Privilegio Cero Permanente, analítica de amenazas) y la **primera de Nivel 4** (la API de secretos para aplicaciones). Las grabaciones de sesión ya se **reproducen en el portal, verificadas por hash contra el registro de auditoría** (Fase 26). El resto del Nivel 3 (amplitud de conectores, CIEM en la nube, proxy web) y del Nivel 4 (provider de Terraform, sincronización Secrets-Hub, descubrimiento de claves SSH, componentes para apps de escritorio) son la siguiente frontera — cada uno condicionado a infraestructura externa o cuentas, catalogado en [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
 
 ## Inicio rápido
 

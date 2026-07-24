@@ -482,3 +482,95 @@ func assertAuditContains(t *testing.T, st store.Store, action, want string) {
 	}
 	t.Fatalf("no audit event action=%q containing %q (have %d events)", action, want, len(events))
 }
+
+// TestDBProxyOneTimeApproval proves consume-on-connect on the PostgreSQL path
+// (Phase 26): with the approval gate on, a single-use approval admits exactly
+// one database session — the first connects and queries end to end, the second
+// is refused before any upstream contact.
+func TestDBProxyOneTimeApproval(t *testing.T) {
+	st := memstore.New()
+	v := mustVault(t)
+	fake := startFakePostgres(t, upstreamSecret)
+	seedPGTarget(t, st, v, fake.addr)
+	targets, err := st.ListTargets(context.Background())
+	if err != nil || len(targets) != 1 {
+		t.Fatalf("seeded targets: %d err %v", len(targets), err)
+	}
+	if err := st.CreateAccessRequest(context.Background(), &store.AccessRequest{
+		Requester: "bootstrap-admin", TargetID: targets[0].ID, Status: "approved",
+		ExpiresAt: time.Now().Add(time.Hour), OneTime: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := auth.NewResolver(st, proxyAPIKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbx, err := proxy.NewDB(st, v, resolver, proxy.DBConfig{
+		RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second, RequireApproval: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := serveDBProxy(t, dbx)
+
+	// dial performs the operator-side startup + password steps and returns the
+	// frontend after the password was sent.
+	dial := func() (net.Conn, *pgproto3.Frontend) {
+		conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fe := pgproto3.NewFrontend(conn, conn)
+		fe.Send(&pgproto3.StartupMessage{
+			ProtocolVersion: pgproto3.ProtocolVersionNumber,
+			Parameters:      map[string]string{"user": "dbuser@pg-01", "database": "appdb"},
+		})
+		if err := fe.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		if msg, err := fe.Receive(); err != nil {
+			t.Fatal(err)
+		} else if _, ok := msg.(*pgproto3.AuthenticationCleartextPassword); !ok {
+			t.Fatalf("expected cleartext-password request, got %T", msg)
+		}
+		fe.Send(&pgproto3.PasswordMessage{Password: proxyAPIKey})
+		if err := fe.Flush(); err != nil {
+			t.Fatal(err)
+		}
+		return conn, fe
+	}
+
+	// First session: the single-use approval admits it, end to end.
+	conn, fe := dial()
+	waitReady(t, fe)
+	fe.Send(&pgproto3.Query{String: "SELECT 1"})
+	if err := fe.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	waitReady(t, fe)
+	fe.Send(&pgproto3.Terminate{})
+	_ = fe.Flush()
+	conn.Close()
+	assertAuditContains(t, st, "access.consumed", "pg-01")
+
+	// Second session: the approval is spent — refused before upstream contact.
+	conn2, fe2 := dial()
+	defer conn2.Close()
+	for {
+		msg, err := fe2.Receive()
+		if err != nil {
+			t.Fatalf("expected an ErrorResponse refusing the session, got transport error: %v", err)
+		}
+		if e, ok := msg.(*pgproto3.ErrorResponse); ok {
+			if !strings.Contains(e.Message, "approved access request") {
+				t.Fatalf("refusal message = %q, want the approval-required error", e.Message)
+			}
+			break
+		}
+		if _, ok := msg.(*pgproto3.ReadyForQuery); ok {
+			t.Fatal("a consumed single-use approval must not admit a second database session")
+		}
+	}
+}

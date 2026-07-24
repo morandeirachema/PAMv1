@@ -491,6 +491,76 @@ func TestApprovalGateProxy(t *testing.T) {
 	}
 }
 
+// TestOneTimeApprovalProxy proves consume-on-connect (Phase 26): a single-use
+// approval admits exactly one proxied connection — the first connect runs end
+// to end against the upstream and burns the approval (audited
+// access.consumed); a second connect is refused before any upstream contact.
+func TestOneTimeApprovalProxy(t *testing.T) {
+	host, port := startUpstream(t, upstreamUser, upstreamSecret, targetOutput)
+	st := memstore.New()
+	v := mustVault(t)
+	target := seedTarget(t, st, v, host, port)
+
+	resolver, err := auth.NewResolver(st, proxyAPIKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	px, err := proxy.New(st, v, resolver, proxy.Config{
+		HostKey: mustSigner(t), RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second,
+		RequireApproval: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := serveProxy(t, px)
+
+	ar := &store.AccessRequest{
+		Requester: "bootstrap-admin", TargetID: target.ID, Status: "approved",
+		ExpiresAt: time.Now().Add(time.Hour), OneTime: true,
+	}
+	if err := st.CreateAccessRequest(context.Background(), ar); err != nil {
+		t.Fatal(err)
+	}
+
+	// First connection: admitted end to end (the exec reaches the real upstream).
+	client, err := dialProxy(t, addr, "web-01", proxyAPIKey)
+	if err != nil {
+		t.Fatalf("auth should pass: %v", err)
+	}
+	sess, err := client.NewSession()
+	if err != nil {
+		t.Fatalf("first session must be admitted by the single-use approval: %v", err)
+	}
+	out, err := sess.Output("run")
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if string(out) != targetOutput {
+		t.Fatalf("output = %q, want %q", out, targetOutput)
+	}
+	sess.Close()
+	client.Close()
+
+	// The connect burned the approval: audited, stamped, and no longer active.
+	if seen, _ := waitForAudit(t, st, "access.consumed"); !seen["access.consumed"] {
+		t.Fatal("consuming a single-use approval must be audited access.consumed")
+	}
+	if got, _ := st.GetAccessRequest(context.Background(), ar.ID); got == nil || got.ConsumedAt == nil {
+		t.Fatalf("consumed approval must carry ConsumedAt: %+v", got)
+	}
+
+	// A second connection finds no active approval and is refused.
+	client2, err := dialProxy(t, addr, "web-01", proxyAPIKey)
+	if err != nil {
+		t.Fatalf("auth should pass: %v", err)
+	}
+	defer client2.Close()
+	if sess2, err := client2.NewSession(); err == nil {
+		sess2.Close()
+		t.Fatal("a consumed single-use approval must not admit a second connection")
+	}
+}
+
 // fieldAfter returns the value following key in a space-separated detail string.
 func fieldAfter(s, key string) string {
 	i := strings.Index(s, key)

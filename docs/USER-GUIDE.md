@@ -139,6 +139,7 @@ The **main menu** is your whole management surface. This is the complete menu;
 | 16 | Work with safes (members, delegated administration) | |
 | 17 | Certification campaigns (review access, certify / revoke) | |
 | 18 | Risk analytics (behavioral risk per actor) | |
+| 19 | Session recordings (replay stored sessions, hash-verified) | |
 | 90 | Sign off | |
 
 On list screens you type an **option number** next to a row (e.g. `5` to display,
@@ -250,12 +251,23 @@ Two more review screens (both need audit-read):
   (break-glass, blocked commands, auth-failure bursts, off-hours, velocity) and
   the points each contributed. Filter by minimum level or widen the window and
   press Enter to rescore.
+- **Session recordings** (menu 19, Phase 26) — replay any stored recording:
+  option `5` on a row opens a player in the same pane as the live viewer.
+  **Space** pauses/resumes, **F5** restarts, **F6** cycles the speed
+  (1x→2x→4x→8x→MAX; long silences are compressed to 2s). The header shows
+  whether the recording's SHA-256 **matches the value in the audit trail** — a
+  file tampered on disk is flagged in amber. Every replay is itself audited
+  (`session.playback`).
 
 When you **file an access request** (menu 5, F6) you can now also provide a
 change **ticket** (if your organization gates access on ITSM tickets), ask for a
-stricter **N-of-M approval chain**, and set an **active window** (`Active from` /
-`Active until`) to pre-approve a future maintenance slot. Approvers see the
-ticket, the approval progress (e.g. `1/2`), and the window on their list.
+stricter **N-of-M approval chain**, set an **active window** (`Active from` /
+`Active until`) to pre-approve a future maintenance slot, and mark it
+**one-time** (Phase 26): a single-use approval is consumed by the first
+connection (or reveal/checkout/WinRM run) it admits and grants nothing further —
+file a new request for the next session. Approvers see the ticket, the approval
+progress (e.g. `1/2`), the window, and a `1x`/`used` marker for single-use
+requests on their list.
 
 ## 7. Troubleshooting
 
@@ -268,6 +280,7 @@ ticket, the approval progress (e.g. `1/2`), and the window on their list.
 | SSH: `upstream connection failed` | pamv1 reached your token fine, but couldn't reach the target (down, or bad vaulted credential). Tell your admin. |
 | `too many attempts; try again shortly` | Repeated failed sign-ins from your address were rate-limited. Wait a minute and retry with the correct token. |
 | `command blocked by policy` (SSH exec / WinRM / SQL) | That specific command matched a command-control deny rule and was refused before reaching the target. The session continues; run something else or ask your admin. |
+| SSH/psql: `connection requires an approved access request` right after a session that worked | Your approval was **one-time** and the previous connection consumed it. File a new access request. |
 | `psql`: `pamv1: authentication failed` | Your PAM token (the psql password) is wrong or deleted — check it, or ask for a new one. |
 | Portal panels are empty | Normal — your role can't read those panels. |
 | Your session ended abruptly / `connection closed` mid-session | An admin may have revoked your login or your grant to that target — revocation now ends live sessions. Confirm your access. |
@@ -278,6 +291,7 @@ ticket, the approval progress (e.g. `1/2`), and the window on their list.
 
 | Date | Change |
 |---|---|
+| 2026-07-24 | Phase 26: **Session recordings** (menu 19) — replay stored recordings with a keyboard-first player and an on-screen audit-hash verdict; **one-time access requests** (a single-use approval is consumed by the first connection it admits) with a `1x`/`used` marker on the approver list. §4, §6, §7 |
 | 2026-07-24 | Phase 25 (console parity): menu items **16–18** (safes, certification campaigns, risk analytics), **watching a session live from the portal** (Active Sessions option 5), and the richer access-request form (ticket, N-of-M approvals, active window). §4, §6 |
 | 2026-07-23 | **RDP in the portal:** documented option **7** on an RDP target — the Windows desktop now renders in the browser (`Ctrl+Alt+Q` disconnects), no client needed. §5 |
 | 2026-07-23 | Completed the main-menu table (items 12–15); noted that revoking access now ends live sessions (troubleshooting + header); aligned with the doc set |

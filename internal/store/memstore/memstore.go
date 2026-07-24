@@ -8,6 +8,7 @@ import (
 	"crypto/hmac"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -533,6 +534,7 @@ func (m *Memstore) GetAccessRequest(_ context.Context, id int64) (*store.AccessR
 		return nil, store.ErrNotFound
 	}
 	ar.DecidedAt = cloneTimePtr(ar.DecidedAt)
+	ar.ConsumedAt = cloneTimePtr(ar.ConsumedAt)
 	return &ar, nil
 }
 
@@ -545,6 +547,7 @@ func (m *Memstore) ListAccessRequests(_ context.Context, status string) ([]store
 	for _, ar := range m.accessReq {
 		if status == "" || ar.Status == status {
 			ar.DecidedAt = cloneTimePtr(ar.DecidedAt)
+			ar.ConsumedAt = cloneTimePtr(ar.ConsumedAt)
 			out = append(out, ar)
 		}
 	}
@@ -570,18 +573,56 @@ func (m *Memstore) DecideAccessRequest(_ context.Context, id int64, status, appr
 }
 
 // HasActiveApproval reports whether requester has an approved, unexpired request
-// for targetID as of now.
+// for targetID as of now. A consumed single-use approval is not active.
 func (m *Memstore) HasActiveApproval(_ context.Context, requester string, targetID int64, now time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, ar := range m.accessReq {
-		if ar.Requester == requester && ar.TargetID == targetID &&
-			ar.Status == "approved" && now.Before(ar.ExpiresAt) &&
-			(ar.NotBefore == nil || !now.Before(*ar.NotBefore)) {
+		if approvalActiveAt(ar, requester, targetID, now) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// approvalActiveAt reports whether one access request is an active approval for
+// (requester, targetID) as of now: approved, unexpired, inside its scheduled
+// window, and not a consumed single-use approval.
+func approvalActiveAt(ar store.AccessRequest, requester string, targetID int64, now time.Time) bool {
+	return ar.Requester == requester && ar.TargetID == targetID &&
+		ar.Status == "approved" && now.Before(ar.ExpiresAt) &&
+		(ar.NotBefore == nil || !now.Before(*ar.NotBefore)) &&
+		(!ar.OneTime || ar.ConsumedAt == nil)
+}
+
+// ConsumeApproval reports whether requester holds an active approval for
+// targetID and, when the only active approval is single-use, burns it by
+// stamping ConsumedAt (under the store lock, so of two racing consumers exactly
+// one wins). A standing approval, when present, is preferred and left
+// untouched.
+func (m *Memstore) ConsumeApproval(_ context.Context, requester string, targetID int64, now time.Time) (bool, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var oneTimeID int64
+	for _, ar := range m.accessReq {
+		if !approvalActiveAt(ar, requester, targetID, now) {
+			continue
+		}
+		if !ar.OneTime {
+			return true, 0, nil // a standing approval wins; nothing is burned
+		}
+		if oneTimeID == 0 || ar.ID < oneTimeID {
+			oneTimeID = ar.ID // burn deterministically: the oldest single-use approval
+		}
+	}
+	if oneTimeID == 0 {
+		return false, 0, nil
+	}
+	ar := m.accessReq[oneTimeID]
+	at := now.UTC()
+	ar.ConsumedAt = &at
+	m.accessReq[oneTimeID] = ar
+	return true, oneTimeID, nil
 }
 
 // activeCheckoutLocked returns the credential's active (unreturned, unexpired)
@@ -868,6 +909,19 @@ func (m *Memstore) ExportAudit(_ context.Context, since, until time.Time) ([]sto
 		}
 	}
 	return out, nil
+}
+
+// FindAuditDetail reports whether any audit event with the given action has a
+// detail containing substr, matched literally.
+func (m *Memstore) FindAuditDetail(_ context.Context, action, substr string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, e := range m.audit {
+		if e.Action == action && strings.Contains(e.Detail, substr) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // CreateUser inserts a user, assigning its ID and CreatedAt; ErrConflict if the username is taken.

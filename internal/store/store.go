@@ -145,6 +145,12 @@ type AccessRequest struct {
 	RequiredApprovals int        `json:"required_approvals,omitempty"`
 	ApprovedBy        string     `json:"approved_by,omitempty"`
 	NotBefore         *time.Time `json:"not_before,omitempty"`
+	// OneTime marks a single-use approval (Phase 26): the first privileged use
+	// it admits (a proxy/RDP connect, a WinRM run, a reveal or checkout, a
+	// broker tool call) consumes it — ConsumedAt is stamped and the approval
+	// admits nothing further. A consumed approval is not "active" anywhere.
+	OneTime    bool       `json:"one_time,omitempty"`
+	ConsumedAt *time.Time `json:"consumed_at,omitempty"`
 }
 
 // Credential is a privileged account on a Target. SecretEnc is always an
@@ -447,8 +453,18 @@ type Store interface {
 	// decided-at time (nil while still partial).
 	SetApprovalState(ctx context.Context, id int64, approvedBy, status, approver string, decidedAt *time.Time) error
 	// HasActiveApproval reports whether requester has an approved, unexpired
-	// request for targetID as of now.
+	// request for targetID as of now. A consumed single-use approval is not
+	// active.
 	HasActiveApproval(ctx context.Context, requester string, targetID int64, now time.Time) (bool, error)
+	// ConsumeApproval is the use-time twin of HasActiveApproval (Phase 26): it
+	// reports whether requester holds an active approval for targetID and, when
+	// the only active approval is single-use (OneTime), atomically burns it by
+	// stamping ConsumedAt so it cannot admit a second use. A standing
+	// (non-one-time) active approval is preferred and left untouched.
+	// consumedID is the burned request's ID (0 when nothing was consumed).
+	// Atomic under concurrent use: one single-use approval admits exactly one
+	// of two racing consumers.
+	ConsumeApproval(ctx context.Context, requester string, targetID int64, now time.Time) (ok bool, consumedID int64, err error)
 
 	// Credential checkout/check-in (exclusive time-boxed leases).
 	// CreateCheckout fails with ErrConflict if the credential already has an
@@ -484,6 +500,11 @@ type Store interface {
 	// oldest-first (for NIS2 incident-report exports). A zero since means "from
 	// the beginning"; a zero until means "up to now".
 	ExportAudit(ctx context.Context, since, until time.Time) ([]AuditEvent, error)
+	// FindAuditDetail reports whether any audit event with the given action has
+	// a detail containing substr, matched literally (Phase 26). The playback
+	// path uses it to verify a served session recording's SHA-256 against the
+	// value audited when the recording was written.
+	FindAuditDetail(ctx context.Context, action, substr string) (bool, error)
 
 	// CreateUser inserts a user, populating its ID and CreatedAt.
 	CreateUser(ctx context.Context, u *User) error

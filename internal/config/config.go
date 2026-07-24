@@ -151,6 +151,10 @@ type Config struct {
 	// may ask for more. RequireReason rejects an access request with no reason.
 	ApprovalsRequired int
 	RequireReason     bool
+	// OneTimeAccess (Phase 26) makes every access request single-use: the first
+	// privileged use its approval admits consumes it. Individual requests can
+	// also opt in per-request regardless of this default.
+	OneTimeAccess bool
 	// CheckoutTTL is the lifetime of a credential checkout lease.
 	CheckoutTTL time.Duration
 	// AllowedProtocols restricts which target protocols may be created and
@@ -358,6 +362,7 @@ func Load() (*Config, error) {
 		TicketValidateURL:   os.Getenv("PAM_TICKET_VALIDATE_URL"),
 		ApprovalsRequired:   integer("PAM_APPROVALS_REQUIRED", 1),
 		RequireReason:       boolean("PAM_REQUIRE_REASON", false),
+		OneTimeAccess:       boolean("PAM_ACCESS_ONE_TIME", false),
 		AirGap:              boolean("PAM_OT_AIRGAP", false),
 		CheckoutTTL:         time.Duration(integer("PAM_CHECKOUT_TTL_MIN", 30)) * time.Minute,
 		AllowedProtocols:    os.Getenv("PAM_ALLOWED_PROTOCOLS"),

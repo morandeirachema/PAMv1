@@ -138,7 +138,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–25, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–26, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 
@@ -276,6 +276,7 @@ All twenty-six phases (0–25) have shipped — full per-phase detail in **[ROAD
 | 23 | Privileged threat analytics (behavioral risk scoring + auto-response) | ✅ shipped |
 | 24 | Application-secrets API (Conjur-style delivery for non-agent apps) | ✅ shipped |
 | 25 | Console parity (safes, campaigns, risk analytics, live session viewer) | ✅ shipped |
+| 26 | Session-recording playback (hash-verified replay) + one-time access | ✅ shipped |
 
 ## Coverage vs. commercial PAM (CyberArk, Wallix, …)
 
@@ -307,7 +308,7 @@ existing chokepoint architecture, and they map to candidate future phases.
 
 - ~~**Access certification / attestation campaigns**~~ **✅ shipped (Phase 19)** — a campaign snapshots current access (target grants + safe members); a reviewer certifies or revokes each item, and a revoke deletes the underlying grant (`POST /api/campaigns`). The SOX / ISO 27001 / NIS2 access-review control.
 - ~~**ITSM / ticketing gate**~~ **✅ shipped (Phase 20)** — an access request can require a change/incident ticket, validated by a format regex and/or a webhook the ITSM answers `2xx` for a valid ticket (`PAM_REQUIRE_TICKET`), then stamped into the audit trail.
-- ~~**Richer approval workflows**~~ **✅ shipped (Phase 21)** — multi-tier **N-of-M** chains (`PAM_APPROVALS_REQUIRED`), **scheduled** access windows (`not_before`/`not_after`), and mandatory reason codes. *(One-time single-use access is the one documented follow-on.)*
+- ~~**Richer approval workflows**~~ **✅ shipped (Phase 21)** — multi-tier **N-of-M** chains (`PAM_APPROVALS_REQUIRED`), **scheduled** access windows (`not_before`/`not_after`), and mandatory reason codes. *(One-time single-use access shipped in Phase 26: a single-use approval is consumed by the first connection it admits, in every gate.)*
 
 **All three Tier-2 access-governance gaps are now closed.**
 
@@ -354,7 +355,7 @@ vault + proxy chokepoint, and is **out of scope** by design.
 2. ~~**Phase 16 — Live monitoring + command control**~~ ✅ **shipped** (SSE live stream + regex command control on exec/WinRM/SQL).
 3. ~~**Phase 17 — Safes / containers + dependent-account propagation**~~ ✅ **shipped** — the authorization upgrade for multi-team use and *safe* service-account rotation.
 
-**All four Tier-1 gaps and all three Tier-2 gaps are closed**, **two of the five Tier-3 gaps** (Zero Standing Privilege, privileged threat analytics), and the **first Tier-4 gap** (the application-secrets API). The rest of Tier 3 (connector breadth, cloud CIEM, web proxying) and Tier 4 (Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, thick-app components) are the next frontier — each gated on external infrastructure or accounts, catalogued in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
+**All four Tier-1 gaps and all three Tier-2 gaps are closed** (including one-time access, Phase 26), **two of the five Tier-3 gaps** (Zero Standing Privilege, privileged threat analytics), and the **first Tier-4 gap** (the application-secrets API). Session recordings now **replay in the portal, hash-verified against the audit trail** (Phase 26). The rest of Tier 3 (connector breadth, cloud CIEM, web proxying) and Tier 4 (Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, thick-app components) are the next frontier — each gated on external infrastructure or accounts, catalogued in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
 
 ## Quickstart
 

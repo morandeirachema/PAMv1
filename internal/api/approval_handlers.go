@@ -23,6 +23,9 @@ type accessRequestIn struct {
 	Approvals int        `json:"approvals,omitempty"`
 	NotBefore *time.Time `json:"not_before,omitempty"`
 	NotAfter  *time.Time `json:"not_after,omitempty"`
+	// OneTime (Phase 26) asks for a single-use approval: the first privileged
+	// use it admits consumes it. PAM_ACCESS_ONE_TIME forces it on every request.
+	OneTime bool `json:"one_time,omitempty"`
 }
 
 // createAccessRequest files a request to connect to a target. The requester is
@@ -78,12 +81,13 @@ func (s *Server) createAccessRequest(w http.ResponseWriter, r *http.Request) {
 		Ticket:            in.Ticket,
 		RequiredApprovals: required,
 		NotBefore:         in.NotBefore,
+		OneTime:           in.OneTime || s.oneTimeAccess,
 	}
 	if err := s.store.CreateAccessRequest(r.Context(), &ar); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "access.request", fmt.Sprintf("request:%d target:%d reason:%q ticket:%q approvals_required:%d", ar.ID, ar.TargetID, ar.Reason, ar.Ticket, ar.RequiredApprovals))
+	s.audit(r.Context(), "access.request", fmt.Sprintf("request:%d target:%d reason:%q ticket:%q approvals_required:%d one_time:%t", ar.ID, ar.TargetID, ar.Reason, ar.Ticket, ar.RequiredApprovals, ar.OneTime))
 	writeJSON(w, http.StatusCreated, ar)
 }
 
@@ -220,8 +224,12 @@ func (s *Server) requireApprovalFor(t *store.Target) bool {
 	return s.rt().approvalRequired || t.RequireApproval
 }
 
-// enforceApproval reports whether the caller may connect to target under the
+// enforceApproval reports whether the caller may perform a privileged use of
+// target (connect, WinRM run, reveal, checkout, broker tool call) under the
 // approval policy. Break-glass bypasses (emergency access is already loud).
+// This is a USE, not a status check: a single-use approval that admits the
+// caller is consumed here (audited access.consumed) and admits nothing further
+// — status-only checks must call HasActiveApproval instead.
 func (s *Server) enforceApproval(ctx context.Context, t *store.Target) (bool, error) {
 	if !s.requireApprovalFor(t) {
 		return true, nil
@@ -229,5 +237,12 @@ func (s *Server) enforceApproval(ctx context.Context, t *store.Target) (bool, er
 	if principalFrom(ctx).BreakGlass {
 		return true, nil
 	}
-	return s.store.HasActiveApproval(ctx, actorFrom(ctx), t.ID, time.Now())
+	ok, consumedID, err := s.store.ConsumeApproval(ctx, actorFrom(ctx), t.ID, time.Now())
+	if err != nil {
+		return false, err
+	}
+	if consumedID != 0 {
+		s.audit(ctx, "access.consumed", fmt.Sprintf("request:%d target:%s", consumedID, t.Name))
+	}
+	return ok, nil
 }

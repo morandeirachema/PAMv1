@@ -145,6 +145,10 @@ type Options struct {
 	// rejects an access request that carries no reason.
 	ApprovalsRequired int
 	RequireReason     bool
+	// OneTimeAccess (Phase 26) makes every access request single-use: the first
+	// privileged use its approval admits consumes it. A request may also opt in
+	// individually via one_time.
+	OneTimeAccess bool
 	// CheckoutTTL is the lifetime of a credential checkout lease (default 30m).
 	CheckoutTTL time.Duration
 	// AirGap disables all outbound network calls (alert webhooks) for isolated
@@ -228,6 +232,7 @@ type Server struct {
 	requireTicket      bool
 	approvalsRequired  int
 	requireReason      bool
+	oneTimeAccess      bool
 	rotators           map[string]rotate.Rotator
 	verifiers          map[string]rotate.Verifier
 	sshConnector       rotate.SSHConnector // one-shot SSH exec for the broker's ssh_exec tool
@@ -398,6 +403,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		requireTicket:      opts.RequireTicket,
 		approvalsRequired:  opts.ApprovalsRequired,
 		requireReason:      opts.RequireReason,
+		oneTimeAccess:      opts.OneTimeAccess,
 		recordingDir:       opts.RecordingDir,
 		portalURL:          portalURL,
 		guacdAddr:          opts.GuacdAddr,
@@ -633,6 +639,11 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/sessions", s.authz(auth.CapReadAudit, s.listSessions))
 	s.mux.Handle("GET /api/sessions/{id}/stream", s.authz(auth.CapReadAudit, s.streamSession))
 	s.mux.Handle("DELETE /api/sessions/{id}", s.authz(auth.CapManageTargets, s.killSession))
+
+	// Session-recording playback (Phase 26): list stored recordings and serve one
+	// for replay, hash-verified against the audit trail.
+	s.mux.Handle("GET /api/recordings", s.authz(auth.CapReadAudit, s.listRecordings))
+	s.mux.Handle("GET /api/recordings/{name}", s.authz(auth.CapReadAudit, s.playRecording))
 
 	// Privileged threat analytics (Phase 23): behavioral risk scores over the
 	// audit trail. Read-only, so an auditor may review risk without changing state.

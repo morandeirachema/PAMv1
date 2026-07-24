@@ -492,9 +492,9 @@ func (s *PGStore) CreateAccessRequest(ctx context.Context, ar *store.AccessReque
 		ar.RequiredApprovals = 1
 	}
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO access_requests (requester, target_id, reason, status, expires_at, ticket, required_approvals, not_before)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at`,
-		ar.Requester, ar.TargetID, ar.Reason, ar.Status, ar.ExpiresAt, ar.Ticket, ar.RequiredApprovals, ar.NotBefore,
+		`INSERT INTO access_requests (requester, target_id, reason, status, expires_at, ticket, required_approvals, not_before, one_time)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at`,
+		ar.Requester, ar.TargetID, ar.Reason, ar.Status, ar.ExpiresAt, ar.Ticket, ar.RequiredApprovals, ar.NotBefore, ar.OneTime,
 	).Scan(&ar.ID, &ar.CreatedAt)
 	if pgCode(err) == pgForeignKeyViolation {
 		return store.ErrNotFound
@@ -505,7 +505,7 @@ func (s *PGStore) CreateAccessRequest(ctx context.Context, ar *store.AccessReque
 // GetAccessRequest returns the access request with the given ID, or ErrNotFound.
 func (s *PGStore) GetAccessRequest(ctx context.Context, id int64) (*store.AccessRequest, error) {
 	return getOne(ctx, s.pool, scanAccessRequest,
-		`SELECT id, requester, target_id, reason, status, approver, created_at, decided_at, expires_at, ticket, required_approvals, approved_by, not_before
+		`SELECT id, requester, target_id, reason, status, approver, created_at, decided_at, expires_at, ticket, required_approvals, approved_by, not_before, one_time, consumed_at
 		 FROM access_requests WHERE id = $1`, id)
 }
 
@@ -513,7 +513,7 @@ func (s *PGStore) GetAccessRequest(ctx context.Context, id int64) (*store.Access
 // ""), ordered by ID.
 func (s *PGStore) ListAccessRequests(ctx context.Context, status string) ([]store.AccessRequest, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, requester, target_id, reason, status, approver, created_at, decided_at, expires_at, ticket, required_approvals, approved_by, not_before
+		`SELECT id, requester, target_id, reason, status, approver, created_at, decided_at, expires_at, ticket, required_approvals, approved_by, not_before, one_time, consumed_at
 		 FROM access_requests WHERE ($1 = '' OR status = $1) ORDER BY id`, status)
 	if err != nil {
 		return nil, err
@@ -530,16 +530,59 @@ func (s *PGStore) DecideAccessRequest(ctx context.Context, id int64, status, app
 }
 
 // HasActiveApproval reports whether requester has an approved, unexpired request
-// for targetID as of now.
+// for targetID as of now. A consumed single-use approval is not active.
 func (s *PGStore) HasActiveApproval(ctx context.Context, requester string, targetID int64, now time.Time) (bool, error) {
 	var exists bool
 	err := s.pool.QueryRow(ctx,
 		`SELECT EXISTS(
 			SELECT 1 FROM access_requests
 			WHERE requester = $1 AND target_id = $2 AND status = 'approved'
-			  AND expires_at > $3 AND (not_before IS NULL OR not_before <= $3))`,
+			  AND expires_at > $3 AND (not_before IS NULL OR not_before <= $3)
+			  AND (NOT one_time OR consumed_at IS NULL))`,
 		requester, targetID, now.UTC()).Scan(&exists)
 	return exists, err
+}
+
+// ConsumeApproval reports whether requester holds an active approval for
+// targetID and, when the only active approval is single-use, atomically burns
+// it (stamps consumed_at) so it cannot admit a second use. A standing
+// approval, when present, is preferred and left untouched. The UPDATE takes
+// the row lock, so of two racing consumers exactly one burns the approval —
+// the other sees no eligible row and is refused.
+func (s *PGStore) ConsumeApproval(ctx context.Context, requester string, targetID int64, now time.Time) (bool, int64, error) {
+	var standing bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(
+			SELECT 1 FROM access_requests
+			WHERE requester = $1 AND target_id = $2 AND status = 'approved'
+			  AND expires_at > $3 AND (not_before IS NULL OR not_before <= $3)
+			  AND NOT one_time)`,
+		requester, targetID, now.UTC()).Scan(&standing)
+	if err != nil {
+		return false, 0, err
+	}
+	if standing {
+		return true, 0, nil
+	}
+	var id int64
+	err = s.pool.QueryRow(ctx,
+		`UPDATE access_requests SET consumed_at = $3
+		 WHERE id = (
+			SELECT id FROM access_requests
+			WHERE requester = $1 AND target_id = $2 AND status = 'approved'
+			  AND expires_at > $3 AND (not_before IS NULL OR not_before <= $3)
+			  AND one_time AND consumed_at IS NULL
+			ORDER BY id LIMIT 1
+			FOR UPDATE SKIP LOCKED)
+		 RETURNING id`,
+		requester, targetID, now.UTC()).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, 0, nil
+	}
+	if err != nil {
+		return false, 0, err
+	}
+	return true, id, nil
 }
 
 // SetApprovalState records a multi-approver decision (Phase 21).
@@ -750,6 +793,18 @@ func (s *PGStore) ExportAudit(ctx context.Context, since, until time.Time) ([]st
 		err := row.Scan(&e.ID, &e.TS, &e.Actor, &e.Action, &e.Detail)
 		return e, err
 	})
+}
+
+// FindAuditDetail reports whether any audit event with the given action has a
+// detail containing substr. The substring is matched literally: LIKE wildcards
+// in substr are escaped so a caller-supplied value cannot widen the match.
+func (s *PGStore) FindAuditDetail(ctx context.Context, action, substr string) (bool, error) {
+	quoted := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(substr)
+	var exists bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM audit_events WHERE action = $1 AND detail LIKE '%' || $2 || '%')`,
+		action, quoted).Scan(&exists)
+	return exists, err
 }
 
 // nullableTime maps the zero time to a SQL NULL (used as "no lower bound").
@@ -1368,7 +1423,7 @@ func scanAccessRequest(row pgx.CollectableRow) (store.AccessRequest, error) {
 	var ar store.AccessRequest
 	err := row.Scan(&ar.ID, &ar.Requester, &ar.TargetID, &ar.Reason, &ar.Status,
 		&ar.Approver, &ar.CreatedAt, &ar.DecidedAt, &ar.ExpiresAt, &ar.Ticket,
-		&ar.RequiredApprovals, &ar.ApprovedBy, &ar.NotBefore)
+		&ar.RequiredApprovals, &ar.ApprovedBy, &ar.NotBefore, &ar.OneTime, &ar.ConsumedAt)
 	return ar, err
 }
 
