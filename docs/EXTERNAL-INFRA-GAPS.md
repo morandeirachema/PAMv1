@@ -10,9 +10,11 @@
 > live. This is the operator's checklist of what you must stand up (and what to
 > re-verify) before relying on each capability in production.
 >
-> Last updated: 2026-07-24 · Reflects: Phases 0–26 + the 2026-07 hardening pass.
-> (Phases 25–26 — console parity and recording playback + one-time access — are
-> fully in-process and add no external-infrastructure requirements.)
+> Last updated: 2026-07-24 · Reflects: Phases 0–28 + the 2026-07 hardening pass.
+> (Phases 25–28 — console parity, recording playback + one-time access, broker
+> completion, and operator SSH certificates — are fully in-process and add no
+> external-infrastructure requirements; the operator-cert KRL is even verified
+> against a real `ssh-keygen` in CI.)
 
 ## Legend
 
@@ -76,7 +78,7 @@ to exercise fully:
 | **Dependent-account propagation** | `/api/credentials/{id}/dependencies` | fake WinRM | A Windows host running Services / Scheduled Tasks / IIS App Pools | The consumer's stored password is updated on rotation so the service keeps running |
 | **PostgreSQL session proxy** | `PAM_DB_ADDR`, `dbproxy.go` | in-process fake upstream | (optional) a real Postgres for interop breadth | JIT injection + per-statement `db.query` audit against a managed/SCRAM Postgres; the SCRAM server signature is verified |
 | **Upstream DB TLS verification** | `PAM_DB_UPSTREAM_CA` / `_TLS_VERIFY` | in-process fake upstream | A Postgres with a CA-issued (or pinned) server cert | With a CA set, the proxy verifies the target's certificate fail-closed (no MITM of the injected credential); unset = trust-any + startup warning |
-| **Zero Standing Privilege (SSH certs)** | `PAM_SSH_CA_KEY`, `internal/sshca` (Phase 22) | in-process cert-only sshd | A target sshd trusting the pamv1 CA (`TrustedUserCAKeys`) | A minted short-lived cert authenticates; no standing secret exists for the account |
+| **Zero Standing Privilege (SSH certs)** | `PAM_SSH_CA_KEY`, `internal/sshca` (Phases 22, 28) | in-process cert-only sshd; **KRL verified vs real `ssh-keygen`** | A target sshd trusting the pamv1 CA (`TrustedUserCAKeys`); for operator certs, its `RevokedKeys` pointed at the published KRL | A minted short-lived cert authenticates; no standing secret exists; a revoked serial is refused once the target reloads the KRL |
 | **Serial (RS-232) connectors** — *deferred* | Phase 8 | — none | Serial hardware / a terminal server | Legacy OT equipment reached over serial. Not implemented — needs the hardware |
 
 ---

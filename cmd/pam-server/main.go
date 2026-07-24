@@ -703,6 +703,7 @@ func run() error {
 		BrokerAuditSignPrevKeys: brokerSignPrevKeys,
 		BrokerSVIDVerifier:      svidVerifier,
 		CA:                      sshCA,
+		SSHOperatorCertTTL:      cfg.SSHOperatorCertTTL,
 		Analytics:               analyticsEngine,
 		AnalyticsWindow:         cfg.AnalyticsWindow,
 		AnalyticsAutoKill:       cfg.AnalyticsAutoKill,
