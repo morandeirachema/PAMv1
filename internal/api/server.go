@@ -188,6 +188,12 @@ type Options struct {
 	BrokerTokenTTL    time.Duration
 	BrokerMaxArgBytes int
 	BrokerRatePerMin  int
+	// BrokerCheckpointEvery emits a signed in-chain audit checkpoint every N broker
+	// events (0 = off). BrokerAuditSignPrevKeys are rotated-out ed25519 public keys
+	// still trusted to verify older checkpoints during a signing-key rotation
+	// overlap (Phase 27).
+	BrokerCheckpointEvery   int
+	BrokerAuditSignPrevKeys []ed25519.PublicKey
 	// BrokerSVIDVerifier (optional) accepts SPIFFE JWT-SVIDs in addition to static
 	// agent keys (Phase 13d); nil = static keys only.
 	BrokerSVIDVerifier agentid.Verifier
@@ -263,7 +269,8 @@ type Server struct {
 	broker        *broker.Broker
 	agentVerifier agentid.Verifier
 	auditChain    *auditchain.Chain
-	brokerLimiter *ratelimit.Limiter // per-agent tool-call rate limit (Phase 13)
+	brokerLimiter *ratelimit.Limiter  // per-agent tool-call rate limit (Phase 13)
+	mcpSessions   *mcpSessionRegistry // open MCP SSE streams for elicitation (Phase 27)
 }
 
 // RuntimeConfig is the set of settings PUT /api/config can change without a
@@ -633,6 +640,7 @@ func (s *Server) routes() {
 
 	s.mux.Handle("GET /api/audit", s.authz(auth.CapReadAudit, s.listAudit))
 	s.mux.Handle("GET /api/audit/export", s.authz(auth.CapReadAudit, s.exportAudit))
+	s.mux.Handle("GET /api/audit/ocsf", s.authz(auth.CapReadAudit, s.exportOCSF))
 	s.mux.Handle("GET /api/audit/verify", s.authz(auth.CapReadAudit, s.verifyAudit))
 	s.mux.Handle("GET /api/audit/head", s.authz(auth.CapReadAudit, s.auditHead))
 
@@ -701,6 +709,7 @@ func (s *Server) routes() {
 		s.mux.HandleFunc("GET /v1/tool-calls/{id}", s.agentAuth(s.getToolCall))
 		s.mux.HandleFunc("POST /v1/tool-calls/{id}/resume", s.agentAuth(s.resumeToolCall))
 		s.mux.HandleFunc("POST /mcp", s.agentAuth(s.serveMCP))
+		s.mux.HandleFunc("GET /mcp", s.agentAuth(s.serveMCPStream)) // MCP SSE transport (Phase 27)
 		s.mux.Handle("GET /v1/approvals", s.authz(auth.CapApprove, s.listBrokerApprovals))
 		s.mux.Handle("POST /v1/approvals/{id}/decision", s.authz(auth.CapApprove, s.decideBrokerApproval))
 		s.mux.Handle("POST /v1/agents", s.authz(auth.CapManageUsers, s.createAgentKey))
@@ -709,6 +718,7 @@ func (s *Server) routes() {
 		s.mux.Handle("GET /v1/audit", s.authz(auth.CapReadAudit, s.listBrokerAudit))
 		s.mux.Handle("GET /v1/audit/verify", s.authz(auth.CapReadAudit, s.verifyBrokerAudit))
 		s.mux.Handle("GET /v1/audit/head", s.authz(auth.CapReadAudit, s.brokerAuditHead))
+		s.mux.Handle("GET /v1/audit/jwks", s.authz(auth.CapReadAudit, s.brokerAuditJWKS))
 	}
 }
 
