@@ -219,6 +219,8 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_DB_UPSTREAM_TLS_VERIFY` | | `false` | Verify the upstream PostgreSQL certificate against the system roots (alternative to `PAM_DB_UPSTREAM_CA`). |
 | `PAM_REQUIRE_DB_CLIENT_TLS` | | `false` | Refuse to start the DB proxy without operator-leg TLS (so the PAM key is never sent to it in cleartext). |
 | `PAM_COMMAND_DENY_FILE` | | (off) | Regex denylist file for command control (Phase 16); blocks matching commands on exec/WinRM/SQL. |
+| `PAM_DB_STEPUP_FILE` | | (off) | Regex file marking PostgreSQL statements that **pause for a supervisor's live approval** — in-session step-up (Phase 30). See §9.4. |
+| `PAM_DB_STEPUP_TTL_SEC` | | `120` | How long a paused statement waits for a decision before it is denied. |
 | `PAM_ANALYTICS_INTERVAL_MIN` | | `0` (off) | Threat-analytics worker interval (Phase 23); `0` leaves the read-only `GET /api/analytics/risk` endpoint on. See §9.7. |
 | `PAM_ANALYTICS_WINDOW_MIN` / `_AUTO_KILL` / `_BUSINESS_START` / `_BUSINESS_END` | | `60` / `false` / `7` / `20` | Risk-scoring window (also the re-alert cooldown), auto-kill of critical actors' sessions, and business hours for the off-hours signal. |
 | `PAM_ANALYTICS_TIMEZONE` | | (UTC) | IANA timezone the business hours are interpreted in (audit timestamps are UTC). |
@@ -1223,6 +1225,23 @@ refused but the session stays usable; an extended/prepared statement fails
 closed). Interactive SSH **shells** stream a raw terminal and are *not* parsed —
 use read-only observer sessions (`ssh <cred>@<target>+observe@pam`) or restrict
 shell access where you need that guarantee.
+
+**In-session step-up (Phase 30).** Where command control is a hard block, step-up
+is a **pause for a live human decision** — the session stays open. Point
+`PAM_DB_STEPUP_FILE` at a regex file (same format as the deny file); a matching
+**PostgreSQL** statement pauses (audited `db.stepup_required`, shown on the live
+monitor) and waits up to `PAM_DB_STEPUP_TTL_SEC` (default 120) for a supervisor:
+
+```bash
+curl -s "$PAM/api/sessions/stepups" -H "X-API-Key: $KEY"          # what's paused
+curl -s -XPOST "$PAM/api/sessions/<session-id>/stepup" -H "X-API-Key: $KEY" -d '{"approve":true}'
+```
+
+An **approval** runs the statement (`db.stepup_approved`); a **denial or timeout**
+refuses it (`db.stepup_denied`) but leaves the session usable. Deciding needs
+`read_audit` (the same role that watches). For the agent broker, policy rules can
+also gate on an **amount** with the numeric comparators `gte`/`gt`/`lte`/`lt`
+(e.g. `when: { args.amount: { gte: 5000 } }` → `require_approval`).
 
 ### 9.5 Metrics & probes
 

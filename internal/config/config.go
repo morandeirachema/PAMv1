@@ -176,6 +176,11 @@ type Config struct {
 	// comments) that block matching commands on the exec/WinRM/SQL paths
 	// (Phase 16 command control). Empty disables command control.
 	CommandDenyFile string
+	// DBStepUpFile (Phase 30) is a file of regex patterns; a matching PostgreSQL
+	// statement pauses for a supervisor's live approval before it runs.
+	// DBStepUpTTL bounds how long a paused statement waits before it is denied.
+	DBStepUpFile string
+	DBStepUpTTL  time.Duration
 
 	// Privileged threat analytics (Phase 23). AnalyticsInterval enables the
 	// background risk-scoring worker (0 disables it; the read-only risk endpoint
@@ -384,6 +389,8 @@ func Load() (*Config, error) {
 		CheckoutTTL:         time.Duration(integer("PAM_CHECKOUT_TTL_MIN", 30)) * time.Minute,
 		AllowedProtocols:    os.Getenv("PAM_ALLOWED_PROTOCOLS"),
 		CommandDenyFile:     os.Getenv("PAM_COMMAND_DENY_FILE"),
+		DBStepUpFile:        os.Getenv("PAM_DB_STEPUP_FILE"),
+		DBStepUpTTL:         time.Duration(integer("PAM_DB_STEPUP_TTL_SEC", 120)) * time.Second,
 
 		AnalyticsInterval:      time.Duration(integer("PAM_ANALYTICS_INTERVAL_MIN", 0)) * time.Minute,
 		AnalyticsWindow:        time.Duration(integer("PAM_ANALYTICS_WINDOW_MIN", 60)) * time.Minute,

@@ -70,6 +70,13 @@ type DBConfig struct {
 	UpstreamTLS *tls.Config
 	// MaxRecordingBytes caps a session recording's output (0 = unlimited).
 	MaxRecordingBytes int64
+	// StepUpGuard marks SQL statements that require an in-session supervisor
+	// approval (Phase 30); nil disables step-up. StepUp coordinates the pause +
+	// decision (shared with the API), and StepUpTTL bounds how long a paused
+	// statement waits before it is denied (default 2m).
+	StepUpGuard *CommandGuard
+	StepUp      *session.StepUp
+	StepUpTTL   time.Duration
 }
 
 // DBProxy brokers PostgreSQL sessions with just-in-time credential injection.
@@ -92,6 +99,9 @@ type DBProxy struct {
 	authLimiter  *ratelimit.Limiter
 	upstreamTLS  *tls.Config
 	maxRecBytes  int64
+	stepupGuard  *CommandGuard
+	stepup       *session.StepUp
+	stepupTTL    time.Duration
 
 	bg sync.WaitGroup // background tasks (post-session rotation) drained on shutdown
 
@@ -132,7 +142,13 @@ func NewDB(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg DBConfig
 		authLimiter:  ratelimit.New(cfg.AuthRatePerMin),
 		upstreamTLS:  cfg.UpstreamTLS,
 		maxRecBytes:  cfg.MaxRecordingBytes,
+		stepupGuard:  cfg.StepUpGuard,
+		stepup:       cfg.StepUp,
+		stepupTTL:    cfg.StepUpTTL,
 		conns:        make(map[net.Conn]struct{}),
+	}
+	if d.stepupTTL <= 0 {
+		d.stepupTTL = 2 * time.Minute
 	}
 	if d.clientTLS == nil {
 		d.log.Warn("database proxy operator leg is NOT encrypted (set PAM_TLS_CERT/KEY or terminate TLS at the ingress)")
@@ -570,6 +586,9 @@ func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgpr
 				if d.blockedStatement(ctx, sendClient, actor, target, m.String, false) {
 					continue // refused by policy; session stays usable
 				}
+				if d.stepUpRefused(ctx, sendClient, actor, target, m.String, sid) {
+					continue // paused for a supervisor and denied/timed out; session stays usable
+				}
 				d.recordQuery(ctx, rec, actor, target, m.String, sid)
 			case *pgproto3.Parse:
 				if d.blockedStatement(ctx, sendClient, actor, target, m.Query, true) {
@@ -622,6 +641,37 @@ func (d *DBProxy) recordQuery(ctx context.Context, rec *Recording, actor string,
 		_, _ = rec.Write(line)
 	}
 	d.live.Publish(sid, line)
+}
+
+// stepUpRefused reports whether a statement matched the step-up guard and its
+// supervisor decision was a denial (or timeout) — in which case the caller
+// refuses the statement but keeps the session open. A match pauses the session
+// (audited db.stepup_required, surfaced on the live hub) and blocks on a
+// supervisor's decision via session.StepUp; an approval returns false so the
+// statement proceeds (audited db.stepup_approved). No step-up configured, or no
+// match, returns false immediately.
+func (d *DBProxy) stepUpRefused(ctx context.Context, sendClient func(...pgproto3.BackendMessage) error, actor string, target *store.Target, sql, sid string) bool {
+	if d.stepupGuard == nil || d.stepup == nil || sid == "" {
+		return false
+	}
+	pat, match := d.stepupGuard.Blocked(sql)
+	if !match {
+		return false
+	}
+	d.audit(ctx, actor, "db.stepup_required", fmt.Sprintf("target:%s pattern:%s sql:%s", target.Name, pat, auditCmd(sql)))
+	if d.live != nil {
+		d.live.Publish(sid, []byte("psql> [step-up: awaiting supervisor approval] "+strings.TrimSpace(sql)+"\r\n"))
+	}
+	if d.stepup.Await(ctx, sid, actor, strings.TrimSpace(sql), d.stepupTTL) {
+		d.audit(ctx, actor, "db.stepup_approved", fmt.Sprintf("target:%s sql:%s", target.Name, auditCmd(sql)))
+		return false // approved — the statement proceeds
+	}
+	d.audit(ctx, actor, "db.stepup_denied", fmt.Sprintf("target:%s sql:%s", target.Name, auditCmd(sql)))
+	_ = sendClient(
+		&pgproto3.ErrorResponse{Severity: "ERROR", Code: "42501", Message: "pamv1: statement requires supervisor approval (denied or timed out)"},
+		&pgproto3.ReadyForQuery{TxStatus: 'I'},
+	)
+	return true
 }
 
 // blockedStatement reports whether sql is blocked by command control. When it is,
