@@ -169,6 +169,8 @@ erDiagram
     int RequiredApprovals
     string ApprovedBy
     ptr_time_Time NotBefore
+    bool OneTime
+    ptr_time_Time ConsumedAt
   }
   AgentKey {
     int64 ID
@@ -337,7 +339,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 98 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 100 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -393,6 +395,8 @@ The 98 routes registered on the API mux, with the capability or guard each enfor
 | DELETE | `/api/profiles/{id}` | CapManageUsers |
 | POST | `/api/rdp-token` | CapConnect |
 | GET | `/api/reconcile` | CapManageCredentials |
+| GET | `/api/recordings` | CapReadAudit |
+| GET | `/api/recordings/{name}` | CapReadAudit |
 | GET | `/api/safes` | CapReadInventory |
 | POST | `/api/safes` | CapManageTargets |
 | DELETE | `/api/safes/{id}` | CapManageTargets |
