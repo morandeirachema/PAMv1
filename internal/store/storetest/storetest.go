@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -303,6 +304,85 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatal("scheduled approval must be active inside its window")
 	}
 
+	// --- one-time (single-use) approvals (Phase 26) ---
+	// A standing approval satisfies ConsumeApproval repeatedly without burning
+	// anything (alice's approval from above is standing).
+	if ok, id, err := st.ConsumeApproval(ctx, "alice", tgt.ID, now); err != nil || !ok || id != 0 {
+		t.Fatalf("ConsumeApproval(standing): ok=%v id=%d err=%v", ok, id, err)
+	}
+	if ok, id, _ := st.ConsumeApproval(ctx, "alice", tgt.ID, now); !ok || id != 0 {
+		t.Fatalf("standing approval must keep admitting: ok=%v id=%d", ok, id)
+	}
+	// A single-use approval admits exactly once, then is consumed everywhere.
+	ot := &store.AccessRequest{Requester: "gina", TargetID: tgt.ID, Reason: "one shot", Status: "pending", ExpiresAt: future, OneTime: true}
+	if err := st.CreateAccessRequest(ctx, ot); err != nil {
+		t.Fatalf("CreateAccessRequest(one-time): %v", err)
+	}
+	if g, _ := st.GetAccessRequest(ctx, ot.ID); g == nil || !g.OneTime || g.ConsumedAt != nil {
+		t.Fatalf("one-time flag not round-tripped: %+v", g)
+	}
+	if ok, id, _ := st.ConsumeApproval(ctx, "gina", tgt.ID, now); ok || id != 0 {
+		t.Fatal("a pending one-time request must not admit")
+	}
+	if err := st.DecideAccessRequest(ctx, ot.ID, "approved", "bob", now); err != nil {
+		t.Fatalf("DecideAccessRequest(one-time): %v", err)
+	}
+	if ok, _ := st.HasActiveApproval(ctx, "gina", tgt.ID, now); !ok {
+		t.Fatal("an approved unconsumed one-time approval must be active")
+	}
+	if ok, id, err := st.ConsumeApproval(ctx, "gina", tgt.ID, now); err != nil || !ok || id != ot.ID {
+		t.Fatalf("ConsumeApproval(one-time): ok=%v id=%d err=%v (want ok, id=%d)", ok, id, err, ot.ID)
+	}
+	if g, _ := st.GetAccessRequest(ctx, ot.ID); g == nil || g.ConsumedAt == nil {
+		t.Fatalf("consumed approval must carry ConsumedAt: %+v", g)
+	}
+	if ok, _ := st.HasActiveApproval(ctx, "gina", tgt.ID, now); ok {
+		t.Fatal("a consumed one-time approval must not be active")
+	}
+	if ok, id, _ := st.ConsumeApproval(ctx, "gina", tgt.ID, now); ok || id != 0 {
+		t.Fatal("a consumed one-time approval must not admit a second use")
+	}
+	// Racing consumers: one single-use approval admits exactly one of N.
+	race := &store.AccessRequest{Requester: "hank", TargetID: tgt.ID, Status: "approved", ExpiresAt: future, OneTime: true}
+	if err := st.CreateAccessRequest(ctx, race); err != nil {
+		t.Fatalf("CreateAccessRequest(race): %v", err)
+	}
+	var wg sync.WaitGroup
+	admitted := make(chan int64, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if ok, id, err := st.ConsumeApproval(ctx, "hank", tgt.ID, now); err == nil && ok {
+				admitted <- id
+			}
+		}()
+	}
+	wg.Wait()
+	close(admitted)
+	var wins int
+	for id := range admitted {
+		wins++
+		if id != race.ID {
+			t.Fatalf("racing consumer burned request %d, want %d", id, race.ID)
+		}
+	}
+	if wins != 1 {
+		t.Fatalf("one single-use approval admitted %d racing consumers, want exactly 1", wins)
+	}
+	// When both a standing and a one-time approval are active, the standing one
+	// is preferred and the single-use survives.
+	both := &store.AccessRequest{Requester: "alice", TargetID: tgt.ID, Status: "approved", ExpiresAt: future, OneTime: true}
+	if err := st.CreateAccessRequest(ctx, both); err != nil {
+		t.Fatalf("CreateAccessRequest(both): %v", err)
+	}
+	if ok, id, _ := st.ConsumeApproval(ctx, "alice", tgt.ID, now); !ok || id != 0 {
+		t.Fatalf("standing approval must be preferred over a one-time one: ok=%v id=%d", ok, id)
+	}
+	if g, _ := st.GetAccessRequest(ctx, both.ID); g == nil || g.ConsumedAt != nil {
+		t.Fatalf("the one-time approval must survive while a standing one admits: %+v", g)
+	}
+
 	// --- checkouts (exclusive lease) ---
 	co := &store.Checkout{CredentialID: cred.ID, TargetID: tgt.ID, Holder: "alice", ExpiresAt: future}
 	if err := st.CreateCheckout(ctx, co, now); err != nil {
@@ -357,6 +437,27 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 	if evs, err := st.ExportAudit(ctx, time.Time{}, future); err != nil || len(evs) == 0 {
 		t.Fatalf("ExportAudit: %d err %v", len(evs), err)
+	}
+
+	// --- FindAuditDetail (recording-hash verification, Phase 26) ---
+	if err := st.AppendAudit(ctx, &store.AuditEvent{Actor: "proxy", Action: "session.record", Detail: "target:t file:a.cast sha256:abcd1234 chain:ff"}); err != nil {
+		t.Fatalf("AppendAudit(record): %v", err)
+	}
+	if ok, err := st.FindAuditDetail(ctx, "session.record", "sha256:abcd1234"); err != nil || !ok {
+		t.Fatalf("FindAuditDetail(hit): ok=%v err=%v", ok, err)
+	}
+	if ok, _ := st.FindAuditDetail(ctx, "winrm.run", "sha256:abcd1234"); ok {
+		t.Fatal("FindAuditDetail must match the action, not just the detail")
+	}
+	if ok, _ := st.FindAuditDetail(ctx, "session.record", "sha256:ffff0000"); ok {
+		t.Fatal("FindAuditDetail must not match a different detail")
+	}
+	// The substring is literal: SQL LIKE wildcards must not widen the match.
+	if ok, _ := st.FindAuditDetail(ctx, "session.record", "sha256:a_cd1234"); ok {
+		t.Fatal("FindAuditDetail must treat _ literally, not as a wildcard")
+	}
+	if ok, _ := st.FindAuditDetail(ctx, "session.record", "sha256:%"); ok {
+		t.Fatal("FindAuditDetail must treat % literally, not as a wildcard")
 	}
 
 	// --- users ---

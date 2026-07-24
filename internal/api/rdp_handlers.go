@@ -105,7 +105,9 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.requireApprovalFor(target) && !principal.BreakGlass {
-		approved, aerr := s.store.HasActiveApproval(r.Context(), principal.Name, target.ID, time.Now())
+		// Connect-time approval gate: a single-use approval is consumed by this
+		// very connection (Phase 26), so it cannot admit a second RDP session.
+		approved, consumedID, aerr := s.store.ConsumeApproval(r.Context(), principal.Name, target.ID, time.Now())
 		if aerr != nil {
 			storeError(w, aerr)
 			return
@@ -114,6 +116,9 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 			s.audit(withPrincipal(r.Context(), principal), "access.denied", "target:"+target.Name+" reason:approval-required")
 			writeError(w, http.StatusForbidden, "connection requires an approved access request")
 			return
+		}
+		if consumedID != 0 {
+			s.audit(withPrincipal(r.Context(), principal), "access.consumed", fmt.Sprintf("request:%d target:%s", consumedID, target.Name))
 		}
 	}
 	// Enforce the concurrent-session caps before decrypting a secret, as the SSH and

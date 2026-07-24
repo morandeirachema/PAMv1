@@ -238,6 +238,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_TICKET_PATTERN` / `PAM_TICKET_VALIDATE_URL` | | | Ticket format regex / ITSM validation webhook (`POST {"ticket":…}` → 2xx = valid). |
 | `PAM_APPROVALS_REQUIRED` | | `1` | Default distinct approvers per access request — N-of-M chains (Phase 21). |
 | `PAM_REQUIRE_REASON` | | `false` | Reject an access request that carries no reason. |
+| `PAM_ACCESS_ONE_TIME` | | `false` | Make **every** access request single-use (Phase 26): the first privileged use its approval admits consumes it. Requests can also opt in individually (`one_time`). |
 | `PAM_CHECKOUT_TTL_MIN` | | `30` | Credential checkout lease lifetime (minutes). |
 | `PAM_OT_AIRGAP` | | `false` | Disable all outbound calls (alert webhooks) for air-gapped sites. |
 | `PAM_REVEAL_DISABLED` | | `false` | Make `reveal` break-glass-only (also forces the broker's `reveal_credential` closed). |
@@ -1110,7 +1111,22 @@ truncated. This is the same signed-head mechanism the broker chain exposes at
 
 Each proxied session is recorded in [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/)
 under `PAM_RECORDING_DIR`, and its SHA-256 is written to the audit trail (tamper
-evidence). Replay with [asciinema](https://asciinema.org/): `asciinema play <file>.cast`.
+evidence). Replay with [asciinema](https://asciinema.org/): `asciinema play <file>.cast` —
+or straight from the console (Phase 26): **Session recordings**, menu **19**,
+lists what's on disk and replays a recording in a keyboard-first player (Space
+pause, F5 restart, F6 speed). At replay time the server **recomputes the file's
+SHA-256 and checks it against the audit trail** (`session.record` / `winrm.run`):
+the response carries `X-PAM-Recording-Audited: true|false`, the player shows the
+verdict, and the replay itself is audited `session.playback`. The API twin:
+
+```bash
+curl -s https://pam.example/api/recordings -H "X-API-Key: $PAM_API_KEY"          # list
+curl -sD- https://pam.example/api/recordings/<name>.cast -H "X-API-Key: $PAM_API_KEY" -o session.cast
+```
+
+Both need `read_audit` (auditor+). A recording flagged `false` was tampered with,
+truncated, or written outside the audited path — treat it as evidence of a
+problem, not as evidence of the session.
 
 ### 9.4 Supervising live sessions & command control (Phase 16)
 
@@ -1293,6 +1309,7 @@ scores in your environment.
 
 | Date | Change |
 |---|---|
+| 2026-07-24 | **Phase 26 — recording playback + one-time access.** `GET /api/recordings[/{name}]` (`read_audit`) lists and replays stored recordings with the SHA-256 re-verified against the audit trail (`X-PAM-Recording-Audited`; replay audited `session.playback`); console menu 19 player. Access requests can be **single-use** (`one_time`, or `PAM_ACCESS_ONE_TIME` globally): every gate — SSH/DB proxies, RDP, reveal, checkout, WinRM run, broker tools — consumes the approval on first use (audited `access.consumed`). §9.3, §5, env table |
 | 2026-07-24 | **Phase 25 — console parity.** New 5250 screens: *Work with Safes* (menu 16, incl. member management and target assignment via *Work with Targets* option 8), *Certification campaigns* (menu 17: snapshot / certify / revoke / close), *Risk analytics* (menu 18), and a **live session watch pane** (*Active Sessions* option 5). The file-request form gained the Phase 20/21 fields (ticket, N-of-M approvals, scheduled window). Portal-only — no new routes, schema, or env. §5, §9.4, §9.6, §9.7 |
 | 2026-07-23 | **In-portal RDP viewer.** The portal now vendors the Apache Guacamole JS client (`/static/guacamole-common.min.js`, see `NOTICE`) and renders RDP on a canvas — *Work with Targets* → option **7**, `Ctrl+Alt+Q` to disconnect. Adds `POST /api/rdp-token` (short-lived WS token, audited `rdp.token`) and widens the portal CSP for the canvas (`img-src data: blob:`, `script-src 'self'`). Verification: [RDP-TESTING.md](RDP-TESTING.md). See §5 → *RDP*. |
 | 2026-07-23 | **Bundled guacd (RDP broker).** The Docker compose runs a hardened `guacd` service (`PAM_GUACD_ADDR=guacd:4822` wired in); the raw K8s manifests add `deploy/k8s/guacd.yaml` (Deployment + ClusterIP + NetworkPolicy); the Helm chart adds it under `guacd.enabled=true`. Internal-only in every case. See §5 → *RDP*. |
