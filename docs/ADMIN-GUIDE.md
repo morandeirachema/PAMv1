@@ -250,6 +250,8 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_BROKER_TOKEN_TTL_MIN` | | `15` | Lifetime of the single-use approval resume token (minutes). |
 | `PAM_BROKER_RATE_PER_MIN` | | `0` (off) | Per-agent tool-call rate limit. |
 | `PAM_BROKER_MAX_ARG_BYTES` | | `16384` | Cap on a tool call's serialized arguments (0 = off). |
+| `PAM_BROKER_AUDIT_CHECKPOINT_EVERY` | | `0` (off) | Emit a signed **in-chain** audit checkpoint every N broker events (Phase 27) — defense-in-depth over the HMAC (catches an edit even under HMAC-key compromise). |
+| `PAM_BROKER_AUDIT_SIGN_PREV` | | — | Comma-separated base64 ed25519 **public** keys still trusted after a signing-key rotation (overlap window); published alongside the current key at `GET /v1/audit/jwks`. |
 | `PAM_BROKER_TRUST_DOMAIN` / `_TRUST_DOMAIN_JWKS` / `_AUDIENCE` | SVID only | — | SPIFFE JWT-SVID verification: trust-domain host, file JWKS, and required audience. |
 | `PAM_BROKER_MAX_DELEGATION_DEPTH` | | `1` | RFC 8693 `act`-chain delegation depth cap. |
 
@@ -860,6 +862,29 @@ edit or mid-history deletion); `GET /v1/audit/head` returns an ed25519-signed
 anchor so an auditor can later detect tail truncation. Appends are serialized
 across processes by a Postgres advisory lock, so a rolling deploy or HA replica
 can't fork the chain.
+
+**Separation of duties (Phase 27):** a `require_approval` rule's `approvers:` list
+names the groups (role names or usernames) permitted to decide; an approver
+outside every named group is refused (`broker.approval.refused`, 403) and the call
+stays parked. Admins are the superuser bypass. **Periodic in-chain checkpoints**
+(`PAM_BROKER_AUDIT_CHECKPOINT_EVERY`) add ed25519 signatures over the running head
+inside the chain — so even a leaked HMAC key can't forge history undetectably
+(`/v1/audit/verify` reports `bad_checkpoint`). Pass `?min_entries=N` (from an
+archived checkpoint's count) to detect **tail truncation** without an out-of-band
+anchor. Rotate the checkpoint signer with an overlap: set the new
+`PAM_BROKER_AUDIT_SIGN_SEED` and list the old **public** key in
+`PAM_BROKER_AUDIT_SIGN_PREV`; both are published as a JWKS at `GET /v1/audit/jwks`
+for external verification. **OCSF export:** `GET /api/audit/ocsf` (add
+`?format=ndjson` for most collectors) delivers the trail as OCSF events (API
+Activity 6003 / Detection Finding 2004) for your SIEM. The full broker threat
+model is in [AGENT-THREAT-MODEL.md](AGENT-THREAT-MODEL.md).
+
+**MCP over SSE (Phase 27):** an MCP client can open `GET /mcp` for the
+Server-Sent-Events transport (server→client messages + heartbeats) in addition to
+`POST /mcp`. When a client advertises `elicitation` support, an approval-gated tool
+call prompts the running user to confirm over the stream; **declining withdraws the
+call**, while accepting only records intent — a separate human approver is still
+required (four-eyes).
 
 For SPIFFE JWT-SVID agents and RFC 8693 delegation, set `PAM_BROKER_TRUST_DOMAIN`,
 `PAM_BROKER_TRUST_DOMAIN_JWKS`, and `PAM_BROKER_AUDIENCE`; delegation depth is

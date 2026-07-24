@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–26 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
+**Phases 0–27 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
 with command control, safes, dependent-account propagation), optional CyberArk Conjur
@@ -19,10 +19,14 @@ Phase 23) — the first **Tier-4** ecosystem gap: a **Conjur-style
 application-secrets API** for non-agent apps (Phase 24), **console parity**
 (Phase 25) — 5250 screens for every backend capability that had been API-only
 (safes, certification campaigns, risk analytics, a live session viewer, and the
-Phase 20/21 request-workflow fields) — and **session-recording playback +
+Phase 20/21 request-workflow fields), **session-recording playback +
 one-time access** (Phase 26): audited, hash-verified replay of stored session
 recordings from the portal, and single-use approvals consumed by the first
-connection they admit. The portal is also **keyboard-first**
+connection they admit — and **AI-agent broker completion** (Phase 27): approver-group
+separation of duties, periodic ed25519 in-chain audit checkpoints with signing-key
+rotation + JWKS and a truncation floor, OCSF SIEM export, and the MCP SSE transport
+with elicitation, bringing the broker to parity with the [pam-research](https://github.com/morandeirachema/pam-research)
+prototype. The portal is also **keyboard-first**
 (mouse optional). See their sections below. Beyond those,
 a number of items genuinely require external infrastructure or a paid account to build
 and verify honestly, so they are left as documented follow-ons rather than faked. The
@@ -375,6 +379,20 @@ admitting connections for its whole window.
 - [x] **Consume-on-use in every gate**: the SSH proxy, the PostgreSQL proxy, the RDP tunnel, and the API's approval gate (reveal, checkout, WinRM run, broker tool calls) all burn a single-use approval via `store.ConsumeApproval` — atomic under racing connects (`FOR UPDATE SKIP LOCKED`; exactly one of two simultaneous dials wins), a standing approval is preferred and never burned, and a consumed approval is inactive everywhere (`HasActiveApproval` honors it). Consumption is deliberately fail-closed: an admitted connection that later fails upstream still spends the approval
 - [x] **Console**: the file-request form takes a one-time flag; the approver list shows `1x` / `used`
 - [x] **Tests**: store contract (round-trip, burn-once, standing-approval preference, an 8-way race admits exactly one consumer), end-to-end SSH and PostgreSQL proxy tests (a single-use approval admits exactly one connection; the second is refused before any upstream contact), API tests (checkout burns the approval; `PAM_ACCESS_ONE_TIME` forces one-time), and playback tests (listing, byte-exact serve, verified/unaudited verdicts, RBAC, name hygiene)
+
+## Phase 27 — AI-agent broker completion (Solution-01 parity) ✅
+
+The AI-agent access broker (Phase 13) ported the [pam-research](https://github.com/morandeirachema/pam-research) control loop; this phase closes the honestly-buildable gaps that remained, so the broker reaches parity with that research prototype's Solution 01 without faking any infra-bound part.
+
+- [x] **Approver-group separation of duties**: a `require_approval` rule's `approvers:` list is now **enforced at decision time** — `broker.Decide` takes an `Approver{Name, Groups, IsAdmin}` (groups = the principal's name + role names, via `auth.Principal.ApproverGroups`) and refuses a decider who is not a member of the rule's group (`broker.approval.refused`, HTTP 403); the parked call stays decidable by someone authorized. Admins are the documented superuser bypass; four-eyes (an agent's owner can't approve its own call) is unchanged
+- [x] **Periodic in-chain signed checkpoints**: `PAM_BROKER_AUDIT_CHECKPOINT_EVERY` makes the chain append a `broker.audit.checkpoint` every N events — an ed25519 signature over the running head, itself part of the HMAC chain. This is defense-in-depth over the keyed-HMAC: an attacker who edits history **and** recomputes every HMAC (a leaked HMAC key) still can't forge the checkpoint signature, so `VerifyFloor` flags a `bad_checkpoint`
+- [x] **Truncation floor**: `GET /v1/audit/verify?min_entries=N` (driven from a previously archived checkpoint count) reports `truncated` when the chain is now shorter — tail-truncation detection without an out-of-band anchor
+- [x] **Signing-key rotation + JWKS**: the checkpoint signer rotates with an overlap window (`PAM_BROKER_AUDIT_SIGN_PREV` trusts rotated-out public keys for verification); current + previous public keys are published as a JWKS at `GET /v1/audit/jwks`, so an external auditor validates an archived checkpoint across a rotation
+- [x] **OCSF SIEM export**: `internal/ocsf` maps the audit trail to the [Open Cybersecurity Schema Framework](https://schema.ocsf.io/) — routine actions to **API Activity (6003)**, security-relevant ones (denials, blocked commands, break-glass, flagged risk) to **Detection Finding (2004)** — served at `GET /api/audit/ocsf` (`?format=ndjson` for collectors); the export is audited `audit.ocsf_export`
+- [x] **MCP SSE transport + elicitation**: `GET /mcp` implements the MCP 2024-11-05 HTTP+SSE transport (session registry, `endpoint` event, heartbeats); `initialize` advertises `elicitation`/`logging`. An approval-gated `tools/call` from an elicitation-capable client prompts the running user over the stream (`elicitation/create`) — a **decline withdraws the requester's own** parked call (`broker.tool_call.withdrawn`; you may always cancel what you asked for, no approver needed), an **accept** only records intent (`broker.elicit.accepted`) and does **not** satisfy the human approver gate (four-eyes preserved)
+- [x] **Threat model doc**: [docs/AGENT-THREAT-MODEL.md](docs/AGENT-THREAT-MODEL.md) maps the OWASP LLM Top 10 (2025) and MITRE ATLAS techniques to the broker's controls, and states the boundaries (admin bypass, in-band truncation limit) honestly
+- [x] **Tests**: auditchain (checkpoints emitted + verified, key-compromise edit caught by the signature, rotation overlap, truncation floor), `ocsf` (classification + envelope), and API end-to-end (SoD refuses an out-of-group approver and admits a member; JWKS shape; verify floor; OCSF JSON + NDJSON; a full MCP SSE + elicitation round-trip where a decline withdraws the call and injects no credential)
+- Deferred (documented, infra-bound): SPIRE workload attestation and RFC 8693 token-**exchange** minting (need an STS/SPIRE), a real OAuth 2.1 AS behind RFC 9728, and Vault-custodied signing keys — see [EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)
 
 ## Portal: keyboard-first navigation ✅
 

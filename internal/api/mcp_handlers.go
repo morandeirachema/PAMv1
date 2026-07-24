@@ -15,7 +15,9 @@ import (
 // serveMCP handles POST /mcp: a JSON-RPC 2.0 endpoint exposing the broker's tools
 // to MCP clients. Auth is the same agentAuth as REST, and tools/call routes
 // through the same broker.ProcessCall, so policy and audit are identical across
-// the two transports.
+// the two transports. When ?session= names an open SSE stream (Phase 27), a body
+// that is a JSON-RPC RESPONSE is routed as an elicitation answer instead of being
+// dispatched as a request.
 func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request, id *agentid.Identity) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxToolCallBytes)
 	body, err := io.ReadAll(r.Body)
@@ -23,7 +25,12 @@ func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request, id *agentid.Id
 		writeError(w, http.StatusBadRequest, "request body too large or unreadable")
 		return
 	}
-	resp, ok := s.mcpDispatcher(id).Handle(r.Context(), body)
+	sess := s.mcpSessions.get(r.URL.Query().Get("session"))
+	if sess != nil && s.routeElicitationResponse(sess, body) {
+		w.WriteHeader(http.StatusAccepted) // an elicitation answer, delivered to the waiting call
+		return
+	}
+	resp, ok := s.mcpDispatcher(id, sess).Handle(r.Context(), body)
 	if !ok {
 		w.WriteHeader(http.StatusNoContent) // JSON-RPC notification: no response body
 		return
@@ -31,14 +38,55 @@ func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request, id *agentid.Id
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// mcpDispatcher builds the JSON-RPC method table bound to the authenticated agent.
-func (s *Server) mcpDispatcher(id *agentid.Identity) mcp.Dispatcher {
+// routeElicitationResponse detects a JSON-RPC response body (an id, a
+// result/error, and no method) answering a server elicitation/create, and
+// delivers it to the waiting elicit call. Returns false for anything else (a
+// normal request), which the caller dispatches.
+func (s *Server) routeElicitationResponse(sess *mcpSession, body []byte) bool {
+	var msg struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+		Result *struct {
+			Action  string         `json:"action"`
+			Content map[string]any `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(body, &msg); err != nil || msg.Method != "" || msg.Result == nil || len(msg.ID) == 0 {
+		return false
+	}
+	var reqID string
+	if json.Unmarshal(msg.ID, &reqID) != nil {
+		return false
+	}
+	return sess.resolveElicit(reqID, elicitResult{Action: msg.Result.Action, Content: msg.Result.Content})
+}
+
+// mcpDispatcher builds the JSON-RPC method table bound to the authenticated agent
+// and (optionally) its open SSE session, which enables server-initiated
+// elicitation on approval-gated calls.
+func (s *Server) mcpDispatcher(id *agentid.Identity, sess *mcpSession) mcp.Dispatcher {
 	return mcp.Dispatcher{
-		"initialize": func(context.Context, json.RawMessage) (any, *mcp.Error) {
+		"initialize": func(_ context.Context, params json.RawMessage) (any, *mcp.Error) {
+			// Note whether the client advertised elicitation support so a later
+			// approval-gated tool call can prompt the running user over the SSE stream.
+			if sess != nil {
+				var p struct {
+					Capabilities struct {
+						Elicitation *json.RawMessage `json:"elicitation"`
+					} `json:"capabilities"`
+				}
+				if json.Unmarshal(params, &p) == nil && p.Capabilities.Elicitation != nil {
+					sess.elicitCapable.Store(true)
+				}
+			}
 			return map[string]any{
 				"protocolVersion": mcp.Version,
-				"capabilities":    map[string]any{"tools": map[string]any{}},
-				"serverInfo":      map[string]any{"name": "pamv1-broker", "version": "13"},
+				"capabilities": map[string]any{
+					"tools":       map[string]any{},
+					"logging":     map[string]any{},
+					"elicitation": map[string]any{},
+				},
+				"serverInfo": map[string]any{"name": "pamv1-broker", "version": "27"},
 			}, nil
 		},
 		"ping": func(context.Context, json.RawMessage) (any, *mcp.Error) {
@@ -66,6 +114,27 @@ func (s *Server) mcpDispatcher(id *agentid.Identity) mcp.Dispatcher {
 			}
 			out := s.broker.ProcessCall(ctx, id, broker.Call{Tool: p.Name, Args: p.Arguments})
 			s.auditAs(ctx, id.AgentName, "broker.tool_call", fmt.Sprintf("tool:%s status:%s call:%s via:mcp", p.Name, out.Status, out.CallID))
+			// Elicitation (Phase 27): if the call parked for approval and the client
+			// declared elicitation support, ask the running user to confirm over the
+			// SSE stream. A decline WITHDRAWS the requester's own pending call (no
+			// four-eyes needed to cancel what you asked for); an accept only records
+			// intent — the human approver gate is unchanged (four-eyes preserved).
+			if out.Status == broker.StatusPendingApproval && sess != nil && sess.elicitCapable.Load() {
+				schema := map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"confirm": map[string]any{"type": "boolean", "description": "proceed with this privileged request"}},
+					"required":   []string{"confirm"},
+				}
+				res, gotAnswer := sess.elicit(ctx, fmt.Sprintf("Confirm privileged request %q on your behalf (still needs a separate human approver).", p.Name), schema)
+				switch {
+				case gotAnswer && (res.Action == "decline" || res.Action == "cancel"):
+					wout, _ := s.broker.Withdraw(ctx, out.CallID, id.AgentName)
+					s.auditAs(ctx, id.AgentName, "broker.elicit.declined", fmt.Sprintf("tool:%s call:%s via:mcp", p.Name, out.CallID))
+					return toolResult(wout), nil
+				case gotAnswer && res.Action == "accept":
+					s.auditAs(ctx, id.AgentName, "broker.elicit.accepted", fmt.Sprintf("tool:%s call:%s via:mcp", p.Name, out.CallID))
+				}
+			}
 			return toolResult(out), nil
 		},
 		"broker/resume": func(ctx context.Context, params json.RawMessage) (any, *mcp.Error) {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/morandeirachema/pamv1/internal/ocsf"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
@@ -99,6 +100,57 @@ func (s *Server) exportAudit(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
 	_, _ = w.Write(body)
+}
+
+// exportOCSF renders a scoped audit slice as OCSF events for SIEM ingestion
+// (Phase 27). It takes the same since/until/actor/action scoping as exportAudit;
+// ?format=ndjson streams one OCSF event per line (the newline-delimited form most
+// SIEM collectors expect), otherwise a JSON array under "events". The export is
+// itself audited. Requires CapReadAudit.
+func (s *Server) exportOCSF(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	since, err := parseTimeParam(q.Get("since"))
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "since must be RFC3339")
+		return
+	}
+	until, err := parseTimeParam(q.Get("until"))
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "until must be RFC3339")
+		return
+	}
+	if until.IsZero() {
+		until = time.Now().UTC()
+	}
+	if since.IsZero() {
+		since = until.Add(-defaultExportWindow)
+	}
+	events, err := s.store.ExportAudit(r.Context(), since, until)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	events = filterAudit(events, q.Get("actor"), q.Get("action"))
+	ocsfEvents := ocsf.Events(events)
+
+	s.audit(r.Context(), "audit.ocsf_export", fmt.Sprintf(
+		"events:%d format:%s since:%s until:%s actor:%q action:%q",
+		len(ocsfEvents), q.Get("format"), q.Get("since"), q.Get("until"), q.Get("actor"), q.Get("action")))
+
+	if q.Get("format") == "ndjson" {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Content-Disposition", "attachment; filename=pamv1-audit-ocsf.ndjson")
+		enc := json.NewEncoder(w)
+		for _, ev := range ocsfEvents {
+			if err := enc.Encode(ev); err != nil {
+				return // client went away mid-stream
+			}
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"schema": ocsf.SchemaVersion, "count": len(ocsfEvents), "events": ocsfEvents,
+	})
 }
 
 // csvSafe defuses spreadsheet formula injection: a cell that a spreadsheet would

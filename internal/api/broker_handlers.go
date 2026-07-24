@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -8,6 +10,7 @@ import (
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/agentid"
+	"github.com/morandeirachema/pamv1/internal/auditchain"
 	"github.com/morandeirachema/pamv1/internal/broker"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
@@ -127,12 +130,14 @@ type decisionIn struct {
 
 // decideBrokerApproval records an approver's decision on a parked tool call. On
 // approve the broker executes the call server-side (JIT) and returns the result;
-// on reject it becomes denied.
+// on reject it becomes denied. Separation of duties (Phase 27): the decider must
+// belong to one of the rule's approver groups (or be an admin), else 403.
 func (s *Server) decideBrokerApproval(w http.ResponseWriter, r *http.Request) {
 	var in decisionIn
 	if !readJSON(w, r, &in) {
 		return
 	}
+	p := principalFrom(r.Context())
 	approver := actorFrom(r.Context())
 	// Four-eyes: the human who owns the agent may not approve their own agent's
 	// call (mirrors the human access-request self-approval refusal).
@@ -140,7 +145,13 @@ func (s *Server) decideBrokerApproval(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "cannot approve a call for an agent you own (four-eyes)")
 		return
 	}
-	out, ok := s.broker.Decide(r.Context(), r.PathValue("id"), approver, in.Approve)
+	out, ok, err := s.broker.Decide(r.Context(), r.PathValue("id"),
+		broker.Approver{Name: approver, Groups: p.ApproverGroups(), IsAdmin: p.IsAdmin()}, in.Approve)
+	if errors.Is(err, broker.ErrNotApprover) {
+		s.audit(r.Context(), "broker.approval.refused", fmt.Sprintf("call:%s reason:not-in-approver-group", r.PathValue("id")))
+		writeError(w, http.StatusForbidden, "you are not a member of this call's approver group (separation of duties)")
+		return
+	}
 	if !ok {
 		writeError(w, http.StatusNotFound, "unknown or already-decided approval")
 		return
@@ -229,14 +240,43 @@ func (s *Server) listBrokerAudit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, events)
 }
 
-// verifyBrokerAudit walks the broker audit chain and reports whether it is intact.
+// verifyBrokerAudit walks the broker audit chain and reports whether it is intact:
+// the HMAC chain reproduces, every in-chain signed checkpoint verifies against a
+// trusted key, and — when ?min_entries=N is supplied (from a previously archived
+// checkpoint count) — the chain has not been tail-truncated below that floor.
 func (s *Server) verifyBrokerAudit(w http.ResponseWriter, r *http.Request) {
-	ok, brokeAt, err := s.auditChain.Verify(r.Context())
+	var minEntries int64
+	if q := r.URL.Query().Get("min_entries"); q != "" {
+		n, err := strconv.ParseInt(q, 10, 64)
+		if err != nil || n < 0 {
+			writeError(w, http.StatusUnprocessableEntity, "min_entries must be a non-negative integer")
+			return
+		}
+		minEntries = n
+	}
+	res, err := s.auditChain.VerifyFloor(r.Context(), minEntries)
 	if err != nil {
 		storeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": ok, "broke_at_id": brokeAt})
+	writeJSON(w, http.StatusOK, res)
+}
+
+// brokerAuditJWKS publishes the ed25519 public keys trusted to sign audit
+// checkpoints (current + rotated-out predecessors) as a JWKS, so an external
+// auditor can verify an archived checkpoint's signature across a signing-key
+// rotation. Requires CapReadAudit.
+func (s *Server) brokerAuditJWKS(w http.ResponseWriter, r *http.Request) {
+	keys := s.auditChain.TrustedKeys()
+	jwks := make([]map[string]any, 0, len(keys))
+	for _, k := range keys {
+		jwks = append(jwks, map[string]any{
+			"kty": "OKP", "crv": "Ed25519", "use": "sig", "alg": "EdDSA",
+			"kid": auditchain.KeyID(k),
+			"x":   base64.RawURLEncoding.EncodeToString(k),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"keys": jwks})
 }
 
 // brokerAuditHead returns a signed checkpoint anchoring the chain, for offline
