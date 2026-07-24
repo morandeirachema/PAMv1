@@ -719,6 +719,42 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatal("a deleted agent key must not resolve")
 	}
 
+	// --- operator SSH certificates + KRL revocation (Phase 28) ---
+	vb := future
+	c1 := &store.SSHCert{Serial: 1001, KeyID: "pamv1:alice@web", Principal: "root", Actor: "alice", ValidBefore: &vb}
+	if err := st.RecordSSHCert(ctx, c1); err != nil {
+		t.Fatalf("RecordSSHCert: %v", err)
+	}
+	if c1.ID == 0 || c1.IssuedAt.IsZero() {
+		t.Fatalf("RecordSSHCert did not populate ID/IssuedAt: %+v", c1)
+	}
+	if err := st.RecordSSHCert(ctx, &store.SSHCert{Serial: 1001}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate serial: want ErrConflict, got %v", err)
+	}
+	if err := st.RecordSSHCert(ctx, &store.SSHCert{Serial: 1002, Principal: "svc", Actor: "bob"}); err != nil {
+		t.Fatalf("RecordSSHCert(2): %v", err)
+	}
+	// Nothing revoked yet.
+	if revoked, err := st.ListRevokedSSHCertSerials(ctx); err != nil || len(revoked) != 0 {
+		t.Fatalf("ListRevokedSSHCertSerials(none): %v err %v", revoked, err)
+	}
+	// Revoke one; it appears in the KRL serial list, and a re-revoke conflicts.
+	if err := st.RevokeSSHCert(ctx, 1001, "carol", now); err != nil {
+		t.Fatalf("RevokeSSHCert: %v", err)
+	}
+	if err := st.RevokeSSHCert(ctx, 1001, "carol", now); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("double revoke: want ErrConflict, got %v", err)
+	}
+	if err := st.RevokeSSHCert(ctx, 9999, "carol", now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("revoke unknown: want ErrNotFound, got %v", err)
+	}
+	if revoked, err := st.ListRevokedSSHCertSerials(ctx); err != nil || len(revoked) != 1 || revoked[0] != 1001 {
+		t.Fatalf("ListRevokedSSHCertSerials(one): %v err %v", revoked, err)
+	}
+	if certs, err := st.ListSSHCerts(ctx, 10); err != nil || len(certs) != 2 || certs[0].Serial != 1002 {
+		t.Fatalf("ListSSHCerts newest-first: %+v err %v", certs, err)
+	}
+
 	// Application-secrets API (Phase 24): app keys + per-app secret grants
 	// (default-deny; grants cascade on credential or app delete).
 	appTarget := &store.Target{Name: "app-host", Host: "10.9.9.9", Port: 22, OSType: "linux", Protocol: "ssh"}

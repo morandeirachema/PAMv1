@@ -199,8 +199,10 @@ type Options struct {
 	BrokerSVIDVerifier agentid.Verifier
 	// CA (optional) is the Zero Standing Privilege SSH certificate authority
 	// (Phase 22). When set, GET /api/ca/ssh publishes its public key so operators
-	// can install it in a target's TrustedUserCAKeys; nil disables ZSP.
-	CA *sshca.CertAuthority
+	// can install it in a target's TrustedUserCAKeys; nil disables ZSP. It also
+	// backs operator-issued certificates (Phase 28), capped at SSHOperatorCertTTL.
+	CA                 *sshca.CertAuthority
+	SSHOperatorCertTTL time.Duration
 	// Analytics (optional) enables privileged threat analytics (Phase 23): the
 	// GET /api/analytics/risk endpoint and, when AnalyticsInterval > 0, a
 	// background risk-scoring worker. nil disables both. AnalyticsWindow is how
@@ -245,6 +247,7 @@ type Server struct {
 	airGap             bool
 	discoveryDial      func(ctx context.Context, network, addr string) (net.Conn, error)
 	sshCA              *sshca.CertAuthority
+	sshOperatorCertTTL time.Duration
 	analytics          *analytics.Engine
 	analyticsWindow    time.Duration
 	analyticsCooldown  time.Duration
@@ -434,6 +437,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		reconfigure:        opts.Reconfigure,
 		auditSignKey:       opts.AuditSignKey,
 		sshCA:              opts.CA,
+		sshOperatorCertTTL: opts.SSHOperatorCertTTL,
 		analytics:          opts.Analytics,
 		analyticsWindow:    opts.AnalyticsWindow,
 		analyticsAutoKill:  opts.AnalyticsAutoKill,
@@ -612,6 +616,11 @@ func (s *Server) routes() {
 	// Zero Standing Privilege (Phase 22): publish the SSH CA public key so an
 	// operator can install it in a target's TrustedUserCAKeys. 404 when ZSP is off.
 	s.mux.Handle("GET /api/ca/ssh", s.authz(auth.CapReadInventory, s.sshCAPublicKey))
+	// Operator-issued SSH certificates + KRL revocation (Phase 28).
+	s.mux.Handle("POST /api/ca/ssh/challenge", s.authz(auth.CapConnect, s.sshCACertChallenge))
+	s.mux.Handle("POST /api/ca/ssh/sign", s.authz(auth.CapConnect, s.signOperatorCert))
+	s.mux.Handle("POST /api/ca/ssh/revoke", s.authz(auth.CapManageTargets, s.revokeOperatorCert))
+	s.mux.Handle("GET /api/ca/ssh/krl", s.authz(auth.CapReadInventory, s.sshCAKRL))
 
 	s.mux.Handle("POST /api/credentials", s.authz(auth.CapManageCredentials, s.createCredential))
 	s.mux.Handle("GET /api/credentials", s.authz(auth.CapReadInventory, s.listCredentials))

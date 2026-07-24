@@ -31,6 +31,7 @@ type Memstore struct {
 	audit         []store.AuditEvent
 	auditKey      []byte // set ⇒ chain the primary audit trail
 	agentKeys     map[int64]store.AgentKey
+	sshCerts      map[int64]store.SSHCert
 	appKeys       map[int64]store.AppKey
 	appGrants     map[int64]store.AppSecretGrant
 	brokerLog     []store.BrokerAuditEvent
@@ -57,6 +58,7 @@ func New() *Memstore {
 		accessReq:     make(map[int64]store.AccessRequest),
 		checkouts:     make(map[int64]store.Checkout),
 		agentKeys:     make(map[int64]store.AgentKey),
+		sshCerts:      make(map[int64]store.SSHCert),
 		appKeys:       make(map[int64]store.AppKey),
 		appGrants:     make(map[int64]store.AppSecretGrant),
 		brokerTok:     make(map[string]store.BrokerToken),
@@ -1027,6 +1029,74 @@ func (m *Memstore) DeleteAgentKey(_ context.Context, id int64) error {
 	}
 	delete(m.agentKeys, id)
 	return nil
+}
+
+// RecordSSHCert stores an issued operator SSH certificate (Phase 28); ErrConflict
+// if the serial is already recorded.
+func (m *Memstore) RecordSSHCert(_ context.Context, c *store.SSHCert) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range m.sshCerts {
+		if existing.Serial == c.Serial {
+			return store.ErrConflict
+		}
+	}
+	c.ID = m.id()
+	c.IssuedAt = time.Now().UTC()
+	m.sshCerts[c.ID] = *c
+	return nil
+}
+
+// RevokeSSHCert stamps a certificate serial revoked; ErrNotFound if unknown,
+// ErrConflict if already revoked.
+func (m *Memstore) RevokeSSHCert(_ context.Context, serial int64, by string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, c := range m.sshCerts {
+		if c.Serial != serial {
+			continue
+		}
+		if c.RevokedAt != nil {
+			return store.ErrConflict
+		}
+		t := at.UTC()
+		c.RevokedAt = &t
+		c.RevokedBy = by
+		m.sshCerts[id] = c
+		return nil
+	}
+	return store.ErrNotFound
+}
+
+// ListRevokedSSHCertSerials returns the serials of every revoked certificate.
+func (m *Memstore) ListRevokedSSHCertSerials(_ context.Context) ([]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []int64
+	for _, c := range m.sshCerts {
+		if c.RevokedAt != nil {
+			out = append(out, c.Serial)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
+// ListSSHCerts returns recent issued certificates, newest first (capped).
+func (m *Memstore) ListSSHCerts(_ context.Context, limit int) ([]store.SSHCert, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]store.SSHCert, 0, len(m.sshCerts))
+	for _, c := range m.sshCerts {
+		c.RevokedAt = cloneTimePtr(c.RevokedAt)
+		c.ValidBefore = cloneTimePtr(c.ValidBefore)
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 // GetAgentKey returns an agent key by ID (regardless of disabled), or ErrNotFound.
