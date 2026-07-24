@@ -488,6 +488,20 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		}
 	}
 
+	// Vendor contract gate (Phase 29): a third-party vendor may reach a target
+	// only while an approved, in-window contract grant is active. Non-vendors are
+	// unaffected (isVendor=false).
+	if isVendor, allowed, verr := p.store.VendorSessionAllowed(ctx, actor, target.Name, time.Now()); verr != nil {
+		p.log.Error("vendor gate check failed", "target", target.Name, "err", verr)
+		rejectAll(chans, ssh.Prohibited, "pamv1: authorization check failed")
+		return
+	} else if isVendor && !allowed {
+		p.log.Warn("session denied: vendor contract", "actor", actor, "target", target.Name, "remote", remote)
+		p.audit(ctx, actor, "session.denied", "target:"+target.Name+" reason:vendor-contract")
+		rejectAll(chans, ssh.Prohibited, "pamv1: vendor access requires an approved, in-window contract grant")
+		return
+	}
+
 	// Refuse protocols this gateway cannot broker (ssh always; winrm only with a
 	// runner configured) before decrypting, so plaintext never materializes for a
 	// session that is about to be denied. serveWinRM re-checks defensively.

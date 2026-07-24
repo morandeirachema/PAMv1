@@ -226,6 +226,9 @@ func (s *Server) runWinRM(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "connection requires an approved access request")
 		return
 	}
+	if !s.vendorGate(w, r, target, "winrm.denied") {
+		return
+	}
 	creds, err := s.store.ListCredentials(r.Context(), target.ID)
 	if err != nil {
 		storeError(w, err)

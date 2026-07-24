@@ -411,6 +411,18 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		}
 	}
 
+	// Vendor contract gate (Phase 29): a vendor may reach a target only within an
+	// active contract grant; non-vendors are unaffected.
+	if isVendor, allowed, verr := d.store.VendorSessionAllowed(ctx, actor, target.Name, time.Now()); verr != nil {
+		d.log.Error("vendor gate check failed", "target", target.Name, "err", verr)
+		d.fail(backend, "58000", "pamv1: authorization check failed")
+		return
+	} else if isVendor && !allowed {
+		d.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:vendor-contract")
+		d.fail(backend, "28000", "pamv1: vendor access requires an approved, in-window contract grant")
+		return
+	}
+
 	// Concurrent-session cap: refuse before decrypting any secret.
 	if d.sessions != nil && !d.sessions.AllowNew(actor) {
 		d.audit(ctx, actor, "db.session.denied", "target:"+target.Name+" reason:session-limit")
