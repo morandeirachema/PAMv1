@@ -275,7 +275,9 @@ func (s *Server) RunVendorSweeper(ctx context.Context, interval time.Duration) {
 // an active contract grant to that session's target.
 func (s *Server) sweepVendorSessions(ctx context.Context, now time.Time) {
 	for _, sess := range s.sessions.List() {
-		isVendor, allowed, err := s.store.VendorSessionAllowed(ctx, sess.Actor, sess.Target, now)
+		// account "" = any: kill only when the vendor has NO active grant to this
+		// target for any account (a live session doesn't record which account it uses).
+		isVendor, allowed, err := s.store.VendorSessionAllowed(ctx, sess.Actor, sess.Target, "", now)
 		if err != nil || !isVendor || allowed {
 			continue
 		}
@@ -287,17 +289,18 @@ func (s *Server) sweepVendorSessions(ctx context.Context, now time.Time) {
 
 // vendorGate enforces the vendor contract gate on an API connect / credential
 // path: a vendor may reach the target only while an approved, in-window contract
-// grant is active. Non-vendors pass through. It writes a 403 and returns false
-// when a vendor is blocked. action names the audited denial.
-func (s *Server) vendorGate(w http.ResponseWriter, r *http.Request, target *store.Target, action string) bool {
-	isVendor, allowed, err := s.store.VendorSessionAllowed(r.Context(), actorFrom(r.Context()), target.Name, time.Now())
+// grant authorizing `account` (the login account being used) is active.
+// Non-vendors pass through. It writes a 403 and returns false when a vendor is
+// blocked. action names the audited denial.
+func (s *Server) vendorGate(w http.ResponseWriter, r *http.Request, target *store.Target, account, action string) bool {
+	isVendor, allowed, err := s.store.VendorSessionAllowed(r.Context(), actorFrom(r.Context()), target.Name, account, time.Now())
 	if err != nil {
 		storeError(w, err)
 		return false
 	}
 	if isVendor && !allowed {
 		s.audit(r.Context(), action, "target:"+target.Name+" reason:vendor-contract")
-		writeError(w, http.StatusForbidden, "vendor access requires an approved, in-window contract grant")
+		writeError(w, http.StatusForbidden, "vendor access requires an approved, in-window contract grant for this account")
 		return false
 	}
 	return true

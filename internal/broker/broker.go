@@ -138,6 +138,7 @@ type TokenStore interface {
 // server-side (JIT) once approved. approvers is the rule's approver-group set:
 // separation of duties requires the deciding human to belong to one of them.
 type parkedCall struct {
+	callID    string
 	id        *agentid.Identity
 	call      Call
 	scope     string
@@ -339,7 +340,7 @@ func (b *Broker) park(ctx context.Context, id *agentid.Identity, c Call, approve
 	b.mu.Lock()
 	full := len(b.parked) >= maxParked
 	if !full {
-		b.parked[out.CallID] = &parkedCall{id: id, call: c, scope: out.Scope, ruleID: out.RuleID, reason: out.Reason, approvers: approvers, requested: time.Now().UTC()}
+		b.parked[out.CallID] = &parkedCall{callID: out.CallID, id: id, call: c, scope: out.Scope, ruleID: out.RuleID, reason: out.Reason, approvers: approvers, requested: time.Now().UTC()}
 	}
 	b.mu.Unlock()
 	// Fail closed rather than let unbounded pending approvals exhaust memory.
@@ -489,12 +490,13 @@ func approverPermitted(a Approver, required []string) bool {
 // MCP elicitation — the running user declined the confirmation). It needs no
 // approver and does not satisfy four-eyes: it only lets the party that asked for
 // the action take it back, so a still-parked call an out-of-band approver never
-// saw is cleaned up. The requester must match the parked call's agent. Returns
-// ok=false for an unknown call or a requester mismatch.
-func (b *Broker) Withdraw(ctx context.Context, callID, requester string) (Outcome, bool) {
+// saw is cleaned up. The requester identity must match the parked call's agent —
+// by static-key row id when both have one (agent names are not unique), else by
+// name. Returns ok=false for an unknown call or an identity mismatch.
+func (b *Broker) Withdraw(ctx context.Context, callID string, requester *agentid.Identity) (Outcome, bool) {
 	b.mu.Lock()
 	p, ok := b.parked[callID]
-	if !ok || !strings.EqualFold(p.id.AgentName, requester) {
+	if !ok || !sameAgent(p.id, requester) {
 		b.mu.Unlock()
 		return Outcome{}, false
 	}
@@ -506,6 +508,18 @@ func (b *Broker) Withdraw(ctx context.Context, callID, requester string) (Outcom
 		b.log.Error("broker withdraw audit append failed", "call", callID, "err", err)
 	}
 	return out, true
+}
+
+// sameAgent reports whether two identities are the same agent: by static-key row
+// id when both carry one (names are not unique), otherwise by case-folded name.
+func sameAgent(a, b *agentid.Identity) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a.KeyID > 0 && b.KeyID > 0 {
+		return a.KeyID == b.KeyID
+	}
+	return strings.EqualFold(a.AgentName, b.AgentName)
 }
 
 // ApprovalOwner returns the accountable owner (on-behalf-of) of a parked call, so
@@ -522,27 +536,40 @@ func (b *Broker) ApprovalOwner(callID string) (string, bool) {
 
 // SweepExpiredParked drops parked approvals older than the resume-token TTL (the
 // token they'd resume with has expired anyway), so an abandoned backlog can't
-// permanently hold the parked cap. Returns the number evicted.
-func (b *Broker) SweepExpiredParked(now time.Time) int {
+// permanently hold the parked cap. Each swept call is recorded as a terminal
+// failed outcome (so an agent polling its status sees a resolution instead of an
+// eternal pending) and appended to the tamper-evident chain (so the trail shows
+// how the parked call ended). Returns the number evicted.
+func (b *Broker) SweepExpiredParked(ctx context.Context, now time.Time) int {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	n := 0
+	var expired []*parkedCall
 	for id, p := range b.parked {
 		if now.Sub(p.requested) > b.tokenTTL {
+			expired = append(expired, p)
 			delete(b.parked, id)
-			n++
 		}
 	}
-	return n
+	b.mu.Unlock()
+	for _, p := range expired {
+		out := Outcome{CallID: p.callID, RuleID: p.ruleID, Scope: p.scope, Status: StatusFailed, Reason: "approval expired before a decision"}
+		b.remember(out)
+		if err := b.chainEvent(ctx, p.id, p.call, "broker.tool_call.failed", out, out.Reason); err != nil {
+			b.log.Error("broker sweep audit append failed", "call", p.callID, "err", err)
+		}
+	}
+	return len(expired)
 }
 
 // Resume spends a single-use token and returns the stored outcome for its bound
 // call, so an agent collects a post-approval result exactly once. It peeks the
-// token first and refuses to spend it while the call is still pending (so an
-// early resume can't burn the ticket before the result exists); the token is
-// consumed only once a terminal outcome is actually returned. A used, expired,
-// unknown token, or a still-pending call yields ok=false.
-func (b *Broker) Resume(ctx context.Context, token string) (Outcome, bool) {
+// token first, verifies it unlocks the expected call (wantCallID; "" skips the
+// check for transports without a path id), and refuses to spend it while the call
+// is still pending (so an early resume — or a wrong path id — can't burn the
+// ticket before the result exists); the token is consumed only once a terminal
+// outcome is actually returned. A mismatched, used, expired, unknown token, or a
+// still-pending call yields ok=false. A collected Sensitive result is then
+// stripped from the cache so the secret does not linger past its single delivery.
+func (b *Broker) Resume(ctx context.Context, token, wantCallID string) (Outcome, bool) {
 	if b.tokens == nil {
 		return Outcome{}, false
 	}
@@ -551,6 +578,9 @@ func (b *Broker) Resume(ctx context.Context, token string) (Outcome, bool) {
 	if err != nil {
 		return Outcome{}, false
 	}
+	if wantCallID != "" && callID != wantCallID {
+		return Outcome{}, false // token does not unlock this path's call — never spend it
+	}
 	out, ok := b.Lookup(callID)
 	if !ok || !out.Status.terminal() {
 		return Outcome{}, false // don't spend the token before the call is collectable
@@ -558,7 +588,20 @@ func (b *Broker) Resume(ctx context.Context, token string) (Outcome, bool) {
 	if _, err := b.tokens.ConsumeBrokerToken(ctx, jti); err != nil {
 		return Outcome{}, false // lost the single-use race
 	}
+	b.stripSensitive(callID)
 	return out, true
+}
+
+// stripSensitive clears a collected call's result from the in-memory cache, so a
+// secret-bearing (reveal_credential) result delivered once via Resume does not
+// linger in b.calls until eviction. The status/metadata are kept.
+func (b *Broker) stripSensitive(callID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if o, ok := b.calls[callID]; ok && o.Result != nil {
+		o.Result = nil
+		b.calls[callID] = o
+	}
 }
 
 // Lookup returns the latest known outcome for a call id.

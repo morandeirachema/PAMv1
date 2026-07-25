@@ -1,16 +1,22 @@
 // Package blast is a read-only identity blast-radius / CIEM engine (Phase 31,
-// pam-research Solution-04). It evaluates *effective* permissions and follows
-// privilege-escalation paths across a normalized, provider-agnostic identity
-// graph, so a reviewer can answer "if this identity is compromised, what can it
-// actually reach?" — the honest, in-process core. Live cloud ingestion (boto3,
-// Okta, GitHub, Workspace APIs) is the external part and is deliberately out of
-// scope: the engine consumes a normalized graph that an ingester produces.
+// pam-research Solution-04, https://github.com/morandeirachema/pam-research). It
+// evaluates *effective* permissions and follows privilege-escalation paths across
+// a normalized, provider-agnostic identity graph, so a reviewer can answer "if
+// this identity is compromised, what can it actually reach?" — the honest,
+// in-process core. Live cloud ingestion (AWS boto3
+// [GetAccountAuthorizationDetails](https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetAccountAuthorizationDetails.html),
+// [Okta](https://developer.okta.com/docs/reference/),
+// [GitHub](https://docs.github.com/en/rest), and
+// [Google Workspace Admin](https://developers.google.com/admin-sdk) APIs) is the
+// external part and is deliberately out of scope: the engine consumes a
+// normalized graph that an ingester produces.
 //
-// iam.go is the AWS IAM effective-permission evaluator. It implements the real
-// AWS policy-evaluation order — an explicit Deny anywhere wins, an SCP is a
-// ceiling, a permission boundary is a ceiling, then an identity Allow grants —
-// and models a condition it cannot evaluate as UNCERTAIN rather than guessing.
-// "An edge means a permission that really holds."
+// iam.go is the AWS IAM effective-permission evaluator, implementing the real AWS
+// policy-evaluation order (https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html)
+// — an unconditional explicit Deny anywhere wins, an SCP is a ceiling, a
+// permission boundary is a ceiling, then an identity Allow grants — and models a
+// condition it cannot evaluate (or a conditional Deny) as UNCERTAIN rather than
+// guessing. "An edge means a permission that really holds."
 package blast
 
 import "strings"
@@ -89,17 +95,21 @@ type Evaluator struct {
 //  4. if the only thing that would allow it is conditional (a condition we can't
 //     evaluate), the result is UNCERTAIN, not a hard allow.
 func (e Evaluator) Evaluate(action, resource string) Evaluation {
-	// 1. Explicit deny anywhere is final.
+	// 1. Explicit deny: an UNCONDITIONAL deny anywhere is final. Scan every deny
+	// statement across all policy sets (not just the first match) — a conditional
+	// deny that appears before an unconditional one must not short-circuit the
+	// stronger, definite deny.
+	condDeny := false
 	for _, set := range [][]Policy{e.Identity, e.SCPs, e.Boundary} {
-		if st, matched := matchEffect(set, Deny, action, resource); matched {
+		for _, st := range denyMatches(set, action, resource) {
 			if st.HasCondition {
-				// A conditional deny might not apply — flag rather than assert allow/deny.
-				return Evaluation{Uncertain, "a conditional explicit Deny may apply"}
+				condDeny = true
+			} else {
+				return Evaluation{Denied, "explicit Deny"}
 			}
-			return Evaluation{Denied, "explicit Deny"}
 		}
 	}
-	uncertain := false
+	uncertain := condDeny
 	// 2. Ceilings: an SCP set and a boundary each cap the permission.
 	if len(e.SCPs) > 0 {
 		st, ok := matchEffect(e.SCPs, Allow, action, resource)
@@ -115,16 +125,31 @@ func (e Evaluator) Evaluate(action, resource string) Evaluation {
 		}
 		uncertain = uncertain || st.HasCondition
 	}
-	// 3. Identity allow.
+	// 3. Identity allow. With no allow the action is denied (implicit) regardless of
+	// any conditional deny above.
 	st, ok := matchEffect(e.Identity, Allow, action, resource)
 	if !ok {
 		return Evaluation{Denied, "no identity Allow matched (implicit deny)"}
 	}
 	uncertain = uncertain || st.HasCondition
 	if uncertain {
-		return Evaluation{Uncertain, "allowed only subject to a condition that cannot be evaluated"}
+		return Evaluation{Uncertain, "allowed only subject to a condition (or conditional deny) that cannot be evaluated"}
 	}
 	return Evaluation{Allowed, "identity Allow, permitted by all ceilings"}
+}
+
+// denyMatches returns every Deny statement in policies whose action AND resource
+// match (so the caller can distinguish an unconditional from a conditional deny).
+func denyMatches(policies []Policy, action, resource string) []Statement {
+	var out []Statement
+	for _, p := range policies {
+		for _, st := range p.Statements {
+			if st.Effect == Deny && matchAction(st.Actions, action) && matchResource(st.Resources, resource) {
+				out = append(out, st)
+			}
+		}
+	}
+	return out
 }
 
 // matchEffect returns the first statement in policies with the given effect whose
@@ -135,7 +160,7 @@ func matchEffect(policies []Policy, effect Effect, action, resource string) (Sta
 			if st.Effect != effect {
 				continue
 			}
-			if anyMatch(st.Actions, action) && anyMatch(st.Resources, resource) {
+			if matchAction(st.Actions, action) && matchResource(st.Resources, resource) {
 				return st, true
 			}
 		}
@@ -143,11 +168,24 @@ func matchEffect(policies []Policy, effect Effect, action, resource string) (Sta
 	return Statement{}, false
 }
 
-// anyMatch reports whether any pattern in pats matches s (case-insensitive for
-// actions/ARNs, with '*' and '?' wildcards — the IAM matching semantics).
-func anyMatch(pats []string, s string) bool {
+// matchAction reports whether any pattern matches the action. Action matching is
+// case-INSENSITIVE in IAM (e.g. s3:GetObject == s3:getobject).
+func matchAction(pats []string, action string) bool {
+	action = strings.ToLower(action)
 	for _, p := range pats {
-		if wildcardMatch(strings.ToLower(p), strings.ToLower(s)) {
+		if wildcardMatch(strings.ToLower(p), action) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchResource reports whether any pattern matches the resource. Resource (ARN)
+// matching is case-SENSITIVE in IAM (an S3 object key is case-significant), so a
+// wrong-case pattern must not match — that would over- or under-state reach.
+func matchResource(pats []string, resource string) bool {
+	for _, p := range pats {
+		if wildcardMatch(p, resource) {
 			return true
 		}
 	}

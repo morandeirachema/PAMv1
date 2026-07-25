@@ -211,10 +211,15 @@ func (ca *CertAuthority) IssueForKey(pub ssh.PublicKey, opts IssueOpts) (*ssh.Ce
 }
 
 // challengeMACKey derives a stable, secret HMAC key for proof-of-possession
-// challenges from the CA private key (a deterministic ed25519 signature over a
-// fixed label). All replicas sharing the CA key derive the same key, so a
-// challenge minted on one is verifiable on another; a party without the CA
-// private key cannot forge one.
+// challenges from the CA private key (a signature over a fixed label). For the
+// ed25519 CA key LoadOrCreate generates by default — and any deterministic signer
+// (ed25519, RSA PKCS#1v1.5) — every replica sharing the CA key derives the SAME
+// key, so a challenge minted on one replica verifies on another. A randomized
+// signer (ECDSA) would derive a per-process key, so multi-replica deployments on
+// an ECDSA CA should use a sticky session for the challenge→sign round-trip. A
+// party without the CA private key cannot forge a challenge either way. (Safe to
+// reuse the CA key here because nothing else ever signs raw caller-chosen bytes
+// with it — the label is fixed and server-controlled.)
 func (ca *CertAuthority) challengeMACKey() []byte {
 	ca.chOnce.Do(func() {
 		sig, err := ca.signer.Sign(rand.Reader, []byte("pamv1-ssh-cert-challenge-key-v1"))

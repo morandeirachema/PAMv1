@@ -11,12 +11,15 @@ import (
 	"github.com/morandeirachema/pamv1/internal/winrm"
 )
 
-// sodRules parks winrm_exec for approval by the named group "payments-oncall".
-const sodRules = "rules:\n  - id: needs-secteam\n    tool: winrm_exec\n    effect: require_approval\n    approvers: [payments-oncall]\n    scope: \"t:{target}:x\"\n"
+// sodRules parks winrm_exec for approval restricted to the admin group.
+const sodRules = "rules:\n  - id: needs-admin\n    tool: winrm_exec\n    effect: require_approval\n    approvers: [admin]\n    scope: \"t:{target}:x\"\n"
 
-// TestBrokerApproverSoD proves separation of duties on a parked call: an approver
-// who is not in the rule's approver group is refused (403, the call stays
-// decidable), while one whose identity matches the group approves it.
+// TestBrokerApproverSoD proves separation of duties on a parked call: the rule
+// restricts approval to the `admin` group, so an approver-role decider (who holds
+// CapApprove and reaches the route) is refused (403, the call stays decidable),
+// while an administrator satisfies it. Groups are matched against ROLES, never a
+// mintable username, so a manage_users delegate can't create a user named after
+// the group to self-approve.
 func TestBrokerApproverSoD(t *testing.T) {
 	fake := &fakeWinRM{result: winrm.Result{Stdout: "ok\r\n"}}
 	srv, _ := newTestServerOpts(t, nil, brokerOpts(t, fake, sodRules))
@@ -24,9 +27,8 @@ func TestBrokerApproverSoD(t *testing.T) {
 	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-sod", "owner": "owner"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
 
-	// Two approver-role deciders: one outside the group, one whose name IS the group.
+	// An approver-role decider — holds CapApprove but is NOT in the rule's group.
 	outsider := seedUser(t, srv, "alice", "approver")
-	member := seedUser(t, srv, "payments-oncall", "approver")
 
 	_, cd := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok, map[string]any{"tool": "winrm_exec", "args": map[string]any{"target": "win-sod", "command": "whoami"}})
 	callID, _ := jsonMap(t, cd)["call_id"].(string)
@@ -36,11 +38,11 @@ func TestBrokerApproverSoD(t *testing.T) {
 
 	// The pending listing shows which group may decide.
 	_, ld := do(t, srv, http.MethodGet, "/v1/approvals", testAPIKey, nil)
-	if !strings.Contains(string(ld), "payments-oncall") {
+	if !strings.Contains(string(ld), "admin") {
 		t.Fatalf("approvals listing should expose the approver group: %s", ld)
 	}
 
-	// Outsider: refused, and the call remains parked (four-eyes/SoD, not consumed).
+	// Outsider: refused, and the call remains parked (SoD, not consumed).
 	if code, _ := do(t, srv, http.MethodPost, "/v1/approvals/"+callID+"/decision", outsider, map[string]any{"approve": true}); code != http.StatusForbidden {
 		t.Fatalf("outsider decision: want 403, got %d", code)
 	}
@@ -48,10 +50,10 @@ func TestBrokerApproverSoD(t *testing.T) {
 		t.Fatal("a refused SoD decision must leave the call parked")
 	}
 
-	// Group member: approved and executed JIT.
-	code, dd := do(t, srv, http.MethodPost, "/v1/approvals/"+callID+"/decision", member, map[string]any{"approve": true})
+	// The administrator (bootstrap key) satisfies the admin group and executes JIT.
+	code, dd := do(t, srv, http.MethodPost, "/v1/approvals/"+callID+"/decision", testAPIKey, map[string]any{"approve": true})
 	if code != http.StatusOK || jsonMap(t, dd)["status"] != "executed" {
-		t.Fatalf("member decision: %d %s", code, dd)
+		t.Fatalf("admin decision: %d %s", code, dd)
 	}
 	if fake.gotPass != "vault-pw" {
 		t.Fatalf("runner got %q, want vault-pw", fake.gotPass)

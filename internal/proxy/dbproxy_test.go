@@ -670,3 +670,66 @@ func TestDBProxyStepUp(t *testing.T) {
 	assertAuditContains(t, st, "db.stepup_approved", "sessions")
 	assertAuditContains(t, st, "db.stepup_denied", "accounts")
 }
+
+// TestDBProxyStepUpExtended proves step-up covers the extended query protocol too
+// (regression for the Parse-path gap): a client cannot dodge the supervisor gate by
+// sending a Parse instead of a simple Query. A matching Parse pauses; on denial the
+// operator gets a FATAL ErrorResponse and the statement never reaches the upstream.
+func TestDBProxyStepUpExtended(t *testing.T) {
+	st := memstore.New()
+	v := mustVault(t)
+	fake := startFakePostgres(t, upstreamSecret)
+	seedPGTarget(t, st, v, fake.addr)
+	resolver, err := auth.NewResolver(st, proxyAPIKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard, err := proxy.NewCommandGuard([]string{`(?i)delete\s+from`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stepup := session.NewStepUp()
+	dbx, err := proxy.NewDB(st, v, resolver, proxy.DBConfig{
+		RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second,
+		Sessions: session.NewRegistry(), StepUpGuard: guard, StepUp: stepup, StepUpTTL: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := serveDBProxy(t, dbx)
+	fe, conn := openDBSession(t, addr, "dbuser@pg-01", "appdb", proxyAPIKey)
+	defer conn.Close()
+
+	// A Parse of a step-up statement pauses; the supervisor denies it.
+	fe.Send(&pgproto3.Parse{Query: "DELETE FROM accounts WHERE id = 1"})
+	fe.Send(&pgproto3.Sync{})
+	if err := fe.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	sid := waitPendingStepUp(t, stepup)
+	if !stepup.Decide(sid, false) {
+		t.Fatal("deny decision returned false")
+	}
+	msg, err := fe.Receive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	er, ok := msg.(*pgproto3.ErrorResponse)
+	if !ok {
+		t.Fatalf("denied extended-protocol step-up: expected ErrorResponse, got %T", msg)
+	}
+	if er.Severity != "FATAL" {
+		t.Fatalf("extended-protocol refusal severity = %q, want FATAL", er.Severity)
+	}
+	fe.Send(&pgproto3.Terminate{})
+	_ = fe.Flush()
+
+	// The denied statement never reached the upstream.
+	for _, q := range fake.allQueries() {
+		if strings.Contains(strings.ToUpper(q), "DELETE FROM ACCOUNTS") {
+			t.Fatal("denied extended-protocol statement reached the upstream")
+		}
+	}
+	assertAuditContains(t, st, "db.stepup_required", "DELETE FROM")
+	assertAuditContains(t, st, "db.stepup_denied", "accounts")
+}

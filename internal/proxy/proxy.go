@@ -491,7 +491,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	// Vendor contract gate (Phase 29): a third-party vendor may reach a target
 	// only while an approved, in-window contract grant is active. Non-vendors are
 	// unaffected (isVendor=false).
-	if isVendor, allowed, verr := p.store.VendorSessionAllowed(ctx, actor, target.Name, time.Now()); verr != nil {
+	if isVendor, allowed, verr := p.store.VendorSessionAllowed(ctx, actor, target.Name, cred.Username, time.Now()); verr != nil {
 		p.log.Error("vendor gate check failed", "target", target.Name, "err", verr)
 		rejectAll(chans, ssh.Prohibited, "pamv1: authorization check failed")
 		return

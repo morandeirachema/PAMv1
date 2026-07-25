@@ -429,7 +429,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 
 	// Vendor contract gate (Phase 29): a vendor may reach a target only within an
 	// active contract grant; non-vendors are unaffected.
-	if isVendor, allowed, verr := d.store.VendorSessionAllowed(ctx, actor, target.Name, time.Now()); verr != nil {
+	if isVendor, allowed, verr := d.store.VendorSessionAllowed(ctx, actor, target.Name, cred.Username, time.Now()); verr != nil {
 		d.log.Error("vendor gate check failed", "target", target.Name, "err", verr)
 		d.fail(backend, "58000", "pamv1: authorization check failed")
 		return
@@ -556,8 +556,13 @@ func (d *DBProxy) dialUpstream(ctx context.Context, target *store.Target, user, 
 // Query/Parse statements are audited and recorded; everything else passes
 // through so result sets, prepared statements and COPY still work.
 func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgproto3.Frontend, clientConn, upConn net.Conn, actor string, target *store.Target, rec *Recording, sid string) {
+	// A per-connection context so a paused step-up (which blocks on a supervisor's
+	// decision) is released when either peer disconnects, instead of parking until
+	// the step-up TTL elapses.
+	relayCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var once sync.Once
-	stop := func() { clientConn.Close(); upConn.Close() }
+	stop := func() { cancel(); clientConn.Close(); upConn.Close() }
 	// The client-facing backend is written by BOTH directions — the upstream→
 	// client relay and a policy refusal on the client→upstream side — so every
 	// write goes through this mutex; pgproto3.Backend is not concurrency-safe.
@@ -586,13 +591,18 @@ func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgpr
 				if d.blockedStatement(ctx, sendClient, actor, target, m.String, false) {
 					continue // refused by policy; session stays usable
 				}
-				if d.stepUpRefused(ctx, sendClient, actor, target, m.String, sid) {
+				if d.stepUpRefused(relayCtx, sendClient, actor, target, m.String, sid, false) {
 					continue // paused for a supervisor and denied/timed out; session stays usable
 				}
 				d.recordQuery(ctx, rec, actor, target, m.String, sid)
 			case *pgproto3.Parse:
 				if d.blockedStatement(ctx, sendClient, actor, target, m.Query, true) {
 					return // fail-closed: end the extended-protocol session
+				}
+				// Step-up covers the extended protocol too, so a client can't dodge a
+				// supervisor by sending a guarded statement as Parse+Bind+Execute.
+				if d.stepUpRefused(relayCtx, sendClient, actor, target, m.Query, sid, true) {
+					return // denied/timed out: fail-closed, end the extended-protocol session
 				}
 				d.recordQuery(ctx, rec, actor, target, m.Query, sid)
 			case *pgproto3.FunctionCall:
@@ -650,7 +660,7 @@ func (d *DBProxy) recordQuery(ctx context.Context, rec *Recording, actor string,
 // supervisor's decision via session.StepUp; an approval returns false so the
 // statement proceeds (audited db.stepup_approved). No step-up configured, or no
 // match, returns false immediately.
-func (d *DBProxy) stepUpRefused(ctx context.Context, sendClient func(...pgproto3.BackendMessage) error, actor string, target *store.Target, sql, sid string) bool {
+func (d *DBProxy) stepUpRefused(ctx context.Context, sendClient func(...pgproto3.BackendMessage) error, actor string, target *store.Target, sql, sid string, extended bool) bool {
 	if d.stepupGuard == nil || d.stepup == nil || sid == "" {
 		return false
 	}
@@ -667,10 +677,17 @@ func (d *DBProxy) stepUpRefused(ctx context.Context, sendClient func(...pgproto3
 		return false // approved — the statement proceeds
 	}
 	d.audit(ctx, actor, "db.stepup_denied", fmt.Sprintf("target:%s sql:%s", target.Name, auditCmd(sql)))
-	_ = sendClient(
-		&pgproto3.ErrorResponse{Severity: "ERROR", Code: "42501", Message: "pamv1: statement requires supervisor approval (denied or timed out)"},
-		&pgproto3.ReadyForQuery{TxStatus: 'I'},
-	)
+	// Mirror blockedStatement's per-protocol refusal: a simple query gets an
+	// ErrorResponse + a fresh ReadyForQuery (session stays usable); an
+	// extended-protocol Parse gets a FATAL error and the caller ends the session.
+	if extended {
+		_ = sendClient(&pgproto3.ErrorResponse{Severity: "FATAL", Code: "42501", Message: "pamv1: statement requires supervisor approval (denied or timed out)"})
+	} else {
+		_ = sendClient(
+			&pgproto3.ErrorResponse{Severity: "ERROR", Code: "42501", Message: "pamv1: statement requires supervisor approval (denied or timed out)"},
+			&pgproto3.ReadyForQuery{TxStatus: 'I'},
+		)
+	}
 	return true
 }
 

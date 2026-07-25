@@ -611,11 +611,15 @@ type Store interface {
 	// OffboardVendor disables the vendor and revokes all its grants atomically; the
 	// caller then kills live sessions. ErrNotFound if the vendor is missing.
 	OffboardVendor(ctx context.Context, id int64, at time.Time) error
-	// VendorSessionAllowed reports, for a login username and a target NAME, whether
-	// username is a vendor and (if so) whether an approved, unrevoked, in-window
-	// grant to that target is active as of now. A non-vendor returns
-	// (isVendor=false, allowed=true) so non-vendor users are unaffected.
-	VendorSessionAllowed(ctx context.Context, username, targetName string, now time.Time) (isVendor, allowed bool, err error)
+	// VendorSessionAllowed reports, for a login username connecting to target NAME
+	// as the account `account`, whether username is a vendor and (if so) whether an
+	// approved, unrevoked, in-window grant to that target is active as of now AND
+	// authorizes that account (grant.Principal must equal `account`, or be empty
+	// for an any-account grant). A blank `account` means "any account" — used by
+	// the sweeper to ask "does this vendor still have ANY active grant to this
+	// target". A non-vendor returns (isVendor=false, allowed=true) so non-vendor
+	// users are unaffected.
+	VendorSessionAllowed(ctx context.Context, username, targetName, account string, now time.Time) (isVendor, allowed bool, err error)
 
 	// CreateAppKey inserts an application identity key, populating ID and CreatedAt
 	// (ErrConflict on a duplicate token hash).

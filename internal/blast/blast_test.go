@@ -124,3 +124,60 @@ func TestMalformedGraphRejected(t *testing.T) {
 		t.Fatal("an edge to an unknown principal must be rejected")
 	}
 }
+
+// TestCertainPathPreferredOverConditional proves a node reachable by BOTH a
+// shorter conditional path and a longer unconditional path is reported CERTAIN
+// (not uncertain) — a definite escalation isn't softened to "needs review".
+func TestCertainPathPreferredOverConditional(t *testing.T) {
+	g := Graph{
+		Principals: []Principal{
+			{ID: "s", Provider: "aws"},
+			{ID: "m", Provider: "aws"},
+			{ID: "adm", Provider: "aws", Admin: true},
+		},
+		Edges: []Edge{
+			{From: "s", To: "adm", Kind: CanAssume, HasCondition: true}, // shorter, conditional
+			{From: "s", To: "m", Kind: MemberOf},                        // longer, unconditional...
+			{From: "m", To: "adm", Kind: CanEscalateTo},                 // ...path to adm
+		},
+	}
+	reach, err := g.BlastRadius("s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range reach {
+		if r.Principal == "adm" {
+			if r.Uncertain {
+				t.Fatal("adm has an all-unconditional path (s→m→adm); it must be certain, not uncertain")
+			}
+			if len(r.Path) != 2 { // the certain path is the 2-hop one
+				t.Fatalf("expected the certain (2-hop) path, got %d hops", len(r.Path))
+			}
+		}
+	}
+}
+
+// TestIsAdminCountsConditionalStar proves a principal whose only *:* allow is
+// conditional is still treated as an effective admin (escalation to it is flagged).
+func TestIsAdminCountsConditionalStar(t *testing.T) {
+	g := Graph{
+		Principals: []Principal{
+			{ID: "u", Provider: "aws", Labels: map[string]string{"priv": "low"}},
+			{ID: "condadm", Provider: "aws", Identity: []Policy{pol(Allow, []string{"*"}, []string{"*"}, true)}},
+		},
+		Edges: []Edge{{From: "u", To: "condadm", Kind: CanEscalateTo}},
+	}
+	findings, err := g.Findings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, f := range findings {
+		if f.Source == "u" && f.Target == "condadm" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("escalation to a conditional-*:* admin must be flagged: %+v", findings)
+	}
+}

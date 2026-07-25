@@ -99,67 +99,91 @@ type PathEdge struct {
 }
 
 // BlastRadius returns every principal reachable from source by following PIVOT
-// edges transitively (BFS, shortest path first). The source is not included.
-// Containment/read edges are ignored — an edge in the result means control that
-// really transfers. An unknown source yields an empty result.
+// edges transitively. The source is not included. Containment/read edges are
+// ignored — an edge in the result means control that really transfers. A reach is
+// marked Uncertain only when EVERY path to it crosses a conditional edge: a node
+// with any all-unconditional path is certain (and that certain path is reported,
+// so remediation cuts a real edge). An unknown source yields an empty result.
 func (g *Graph) BlastRadius(source string) ([]Reach, error) {
 	byID, adj, err := g.index()
 	if err != nil {
 		return nil, err
 	}
+	return blastRadius(byID, adj, source), nil
+}
+
+// blastRadius is BlastRadius over a prebuilt index (so callers that scan many
+// sources don't rebuild it per call).
+func blastRadius(byID map[string]*Principal, adj map[string][]Edge, source string) []Reach {
 	if byID[source] == nil {
-		return nil, nil
+		return nil
 	}
-	type state struct {
-		id        string
-		path      []PathEdge
-		uncertain bool
+	certain := bfs(adj, source, true) // paths using only unconditional pivot edges
+	all := bfs(adj, source, false)    // paths using any pivot edge
+	out := make([]Reach, 0, len(all))
+	for node, path := range all {
+		r := Reach{Principal: node, Uncertain: true, Path: path}
+		if cp, ok := certain[node]; ok {
+			r.Uncertain, r.Path = false, cp // a certain path exists; prefer it
+		}
+		out = append(out, r)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Principal < out[j].Principal })
+	return out
+}
+
+// bfs returns the shortest pivot-edge path from source to each reachable node
+// (source excluded). When unconditionalOnly is set, conditional edges are not
+// traversed, so a returned node is CERTAINLY reachable.
+func bfs(adj map[string][]Edge, source string, unconditionalOnly bool) map[string][]PathEdge {
+	out := map[string][]PathEdge{}
 	seen := map[string]bool{source: true}
+	type state struct {
+		id   string
+		path []PathEdge
+	}
 	queue := []state{{id: source}}
-	var out []Reach
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
 		edges := append([]Edge(nil), adj[cur.id]...)
 		sort.Slice(edges, func(i, j int) bool { return edges[i].To < edges[j].To })
 		for _, e := range edges {
-			if !e.Kind.IsPivot() || seen[e.To] {
+			if !e.Kind.IsPivot() || seen[e.To] || (unconditionalOnly && e.HasCondition) {
 				continue
 			}
 			seen[e.To] = true
 			path := append(append([]PathEdge(nil), cur.path...), PathEdge{From: e.From, To: e.To, Kind: e.Kind, Via: e.Via})
-			unc := cur.uncertain || e.HasCondition
-			out = append(out, Reach{Principal: e.To, Uncertain: unc, Path: path})
-			queue = append(queue, state{id: e.To, path: path, uncertain: unc})
+			out[e.To] = path
+			queue = append(queue, state{id: e.To, path: path})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Principal < out[j].Principal })
-	return out, nil
+	return out
 }
 
-// WhoCanReach returns every principal that can reach target via pivot edges (the
-// reverse query — who is in the blast radius that lands on target).
+// WhoCanReach returns every principal that can reach target via pivot edges — a
+// single reverse BFS over the pivot edges, not a forward scan from every node.
 func (g *Graph) WhoCanReach(target string) ([]string, error) {
-	byID, _, err := g.index()
+	byID, adj, err := g.index()
 	if err != nil {
 		return nil, err
 	}
 	if byID[target] == nil {
 		return nil, nil
 	}
-	var out []string
-	for id := range byID {
-		if id == target {
-			continue
-		}
-		reach, _ := g.BlastRadius(id)
-		for _, r := range reach {
-			if r.Principal == target {
-				out = append(out, id)
-				break
+	// Reverse adjacency over pivot edges: to → sources.
+	radj := map[string][]Edge{}
+	for from, edges := range adj {
+		for _, e := range edges {
+			if e.Kind.IsPivot() {
+				radj[e.To] = append(radj[e.To], Edge{From: e.To, To: from, Kind: e.Kind})
 			}
 		}
+	}
+	reached := bfs(radj, target, false)
+	out := make([]string, 0, len(reached))
+	for id := range reached {
+		out = append(out, id)
 	}
 	sort.Strings(out)
 	return out, nil
@@ -187,7 +211,11 @@ type Finding struct {
 }
 
 // Remediation is the reviewable fix for a finding: cut the EARLIEST pivot edge on
-// the path (closest to the source), which breaks it with the least disruption.
+// the reported path (closest to the source), which breaks THAT path with the
+// least disruption. Note: it breaks the reported path only — if the source
+// reaches the target by a second, edge-disjoint path, the escalation persists, so
+// re-run the analysis after applying a remediation to confirm no residual path
+// remains (NeedsReview flags a conditional path for a human).
 type Remediation struct {
 	CutEdge     PathEdge `json:"cut_edge"`
 	Action      string   `json:"action"`       // human-readable instruction
@@ -199,20 +227,24 @@ type Remediation struct {
 // any cross-provider pivot (lateral movement across trust domains). Each finding
 // carries a remediation cutting the earliest pivot edge. Deterministic ordering.
 func (g *Graph) Findings() ([]Finding, error) {
-	byID, _, err := g.index()
+	byID, adj, err := g.index()
 	if err != nil {
 		return nil, err
+	}
+	// Memoize effective-admin per principal so isAdmin isn't recomputed per reach.
+	admin := make(map[string]bool, len(g.Principals))
+	for i := range g.Principals {
+		admin[g.Principals[i].ID] = isAdmin(&g.Principals[i])
 	}
 	var out []Finding
 	for i := range g.Principals {
 		src := &g.Principals[i]
-		if isAdmin(src) {
+		if admin[src.ID] {
 			continue // an admin reaching admin is not an escalation
 		}
-		reach, _ := g.BlastRadius(src.ID)
-		for _, r := range reach {
+		for _, r := range blastRadius(byID, adj, src.ID) {
 			dst := byID[r.Principal]
-			escalation := isAdmin(dst)
+			escalation := admin[r.Principal]
 			crossProvider := dst.Provider != "" && src.Provider != "" && dst.Provider != src.Provider
 			if !escalation && !crossProvider {
 				continue
@@ -258,7 +290,10 @@ func remediate(path []PathEdge, uncertain bool) Remediation {
 
 // isAdmin reports whether a principal is an effective admin: pre-classified
 // (Admin flag or an "admin"/"priv:high" label), or derivable from an identity
-// policy that allows "*" on "*".
+// policy that allows "*" on "*". A *:* allow that is only CONDITIONALLY granted
+// (Uncertain) still counts as effective-admin — a potentially all-powerful
+// principal must not be silently dropped from escalation findings (the safe,
+// over-reporting direction).
 func isAdmin(p *Principal) bool {
 	if p == nil {
 		return false
@@ -267,8 +302,19 @@ func isAdmin(p *Principal) bool {
 		return true
 	}
 	ev := Evaluator{Identity: p.Identity, SCPs: p.SCPs, Boundary: p.Boundary}
-	// An identity that can do "*" on "*" is effective-admin (unless a ceiling caps it).
-	return ev.Evaluate("*", "*").Decision == Allowed
+	// Allowed OR Uncertain on "*"/"*" ⇒ effective (or potential) admin; only a
+	// definite Denied excludes the principal.
+	return ev.Evaluate("*", "*").Decision != Denied
+}
+
+// Principal returns the principal with the given id, or nil.
+func (g *Graph) Principal(id string) *Principal {
+	for i := range g.Principals {
+		if g.Principals[i].ID == id {
+			return &g.Principals[i]
+		}
+	}
+	return nil
 }
 
 // Stats summarizes a graph for the analysis response.
@@ -279,15 +325,24 @@ type Stats struct {
 	Admins     int `json:"admins"`
 }
 
-// Summary returns graph statistics.
+// Summary returns graph statistics over the DISTINCT principals (so a duplicate id
+// isn't double-counted) — the API validates the graph via Findings first, so this
+// stays cheap and consistent for a direct caller too.
 func (g *Graph) Summary() Stats {
-	s := Stats{Principals: len(g.Principals), Edges: len(g.Edges)}
+	ids := make(map[string]bool, len(g.Principals))
+	s := Stats{}
 	for i := range g.Principals {
+		if ids[g.Principals[i].ID] {
+			continue
+		}
+		ids[g.Principals[i].ID] = true
+		s.Principals++
 		if isAdmin(&g.Principals[i]) {
 			s.Admins++
 		}
 	}
 	for _, e := range g.Edges {
+		s.Edges++
 		if e.Kind.IsPivot() {
 			s.PivotEdges++
 		}

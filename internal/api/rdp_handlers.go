@@ -121,23 +121,6 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 			s.audit(withPrincipal(r.Context(), principal), "access.consumed", fmt.Sprintf("request:%d target:%s", consumedID, target.Name))
 		}
 	}
-	// Vendor contract gate (Phase 29): a vendor reaches the target only in-contract.
-	if isVendor, allowed, verr := s.store.VendorSessionAllowed(r.Context(), principal.Name, target.Name, time.Now()); verr != nil {
-		storeError(w, verr)
-		return
-	} else if isVendor && !allowed {
-		s.audit(withPrincipal(r.Context(), principal), "access.denied", "target:"+target.Name+" reason:vendor-contract")
-		writeError(w, http.StatusForbidden, "vendor access requires an approved, in-window contract grant")
-		return
-	}
-	// Enforce the concurrent-session caps before decrypting a secret, as the SSH and
-	// PostgreSQL proxies do — otherwise a connect-capable user could open unbounded
-	// memory-heavy RDP sessions past PAM_MAX_SESSIONS_PER_USER / _TOTAL.
-	if s.sessions != nil && !s.sessions.AllowNew(principal.Name) {
-		s.audit(withPrincipal(r.Context(), principal), "session.denied", "target:"+target.Name+" reason:session-limit")
-		writeError(w, http.StatusTooManyRequests, "session limit reached")
-		return
-	}
 	creds, err := s.store.ListCredentials(r.Context(), target.ID)
 	if err != nil {
 		storeError(w, err)
@@ -148,6 +131,24 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cred := creds[0]
+	// Vendor contract gate (Phase 29): a vendor reaches the target only within an
+	// active contract grant authorizing the login account (the credential username).
+	if isVendor, allowed, verr := s.store.VendorSessionAllowed(r.Context(), principal.Name, target.Name, cred.Username, time.Now()); verr != nil {
+		storeError(w, verr)
+		return
+	} else if isVendor && !allowed {
+		s.audit(withPrincipal(r.Context(), principal), "access.denied", "target:"+target.Name+" reason:vendor-contract")
+		writeError(w, http.StatusForbidden, "vendor access requires an approved, in-window contract grant for this account")
+		return
+	}
+	// Enforce the concurrent-session caps before decrypting a secret, as the SSH and
+	// PostgreSQL proxies do — otherwise a connect-capable user could open unbounded
+	// memory-heavy RDP sessions past PAM_MAX_SESSIONS_PER_USER / _TOTAL.
+	if s.sessions != nil && !s.sessions.AllowNew(principal.Name) {
+		s.audit(withPrincipal(r.Context(), principal), "session.denied", "target:"+target.Name+" reason:session-limit")
+		writeError(w, http.StatusTooManyRequests, "session limit reached")
+		return
+	}
 	secret, err := s.vault.Decrypt(r.Context(), cred.SecretEnc, store.CredentialAAD(target.ID, cred.ID))
 	if err != nil {
 		s.audit(withPrincipal(r.Context(), principal), "credential.decrypt_failed", fmt.Sprintf("credential:%d target:%s op:rdp", cred.ID, target.Name))

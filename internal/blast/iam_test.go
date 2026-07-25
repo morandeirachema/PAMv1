@@ -85,3 +85,50 @@ func TestWildcardMatch(t *testing.T) {
 		}
 	}
 }
+
+// TestConditionalDenyDoesNotHideUnconditionalDeny proves a conditional Deny does
+// not short-circuit to Uncertain when an unconditional Deny also matches, and that
+// a conditional Deny with no Allow at all is a definite Deny.
+func TestConditionalDenyDoesNotHideUnconditionalDeny(t *testing.T) {
+	star := []string{"*"}
+	// Conditional deny + unconditional deny both match → definite Deny.
+	e := Evaluator{Identity: []Policy{
+		pol(Allow, star, star, false),
+		pol(Deny, []string{"s3:*"}, star, true),          // conditional deny (appears first)
+		pol(Deny, []string{"s3:GetObject"}, star, false), // unconditional deny
+	}}
+	if got := e.Evaluate("s3:GetObject", "arn:aws:s3:::b/o"); got.Decision != Denied {
+		t.Fatalf("unconditional deny must win over an earlier conditional deny: %s (%s)", got.Decision, got.Reason)
+	}
+	// A conditional deny with NO allow anywhere is a definite (implicit) Deny.
+	e = Evaluator{Identity: []Policy{pol(Deny, []string{"s3:*"}, star, true)}}
+	if got := e.Evaluate("s3:GetObject", "arn:aws:s3:::b/o"); got.Decision != Denied {
+		t.Fatalf("conditional deny with no allow must be denied, not uncertain: %s", got.Decision)
+	}
+	// A conditional deny WITH an allow is uncertain (the deny might apply).
+	e = Evaluator{Identity: []Policy{pol(Allow, star, star, false), pol(Deny, []string{"s3:*"}, star, true)}}
+	if got := e.Evaluate("s3:GetObject", "arn:aws:s3:::b/o"); got.Decision != Uncertain {
+		t.Fatalf("conditional deny over an allow must be uncertain: %s", got.Decision)
+	}
+}
+
+// TestResourceMatchingIsCaseSensitive proves actions match case-insensitively but
+// resource ARNs match case-sensitively (an S3 key is case-significant).
+func TestResourceMatchingIsCaseSensitive(t *testing.T) {
+	// Action case-insensitive: an "s3:getobject" pattern matches "s3:GetObject".
+	e := Evaluator{Identity: []Policy{pol(Allow, []string{"s3:getobject"}, []string{"arn:aws:s3:::b/o"}, false)}}
+	if got := e.Evaluate("s3:GetObject", "arn:aws:s3:::b/o"); got.Decision != Allowed {
+		t.Fatalf("action matching must be case-insensitive: %s", got.Decision)
+	}
+	// Resource case-sensitive: a Deny on ".../Secret" must NOT match ".../secret".
+	e = Evaluator{Identity: []Policy{
+		pol(Allow, []string{"s3:*"}, []string{"arn:aws:s3:::b/*"}, false),
+		pol(Deny, []string{"s3:*"}, []string{"arn:aws:s3:::b/Secret"}, false),
+	}}
+	if got := e.Evaluate("s3:GetObject", "arn:aws:s3:::b/secret"); got.Decision != Allowed {
+		t.Fatalf("a Deny on b/Secret must not match b/secret (case-sensitive): %s", got.Decision)
+	}
+	if got := e.Evaluate("s3:GetObject", "arn:aws:s3:::b/Secret"); got.Decision != Denied {
+		t.Fatalf("the Deny must match the exact-case b/Secret: %s", got.Decision)
+	}
+}

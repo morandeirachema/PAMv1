@@ -140,7 +140,7 @@ func (c *Chain) Append(ctx context.Context, ev store.BrokerAuditEvent) (store.Br
 		c.sinceCP++
 		if c.sinceCP >= c.cpEvery {
 			c.sinceCP = 0
-			if _, cerr := c.appendCheckpointLocked(ctx, out.ID, out.HMAC, time.Now()); cerr != nil {
+			if _, cerr := c.appendCheckpointLocked(ctx, time.Now()); cerr != nil {
 				return out, nil // checkpoint is best-effort; the event itself is durable
 			}
 		}
@@ -173,21 +173,41 @@ func (c *Chain) appendLocked(ctx context.Context, ev store.BrokerAuditEvent) (st
 }
 
 // appendCheckpointLocked appends a signed in-chain checkpoint anchoring the head
-// at (lastID, head); the caller holds c.mu.
-func (c *Chain) appendCheckpointLocked(ctx context.Context, lastID int64, head []byte, now time.Time) (store.BrokerAuditEvent, error) {
-	cp := inChainCheckpoint{
-		LastID: lastID,
-		Head:   hex.EncodeToString(head),
-		KID:    KeyID(c.signKey.Public().(ed25519.PublicKey)),
-		Sig:    base64.StdEncoding.EncodeToString(ed25519.Sign(c.signKey, checkpointMsg(lastID, head))),
-		TS:     now.UTC().Format(time.RFC3339),
-	}
-	detail, _ := json.Marshal(cp)
-	return c.appendLocked(ctx, store.BrokerAuditEvent{
-		Actor:  "system",
-		Action: CheckpointAction,
-		Detail: string(detail),
+// the STORE reads back under its append lock (the real previous row), not the
+// triggering event's head. This keeps the anchor correct under multi-writer / HA
+// operation: if another replica appends between the triggering event and this
+// checkpoint, the checkpoint still signs the actual running head at its own
+// position, so VerifyFloor never raises a false tamper alarm. The caller holds c.mu.
+func (c *Chain) appendCheckpointLocked(ctx context.Context, now time.Time) (store.BrokerAuditEvent, error) {
+	kid := KeyID(c.signKey.Public().(ed25519.PublicKey))
+	ts := now.UTC().Format(time.RFC3339)
+	out, err := c.st.AppendBrokerAuditLinked(ctx, func(head *store.BrokerAuditEvent) store.BrokerAuditEvent {
+		var prev []byte
+		var anchorID int64
+		if head != nil {
+			prev, anchorID = head.HMAC, head.ID
+		}
+		cp := inChainCheckpoint{
+			LastID: anchorID,
+			Head:   hex.EncodeToString(prev),
+			KID:    kid,
+			Sig:    base64.StdEncoding.EncodeToString(ed25519.Sign(c.signKey, checkpointMsg(anchorID, prev))),
+			TS:     ts,
+		}
+		detail, _ := json.Marshal(cp)
+		ev := store.BrokerAuditEvent{Actor: "system", Action: CheckpointAction, Detail: string(detail)}
+		ev.HMAC = c.mac(prev, ev)
+		ev.PrevHash = prev
+		if ev.PrevHash == nil {
+			ev.PrevHash = []byte{}
+		}
+		return ev
 	})
+	if err != nil {
+		return store.BrokerAuditEvent{}, err
+	}
+	c.head = out.HMAC
+	return out, nil
 }
 
 // inChainCheckpoint is the JSON payload stored in a checkpoint event's detail: an
@@ -238,6 +258,7 @@ func (c *Chain) VerifyFloor(ctx context.Context, minEntries int64) (VerifyResult
 	}
 	res := VerifyResult{OK: true, Count: int64(len(events))}
 	var head []byte
+	var maxID int64
 	for i := range events {
 		ev := events[i]
 		if !hmac.Equal(c.mac(head, ev), ev.HMAC) {
@@ -253,9 +274,16 @@ func (c *Chain) VerifyFloor(ctx context.Context, minEntries int64) (VerifyResult
 				res.OK, res.BadCheckpoint = false, ev.ID
 			}
 		}
+		if ev.ID > maxID {
+			maxID = ev.ID
+		}
 		head = ev.HMAC
 	}
-	if minEntries > 0 && res.Count < minEntries {
+	// The floor is compared against the highest event ID, not the row count: an
+	// archived checkpoint records a BIGSERIAL upper bound (Count == LastID), and a
+	// rolled-back insert leaves an ID gap — so a true row count would raise a false
+	// truncation alarm. Tail truncation drops the highest IDs, which this catches.
+	if minEntries > 0 && maxID < minEntries {
 		res.OK, res.Truncated = false, true
 	}
 	return res, nil
