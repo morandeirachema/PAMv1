@@ -240,6 +240,10 @@ type Config struct {
 	// (dev only — default false verifies the certificate).
 	GuacdRDPSecurity string
 	GuacdIgnoreCert  bool
+	// RDPClipboard is the in-portal RDP clipboard policy: "allow" (default),
+	// "readonly" (block paste into the target — no clipboard injection), or "deny"
+	// (clipboard off both ways). Drive redirection is always disabled.
+	RDPClipboard string
 
 	// KEKProvider selects the vault Key Encryption Key backend:
 	// "local" (default, dev/test — uses MasterKey) or "vault-transit".
@@ -425,6 +429,7 @@ func Load() (*Config, error) {
 		GuacdRecordingPath:    os.Getenv("PAM_GUACD_RECORDING_PATH"),
 		GuacdRDPSecurity:      os.Getenv("PAM_GUACD_RDP_SECURITY"),
 		GuacdIgnoreCert:       boolean("PAM_GUACD_IGNORE_CERT", false),
+		RDPClipboard:          strings.ToLower(getenv("PAM_RDP_CLIPBOARD", "allow")),
 		KEKProvider:           getenv("PAM_KEK_PROVIDER", "local"),
 		TransitAddr:           os.Getenv("PAM_KEK_TRANSIT_ADDR"),
 		TransitToken:          os.Getenv("PAM_KEK_TRANSIT_TOKEN"),
@@ -550,6 +555,12 @@ func Load() (*Config, error) {
 	case "allow", "readonly", "deny":
 	default:
 		errs = append(errs, fmt.Sprintf("PAM_SSH_SFTP must be one of allow, readonly, deny (got %q)", cfg.SSHSFTPMode))
+	}
+	// RDP clipboard policy is the same fixed enum.
+	switch cfg.RDPClipboard {
+	case "allow", "readonly", "deny":
+	default:
+		errs = append(errs, fmt.Sprintf("PAM_RDP_CLIPBOARD must be one of allow, readonly, deny (got %q)", cfg.RDPClipboard))
 	}
 	// Rate limits are "0 = off"; a negative value must fail loud rather than
 	// silently disable throttling (a fat-fingered minus turning off brute-force

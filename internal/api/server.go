@@ -101,6 +101,10 @@ type Options struct {
 	// negotiates. GuacdIgnoreCert disables RDP server-cert verification (dev only).
 	GuacdRDPSecurity string
 	GuacdIgnoreCert  bool
+	// RDPClipboard is the clipboard/drive policy for in-portal RDP sessions:
+	// "allow" (default), "readonly" (block paste into the target), or "deny"
+	// (clipboard off both ways). Drive redirection is always disabled.
+	RDPClipboard string
 	// AuthRatePerMin limits authentication attempts per client IP per minute
 	// (0 disables rate limiting).
 	AuthRatePerMin int
@@ -234,6 +238,7 @@ type Server struct {
 	guacdRecordingPath string
 	guacdRDPSecurity   string
 	guacdIgnoreCert    bool
+	rdpClipboard       string
 	authLimiter        *ratelimit.Limiter
 	trustedProxyHops   int
 	sessions           *session.Registry
@@ -429,6 +434,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		guacdRecordingPath: opts.GuacdRecordingPath,
 		guacdRDPSecurity:   opts.GuacdRDPSecurity,
 		guacdIgnoreCert:    opts.GuacdIgnoreCert,
+		rdpClipboard:       rdpClipboardMode(opts.RDPClipboard),
 		authLimiter:        ratelimit.New(opts.AuthRatePerMin),
 		trustedProxyHops:   opts.TrustedProxyHops,
 		sessions:           opts.Sessions,

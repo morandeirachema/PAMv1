@@ -455,6 +455,15 @@ Closes an unaudited file-transfer path in the flagship SSH proxy. SFTP is not a 
 - [x] **Tests**: a **real minimal SFTP client + server** exchange genuine v3 packets through the proxy — `allow` forwards an upload to the target and audits it, `readonly` returns permission-denied for both an upload and a delete (neither reaches the target) yet a download still succeeds, `deny` refuses the subsystem — plus the config-enum mapping. New audit vocab `sftp.*` + `session.subsystem`; no schema change
 - Deferred (documented): **per-file content recording** of transferred bytes and a **path allow/deny list** (a natural follow-on to the framing already in place); **read-only enforcement for interactive shell file tools** (`scp`/shell redirection) stays inherent to the exec-path-only limit of command control
 
+## Phase 33 — RDP clipboard control ✅
+
+The RDP counterpart to Phase 32. The in-portal RDP viewer relies on [Apache Guacamole](https://guacamole.apache.org/doc/gug/configuring-guacamole.html#rdp), which leaves the **clipboard bridge on in both directions by default** — so an operator could copy data out of (or paste into) a recorded RDP session with no gate and no audit, and Guacamole's drive-redirection could mount a client folder as a file channel. A PAM must be able to restrict the session clipboard (a standard PSM control).
+
+- [x] **`PAM_RDP_CLIPBOARD` policy** (`internal/api/rdp_handlers.go` `rdpClipboardParams`, threaded into the guacd `connect` handshake via `rdpExtra`): **`allow`** (default) leaves copy + paste on; **`readonly`** blocks paste *into* the target (`disable-paste=true` — no clipboard injection) while copy-out stays on, mirroring SFTP read-only; **`deny`** turns the clipboard off both ways (`disable-copy=true`+`disable-paste=true`). Every mode also forces **`enable-drive=false`**, so no file can be exfiltrated through a mounted client drive regardless of guacd's defaults
+- [x] **Audited**: the chosen mode rides the `rdp.connect` audit detail (`clipboard:<mode>`); config `PAM_RDP_CLIPBOARD` ∈ {allow, readonly, deny} is validated fail-loud
+- [x] **Tests**: the mode→parameter mapping (allow/readonly/deny/unset), that drive redirection is always disabled, and an **end-to-end** assertion that a `deny` policy reaches a fake guacd as `disable-copy=true`/`disable-paste=true`/`enable-drive=false` in the advertised arg order. No new audit vocab, no schema change
+- Deferred (documented): **clipboard-content auditing** (logging *what* was copied — Guacamole exposes clipboard as a stream that could be tee'd, a natural follow-on) and a **per-target** clipboard override (today it is a global policy)
+
 ## Portal: keyboard-first navigation ✅
 
 The 5250 console is now explicitly **keyboard-first** (the mouse is optional), matching the IBM-terminal heritage: focus lands on each screen's primary field after every render, **Esc** cancels/goes back (the twin of F12), **↑/↓** move between subfile option cells, Tab/Enter/F-keys work throughout, and a persistent hint documents the shortcuts. The look is unchanged — only keyboard affordances were added.
