@@ -117,6 +117,7 @@ flowchart LR
   n_conjur --> n_logging
   n_maint --> n_store
   n_maint --> n_vault
+  n_memstore --> n_session
   n_memstore --> n_store
   n_ocsf --> n_store
   n_pam_server --> n_agentid
@@ -143,6 +144,7 @@ flowchart LR
   n_pam_server --> n_vendor
   n_pam_server --> n_winrm
   n_pgstore --> n_logging
+  n_pgstore --> n_session
   n_pgstore --> n_store
   n_proxy --> n_auth
   n_proxy --> n_logging
@@ -154,7 +156,9 @@ flowchart LR
   n_proxy --> n_winrm
   n_rotate --> n_store
   n_rotate --> n_winrm
+  n_storetest --> n_session
   n_storetest --> n_store
+  n_store --> n_session
 ```
 
 ## 2. Domain data model

@@ -535,6 +535,13 @@ func run() error {
 
 	sessions := session.NewRegistry()
 	sessions.SetLimits(cfg.MaxSessionsPerUser, cfg.MaxSessionsTotal)
+	// Cross-replica kill bus (Phase 34): broadcast session kills over the store so
+	// the kill-switch terminates a session on whichever replica hosts it. Postgres
+	// uses LISTEN/NOTIFY; the memory store fans out in-process. Best-effort — a
+	// subscribe failure logs and leaves the kill-switch replica-local.
+	if err := sessions.StartKillBus(ctx, st); err != nil {
+		log.Warn("session kill bus unavailable; kill-switch is replica-local", "err", err)
+	}
 	maxRecBytes := int64(cfg.MaxRecordingMB) * 1024 * 1024
 	liveHub := session.NewHub()
 

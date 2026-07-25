@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
@@ -45,6 +46,9 @@ type Memstore struct {
 	credDeps      map[int64]store.CredentialDependency
 	campaigns     map[int64]store.Campaign
 	campaignItems map[int64]store.CampaignItem
+
+	killMu   sync.Mutex
+	killSubs map[chan session.KillSelector]struct{} // cross-replica kill fan-out
 }
 
 // New returns an empty in-memory store ready for use.
@@ -73,6 +77,7 @@ func New() *Memstore {
 		credDeps:      make(map[int64]store.CredentialDependency),
 		campaigns:     make(map[int64]store.Campaign),
 		campaignItems: make(map[int64]store.CampaignItem),
+		killSubs:      make(map[chan session.KillSelector]struct{}),
 	}
 }
 

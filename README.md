@@ -285,6 +285,7 @@ All twenty-six phases (0–25) have shipped — full per-phase detail in **[ROAD
 | 31 | Identity blast-radius / CIEM engine (AWS IAM effective-permission evaluator + escalation paths) | ✅ shipped |
 | 32 | SFTP file-transfer control + audit (parse the subsystem stream; allow/readonly/deny) | ✅ shipped |
 | 33 | RDP clipboard control (gate the Guacamole clipboard bridge; drive redirection off) | ✅ shipped |
+| 34 | HA session kill-switch (cross-replica kill over Postgres LISTEN/NOTIFY) | ✅ shipped |
 
 ## Coverage vs. commercial PAM (CyberArk, Wallix, …)
 

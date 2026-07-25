@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-07-25 · Reflects: Phases 0–33 + the 2026-07 hardening pass.
+> Last updated: 2026-07-25 · Reflects: Phases 0–34 + the 2026-07 hardening pass.
 
 ## How the review was run
 
@@ -65,7 +65,7 @@ few authorization edges.
 | 19 | Container healthcheck hard-coded `http://`, breaking under native TLS. | **Fixed** | `runHealthcheck` matches the served scheme (`https` when `PAM_TLS_CERT/KEY` set). |
 | 20 | SSH-proxy grant check used a stripped principal (dropped multi-group/custom-profile — fail-closed but denied valid users). | **Fixed** | The handshake now carries the full role set (`ext["roles"]`), reconstructed for `CanConnectTarget`. |
 | 21 | Alert webhook accepted `http://` with no warning. | **Mitigated** | A startup warning is logged for a non-HTTPS, non-loopback webhook. |
-| 22 | Revoking access left in-flight proxied sessions running (grants/users checked only at connect time). | **Fixed** | Revoking a login, a directory-disable during reconcile, or deleting a *user* grant now kills the matching live sessions (`session.killed`). Role-grant deletions affect only new connections; the registry is per-replica (HA note below). |
+| 22 | Revoking access left in-flight proxied sessions running (grants/users checked only at connect time). | **Fixed** | Revoking a login, a directory-disable during reconcile, or deleting a *user* grant now kills the matching live sessions (`session.killed`). Role-grant deletions affect only new connections. Since Phase 34 the kill is **cluster-wide** (broadcast over the store, applied on whichever replica hosts the session). |
 | 23 | No cap on concurrent sessions or recording size (resource-exhaustion DoS; a runaway session could fill the recording disk). | **Fixed** | `PAM_MAX_SESSIONS_PER_USER`/`PAM_MAX_SESSIONS_TOTAL` cap concurrent proxied sessions (checked before decrypt); `PAM_MAX_RECORDING_MB` terminates a session that exceeds the recording cap (`session.record_limit`) rather than run it unrecorded. All default off; per-replica in HA. |
 
 ## Not changed by design (documented trade-offs)
@@ -119,9 +119,15 @@ is a phase each, out of scope for a security *fix*:
 - **JIT ephemeral account provisioning** on targets, **FIDO2/
   WebAuthn**, **CIEM / cloud-IAM brokering**, **Kubernetes secret/SA delivery**,
   **other DB engines** (MySQL/MSSQL/Oracle), **native audit→SIEM forwarding**
-  (syslog/CEF/LEEF), **HSM/KMS-backed SSH-CA signing**, **rotation webhooks**, and
-  **HA correctness** (in-memory session registry + scheduler have no leader
-  election, so kill-switch/monitoring/rotation are per-replica).
+  (syslog/CEF/LEEF), **HSM/KMS-backed SSH-CA signing**, and **rotation webhooks**.
+- **HA correctness** — the periodic-job scheduler runs under a Postgres
+  advisory **leader lock** (one replica per tick), and the **kill-switch is now
+  cluster-wide** (Phase 34: a kill is broadcast over Postgres LISTEN/NOTIFY and
+  applied on whichever replica hosts the session — kill-switch, revoke cascade,
+  vendor offboard, analytics auto-response). What remains per-replica: **live
+  session *monitoring*** (the SSE watch stream is served from the hosting pod) and
+  the session **inventory listing**; fanning session *bytes* across replicas is a
+  heavier pub/sub than a kill signal and stays a documented follow-on.
 - **Roadmap-deferred**: Kerberos/GSSAPI, serial connectors, SPIRE workload
   attestation, automatic broker-chain checkpoint export. (The in-browser RDP viewer
   has since **shipped** — vendored Guacamole client + bundled guacd.)

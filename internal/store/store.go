@@ -12,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/morandeirachema/pamv1/internal/session"
 )
 
 var (
@@ -705,6 +707,14 @@ type Store interface {
 	// directory user disabled upstream, or a compromised account), returning how
 	// many were removed. It is idempotent — zero is not an error.
 	DeleteSessionsByUsername(ctx context.Context, username string) (int, error)
+
+	// PublishSessionKill broadcasts a live-session kill to every replica so the
+	// kill-switch works in HA (Postgres LISTEN/NOTIFY; an in-process hub for the
+	// memory store). SubscribeSessionKills returns a stream of kills published by
+	// any replica, delivered until ctx is cancelled — the local session registry
+	// applies each to the sessions it hosts.
+	PublishSessionKill(ctx context.Context, sel session.KillSelector) error
+	SubscribeSessionKills(ctx context.Context) (<-chan session.KillSelector, error)
 
 	// UpsertMFAEnrollment creates or replaces a user's TOTP enrollment.
 	UpsertMFAEnrollment(ctx context.Context, e *MFAEnrollment) error
