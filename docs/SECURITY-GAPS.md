@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-07-24 · Reflects: Phases 0–25 + the 2026-07 hardening pass.
+> Last updated: 2026-07-25 · Reflects: Phases 0–32 + the 2026-07 hardening pass.
 
 ## How the review was run
 
@@ -74,7 +74,14 @@ few authorization edges.
   PTY shells stream unparsed, and the exec path is regex over the command string.
   This is inherent (real containment needs a parsing shell/PTY layer) and already
   documented; it must not be read as an enforcement boundary. Use observer sessions
-  or restrict shell access for true containment.
+  or restrict shell access for true containment. **SFTP is the exception:** as of
+  Phase 32 the proxy parses the SFTP subsystem stream (a distinct binary protocol,
+  not raw PTY keystrokes) to audit every file operation and, under
+  `PAM_SSH_SFTP=readonly`/`deny`, refuse writes or the subsystem outright — so file
+  *transfer* is now audited and gatable even though interactive shell *content* is
+  not. (File transfer initiated as `scp` over an interactive shell, or shell
+  redirection, still rides the unparsed PTY and is out of scope — use `readonly`
+  plus shell restriction for containment.)
 - **Session recording is fail-open unless `PAM_REQUIRE_RECORDING`** — the opt-in
   fail-closed control already exists; the default is kept permissive for demos.
 - **Decrypted plaintext lives in Go `string`s** (only the data key is zeroed) —

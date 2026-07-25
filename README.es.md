@@ -157,6 +157,7 @@ Fases 0–26, agrupadas por área. Cada capacidad está cubierta por tests y se 
 - **Proxy de sesión de base de datos (PostgreSQL)** — apunta `psql` a pamv1 (`PAM_DB_ADDR`, p. ej. `:5433`) con `user=<credbd>@<objetivo>` y tu clave PAM como contraseña; el proxy aplica las mismas comprobaciones de autorización que el proxy SSH, inyecta la credencial de BD del vault just-in-time (auth upstream por cleartext / MD5 / **SCRAM-SHA-256**) e intermedia el protocolo — **auditando cada sentencia SQL** (`db.query`) y grabando la sesión. El operador nunca conoce la contraseña de la base de datos. Demostrado de extremo a extremo por un upstream falso que acepta *solo* el secreto del vault.
 - **Grabación de sesiones** — cada sesión (stdout **y** stderr, o cada sentencia SQL) capturada en [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/), encadenada por hash SHA-256 a prueba de manipulación, y el hash escrito en la auditoría. Los fallos de grabación se auditan y `PAM_REQUIRE_RECORDING` puede rechazar de plano una sesión no grabable.
 - **Sesiones supervisadas (monitorización en vivo + control de comandos)** — un supervisor puede **ver una sesión SSH o PostgreSQL en vivo** por `GET /api/sessions/{id}/stream` (Server-Sent Events, `CapReadAudit`), y una lista de denegación por regex (`PAM_COMMAND_DENY_FILE`) **bloquea un comando peligroso antes de que llegue al objetivo** en las rutas de exec, WinRM y SQL — rechazado y auditado (`command.blocked`). Para las shells SSH interactivas se usa el modo observador de solo lectura.
+- **Control de transferencia de archivos (SFTP)** — SFTP viaja sobre un subsistema SSH con un protocolo binario que el control de comandos no veía. Ahora el proxy **analiza ese flujo** para auditar cada operación de archivo (`sftp.open`/`sftp.modify`), y `PAM_SSH_SFTP` fija la política: `allow` (reenviar + auditar), `readonly` (**rechaza subidas, borrados y renombrados** con un permiso denegado sintetizado — el objetivo nunca es contactado; las descargas siguen funcionando) o `deny` (rechaza el subsistema por completo). Cierra una vía de exfiltración de archivos que antes no se auditaba. Probado de extremo a extremo con un cliente y servidor SFTP reales intercambiando paquetes genuinos a través del proxy.
 
 ### Vault y ciclo de vida de credenciales
 
@@ -279,6 +280,12 @@ Se han entregado las veintiséis fases (0–25) — detalle por fase en **[ROADM
 | 24 | API de secretos para aplicaciones (entrega estilo Conjur para apps sin agente) | ✅ entregada |
 | 25 | Paridad de la consola (safes, campañas, analítica de riesgo, visor de sesiones en directo) | ✅ entregada |
 | 26 | Reproducción de grabaciones de sesión (verificada por hash) + acceso de un solo uso | ✅ entregada |
+| 27 | Compleción del broker de agentes IA (SoD, checkpoints de auditoría firmados, exportación OCSF, MCP SSE + elicitación) | ✅ entregada |
+| 28 | Certificados SSH emitidos al operador (certificados JIT para humanos, revocación por KRL) | ✅ entregada |
+| 29 | Pasarela de acceso de terceros/proveedores (concesiones contractuales con caducidad, atestación de empleo, cascada de baja) | ✅ entregada |
+| 30 | Política en sesión + step-up (comparadores numéricos de política, pausa-para-supervisor en el proxy de BD) | ✅ entregada |
+| 31 | Motor de radio de impacto de identidad / CIEM (evaluador de permisos efectivos de AWS IAM + rutas de escalada) | ✅ entregada |
+| 32 | Control y auditoría de transferencia de archivos SFTP (analiza el subsistema; allow/readonly/deny) | ✅ entregada |
 
 ## Cobertura frente al PAM comercial (CyberArk, Wallix, …)
 
