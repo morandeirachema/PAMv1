@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-07-24 · Reflects: Phases 0–25 + the 2026-07 hardening pass — through the AI-agent access broker (13), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22), privileged threat analytics (23), the Conjur-style application-secrets API (24), and console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer) — plus the post-24 hardening: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP proxy auth throttling. The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-07-25 · Reflects: Phases 0–32 + the 2026-07 hardening pass — through the AI-agent access broker (13), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22), privileged threat analytics (23), the Conjur-style application-secrets API (24), and console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer) — plus the post-24 hardening: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP proxy auth throttling. The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -219,6 +219,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_DB_UPSTREAM_TLS_VERIFY` | | `false` | Verify the upstream PostgreSQL certificate against the system roots (alternative to `PAM_DB_UPSTREAM_CA`). |
 | `PAM_REQUIRE_DB_CLIENT_TLS` | | `false` | Refuse to start the DB proxy without operator-leg TLS (so the PAM key is never sent to it in cleartext). |
 | `PAM_COMMAND_DENY_FILE` | | (off) | Regex denylist file for command control (Phase 16); blocks matching commands on exec/WinRM/SQL. |
+| `PAM_SSH_SFTP` | | `allow` | SFTP file-transfer policy (Phase 32): `allow` (forward + audit every op), `readonly` (refuse writes/deletes/renames), `deny` (refuse the subsystem). See §9.4. |
 | `PAM_DB_STEPUP_FILE` | | (off) | Regex file marking PostgreSQL statements that **pause for a supervisor's live approval** — in-session step-up (Phase 30). See §9.4. |
 | `PAM_DB_STEPUP_TTL_SEC` | | `120` | How long a paused statement waits for a decision before it is denied. |
 | `PAM_ANALYTICS_INTERVAL_MIN` | | `0` (off) | Threat-analytics worker interval (Phase 23); `0` leaves the read-only `GET /api/analytics/risk` endpoint on. See §9.7. |
@@ -1226,6 +1227,21 @@ closed). Interactive SSH **shells** stream a raw terminal and are *not* parsed �
 use read-only observer sessions (`ssh <cred>@<target>+observe@pam`) or restrict
 shell access where you need that guarantee.
 
+**SFTP file-transfer control (Phase 32).** SFTP is not caught by the command
+denylist — it rides its own SSH *subsystem* channel carrying a binary protocol.
+`PAM_SSH_SFTP` governs it independently:
+
+| Value | Behavior |
+|---|---|
+| `allow` (default) | File transfer is forwarded, and **every operation is audited** — `sftp.session` (subsystem opened), `sftp.open` (with `mode:read`/`mode:write`), `sftp.modify` (remove/rename/mkdir/rmdir/setstat/symlink). |
+| `readonly` | Downloads work; any **upload, delete, rename, mkdir, chmod, or symlink is refused** with an SFTP permission-denied (`sftp.blocked`) — the target is never contacted for the write. |
+| `deny` | The SFTP subsystem is **refused outright** (`sftp.denied`); the operator keeps a shell but cannot transfer files. |
+
+This closes an otherwise **unaudited** file path: before Phase 32 the SFTP stream
+passed through opaque. Note it governs SFTP specifically — `scp` run *inside* an
+interactive shell rides the unparsed PTY (as above); pair `readonly` with shell
+restriction for full containment.
+
 **In-session step-up (Phase 30).** Where command control is a hard block, step-up
 is a **pause for a live human decision** — the session stays open. Point
 `PAM_DB_STEPUP_FILE` at a regex file (same format as the deny file); a matching
@@ -1400,6 +1416,7 @@ scores in your environment.
 | 2026-07-21 | Phase 19: **access certification campaigns** — `POST /api/campaigns` snapshots current access (target grants + safe members); certify/revoke each item (`revoke` deletes the grant); close to record the attestation. Management `CapManageUsers`, reading `CapReadAudit`. See §9.6 |
 | 2026-07-21 | Phase 18: **Conjur secret sourcing** — an alternative to SOPS: set `PAM_CONJUR_URL` and pam-server fetches its own bootstrap secrets from CyberArk Conjur at startup (authn-api-key or Kubernetes authn-jwt). Both ship; SOPS stays the default. See [deploy/k8s/conjur/README.md](../deploy/k8s/conjur/README.md) |
 | 2026-07-21 | Phase 17: **safes + dependent-account propagation** — group targets into delegated-access safes (`/api/safes`, a member reaches every target in the safe; `can_manage` delegated administration) and declare a credential's consumers (`/api/credentials/{id}/dependencies`) so rotation updates the Windows Services / Scheduled Tasks / IIS App Pools that use it. See §7 → *Safes* and *Dependent accounts* |
+| 2026-07-25 | Phase 32: **SFTP file-transfer control** — `PAM_SSH_SFTP` (`allow`/`readonly`/`deny`) audits every SFTP operation and can refuse writes or the whole subsystem; closes an unaudited file-transfer path. See §9.4 |
 | 2026-07-21 | Phase 16: **live session monitoring + command control** — watch an SSH/PostgreSQL session live over `GET /api/sessions/{id}/stream` (SSE, `CapReadAudit`); block dangerous commands on exec/WinRM/SQL via a regex denylist (`PAM_COMMAND_DENY_FILE`, audited `command.blocked`). See §9.4 |
 | 2026-07-20 | Phase 15: **PostgreSQL database session proxy** (`PAM_DB_ADDR`) — brokers `postgres` targets with JIT credential injection and **per-statement query audit** (`db.query`); operators use `psql user=<dbcred>@<target>` with their PAM token. Same authorization gates as the SSH proxy; upstream auth via SCRAM-SHA-256/MD5/cleartext. See §5 → *Database targets (PostgreSQL)* |
 | 2026-07-20 | Post-review hardening: directory logins grant the **union** of every mapped group's role (not the single highest); a parked agent approval is **re-validated at decision time** (revoked key / expired SVID refused); broker-audit append serializes under a Postgres advisory lock so a rolling-deploy/HA overlap can't fork the hash chain; numeric policy arguments match in plain decimal |

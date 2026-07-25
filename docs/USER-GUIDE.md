@@ -186,6 +186,13 @@ you.
 > by policy** — if you see `command blocked by policy`, that command was refused
 > before it reached the target (the rest of your session continues).
 
+> **File transfers (SFTP) are audited too.** You can use `sftp`/`scp` over the
+> proxy as normal, but each file operation is logged. Depending on policy your
+> access may be **read-only** (uploads, deletes and renames are refused with
+> "permission denied" — downloads still work) or SFTP may be **disabled** (the
+> subsystem is refused; you still get a shell). Ask your admin if you need to
+> upload and can't.
+
 ### Connecting to a database (PostgreSQL)
 
 If your admin enabled the database proxy, you reach `postgres` targets with
@@ -291,6 +298,7 @@ requests on their list.
 
 | Date | Change |
 |---|---|
+| 2026-07-25 | Phase 32: **SFTP file transfers are audited**, and may be **read-only** (uploads/deletes refused) or **disabled** by policy. §3 |
 | 2026-07-24 | Phase 26: **Session recordings** (menu 19) — replay stored recordings with a keyboard-first player and an on-screen audit-hash verdict; **one-time access requests** (a single-use approval is consumed by the first connection it admits) with a `1x`/`used` marker on the approver list. §4, §6, §7 |
 | 2026-07-24 | Phase 25 (console parity): menu items **16–18** (safes, certification campaigns, risk analytics), **watching a session live from the portal** (Active Sessions option 5), and the richer access-request form (ticket, N-of-M approvals, active window). §4, §6 |
 | 2026-07-23 | **RDP in the portal:** documented option **7** on an RDP target — the Windows desktop now renders in the browser (`Ctrl+Alt+Q` disconnects), no client needed. §5 |
