@@ -1,0 +1,255 @@
+// Package auditfwd streams the primary audit trail to an external SIEM as it
+// grows. Where internal/alert fires a message on a specific event (break-glass,
+// a risk spike) and the OCSF endpoint is pull-based, this is a continuous push:
+// every audit row is forwarded, in order, as an RFC 5424 syslog message
+// (https://datatracker.ietf.org/doc/html/rfc5424) or an ArcSight CEF record
+// (https://www.microfocus.com/documentation/arcsight/arcsight-smartconnectors-8.4/cef-implementation-standard/).
+//
+// It tails the trail from a durable cursor (the id of the last event forwarded,
+// persisted in the settings store), so a restart resumes exactly where it left
+// off — no gap, no replay. The cursor advances only after an event is written to
+// the collector, so a transport failure re-sends from the last success on the
+// next tick (spool-and-retry). In HA the whole pass runs under a Postgres leader
+// lock, so N replicas do not each forward the same rows.
+package auditfwd
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/morandeirachema/pamv1/internal/logging"
+	"github.com/morandeirachema/pamv1/internal/store"
+)
+
+// cursorKey is the settings key holding the last-forwarded audit id. The leading
+// underscore keeps it out of the config-override whitelist namespace.
+const cursorKey = "_audit_forward_cursor"
+
+// forwardLockKey is the advisory-lock key that serializes the forward pass across
+// replicas ("pam_fwd" as bytes).
+const forwardLockKey = 0x70616d5f667764
+
+// Format is the wire format emitted to the collector.
+type Format string
+
+const (
+	FormatRFC5424 Format = "rfc5424"
+	FormatCEF     Format = "cef"
+)
+
+// ParseFormat validates a format string, defaulting empty to RFC 5424.
+func ParseFormat(s string) (Format, error) {
+	switch Format(s) {
+	case "", FormatRFC5424:
+		return FormatRFC5424, nil
+	case FormatCEF:
+		return FormatCEF, nil
+	default:
+		return "", fmt.Errorf("invalid audit-forward format %q (want rfc5424 or cef)", s)
+	}
+}
+
+// source is the slice of the store the forwarder needs (satisfied by store.Store).
+type source interface {
+	AuditSince(ctx context.Context, afterID int64, limit int) ([]store.AuditEvent, error)
+	ListAudit(ctx context.Context, limit int) ([]store.AuditEvent, error)
+	GetSetting(ctx context.Context, key string) (*store.Setting, error)
+	PutSetting(ctx context.Context, s *store.Setting) error
+	WithLeaderLock(ctx context.Context, key int64, fn func(context.Context) error) (bool, error)
+}
+
+// Config configures a Forwarder.
+type Config struct {
+	Network string // "udp" or "tcp"
+	Addr    string // host:port of the SIEM collector
+	Format  Format
+	Tag     string // syslog APP-NAME / CEF device product (default "pamv1")
+	Host    string // syslog HOSTNAME (default the OS hostname)
+	Batch   int    // max events per flush (default 500)
+}
+
+// Forwarder pushes new audit events to a SIEM collector.
+type Forwarder struct {
+	src     source
+	network string
+	addr    string
+	format  Format
+	tag     string
+	host    string
+	batch   int
+	dial    func(network, addr string) (net.Conn, error)
+	log     *slog.Logger
+}
+
+// New builds a Forwarder, validating the transport and format. dial defaults to a
+// timeout-bounded net dialer; tests inject their own.
+func New(src source, cfg Config) (*Forwarder, error) {
+	if cfg.Addr == "" {
+		return nil, fmt.Errorf("auditfwd: Addr is required")
+	}
+	if cfg.Network != "udp" && cfg.Network != "tcp" {
+		return nil, fmt.Errorf("auditfwd: Network must be udp or tcp (got %q)", cfg.Network)
+	}
+	format, err := ParseFormat(string(cfg.Format))
+	if err != nil {
+		return nil, err
+	}
+	f := &Forwarder{
+		src: src, network: cfg.Network, addr: cfg.Addr, format: format,
+		tag: cfg.Tag, host: cfg.Host, batch: cfg.Batch,
+		log: logging.Component("auditfwd"),
+	}
+	if f.tag == "" {
+		f.tag = "pamv1"
+	}
+	if f.host == "" {
+		if h, err := os.Hostname(); err == nil && h != "" {
+			f.host = h
+		} else {
+			f.host = "-"
+		}
+	}
+	if f.batch <= 0 {
+		f.batch = 500
+	}
+	f.dial = func(network, addr string) (net.Conn, error) {
+		return net.DialTimeout(network, addr, 5*time.Second)
+	}
+	return f, nil
+}
+
+// Run forwards new audit events every interval until ctx is cancelled. Each pass
+// runs under the leader lock so only one replica forwards. It does an immediate
+// first pass so a freshly enabled forwarder does not wait a full interval.
+func (f *Forwarder) Run(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		if _, err := f.src.WithLeaderLock(ctx, forwardLockKey, f.Flush); err != nil && ctx.Err() == nil {
+			f.log.Warn("audit forward pass failed", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// Flush sends every audit event newer than the cursor, advancing (and persisting)
+// the cursor as it goes. It drains in batches; a dial or write failure stops the
+// pass with the cursor at the last event actually delivered, so the next pass
+// resumes there (spool-and-retry).
+func (f *Forwarder) Flush(ctx context.Context) error {
+	cursor, err := f.loadCursor(ctx)
+	if err != nil {
+		return err
+	}
+	for {
+		events, err := f.src.AuditSince(ctx, cursor, f.batch)
+		if err != nil {
+			return err
+		}
+		if len(events) == 0 {
+			return nil
+		}
+		conn, err := f.dial(f.network, f.addr)
+		if err != nil {
+			return err // collector unreachable; retry next tick, cursor unchanged
+		}
+		sent := cursor
+		for _, e := range events {
+			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if _, werr := conn.Write([]byte(f.format.render(e, f.tag, f.host) + "\n")); werr != nil {
+				conn.Close()
+				if sent != cursor {
+					_ = f.saveCursor(ctx, sent) // persist partial progress
+				}
+				return werr
+			}
+			sent = e.ID
+		}
+		conn.Close()
+		cursor = sent
+		if err := f.saveCursor(ctx, cursor); err != nil {
+			return err
+		}
+		if len(events) < f.batch {
+			return nil // drained
+		}
+	}
+}
+
+// loadCursor returns the last-forwarded id. On first run (no cursor persisted) it
+// initializes to the current max audit id and persists it, so enabling forwarding
+// starts from "now" rather than replaying the entire history into the SIEM.
+func (f *Forwarder) loadCursor(ctx context.Context) (int64, error) {
+	s, err := f.src.GetSetting(ctx, cursorKey)
+	if err == nil {
+		return strconv.ParseInt(s.Value, 10, 64)
+	}
+	if err != store.ErrNotFound {
+		return 0, err
+	}
+	var start int64
+	if latest, lerr := f.src.ListAudit(ctx, 1); lerr == nil && len(latest) > 0 {
+		start = latest[0].ID
+	}
+	return start, f.saveCursor(ctx, start)
+}
+
+// saveCursor persists the cursor as a non-secret setting.
+func (f *Forwarder) saveCursor(ctx context.Context, id int64) error {
+	return f.src.PutSetting(ctx, &store.Setting{Key: cursorKey, Value: strconv.FormatInt(id, 10)})
+}
+
+// render formats an audit event in the forwarder's wire format.
+func (fm Format) render(e store.AuditEvent, tag, host string) string {
+	if fm == FormatCEF {
+		return renderCEF(e, tag)
+	}
+	return renderRFC5424(e, tag, host)
+}
+
+// renderRFC5424 formats an event as an RFC 5424 syslog line. PRI = facility 13
+// (log audit) * 8 + severity 6 (informational) = 110. Actor/action/detail are
+// sanitized so a name carrying CR/LF (e.g. from a directory claim) cannot forge
+// extra syslog records.
+func renderRFC5424(e store.AuditEvent, tag, host string) string {
+	return fmt.Sprintf("<110>1 %s %s %s - %s - actor=%s detail=%q",
+		e.TS.UTC().Format(time.RFC3339), oneLine(host), oneLine(tag),
+		oneLine(e.Action), oneLine(e.Actor), oneLine(e.Detail))
+}
+
+// renderCEF formats an event as an ArcSight CEF record. Header fields escape '|'
+// and '\'; extension values escape '=' and '\'. rt is milliseconds since epoch.
+func renderCEF(e store.AuditEvent, tag string) string {
+	sig := cefHeader(e.Action)
+	return fmt.Sprintf("CEF:0|pamv1|%s|1|%s|%s|3|rt=%d suser=%s msg=%s",
+		cefHeader(tag), sig, sig, e.TS.UnixMilli(),
+		cefExt(e.Actor), cefExt(e.Detail))
+}
+
+// oneLine strips CR/LF so an attacker-controlled field cannot inject a new record.
+func oneLine(s string) string {
+	return strings.NewReplacer("\r", " ", "\n", " ").Replace(s)
+}
+
+// cefHeader escapes the CEF header-field metacharacters (\ and |).
+func cefHeader(s string) string {
+	return strings.NewReplacer("\r", " ", "\n", " ", `\`, `\\`, "|", `\|`).Replace(s)
+}
+
+// cefExt escapes the CEF extension-value metacharacters (\ and =).
+func cefExt(s string) string {
+	return strings.NewReplacer("\r", " ", "\n", " ", `\`, `\\`, "=", `\=`).Replace(s)
+}

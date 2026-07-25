@@ -37,6 +37,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/analytics"
 	"github.com/morandeirachema/pamv1/internal/api"
 	"github.com/morandeirachema/pamv1/internal/auditchain"
+	"github.com/morandeirachema/pamv1/internal/auditfwd"
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/config"
 	"github.com/morandeirachema/pamv1/internal/conjur"
@@ -760,6 +761,19 @@ func run() error {
 	}
 	if cfg.VendorSweepInterval > 0 {
 		go handler.RunVendorSweeper(ctx, cfg.VendorSweepInterval)
+	}
+	// SIEM audit forwarding (Phase 35): stream every audit event to a collector.
+	if cfg.AuditForwardAddr != "" {
+		fwd, ferr := auditfwd.New(st, auditfwd.Config{
+			Network: cfg.AuditForwardProto,
+			Addr:    cfg.AuditForwardAddr,
+			Format:  auditfwd.Format(cfg.AuditForwardFormat),
+		})
+		if ferr != nil {
+			return fmt.Errorf("audit forwarder: %w", ferr)
+		}
+		go fwd.Run(ctx, time.Duration(cfg.AuditForwardIntervalSec)*time.Second)
+		log.Info("audit SIEM forwarding enabled", "addr", cfg.AuditForwardAddr, "proto", cfg.AuditForwardProto, "format", cfg.AuditForwardFormat)
 	}
 
 	// errc receives the first fatal listener error (HTTP or SSH proxy); either

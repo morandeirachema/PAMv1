@@ -288,6 +288,7 @@ Se han entregado las veintiséis fases (0–25) — detalle por fase en **[ROADM
 | 32 | Control y auditoría de transferencia de archivos SFTP (analiza el subsistema; allow/readonly/deny) | ✅ entregada |
 | 33 | Control del portapapeles RDP (regula el puente de portapapeles de Guacamole; redirección de unidades deshabilitada) | ✅ entregada |
 | 34 | Interruptor de corte de sesión en HA (corte entre réplicas vía Postgres LISTEN/NOTIFY) | ✅ entregada |
+| 35 | Reenvío de auditoría a SIEM (flujo continuo RFC 5424 syslog / CEF) | ✅ entregada |
 
 ## Cobertura frente al PAM comercial (CyberArk, Wallix, …)
 
