@@ -220,6 +220,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_REQUIRE_DB_CLIENT_TLS` | | `false` | Refuse to start the DB proxy without operator-leg TLS (so the PAM key is never sent to it in cleartext). |
 | `PAM_COMMAND_DENY_FILE` | | (off) | Regex denylist file for command control (Phase 16); blocks matching commands on exec/WinRM/SQL. |
 | `PAM_SSH_SFTP` | | `allow` | SFTP file-transfer policy (Phase 32): `allow` (forward + audit every op), `readonly` (refuse writes/deletes/renames), `deny` (refuse the subsystem). See §9.4. |
+| `PAM_RDP_CLIPBOARD` | | `allow` | RDP clipboard policy (Phase 33): `allow`, `readonly` (block paste into the target), `deny` (clipboard off both ways); drive redirection always off. |
 | `PAM_DB_STEPUP_FILE` | | (off) | Regex file marking PostgreSQL statements that **pause for a supervisor's live approval** — in-session step-up (Phase 30). See §9.4. |
 | `PAM_DB_STEPUP_TTL_SEC` | | `120` | How long a paused statement waits for a decision before it is denied. |
 | `PAM_ANALYTICS_INTERVAL_MIN` | | `0` (off) | Threat-analytics worker interval (Phase 23); `0` leaves the read-only `GET /api/analytics/risk` endpoint on. See §9.7. |
@@ -514,6 +515,20 @@ security mode. For self-signed or legacy hosts, opt out or pin the mode:
 PAM_GUACD_RDP_SECURITY=nla     # force a mode (nla|tls|rdp); empty = negotiate
 PAM_GUACD_IGNORE_CERT=true     # dev only — skip RDP server-cert verification
 ```
+
+**Clipboard control (Phase 33).** Guacamole leaves the RDP clipboard on in both
+directions by default — an operator can copy data out of, or paste into, a
+recorded session with no gate. `PAM_RDP_CLIPBOARD` restricts it (drive
+redirection is *always* disabled, so no file can be exfiltrated via a mounted
+client drive):
+
+```bash
+PAM_RDP_CLIPBOARD=allow        # copy + paste both on (default)
+PAM_RDP_CLIPBOARD=readonly     # block paste INTO the target (no clipboard injection); copy-out stays on
+PAM_RDP_CLIPBOARD=deny         # clipboard off in both directions
+```
+
+The active mode is recorded in the `rdp.connect` audit event (`clipboard:<mode>`).
 
 Create the target with `protocol=rdp`, port `3389`, and a credential. The
 WebSocket endpoint `GET /api/targets/{id}/rdp?token=<token>` decrypts the
@@ -1416,6 +1431,7 @@ scores in your environment.
 | 2026-07-21 | Phase 19: **access certification campaigns** — `POST /api/campaigns` snapshots current access (target grants + safe members); certify/revoke each item (`revoke` deletes the grant); close to record the attestation. Management `CapManageUsers`, reading `CapReadAudit`. See §9.6 |
 | 2026-07-21 | Phase 18: **Conjur secret sourcing** — an alternative to SOPS: set `PAM_CONJUR_URL` and pam-server fetches its own bootstrap secrets from CyberArk Conjur at startup (authn-api-key or Kubernetes authn-jwt). Both ship; SOPS stays the default. See [deploy/k8s/conjur/README.md](../deploy/k8s/conjur/README.md) |
 | 2026-07-21 | Phase 17: **safes + dependent-account propagation** — group targets into delegated-access safes (`/api/safes`, a member reaches every target in the safe; `can_manage` delegated administration) and declare a credential's consumers (`/api/credentials/{id}/dependencies`) so rotation updates the Windows Services / Scheduled Tasks / IIS App Pools that use it. See §7 → *Safes* and *Dependent accounts* |
+| 2026-07-25 | Phase 33: **RDP clipboard control** — `PAM_RDP_CLIPBOARD` (`allow`/`readonly`/`deny`) gates the Guacamole clipboard bridge and always disables drive redirection; the mode is audited on `rdp.connect`. See §5 (RDP). |
 | 2026-07-25 | Phase 32: **SFTP file-transfer control** — `PAM_SSH_SFTP` (`allow`/`readonly`/`deny`) audits every SFTP operation and can refuse writes or the whole subsystem; closes an unaudited file-transfer path. See §9.4 |
 | 2026-07-21 | Phase 16: **live session monitoring + command control** — watch an SSH/PostgreSQL session live over `GET /api/sessions/{id}/stream` (SSE, `CapReadAudit`); block dangerous commands on exec/WinRM/SQL via a regex denylist (`PAM_COMMAND_DENY_FILE`, audited `command.blocked`). See §9.4 |
 | 2026-07-20 | Phase 15: **PostgreSQL database session proxy** (`PAM_DB_ADDR`) — brokers `postgres` targets with JIT credential injection and **per-statement query audit** (`db.query`); operators use `psql user=<dbcred>@<target>` with their PAM token. Same authorization gates as the SSH proxy; upstream auth via SCRAM-SHA-256/MD5/cleartext. See §5 → *Database targets (PostgreSQL)* |

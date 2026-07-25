@@ -239,3 +239,80 @@ func TestRDPTokenIsTunnelScoped(t *testing.T) {
 		t.Fatalf("RDP token re-minting should be 403 (tunnel-only), got %d", status)
 	}
 }
+
+// TestRDPClipboardReachesGuacd proves the PAM_RDP_CLIPBOARD policy is injected
+// into guacd's connect end to end: a "deny" policy disables both copy and paste
+// (no clipboard exfiltration or injection) and always disables drive redirection,
+// each positioned by the arg name guacd advertised.
+func TestRDPClipboardReachesGuacd(t *testing.T) {
+	argNames := []string{"hostname", "port", "username", "password", "disable-copy", "disable-paste", "enable-drive"}
+	connectCh := make(chan []string, 1)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		r := bufio.NewReader(conn)
+		if _, err := readFakeInst(r); err != nil { // select
+			return
+		}
+		conn.Write([]byte(guacd.Instruction{Opcode: "args", Args: append([]string{"VERSION_1_5_0"}, argNames...)}.Encode()))
+		for {
+			inst, err := readFakeInst(r)
+			if err != nil {
+				return
+			}
+			if inst.op == "connect" {
+				connectCh <- inst.args
+				break
+			}
+		}
+		conn.Write([]byte(guacd.Instruction{Opcode: "ready", Args: []string{"$test-conn"}}.Encode()))
+		io.Copy(io.Discard, r)
+	}()
+
+	srv, _ := newTestServerOpts(t, nil, api.Options{GuacdAddr: ln.Addr().String(), RDPClipboard: "deny"})
+	_, data := do(t, srv, "POST", "/api/targets", testAPIKey, map[string]any{
+		"name": "win-rdp", "host": "10.0.0.9", "port": 3389, "os_type": "windows", "protocol": "rdp",
+	})
+	id := int64(jsonMap(t, data)["id"].(float64))
+	do(t, srv, "POST", "/api/credentials", testAPIKey, map[string]any{
+		"target_id": id, "username": "Administrator", "secret": "Rdp-S3cret!",
+	})
+	status, data := do(t, srv, "POST", "/api/rdp-token", testAPIKey, nil)
+	if status != 200 {
+		t.Fatalf("rdp-token: %d %s", status, data)
+	}
+	tok, _ := jsonMap(t, data)["token"].(string)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/targets/" + strconv.FormatInt(id, 10) + "/rdp?token=" + tok
+	if c, _, derr := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{"guacamole"}}); derr == nil {
+		defer c.Close(websocket.StatusNormalClosure, "")
+	}
+
+	select {
+	case args := <-connectCh:
+		// Order mirrors the advertised args: VERSION, hostname, port, username,
+		// password, disable-copy, disable-paste, enable-drive.
+		if len(args) != len(argNames)+1 {
+			t.Fatalf("connect args = %v (len %d)", args, len(args))
+		}
+		if args[5] != "true" || args[6] != "true" {
+			t.Fatalf("deny policy: disable-copy=%q disable-paste=%q, want true/true", args[5], args[6])
+		}
+		if args[7] != "false" {
+			t.Fatalf("enable-drive = %q, want false (no drive redirection)", args[7])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("guacd never received the connect (clipboard params not injected)")
+	}
+}
