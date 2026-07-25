@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/auditchain"
+	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
@@ -70,16 +71,27 @@ func sseEscape(b []byte) string {
 	return strings.ReplaceAll(string(b), "\n", "\\n")
 }
 
-// killSession terminates a live session by id via the registry and audits it; an
-// unknown session id is a 404.
+// killSession terminates a live session by id via the registry and audits it. In
+// an HA deployment the session may be hosted on another replica: the kill is
+// broadcast over the kill bus and the response is 202 Accepted (dispatched). A
+// session found and killed on this replica is 204; an unknown id with no bus is
+// 404.
 func (s *Server) killSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if s.sessions == nil || !s.sessions.Kill(id) {
+	if s.sessions == nil {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	s.audit(r.Context(), "session.kill", "session:"+id)
-	w.WriteHeader(http.StatusNoContent)
+	switch s.sessions.KillDistributed(id) {
+	case session.KillLocal:
+		s.audit(r.Context(), "session.kill", "session:"+id)
+		w.WriteHeader(http.StatusNoContent)
+	case session.KillDispatched:
+		s.audit(r.Context(), "session.kill", "session:"+id+" scope:cluster")
+		w.WriteHeader(http.StatusAccepted)
+	default:
+		writeError(w, http.StatusNotFound, "session not found")
+	}
 }
 
 // --- audit ---

@@ -30,8 +30,9 @@ type entry struct {
 type Registry struct {
 	mu          sync.Mutex
 	m           map[string]entry
-	maxPerActor int // 0 = unlimited
-	maxTotal    int // 0 = unlimited
+	maxPerActor int     // 0 = unlimited
+	maxTotal    int     // 0 = unlimited
+	bus         KillBus // cross-replica kill transport (nil = single-replica)
 }
 
 // NewRegistry returns an empty, ready-to-use session registry.
@@ -101,8 +102,18 @@ func (r *Registry) List() []Info {
 	return out
 }
 
-// Kill terminates a session by id, returning whether it was found.
+// Kill terminates a session by id, returning whether it was found on this
+// replica. It also broadcasts the kill to other replicas via the kill bus (if
+// configured), so the session is terminated wherever it is hosted.
 func (r *Registry) Kill(id string) bool {
+	local := r.killLocalByID(id)
+	r.publish(KillSelector{ID: id})
+	return local
+}
+
+// killLocalByID terminates a session by id on THIS replica only (no broadcast),
+// returning whether it was found. It is the target of an inbound bus kill.
+func (r *Registry) killLocalByID(id string) bool {
 	r.mu.Lock()
 	e, ok := r.m[id]
 	r.mu.Unlock()
@@ -116,9 +127,17 @@ func (r *Registry) Kill(id string) bool {
 }
 
 // KillByActor terminates every live session owned by actor and returns how many
-// were killed. It backs automated threat-analytics response (Phase 23): when an
-// actor's risk score crosses critical, their active sessions can be cut off.
+// were killed on this replica; it also broadcasts to other replicas. It backs
+// automated threat-analytics response (Phase 23): when an actor's risk score
+// crosses critical, their active sessions can be cut off.
 func (r *Registry) KillByActor(actor string) int {
+	n := r.killLocalByActor(actor)
+	r.publish(KillSelector{Actor: actor})
+	return n
+}
+
+// killLocalByActor terminates actor's sessions on THIS replica only (no broadcast).
+func (r *Registry) killLocalByActor(actor string) int {
 	r.mu.Lock()
 	var kills []func()
 	for _, e := range r.m {
@@ -134,10 +153,19 @@ func (r *Registry) KillByActor(actor string) int {
 }
 
 // KillByActorTarget terminates every live session an actor holds to a specific
-// target and returns how many were killed. It backs kill-on-revoke: when a user's
-// grant to one target is removed, their in-flight session to that target is cut,
-// while their sessions to other still-authorized targets are left running.
+// target and returns how many were killed on this replica; it also broadcasts to
+// other replicas. It backs kill-on-revoke: when a user's grant to one target is
+// removed, their in-flight session to that target is cut, while their sessions to
+// other still-authorized targets are left running.
 func (r *Registry) KillByActorTarget(actor, target string) int {
+	n := r.killLocalByActorTarget(actor, target)
+	r.publish(KillSelector{Actor: actor, Target: target})
+	return n
+}
+
+// killLocalByActorTarget terminates actor's sessions to target on THIS replica
+// only (no broadcast).
+func (r *Registry) killLocalByActorTarget(actor, target string) int {
 	r.mu.Lock()
 	var kills []func()
 	for _, e := range r.m {
