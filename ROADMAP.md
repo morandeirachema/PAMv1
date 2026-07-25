@@ -464,6 +464,16 @@ The RDP counterpart to Phase 32. The in-portal RDP viewer relies on [Apache Guac
 - [x] **Tests**: the mode→parameter mapping (allow/readonly/deny/unset), that drive redirection is always disabled, and an **end-to-end** assertion that a `deny` policy reaches a fake guacd as `disable-copy=true`/`disable-paste=true`/`enable-drive=false` in the advertised arg order. No new audit vocab, no schema change
 - Deferred (documented): **clipboard-content auditing** (logging *what* was copied — Guacamole exposes clipboard as a stream that could be tee'd, a natural follow-on) and a **per-target** clipboard override (today it is a global policy)
 
+## Phase 34 — HA live-session kill-switch ✅
+
+Closes an HA **correctness** gap. The live-session registry is per-replica — each pod holds the cancel funcs for the sessions it hosts — so a kill issued to one pod could not terminate a session pinned to another. That silently broke the kill-switch, the revoke cascade, vendor offboarding and the analytics auto-response in any multi-replica deployment. (The periodic-job scheduler already had leader election via a Postgres advisory lock; this is the session-registry half.)
+
+- [x] **Cross-replica kill bus** (`internal/session/killbus.go` — `KillBus`, `KillSelector`): a kill published on any replica is delivered to every replica's subscriber, which applies it to its own registry. `Registry.Kill`/`KillByActor`/`KillByActorTarget` broadcast; a private `killLocal*` variant applies an inbound kill **without re-publishing**, so it can't loop
+- [x] **Store transport**: Postgres **`LISTEN`/`NOTIFY`** (`pgstore/killbus.go` — a hijacked dedicated connection that reconnects on failure) and an **in-process fan-out hub** for the memory store (`memstore/killbus.go`), so the demo and unit tests drive the same registry code the HA path does. New store methods `PublishSessionKill`/`SubscribeSessionKills`
+- [x] **API**: `DELETE /api/sessions/{id}` returns **202 Accepted** when the kill is broadcast to the cluster (the session is not on this replica) vs **204** when killed locally; `main` calls `Registry.StartKillBus(ctx, store)` at startup
+- [x] **Tests**: two registries sharing one store prove a kill on "replica B" terminates a session on "replica A" (by id, by actor, by actor+target); a store-contract round-trip exercises pgstore's real `NOTIFY` in CI
+- Deferred (documented): **cross-replica live monitoring** — the SSE watch stream is still served from the pod hosting the session (fanning session *bytes* across replicas is a heavier pub/sub than a kill signal). Session **inventory** listing also stays per-replica. The security-critical action — termination — is now cluster-wide
+
 ## Portal: keyboard-first navigation ✅
 
 The 5250 console is now explicitly **keyboard-first** (the mouse is optional), matching the IBM-terminal heritage: focus lands on each screen's primary field after every render, **Esc** cancels/goes back (the twin of F12), **↑/↓** move between subfile option cells, Tab/Enter/F-keys work throughout, and a persistent hint documents the shortcuts. The look is unchanged — only keyboard affordances were added.

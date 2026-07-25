@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-07-25 · Reflects: Phases 0–32 + the 2026-07 hardening pass — through the AI-agent access broker (13), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22), privileged threat analytics (23), the Conjur-style application-secrets API (24), and console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer) — plus the post-24 hardening: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP proxy auth throttling. The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-07-25 · Reflects: Phases 0–34 + the 2026-07 hardening pass — through the AI-agent access broker (13), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22), privileged threat analytics (23), the Conjur-style application-secrets API (24), and console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer) — plus the post-24 hardening: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP proxy auth throttling. The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -1222,6 +1222,16 @@ curl -N https://pam.example/api/sessions/<id>/stream -H "X-API-Key: $PAM_API_KEY
 It works for SSH and PostgreSQL sessions; delivery is non-blocking (a slow
 watcher drops frames and never stalls the session being observed).
 
+**Killing a session (HA).** `DELETE /api/sessions/{id}` terminates a live session.
+In a multi-replica deployment the session may be pinned to a different pod than
+the one that receives your request: since Phase 34 the kill is **broadcast across
+replicas** (Postgres `LISTEN`/`NOTIFY`), so it terminates the session wherever it
+is hosted — and the same cluster-wide broadcast backs the revoke cascade, vendor
+offboarding and the analytics auto-kill. The response is **204** when the session
+was on the replica you hit and **202 Accepted** when the kill was dispatched to
+the cluster. (Live *monitoring* is still served from the pod hosting the session;
+only the kill is cluster-wide.)
+
 **Command control.** Point `PAM_COMMAND_DENY_FILE` at a file of regular
 expressions (one per line, `#` comments). A command matching any pattern is
 **refused before it reaches the target** and audited `command.blocked`:
@@ -1431,6 +1441,7 @@ scores in your environment.
 | 2026-07-21 | Phase 19: **access certification campaigns** — `POST /api/campaigns` snapshots current access (target grants + safe members); certify/revoke each item (`revoke` deletes the grant); close to record the attestation. Management `CapManageUsers`, reading `CapReadAudit`. See §9.6 |
 | 2026-07-21 | Phase 18: **Conjur secret sourcing** — an alternative to SOPS: set `PAM_CONJUR_URL` and pam-server fetches its own bootstrap secrets from CyberArk Conjur at startup (authn-api-key or Kubernetes authn-jwt). Both ship; SOPS stays the default. See [deploy/k8s/conjur/README.md](../deploy/k8s/conjur/README.md) |
 | 2026-07-21 | Phase 17: **safes + dependent-account propagation** — group targets into delegated-access safes (`/api/safes`, a member reaches every target in the safe; `can_manage` delegated administration) and declare a credential's consumers (`/api/credentials/{id}/dependencies`) so rotation updates the Windows Services / Scheduled Tasks / IIS App Pools that use it. See §7 → *Safes* and *Dependent accounts* |
+| 2026-07-25 | Phase 34: **HA session kill-switch** — session kills are broadcast across replicas (Postgres LISTEN/NOTIFY), so `DELETE /api/sessions/{id}` (and the revoke cascade / vendor offboard / analytics auto-kill) terminates a session on whichever pod hosts it; 202 when dispatched cluster-wide, 204 when local. See §9.4. |
 | 2026-07-25 | Phase 33: **RDP clipboard control** — `PAM_RDP_CLIPBOARD` (`allow`/`readonly`/`deny`) gates the Guacamole clipboard bridge and always disables drive redirection; the mode is audited on `rdp.connect`. See §5 (RDP). |
 | 2026-07-25 | Phase 32: **SFTP file-transfer control** — `PAM_SSH_SFTP` (`allow`/`readonly`/`deny`) audits every SFTP operation and can refuse writes or the whole subsystem; closes an unaudited file-transfer path. See §9.4 |
 | 2026-07-21 | Phase 16: **live session monitoring + command control** — watch an SSH/PostgreSQL session live over `GET /api/sessions/{id}/stream` (SSE, `CapReadAudit`); block dangerous commands on exec/WinRM/SQL via a regex denylist (`PAM_COMMAND_DENY_FILE`, audited `command.blocked`). See §9.4 |

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
@@ -1003,5 +1004,36 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	sentinel := errors.New("boom")
 	if _, err := st.WithLeaderLock(ctx, 0x70616d5f7473, func(context.Context) error { return sentinel }); !errors.Is(err, sentinel) {
 		t.Fatalf("WithLeaderLock must propagate fn's error, got %v", err)
+	}
+
+	// --- session kill bus (Phase 34) ---
+	// A selector published on the bus is delivered to a subscriber, JSON-intact
+	// (Postgres LISTEN/NOTIFY for pgstore; an in-process hub for memstore).
+	subCtx, subCancel := context.WithCancel(ctx)
+	defer subCancel()
+	kills, err := st.SubscribeSessionKills(subCtx)
+	if err != nil {
+		t.Fatalf("SubscribeSessionKills: %v", err)
+	}
+	// pgstore's LISTEN runs in a goroutine that must register before a NOTIFY is
+	// seen; publish a few times until one is delivered (or time out).
+	want := session.KillSelector{Actor: "mallory", Target: "db-01"}
+	deadline := time.After(5 * time.Second)
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	if err := st.PublishSessionKill(ctx, want); err != nil {
+		t.Fatalf("PublishSessionKill: %v", err)
+	}
+	for {
+		select {
+		case got := <-kills:
+			if got.Actor == want.Actor && got.Target == want.Target {
+				return
+			}
+		case <-tick.C:
+			_ = st.PublishSessionKill(ctx, want) // retry until the listener is ready
+		case <-deadline:
+			t.Fatal("kill bus: published selector was not delivered to the subscriber")
+		}
 	}
 }
