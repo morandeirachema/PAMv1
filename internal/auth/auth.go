@@ -331,13 +331,15 @@ func (p *Principal) Covers(want CapSet) bool {
 	return true
 }
 
-// ApproverGroups returns the identity tokens a broker policy rule's `approvers:`
-// list is matched against for separation-of-duties (Phase 27): the principal's
-// own name plus each of its effective role names. A rule that names any of these
-// admits this principal as an approver of a parked tool call.
+// ApproverGroups returns the group tokens a broker policy rule's `approvers:` list
+// is matched against for separation of duties (Phase 27): the principal's
+// effective role names — a built-in role, or a directory group mapped to one.
+// Deliberately NOT the principal's own username: a username lives in a namespace
+// that a `manage_users` delegate can freely create, so allowing a rule to name a
+// user would let that delegate mint a user with the group's name and self-approve,
+// defeating the very separation SoD enforces. Groups are roles/directory groups.
 func (p *Principal) ApproverGroups() []string {
-	out := make([]string, 0, len(p.Roles)+2)
-	out = append(out, p.Name)
+	out := make([]string, 0, len(p.Roles)+1)
 	for _, r := range p.effectiveRoles() {
 		out = append(out, string(r))
 	}

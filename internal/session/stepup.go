@@ -44,50 +44,61 @@ func (s *StepUp) Await(ctx context.Context, sessionID, actor, statement string, 
 	if s == nil {
 		return false
 	}
-	ch := make(chan bool, 1)
+	entry := &pendingStepUp{sessionID: sessionID, actor: actor, statement: statement, requested: time.Now().UTC(), decided: make(chan bool, 1)}
 	s.mu.Lock()
 	if _, exists := s.pending[sessionID]; exists {
 		s.mu.Unlock()
 		return false
 	}
-	s.pending[sessionID] = &pendingStepUp{sessionID: sessionID, actor: actor, statement: statement, requested: time.Now().UTC(), decided: ch}
+	s.pending[sessionID] = entry
 	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		delete(s.pending, sessionID)
-		s.mu.Unlock()
-	}()
 
 	t := time.NewTimer(timeout)
 	defer t.Stop()
 	select {
-	case ok := <-ch:
-		return ok
+	case ok := <-entry.decided:
+		return ok // a Decide claimed the entry (removed it) and delivered the decision
 	case <-t.C:
-		return false
 	case <-ctx.Done():
-		return false
+	}
+	// Timeout / cancellation: try to claim (remove) our own entry. Removal from the
+	// map is the single atomic claim point — whoever removes it wins, so Await and a
+	// concurrent Decide can never both report success on the same step-up.
+	s.mu.Lock()
+	if s.pending[sessionID] == entry {
+		delete(s.pending, sessionID)
+		s.mu.Unlock()
+		return false // we claimed the timeout; a later Decide finds nothing and fails
+	}
+	s.mu.Unlock()
+	// A Decide claimed it first; honor the decision it delivered into our channel.
+	select {
+	case ok := <-entry.decided:
+		return ok
+	case <-time.After(100 * time.Millisecond):
+		return false // decision never arrived; fail closed
 	}
 }
 
-// Decide resolves a session's pending step-up (approve/deny). It returns false if
-// no step-up is pending for the session (or one was already decided).
+// Decide resolves a session's pending step-up (approve/deny). It claims the
+// pending entry by removing it from the map under the lock — the same atomic
+// point Await's timeout path contends for — so exactly one of the two wins.
+// Returns false if no step-up is pending (or one was already claimed/decided).
 func (s *StepUp) Decide(sessionID string, approve bool) bool {
 	if s == nil {
 		return false
 	}
 	s.mu.Lock()
 	p, ok := s.pending[sessionID]
+	if ok {
+		delete(s.pending, sessionID)
+	}
 	s.mu.Unlock()
 	if !ok {
 		return false
 	}
-	select {
-	case p.decided <- approve:
-		return true
-	default:
-		return false // already being decided
-	}
+	p.decided <- approve // buffered (cap 1); the waiting Await receives it
+	return true
 }
 
 // Pending lists the sessions awaiting a step-up decision (for a supervisor).

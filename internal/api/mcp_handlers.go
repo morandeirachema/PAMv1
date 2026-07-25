@@ -26,6 +26,12 @@ func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request, id *agentid.Id
 		return
 	}
 	sess := s.mcpSessions.get(r.URL.Query().Get("session"))
+	if sess != nil && !sess.ownedBy(id) {
+		// The session id travels in the query string (access logs, proxies); only the
+		// agent that opened the stream may drive it, so a leaked id can't be used to
+		// prompt or route into another agent's session.
+		sess = nil
+	}
 	if sess != nil && s.routeElicitationResponse(sess, body) {
 		w.WriteHeader(http.StatusAccepted) // an elicitation answer, delivered to the waiting call
 		return
@@ -50,15 +56,27 @@ func (s *Server) routeElicitationResponse(sess *mcpSession, body []byte) bool {
 			Action  string         `json:"action"`
 			Content map[string]any `json:"content"`
 		} `json:"result"`
+		Error json.RawMessage `json:"error"`
 	}
-	if err := json.Unmarshal(body, &msg); err != nil || msg.Method != "" || msg.Result == nil || len(msg.ID) == 0 {
+	// A response has an id and no method; it carries either a result or an error.
+	if err := json.Unmarshal(body, &msg); err != nil || msg.Method != "" || len(msg.ID) == 0 {
 		return false
+	}
+	if msg.Result == nil && len(msg.Error) == 0 {
+		return false // neither result nor error: not a response
 	}
 	var reqID string
 	if json.Unmarshal(msg.ID, &reqID) != nil {
 		return false
 	}
-	return sess.resolveElicit(reqID, elicitResult{Action: msg.Result.Action, Content: msg.Result.Content})
+	// A JSON-RPC error answer (the client rejected elicitation/create) is treated
+	// as a decline, so the waiting call resolves immediately instead of hanging
+	// until the elicitation timeout.
+	res := elicitResult{Action: "decline"}
+	if msg.Result != nil {
+		res = elicitResult{Action: msg.Result.Action, Content: msg.Result.Content}
+	}
+	return sess.resolveElicit(reqID, res)
 }
 
 // mcpDispatcher builds the JSON-RPC method table bound to the authenticated agent
@@ -128,9 +146,15 @@ func (s *Server) mcpDispatcher(id *agentid.Identity, sess *mcpSession) mcp.Dispa
 				res, gotAnswer := sess.elicit(ctx, fmt.Sprintf("Confirm privileged request %q on your behalf (still needs a separate human approver).", p.Name), schema)
 				switch {
 				case gotAnswer && (res.Action == "decline" || res.Action == "cancel"):
-					wout, _ := s.broker.Withdraw(ctx, out.CallID, id.AgentName)
-					s.auditAs(ctx, id.AgentName, "broker.elicit.declined", fmt.Sprintf("tool:%s call:%s via:mcp", p.Name, out.CallID))
-					return toolResult(wout), nil
+					// Withdraw only succeeds if the call is still parked. If a human
+					// approver decided it during the elicitation window, Withdraw fails
+					// (ok=false) — return the ORIGINAL outcome (which carries the agent's
+					// only copy of the resume token) rather than an empty one, so the
+					// already-executed result stays collectable.
+					if wout, ok := s.broker.Withdraw(ctx, out.CallID, id); ok {
+						s.auditAs(ctx, id.AgentName, "broker.elicit.declined", fmt.Sprintf("tool:%s call:%s via:mcp", p.Name, out.CallID))
+						return toolResult(wout), nil
+					}
 				case gotAnswer && res.Action == "accept":
 					s.auditAs(ctx, id.AgentName, "broker.elicit.accepted", fmt.Sprintf("tool:%s call:%s via:mcp", p.Name, out.CallID))
 				}
@@ -144,7 +168,7 @@ func (s *Server) mcpDispatcher(id *agentid.Identity, sess *mcpSession) mcp.Dispa
 			if err := json.Unmarshal(params, &p); err != nil || p.Token == "" {
 				return nil, mcp.Errorf(mcp.CodeInvalidParams, "broker/resume requires a token")
 			}
-			out, ok := s.broker.Resume(ctx, p.Token)
+			out, ok := s.broker.Resume(ctx, p.Token, "") // MCP resume has no path id to check against
 			if !ok {
 				return nil, mcp.Errorf(mcp.CodeInvalidParams, "invalid, expired, or already-used resume token")
 			}

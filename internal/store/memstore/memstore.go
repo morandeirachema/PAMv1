@@ -1253,7 +1253,7 @@ func (m *Memstore) OffboardVendor(_ context.Context, id int64, at time.Time) err
 
 // VendorSessionAllowed reports whether username is a vendor and, if so, whether an
 // active contract grant to targetName exists as of now.
-func (m *Memstore) VendorSessionAllowed(_ context.Context, username, targetName string, now time.Time) (bool, bool, error) {
+func (m *Memstore) VendorSessionAllowed(_ context.Context, username, targetName, account string, now time.Time) (bool, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var vendor *store.Vendor
@@ -1281,7 +1281,8 @@ func (m *Memstore) VendorSessionAllowed(_ context.Context, username, targetName 
 		return true, false, nil
 	}
 	for _, g := range m.vendorGrants {
-		if g.VendorID == vendor.ID && g.TargetID == targetID && vendorGrantActive(g, now) {
+		if g.VendorID == vendor.ID && g.TargetID == targetID && vendorGrantActive(g, now) &&
+			(account == "" || g.Principal == "" || g.Principal == account) {
 			return true, true, nil
 		}
 	}

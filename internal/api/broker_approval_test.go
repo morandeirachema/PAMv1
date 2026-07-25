@@ -107,6 +107,34 @@ func TestBrokerResumeNotBurnedBeforeApproval(t *testing.T) {
 	}
 }
 
+// TestBrokerResumeTokenBoundToCall proves a resume token is bound to its own
+// call: presenting it on a different call's path is rejected WITHOUT spending it
+// (the id is checked before the token is consumed), so a swapped path id can
+// neither collect another call's result nor burn the real one.
+func TestBrokerResumeTokenBoundToCall(t *testing.T) {
+	fake := &fakeWinRM{result: winrm.Result{Stdout: "ok", ExitCode: 0}}
+	srv, _ := newTestServerOpts(t, nil, brokerOpts(t, fake, approvalRules))
+	seedWinRMTarget(t, srv, "win-bind", "pw")
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-bind"})
+	tok, _ := jsonMap(t, ad)["token"].(string)
+	_, data := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok, map[string]any{"tool": "winrm_exec", "args": map[string]any{"target": "win-bind", "command": "x"}})
+	m := jsonMap(t, data)
+	callID, _ := m["call_id"].(string)
+	resume, _ := m["resume_token"].(string)
+	if st, dd := do(t, srv, http.MethodPost, "/v1/approvals/"+callID+"/decision", testAPIKey, map[string]any{"approve": true}); st != http.StatusOK || jsonMap(t, dd)["status"] != "executed" {
+		t.Fatalf("approve: %d %s", st, dd)
+	}
+
+	// Present the valid token on a MISMATCHED path id → rejected, token not spent.
+	if st, _ := doBearer(t, srv, http.MethodPost, "/v1/tool-calls/"+callID+"-wrong/resume", tok, map[string]any{"token": resume}); st != http.StatusNotFound {
+		t.Fatalf("mismatched-path resume: want 404, got %d", st)
+	}
+	// The token survived the mismatch and still collects on the correct path.
+	if st, rd := doBearer(t, srv, http.MethodPost, "/v1/tool-calls/"+callID+"/resume", tok, map[string]any{"token": resume}); st != http.StatusOK || jsonMap(t, rd)["status"] != "executed" {
+		t.Fatalf("resume after mismatch: %d %s (token wrongly burned by the id mismatch?)", st, rd)
+	}
+}
+
 // TestBrokerApprovalReject proves a rejected approval denies the call (no
 // injection) and that a parked call can be decided only once.
 func TestBrokerApprovalReject(t *testing.T) {

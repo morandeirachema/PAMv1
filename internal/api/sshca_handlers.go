@@ -117,12 +117,10 @@ func (s *Server) signOperatorCert(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "ssh is not allowed by policy")
 		return
 	}
-	// Same connect authorization as any other path to this target.
-	if !s.gateCredentialAccess(w, r, target, "ssh.cert_issue") {
-		return
-	}
 	// The principal must be a managed account on the target, so an operator can't
 	// mint a cert for an arbitrary login (e.g. root) the vault doesn't govern.
+	// Checked BEFORE the approval gate below, so a bad principal is rejected without
+	// consuming a one-time access approval.
 	creds, err := s.store.ListCredentials(r.Context(), target.ID)
 	if err != nil {
 		storeError(w, err)
@@ -130,6 +128,12 @@ func (s *Server) signOperatorCert(w http.ResponseWriter, r *http.Request) {
 	}
 	if !credentialUsernameExists(creds, in.Principal) {
 		writeError(w, http.StatusUnprocessableEntity, "principal is not a managed account on this target")
+		return
+	}
+	// Same connect authorization as any other path to this target (grants ∪ safes,
+	// approval — which may consume a one-time request — and the vendor gate for the
+	// requested principal account).
+	if !s.gateCredentialAccess(w, r, target, in.Principal, "ssh.cert_issue") {
 		return
 	}
 
@@ -168,7 +172,7 @@ func (s *Server) signOperatorCert(w http.ResponseWriter, r *http.Request) {
 		"serial":       strconv.FormatUint(cert.Serial, 10),
 		"principal":    in.Principal,
 		"valid_before": validBefore,
-		"note":         "Save this to id_key-cert.pub next to your private key; ssh uses it automatically. Revoke early with POST /api/ca/ssh/revoke.",
+		"note":         "Save this to id_key-cert.pub next to your private key; ssh uses it automatically. To revoke it early, ask a target manager to POST its serial to /api/ca/ssh/revoke.",
 	})
 }
 
