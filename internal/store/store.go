@@ -550,6 +550,10 @@ type Store interface {
 	// oldest-first (for NIS2 incident-report exports). A zero since means "from
 	// the beginning"; a zero until means "up to now".
 	ExportAudit(ctx context.Context, since, until time.Time) ([]AuditEvent, error)
+	// AuditSince returns up to limit audit events with id > afterID, ordered
+	// oldest-first (ascending id). It is the cursor read for the SIEM forwarder
+	// (Phase 35): tail the trail by advancing afterID past the last event sent.
+	AuditSince(ctx context.Context, afterID int64, limit int) ([]AuditEvent, error)
 	// FindAuditDetail reports whether any audit event with the given action has
 	// a detail containing substr, matched literally (Phase 26). The playback
 	// path uses it to verify a served session recording's SHA-256 against the

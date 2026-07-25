@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-07-25 · Reflects: Phases 0–34 + the 2026-07 hardening pass — through the AI-agent access broker (13), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22), privileged threat analytics (23), the Conjur-style application-secrets API (24), and console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer) — plus the post-24 hardening: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP proxy auth throttling. The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-07-25 · Reflects: Phases 0–35 + the 2026-07 hardening pass — through the AI-agent access broker (13), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22), privileged threat analytics (23), the Conjur-style application-secrets API (24), and console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer) — plus the post-24 hardening: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP proxy auth throttling. The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -249,6 +249,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_REVEAL_DISABLED` | | `false` | Make `reveal` break-glass-only (also forces the broker's `reveal_credential` closed). |
 | `PAM_AUDIT_HMAC_KEY` | | (off) | base64 32-byte key enabling the **tamper-evident HMAC chain** over the primary audit trail; verify with `GET /api/audit/verify`. See §9.2. |
 | `PAM_AUDIT_SIGN_SEED` | | (off) | base64 32-byte ed25519 seed (needs `PAM_AUDIT_HMAC_KEY`) enabling **signed checkpoints** (`GET /api/audit/head`) so an auditor can detect **tail truncation**. See §9.2. |
+| `PAM_AUDIT_FORWARD_ADDR` | | (off) | host:port of a SIEM collector; **continuously forwards** every audit event (Phase 35). `PAM_AUDIT_FORWARD_PROTO` (`udp`/`tcp`), `PAM_AUDIT_FORWARD_FORMAT` (`rfc5424`/`cef`), `PAM_AUDIT_FORWARD_INTERVAL_SEC` (`10`) tune it. See §9.2. |
 | `PAM_BROKER_POLICY_FILE` | | (off) | YAML policy file — **its presence enables the AI-agent access broker** (Phase 13). |
 | `PAM_BROKER_AUDIT_KEY` | broker only | — | base64 32-byte HMAC key for the verifiable audit chain (required once the broker is on). |
 | `PAM_BROKER_AUDIT_SIGN_SEED` | broker only | — | base64 32-byte ed25519 seed signing the audit-chain head (truncation detection). |
@@ -1181,6 +1182,25 @@ if the current chain no longer reproduces a stored checkpoint's signed
 truncated. This is the same signed-head mechanism the broker chain exposes at
 `GET /v1/audit/head`.
 
+**Streaming to a SIEM (Phase 35).** To feed a SIEM (Splunk, QRadar, Sentinel, …)
+continuously rather than exporting on demand, point pamv1 at a syslog/CEF
+collector:
+
+```bash
+export PAM_AUDIT_FORWARD_ADDR=siem.internal:514
+export PAM_AUDIT_FORWARD_PROTO=udp          # or tcp
+export PAM_AUDIT_FORWARD_FORMAT=rfc5424      # or cef (ArcSight)
+```
+
+Every audit event is then streamed as it is written, in order. The forwarder
+tracks a **durable cursor** (the last event it delivered, persisted in the
+settings table), so a restart resumes exactly where it left off — no gap, no
+replay — and a collector outage just means the backlog is delivered once it comes
+back (the cursor only advances after a successful send). In a multi-replica
+deployment the forwarder runs under the same **leader lock** as the other
+background workers, so you get one stream, not one per pod. Enabling it starts
+from the current head (it does not flood the SIEM with all prior history).
+
 ### 9.3 Session recordings
 
 Each proxied session is recorded in [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/)
@@ -1441,6 +1461,7 @@ scores in your environment.
 | 2026-07-21 | Phase 19: **access certification campaigns** — `POST /api/campaigns` snapshots current access (target grants + safe members); certify/revoke each item (`revoke` deletes the grant); close to record the attestation. Management `CapManageUsers`, reading `CapReadAudit`. See §9.6 |
 | 2026-07-21 | Phase 18: **Conjur secret sourcing** — an alternative to SOPS: set `PAM_CONJUR_URL` and pam-server fetches its own bootstrap secrets from CyberArk Conjur at startup (authn-api-key or Kubernetes authn-jwt). Both ship; SOPS stays the default. See [deploy/k8s/conjur/README.md](../deploy/k8s/conjur/README.md) |
 | 2026-07-21 | Phase 17: **safes + dependent-account propagation** — group targets into delegated-access safes (`/api/safes`, a member reaches every target in the safe; `can_manage` delegated administration) and declare a credential's consumers (`/api/credentials/{id}/dependencies`) so rotation updates the Windows Services / Scheduled Tasks / IIS App Pools that use it. See §7 → *Safes* and *Dependent accounts* |
+| 2026-07-25 | Phase 35: **audit→SIEM forwarding** — `PAM_AUDIT_FORWARD_ADDR` streams every audit event to a syslog/CEF collector continuously (durable cursor, spool-and-retry, leader-locked). See §9.2. |
 | 2026-07-25 | Phase 34: **HA session kill-switch** — session kills are broadcast across replicas (Postgres LISTEN/NOTIFY), so `DELETE /api/sessions/{id}` (and the revoke cascade / vendor offboard / analytics auto-kill) terminates a session on whichever pod hosts it; 202 when dispatched cluster-wide, 204 when local. See §9.4. |
 | 2026-07-25 | Phase 33: **RDP clipboard control** — `PAM_RDP_CLIPBOARD` (`allow`/`readonly`/`deny`) gates the Guacamole clipboard bridge and always disables drive redirection; the mode is audited on `rdp.connect`. See §5 (RDP). |
 | 2026-07-25 | Phase 32: **SFTP file-transfer control** — `PAM_SSH_SFTP` (`allow`/`readonly`/`deny`) audits every SFTP operation and can refuse writes or the whole subsystem; closes an unaudited file-transfer path. See §9.4 |

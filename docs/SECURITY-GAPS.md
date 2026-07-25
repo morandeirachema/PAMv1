@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-07-25 · Reflects: Phases 0–34 + the 2026-07 hardening pass.
+> Last updated: 2026-07-25 · Reflects: Phases 0–35 + the 2026-07 hardening pass.
 
 ## How the review was run
 
@@ -118,8 +118,12 @@ is a phase each, out of scope for a security *fix*:
   5250 player (portal menu 19).
 - **JIT ephemeral account provisioning** on targets, **FIDO2/
   WebAuthn**, **CIEM / cloud-IAM brokering**, **Kubernetes secret/SA delivery**,
-  **other DB engines** (MySQL/MSSQL/Oracle), **native audit→SIEM forwarding**
-  (syslog/CEF/LEEF), **HSM/KMS-backed SSH-CA signing**, and **rotation webhooks**.
+  **other DB engines** (MySQL/MSSQL/Oracle), **HSM/KMS-backed SSH-CA signing**, and
+  **rotation webhooks**.
+- ~~**Native audit→SIEM forwarding**~~ **✅ shipped (Phase 35)** — `internal/auditfwd`
+  continuously streams every audit event to a syslog/CEF collector (UDP/TCP) from a
+  durable cursor with spool-and-retry, leader-locked in HA (`PAM_AUDIT_FORWARD_ADDR`).
+  LEEF and TLS-syslog transport remain follow-ons on the same seam.
 - **HA correctness** — the periodic-job scheduler runs under a Postgres
   advisory **leader lock** (one replica per tick), and the **kill-switch is now
   cluster-wide** (Phase 34: a kill is broadcast over Postgres LISTEN/NOTIFY and

@@ -286,6 +286,7 @@ All twenty-six phases (0–25) have shipped — full per-phase detail in **[ROAD
 | 32 | SFTP file-transfer control + audit (parse the subsystem stream; allow/readonly/deny) | ✅ shipped |
 | 33 | RDP clipboard control (gate the Guacamole clipboard bridge; drive redirection off) | ✅ shipped |
 | 34 | HA session kill-switch (cross-replica kill over Postgres LISTEN/NOTIFY) | ✅ shipped |
+| 35 | Audit→SIEM push forwarding (continuous RFC 5424 syslog / CEF stream) | ✅ shipped |
 
 ## Coverage vs. commercial PAM (CyberArk, Wallix, …)
 

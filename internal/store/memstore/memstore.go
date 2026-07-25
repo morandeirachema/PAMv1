@@ -922,6 +922,24 @@ func (m *Memstore) ExportAudit(_ context.Context, since, until time.Time) ([]sto
 	return out, nil
 }
 
+// AuditSince returns up to limit audit events with id > afterID, oldest-first.
+// The in-memory slice is append-ordered with ascending ids, so a forward scan
+// with a cap satisfies the contract.
+func (m *Memstore) AuditSince(_ context.Context, afterID int64, limit int) ([]store.AuditEvent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]store.AuditEvent, 0, limit)
+	for _, e := range m.audit {
+		if e.ID > afterID {
+			out = append(out, e)
+			if limit > 0 && len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 // FindAuditDetail reports whether any audit event with the given action has a
 // detail containing substr, matched literally.
 func (m *Memstore) FindAuditDetail(_ context.Context, action, substr string) (bool, error) {

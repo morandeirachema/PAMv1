@@ -1006,6 +1006,29 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("WithLeaderLock must propagate fn's error, got %v", err)
 	}
 
+	// --- audit cursor read (Phase 35) ---
+	// AuditSince returns events with id > afterID, oldest-first, capped by limit.
+	if err := st.AppendAudit(ctx, &store.AuditEvent{Actor: "fwd", Action: "fwd.one", Detail: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	base, err := st.AuditSince(ctx, 0, 1000)
+	if err != nil || len(base) == 0 {
+		t.Fatalf("AuditSince(0): %d events, err %v", len(base), err)
+	}
+	if base[0].ID > base[len(base)-1].ID {
+		t.Fatal("AuditSince must return events oldest-first (ascending id)")
+	}
+	lastID := base[len(base)-1].ID
+	if after, err := st.AuditSince(ctx, lastID, 1000); err != nil || len(after) != 0 {
+		t.Fatalf("AuditSince(lastID) must be empty, got %d (err %v)", len(after), err)
+	}
+	if err := st.AppendAudit(ctx, &store.AuditEvent{Actor: "fwd", Action: "fwd.two", Detail: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if next, err := st.AuditSince(ctx, lastID, 1000); err != nil || len(next) != 1 || next[0].Action != "fwd.two" {
+		t.Fatalf("AuditSince(lastID) after a new event = %v (err %v)", next, err)
+	}
+
 	// --- session kill bus (Phase 34) ---
 	// A selector published on the bus is delivered to a subscriber, JSON-intact
 	// (Postgres LISTEN/NOTIFY for pgstore; an in-process hub for memstore).

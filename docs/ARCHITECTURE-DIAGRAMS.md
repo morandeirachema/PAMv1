@@ -64,6 +64,7 @@ flowchart LR
   end
   subgraph n_Other["Other"]
     n_analytics[analytics]
+    n_auditfwd[auditfwd]
     n_blast[blast]
     n_conjur[conjur]
     n_ocsf[ocsf]
@@ -105,6 +106,8 @@ flowchart LR
   n_api --> n_web
   n_api --> n_winrm
   n_auditchain --> n_store
+  n_auditfwd --> n_logging
+  n_auditfwd --> n_store
   n_auth --> n_oidc
   n_auth --> n_store
   n_broker --> n_agentid
@@ -125,6 +128,7 @@ flowchart LR
   n_pam_server --> n_analytics
   n_pam_server --> n_api
   n_pam_server --> n_auditchain
+  n_pam_server --> n_auditfwd
   n_pam_server --> n_auth
   n_pam_server --> n_config
   n_pam_server --> n_conjur

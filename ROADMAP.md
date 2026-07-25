@@ -474,6 +474,18 @@ Closes an HA **correctness** gap. The live-session registry is per-replica — e
 - [x] **Tests**: two registries sharing one store prove a kill on "replica B" terminates a session on "replica A" (by id, by actor, by actor+target); a store-contract round-trip exercises pgstore's real `NOTIFY` in CI
 - Deferred (documented): **cross-replica live monitoring** — the SSE watch stream is still served from the pod hosting the session (fanning session *bytes* across replicas is a heavier pub/sub than a kill signal). Session **inventory** listing also stays per-replica. The security-critical action — termination — is now cluster-wide
 
+## Phase 35 — Audit→SIEM push forwarding ✅
+
+pamv1 could already *alert* on a specific event (`internal/alert`: webhook/syslog/email) and *export* the trail on demand (OCSF at `GET /api/audit/ocsf`), but it could not **continuously stream the whole audit trail** to a SIEM the way a commercial PAM feeds Splunk/QRadar/Sentinel. This closes that.
+
+- [x] **Continuous forwarder** (`internal/auditfwd`): tails `audit_events` from a **durable cursor** — the last-forwarded id, persisted as a setting — and emits each event as an **RFC 5424 syslog** message (PRI 110 = the log-audit facility) or an **ArcSight CEF** record, to a UDP or TCP collector. New store read `AuditSince(afterID, limit)`
+- [x] **Spool-and-retry**: the cursor advances only *after* an event is written to the collector, so a dropped connection re-sends from the last success on the next tick — no silent loss. On first enable it starts from the current head (it does not replay the entire history into the SIEM)
+- [x] **HA-safe**: the forward pass runs under the Postgres **leader lock**, so N replicas don't each emit duplicate SIEM records
+- [x] **Injection-safe**: actor/action/detail are CR/LF-stripped (and CEF metacharacters escaped), so a directory-supplied name carrying a newline can't forge an extra syslog record
+- [x] **Config** `PAM_AUDIT_FORWARD_ADDR` (host:port; empty = off), `PAM_AUDIT_FORWARD_PROTO` (udp/tcp), `PAM_AUDIT_FORWARD_FORMAT` (rfc5424/cef), `PAM_AUDIT_FORWARD_INTERVAL_SEC` — validated fail-loud
+- [x] **Tests**: a real in-process UDP syslog sink receives forwarded RFC 5424 and CEF messages; the cursor advances (a second flush sends nothing); a "restarted" forwarder resumes from the persisted cursor without replaying; the store contract covers `AuditSince` (pgstore in CI)
+- Deferred (documented): **LEEF** (QRadar) as a third format (trivial to add on the same seam), and **TLS syslog** (RFC 5425) for the transport
+
 ## Portal: keyboard-first navigation ✅
 
 The 5250 console is now explicitly **keyboard-first** (the mouse is optional), matching the IBM-terminal heritage: focus lands on each screen's primary field after every render, **Esc** cancels/goes back (the twin of F12), **↑/↓** move between subfile option cells, Tab/Enter/F-keys work throughout, and a persistent hint documents the shortcuts. The look is unchanged — only keyboard affordances were added.
