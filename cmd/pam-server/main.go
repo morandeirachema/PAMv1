@@ -694,6 +694,7 @@ func run() error {
 		GuacdRecordingPath:      cfg.GuacdRecordingPath,
 		GuacdRDPSecurity:        cfg.GuacdRDPSecurity,
 		GuacdIgnoreCert:         cfg.GuacdIgnoreCert,
+		RDPClipboard:            cfg.RDPClipboard,
 		AuthRatePerMin:          cfg.AuthRatePerMin,
 		TrustedProxyHops:        cfg.TrustedProxyHops,
 		RevealDisabled:          cfg.RevealDisabled,

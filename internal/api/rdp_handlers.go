@@ -176,7 +176,7 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 		Height:        clampDim(atoiOr(r.URL.Query().Get("height"), 768)),
 		RecordingPath: s.guacdRecordingPath,
 		RecordingName: recName,
-		Extra:         rdpExtra(s.guacdRDPSecurity, s.guacdIgnoreCert),
+		Extra:         rdpExtra(s.guacdRDPSecurity, s.guacdIgnoreCert, s.rdpClipboard),
 	})
 	if err != nil {
 		s.log.Error("rdp connect failed", "target", target.Name, "err", err)
@@ -192,7 +192,7 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.Close(websocket.StatusNormalClosure, "")
 
-	s.audit(ctx, "rdp.connect", "target:"+target.Name+" cred_user:"+cred.Username+" recording:"+recName)
+	s.audit(ctx, "rdp.connect", "target:"+target.Name+" cred_user:"+cred.Username+" recording:"+recName+" clipboard:"+s.rdpClipboard)
 	defer s.audit(ctx, "rdp.end", "target:"+target.Name)
 	s.log.Info("rdp session", "actor", principal.Name, "target", target.Name)
 
@@ -305,8 +305,8 @@ func clampDim(n int) int {
 // and verifies the RDP server certificate. A security mode is passed through when
 // set; ignore-cert is only sent (disabling cert verification) when explicitly
 // enabled for dev/self-signed hosts.
-func rdpExtra(security string, ignoreCert bool) map[string]string {
-	extra := map[string]string{}
+func rdpExtra(security string, ignoreCert bool, clipboard string) map[string]string {
+	extra := rdpClipboardParams(clipboard)
 	if security != "" {
 		extra["security"] = security
 	}
@@ -314,4 +314,37 @@ func rdpExtra(security string, ignoreCert bool) map[string]string {
 		extra["ignore-cert"] = "true"
 	}
 	return extra
+}
+
+// rdpClipboardParams maps the clipboard policy (PAM_RDP_CLIPBOARD) to Guacamole
+// RDP parameters. Guacamole leaves both clipboard directions ON by default, so an
+// operator can copy data out of (or paste into) a recorded RDP session with no
+// gate and no audit — the RDP analog of unrestricted SFTP. This closes that:
+//   - allow (default): copy (target→browser) and paste (browser→target) both on;
+//   - readonly: paste INTO the target is blocked (no clipboard injection), copy
+//     out stays on — the "target is read-only" stance, mirroring SFTP read-only;
+//   - deny: the clipboard bridge is off in both directions.
+//
+// It also always disables drive redirection (`enable-drive=false`) so no file can
+// be exfiltrated through a mounted client drive regardless of guacd's defaults.
+// rdpClipboardMode normalizes a clipboard policy, defaulting an empty value to
+// "allow" (config validation rejects anything other than allow/readonly/deny).
+func rdpClipboardMode(mode string) string {
+	if mode == "" {
+		return "allow"
+	}
+	return mode
+}
+
+func rdpClipboardParams(mode string) map[string]string {
+	m := map[string]string{"enable-drive": "false"}
+	switch mode {
+	case "deny":
+		m["disable-copy"], m["disable-paste"] = "true", "true"
+	case "readonly":
+		m["disable-copy"], m["disable-paste"] = "false", "true"
+	default: // allow (and any unset value — validated at config load)
+		m["disable-copy"], m["disable-paste"] = "false", "false"
+	}
+	return m
 }
