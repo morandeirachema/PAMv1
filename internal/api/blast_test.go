@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -55,9 +56,28 @@ func TestBlastAnalyze(t *testing.T) {
 		t.Fatalf("who_can_reach: %s", data)
 	}
 
+	// The analysis is audited.
+	_, aud := do(t, srv, http.MethodGet, "/api/audit?limit=50", testAPIKey, nil)
+	if !strings.Contains(string(aud), "blast.analyze") {
+		t.Fatalf("blast analysis not audited: %s", aud)
+	}
+
 	// An empty graph is rejected; a plain user (no read_audit) is refused.
 	if c, _ := do(t, srv, http.MethodPost, "/api/blast/analyze", testAPIKey, map[string]any{"graph": map[string]any{}}); c != http.StatusUnprocessableEntity {
 		t.Fatalf("empty graph: want 422, got %d", c)
+	}
+	// A focused query for a principal absent from the graph is a client error, not a
+	// silent empty result — otherwise "reaches nothing" is indistinguishable from a typo.
+	if c, _ := do(t, srv, http.MethodPost, "/api/blast/analyze", testAPIKey,
+		map[string]any{"graph": graph, "source": "aws:role/ghost"}); c != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown source: want 422, got %d", c)
+	}
+	// A clean graph (no toxic combinations) returns findings as [], never JSON null.
+	_, cd := do(t, srv, http.MethodPost, "/api/blast/analyze", testAPIKey, map[string]any{
+		"graph": map[string]any{"principals": []map[string]any{{"id": "lonely", "provider": "aws"}}},
+	})
+	if !strings.Contains(string(cd), `"findings":[]`) {
+		t.Fatalf("clean graph should return findings:[], got: %s", cd)
 	}
 	user := seedUser(t, srv, "blast-user", "user")
 	if c, _ := do(t, srv, http.MethodPost, "/api/blast/analyze", user, body); c != http.StatusForbidden {

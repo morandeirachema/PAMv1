@@ -221,9 +221,10 @@ func (s *Server) authorizedForTarget(ctx context.Context, target *store.Target) 
 
 // gateCredentialAccess enforces the per-target grant and four-eyes approval gates
 // that guard EVERY credential-access path — the SSH/WinRM/RDP connect paths and,
-// equally, reveal and checkout. It writes a 403 and returns false when the caller
-// may not reach the target. action names the audited denial (e.g. "credential.reveal").
-func (s *Server) gateCredentialAccess(w http.ResponseWriter, r *http.Request, target *store.Target, action string) bool {
+// equally, reveal and checkout. `account` is the login account the caller will use
+// (for the vendor contract gate; "" = any). It writes a 403 and returns false when
+// the caller may not reach the target. action names the audited denial.
+func (s *Server) gateCredentialAccess(w http.ResponseWriter, r *http.Request, target *store.Target, account, action string) bool {
 	if ok, err := s.authorizedForTarget(r.Context(), target); err != nil {
 		storeError(w, err)
 		return false
@@ -241,7 +242,7 @@ func (s *Server) gateCredentialAccess(w http.ResponseWriter, r *http.Request, ta
 		return false
 	}
 	// Vendor contract gate (Phase 29): a vendor reaches the target only in-contract.
-	return s.vendorGate(w, r, target, action+"_denied")
+	return s.vendorGate(w, r, target, account, action+"_denied")
 }
 
 // --- credentials ---

@@ -1086,7 +1086,7 @@ func (s *PGStore) OffboardVendor(ctx context.Context, id int64, at time.Time) er
 
 // VendorSessionAllowed reports whether username is a vendor and, if so, whether an
 // active contract grant to targetName exists as of now.
-func (s *PGStore) VendorSessionAllowed(ctx context.Context, username, targetName string, now time.Time) (bool, bool, error) {
+func (s *PGStore) VendorSessionAllowed(ctx context.Context, username, targetName, account string, now time.Time) (bool, bool, error) {
 	var vendorID int64
 	var disabled bool
 	err := s.pool.QueryRow(ctx, `SELECT id, disabled FROM vendors WHERE username = $1`, username).Scan(&vendorID, &disabled)
@@ -1104,8 +1104,9 @@ func (s *PGStore) VendorSessionAllowed(ctx context.Context, username, targetName
 		`SELECT EXISTS(
 			SELECT 1 FROM vendor_grants g JOIN targets t ON t.id = g.target_id
 			WHERE g.vendor_id = $1 AND t.name = $2 AND g.status = 'approved' AND g.revoked_at IS NULL
-			  AND g.not_after > $3 AND (g.not_before IS NULL OR g.not_before <= $3))`,
-		vendorID, targetName, now.UTC()).Scan(&allowed)
+			  AND g.not_after > $3 AND (g.not_before IS NULL OR g.not_before <= $3)
+			  AND ($4 = '' OR g.principal = '' OR g.principal = $4))`,
+		vendorID, targetName, now.UTC(), account).Scan(&allowed)
 	return true, allowed, err
 }
 

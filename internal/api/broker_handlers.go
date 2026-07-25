@@ -109,8 +109,11 @@ func (s *Server) resumeToolCall(w http.ResponseWriter, r *http.Request, id *agen
 	if !readJSON(w, r, &in) {
 		return
 	}
-	out, ok := s.broker.Resume(r.Context(), in.Token)
-	if !ok || out.CallID != r.PathValue("id") {
+	// Pass the path id so the token is checked against the call it unlocks BEFORE it
+	// is spent — a wrong/stale id no longer burns the single-use token (leaving the
+	// post-approval result, possibly a secret, permanently uncollectable).
+	out, ok := s.broker.Resume(r.Context(), in.Token, r.PathValue("id"))
+	if !ok {
 		writeError(w, http.StatusNotFound, "invalid, expired, or already-used resume token")
 		return
 	}

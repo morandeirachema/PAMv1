@@ -770,11 +770,11 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("unknown vendor: want ErrNotFound, got %v", err)
 	}
 	// A non-vendor login is unaffected by the gate.
-	if isV, ok, err := st.VendorSessionAllowed(ctx, "alice", tgt.Name, now); err != nil || isV || !ok {
+	if isV, ok, err := st.VendorSessionAllowed(ctx, "alice", tgt.Name, "root", now); err != nil || isV || !ok {
 		t.Fatalf("non-vendor gate: isVendor=%v allowed=%v err=%v (want false,true)", isV, ok, err)
 	}
 	// A vendor with no grant is a vendor but not allowed.
-	if isV, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, now); !isV || ok {
+	if isV, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, "root", now); !isV || ok {
 		t.Fatalf("vendor no grant: isVendor=%v allowed=%v (want true,false)", isV, ok)
 	}
 	// A grant to a missing vendor/target is ErrNotFound.
@@ -786,7 +786,7 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("CreateVendorGrant: %v", err)
 	}
 	// Pending grant does not yet allow access.
-	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, now); ok {
+	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, "root", now); ok {
 		t.Fatal("a pending grant must not allow access")
 	}
 	if err := st.ApproveVendorGrant(ctx, grant.ID, "customer-appr", now); err != nil {
@@ -795,11 +795,19 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.ApproveVendorGrant(ctx, grant.ID, "customer-appr", now); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("re-approve: want ErrConflict, got %v", err)
 	}
-	// Approved, in-window: allowed. Past the window: not allowed.
-	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, now); !ok {
-		t.Fatal("an approved in-window grant must allow access")
+	// Approved, in-window, matching account: allowed. Past the window: not allowed.
+	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, "root", now); !ok {
+		t.Fatal("an approved in-window grant must allow access as the granted account")
 	}
-	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, future.Add(time.Minute)); ok {
+	// The grant is scoped to "root": a DIFFERENT account is refused, and the
+	// account-agnostic query ("") still sees the grant.
+	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, "postgres", now); ok {
+		t.Fatal("a grant for root must not authorize a different account")
+	}
+	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, "", now); !ok {
+		t.Fatal("an account-agnostic query must see the active grant")
+	}
+	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, "root", future.Add(time.Minute)); ok {
 		t.Fatal("a grant past its window must not allow access")
 	}
 	// Offboard cascade: disables the vendor and revokes the grant.
@@ -809,7 +817,7 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if v, _ := st.GetVendorByUsername(ctx, "acme-tech"); v == nil || !v.Disabled {
 		t.Fatalf("offboarded vendor must be disabled: %+v", v)
 	}
-	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, now); ok {
+	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, "root", now); ok {
 		t.Fatal("an offboarded vendor must not have access")
 	}
 	if grants, err := st.ListVendorGrants(ctx, ven.ID); err != nil || len(grants) != 1 || grants[0].Status != "revoked" {
