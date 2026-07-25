@@ -795,6 +795,28 @@ func (s *PGStore) ExportAudit(ctx context.Context, since, until time.Time) ([]st
 	})
 }
 
+// AuditSince returns up to limit audit events with id > afterID, oldest-first —
+// the cursor read the SIEM forwarder tails the trail with.
+func (s *PGStore) AuditSince(ctx context.Context, afterID int64, limit int) ([]store.AuditEvent, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, ts, actor, action, detail
+		 FROM audit_events
+		 WHERE id > $1
+		 ORDER BY id ASC
+		 LIMIT $2`, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.AuditEvent, error) {
+		var e store.AuditEvent
+		err := row.Scan(&e.ID, &e.TS, &e.Actor, &e.Action, &e.Detail)
+		return e, err
+	})
+}
+
 // FindAuditDetail reports whether any audit event with the given action has a
 // detail containing substr. The substring is matched literally: LIKE wildcards
 // in substr are escaped so a caller-supplied value cannot widen the match.

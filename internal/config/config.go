@@ -97,6 +97,14 @@ type Config struct {
 	// auditor stores a signed head and later detects TAIL TRUNCATION (which the
 	// HMAC chain alone cannot catch). Unset disables the checkpoint endpoint.
 	AuditSignSeed string
+	// AuditForwardAddr, when set (host:port), streams every audit event to a SIEM
+	// collector as it is written. AuditForwardProto is "udp" (default) or "tcp";
+	// AuditForwardFormat is "rfc5424" (default) or "cef"; AuditForwardIntervalSec
+	// is the polling cadence (default 10). Empty AuditForwardAddr disables it.
+	AuditForwardAddr        string
+	AuditForwardProto       string
+	AuditForwardFormat      string
+	AuditForwardIntervalSec int
 	// RevealDisabled makes credential reveal break-glass-only.
 	RevealDisabled bool
 
@@ -335,71 +343,75 @@ func Load() (*Config, error) {
 		return n
 	}
 	cfg := &Config{
-		ListenAddr:          getenv("PAM_LISTEN_ADDR", ":8080"),
-		DatabaseURL:         os.Getenv("PAM_DATABASE_URL"),
-		MasterKey:           os.Getenv("PAM_MASTER_KEY"),
-		APIKey:              os.Getenv("PAM_API_KEY"),
-		BreakGlassKeyHash:   os.Getenv("PAM_BREAK_GLASS_KEY_HASH"),
-		SSHAddr:             getenv("PAM_SSH_ADDR", ":2222"),
-		DBAddr:              getenv("PAM_DB_ADDR", "off"),
-		SSHHostKeyPath:      os.Getenv("PAM_SSH_HOST_KEY"),
-		SSHCAKeyPath:        os.Getenv("PAM_SSH_CA_KEY"),
-		SSHCertTTL:          time.Duration(integer("PAM_SSH_CERT_TTL_MIN", 2)) * time.Minute,
-		SSHOperatorCertTTL:  time.Duration(integer("PAM_SSH_OPERATOR_CERT_TTL_MIN", 10)) * time.Minute,
-		SSHKnownHosts:       os.Getenv("PAM_SSH_KNOWN_HOSTS"),
-		SSHSFTPMode:         strings.ToLower(getenv("PAM_SSH_SFTP", "allow")),
-		SSHJumpHost:         os.Getenv("PAM_SSH_JUMP_HOST"),
-		SSHJumpUser:         os.Getenv("PAM_SSH_JUMP_USER"),
-		SSHJumpKey:          os.Getenv("PAM_SSH_JUMP_KEY"),
-		RecordingDir:        getenv("PAM_RECORDING_DIR", "recordings"),
-		LogLevel:            getenv("PAM_LOG_LEVEL", "info"),
-		LogFormat:           getenv("PAM_LOG_FORMAT", "json"),
-		TLSCert:             os.Getenv("PAM_TLS_CERT"),
-		TLSKey:              os.Getenv("PAM_TLS_KEY"),
-		AuthRatePerMin:      integer("PAM_AUTH_RATE_LIMIT", 20),
-		TrustedProxyHops:    integer("PAM_TRUSTED_PROXY_HOPS", 0),
-		ProxyAuthRatePerMin: integer("PAM_PROXY_AUTH_RATE_LIMIT", 10),
-		RequireHTTPS:        boolean("PAM_REQUIRE_HTTPS", false),
-		RequireDBClientTLS:  boolean("PAM_REQUIRE_DB_CLIENT_TLS", false),
-		DBUpstreamCA:        os.Getenv("PAM_DB_UPSTREAM_CA"),
-		DBUpstreamTLSVerify: boolean("PAM_DB_UPSTREAM_TLS_VERIFY", false),
-		AuditHMACKey:        os.Getenv("PAM_AUDIT_HMAC_KEY"),
-		AuditSignSeed:       os.Getenv("PAM_AUDIT_SIGN_SEED"),
-		RevealDisabled:      boolean("PAM_REVEAL_DISABLED", false),
-		BreakGlassThreshold: integer("PAM_BREAK_GLASS_THRESHOLD", 0),
-		BreakGlassShares:    integer("PAM_BREAK_GLASS_SHARES", 5),
-		BreakGlassTTL:       time.Duration(integer("PAM_BREAK_GLASS_TTL_MIN", 15)) * time.Minute,
-		AlertWebhook:        os.Getenv("PAM_ALERT_WEBHOOK"),
-		AlertSyslog:         os.Getenv("PAM_ALERT_SYSLOG"),
-		AlertEmailSMTP:      os.Getenv("PAM_ALERT_EMAIL_SMTP"),
-		AlertEmailFrom:      os.Getenv("PAM_ALERT_EMAIL_FROM"),
-		AlertEmailTo:        os.Getenv("PAM_ALERT_EMAIL_TO"),
-		AlertEmailUser:      os.Getenv("PAM_ALERT_EMAIL_USER"),
-		AlertEmailPass:      os.Getenv("PAM_ALERT_EMAIL_PASS"),
-		MFARequired:         boolean("PAM_MFA_REQUIRED", false),
-		RotateInterval:      time.Duration(integer("PAM_ROTATE_INTERVAL_MIN", 0)) * time.Minute,
-		RotateMaxAge:        time.Duration(integer("PAM_ROTATE_MAX_AGE_HOURS", 0)) * time.Hour,
-		RotateAfterSession:  boolean("PAM_ROTATE_AFTER_SESSION", false),
-		RequireRecording:    boolean("PAM_REQUIRE_RECORDING", false),
-		MaxSessionsPerUser:  integer("PAM_MAX_SESSIONS_PER_USER", 0),
-		MaxSessionsTotal:    integer("PAM_MAX_SESSIONS_TOTAL", 0),
-		MaxRecordingMB:      integer("PAM_MAX_RECORDING_MB", 0),
-		RequireApproval:     boolean("PAM_REQUIRE_APPROVAL", false),
-		ApprovalWindow:      time.Duration(integer("PAM_APPROVAL_WINDOW_MIN", 60)) * time.Minute,
-		RequireTicket:       boolean("PAM_REQUIRE_TICKET", false),
-		TicketPattern:       os.Getenv("PAM_TICKET_PATTERN"),
-		TicketValidateURL:   os.Getenv("PAM_TICKET_VALIDATE_URL"),
-		ApprovalsRequired:   integer("PAM_APPROVALS_REQUIRED", 1),
-		RequireReason:       boolean("PAM_REQUIRE_REASON", false),
-		OneTimeAccess:       boolean("PAM_ACCESS_ONE_TIME", false),
-		VendorAttestURL:     getenv("PAM_VENDOR_ATTEST_URL", ""),
-		VendorSweepInterval: time.Duration(integer("PAM_VENDOR_SWEEP_INTERVAL_MIN", 0)) * time.Minute,
-		AirGap:              boolean("PAM_OT_AIRGAP", false),
-		CheckoutTTL:         time.Duration(integer("PAM_CHECKOUT_TTL_MIN", 30)) * time.Minute,
-		AllowedProtocols:    os.Getenv("PAM_ALLOWED_PROTOCOLS"),
-		CommandDenyFile:     os.Getenv("PAM_COMMAND_DENY_FILE"),
-		DBStepUpFile:        os.Getenv("PAM_DB_STEPUP_FILE"),
-		DBStepUpTTL:         time.Duration(integer("PAM_DB_STEPUP_TTL_SEC", 120)) * time.Second,
+		ListenAddr:              getenv("PAM_LISTEN_ADDR", ":8080"),
+		DatabaseURL:             os.Getenv("PAM_DATABASE_URL"),
+		MasterKey:               os.Getenv("PAM_MASTER_KEY"),
+		APIKey:                  os.Getenv("PAM_API_KEY"),
+		BreakGlassKeyHash:       os.Getenv("PAM_BREAK_GLASS_KEY_HASH"),
+		SSHAddr:                 getenv("PAM_SSH_ADDR", ":2222"),
+		DBAddr:                  getenv("PAM_DB_ADDR", "off"),
+		SSHHostKeyPath:          os.Getenv("PAM_SSH_HOST_KEY"),
+		SSHCAKeyPath:            os.Getenv("PAM_SSH_CA_KEY"),
+		SSHCertTTL:              time.Duration(integer("PAM_SSH_CERT_TTL_MIN", 2)) * time.Minute,
+		SSHOperatorCertTTL:      time.Duration(integer("PAM_SSH_OPERATOR_CERT_TTL_MIN", 10)) * time.Minute,
+		SSHKnownHosts:           os.Getenv("PAM_SSH_KNOWN_HOSTS"),
+		SSHSFTPMode:             strings.ToLower(getenv("PAM_SSH_SFTP", "allow")),
+		SSHJumpHost:             os.Getenv("PAM_SSH_JUMP_HOST"),
+		SSHJumpUser:             os.Getenv("PAM_SSH_JUMP_USER"),
+		SSHJumpKey:              os.Getenv("PAM_SSH_JUMP_KEY"),
+		RecordingDir:            getenv("PAM_RECORDING_DIR", "recordings"),
+		LogLevel:                getenv("PAM_LOG_LEVEL", "info"),
+		LogFormat:               getenv("PAM_LOG_FORMAT", "json"),
+		TLSCert:                 os.Getenv("PAM_TLS_CERT"),
+		TLSKey:                  os.Getenv("PAM_TLS_KEY"),
+		AuthRatePerMin:          integer("PAM_AUTH_RATE_LIMIT", 20),
+		TrustedProxyHops:        integer("PAM_TRUSTED_PROXY_HOPS", 0),
+		ProxyAuthRatePerMin:     integer("PAM_PROXY_AUTH_RATE_LIMIT", 10),
+		RequireHTTPS:            boolean("PAM_REQUIRE_HTTPS", false),
+		RequireDBClientTLS:      boolean("PAM_REQUIRE_DB_CLIENT_TLS", false),
+		DBUpstreamCA:            os.Getenv("PAM_DB_UPSTREAM_CA"),
+		DBUpstreamTLSVerify:     boolean("PAM_DB_UPSTREAM_TLS_VERIFY", false),
+		AuditHMACKey:            os.Getenv("PAM_AUDIT_HMAC_KEY"),
+		AuditForwardAddr:        os.Getenv("PAM_AUDIT_FORWARD_ADDR"),
+		AuditForwardProto:       strings.ToLower(getenv("PAM_AUDIT_FORWARD_PROTO", "udp")),
+		AuditForwardFormat:      strings.ToLower(getenv("PAM_AUDIT_FORWARD_FORMAT", "rfc5424")),
+		AuditForwardIntervalSec: integer("PAM_AUDIT_FORWARD_INTERVAL_SEC", 10),
+		AuditSignSeed:           os.Getenv("PAM_AUDIT_SIGN_SEED"),
+		RevealDisabled:          boolean("PAM_REVEAL_DISABLED", false),
+		BreakGlassThreshold:     integer("PAM_BREAK_GLASS_THRESHOLD", 0),
+		BreakGlassShares:        integer("PAM_BREAK_GLASS_SHARES", 5),
+		BreakGlassTTL:           time.Duration(integer("PAM_BREAK_GLASS_TTL_MIN", 15)) * time.Minute,
+		AlertWebhook:            os.Getenv("PAM_ALERT_WEBHOOK"),
+		AlertSyslog:             os.Getenv("PAM_ALERT_SYSLOG"),
+		AlertEmailSMTP:          os.Getenv("PAM_ALERT_EMAIL_SMTP"),
+		AlertEmailFrom:          os.Getenv("PAM_ALERT_EMAIL_FROM"),
+		AlertEmailTo:            os.Getenv("PAM_ALERT_EMAIL_TO"),
+		AlertEmailUser:          os.Getenv("PAM_ALERT_EMAIL_USER"),
+		AlertEmailPass:          os.Getenv("PAM_ALERT_EMAIL_PASS"),
+		MFARequired:             boolean("PAM_MFA_REQUIRED", false),
+		RotateInterval:          time.Duration(integer("PAM_ROTATE_INTERVAL_MIN", 0)) * time.Minute,
+		RotateMaxAge:            time.Duration(integer("PAM_ROTATE_MAX_AGE_HOURS", 0)) * time.Hour,
+		RotateAfterSession:      boolean("PAM_ROTATE_AFTER_SESSION", false),
+		RequireRecording:        boolean("PAM_REQUIRE_RECORDING", false),
+		MaxSessionsPerUser:      integer("PAM_MAX_SESSIONS_PER_USER", 0),
+		MaxSessionsTotal:        integer("PAM_MAX_SESSIONS_TOTAL", 0),
+		MaxRecordingMB:          integer("PAM_MAX_RECORDING_MB", 0),
+		RequireApproval:         boolean("PAM_REQUIRE_APPROVAL", false),
+		ApprovalWindow:          time.Duration(integer("PAM_APPROVAL_WINDOW_MIN", 60)) * time.Minute,
+		RequireTicket:           boolean("PAM_REQUIRE_TICKET", false),
+		TicketPattern:           os.Getenv("PAM_TICKET_PATTERN"),
+		TicketValidateURL:       os.Getenv("PAM_TICKET_VALIDATE_URL"),
+		ApprovalsRequired:       integer("PAM_APPROVALS_REQUIRED", 1),
+		RequireReason:           boolean("PAM_REQUIRE_REASON", false),
+		OneTimeAccess:           boolean("PAM_ACCESS_ONE_TIME", false),
+		VendorAttestURL:         getenv("PAM_VENDOR_ATTEST_URL", ""),
+		VendorSweepInterval:     time.Duration(integer("PAM_VENDOR_SWEEP_INTERVAL_MIN", 0)) * time.Minute,
+		AirGap:                  boolean("PAM_OT_AIRGAP", false),
+		CheckoutTTL:             time.Duration(integer("PAM_CHECKOUT_TTL_MIN", 30)) * time.Minute,
+		AllowedProtocols:        os.Getenv("PAM_ALLOWED_PROTOCOLS"),
+		CommandDenyFile:         os.Getenv("PAM_COMMAND_DENY_FILE"),
+		DBStepUpFile:            os.Getenv("PAM_DB_STEPUP_FILE"),
+		DBStepUpTTL:             time.Duration(integer("PAM_DB_STEPUP_TTL_SEC", 120)) * time.Second,
 
 		AnalyticsInterval:      time.Duration(integer("PAM_ANALYTICS_INTERVAL_MIN", 0)) * time.Minute,
 		AnalyticsWindow:        time.Duration(integer("PAM_ANALYTICS_WINDOW_MIN", 60)) * time.Minute,
@@ -561,6 +573,19 @@ func Load() (*Config, error) {
 	case "allow", "readonly", "deny":
 	default:
 		errs = append(errs, fmt.Sprintf("PAM_RDP_CLIPBOARD must be one of allow, readonly, deny (got %q)", cfg.RDPClipboard))
+	}
+	// SIEM audit forwarding: validate the transport and format only when enabled,
+	// fail-loud on a typo rather than silently not forwarding.
+	if cfg.AuditForwardAddr != "" {
+		if cfg.AuditForwardProto != "udp" && cfg.AuditForwardProto != "tcp" {
+			errs = append(errs, fmt.Sprintf("PAM_AUDIT_FORWARD_PROTO must be udp or tcp (got %q)", cfg.AuditForwardProto))
+		}
+		if cfg.AuditForwardFormat != "rfc5424" && cfg.AuditForwardFormat != "cef" {
+			errs = append(errs, fmt.Sprintf("PAM_AUDIT_FORWARD_FORMAT must be rfc5424 or cef (got %q)", cfg.AuditForwardFormat))
+		}
+		if cfg.AuditForwardIntervalSec < 1 {
+			errs = append(errs, "PAM_AUDIT_FORWARD_INTERVAL_SEC must be >= 1")
+		}
 	}
 	// Rate limits are "0 = off"; a negative value must fail loud rather than
 	// silently disable throttling (a fat-fingered minus turning off brute-force
