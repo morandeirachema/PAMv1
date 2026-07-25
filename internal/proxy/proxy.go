@@ -86,6 +86,10 @@ type Config struct {
 	// MaxRecordingBytes caps a single session recording's output (0 = unlimited);
 	// a session that exceeds it is terminated rather than run unrecorded.
 	MaxRecordingBytes int64
+	// SFTPMode is the file-transfer policy for SFTP (an SSH subsystem) sessions:
+	// SFTPAllow (default, forward + audit every operation), SFTPReadOnly (refuse
+	// writes), or SFTPDeny (refuse the subsystem). An empty value means SFTPAllow.
+	SFTPMode SFTPMode
 }
 
 // JumpConfig configures reaching SSH targets through an SSH bastion.
@@ -120,6 +124,7 @@ type Proxy struct {
 	certTTL      time.Duration
 	authLimiter  *ratelimit.Limiter
 	maxRecBytes  int64
+	sftpMode     SFTPMode
 
 	bg sync.WaitGroup // background tasks (post-session rotation) to drain on shutdown
 
@@ -168,10 +173,14 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		certTTL:      cfg.CertTTL,
 		authLimiter:  ratelimit.New(cfg.AuthRatePerMin),
 		maxRecBytes:  cfg.MaxRecordingBytes,
+		sftpMode:     cfg.SFTPMode,
 		conns:        make(map[net.Conn]struct{}),
 	}
 	if p.certTTL <= 0 {
 		p.certTTL = 2 * time.Minute
+	}
+	if p.sftpMode == "" {
+		p.sftpMode = SFTPAllow
 	}
 	if p.upstreamHKCB == nil {
 		p.log.Warn("upstream SSH host keys are NOT verified (set PAM_SSH_KNOWN_HOSTS to pin them)")
@@ -801,6 +810,35 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		p.audit(ctx, actor, "ssh.exec", fmt.Sprintf("target:%s cred_user:%s via:proxy cmd:%s", target.Name, cred.Username, auditCmd(m.Command)))
 		return true
 	}
+	// File-transfer control (Phase 32): SFTP rides an SSH "subsystem" channel. The
+	// inspector parses that binary stream to audit each file operation and, in
+	// read-only mode, refuse writes; onSubsystem gates the subsystem request itself
+	// (deny mode refuses it, otherwise it activates the inspector for sftp).
+	insp := newSFTPInspector(p.sftpMode, func(action, detail string) {
+		p.audit(ctx, actor, action, fmt.Sprintf("target:%s cred_user:%s %s", target.Name, cred.Username, detail))
+	})
+	onSubsystem := func(payload []byte) bool {
+		var m struct{ Name string }
+		_ = ssh.Unmarshal(payload, &m)
+		if m.Name != "sftp" {
+			if p.sftpMode == SFTPDeny {
+				p.audit(ctx, actor, "sftp.denied", fmt.Sprintf("target:%s cred_user:%s subsystem:%s", target.Name, cred.Username, m.Name))
+				return false
+			}
+			p.audit(ctx, actor, "session.subsystem", fmt.Sprintf("target:%s cred_user:%s name:%s", target.Name, cred.Username, m.Name))
+			return true
+		}
+		if p.sftpMode == SFTPDeny {
+			if rec != nil {
+				_, _ = io.WriteString(rec, "pamv1: SFTP is disabled by policy\r\n")
+			}
+			p.audit(ctx, actor, "sftp.denied", fmt.Sprintf("target:%s cred_user:%s", target.Name, cred.Username))
+			return false
+		}
+		insp.activate()
+		p.audit(ctx, actor, "sftp.session", fmt.Sprintf("target:%s cred_user:%s mode:%s", target.Name, cred.Username, p.sftpMode))
+		return true
+	}
 	clientReqDone := make(chan struct{}) // stops the pump between requests
 	var clientReqPump sync.WaitGroup
 	clientReqPump.Add(1)
@@ -809,14 +847,14 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		if observe {
 			pumpRequestsObserver(clientReqs, upChan, clientReqDone)
 		} else {
-			pumpRequests(clientReqs, upChan, clientReqDone, onExec)
+			pumpRequests(clientReqs, upChan, clientReqDone, reqHooks{onExec: onExec, onSubsystem: onSubsystem})
 		}
 	}()
 	var upReqDone sync.WaitGroup
 	upReqDone.Add(1)
 	go func() {
 		defer upReqDone.Done()
-		pumpRequests(upReqs, clientChan, nil, nil) // exits when the upstream channel closes
+		pumpRequests(upReqs, clientChan, nil, reqHooks{}) // exits when the upstream channel closes
 	}()
 
 	// Target stderr -> operator, also tee'd into the recording so the audited
@@ -841,7 +879,10 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		go io.Copy(io.Discard, clientChan)
 	} else {
 		go func() {
-			io.Copy(upChan, clientChan) // operator keystrokes -> target
+			// Operator keystrokes -> target. For an SFTP session the inspector parses
+			// this leg to audit + gate file operations; for a shell/exec session it is
+			// a transparent pass-through (the inspector stays inactive).
+			insp.pump(upChan, clientChan)
 			// Propagate a client stdin half-close (CHANNEL_EOF) upstream, but keep
 			// the channel open so the command's remaining output and exit-status
 			// still flow back. Full upstream teardown happens in handleConn when the
@@ -1096,22 +1137,34 @@ func crlf(s string) string {
 // is forwarded, so the caller can capture the command into the recording + audit
 // (the request payload never appears in the tee'd channel data) and can veto it:
 // returning false blocks the command (it is not forwarded and the reply is false).
-func pumpRequests(in <-chan *ssh.Request, dst ssh.Channel, done <-chan struct{}, onExec func([]byte) bool) {
+// reqHooks intercepts specific channel requests on the client→upstream leg. A nil
+// hook forwards that request type unchanged; a hook returning false refuses the
+// request (it is not sent upstream and the client is replied to with failure).
+type reqHooks struct {
+	onExec      func(payload []byte) bool // "exec" (a discrete `ssh target "cmd"`)
+	onSubsystem func(payload []byte) bool // "subsystem" (notably sftp)
+}
+
+func pumpRequests(in <-chan *ssh.Request, dst ssh.Channel, done <-chan struct{}, h reqHooks) {
 	for {
 		select {
 		case req, ok := <-in:
 			if !ok {
 				return
 			}
-			if onExec != nil && req.Type == "exec" {
-				// onExec captures the command and reports whether to forward it;
-				// a command blocked by policy is not sent upstream (reply false).
-				if !onExec(req.Payload) {
-					if req.WantReply {
-						req.Reply(false, nil)
-					}
-					continue
+			// A hook captures the request and reports whether to forward it; one
+			// refused by policy is not sent upstream (reply false).
+			if h.onExec != nil && req.Type == "exec" && !h.onExec(req.Payload) {
+				if req.WantReply {
+					req.Reply(false, nil)
 				}
+				continue
+			}
+			if h.onSubsystem != nil && req.Type == "subsystem" && !h.onSubsystem(req.Payload) {
+				if req.WantReply {
+					req.Reply(false, nil)
+				}
+				continue
 			}
 			okr, err := dst.SendRequest(req.Type, req.WantReply, req.Payload)
 			if req.WantReply {

@@ -40,6 +40,10 @@ type Config struct {
 	// SSHKnownHosts pins upstream target host keys (an OpenSSH known_hosts file).
 	// Empty = trust any upstream key (insecure; logged loudly).
 	SSHKnownHosts string
+	// SSHSFTPMode is the file-transfer policy for SFTP sessions through the proxy:
+	// "allow" (default — forward + audit every operation), "readonly" (refuse
+	// writes/deletes/renames), or "deny" (refuse the SFTP subsystem entirely).
+	SSHSFTPMode string
 	// SSHJump* route SSH targets through an SSH bastion (for legacy equipment only
 	// reachable via a jump host). Empty SSHJumpHost disables it.
 	SSHJumpHost string
@@ -339,6 +343,7 @@ func Load() (*Config, error) {
 		SSHCertTTL:          time.Duration(integer("PAM_SSH_CERT_TTL_MIN", 2)) * time.Minute,
 		SSHOperatorCertTTL:  time.Duration(integer("PAM_SSH_OPERATOR_CERT_TTL_MIN", 10)) * time.Minute,
 		SSHKnownHosts:       os.Getenv("PAM_SSH_KNOWN_HOSTS"),
+		SSHSFTPMode:         strings.ToLower(getenv("PAM_SSH_SFTP", "allow")),
 		SSHJumpHost:         os.Getenv("PAM_SSH_JUMP_HOST"),
 		SSHJumpUser:         os.Getenv("PAM_SSH_JUMP_USER"),
 		SSHJumpKey:          os.Getenv("PAM_SSH_JUMP_KEY"),
@@ -538,6 +543,13 @@ func Load() (*Config, error) {
 	}
 	if cfg.SSHCAKeyPath != "" && cfg.SSHCertTTL > 24*time.Hour {
 		errs = append(errs, "PAM_SSH_CERT_TTL_MIN must be <= 1440 (24h) to keep ZSP certificates short-lived")
+	}
+	// SFTP file-transfer policy is a fixed enum; a typo must fail loud, not silently
+	// fall back to the permissive default.
+	switch cfg.SSHSFTPMode {
+	case "allow", "readonly", "deny":
+	default:
+		errs = append(errs, fmt.Sprintf("PAM_SSH_SFTP must be one of allow, readonly, deny (got %q)", cfg.SSHSFTPMode))
 	}
 	// Rate limits are "0 = off"; a negative value must fail loud rather than
 	// silently disable throttling (a fat-fingered minus turning off brute-force

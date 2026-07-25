@@ -811,6 +811,7 @@ func run() error {
 			CertTTL:           cfg.SSHCertTTL,
 			AuthRatePerMin:    cfg.ProxyAuthRatePerMin,
 			MaxRecordingBytes: maxRecBytes,
+			SFTPMode:          proxy.SFTPMode(cfg.SSHSFTPMode),
 		})
 		if err != nil {
 			return err
