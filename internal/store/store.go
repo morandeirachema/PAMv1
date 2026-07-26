@@ -554,6 +554,11 @@ type Store interface {
 	// oldest-first (ascending id). It is the cursor read for the SIEM forwarder
 	// (Phase 35): tail the trail by advancing afterID past the last event sent.
 	AuditSince(ctx context.Context, afterID int64, limit int) ([]AuditEvent, error)
+	// PruneAuditBefore deletes audit events with ts < cutoff and returns how many
+	// were removed (Phase 36 retention). The caller must NOT prune when the
+	// tamper-evident HMAC chain is enabled — deleting the chain head breaks
+	// verification — so the retention worker skips it in that case.
+	PruneAuditBefore(ctx context.Context, cutoff time.Time) (int, error)
 	// FindAuditDetail reports whether any audit event with the given action has
 	// a detail containing substr, matched literally (Phase 26). The playback
 	// path uses it to verify a served session recording's SHA-256 against the

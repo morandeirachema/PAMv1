@@ -940,6 +940,23 @@ func (m *Memstore) AuditSince(_ context.Context, afterID int64, limit int) ([]st
 	return out, nil
 }
 
+// PruneAuditBefore deletes audit events with ts < cutoff, returning the count.
+func (m *Memstore) PruneAuditBefore(_ context.Context, cutoff time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	kept := m.audit[:0:0]
+	removed := 0
+	for _, e := range m.audit {
+		if e.TS.Before(cutoff) {
+			removed++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	m.audit = kept
+	return removed, nil
+}
+
 // FindAuditDetail reports whether any audit event with the given action has a
 // detail containing substr, matched literally.
 func (m *Memstore) FindAuditDetail(_ context.Context, action, substr string) (bool, error) {
