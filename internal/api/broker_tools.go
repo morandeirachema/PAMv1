@@ -151,7 +151,14 @@ func (t *winrmExecTool) Execute(ctx context.Context, p *auth.Principal, args bro
 	if err != nil {
 		return broker.Result{}, err
 	}
-	res, err := t.s.execWinRM(ctx, target, cred, command, p.Name)
+	// An agent's execution is a supervised session too: capped, listed and killable
+	// exactly like an operator's (Phase 40).
+	sctx, release, err := t.s.superviseSession(ctx, p.Name, target.Name, "winrm", "broker")
+	if err != nil {
+		return broker.Result{}, err
+	}
+	defer release()
+	res, err := t.s.execWinRM(sctx, target, cred, command, p.Name)
 	if err != nil {
 		return broker.Result{}, err
 	}
@@ -211,11 +218,18 @@ func (t *sshExecTool) Execute(ctx context.Context, p *auth.Principal, args broke
 		// certificate path is the interactive proxy, not this one-shot exec.
 		return broker.Result{}, fmt.Errorf("ssh_exec does not support zero-standing-privilege (ssh_ca) credentials")
 	}
-	secret, err := t.s.vault.Decrypt(ctx, cred.SecretEnc, store.CredentialAAD(target.ID, cred.ID))
+	// Supervise BEFORE the just-in-time decrypt, so a run refused by the
+	// concurrent-session cap never causes a secret to exist (Phase 40).
+	sctx, release, err := t.s.superviseSession(ctx, p.Name, target.Name, "ssh_exec", "broker")
+	if err != nil {
+		return broker.Result{}, err
+	}
+	defer release()
+	secret, err := t.s.vault.Decrypt(sctx, cred.SecretEnc, store.CredentialAAD(target.ID, cred.ID))
 	if err != nil {
 		return broker.Result{}, fmt.Errorf("credential decrypt failed")
 	}
-	res, err := t.s.sshConnector.Exec(ctx, *target, cred.Username, secret, command)
+	res, err := t.s.sshConnector.Exec(sctx, *target, cred.Username, secret, command)
 	if err != nil {
 		return broker.Result{}, err
 	}

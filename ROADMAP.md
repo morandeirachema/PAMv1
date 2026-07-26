@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–39 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
+**Phases 0–40 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
 with command control, safes, dependent-account propagation), optional CyberArk Conjur
@@ -42,7 +42,10 @@ bearer credentials throttled + audited on every authentication surface — and
 `internal/cmdguard` and is now enforced on the REST WinRM endpoint and the agent
 broker's exec tools, not only inside the session proxies — and **the approver
 capability on the two decision points** (39): releasing a paused statement and
-certifying access are now `CapApprove`, not a read-only or user-admin gate. The portal is
+certifying access are now `CapApprove`, not a read-only or user-admin gate — and
+**every brokered execution is a supervised session** (40): the REST WinRM endpoint
+and the agent broker's exec tools join the proxies in the live-session registry, so
+they are listable, countable and killable. The portal is
 also **keyboard-first** (mouse optional). See their sections below. Beyond those,
 a number of items genuinely require external infrastructure or a paid account to build
 and verify honestly, so they are left as documented follow-ons rather than faked. The
@@ -604,6 +607,36 @@ kind of decision.
   an admin, who also holds `CapApprove`, from certifying a grant they created. Per-item
   four-eyes needs the grant's creator recorded, which is a schema change and stays a
   follow-on. No new capability, no schema change, no new environment variable
+
+## Phase 40 — Every brokered execution is a supervised session ✅
+
+Finding **D** of the [2026-07-26 sweep](docs/SECURITY-GAPS.md#open-findings-from-the-2026-07-26-sweep),
+plus the same hole one layer over. The SSH proxy, the PostgreSQL proxy and the RDP
+tunnel all registered their sessions; `POST /api/targets/{id}/winrm` did not — and
+neither did the agent broker's `winrm_exec` / `ssh_exec` tools. A run on those paths
+was invisible to `GET /api/sessions`, could not be killed, was not counted against
+`PAM_MAX_SESSIONS_PER_USER` / `_TOTAL`, and was out of reach of the analytics
+auto-response and the vendor sweeper — both of which terminate **by actor**. An
+agent's long-running command was the least supervisable execution in the system.
+
+- [x] **One helper, every path** (`Server.superviseSession`): enforces the
+  concurrent-session caps, registers the session, and returns a context a kill
+  cancels plus a release func. The REST WinRM endpoint and both broker exec tools
+  now go through it, so an AI agent's run is exactly as listable, countable and
+  killable as an operator's
+- [x] **Capped before the decrypt**: the cap check runs *before* the just-in-time
+  decryption on every path (`ssh_exec`'s decrypt was moved after it), so a run
+  refused by the limit never causes a secret to exist in memory
+- [x] **A kill is honest about itself**: cancelling the run returns HTTP **503
+  session terminated** and audits `session.killed`, rather than blaming the target
+  for an upstream failure
+- [x] **Tests**: an in-flight WinRM run parks in a blocking runner and is observed
+  in `GET /api/sessions` as protocol `winrm`; a second concurrent run is refused
+  **429** by the per-actor cap; `DELETE /api/sessions/{id}` terminates the run, which
+  returns 503; the registry empties afterwards; and the runner still received the
+  vaulted secret, so JIT injection is unchanged
+- No schema change, no new environment variable — `PAM_MAX_SESSIONS_*` simply now
+  means what it says on every path
 
 ## Portal: keyboard-first navigation ✅
 
