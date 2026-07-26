@@ -32,6 +32,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
+	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/sshca"
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -67,6 +68,9 @@ type Config struct {
 	// RequireRecording refuses a session when its recording cannot be created,
 	// rather than proceeding unrecorded (fail-closed session auditing).
 	RequireRecording bool
+	// EncryptRecordings seals session recordings at rest with a per-recording
+	// data key wrapped by the vault KEK (PAM_RECORDING_ENCRYPT).
+	EncryptRecordings bool
 	// CommandGuard, when set, blocks commands matching its deny patterns on the
 	// exec and WinRM paths (Phase 16 command control). nil disables it.
 	CommandGuard *cmdguard.Guard
@@ -104,6 +108,7 @@ type JumpConfig struct {
 type Proxy struct {
 	store        store.Store
 	vault        *vault.Vault
+	recKey       recording.KeyWrapper // non-nil = seal recordings at rest
 	resolver     *auth.Resolver
 	log          *slog.Logger
 	sshCfg       *ssh.ServerConfig
@@ -155,6 +160,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 	p := &Proxy{
 		store:        st,
 		vault:        v,
+		recKey:       recKeyFor(cfg.EncryptRecordings, v),
 		resolver:     resolver,
 		log:          logging.Component("proxy"),
 		hostKey:      cfg.HostKey,
@@ -198,6 +204,16 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 	p.sshCfg = &ssh.ServerConfig{PasswordCallback: p.authenticate}
 	p.sshCfg.AddHostKey(cfg.HostKey)
 	return p, nil
+}
+
+// recKeyFor returns the key wrapper to seal recordings with, or nil to keep
+// writing them in the clear. A shared helper so both proxies express the same
+// rule: encryption is opt-in, and impossible without a vault.
+func recKeyFor(enabled bool, v *vault.Vault) recording.KeyWrapper {
+	if !enabled || v == nil {
+		return nil
+	}
+	return v
 }
 
 // authenticate resolves the SSH password (a PAM key or per-user token) into a
@@ -774,7 +790,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 
 	now := time.Now()
 	title := fmt.Sprintf("%d_%s_%s", now.UnixNano(), target.Name, actor)
-	rec, err := newRecording(p.recordingDir, title, now, p.maxRecBytes)
+	rec, err := newRecording(context.Background(), p.recordingDir, title, now, p.maxRecBytes, p.recKey)
 	if err != nil {
 		p.log.Error("recording setup failed", "actor", actor, "target", target.Name, "err", err)
 		p.audit(ctx, actor, "session.record_failed",
@@ -971,7 +987,7 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 	defer ch.Close()
 
 	now := time.Now()
-	rec, err := newRecording(p.recordingDir, fmt.Sprintf("%d_%s_%s", now.UnixNano(), target.Name, actor), now, p.maxRecBytes)
+	rec, err := newRecording(context.Background(), p.recordingDir, fmt.Sprintf("%d_%s_%s", now.UnixNano(), target.Name, actor), now, p.maxRecBytes, p.recKey)
 	if err != nil {
 		p.log.Error("recording setup failed", "actor", actor, "target", target.Name, "err", err)
 		p.audit(ctx, actor, "session.record_failed",

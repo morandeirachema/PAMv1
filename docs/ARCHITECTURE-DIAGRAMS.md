@@ -70,6 +70,7 @@ flowchart LR
     n_conjur[conjur]
     n_ocsf[ocsf]
     n_ratelimit[ratelimit]
+    n_recording[recording]
     n_sshca[sshca]
     n_ticket[ticket]
     n_vendor[vendor]
@@ -98,6 +99,7 @@ flowchart LR
   n_api --> n_oidc
   n_api --> n_policy
   n_api --> n_ratelimit
+  n_api --> n_recording
   n_api --> n_rotate
   n_api --> n_session
   n_api --> n_shamir
@@ -158,6 +160,7 @@ flowchart LR
   n_proxy --> n_cmdguard
   n_proxy --> n_logging
   n_proxy --> n_ratelimit
+  n_proxy --> n_recording
   n_proxy --> n_session
   n_proxy --> n_sshca
   n_proxy --> n_store

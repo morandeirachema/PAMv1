@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-07-26 · Reflects: Phases 0–40 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-07-26 · Reflects: Phases 0–41 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -239,6 +239,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_GUACD_ADDR` | | (RDP off) | `host:port` of the `guacd` daemon that brokers RDP (the Docker/K8s/Helm deploys ship one). See §5 → *RDP*. |
 | `PAM_GUACD_RECORDING_PATH` | | (off) | Directory where **guacd** writes its own server-side RDP session recordings; the recording's name lands in the `rdp.connect` audit event. Separate from `PAM_RECORDING_DIR`, which holds the SSH/WinRM/PostgreSQL asciicasts. |
 | `PAM_RECORDING_DIR` | | `recordings` | Where session recordings are written. |
+| `PAM_RECORDING_ENCRYPT` | | `false` | **Seal recordings and WinRM transcripts at rest** (Phase 41): chunked AES-256-GCM under a per-recording data key wrapped by your KEK, so they inherit the same root of trust as credentials. Replay through the portal is unaffected — playback decrypts, and detects the format per file so recordings written before you enabled it still work. The trade: a `.cast` can no longer be fed straight to `asciinema`. See §9.3. |
 | `PAM_LOG_LEVEL` | | `info` | `debug` \| `info` \| `warn` \| `error`. |
 | `PAM_LOG_FORMAT` | | `json` | `json` (for SIEM) \| `text` (for humans). |
 | `PAM_ROTATE_INTERVAL_MIN` | | `0` (off) | Credential-lifecycle worker interval (minutes). |
@@ -1305,6 +1306,25 @@ audits what it removed (`recording.pruned`, `audit.pruned`).
 
 ### 9.3 Session recordings
 
+**Encryption at rest (Phase 41).** By default a recording is protected only by its
+file permissions — which is a real gap, because the recording holds whatever the
+operator typed and saw. Set `PAM_RECORDING_ENCRYPT=true` and each recording is
+sealed with its own AES-256-GCM data key, wrapped by the same KEK that protects
+your credentials (local, Vault Transit, AWS KMS or a PKCS#11 HSM). Practical notes:
+
+- **Replay is unchanged.** The console player and `GET /api/recordings/{name}`
+  decrypt on the way out, and the SHA-256 tamper-evidence check still works because
+  the audited hash covers the bytes as stored.
+- **Nothing is orphaned.** The format is detected per file, so recordings written
+  before you enabled it keep replaying.
+- **You lose direct `asciinema` playback** of the raw `.cast`; replay through pamv1
+  (which is the audited path anyway).
+- **A KEK outage fails closed** — the session is refused rather than recorded in
+  the clear.
+- **The file name is not encrypted.** It still carries the target and the actor, so
+  treat the directory listing itself as metadata worth protecting.
+
+
 Each proxied session is recorded in [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/)
 under `PAM_RECORDING_DIR`, and its SHA-256 is written to the audit trail (tamper
 evidence). Replay with [asciinema](https://asciinema.org/): `asciinema play <file>.cast` —
@@ -1616,6 +1636,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-07-27 | **Phase 41 — session recordings encrypted at rest.** `PAM_RECORDING_ENCRYPT=true` seals session recordings and WinRM transcripts with a per-recording key wrapped by your KEK (local / Vault Transit / AWS KMS / PKCS#11), so the artifact that holds what the operator typed and saw is protected like a credential rather than by file permissions. Replay from the console is unchanged and the tamper-evidence verdict still works — the hash covers the stored bytes. Existing recordings keep replaying (the format is detected per file). Note the file NAME still carries target and actor. See §4 and §9.3 |
 | 2026-07-27 | **Phase 40 — every brokered execution is a supervised session.** A `POST /api/targets/{id}/winrm` run, and an AI agent's `winrm_exec`/`ssh_exec` tool call, now appear in *Active Sessions* while they run, count against `PAM_MAX_SESSIONS_PER_USER`/`_TOTAL` (checked before the credential is decrypted, so a refused run never decrypts one), and can be terminated by the kill switch — including by the analytics auto-response and the vendor sweeper, which terminate by actor. A killed run answers 503. Previously only the SSH, PostgreSQL and RDP paths were registered. See §9.4 |
 | 2026-07-26 | **Phase 39 — approver capability on the two decision points.** Releasing a paused step-up statement (`POST /api/sessions/{id}/stepup`) now needs `approve` instead of `read_audit`: a read-only auditor could previously authorize a statement the policy had flagged. Deciding a certification item now needs `approve` instead of `manage_users`, so a dedicated approver can run a recertification without holding any access-granting capability (creating and closing a campaign stay `manage_users`). Listing paused step-ups and reading campaigns are unchanged. See §9.4 and §9.6 |
 | 2026-07-26 | **Phase 38 — command control on every command path.** The deny policy (`PAM_COMMAND_DENY_FILE`) moved into its own package and is now compiled once and shared by the session proxies **and** the API server, so it also covers `POST /api/targets/{id}/winrm` (403, before the credential is decrypted) and the agent broker's `ssh_exec`/`winrm_exec` tools (before any dial). Previously a pattern that stopped an operator's `ssh target "cmd"` did nothing to an AI agent. Blocks are audited `command.blocked` with the matched pattern on every path. No new env var, no schema change. See §9.4 |

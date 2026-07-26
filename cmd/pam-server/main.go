@@ -698,6 +698,7 @@ func run() error {
 		SSHHostKeyCallback:      upstreamHostKey,
 		MFARequired:             cfg.MFARequired,
 		RecordingDir:            cfg.RecordingDir,
+		EncryptRecordings:       cfg.EncryptRecordings,
 		WinRM:                   winrmClient,
 		OIDC:                    oidcProvider,
 		OIDCRoleMap:             roleMap(cfg.OIDCRoleAdmin, cfg.OIDCRoleUser, cfg.OIDCRoleAuditor, cfg.OIDCRoleApprover),
@@ -844,6 +845,7 @@ func run() error {
 			CertTTL:           cfg.SSHCertTTL,
 			AuthRatePerMin:    cfg.ProxyAuthRatePerMin,
 			MaxRecordingBytes: maxRecBytes,
+			EncryptRecordings: cfg.EncryptRecordings,
 			SFTPMode:          proxy.SFTPMode(cfg.SSHSFTPMode),
 		})
 		if err != nil {
@@ -910,6 +912,7 @@ func run() error {
 			Live:              liveHub,
 			AuthRatePerMin:    cfg.ProxyAuthRatePerMin,
 			MaxRecordingBytes: maxRecBytes,
+			EncryptRecordings: cfg.EncryptRecordings,
 			UpstreamTLS:       dbUpstreamTLS,
 			StepUpGuard:       stepupGuard,
 			StepUp:            stepUp,

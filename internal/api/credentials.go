@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/winrm"
@@ -382,12 +384,30 @@ func (s *Server) recordWinRM(target *store.Target, credUser, actor, command stri
 		"# pamv1 WinRM session\n# target: %s (%s:%d)\n# user: %s\n# actor: %s\n# time: %s\n\n$ %s\n\n--- stdout ---\n%s\n--- stderr ---\n%s\n--- exit: %d ---\n",
 		target.Name, target.Host, target.Port, credUser, actor, ts.Format(time.RFC3339),
 		command, res.Stdout, res.Stderr, res.ExitCode)
-	data := []byte(transcript)
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	// Seal the transcript at rest when configured, and hash the bytes that land ON
+	// DISK — not the plaintext. Playback re-hashes the stored file to check it
+	// against the audit trail, so the two must describe the same bytes or every
+	// sealed transcript would replay as "never audited".
+	var stored bytes.Buffer
+	if s.recKey != nil {
+		sealer, serr := recording.NewSealer(context.Background(), &stored, s.recKey, name)
+		if serr != nil {
+			s.log.Error("winrm recording seal", "err", serr)
+			return "", ""
+		}
+		if _, werr := sealer.Write([]byte(transcript)); werr != nil {
+			s.log.Error("winrm recording seal", "err", werr)
+			return "", ""
+		}
+		_ = sealer.Close()
+	} else {
+		stored.WriteString(transcript)
+	}
+	if err := os.WriteFile(path, stored.Bytes(), 0o600); err != nil {
 		s.log.Error("winrm recording write", "err", err)
 		return "", ""
 	}
-	return path, hashHex(transcript)
+	return path, hashHex(stored.String())
 }
 
 // sanitizeName reduces a string to filename-safe characters (alphanumerics and
