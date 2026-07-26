@@ -147,6 +147,12 @@ type Config struct {
 	// a single (or compromised) identity. Per-replica in an HA deployment.
 	MaxSessionsPerUser int
 	MaxSessionsTotal   int
+	// EncryptRecordings seals session recordings and WinRM transcripts at rest,
+	// with a per-recording AES-256-GCM data key wrapped by the configured KEK.
+	// Opt-in: it changes the on-disk format, so a plain `.cast` can no longer be
+	// replayed with asciinema directly (replay through the portal instead).
+	// Playback detects the format per file, so existing recordings keep working.
+	EncryptRecordings bool
 	// MaxRecordingMB caps a single session recording's output in megabytes
 	// (0 = unlimited); a session that exceeds it is terminated rather than run
 	// unrecorded, so one runaway session can't fill the recording disk.
@@ -405,6 +411,7 @@ func Load() (*Config, error) {
 		RequireRecording:        boolean("PAM_REQUIRE_RECORDING", false),
 		MaxSessionsPerUser:      integer("PAM_MAX_SESSIONS_PER_USER", 0),
 		MaxSessionsTotal:        integer("PAM_MAX_SESSIONS_TOTAL", 0),
+		EncryptRecordings:       boolean("PAM_RECORDING_ENCRYPT", false),
 		MaxRecordingMB:          integer("PAM_MAX_RECORDING_MB", 0),
 		RecordingRetentionDays:  integer("PAM_RECORDING_RETENTION_DAYS", 0),
 		AuditRetentionDays:      integer("PAM_AUDIT_RETENTION_DAYS", 0),

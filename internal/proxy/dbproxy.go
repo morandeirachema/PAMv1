@@ -37,6 +37,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
+	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/vault"
@@ -57,6 +58,8 @@ type DBConfig struct {
 	ClientTLS *tls.Config
 	// OnSessionEnd forces post-session credential rotation, like the SSH proxy.
 	OnSessionEnd func(credentialID int64)
+	// EncryptRecordings seals recordings at rest (PAM_RECORDING_ENCRYPT).
+	EncryptRecordings bool
 	// CommandGuard blocks SQL statements matching its deny patterns (Phase 16).
 	CommandGuard *cmdguard.Guard
 	// Live receives each recorded statement keyed by session id, so a supervisor
@@ -84,6 +87,7 @@ type DBConfig struct {
 type DBProxy struct {
 	store        store.Store
 	vault        *vault.Vault
+	recKey       recording.KeyWrapper
 	resolver     *auth.Resolver
 	log          *slog.Logger
 	recordingDir string
@@ -127,6 +131,7 @@ func NewDB(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg DBConfig
 	d := &DBProxy{
 		store:        st,
 		vault:        v,
+		recKey:       recKeyFor(cfg.EncryptRecordings, v),
 		resolver:     resolver,
 		log:          logging.Component("dbproxy"),
 		recordingDir: cfg.RecordingDir,
@@ -483,7 +488,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	d.log.Info("db session started", "actor", actor, "target", target.Name, "db", database, "cred_user", cred.Username, "remote", remote)
 
 	var rec *Recording
-	if r, rerr := newRecording(d.recordingDir, "pgsql-"+actor+"-"+target.Name+"-"+time.Now().UTC().Format("20060102-150405"), time.Now(), d.maxRecBytes); rerr == nil {
+	if r, rerr := newRecording(context.Background(), d.recordingDir, "pgsql-"+actor+"-"+target.Name+"-"+time.Now().UTC().Format("20060102-150405"), time.Now(), d.maxRecBytes, d.recKey); rerr == nil {
 		rec = r
 	} else {
 		d.audit(ctx, actor, "session.record_failed", "proto:postgres target:"+target.Name+" err:"+rerr.Error())

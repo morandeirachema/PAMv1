@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/morandeirachema/pamv1/internal/recording"
 )
 
 // errRecordingLimit is returned by Recording.Write once a session's recording has
@@ -81,7 +84,15 @@ type Recording struct {
 // writes the asciicast v2 header and returns a Recording that hashes every byte
 // it writes so its contents can be verified later. maxBytes caps the recorded
 // output (0 = unlimited): once exceeded, Write returns errRecordingLimit.
-func newRecording(dir, title string, now time.Time, maxBytes int64) (*Recording, error) {
+//
+// When kw is non-nil the recording is sealed at rest (Phase 41): the frames are
+// encrypted with a per-recording data key wrapped by the deployment's KEK. The
+// hash is deliberately taken over the bytes that land ON DISK, so the existing
+// tamper-evidence — the audited SHA-256 and the recording hash chain — keeps
+// describing the stored artifact and needs no change. A KEK failure returns an
+// error and leaves no file behind, so a session can fail closed rather than be
+// recorded in the clear by accident.
+func newRecording(ctx context.Context, dir, title string, now time.Time, maxBytes int64, kw recording.KeyWrapper) (*Recording, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -91,7 +102,17 @@ func newRecording(dir, title string, now time.Time, maxBytes int64) (*Recording,
 		return nil, err
 	}
 	hasher := sha256.New()
-	enc := json.NewEncoder(io.MultiWriter(f, hasher))
+	var sink io.Writer = io.MultiWriter(f, hasher)
+	if kw != nil {
+		sealer, serr := recording.NewSealer(ctx, sink, kw, filepath.Base(path))
+		if serr != nil {
+			f.Close()
+			_ = os.Remove(path)
+			return nil, serr
+		}
+		sink = sealer
+	}
+	enc := json.NewEncoder(sink)
 	header := map[string]any{
 		"version":   2,
 		"width":     80,

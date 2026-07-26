@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/morandeirachema/pamv1/internal/recording"
 )
 
 // --- session-recording playback (Phase 26) ---
@@ -137,5 +139,25 @@ func (s *Server) playRecording(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-PAM-Recording-SHA256", sum)
 	w.Header().Set("X-PAM-Recording-Audited", strconv.FormatBool(audited))
+
+	// A sealed recording (Phase 41) is decrypted on the way out. Detection is per
+	// file, by its magic prefix, so recordings written before encryption was turned
+	// on still replay — and the hash above still covers the STORED bytes, which is
+	// what the audit trail attests to.
+	head := make([]byte, recording.HeaderLen)
+	if n, _ := f.ReadAt(head, 0); recording.IsSealed(head[:n]) {
+		pr, oerr := recording.Open(r.Context(), io.NewSectionReader(f, 0, fi.Size()), s.vault, name)
+		if oerr != nil {
+			s.log.Error("recording decrypt", "file", name, "err", oerr)
+			writeError(w, http.StatusInternalServerError, "recording could not be decrypted")
+			return
+		}
+		w.Header().Set("X-PAM-Recording-Encrypted", "true")
+		if _, cerr := io.Copy(w, pr); cerr != nil {
+			// The prefix is already on the wire; log rather than rewrite the status.
+			s.log.Warn("recording replay ended early", "file", name, "err", cerr)
+		}
+		return
+	}
 	http.ServeContent(w, r, "", fi.ModTime(), io.NewSectionReader(f, 0, fi.Size()))
 }

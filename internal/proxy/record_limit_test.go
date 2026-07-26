@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -11,7 +12,7 @@ import (
 // Write returns errRecordingLimit so the session is torn down instead of running
 // unrecorded.
 func TestRecordingSizeCap(t *testing.T) {
-	rec, err := newRecording(t.TempDir(), "cap-test", time.Now(), 100) // 100-byte cap
+	rec, err := newRecording(context.Background(), t.TempDir(), "cap-test", time.Now(), 100, nil) // 100-byte cap
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +35,7 @@ func TestRecordingSizeCap(t *testing.T) {
 
 // TestRecordingUnlimited confirms maxBytes=0 never caps.
 func TestRecordingUnlimited(t *testing.T) {
-	rec, err := newRecording(t.TempDir(), "nocap", time.Now(), 0)
+	rec, err := newRecording(context.Background(), t.TempDir(), "nocap", time.Now(), 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
