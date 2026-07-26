@@ -243,6 +243,10 @@ func (s *Server) runWinRM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := s.execWinRM(r.Context(), target, &cred, in.Command, actorFrom(r.Context()))
+	if errors.Is(err, errCommandBlocked) {
+		writeError(w, http.StatusForbidden, "command blocked by policy")
+		return
+	}
 	if errors.Is(err, errDecryptFailed) {
 		writeError(w, http.StatusInternalServerError, "decryption failed")
 		return
@@ -263,11 +267,39 @@ func (s *Server) runWinRM(w http.ResponseWriter, r *http.Request) {
 // it to an internal-error status distinct from a target execution failure.
 var errDecryptFailed = errors.New("decryption failed")
 
+// errCommandBlocked marks a command refused by command control, so callers can
+// map it to a 403 (the request was understood and deliberately refused) rather
+// than a target failure.
+var errCommandBlocked = errors.New("command blocked by policy")
+
+// guardCommand refuses a command matching the deny policy before anything
+// reaches the target — and before the credential is decrypted, so a blocked
+// command never causes a secret to exist in memory. The block is audited
+// `command.blocked` with the matched pattern, the same vocabulary the session
+// proxies use, so one query finds every refusal whatever path it came in on.
+// A nil guard blocks nothing.
+func (s *Server) guardCommand(ctx context.Context, actor, targetName, path, command string) error {
+	pattern, blocked := s.cmdGuard.Blocked(command)
+	if !blocked {
+		return nil
+	}
+	s.log.Warn("command blocked", "actor", actor, "target", targetName, "path", path, "pattern", pattern)
+	s.auditAs(ctx, actor, "command.blocked",
+		fmt.Sprintf("target:%s path:%s pattern:%s", targetName, path, pattern))
+	return errCommandBlocked
+}
+
 // execWinRM injects target's vaulted credential just-in-time, runs command over
 // WinRM, records the transcript, and audits the run — returning only the result.
 // The plaintext secret never leaves this function. Shared by the REST handler and
 // the agent-broker winrm_exec tool.
 func (s *Server) execWinRM(ctx context.Context, target *store.Target, cred *store.Credential, command, actor string) (winrm.Result, error) {
+	// Command control, before the credential is decrypted: this is the one
+	// chokepoint the REST WinRM endpoint and the broker's winrm_exec tool share,
+	// so the deny policy covers a human and an agent identically.
+	if err := s.guardCommand(ctx, actor, target.Name, "winrm", command); err != nil {
+		return winrm.Result{}, err
+	}
 	secret, err := s.vault.Decrypt(ctx, cred.SecretEnc, store.CredentialAAD(target.ID, cred.ID))
 	if err != nil {
 		s.audit(ctx, "credential.decrypt_failed", fmt.Sprintf("credential:%d target:%s op:winrm", cred.ID, target.Name))

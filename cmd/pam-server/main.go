@@ -39,6 +39,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/auditchain"
 	"github.com/morandeirachema/pamv1/internal/auditfwd"
 	"github.com/morandeirachema/pamv1/internal/auth"
+	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/config"
 	"github.com/morandeirachema/pamv1/internal/conjur"
 	"github.com/morandeirachema/pamv1/internal/logging"
@@ -546,15 +547,18 @@ func run() error {
 	maxRecBytes := int64(cfg.MaxRecordingMB) * 1024 * 1024
 	liveHub := session.NewHub()
 
-	// Command control (Phase 16): compile the deny file, if configured, into a
-	// guard shared by the SSH and database proxies. Fail-loud on a bad pattern.
-	var cmdGuard *proxy.CommandGuard
+	// Command control (Phase 16): compile the deny file, if configured, into ONE
+	// guard shared by the SSH proxy, the database proxy and the API server — so the
+	// same policy covers every path where a discrete command is visible, including
+	// the REST WinRM endpoint and the agent broker's exec tools. Fail-loud on a bad
+	// pattern.
+	var cmdGuard *cmdguard.Guard
 	if cfg.CommandDenyFile != "" {
 		denyBytes, derr := os.ReadFile(cfg.CommandDenyFile)
 		if derr != nil {
 			return fmt.Errorf("command deny file %q: %w", cfg.CommandDenyFile, derr)
 		}
-		cmdGuard, derr = proxy.NewCommandGuard(proxy.ParseCommandDeny(string(denyBytes)))
+		cmdGuard, derr = cmdguard.New(cmdguard.ParseDeny(string(denyBytes)))
 		if derr != nil {
 			return fmt.Errorf("command deny file %q: %w", cfg.CommandDenyFile, derr)
 		}
@@ -565,13 +569,13 @@ func run() error {
 	// for a supervisor's live decision. The coordinator is shared by the DB proxy
 	// (which awaits) and the API (which decides).
 	stepUp := session.NewStepUp()
-	var stepupGuard *proxy.CommandGuard
+	var stepupGuard *cmdguard.Guard
 	if cfg.DBStepUpFile != "" {
 		suBytes, derr := os.ReadFile(cfg.DBStepUpFile)
 		if derr != nil {
 			return fmt.Errorf("db step-up file %q: %w", cfg.DBStepUpFile, derr)
 		}
-		stepupGuard, derr = proxy.NewCommandGuard(proxy.ParseCommandDeny(string(suBytes)))
+		stepupGuard, derr = cmdguard.New(cmdguard.ParseDeny(string(suBytes)))
 		if derr != nil {
 			return fmt.Errorf("db step-up file %q: %w", cfg.DBStepUpFile, derr)
 		}
@@ -704,6 +708,7 @@ func run() error {
 		GuacdIgnoreCert:         cfg.GuacdIgnoreCert,
 		RDPClipboard:            cfg.RDPClipboard,
 		AuthRatePerMin:          cfg.AuthRatePerMin,
+		CommandGuard:            cmdGuard,
 		TrustedProxyHops:        cfg.TrustedProxyHops,
 		RevealDisabled:          cfg.RevealDisabled,
 		BreakGlassHashHex:       cfg.BreakGlassKeyHash,

@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–37 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
+**Phases 0–38 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
 with command control, safes, dependent-account propagation), optional CyberArk Conjur
@@ -37,7 +37,10 @@ CIEM engine** (Phase 31), **SFTP file-transfer control** (32) and **RDP clipboar
 control** (33) closing the two unaudited data-movement paths, the **HA kill-switch**
 (34), **audit→SIEM push forwarding** (35), **retention / pruning** (36), and a
 **gap-analysis pass** (37): child-resource deletes scoped to their parent, and failed
-bearer credentials throttled + audited on every authentication surface. The portal is
+bearer credentials throttled + audited on every authentication surface — and
+**command control on every command path** (38): the deny policy moved to
+`internal/cmdguard` and is now enforced on the REST WinRM endpoint and the agent
+broker's exec tools, not only inside the session proxies. The portal is
 also **keyboard-first** (mouse optional). See their sections below. Beyond those,
 a number of items genuinely require external infrastructure or a paid account to build
 and verify honestly, so they are left as documented follow-ons rather than faked. The
@@ -538,6 +541,39 @@ rather than half-built here.
   WinRM and broker exec paths, the WinRM endpoint's absence from the session
   registry, `CapApprove` for step-up and certification decisions, the console-parity
   drift since Phase 25, and update endpoints + pagination
+
+## Phase 38 — Command control on every command path ✅
+
+The first of the [open findings](docs/SECURITY-GAPS.md#open-findings-from-the-2026-07-26-sweep)
+Phase 37 recorded. Phase 16 described command control as covering "every path
+where a discrete command is visible" — but the guard lived inside
+`internal/proxy` and was consulted only there. Two paths that *do* see a discrete
+command never asked it: `POST /api/targets/{id}/winrm` (any `CapConnect` holder)
+and the agent broker's `ssh_exec` / `winrm_exec` tools. A pattern that stopped an
+operator's `ssh target "cmd"` did nothing to an AI agent — the least-trusted
+actor on the system.
+
+- [x] **One guard, one policy** (`internal/cmdguard`): the denylist moves out of
+  `internal/proxy` into its own package (`Guard`, `New`, `ParseDeny`, `Blocked`,
+  `Size` — same logic, its tests moved with it). `main` compiles
+  `PAM_COMMAND_DENY_FILE` **once** and hands the same guard to the SSH proxy, the
+  PostgreSQL proxy and the API server, so the two can't drift apart
+- [x] **Enforced on the API's command paths**: `Server.guardCommand` is called from
+  `execWinRM` — the single chokepoint the REST endpoint and the broker's
+  `winrm_exec` share — and from `sshExecTool.Execute`. Both run **before** the
+  just-in-time decrypt, so a refused command never causes a secret to exist in
+  memory. A block is audited `command.blocked` with the matched pattern (the same
+  vocabulary the proxies use, so one query finds every refusal) and answers HTTP
+  403 to a human / a failed tool call to an agent
+- [x] **Tests**: a blocked WinRM run is refused with 403, never reaches the fake
+  runner, never decrypts the credential, and is audited — while an unmatched
+  command still runs; the same for an agent calling `winrm_exec`; and a blocked
+  `ssh_exec` against an unroutable host returns the *policy refusal* rather than a
+  dial error, which proves the guard runs before the dial
+- Unchanged by design: an interactive SSH shell streams a raw PTY that is never
+  parsed, so command control still must not be read as a containment boundary —
+  use read-only observer sessions or restrict shell access where that guarantee is
+  needed. No schema change, no new environment variable
 
 ## Portal: keyboard-first navigation ✅
 

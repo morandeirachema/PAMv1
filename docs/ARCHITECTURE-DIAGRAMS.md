@@ -66,6 +66,7 @@ flowchart LR
     n_analytics[analytics]
     n_auditfwd[auditfwd]
     n_blast[blast]
+    n_cmdguard[cmdguard]
     n_conjur[conjur]
     n_ocsf[ocsf]
     n_ratelimit[ratelimit]
@@ -84,6 +85,7 @@ flowchart LR
   n_api --> n_auth
   n_api --> n_blast
   n_api --> n_broker
+  n_api --> n_cmdguard
   n_api --> n_config
   n_api --> n_discovery
   n_api --> n_guacd
@@ -131,6 +133,7 @@ flowchart LR
   n_pam_server --> n_auditchain
   n_pam_server --> n_auditfwd
   n_pam_server --> n_auth
+  n_pam_server --> n_cmdguard
   n_pam_server --> n_config
   n_pam_server --> n_conjur
   n_pam_server --> n_logging
@@ -152,6 +155,7 @@ flowchart LR
   n_pgstore --> n_session
   n_pgstore --> n_store
   n_proxy --> n_auth
+  n_proxy --> n_cmdguard
   n_proxy --> n_logging
   n_proxy --> n_ratelimit
   n_proxy --> n_session

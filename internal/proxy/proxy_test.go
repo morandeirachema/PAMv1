@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
+	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/proxy"
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/store/memstore"
@@ -585,7 +586,7 @@ func TestProxyExecBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	guard, err := proxy.NewCommandGuard([]string{`rm\s+-rf`})
+	guard, err := cmdguard.New([]string{`rm\s+-rf`})
 	if err != nil {
 		t.Fatal(err)
 	}

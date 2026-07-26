@@ -289,6 +289,7 @@ All twenty-six phases (0–25) have shipped — full per-phase detail in **[ROAD
 | 35 | Audit→SIEM push forwarding (continuous RFC 5424 syslog / CEF stream) | ✅ shipped |
 | 36 | Retention / pruning (aged recordings + audit rows; integrity-preserving) | ✅ shipped |
 | 37 | Gap-analysis pass (child-resource deletes scoped to their parent; failed bearer credentials throttled + audited on every surface) | ✅ shipped |
+| 38 | Command control on every command path (one shared `cmdguard`; the REST WinRM endpoint and the broker's exec tools now obey the denylist) | ✅ shipped |
 
 ## Coverage vs. commercial PAM (CyberArk, Wallix, …)
 
