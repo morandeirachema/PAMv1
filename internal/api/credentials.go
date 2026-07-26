@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/winrm"
 )
@@ -242,13 +243,30 @@ func (s *Server) runWinRM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := s.execWinRM(r.Context(), target, &cred, in.Command, actorFrom(r.Context()))
+	// A WinRM run is a brokered privileged session like any other, so it belongs in
+	// the live-session registry (Phase 40).
+	actor := actorFrom(r.Context())
+	ctx, release, err := s.superviseSession(r.Context(), actor, target.Name, "winrm", r.RemoteAddr)
+	if errors.Is(err, errSessionLimit) {
+		writeError(w, http.StatusTooManyRequests, "session limit reached")
+		return
+	}
+	defer release()
+
+	res, err := s.execWinRM(ctx, target, &cred, in.Command, actor)
 	if errors.Is(err, errCommandBlocked) {
 		writeError(w, http.StatusForbidden, "command blocked by policy")
 		return
 	}
 	if errors.Is(err, errDecryptFailed) {
 		writeError(w, http.StatusInternalServerError, "decryption failed")
+		return
+	}
+	// A kill (or the client going away) cancels ctx: report it as a terminated
+	// session rather than blaming the target for an upstream failure.
+	if err != nil && ctx.Err() != nil {
+		s.audit(r.Context(), "session.killed", "target:"+target.Name+" protocol:winrm")
+		writeError(w, http.StatusServiceUnavailable, "session terminated")
 		return
 	}
 	if err != nil {
@@ -261,6 +279,35 @@ func (s *Server) runWinRM(w http.ResponseWriter, r *http.Request) {
 		"stdout":    res.Stdout,
 		"stderr":    res.Stderr,
 	})
+}
+
+// errSessionLimit reports that the concurrent-session cap refused a new session.
+var errSessionLimit = errors.New("session limit reached")
+
+// superviseSession puts a brokered execution under the live-session registry:
+// it enforces the concurrent-session caps BEFORE any secret is decrypted, then
+// registers the session so it is listed by GET /api/sessions, terminated by the
+// kill switch, and reachable by the analytics auto-response and the vendor
+// sweeper (both of which kill by actor). The returned context is cancelled when
+// a kill arrives; release removes the registration.
+//
+// Every path that executes something privileged goes through this — the REST
+// WinRM endpoint and the agent broker's exec tools alike — so an AI agent's run
+// is exactly as supervisable as an operator's. A nil registry is a no-op.
+func (s *Server) superviseSession(ctx context.Context, actor, target, protocol, remote string) (context.Context, func(), error) {
+	if s.sessions == nil {
+		cctx, cancel := context.WithCancel(ctx)
+		return cctx, cancel, nil
+	}
+	if !s.sessions.AllowNew(actor) {
+		s.auditAs(ctx, actor, "session.denied", "target:"+target+" reason:session-limit")
+		return ctx, func() {}, errSessionLimit
+	}
+	cctx, cancel := context.WithCancel(ctx)
+	sid := s.sessions.Register(session.Info{
+		Actor: actor, Target: target, Protocol: protocol, Remote: remote, Started: time.Now(),
+	}, cancel)
+	return cctx, func() { s.sessions.Remove(sid); cancel() }, nil
 }
 
 // errDecryptFailed marks a just-in-time vault decrypt failure, so callers can map
