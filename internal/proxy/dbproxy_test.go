@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgproto3"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
+	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/proxy"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -372,7 +373,7 @@ func TestDBProxyCommandBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	guard, err := proxy.NewCommandGuard([]string{`(?i)drop\s+table`})
+	guard, err := cmdguard.New([]string{`(?i)drop\s+table`})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -602,7 +603,7 @@ func TestDBProxyStepUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	guard, err := proxy.NewCommandGuard([]string{`(?i)delete\s+from`})
+	guard, err := cmdguard.New([]string{`(?i)delete\s+from`})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -684,7 +685,7 @@ func TestDBProxyStepUpExtended(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	guard, err := proxy.NewCommandGuard([]string{`(?i)delete\s+from`})
+	guard, err := cmdguard.New([]string{`(?i)delete\s+from`})
 	if err != nil {
 		t.Fatal(err)
 	}

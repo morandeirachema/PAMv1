@@ -34,6 +34,7 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
+	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
 	"github.com/morandeirachema/pamv1/internal/session"
@@ -57,7 +58,7 @@ type DBConfig struct {
 	// OnSessionEnd forces post-session credential rotation, like the SSH proxy.
 	OnSessionEnd func(credentialID int64)
 	// CommandGuard blocks SQL statements matching its deny patterns (Phase 16).
-	CommandGuard *CommandGuard
+	CommandGuard *cmdguard.Guard
 	// Live receives each recorded statement keyed by session id, so a supervisor
 	// can watch the session live (Phase 16).
 	Live *session.Hub
@@ -74,7 +75,7 @@ type DBConfig struct {
 	// approval (Phase 30); nil disables step-up. StepUp coordinates the pause +
 	// decision (shared with the API), and StepUpTTL bounds how long a paused
 	// statement waits before it is denied (default 2m).
-	StepUpGuard *CommandGuard
+	StepUpGuard *cmdguard.Guard
 	StepUp      *session.StepUp
 	StepUpTTL   time.Duration
 }
@@ -93,13 +94,13 @@ type DBProxy struct {
 	dialTimeout  time.Duration
 	clientTLS    *tls.Config
 	onSessionEnd func(int64)
-	guard        *CommandGuard
+	guard        *cmdguard.Guard
 	live         *session.Hub
 	chain        *recordChain
 	authLimiter  *ratelimit.Limiter
 	upstreamTLS  *tls.Config
 	maxRecBytes  int64
-	stepupGuard  *CommandGuard
+	stepupGuard  *cmdguard.Guard
 	stepup       *session.StepUp
 	stepupTTL    time.Duration
 

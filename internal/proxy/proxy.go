@@ -29,6 +29,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
+	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
 	"github.com/morandeirachema/pamv1/internal/session"
@@ -68,7 +69,7 @@ type Config struct {
 	RequireRecording bool
 	// CommandGuard, when set, blocks commands matching its deny patterns on the
 	// exec and WinRM paths (Phase 16 command control). nil disables it.
-	CommandGuard *CommandGuard
+	CommandGuard *cmdguard.Guard
 	// Live, when set, receives a copy of every recorded output byte keyed by
 	// session id, so a supervisor can watch a session live (Phase 16).
 	Live *session.Hub
@@ -118,7 +119,7 @@ type Proxy struct {
 	upstreamDial func(addr string) (net.Conn, error)
 	chain        *recordChain
 	requireRec   bool
-	guard        *CommandGuard
+	guard        *cmdguard.Guard
 	live         *session.Hub
 	ca           *sshca.CertAuthority
 	certTTL      time.Duration

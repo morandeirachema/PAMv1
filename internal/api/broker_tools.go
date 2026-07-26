@@ -197,6 +197,11 @@ func (t *sshExecTool) Execute(ctx context.Context, p *auth.Principal, args broke
 	if err != nil {
 		return broker.Result{}, err
 	}
+	// Command control applies to an agent exactly as it does to an operator's
+	// `ssh target "cmd"` on the session proxy — same policy, same audit event.
+	if err := t.s.guardCommand(ctx, p.Name, target.Name, "ssh_exec", command); err != nil {
+		return broker.Result{}, err
+	}
 	cred, err := t.s.firstCredential(ctx, target)
 	if err != nil {
 		return broker.Result{}, err

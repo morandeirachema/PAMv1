@@ -21,6 +21,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/auditchain"
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/broker"
+	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/metrics"
 	"github.com/morandeirachema/pamv1/internal/oidc"
@@ -110,6 +111,12 @@ type Options struct {
 	// window, the failed bearer-credential attempts on the REST, agent-broker and
 	// application-secrets surfaces.
 	AuthRatePerMin int
+	// CommandGuard is the command denylist (PAM_COMMAND_DENY_FILE), the SAME
+	// guard the session proxies enforce. The API owns two paths where a discrete
+	// command is visible — the REST WinRM run and the broker's ssh_exec/winrm_exec
+	// tools — and without it a pattern blocked for a human on the proxy would run
+	// freely for an AI agent. A nil guard blocks nothing.
+	CommandGuard *cmdguard.Guard
 	// TrustedProxyHops is how many trusted reverse-proxy hops sit in front of the
 	// server; it selects the real client IP from X-Forwarded-For for rate limiting
 	// (0 = use RemoteAddr directly).
@@ -248,6 +255,7 @@ type Server struct {
 	// a legitimate API client makes many successful calls a minute and only its
 	// failures may be counted. Same budget (PAM_AUTH_RATE_LIMIT), own window.
 	keyFailLimiter     *ratelimit.Limiter
+	cmdGuard           *cmdguard.Guard
 	trustedProxyHops   int
 	sessions           *session.Registry
 	live               *session.Hub
@@ -445,6 +453,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		rdpClipboard:       rdpClipboardMode(opts.RDPClipboard),
 		authLimiter:        ratelimit.New(opts.AuthRatePerMin),
 		keyFailLimiter:     ratelimit.New(opts.AuthRatePerMin),
+		cmdGuard:           opts.CommandGuard,
 		trustedProxyHops:   opts.TrustedProxyHops,
 		sessions:           opts.Sessions,
 		live:               opts.Live,
