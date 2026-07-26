@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–38 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
+**Phases 0–39 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
 with command control, safes, dependent-account propagation), optional CyberArk Conjur
@@ -40,7 +40,9 @@ control** (33) closing the two unaudited data-movement paths, the **HA kill-swit
 bearer credentials throttled + audited on every authentication surface — and
 **command control on every command path** (38): the deny policy moved to
 `internal/cmdguard` and is now enforced on the REST WinRM endpoint and the agent
-broker's exec tools, not only inside the session proxies. The portal is
+broker's exec tools, not only inside the session proxies — and **the approver
+capability on the two decision points** (39): releasing a paused statement and
+certifying access are now `CapApprove`, not a read-only or user-admin gate. The portal is
 also **keyboard-first** (mouse optional). See their sections below. Beyond those,
 a number of items genuinely require external infrastructure or a paid account to build
 and verify honestly, so they are left as documented follow-ons rather than faked. The
@@ -574,6 +576,34 @@ actor on the system.
   parsed, so command control still must not be read as a containment boundary —
   use read-only observer sessions or restrict shell access where that guarantee is
   needed. No schema change, no new environment variable
+
+## Phase 39 — Approver capability for the two decision points ✅
+
+Findings **E** and **F** of the [2026-07-26 sweep](docs/SECURITY-GAPS.md#open-findings-from-the-2026-07-26-sweep).
+Two endpoints that *authorize* something were gated on the wrong capability — one
+too permissive, one too narrow — and `CapApprove` already existed for exactly this
+kind of decision.
+
+- [x] **Step-up release needs `CapApprove`** (was `CapReadAudit`): pausing a flagged
+  PostgreSQL statement for a supervisor is only meaningful if releasing it is a
+  privileged act. As shipped in Phase 30 the role defined as *read-only* — `auditor`
+  — could run it. `GET /api/sessions/stepups` **keeps** `CapReadAudit`, the same gate
+  as the live stream, so a watching supervisor still sees every paused statement;
+  only `POST /api/sessions/{id}/stepup` moved
+- [x] **Certification decisions need `CapApprove`** (was `CapManageUsers`): recertifying
+  access is a review, not user administration. Requiring the user-management
+  capability meant the principal who grants access was the only one who could attest
+  to it — the opposite of what a SOX / ISO 27001 review is for. An `approver` can now
+  certify or revoke items **without** holding any access-granting capability; creating
+  and closing a campaign stay `CapManageUsers`
+- [x] **Tests**: an auditor lists paused step-ups but is refused the release (403) while
+  an approver's decision resolves the waiting statement; an approver decides a campaign
+  item (204) yet still cannot create a campaign, and neither an auditor nor a plain user
+  can decide
+- Honest limit (documented): this **delegates** the review — it does not by itself stop
+  an admin, who also holds `CapApprove`, from certifying a grant they created. Per-item
+  four-eyes needs the grant's creator recorded, which is a schema change and stays a
+  follow-on. No new capability, no schema change, no new environment variable
 
 ## Portal: keyboard-first navigation ✅
 

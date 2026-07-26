@@ -420,7 +420,7 @@ The 118 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/campaigns` | CapManageUsers |
 | GET | `/api/campaigns/{id}` | CapReadAudit |
 | POST | `/api/campaigns/{id}/close` | CapManageUsers |
-| POST | `/api/campaigns/{id}/items/{iid}/decision` | CapManageUsers |
+| POST | `/api/campaigns/{id}/items/{iid}/decision` | CapApprove |
 | GET | `/api/checkouts` | CapReadAudit |
 | GET | `/api/config` | CapManageUsers |
 | PUT | `/api/config` | CapManageUsers |
@@ -466,7 +466,7 @@ The 118 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/sessions` | CapReadAudit |
 | GET | `/api/sessions/stepups` | CapReadAudit |
 | DELETE | `/api/sessions/{id}` | CapManageTargets |
-| POST | `/api/sessions/{id}/stepup` | CapReadAudit |
+| POST | `/api/sessions/{id}/stepup` | CapApprove |
 | GET | `/api/sessions/{id}/stream` | CapReadAudit |
 | GET | `/api/targets` | CapReadInventory |
 | POST | `/api/targets` | CapManageTargets |

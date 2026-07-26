@@ -690,9 +690,13 @@ func (s *Server) routes() {
 
 	s.mux.Handle("GET /api/sessions", s.authz(auth.CapReadAudit, s.listSessions))
 	s.mux.Handle("GET /api/sessions/{id}/stream", s.authz(auth.CapReadAudit, s.streamSession))
-	s.mux.Handle("POST /api/blast/analyze", s.authz(auth.CapReadAudit, s.analyzeBlast))        // Phase 31 (CIEM)
-	s.mux.Handle("GET /api/sessions/stepups", s.authz(auth.CapReadAudit, s.listStepUps))       // Phase 30
-	s.mux.Handle("POST /api/sessions/{id}/stepup", s.authz(auth.CapReadAudit, s.decideStepUp)) // Phase 30
+	s.mux.Handle("POST /api/blast/analyze", s.authz(auth.CapReadAudit, s.analyzeBlast))  // Phase 31 (CIEM)
+	s.mux.Handle("GET /api/sessions/stepups", s.authz(auth.CapReadAudit, s.listStepUps)) // Phase 30
+	// Listing paused statements is a monitoring read (CapReadAudit, the same gate as
+	// the live stream); DECIDING one releases a statement the policy flagged, which
+	// is an execution-authorizing act — CapApprove, so a read-only auditor cannot
+	// grant it (Phase 39).
+	s.mux.Handle("POST /api/sessions/{id}/stepup", s.authz(auth.CapApprove, s.decideStepUp)) // Phase 30
 	s.mux.Handle("DELETE /api/sessions/{id}", s.authz(auth.CapManageTargets, s.killSession))
 
 	// Session-recording playback (Phase 26): list stored recordings and serve one
@@ -743,7 +747,11 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/campaigns", s.authz(auth.CapManageUsers, s.createCampaign))
 	s.mux.Handle("GET /api/campaigns", s.authz(auth.CapReadAudit, s.listCampaigns))
 	s.mux.Handle("GET /api/campaigns/{id}", s.authz(auth.CapReadAudit, s.getCampaign))
-	s.mux.Handle("POST /api/campaigns/{id}/items/{iid}/decision", s.authz(auth.CapManageUsers, s.decideCampaignItem))
+	// Certifying or revoking an item is a review decision, not user administration:
+	// CapApprove lets a dedicated reviewer run the campaign without holding the
+	// access-granting capability (Phase 39). Creating and closing a campaign stay
+	// CapManageUsers.
+	s.mux.Handle("POST /api/campaigns/{id}/items/{iid}/decision", s.authz(auth.CapApprove, s.decideCampaignItem))
 	s.mux.Handle("POST /api/campaigns/{id}/close", s.authz(auth.CapManageUsers, s.closeCampaign))
 
 	// Custom permission profiles (Phase 12): named capability sets for users.

@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-07-26 · Reflects: Phases 0–38 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-07-26 · Reflects: Phases 0–39 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -1412,8 +1412,11 @@ curl -s -XPOST "$PAM/api/sessions/<session-id>/stepup" -H "X-API-Key: $KEY" -d '
 ```
 
 An **approval** runs the statement (`db.stepup_approved`); a **denial or timeout**
-refuses it (`db.stepup_denied`) but leaves the session usable. Deciding needs
-`read_audit` (the same role that watches). For the agent broker, policy rules can
+refuses it (`db.stepup_denied`) but leaves the session usable. **Listing** what is
+paused needs `read_audit` — the same gate as the live stream, so anyone who can
+watch can see it — but **deciding** needs `approve`: releasing a statement the
+policy flagged is an authorization, not an observation, so a read-only `auditor`
+is refused (Phase 39). For the agent broker, policy rules can
 also gate on an **amount** with the numeric comparators `gte`/`gt`/`lte`/`lt`
 (e.g. `when: { args.amount: { gte: 5000 } }` → `require_approval`).
 
@@ -1459,11 +1462,25 @@ The whole flow is also in the console: **Certification campaigns** (menu 17) —
 F6 snapshots a new campaign (with an optional due date), option **5** on a
 campaign opens the item review (certify / revoke per item), option **8** closes it.
 
-Management (create / decide / close) requires `CapManageUsers`; **reading** a
-campaign and its items requires `CapReadAudit`, so an **auditor** can review the
-attestation evidence without being able to change access. Every decision is
-audited (`certification.item_certified` / `certification.item_revoked`), and the
-campaign itself is the point-in-time record for your evidence file.
+Three capabilities, deliberately split (Phase 39):
+
+| Action | Capability | Who |
+|---|---|---|
+| Create / close a campaign | `manage_users` | admin |
+| **Certify or revoke an item** | `approve` | admin, **approver** |
+| Read a campaign and its items | `read_audit` | admin, approver, **auditor** |
+
+The middle row is the point: a recertification is a *review*, so a dedicated
+**approver** can run it without holding any capability that grants access, and an
+**auditor** can read the evidence without being able to change anything. Every
+decision is audited (`certification.item_certified` / `certification.item_revoked`),
+and the campaign itself is the point-in-time record for your evidence file.
+
+One honest limit: an admin holds `approve` too, so this **delegates** the review
+rather than forcing separation — nothing yet stops an admin certifying a grant
+they created. Enforcing that needs the grant's creator recorded (a schema change)
+and is a documented follow-on; until then, assign campaigns to approvers who are
+not target administrators if your control requires it.
 
 ### 9.7 Privileged threat analytics (Phase 23)
 
@@ -1599,6 +1616,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-07-26 | **Phase 39 — approver capability on the two decision points.** Releasing a paused step-up statement (`POST /api/sessions/{id}/stepup`) now needs `approve` instead of `read_audit`: a read-only auditor could previously authorize a statement the policy had flagged. Deciding a certification item now needs `approve` instead of `manage_users`, so a dedicated approver can run a recertification without holding any access-granting capability (creating and closing a campaign stay `manage_users`). Listing paused step-ups and reading campaigns are unchanged. See §9.4 and §9.6 |
 | 2026-07-26 | **Phase 38 — command control on every command path.** The deny policy (`PAM_COMMAND_DENY_FILE`) moved into its own package and is now compiled once and shared by the session proxies **and** the API server, so it also covers `POST /api/targets/{id}/winrm` (403, before the credential is decrypted) and the agent broker's `ssh_exec`/`winrm_exec` tools (before any dial). Previously a pattern that stopped an operator's `ssh target "cmd"` did nothing to an AI agent. Blocks are audited `command.blocked` with the matched pattern on every path. No new env var, no schema change. See §9.4 |
 | 2026-07-26 | **Currency pass over this guide.** Two shipped subsystems had no operator documentation at all and now do: the **third-party vendor access gate** (§7 — contract grants, the attestation webhook, the sweeper, the offboard cascade, evidence export) and the **identity blast radius / CIEM** engine (new §9.8, with a worked example). Every `PAM_*` variable the server reads is now in §4 or its own section — newly documented: `PAM_VENDOR_*`, `PAM_ALERT_WEBHOOK`/`_SYSLOG`/`_EMAIL_*`, `PAM_SSH_JUMP_*`, `PAM_PROXY_WINRM`, `PAM_ROTATE_AFTER_SESSION`, `PAM_GUACD_ADDR`/`_RECORDING_PATH`, `PAM_PORTAL_URL`, `PAM_LDAP_INSECURE_SKIP_VERIFY` (with why it must stay off), and the OIDC endpoint/scope/role overrides. Change-log rows added for Phases 27–31 and the misfiled 32–36 rows sorted back into date order. `.env.example` gained the eight variables it was missing |
 | 2026-07-26 | **Phase 37 — gap-analysis pass.** Two authorization scoping fixes: a delegated `can_manage` safe member can no longer remove a member of **another** safe (the member must belong to the safe in the path), and a dependency delete is bound to the credential in its route (the audit now names it). **Failed bearer credentials are throttled and audited on every surface**: a wrong `X-API-Key`, agent key or application key now consumes a per-source-IP failure budget (`PAM_AUTH_RATE_LIMIT`, its own window → 429 past it) and appends `api.auth_failed` (`surface:api\|agent\|app`), so token guessing over HTTP is slowed and visible to the risk engine and the SIEM forwarder — parity with what the SSH/DB proxies already did. No new env var, no schema change. See §4, §11 and [SECURITY-GAPS.md](SECURITY-GAPS.md) |

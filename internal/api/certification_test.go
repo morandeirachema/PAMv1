@@ -114,8 +114,10 @@ func TestCertificationCampaign(t *testing.T) {
 	}
 }
 
-// TestCertificationAuthz proves campaign management needs CapManageUsers and
-// reading needs CapReadAudit.
+// TestCertificationAuthz proves the three-way split: creating/closing a campaign
+// needs CapManageUsers, reading it needs CapReadAudit, and DECIDING an item needs
+// CapApprove — so a dedicated reviewer can run the recertification without also
+// holding the capability that grants access (Phase 39).
 func TestCertificationAuthz(t *testing.T) {
 	srv := newTestServer(t)
 	userTok := seedUser(t, srv, "bob", "user")       // no CapManageUsers, no CapReadAudit
@@ -132,5 +134,51 @@ func TestCertificationAuthz(t *testing.T) {
 	}
 	if code, _ := do(t, srv, http.MethodPost, "/api/campaigns", auditorTok, map[string]any{"name": "x"}); code != http.StatusForbidden {
 		t.Fatalf("auditor create campaign: want 403, got %d", code)
+	}
+
+	// Deciding an item is a review decision (CapApprove), not user administration.
+	// Snapshot a campaign with one item to decide.
+	tc, td := do(t, srv, http.MethodPost, "/api/targets", testAPIKey, map[string]any{
+		"name": "authz-target", "host": "10.0.0.11", "port": 22, "os_type": "linux", "protocol": "ssh",
+	})
+	if tc != http.StatusCreated {
+		t.Fatalf("create target: %d %s", tc, td)
+	}
+	targetID := int64(jsonMap(t, td)["id"].(float64))
+	if code, _ := do(t, srv, http.MethodPost, fmt.Sprintf("/api/targets/%d/grants", targetID), testAPIKey,
+		map[string]any{"subject_type": "user", "subject": "carol"}); code != http.StatusCreated {
+		t.Fatal("seed grant")
+	}
+	ccode, cd := do(t, srv, http.MethodPost, "/api/campaigns", testAPIKey, map[string]any{"name": "authz review"})
+	if ccode != http.StatusCreated {
+		t.Fatalf("create campaign: %d %s", ccode, cd)
+	}
+	campaignID := int64(jsonMap(t, cd)["campaign"].(map[string]any)["id"].(float64))
+	_, gd := do(t, srv, http.MethodGet, fmt.Sprintf("/api/campaigns/%d", campaignID), testAPIKey, nil)
+	var snapshot struct {
+		Items []campaignItem `json:"items"`
+	}
+	if err := json.Unmarshal(gd, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Items) == 0 {
+		t.Fatalf("campaign has no items: %s", gd)
+	}
+	decisionURL := fmt.Sprintf("/api/campaigns/%d/items/%d/decision", campaignID, snapshot.Items[0].ID)
+
+	// An auditor reads the campaign but cannot decide; a plain user cannot either.
+	if code, _ := do(t, srv, http.MethodPost, decisionURL, auditorTok, map[string]any{"decision": "certify"}); code != http.StatusForbidden {
+		t.Fatalf("auditor decide item: want 403, got %d", code)
+	}
+	if code, _ := do(t, srv, http.MethodPost, decisionURL, userTok, map[string]any{"decision": "certify"}); code != http.StatusForbidden {
+		t.Fatalf("user decide item: want 403, got %d", code)
+	}
+	// An approver — who holds no CapManageUsers — can.
+	approverTok := seedUser(t, srv, "ann", "approver")
+	if code, body := do(t, srv, http.MethodPost, decisionURL, approverTok, map[string]any{"decision": "certify"}); code != http.StatusNoContent {
+		t.Fatalf("approver decide item: want 204, got %d %s", code, body)
+	}
+	if code, _ := do(t, srv, http.MethodPost, "/api/campaigns", approverTok, map[string]any{"name": "x"}); code != http.StatusForbidden {
+		t.Fatalf("approver create campaign: want 403 (management stays manage_users), got %d", code)
 	}
 }

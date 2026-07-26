@@ -292,6 +292,7 @@ Se han entregado las veintiséis fases (0–25) — detalle por fase en **[ROADM
 | 36 | Retención / purga (grabaciones y filas de auditoría antiguas; preserva la integridad) | ✅ entregada |
 | 37 | Pasada de análisis de brechas (los borrados de recursos hijo se acotan a su padre; las credenciales bearer fallidas se limitan y auditan en todas las superficies) | ✅ entregada |
 | 38 | Control de comandos en todas las rutas de comando (un único `cmdguard` compartido; el endpoint WinRM REST y las herramientas exec del broker ya respetan la lista de denegación) | ✅ entregada |
+| 39 | Capacidad de aprobación en los dos puntos de decisión (liberar una sentencia en pausa y decidir una campaña pasan a `approve`) | ✅ entregada |
 
 ## Cobertura frente al PAM comercial (CyberArk, Wallix, …)
 
