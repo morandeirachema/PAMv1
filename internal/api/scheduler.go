@@ -144,6 +144,7 @@ func (s *Server) invalidateExpiredCheckoutFor(ctx context.Context, credentialID 
 const (
 	lifecycleLockKey = int64(0x70616d5f6c6663) // "pam_lfc"
 	analyticsLockKey = int64(0x70616d5f616e61) // "pam_ana"
+	retentionLockKey = int64(0x70616d5f726574) // "pam_ret"
 )
 
 // RunLifecycleWorker runs the credential-lifecycle worker until ctx is cancelled:

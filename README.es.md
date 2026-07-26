@@ -289,6 +289,7 @@ Se han entregado las veintiséis fases (0–25) — detalle por fase en **[ROADM
 | 33 | Control del portapapeles RDP (regula el puente de portapapeles de Guacamole; redirección de unidades deshabilitada) | ✅ entregada |
 | 34 | Interruptor de corte de sesión en HA (corte entre réplicas vía Postgres LISTEN/NOTIFY) | ✅ entregada |
 | 35 | Reenvío de auditoría a SIEM (flujo continuo RFC 5424 syslog / CEF) | ✅ entregada |
+| 36 | Retención / purga (grabaciones y filas de auditoría antiguas; preserva la integridad) | ✅ entregada |
 
 ## Cobertura frente al PAM comercial (CyberArk, Wallix, …)
 

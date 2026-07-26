@@ -817,6 +817,15 @@ func (s *PGStore) AuditSince(ctx context.Context, afterID int64, limit int) ([]s
 	})
 }
 
+// PruneAuditBefore deletes audit events with ts < cutoff, returning the count.
+func (s *PGStore) PruneAuditBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM audit_events WHERE ts < $1`, cutoff.UTC())
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 // FindAuditDetail reports whether any audit event with the given action has a
 // detail containing substr. The substring is matched literally: LIKE wildcards
 // in substr are escaped so a caller-supplied value cannot widen the match.

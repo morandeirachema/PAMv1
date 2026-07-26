@@ -88,6 +88,7 @@ flowchart LR
   n_api --> n_discovery
   n_api --> n_guacd
   n_api --> n_logging
+  n_api --> n_maint
   n_api --> n_mcp
   n_api --> n_metrics
   n_api --> n_mfa

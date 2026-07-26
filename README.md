@@ -287,6 +287,7 @@ All twenty-six phases (0–25) have shipped — full per-phase detail in **[ROAD
 | 33 | RDP clipboard control (gate the Guacamole clipboard bridge; drive redirection off) | ✅ shipped |
 | 34 | HA session kill-switch (cross-replica kill over Postgres LISTEN/NOTIFY) | ✅ shipped |
 | 35 | Audit→SIEM push forwarding (continuous RFC 5424 syslog / CEF stream) | ✅ shipped |
+| 36 | Retention / pruning (aged recordings + audit rows; integrity-preserving) | ✅ shipped |
 
 ## Coverage vs. commercial PAM (CyberArk, Wallix, …)
 

@@ -148,6 +148,13 @@ type Config struct {
 	// (0 = unlimited); a session that exceeds it is terminated rather than run
 	// unrecorded, so one runaway session can't fill the recording disk.
 	MaxRecordingMB int
+	// Retention (Phase 36): RecordingRetentionDays prunes recording files older
+	// than N days; AuditRetentionDays deletes audit rows older than N days (skipped
+	// when the tamper-evident chain is on). RetentionIntervalHours is the sweep
+	// cadence. 0 days = keep forever.
+	RecordingRetentionDays int
+	AuditRetentionDays     int
+	RetentionIntervalHours int
 
 	// OT hardening (Phase 8). RequireApproval gates every target's connect paths
 	// behind an approved access request (4-eyes / maintenance window).
@@ -396,6 +403,9 @@ func Load() (*Config, error) {
 		MaxSessionsPerUser:      integer("PAM_MAX_SESSIONS_PER_USER", 0),
 		MaxSessionsTotal:        integer("PAM_MAX_SESSIONS_TOTAL", 0),
 		MaxRecordingMB:          integer("PAM_MAX_RECORDING_MB", 0),
+		RecordingRetentionDays:  integer("PAM_RECORDING_RETENTION_DAYS", 0),
+		AuditRetentionDays:      integer("PAM_AUDIT_RETENTION_DAYS", 0),
+		RetentionIntervalHours:  integer("PAM_RETENTION_INTERVAL_HOURS", 24),
 		RequireApproval:         boolean("PAM_REQUIRE_APPROVAL", false),
 		ApprovalWindow:          time.Duration(integer("PAM_APPROVAL_WINDOW_MIN", 60)) * time.Minute,
 		RequireTicket:           boolean("PAM_REQUIRE_TICKET", false),
@@ -573,6 +583,11 @@ func Load() (*Config, error) {
 	case "allow", "readonly", "deny":
 	default:
 		errs = append(errs, fmt.Sprintf("PAM_RDP_CLIPBOARD must be one of allow, readonly, deny (got %q)", cfg.RDPClipboard))
+	}
+	// Retention windows are "0 = keep forever"; a negative value is a fat-finger
+	// that must fail loud rather than silently delete or disable.
+	if cfg.RecordingRetentionDays < 0 || cfg.AuditRetentionDays < 0 || cfg.RetentionIntervalHours < 1 {
+		errs = append(errs, "PAM_RECORDING_RETENTION_DAYS / PAM_AUDIT_RETENTION_DAYS must be >= 0 and PAM_RETENTION_INTERVAL_HOURS >= 1")
 	}
 	// SIEM audit forwarding: validate the transport and format only when enabled,
 	// fail-loud on a typo rather than silently not forwarding.

@@ -486,6 +486,16 @@ pamv1 could already *alert* on a specific event (`internal/alert`: webhook/syslo
 - [x] **Tests**: a real in-process UDP syslog sink receives forwarded RFC 5424 and CEF messages; the cursor advances (a second flush sends nothing); a "restarted" forwarder resumes from the persisted cursor without replaying; the store contract covers `AuditSince` (pgstore in CI)
 - Deferred (documented): **LEEF** (QRadar) as a third format (trivial to add on the same seam), and **TLS syslog** (RFC 5425) for the transport
 
+## Phase 36 — Retention / pruning ✅
+
+Two data stores grew without bound: **session recordings** on disk and **audit rows** in Postgres. A PAM needs a defined retention policy (NIS2/SOC 2/DORA all expect one) and an operator needs the disk/table not to grow forever. This adds a scheduled, leader-locked sweep — without ever silently weakening the audit trail's tamper-evidence.
+
+- [x] **Recording retention** (`internal/maint.PruneRecordings`): deletes `.cast`/`.winrm.log` files older than `PAM_RECORDING_RETENTION_DAYS`, **preserving dotfiles** — notably the `.chain` head that anchors the recordings' hash chain — and any non-recording file, so a sweep can never corrupt the chain or touch an unrelated file. Audited `recording.pruned`
+- [x] **Audit-row retention** (`store.PruneAuditBefore`): deletes audit events older than `PAM_AUDIT_RETENTION_DAYS`, audited `audit.pruned` — **but only when the tamper-evident HMAC chain is off**. Deleting the chain head breaks `VerifyAuditChain` (it requires the first row's `prev_hash` to be nil), so with the chain on the worker **skips audit pruning with a loud warning** rather than trade integrity for space (the correct pattern there is a WORM export + manual re-anchor)
+- [x] **Leader-locked worker** (`RunRetentionWorker`, `PAM_RETENTION_INTERVAL_HOURS`, default 24) — one replica sweeps per tick, like the other background jobs. Both windows default to `0` = keep forever, validated fail-loud
+- [x] **Tests**: `PruneRecordings` (old removed; the `.chain` head, recent recordings, and non-recording files preserved; a dotfile-`.cast` is never touched); the store contract (`PruneAuditBefore` — a future cutoff prunes all, a past cutoff prunes none); the worker pass (recordings pruned + audited, audit pruned when unchained, and **skipped when chained**)
+- Deferred (documented): **archive-to-WORM before delete** as a built-in (the audit **export** endpoint already produces a digest-stamped artifact for this), and **audit retention with the chain on** via export + automatic re-genesis (a deliberate integrity/operations tradeoff kept manual for now)
+
 ## Portal: keyboard-first navigation ✅
 
 The 5250 console is now explicitly **keyboard-first** (the mouse is optional), matching the IBM-terminal heritage: focus lands on each screen's primary field after every render, **Esc** cancels/goes back (the twin of F12), **↑/↓** move between subfile option cells, Tab/Enter/F-keys work throughout, and a persistent hint documents the shortcuts. The look is unchanged — only keyboard affordances were added.
