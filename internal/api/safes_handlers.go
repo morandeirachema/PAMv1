@@ -139,6 +139,25 @@ func (s *Server) deleteSafeMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid member id")
 		return
 	}
+	// canManageSafe authorized THIS safe, so the member must belong to it: a
+	// delegated manager of one safe must not be able to remove a member of any
+	// other safe by guessing its id (member ids are global).
+	members, err := s.store.ListSafeMembers(r.Context(), id)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	found := false
+	for _, m := range members {
+		if m.ID == mid {
+			found = true
+			break
+		}
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "member not found in this safe")
+		return
+	}
 	if err := s.store.DeleteSafeMember(r.Context(), mid); err != nil {
 		storeError(w, err)
 		return

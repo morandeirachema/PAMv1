@@ -61,6 +61,9 @@ type Config struct {
 	TLSCert string
 	TLSKey  string
 	// AuthRatePerMin limits auth attempts per client IP per minute (0 disables).
+	// It budgets both every call to the login endpoints and — on its own window —
+	// the FAILED bearer-credential attempts on the REST, agent-broker and
+	// application-secrets surfaces (Phase 37).
 	AuthRatePerMin int
 	// TrustedProxyHops is the number of trusted reverse-proxy hops in front of the
 	// API. 0 (default) keys the rate limiter on RemoteAddr; >0 takes the client IP

@@ -24,7 +24,9 @@ func (s *Server) appAuth(next appHandler) http.HandlerFunc {
 		}
 		app, err := s.store.GetAppKeyByTokenHash(r.Context(), hashHex(tok))
 		if err != nil {
-			writeError(w, http.StatusUnauthorized, "invalid application credential")
+			// This surface vends plaintext secrets to machines, so a guessed token
+			// must be both throttled and recorded.
+			s.authFailed(w, r, "app", "invalid application credential")
 			return
 		}
 		setActor(r.Context(), "app:"+app.Name)

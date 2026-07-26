@@ -27,7 +27,7 @@ func (s *Server) agentAuth(next agentHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := s.agentVerifier.Verify(r.Context(), bearerToken(r))
 		if err != nil {
-			writeError(w, http.StatusUnauthorized, "invalid or missing agent credential")
+			s.authFailed(w, r, "agent", "invalid or missing agent credential")
 			return
 		}
 		// Per-agent rate limit (keyed by agent name) bounds tool-call volume.

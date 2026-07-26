@@ -106,7 +106,9 @@ type Options struct {
 	// (clipboard off both ways). Drive redirection is always disabled.
 	RDPClipboard string
 	// AuthRatePerMin limits authentication attempts per client IP per minute
-	// (0 disables rate limiting).
+	// (0 disables rate limiting). It budgets the login endpoints and, on its own
+	// window, the failed bearer-credential attempts on the REST, agent-broker and
+	// application-secrets surfaces.
 	AuthRatePerMin int
 	// TrustedProxyHops is how many trusted reverse-proxy hops sit in front of the
 	// server; it selects the real client IP from X-Forwarded-For for rate limiting
@@ -240,6 +242,12 @@ type Server struct {
 	guacdIgnoreCert    bool
 	rdpClipboard       string
 	authLimiter        *ratelimit.Limiter
+	// keyFailLimiter throttles FAILED bearer-credential attempts (X-API-Key,
+	// agent key, application key) per source IP. It is separate from
+	// authLimiter — which throttles every call to the login endpoints — because
+	// a legitimate API client makes many successful calls a minute and only its
+	// failures may be counted. Same budget (PAM_AUTH_RATE_LIMIT), own window.
+	keyFailLimiter     *ratelimit.Limiter
 	trustedProxyHops   int
 	sessions           *session.Registry
 	live               *session.Hub
@@ -436,6 +444,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		guacdIgnoreCert:    opts.GuacdIgnoreCert,
 		rdpClipboard:       rdpClipboardMode(opts.RDPClipboard),
 		authLimiter:        ratelimit.New(opts.AuthRatePerMin),
+		keyFailLimiter:     ratelimit.New(opts.AuthRatePerMin),
 		trustedProxyHops:   opts.TrustedProxyHops,
 		sessions:           opts.Sessions,
 		live:               opts.Live,
@@ -769,8 +778,7 @@ func (s *Server) authz(cap auth.Capability, next http.HandlerFunc) http.Handler 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := s.resolver.Resolve(r.Context(), r.Header.Get("X-API-Key"))
 		if err != nil {
-			s.log.Warn("authentication failed", "path", r.URL.Path, "remote", r.RemoteAddr)
-			writeError(w, http.StatusUnauthorized, "invalid or missing API key")
+			s.authFailed(w, r, "api", "invalid or missing API key")
 			return
 		}
 		setActor(r.Context(), p.Name)
@@ -822,7 +830,7 @@ func (s *Server) authenticated(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := s.resolver.Resolve(r.Context(), r.Header.Get("X-API-Key"))
 		if err != nil {
-			writeError(w, http.StatusUnauthorized, "invalid or missing API key")
+			s.authFailed(w, r, "api", "invalid or missing API key")
 			return
 		}
 		setActor(r.Context(), p.Name)

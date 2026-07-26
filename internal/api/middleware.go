@@ -33,6 +33,32 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 	})
 }
 
+// authFailed rejects a request whose bearer credential did not resolve, the same
+// way on all three surfaces that accept one: the X-API-Key header, an agent key
+// and an application key. Until Phase 37 only the login endpoints and the two
+// session proxies throttled and audited a failed authentication, so token
+// guessing against /api/*, /v1/tool-calls and /v1/app-secrets was neither slowed
+// nor visible in the system of record (and therefore invisible to the risk engine
+// and the SIEM forwarder). surface is "api", "agent" or "app".
+//
+// The audit append is deliberately skipped once the source IP is throttled: the
+// failures that preceded it are the signal, and writing one row per attempt under
+// a flood would turn the audit trail into the amplifier. That bounds audit writes
+// to the limiter's budget per IP per minute. The presented credential is never
+// logged or audited.
+func (s *Server) authFailed(w http.ResponseWriter, r *http.Request, surface, msg string) {
+	ip := s.clientIP(r)
+	if !s.keyFailLimiter.Allow(ip) {
+		s.log.Warn("authentication rate limited", "surface", surface, "path", r.URL.Path, "remote", r.RemoteAddr)
+		w.Header().Set("Retry-After", "60")
+		writeError(w, http.StatusTooManyRequests, "too many failed attempts; try again shortly")
+		return
+	}
+	s.log.Warn("authentication failed", "surface", surface, "path", r.URL.Path, "remote", r.RemoteAddr)
+	s.audit(r.Context(), "api.auth_failed", "surface:"+surface+" "+r.Method+" "+r.URL.Path+" remote:"+ip)
+	writeError(w, http.StatusUnauthorized, msg)
+}
+
 // clientIP resolves the address the rate limiter keys on. With no trusted proxy
 // (trustedProxyHops==0) it uses the direct RemoteAddr, so a spoofed
 // X-Forwarded-For can never evade throttling. With N trusted hops it takes the

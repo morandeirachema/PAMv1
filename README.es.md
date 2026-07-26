@@ -290,6 +290,7 @@ Se han entregado las veintiséis fases (0–25) — detalle por fase en **[ROADM
 | 34 | Interruptor de corte de sesión en HA (corte entre réplicas vía Postgres LISTEN/NOTIFY) | ✅ entregada |
 | 35 | Reenvío de auditoría a SIEM (flujo continuo RFC 5424 syslog / CEF) | ✅ entregada |
 | 36 | Retención / purga (grabaciones y filas de auditoría antiguas; preserva la integridad) | ✅ entregada |
+| 37 | Pasada de análisis de brechas (los borrados de recursos hijo se acotan a su padre; las credenciales bearer fallidas se limitan y auditan en todas las superficies) | ✅ entregada |
 
 ## Cobertura frente al PAM comercial (CyberArk, Wallix, …)
 
