@@ -683,6 +683,93 @@ it. This closes that, opt-in via `PAM_RECORDING_ENCRYPT`.
   The content is sealed; that metadata is not. Naming recordings by opaque id is a
   follow-on, and would cost the operator the ability to find a session by eye
 
+## Next — planned ⬜
+
+Phases 37–41 came out of a read-only sweep of the codebase whose findings are
+catalogued in **[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md#open-findings-from-the-2026-07-26-sweep)**.
+Five of those findings shipped. The three below are the ones still open, promoted
+here so the roadmap — not a gaps table — is where the remaining work lives. Each
+is buildable and verifiable in process; none is infra-bound (that list stays in
+[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)).
+
+### Phase 42 — Shared custody of the host and CA keys (HA) ⬜
+
+*Finding B.* `proxy.LoadOrCreateHostKey` and `sshca.LoadOrCreate` persist to a
+**local file**, while the Helm PVC is `ReadWriteOnce` and defaults to `emptyDir`
+and `replicaCount` is freely configurable. Scaling past one replica therefore:
+
+- gives each pod a different **SSH host key**, so operators get host-key-changed
+  warnings that look exactly like a MITM;
+- gives each pod a different **ZSP CA key**, so a certificate minted on one pod is
+  not trusted by targets configured with another's `TrustedUserCAKeys`, and
+  `GET /api/ca/ssh` returns a different key depending on which pod answers;
+- breaks the operator-certificate challenge, which is an HMAC keyed off the CA
+  private key and is documented as "HA-safe across replicas" — true only if that
+  key is shared;
+- scatters recordings per pod, so `GET /api/recordings` lists only what the
+  serving pod happens to hold.
+
+Direction: custody both keys in the store, vault-encrypted (the pattern already
+used for MFA secrets and configuration settings), with the file as a fallback for
+single-node deploys — or, if that is rejected, make RWX storage a hard documented
+requirement and refuse to start a multi-replica deployment without it. Phase 34
+closed the kill-switch half of HA correctness; this is the key-material half.
+
+### Phase 43 — Console parity, second pass ⬜
+
+*Finding G.* Phase 25 brought the 5250 console back to full backend parity, and
+Phases 27–41 then drifted away from it again. Comparing the mux's routes against
+the endpoints the portal calls, these have no screen:
+
+| Capability | Route(s) | Why it matters |
+|---|---|---|
+| **Broker approvals** | `GET /v1/approvals`, `POST /v1/approvals/{id}/decision` | A human approval gate with no UI at all |
+| **In-session step-ups** | `GET /api/sessions/stepups`, `POST /api/sessions/{id}/stepup` | Time-boxed: a paused statement expires while you find a terminal |
+| Vendors | `/api/vendors*`, `/api/vendor-grants/*` | Acknowledged follow-on since Phase 29 |
+| Operator SSH certificates | `/api/ca/ssh/{challenge,sign,revoke,krl}` | Issue and revoke by hand today |
+| Credential dependencies | `/api/credentials/{id}/dependencies` | |
+| Identity blast radius | `POST /api/blast/analyze` | |
+| Audit chain + OCSF | `/api/audit/{verify,head,ocsf}` | An auditor cannot check the chain from the console |
+| Login-session revocation | `/api/login-sessions*` | |
+| Agent keys | `/v1/agents` | |
+
+The first two are the point: both are **human decision points with a deadline**,
+which makes a curl-only path operationally fragile. Shape it like Phase 25 — same
+austere look, keyboard-first, no new routes or schema.
+
+### Phase 44 — Editable objects and bounded lists ⬜
+
+*Finding H.* The `Store` interface has create and delete but **no update** for
+targets, safes, users, vendors or grants, and no list read is bounded except the
+audit ones (`listAudit`/`exportAudit`, bounded by gap #9).
+
+- Fixing a target's port means delete + recreate, which cascades away its
+  credentials, grants, dependencies and safe assignment. That is a data-loss
+  footgun in ordinary administration.
+- `ListTargets`, `ListCredentials`, `ListUsers`, `ListSafes`, `ListCheckouts`,
+  `ListAccessRequests` and `ListVendors` return everything, and
+  `ListBrokerAudit(limit<=0)` explicitly returns all — a scale limit and an
+  authenticated memory-exhaustion vector on a large inventory.
+
+Direction: `Update*` store methods plus `PUT` routes with the same authorization
+as create, and a `limit`/`after` cursor on the list reads, defaulted and clamped
+the way `listAudit` already is.
+
+### Smaller follow-ons, recorded where they were deferred ⬜
+
+- **Recording file names carry target and actor** (Phase 41) — the content is
+  sealed, the metadata is not.
+- **Per-item four-eyes on certification** (Phase 39) — an admin holds `approve`,
+  so the review is delegated but not separated; enforcing it needs the grant's
+  creator recorded, a schema change.
+- **Cross-replica live monitoring** (Phase 34) — the SSE watch stream is still
+  served by the pod hosting the session.
+- **LEEF and TLS syslog** (Phase 35) · **archive-to-WORM before pruning**
+  (Phase 36) · **per-file SFTP content recording and path allow/deny**
+  (Phase 32) · **clipboard-content auditing** (Phase 33).
+
+---
+
 ## Portal: keyboard-first navigation ✅
 
 The 5250 console is now explicitly **keyboard-first** (the mouse is optional), matching the IBM-terminal heritage: focus lands on each screen's primary field after every render, **Esc** cancels/goes back (the twin of F12), **↑/↓** move between subfile option cells, Tab/Enter/F-keys work throughout, and a persistent hint documents the shortcuts. The look is unchanged — only keyboard affordances were added.
@@ -690,3 +777,9 @@ The 5250 console is now explicitly **keyboard-first** (the mouse is optional), m
 ---
 
 **Tier-2 (access-governance depth) is complete** — certification campaigns (19), the ITSM/ticketing gate (20), and richer approval workflows (21), now including one-time access (26). **Tier-3**: Zero Standing Privilege (22) and privileged threat analytics (23) are shipped; connector/plugin breadth, cloud CIEM, and web/SaaS session proxying remain (infra-bound). **Tier-4 is under way**: the application-secrets API (24) is shipped; a Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, and thick-app components remain, each requiring external infrastructure or an account to build honestly (see [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)). The 5250 console has **full parity** with the backend (Phase 25) — every shipped capability is operable from the portal, keyboard-first — and the session-recording loop is closed end to end (Phase 26): record → watch live → replay later, hash-verified. See the [competitive-coverage section](README.md#coverage-vs-commercial-pam-cyberark-wallix-) for the full picture.
+
+**What is next** is the [planned section above](#next--planned-): shared custody of
+the host and CA keys in HA (42), a second console-parity pass (43), and editable
+objects with bounded lists (44) — the three findings from the 2026-07 sweep that
+have not shipped yet. All three are buildable in process; the items that genuinely
+need external infrastructure stay in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).

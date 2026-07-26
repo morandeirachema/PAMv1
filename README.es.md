@@ -295,6 +295,7 @@ Se han entregado las veintiséis fases (0–25) — detalle por fase en **[ROADM
 | 39 | Capacidad de aprobación en los dos puntos de decisión (liberar una sentencia en pausa y decidir una campaña pasan a `approve`) | ✅ entregada |
 | 40 | Toda ejecución intermediada es una sesión supervisada (el endpoint WinRM REST y las herramientas exec del broker entran en el registro de sesiones vivas) | ✅ entregada |
 | 41 | Grabaciones de sesión cifradas en disco (AES-256-GCM por bloques bajo la KEK del vault; la evidencia de manipulación no cambia) | ✅ entregada |
+| 42–44 | **Planificadas** — custodia compartida de las claves de host/CA en HA · segunda pasada de paridad de consola · objetos editables + listados acotados ([hoja de ruta](ROADMAP.md#next--planned-)) | ⬜ planificada |
 
 ## Cobertura frente al PAM comercial (CyberArk, Wallix, …)
 

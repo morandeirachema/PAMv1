@@ -119,7 +119,10 @@ what the same sweep found and did **not** fix is listed under
 
 Found by the same pass, **not** fixed in it — each is a phase-sized change or a
 deliberate design decision to take, not a one-line correction. They are recorded
-here rather than left implicit. Struck-through rows have since shipped.
+here rather than left implicit. Struck-through rows have since shipped; the ones
+still open are scheduled as **[planned phases 42–44 in the ROADMAP](../ROADMAP.md#next--planned-)**,
+which is the authoritative place for what happens next — this table is the finding,
+the roadmap is the plan.
 
 | # | Finding | Why it matters | Direction |
 |---|---|---|---|
