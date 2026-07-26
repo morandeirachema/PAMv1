@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-07-25 · Reflects: Phases 0–36 + the 2026-07 hardening pass — through the AI-agent access broker (13), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22), privileged threat analytics (23), the Conjur-style application-secrets API (24), and console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer) — plus the post-24 hardening: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP proxy auth throttling. The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-07-26 · Reflects: Phases 0–37 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -208,9 +208,11 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_DATABASE_URL` | ✅ | — | `postgres://…` (use `sslmode=verify-full`) or `memory` for demo. |
 | `PAM_BREAK_GLASS_KEY_HASH` | | (off) | Hex SHA-256 of the sealed emergency key. |
 | `PAM_LISTEN_ADDR` | | `:8080` | HTTP portal/API bind. |
+| `PAM_PORTAL_URL` | | `/` | Where the OIDC callback redirects the browser after a successful login (the session token rides the URL fragment). Set it when the portal is served from another origin than the callback. |
 | `PAM_REQUIRE_HTTPS` | | `false` | Refuse to start over plaintext HTTP unless native TLS (`PAM_TLS_CERT/KEY`) is set. Leave off only behind a trusted TLS-terminating proxy. |
 | `PAM_TRUSTED_PROXY_HOPS` | | `0` | Number of trusted reverse-proxy hops; makes the auth rate limiter read the real client IP from `X-Forwarded-For` (0 = key on RemoteAddr, spoof-proof). |
 | `PAM_SSH_ADDR` | | `:2222` | SSH proxy bind; `off` disables the proxy. |
+| `PAM_PROXY_WINRM` | | `false` | Let `ssh <cred>@<winrm-target>@pam` open an interactive **command loop** against a Windows target — each line runs as one WinRM command with a JIT credential, recorded like an SSH session. It is a command loop, not a stateful PowerShell (no working directory or variables across lines). See §5. |
 | `PAM_PROXY_AUTH_RATE_LIMIT` | | `10` | Failed-auth attempts per source IP per minute on the SSH (:2222) and DB (:5433) proxies (0 disables). Throttles guessing of `PAM_API_KEY`. |
 | `PAM_AUTH_RATE_LIMIT` | | `20` | Attempts per client IP per minute on the login endpoints, and — on its own window — **failed** bearer credentials (`X-API-Key`, agent key, application key) on the REST, broker and application-secrets surfaces (0 disables). Each admitted failure is audited `api.auth_failed`; once throttled the caller gets 429 and nothing further is written to the trail. |
 | `PAM_MAX_SESSIONS_PER_USER` / `PAM_MAX_SESSIONS_TOTAL` | | `0` (∞) | Cap concurrent live proxied sessions per user and overall, checked before any secret is decrypted — bounds resource use from one (or a compromised) identity. Per-replica in HA. |
@@ -233,11 +235,15 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_SSH_CERT_TTL_MIN` | | `2` | Validity (minutes) of a minted ZSP certificate. |
 | `PAM_SSH_OPERATOR_CERT_TTL_MIN` | | `10` | Cap (minutes) on an operator-issued SSH certificate (Phase 28: `POST /api/ca/ssh/sign`). See §6. |
 | `PAM_SSH_KNOWN_HOSTS` | | (trust-any + warn) | OpenSSH known_hosts file pinning **upstream target** host keys. |
+| `PAM_SSH_JUMP_HOST` / `_USER` / `_KEY` | | (direct) | Reach SSH targets only routable through a **bastion** (Phase 8): the proxy opens a `direct-tcpip` channel through the jump host, authenticating to it with the private key at `_KEY` (public-key only). Set all three; leave unset for a direct dial. |
+| `PAM_GUACD_ADDR` | | (RDP off) | `host:port` of the `guacd` daemon that brokers RDP (the Docker/K8s/Helm deploys ship one). See §5 → *RDP*. |
+| `PAM_GUACD_RECORDING_PATH` | | (off) | Directory where **guacd** writes its own server-side RDP session recordings; the recording's name lands in the `rdp.connect` audit event. Separate from `PAM_RECORDING_DIR`, which holds the SSH/WinRM/PostgreSQL asciicasts. |
 | `PAM_RECORDING_DIR` | | `recordings` | Where session recordings are written. |
 | `PAM_LOG_LEVEL` | | `info` | `debug` \| `info` \| `warn` \| `error`. |
 | `PAM_LOG_FORMAT` | | `json` | `json` (for SIEM) \| `text` (for humans). |
 | `PAM_ROTATE_INTERVAL_MIN` | | `0` (off) | Credential-lifecycle worker interval (minutes). |
 | `PAM_ROTATE_MAX_AGE_HOURS` | | `0` (report) | Auto-rotate password credentials older than this. |
+| `PAM_ROTATE_AFTER_SESSION` | | `false` | Rotate a credential **as soon as the proxied session that used it ends**, so a secret can never be reused in a second session (this is also what forces rotation after a break-glass session). Zero-standing-privilege `ssh_ca` credentials are skipped — there is no stored secret. See §6. |
 | `PAM_REQUIRE_APPROVAL` | | `false` | OT: gate every target behind an approved access request (4-eyes). |
 | `PAM_APPROVAL_WINDOW_MIN` | | `60` | How long an approved access request stays valid. |
 | `PAM_REQUIRE_TICKET` | | `false` | Require an ITSM change/incident ticket on access requests (Phase 20). |
@@ -246,7 +252,12 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_REQUIRE_REASON` | | `false` | Reject an access request that carries no reason. |
 | `PAM_ACCESS_ONE_TIME` | | `false` | Make **every** access request single-use (Phase 26): the first privileged use its approval admits consumes it. Requests can also opt in individually (`one_time`). |
 | `PAM_CHECKOUT_TTL_MIN` | | `30` | Credential checkout lease lifetime (minutes). |
+| `PAM_VENDOR_ATTEST_URL` | | (off) | Employment-attestation webhook consulted when a vendor contract grant is approved (Phase 29): pamv1 `POST`s `{"vendor":…,"org":…}` and the vendor-management system answers `2xx` for a currently-employed technician, so access is refused the moment their own employer offboards them. See §7. |
+| `PAM_VENDOR_SWEEP_INTERVAL_MIN` | | `0` (off) | How often the sweeper cuts a vendor's **live** session once its contract grant's window closes (`vendor.session_expired`), so access ends with the contract rather than at the next connect. |
 | `PAM_OT_AIRGAP` | | `false` | Disable all outbound calls (alert webhooks) for air-gapped sites. |
+| `PAM_ALERT_WEBHOOK` | | (off) | HTTP endpoint POSTed a JSON alert on break-glass access/unseal and newly flagged risk (Slack/PagerDuty/…). Use HTTPS — a plaintext or non-loopback `http://` URL is warned about at startup. |
+| `PAM_ALERT_SYSLOG` | | (off) | Syslog collector for the same alerts — `udp://host:port` or `tcp://host:port` (a bare `host:port` is treated as UDP). This is per-*alert*; to stream the whole trail use `PAM_AUDIT_FORWARD_ADDR`. |
+| `PAM_ALERT_EMAIL_SMTP` / `_FROM` / `_TO` | | (off) | SMTP server (`host:port`), envelope sender, and comma-separated recipients for email alerts — **all three or none** (validated fail-loud). `PAM_ALERT_EMAIL_USER` / `_PASS` add SMTP auth. |
 | `PAM_REVEAL_DISABLED` | | `false` | Make `reveal` break-glass-only (also forces the broker's `reveal_credential` closed). |
 | `PAM_AUDIT_HMAC_KEY` | | (off) | base64 32-byte key enabling the **tamper-evident HMAC chain** over the primary audit trail; verify with `GET /api/audit/verify`. See §9.2. |
 | `PAM_AUDIT_SIGN_SEED` | | (off) | base64 32-byte ed25519 seed (needs `PAM_AUDIT_HMAC_KEY`) enabling **signed checkpoints** (`GET /api/audit/head`) so an auditor can detect **tail truncation**. See §9.2. |
@@ -728,6 +739,64 @@ fix is to update the stale consumer, not to roll back. *(The propagation
 currently connects as the rotated account; a per-consumer management credential
 is a documented follow-on.)*
 
+### Third-party vendor access (Phase 29)
+
+A **vendor** is an external technician who needs narrow, time-boxed access to
+specific targets, revocable in one action. They log in like any `user` (local
+token or directory), but a vendor's connection is additionally gated by a
+**contract grant**: which target, as which account, and for how long. A grant
+starts **pending** and grants nothing until the *customer* approves it.
+
+```bash
+# 1. Register the vendor (manage_users). This also mints their `user`-role login —
+#    the token is returned ONCE, like POST /api/users.
+curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/vendors \
+  -d '{"username":"acme-tech1","org":"ACME Robotics"}'
+
+# 2. File a contract grant: target NAME, the account they may log in as, and the
+#    window (manage_targets). not_after is required; not_before defaults to now.
+#    $VID is the id returned in step 1.
+curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/vendors/$VID/grants \
+  -d '{"target":"plc-gateway","principal":"svc-maint","not_before":"2026-08-01T08:00:00Z","not_after":"2026-08-01T18:00:00Z"}'
+
+# 3. The customer approves it — $GID is the grant id from step 2 (approve
+#    capability; four-eyes, so a vendor can never approve their own grant).
+curl -H "X-API-Key: $APPROVER" -X POST http://localhost:8080/api/vendor-grants/$GID/approve
+```
+
+Approval runs the **employment attestation** webhook when `PAM_VENDOR_ATTEST_URL`
+is set: the vendor-management system answers `2xx` only for a currently-employed
+technician, so access is refused the moment their own employer offboards them
+(`vendor.attestation_failed`).
+
+The gate is enforced on **every** connect path — SSH proxy, PostgreSQL proxy,
+RDP, WinRM runs, and reveal/checkout — so a vendor reaches nothing outside their
+contract, and non-vendor users are unaffected. A grant's `principal` binds it to
+one login account on the target; omit it for any account.
+
+Ending access:
+
+```bash
+curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/vendor-grants/$GID/revoke
+curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/vendors/$VID/offboard   # everything, at once
+```
+
+**Offboard** disables the vendor, revokes every grant atomically, and kills all
+their live sessions — persisted, so a revoked technician can't return after a
+restart. Set `PAM_VENDOR_SWEEP_INTERVAL_MIN` so a session is also cut *mid-flight*
+when its window closes (`vendor.session_expired`) rather than merely refused at
+the next connect.
+
+For an auditor, `GET /api/vendors/{id}/evidence` (`read_audit`) bundles the
+vendor's grants with the audit slice attributable to them plus a SHA-256 digest —
+a per-vendor SOC 2 / DORA record. Audit vocabulary: `vendor.create` ·
+`vendor.grant_created` · `vendor.grant_approved` · `vendor.grant_revoked` ·
+`vendor.grant_decision_denied` · `vendor.attestation_failed` · `vendor.offboard` ·
+`vendor.session_expired` · `vendor.evidence_export`.
+
+*(The API is complete; a dedicated 5250 console screen is a documented
+follow-on — drive it from the REST API for now.)*
+
 ### Active Directory login (optional)
 
 Instead of (or alongside) local tokens, users can sign in with their **AD
@@ -745,6 +814,13 @@ PAM_LDAP_GROUP_USER=CN=PAM-Users,OU=Groups,DC=example,DC=com
 PAM_LDAP_GROUP_AUDITOR=CN=PAM-Auditors,OU=Groups,DC=example,DC=com
 PAM_LDAP_GROUP_APPROVER=CN=PAM-Approvers,OU=Groups,DC=example,DC=com
 ```
+
+`PAM_LDAP_INSECURE_SKIP_VERIFY=true` disables LDAPS certificate verification.
+It exists for a lab with a self-signed DC certificate and **must never be set in
+production** — it would let anything that can answer on port 636 harvest the
+credentials pamv1 binds with. It is deliberately *not* overridable from the
+runtime configuration console (§4.1): turning it on requires a restart with a
+changed environment, which is auditable at the deployment layer.
 
 How it works: pam-server binds the service account, finds the user, verifies the
 password by binding as them, and derives roles from group membership. A user in
@@ -810,10 +886,16 @@ PAM_OIDC_CLIENT_SECRET=<client-secret>
 PAM_OIDC_REDIRECT_URL=https://pam.example.com/api/auth/oidc/callback
 PAM_OIDC_ROLE_ADMIN=pam.admin   # app role value / group id -> role
 PAM_OIDC_ROLE_USER=pam.user
+PAM_OIDC_ROLE_AUDITOR=pam.auditor     # optional, same mapping for the other two roles
+PAM_OIDC_ROLE_APPROVER=pam.approver
 ```
 
 Register `PAM_OIDC_REDIRECT_URL` as a redirect URI in the app registration. The
-authorize/token/JWKS endpoints are auto-discovered from the issuer. Users click
+authorize/token/JWKS endpoints are auto-discovered from the issuer — override
+them with `PAM_OIDC_AUTH_URL` / `PAM_OIDC_TOKEN_URL` / `PAM_OIDC_JWKS_URL` only
+for an IdP without a discovery document. `PAM_OIDC_SCOPES` replaces the requested
+scopes (default `openid profile`) when your IdP needs an extra one to emit the
+role or group claim. Users click
 **Single sign-on** on the portal (or hit `/api/auth/oidc/start`); after the IdP,
 the callback issues a pamv1 session and returns to the portal. Note: pamv1's own
 TOTP is not layered on OIDC (the IdP owns MFA there). The OIDC login state is
@@ -1419,6 +1501,46 @@ read endpoint's `?window_min=` is capped (at 7 days) so a single request can't b
 made to score the entire audit history. Leave auto-kill off until you trust the
 scores in your environment.
 
+### 9.8 Identity blast radius / CIEM (Phase 31)
+
+Where §9.7 scores *behavior*, this answers a **structural** question: if this
+identity were compromised, what could it actually reach? `POST /api/blast/analyze`
+(`read_audit`) runs a read-only analysis over a **normalized identity graph** you
+submit — no cloud credentials are involved and nothing is persisted. Producing
+the graph (from AWS `GetAccountAuthorizationDetails`, Okta, GitHub, Workspace…)
+is an **external ingester's** job; pamv1 ships the engine, not the collector.
+
+```bash
+curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/blast/analyze -d '{
+  "graph": {
+    "principals": [
+      {"id":"github:deploy-bot","kind":"service","provider":"github"},
+      {"id":"aws:role/deploy","kind":"role","provider":"aws"},
+      {"id":"aws:role/admin","kind":"role","provider":"aws","admin":true}
+    ],
+    "edges": [
+      {"from":"github:deploy-bot","to":"aws:role/deploy","kind":"can_assume","via":"oidc-trust"},
+      {"from":"aws:role/deploy","to":"aws:role/admin","kind":"can_escalate_to","via":"iam:PassRole"}
+    ]
+  },
+  "source": "github:deploy-bot"
+}'
+```
+
+The response carries **findings** (a non-admin that can pivot to an effective
+admin = privilege escalation; a pivot across providers = lateral movement;
+severity derived, critical when both), each with a **remediation** naming the
+earliest pivot edge to cut — the least-disruptive break — plus the `source`
+principal's blast radius. Pass `target` instead to ask *who can reach* it.
+
+Two properties worth knowing when you read the output: an edge exists only where
+the permission **really holds** (the AWS evaluator applies the real order —
+explicit `Deny` wins, then SCP and permission-boundary ceilings, then an identity
+`Allow`), and a condition the engine cannot evaluate is reported as **uncertain**
+rather than guessed, which also marks the path's remediation *needs-review*. A
+graph whose edge references an unknown principal is rejected fail-loud; requests
+are capped at 4 MiB. Every analysis is audited `blast.analyze`.
+
 ---
 
 ## 10. Security & hardening notes
@@ -1466,7 +1588,19 @@ scores in your environment.
 
 | Date | Change |
 |---|---|
+| 2026-07-26 | **Currency pass over this guide.** Two shipped subsystems had no operator documentation at all and now do: the **third-party vendor access gate** (§7 — contract grants, the attestation webhook, the sweeper, the offboard cascade, evidence export) and the **identity blast radius / CIEM** engine (new §9.8, with a worked example). Every `PAM_*` variable the server reads is now in §4 or its own section — newly documented: `PAM_VENDOR_*`, `PAM_ALERT_WEBHOOK`/`_SYSLOG`/`_EMAIL_*`, `PAM_SSH_JUMP_*`, `PAM_PROXY_WINRM`, `PAM_ROTATE_AFTER_SESSION`, `PAM_GUACD_ADDR`/`_RECORDING_PATH`, `PAM_PORTAL_URL`, `PAM_LDAP_INSECURE_SKIP_VERIFY` (with why it must stay off), and the OIDC endpoint/scope/role overrides. Change-log rows added for Phases 27–31 and the misfiled 32–36 rows sorted back into date order. `.env.example` gained the eight variables it was missing |
 | 2026-07-26 | **Phase 37 — gap-analysis pass.** Two authorization scoping fixes: a delegated `can_manage` safe member can no longer remove a member of **another** safe (the member must belong to the safe in the path), and a dependency delete is bound to the credential in its route (the audit now names it). **Failed bearer credentials are throttled and audited on every surface**: a wrong `X-API-Key`, agent key or application key now consumes a per-source-IP failure budget (`PAM_AUTH_RATE_LIMIT`, its own window → 429 past it) and appends `api.auth_failed` (`surface:api\|agent\|app`), so token guessing over HTTP is slowed and visible to the risk engine and the SIEM forwarder — parity with what the SSH/DB proxies already did. No new env var, no schema change. See §4, §11 and [SECURITY-GAPS.md](SECURITY-GAPS.md) |
+| 2026-07-25 | Phase 36: **retention / pruning** — a leader-locked worker prunes recordings (`PAM_RECORDING_RETENTION_DAYS`) and audit rows (`PAM_AUDIT_RETENTION_DAYS`); audit pruning is skipped while the HMAC chain is on. See §9.2. |
+| 2026-07-25 | Phase 35: **audit→SIEM forwarding** — `PAM_AUDIT_FORWARD_ADDR` streams every audit event to a syslog/CEF collector continuously (durable cursor, spool-and-retry, leader-locked). See §9.2. |
+| 2026-07-25 | Phase 34: **HA session kill-switch** — session kills are broadcast across replicas (Postgres LISTEN/NOTIFY), so `DELETE /api/sessions/{id}` (and the revoke cascade / vendor offboard / analytics auto-kill) terminates a session on whichever pod hosts it; 202 when dispatched cluster-wide, 204 when local. See §9.4. |
+| 2026-07-25 | Phase 33: **RDP clipboard control** — `PAM_RDP_CLIPBOARD` (`allow`/`readonly`/`deny`) gates the Guacamole clipboard bridge and always disables drive redirection; the mode is audited on `rdp.connect`. See §5 (RDP). |
+| 2026-07-25 | Phase 32: **SFTP file-transfer control** — `PAM_SSH_SFTP` (`allow`/`readonly`/`deny`) audits every SFTP operation and can refuse writes or the whole subsystem; closes an unaudited file-transfer path. See §9.4 |
+| 2026-07-25 | **Phases 27–31 review fixes.** A vendor grant scoped to one account no longer admits a session on another; DB step-up now also pauses a **prepared** (extended-protocol) statement, so the supervisor gate can't be dodged; broker approver-group membership drops the principal's own name (a delegated `manage_users` can't mint a user named after an approver group to self-approve); an SSH-cert issue refused for an unmanaged principal no longer burns a one-time approval |
+| 2026-07-25 | Phase 31: **identity blast radius / CIEM** — `POST /api/blast/analyze` (`read_audit`) answers "if this identity were compromised, what could it reach?" over a normalized identity graph you submit: a real AWS IAM effective-permission evaluator, toxic-combination findings (escalation, cross-provider lateral movement) and an earliest-cut remediation for each. Read-only; the ingester that builds the graph is external. See §9.8 |
+| 2026-07-25 | Phase 30: **in-session step-up** — `PAM_DB_STEPUP_FILE` marks PostgreSQL statements that **pause for a supervisor's live decision** (`GET /api/sessions/stepups`, `POST /api/sessions/{id}/stepup`) instead of killing the session; `PAM_DB_STEPUP_TTL_SEC` bounds the wait. Broker policy rules also gained numeric comparators (`gte`/`gt`/`lte`/`lt`) so a rule can gate on an amount. See §9.4 |
+| 2026-07-25 | Phase 29: **third-party vendor access gate** — time-boxed, customer-approved contract grants for external technicians, enforced on every connect path, with a live employment-attestation webhook (`PAM_VENDOR_ATTEST_URL`), a mid-session sweeper (`PAM_VENDOR_SWEEP_INTERVAL_MIN`), a one-action offboard cascade, and a per-vendor evidence export. See §7 |
+| 2026-07-24 | Phase 28: **operator-issued SSH certificates** — an operator proves possession of their own key (`POST /api/ca/ssh/challenge` → `/sign`) and gets a short-lived cert scoped to one principal (`PAM_SSH_OPERATOR_CERT_TTL_MIN`), usable with their normal SSH client; revoke by serial and publish an OpenSSH **KRL** (`GET /api/ca/ssh/krl`) as your targets' `RevokedKeys`. See §6 |
+| 2026-07-24 | Phase 27: **AI-agent broker completion** — a `require_approval` rule's `approvers:` list is enforced at decision time (separation of duties); periodic **signed in-chain checkpoints** (`PAM_BROKER_AUDIT_CHECKPOINT_EVERY`) with signing-key rotation (`PAM_BROKER_AUDIT_SIGN_PREV`) and a JWKS at `GET /v1/audit/jwks`; a truncation floor on `GET /v1/audit/verify?min_entries=N`; **OCSF** SIEM export at `GET /api/audit/ocsf`; and the MCP SSE transport with elicitation. See §7 and §9.2 |
 | 2026-07-24 | **Phase 26 — recording playback + one-time access.** `GET /api/recordings[/{name}]` (`read_audit`) lists and replays stored recordings with the SHA-256 re-verified against the audit trail (`X-PAM-Recording-Audited`; replay audited `session.playback`); console menu 19 player. Access requests can be **single-use** (`one_time`, or `PAM_ACCESS_ONE_TIME` globally): every gate — SSH/DB proxies, RDP, reveal, checkout, WinRM run, broker tools — consumes the approval on first use (audited `access.consumed`). §9.3, §5, env table |
 | 2026-07-24 | **Phase 25 — console parity.** New 5250 screens: *Work with Safes* (menu 16, incl. member management and target assignment via *Work with Targets* option 8), *Certification campaigns* (menu 17: snapshot / certify / revoke / close), *Risk analytics* (menu 18), and a **live session watch pane** (*Active Sessions* option 5). The file-request form gained the Phase 20/21 fields (ticket, N-of-M approvals, scheduled window). Portal-only — no new routes, schema, or env. §5, §9.4, §9.6, §9.7 |
 | 2026-07-23 | **In-portal RDP viewer.** The portal now vendors the Apache Guacamole JS client (`/static/guacamole-common.min.js`, see `NOTICE`) and renders RDP on a canvas — *Work with Targets* → option **7**, `Ctrl+Alt+Q` to disconnect. Adds `POST /api/rdp-token` (short-lived WS token, audited `rdp.token`) and widens the portal CSP for the canvas (`img-src data: blob:`, `script-src 'self'`). Verification: [RDP-TESTING.md](RDP-TESTING.md). See §5 → *RDP*. |
@@ -1483,11 +1617,6 @@ scores in your environment.
 | 2026-07-21 | Phase 19: **access certification campaigns** — `POST /api/campaigns` snapshots current access (target grants + safe members); certify/revoke each item (`revoke` deletes the grant); close to record the attestation. Management `CapManageUsers`, reading `CapReadAudit`. See §9.6 |
 | 2026-07-21 | Phase 18: **Conjur secret sourcing** — an alternative to SOPS: set `PAM_CONJUR_URL` and pam-server fetches its own bootstrap secrets from CyberArk Conjur at startup (authn-api-key or Kubernetes authn-jwt). Both ship; SOPS stays the default. See [deploy/k8s/conjur/README.md](../deploy/k8s/conjur/README.md) |
 | 2026-07-21 | Phase 17: **safes + dependent-account propagation** — group targets into delegated-access safes (`/api/safes`, a member reaches every target in the safe; `can_manage` delegated administration) and declare a credential's consumers (`/api/credentials/{id}/dependencies`) so rotation updates the Windows Services / Scheduled Tasks / IIS App Pools that use it. See §7 → *Safes* and *Dependent accounts* |
-| 2026-07-25 | Phase 36: **retention / pruning** — a leader-locked worker prunes recordings (`PAM_RECORDING_RETENTION_DAYS`) and audit rows (`PAM_AUDIT_RETENTION_DAYS`); audit pruning is skipped while the HMAC chain is on. See §9.2. |
-| 2026-07-25 | Phase 35: **audit→SIEM forwarding** — `PAM_AUDIT_FORWARD_ADDR` streams every audit event to a syslog/CEF collector continuously (durable cursor, spool-and-retry, leader-locked). See §9.2. |
-| 2026-07-25 | Phase 34: **HA session kill-switch** — session kills are broadcast across replicas (Postgres LISTEN/NOTIFY), so `DELETE /api/sessions/{id}` (and the revoke cascade / vendor offboard / analytics auto-kill) terminates a session on whichever pod hosts it; 202 when dispatched cluster-wide, 204 when local. See §9.4. |
-| 2026-07-25 | Phase 33: **RDP clipboard control** — `PAM_RDP_CLIPBOARD` (`allow`/`readonly`/`deny`) gates the Guacamole clipboard bridge and always disables drive redirection; the mode is audited on `rdp.connect`. See §5 (RDP). |
-| 2026-07-25 | Phase 32: **SFTP file-transfer control** — `PAM_SSH_SFTP` (`allow`/`readonly`/`deny`) audits every SFTP operation and can refuse writes or the whole subsystem; closes an unaudited file-transfer path. See §9.4 |
 | 2026-07-21 | Phase 16: **live session monitoring + command control** — watch an SSH/PostgreSQL session live over `GET /api/sessions/{id}/stream` (SSE, `CapReadAudit`); block dangerous commands on exec/WinRM/SQL via a regex denylist (`PAM_COMMAND_DENY_FILE`, audited `command.blocked`). See §9.4 |
 | 2026-07-20 | Phase 15: **PostgreSQL database session proxy** (`PAM_DB_ADDR`) — brokers `postgres` targets with JIT credential injection and **per-statement query audit** (`db.query`); operators use `psql user=<dbcred>@<target>` with their PAM token. Same authorization gates as the SSH proxy; upstream auth via SCRAM-SHA-256/MD5/cleartext. See §5 → *Database targets (PostgreSQL)* |
 | 2026-07-20 | Post-review hardening: directory logins grant the **union** of every mapped group's role (not the single highest); a parked agent approval is **re-validated at decision time** (revoked key / expired SVID refused); broker-audit append serializes under a Postgres advisory lock so a rolling-deploy/HA overlap can't fork the hash chain; numeric policy arguments match in plain decimal |
