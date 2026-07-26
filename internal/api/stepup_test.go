@@ -11,8 +11,11 @@ import (
 )
 
 // TestStepUpEndpoints proves the in-session step-up API (Phase 30): a paused
-// statement appears in the listing and a supervisor's approval resolves it; a
-// missing session yields 404, and an auditor role may decide.
+// statement appears in the listing and a supervisor's approval resolves it, and
+// a missing session yields 404. Deciding needs CapApprove: an auditor may WATCH
+// (the listing and the live stream are read_audit) but releasing a statement the
+// step-up policy flagged is an execution-authorizing act, so a read-only role is
+// refused.
 func TestStepUpEndpoints(t *testing.T) {
 	su := session.NewStepUp()
 	srv, _ := newTestServerOpts(t, nil, api.Options{StepUp: su})
@@ -31,9 +34,18 @@ func TestStepUpEndpoints(t *testing.T) {
 		t.Fatalf("step-up listing missing the paused statement: %s", ld)
 	}
 
-	// An auditor (holds read_audit, the live-monitor gate) approves it.
+	// An auditor can see the paused statement but must NOT be able to release it.
 	auditor := seedUser(t, srv, "su-auditor", "auditor")
-	if code, dd := do(t, srv, http.MethodPost, "/api/sessions/sess-1/stepup", auditor, map[string]any{"approve": true}); code != http.StatusOK {
+	if code, ld := do(t, srv, http.MethodGet, "/api/sessions/stepups", auditor, nil); code != http.StatusOK {
+		t.Fatalf("auditor list step-ups: %d %s", code, ld)
+	}
+	if code, _ := do(t, srv, http.MethodPost, "/api/sessions/sess-1/stepup", auditor, map[string]any{"approve": true}); code != http.StatusForbidden {
+		t.Fatalf("auditor decide step-up: want 403, got %d", code)
+	}
+
+	// An approver holds CapApprove and decides it.
+	approver := seedUser(t, srv, "su-approver", "approver")
+	if code, dd := do(t, srv, http.MethodPost, "/api/sessions/sess-1/stepup", approver, map[string]any{"approve": true}); code != http.StatusOK {
 		t.Fatalf("approve step-up: %d %s", code, dd)
 	}
 	select {
@@ -46,7 +58,7 @@ func TestStepUpEndpoints(t *testing.T) {
 	}
 
 	// Deciding a session with no pending step-up is 404.
-	if code, _ := do(t, srv, http.MethodPost, "/api/sessions/sess-1/stepup", auditor, map[string]any{"approve": true}); code != http.StatusNotFound {
+	if code, _ := do(t, srv, http.MethodPost, "/api/sessions/sess-1/stepup", approver, map[string]any{"approve": true}); code != http.StatusNotFound {
 		t.Fatalf("decide with nothing pending: want 404, got %d", code)
 	}
 }
