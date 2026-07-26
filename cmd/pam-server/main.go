@@ -762,6 +762,12 @@ func run() error {
 	if cfg.VendorSweepInterval > 0 {
 		go handler.RunVendorSweeper(ctx, cfg.VendorSweepInterval)
 	}
+	// Retention (Phase 36): prune aged recordings and audit rows.
+	go handler.RunRetentionWorker(ctx, time.Duration(cfg.RetentionIntervalHours)*time.Hour, api.RetentionPolicy{
+		RecordingDays: cfg.RecordingRetentionDays,
+		AuditDays:     cfg.AuditRetentionDays,
+		AuditChained:  cfg.AuditHMACKey != "",
+	})
 	// SIEM audit forwarding (Phase 35): stream every audit event to a collector.
 	if cfg.AuditForwardAddr != "" {
 		fwd, ferr := auditfwd.New(st, auditfwd.Config{

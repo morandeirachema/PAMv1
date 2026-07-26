@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-07-25 · Reflects: Phases 0–35 + the 2026-07 hardening pass.
+> Last updated: 2026-07-25 · Reflects: Phases 0–36 + the 2026-07 hardening pass.
 
 ## How the review was run
 
@@ -92,6 +92,14 @@ few authorization edges.
 - **Credential create is two store calls** (insert row → encrypt secret under its
   row id), so a crash between them can orphan an empty-secret row. Inherent to the
   AAD-binds-row-id design; a client cancel already rolls back.
+- **Audit retention is refused while the HMAC chain is on** (Phase 36). Deleting
+  the oldest audit rows breaks `VerifyAuditChain` (it requires the first row's
+  `prev_hash` to be nil), so the retention worker prunes audit rows only for the
+  *unchained* table and skips (loudly) when the chain is enabled. This is a
+  deliberate integrity-over-convenience choice: tamper-evidence is never silently
+  traded for disk space. With the chain on, retention is an operator step — export
+  to WORM (`GET /api/audit/export`, digest-stamped) then re-anchor. Recording-file
+  pruning always runs (it preserves the `.chain` head).
 
 ## Tier 3 — Missing capabilities (deferred; new roadmap phases, not fixes)
 

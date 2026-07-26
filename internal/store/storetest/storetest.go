@@ -1029,6 +1029,25 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("AuditSince(lastID) after a new event = %v (err %v)", next, err)
 	}
 
+	// --- audit retention prune (Phase 36) ---
+	// A cutoff in the future prunes everything present; the trail is then empty.
+	if _, err := st.PruneAuditBefore(ctx, time.Now().Add(24*time.Hour)); err != nil {
+		t.Fatalf("PruneAuditBefore(future): %v", err)
+	}
+	if remaining, err := st.AuditSince(ctx, 0, 1000); err != nil || len(remaining) != 0 {
+		t.Fatalf("after pruning everything, %d events remain (err %v)", len(remaining), err)
+	}
+	// A fresh event survives a cutoff in the past (ts >= cutoff).
+	if err := st.AppendAudit(ctx, &store.AuditEvent{Actor: "ret", Action: "ret.keep", Detail: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := st.PruneAuditBefore(ctx, time.Now().Add(-24*time.Hour)); err != nil || n != 0 {
+		t.Fatalf("PruneAuditBefore(past) removed %d (err %v), want 0", n, err)
+	}
+	if remaining, err := st.AuditSince(ctx, 0, 1000); err != nil || len(remaining) != 1 {
+		t.Fatalf("a recent event must survive a past cutoff, got %d (err %v)", len(remaining), err)
+	}
+
 	// --- session kill bus (Phase 34) ---
 	// A selector published on the bus is delivered to a subscriber, JSON-intact
 	// (Postgres LISTEN/NOTIFY for pgstore; an in-process hub for memstore).
