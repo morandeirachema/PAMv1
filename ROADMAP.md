@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–40 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
+**Phases 0–41 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
 with command control, safes, dependent-account propagation), optional CyberArk Conjur
@@ -45,7 +45,9 @@ capability on the two decision points** (39): releasing a paused statement and
 certifying access are now `CapApprove`, not a read-only or user-admin gate — and
 **every brokered execution is a supervised session** (40): the REST WinRM endpoint
 and the agent broker's exec tools join the proxies in the live-session registry, so
-they are listable, countable and killable. The portal is
+they are listable, countable and killable — and **session recordings are encrypted
+at rest** (41): the other high-value artifact finally gets the same envelope
+encryption and KEK as the credentials themselves. The portal is
 also **keyboard-first** (mouse optional). See their sections below. Beyond those,
 a number of items genuinely require external infrastructure or a paid account to build
 and verify honestly, so they are left as documented follow-ons rather than faked. The
@@ -637,6 +639,49 @@ agent's long-running command was the least supervisable execution in the system.
   vaulted secret, so JIT injection is unchanged
 - No schema change, no new environment variable — `PAM_MAX_SESSIONS_*` simply now
   means what it says on every path
+
+## Phase 41 — Session recordings encrypted at rest ✅
+
+Finding **A** of the [2026-07-26 sweep](docs/SECURITY-GAPS.md#open-findings-from-the-2026-07-26-sweep),
+and the oldest real asymmetry in the project: pamv1 wrapped every credential in
+envelope encryption under a pluggable KEK, then wrote the **recording of the
+session** — which holds whatever the operator typed and saw, including a secret
+typed by hand, a query result, or a file listed on screen — in the clear, protected
+by file permissions alone. Anyone with volume, backup or snapshot access could read
+it. This closes that, opt-in via `PAM_RECORDING_ENCRYPT`.
+
+- [x] **A sealed stream, not a sealed blob** (`internal/recording`): a header line
+  carrying the vault-wrapped per-recording data key, then AES-256-GCM chunks. It is
+  chunked because a session can be killed, hit its size cap or die with the process
+  — a partial file must still decrypt up to its last complete chunk rather than be
+  lost whole. Each chunk's additional authenticated data binds it to the
+  recording's name **and its index**, so chunks cannot be reordered, dropped from
+  the middle, or spliced in from another recording
+- [x] **Same root of trust as the vault**: the data key is wrapped by the configured
+  KEK — local, HashiCorp Vault Transit, AWS KMS or a PKCS#11 HSM — so a deployment
+  whose master key never leaves an HSM now protects its recordings that way too
+- [x] **Tamper evidence unchanged**: the SHA-256 is deliberately taken over the bytes
+  that land **on disk**, so the audited hash, the `X-PAM-Recording-Audited` verdict
+  and the recording hash chain keep describing the stored artifact with no change to
+  any of them. The WinRM transcript path was hashing its *plaintext* — identical
+  while unencrypted, silently wrong once sealed — and now hashes the stored bytes
+- [x] **Fails closed, never silently clear**: a KEK that cannot wrap the data key
+  returns an error and leaves no file behind, so a session can be refused rather
+  than recorded in the open by accident
+- [x] **Detected per file, not by config**: playback sniffs the magic prefix, so
+  turning encryption on does not orphan the recordings a deployment already had —
+  they keep replaying through the same audited path
+- [x] **Tests**: the package (round-trip with the plaintext provably absent from the
+  file, a flipped bit caught as an authentication failure with the intact prefix
+  still recoverable, a chunk refused under another recording's name, a truncated
+  file readable up to its last complete chunk, a loud KEK failure); the proxy
+  recorder (a session's `.cast` is sealed on disk and `Close` reports the hash of
+  the stored bytes); and end to end (a recorded WinRM run leaks neither its command
+  nor its output nor the target to disk, yet replays through the API with
+  `X-PAM-Recording-Audited: true`, while a pre-encryption recording still replays)
+- Honest limit, documented: the **file name** still carries the target and the actor.
+  The content is sealed; that metadata is not. Naming recordings by opaque id is a
+  follow-on, and would cost the operator the ability to find a session by eye
 
 ## Portal: keyboard-first navigation ✅
 

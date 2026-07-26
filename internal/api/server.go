@@ -27,6 +27,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/oidc"
 	"github.com/morandeirachema/pamv1/internal/policy"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
+	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/rotate"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/sshca"
@@ -117,6 +118,11 @@ type Options struct {
 	// tools — and without it a pattern blocked for a human on the proxy would run
 	// freely for an AI agent. A nil guard blocks nothing.
 	CommandGuard *cmdguard.Guard
+	// EncryptRecordings seals session recordings and WinRM transcripts at rest
+	// with a per-recording data key wrapped by the vault KEK (PAM_RECORDING_ENCRYPT).
+	// Playback detects the format per file, so recordings written before it was
+	// turned on keep replaying.
+	EncryptRecordings bool
 	// TrustedProxyHops is how many trusted reverse-proxy hops sit in front of the
 	// server; it selects the real client IP from X-Forwarded-For for rate limiting
 	// (0 = use RemoteAddr directly).
@@ -256,6 +262,7 @@ type Server struct {
 	// failures may be counted. Same budget (PAM_AUTH_RATE_LIMIT), own window.
 	keyFailLimiter     *ratelimit.Limiter
 	cmdGuard           *cmdguard.Guard
+	recKey             recording.KeyWrapper
 	trustedProxyHops   int
 	sessions           *session.Registry
 	live               *session.Hub
@@ -454,6 +461,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		authLimiter:        ratelimit.New(opts.AuthRatePerMin),
 		keyFailLimiter:     ratelimit.New(opts.AuthRatePerMin),
 		cmdGuard:           opts.CommandGuard,
+		recKey:             apiRecKey(opts.EncryptRecordings, v),
 		trustedProxyHops:   opts.TrustedProxyHops,
 		sessions:           opts.Sessions,
 		live:               opts.Live,
@@ -862,6 +870,15 @@ func (s *Server) authenticated(next http.HandlerFunc) http.Handler {
 		}
 		next(w, r.WithContext(ctx))
 	})
+}
+
+// apiRecKey returns the key wrapper used to seal recordings, or nil to write
+// them in the clear. Encryption is opt-in and impossible without a vault.
+func apiRecKey(enabled bool, v *vault.Vault) recording.KeyWrapper {
+	if !enabled || v == nil {
+		return nil
+	}
+	return v
 }
 
 // audit appends an audit event attributed to the actor in ctx, bumps the audit
