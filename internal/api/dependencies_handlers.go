@@ -71,15 +71,39 @@ func (s *Server) listDependencies(w http.ResponseWriter, r *http.Request) {
 
 // deleteDependency removes a declared consumer (CapManageCredentials).
 func (s *Server) deleteDependency(w http.ResponseWriter, r *http.Request) {
+	cid, ok := idParam(w, r)
+	if !ok {
+		return
+	}
 	did, err := strconv.ParseInt(r.PathValue("did"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid dependency id")
+		return
+	}
+	// The route is scoped to a credential — only delete the dependency if it
+	// belongs to that credential, so DELETE /credentials/1/dependencies/5 cannot
+	// remove credential 2's consumer, and the audit names the credential that
+	// lost it (mirrors deleteTargetGrant / deleteAppSecretGrant).
+	deps, err := s.store.ListCredentialDependencies(r.Context(), cid)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	found := false
+	for _, d := range deps {
+		if d.ID == did {
+			found = true
+			break
+		}
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "dependency not found for this credential")
 		return
 	}
 	if err := s.store.DeleteCredentialDependency(r.Context(), did); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "dependency.delete", fmt.Sprintf("dependency:%d", did))
+	s.audit(r.Context(), "dependency.delete", fmt.Sprintf("credential:%d dependency:%d", cid, did))
 	w.WriteHeader(http.StatusNoContent)
 }

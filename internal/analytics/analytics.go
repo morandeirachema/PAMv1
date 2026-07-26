@@ -149,6 +149,9 @@ var (
 	authFailActions   = map[string]bool{
 		"proxy.auth_failed": true, "login.failed": true, "authz.denied": true,
 		"session.denied": true, "access.denied": true, "db.session.denied": true,
+		// A rejected bearer credential on the REST/broker/app-secrets surfaces
+		// (Phase 37); attributed to "unknown", so it scores that pseudo-actor.
+		"api.auth_failed": true,
 	}
 	decryptActions = map[string]bool{"credential.decrypt_failed": true}
 	// sensitive "activity" actions that count toward off-hours and velocity.

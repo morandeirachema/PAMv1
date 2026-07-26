@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–31 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
+**Phases 0–37 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
 with command control, safes, dependent-account propagation), optional CyberArk Conjur
@@ -32,8 +32,13 @@ short-lived, principal-scoped cert for an operator's own key with KRL revocation
 grants with live employment attestation, an instant-offboard cascade, and per-vendor
 evidence export — and **in-session policy + step-up** (Phase 30): numeric policy
 comparators for the agent broker, and a pause-for-supervisor step-up on the
-PostgreSQL session proxy that keeps the session open. The portal is also **keyboard-first**
-(mouse optional). See their sections below. Beyond those,
+PostgreSQL session proxy that keeps the session open — the **identity blast-radius /
+CIEM engine** (Phase 31), **SFTP file-transfer control** (32) and **RDP clipboard
+control** (33) closing the two unaudited data-movement paths, the **HA kill-switch**
+(34), **audit→SIEM push forwarding** (35), **retention / pruning** (36), and a
+**gap-analysis pass** (37): child-resource deletes scoped to their parent, and failed
+bearer credentials throttled + audited on every authentication surface. The portal is
+also **keyboard-first** (mouse optional). See their sections below. Beyond those,
 a number of items genuinely require external infrastructure or a paid account to build
 and verify honestly, so they are left as documented follow-ons rather than faked. The
 full catalogue is in **[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)**;
@@ -495,6 +500,44 @@ Two data stores grew without bound: **session recordings** on disk and **audit r
 - [x] **Leader-locked worker** (`RunRetentionWorker`, `PAM_RETENTION_INTERVAL_HOURS`, default 24) — one replica sweeps per tick, like the other background jobs. Both windows default to `0` = keep forever, validated fail-loud
 - [x] **Tests**: `PruneRecordings` (old removed; the `.chain` head, recent recordings, and non-recording files preserved; a dotfile-`.cast` is never touched); the store contract (`PruneAuditBefore` — a future cutoff prunes all, a past cutoff prunes none); the worker pass (recordings pruned + audited, audit pruned when unchained, and **skipped when chained**)
 - Deferred (documented): **archive-to-WORM before delete** as a built-in (the audit **export** endpoint already produces a digest-stamped artifact for this), and **audit retention with the chain on** via export + automatic re-genesis (a deliberate integrity/operations tradeoff kept manual for now)
+
+## Phase 37 — Gap-analysis pass: child-resource scoping + bearer auth failures ✅
+
+A read-only sweep over the route→capability map, the child-resource handlers and
+the four authentication surfaces, comparing them against each other. Two
+authorization gaps and one missing control; the same sweep's phase-sized findings
+are recorded in [docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md#open-findings-from-the-2026-07-26-sweep)
+rather than half-built here.
+
+- [x] **Child-resource deletes are scoped to their parent**: `deleteSafeMember`
+  authorized the safe in the path and then deleted by the member's *global* id, so a
+  delegated `can_manage` member of one safe could remove a member of **any** safe —
+  delegated administration as a lever to strip access anywhere. It now requires the
+  member to belong to that safe. `deleteDependency` ignored its `{id}` credential
+  entirely; it is now scoped the same way, and the audit detail names the owning
+  credential. Both now follow `deleteTargetGrant`/`deleteAppSecretGrant`, which
+  already scoped correctly
+- [x] **Failed bearer credentials are throttled and audited on every surface**: only
+  the login endpoints and the two session proxies did this, so a wrong `X-API-Key`,
+  agent key or **application** key was merely logged — token guessing against
+  `/api/*`, `/v1/tool-calls` and `/v1/app-secrets` (the last vends plaintext secrets
+  to machines) was an unthrottled online oracle, and invisible to the risk engine and
+  the SIEM forwarder because neither sees anything that is not in the audit trail. One
+  `Server.authFailed` now covers all three: a per-source-IP **failure** limiter (its own
+  window on the existing `PAM_AUTH_RATE_LIMIT` budget — separate from the login
+  limiter, since a legitimate API client makes many *successful* calls a minute)
+  answers 429 past the budget, and each admitted failure appends `api.auth_failed`
+  (`surface:api|agent|app`, method, path, client IP — never the presented credential).
+  The append is skipped once throttled, so a flood cannot amplify into the audit trail
+- [x] **Tests**: a cross-safe member delete refused with the victim surviving (plus a
+  positive control that in-safe deletion still works), a cross-credential dependency
+  delete refused, and 401×N-then-429 with exactly N events audited on each of the
+  three bearer surfaces. No schema change, no new environment variable
+- Deferred (documented in SECURITY-GAPS.md, each phase-sized): recording encryption
+  at rest, shared custody of the SSH host/CA keys in HA, command control on the REST
+  WinRM and broker exec paths, the WinRM endpoint's absence from the session
+  registry, `CapApprove` for step-up and certification decisions, the console-parity
+  drift since Phase 25, and update endpoints + pagination
 
 ## Portal: keyboard-first navigation ✅
 
