@@ -288,6 +288,7 @@ All twenty-six phases (0–25) have shipped — full per-phase detail in **[ROAD
 | 34 | HA session kill-switch (cross-replica kill over Postgres LISTEN/NOTIFY) | ✅ shipped |
 | 35 | Audit→SIEM push forwarding (continuous RFC 5424 syslog / CEF stream) | ✅ shipped |
 | 36 | Retention / pruning (aged recordings + audit rows; integrity-preserving) | ✅ shipped |
+| 37 | Gap-analysis pass (child-resource deletes scoped to their parent; failed bearer credentials throttled + audited on every surface) | ✅ shipped |
 
 ## Coverage vs. commercial PAM (CyberArk, Wallix, …)
 
