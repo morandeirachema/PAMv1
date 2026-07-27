@@ -79,7 +79,10 @@ type Campaign struct {
 }
 
 // CampaignItem is one access grant under review in a campaign. RefID points at
-// the underlying grant so a "revoke" decision can delete it.
+// the underlying grant so a "revoke" decision can delete it. GrantedBy is the
+// grant's creator, snapshotted at campaign creation (Phase 46) so the four-eyes
+// check — the grantor may not CERTIFY their own grant — needs no live lookup
+// and survives the grant's deletion; empty when the creator was never recorded.
 type CampaignItem struct {
 	ID          int64      `json:"id"`
 	CampaignID  int64      `json:"campaign_id"`
@@ -87,7 +90,8 @@ type CampaignItem struct {
 	RefID       int64      `json:"ref_id"` // id of the underlying grant/member
 	SubjectType string     `json:"subject_type"`
 	Subject     string     `json:"subject"`
-	Detail      string     `json:"detail"`   // human-readable ("grant on target web-01")
+	Detail      string     `json:"detail"` // human-readable ("grant on target web-01")
+	GrantedBy   string     `json:"granted_by,omitempty"`
 	Decision    string     `json:"decision"` // pending | certified | revoked
 	DecidedBy   string     `json:"decided_by,omitempty"`
 	DecidedAt   *time.Time `json:"decided_at,omitempty"`
@@ -118,12 +122,15 @@ type Safe struct {
 
 // SafeMember authorizes a subject (a user or a role) on a safe. CanManage marks
 // a delegated safe administrator (may add/remove members of that safe).
+// CreatedBy records who added the member (Phase 46, four-eyes on certification);
+// empty on rows that predate the recording.
 type SafeMember struct {
 	ID          int64  `json:"id"`
 	SafeID      int64  `json:"safe_id"`
 	SubjectType string `json:"subject_type"` // user | role
 	Subject     string `json:"subject"`
 	CanManage   bool   `json:"can_manage"`
+	CreatedBy   string `json:"created_by,omitempty"`
 }
 
 // AccessRequest is a user's request to connect to a target, subject to approval
@@ -175,11 +182,16 @@ type Credential struct {
 // TargetGrant authorizes a subject (a specific user, or a whole role) to connect
 // to a target. A target with no grants is open to any connect-capable principal;
 // once it has grants, only matching subjects (plus admins) may connect.
+// CreatedBy records the principal who created the grant (Phase 46) so a
+// certification review can refuse the grantor attesting to their own grant;
+// empty on rows that predate the recording. EffectiveTargetGrants (an
+// authorization-only view) does not populate it.
 type TargetGrant struct {
 	ID          int64  `json:"id"`
 	TargetID    int64  `json:"target_id"`
 	SubjectType string `json:"subject_type"` // user | role
 	Subject     string `json:"subject"`
+	CreatedBy   string `json:"created_by,omitempty"`
 }
 
 // Checkout is an exclusive, time-boxed lease on a credential. While a checkout

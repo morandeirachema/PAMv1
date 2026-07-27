@@ -215,15 +215,17 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 
 	// --- grants ---
-	g := &store.TargetGrant{TargetID: tgt.ID, SubjectType: "user", Subject: "alice"}
+	g := &store.TargetGrant{TargetID: tgt.ID, SubjectType: "user", Subject: "alice", CreatedBy: "grantor-gary"}
 	if err := st.CreateTargetGrant(ctx, g); err != nil {
 		t.Fatalf("CreateTargetGrant: %v", err)
 	}
 	if err := st.CreateTargetGrant(ctx, &store.TargetGrant{TargetID: tgt.ID, SubjectType: "user", Subject: "alice"}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("duplicate grant: want ErrConflict, got %v", err)
 	}
-	if gs, err := st.ListTargetGrants(ctx, tgt.ID); err != nil || len(gs) != 1 {
-		t.Fatalf("ListTargetGrants: %d err %v", len(gs), err)
+	// The creator round-trips (Phase 46): the certification four-eyes check
+	// depends on it.
+	if gs, err := st.ListTargetGrants(ctx, tgt.ID); err != nil || len(gs) != 1 || gs[0].CreatedBy != "grantor-gary" {
+		t.Fatalf("ListTargetGrants: %+v err %v", gs, err)
 	}
 	if err := st.DeleteTargetGrant(ctx, g.ID); err != nil {
 		t.Fatalf("DeleteTargetGrant: %v", err)
@@ -240,9 +242,12 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if got, err := st.GetSafe(ctx, sf.ID); err != nil || got.Name != "prod-db" {
 		t.Fatalf("GetSafe: %+v err %v", got, err)
 	}
-	sm := &store.SafeMember{SafeID: sf.ID, SubjectType: "role", Subject: "user", CanManage: false}
+	sm := &store.SafeMember{SafeID: sf.ID, SubjectType: "role", Subject: "user", CanManage: false, CreatedBy: "grantor-gary"}
 	if err := st.AddSafeMember(ctx, sm); err != nil {
 		t.Fatalf("AddSafeMember: %v", err)
+	}
+	if ms, err := st.ListSafeMembers(ctx, sf.ID); err != nil || len(ms) != 1 || ms[0].CreatedBy != "grantor-gary" {
+		t.Fatalf("ListSafeMembers created_by: %+v err %v", ms, err)
 	}
 	if err := st.AddSafeMember(ctx, &store.SafeMember{SafeID: sf.ID, SubjectType: "role", Subject: "user"}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("duplicate safe member: want ErrConflict, got %v", err)
@@ -343,9 +348,12 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if camp.Status != "open" {
 		t.Fatalf("new campaign status = %q, want open", camp.Status)
 	}
-	it := &store.CampaignItem{CampaignID: camp.ID, Kind: "target_grant", RefID: 42, SubjectType: "user", Subject: "bob", Detail: "grant on target x"}
+	it := &store.CampaignItem{CampaignID: camp.ID, Kind: "target_grant", RefID: 42, SubjectType: "user", Subject: "bob", Detail: "grant on target x", GrantedBy: "grantor-gary"}
 	if err := st.AddCampaignItem(ctx, it); err != nil {
 		t.Fatalf("AddCampaignItem: %v", err)
+	}
+	if got, err := st.GetCampaignItem(ctx, it.ID); err != nil || got.GrantedBy != "grantor-gary" {
+		t.Fatalf("campaign item granted_by not round-tripped: %+v err %v", got, err)
 	}
 	if err := st.AddCampaignItem(ctx, &store.CampaignItem{CampaignID: 999999, Kind: "target_grant", RefID: 1, SubjectType: "user", Subject: "z"}); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("item on missing campaign: want ErrNotFound, got %v", err)

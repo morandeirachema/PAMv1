@@ -80,7 +80,11 @@ func TestCertificationCampaign(t *testing.T) {
 		map[string]any{"decision": "revoke"}); code != http.StatusNoContent {
 		t.Fatalf("revoke item: %d", code)
 	}
-	if code, _ := do(t, srv, http.MethodPost, fmt.Sprintf("/api/campaigns/%d/items/%d/decision", campaignID, memberItem), testAPIKey,
+	// Certifying is done by a DIFFERENT approver: the bootstrap admin created
+	// the member, and since Phase 46 the grantor may not certify their own
+	// grant (that refusal is covered by TestCertificationFourEyes).
+	reviewerTok := seedUser(t, srv, "cert-reviewer", "approver")
+	if code, _ := do(t, srv, http.MethodPost, fmt.Sprintf("/api/campaigns/%d/items/%d/decision", campaignID, memberItem), reviewerTok,
 		map[string]any{"decision": "certify"}); code != http.StatusNoContent {
 		t.Fatalf("certify item: %d", code)
 	}

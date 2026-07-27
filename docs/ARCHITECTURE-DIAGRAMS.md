@@ -260,6 +260,7 @@ erDiagram
     string SubjectType
     string Subject
     string Detail
+    string GrantedBy
     string Decision
     string DecidedBy
     ptr_time_Time DecidedAt
@@ -324,6 +325,7 @@ erDiagram
     string SubjectType
     string Subject
     bool CanManage
+    string CreatedBy
   }
   Session {
     int64 ID
@@ -356,6 +358,7 @@ erDiagram
     int64 TargetID
     string SubjectType
     string Subject
+    string CreatedBy
   }
   User {
     int64 ID

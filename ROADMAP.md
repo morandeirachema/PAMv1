@@ -849,21 +849,48 @@ now first-class 5250 screens, keyboard-first, in the single embedded page:
   `ok:true`, head with every rendered field, OCSF 200; the CA-disabled hint;
   `node --check` on the embedded script
 
+## Phase 46 — Per-item four-eyes on certification ✅
+
+The Phase 39 follow-on, closing the last separation-of-duties gap (finding
+*F*'s honest limit): delegating the review to `CapApprove` did not stop the
+principal who **granted** access from **certifying** it themselves — the
+reviewer and the grantor could be the same person, which is what an access
+review exists to prevent.
+
+- [x] **The grant's creator is recorded**: `target_grants.created_by` and
+  `safe_members.created_by` (migration `0023`), stamped from the authenticated
+  actor on every create. Rows that predate the migration keep an empty creator
+  — four-eyes cannot be enforced retroactively on grants whose creator was
+  never recorded, and pretending otherwise would block every legacy review
+- [x] **Snapshotted into the campaign item** (`campaign_items.granted_by`), so
+  the decision check needs no live lookup and still works after the underlying
+  grant is deleted; the item's human-readable detail says *"granted by X"*, so
+  the reviewer sees who they are attesting for — in the console too, with no
+  screen change
+- [x] **Enforced at the decision**: certifying an item whose recorded creator
+  is the deciding actor is refused 403 (*"four-eyes: you cannot certify access
+  you granted yourself"*) and audited `certification.decision_denied`
+  (`reason:four-eyes`). **Self-revoke stays allowed** — removing your own
+  grant only reduces access
+- [x] Proven in the store contract (creator round-trips through grants, safe
+  members and campaign items — live PostgreSQL in CI) and
+  `api.TestCertificationFourEyes` (self-certify 403 + audit; another approver
+  204; self-revoke 204; legacy item 204), and verified against a running
+  server
+- One additive migration; no new routes, no new environment variable
+
 ## Next — planned ⬜
 
-Phases 37–45 closed every finding from the 2026-07-26 read-only sweep
-(**[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md#open-findings-from-the-2026-07-26-sweep)**).
-What remains planned are the smaller deferred follow-ons below — each buildable
-in process; the infra-bound list stays in
-[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
+Phases 37–46 closed every finding from the 2026-07-26 read-only sweep
+(**[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md#open-findings-from-the-2026-07-26-sweep)**),
+including the four-eyes follow-on. What remains planned are the smaller
+deferred follow-ons below — each buildable in process; the infra-bound list
+stays in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
 
 ### Smaller follow-ons, recorded where they were deferred ⬜
 
 - **Recording file names carry target and actor** (Phase 41) — the content is
   sealed, the metadata is not.
-- **Per-item four-eyes on certification** (Phase 39) — an admin holds `approve`,
-  so the review is delegated but not separated; enforcing it needs the grant's
-  creator recorded, a schema change.
 - **Cross-replica live monitoring** (Phase 34) — the SSE watch stream is still
   served by the pod hosting the session.
 - **LEEF and TLS syslog** (Phase 35) · **archive-to-WORM before pruning**

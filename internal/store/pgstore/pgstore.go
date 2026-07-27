@@ -261,8 +261,8 @@ func (s *PGStore) RotateCredentialSecret(ctx context.Context, id int64, secretEn
 // grant exists, ErrNotFound if the target is missing.
 func (s *PGStore) CreateTargetGrant(ctx context.Context, g *store.TargetGrant) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO target_grants (target_id, subject_type, subject) VALUES ($1, $2, $3) RETURNING id`,
-		g.TargetID, g.SubjectType, g.Subject,
+		`INSERT INTO target_grants (target_id, subject_type, subject, created_by) VALUES ($1, $2, $3, $4) RETURNING id`,
+		g.TargetID, g.SubjectType, g.Subject, g.CreatedBy,
 	).Scan(&g.ID)
 	switch pgCode(err) {
 	case pgUniqueViolation:
@@ -276,13 +276,13 @@ func (s *PGStore) CreateTargetGrant(ctx context.Context, g *store.TargetGrant) e
 // ListTargetGrants returns the grants for a target, ordered by ID.
 func (s *PGStore) ListTargetGrants(ctx context.Context, targetID int64) ([]store.TargetGrant, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, target_id, subject_type, subject FROM target_grants WHERE target_id = $1 ORDER BY id`, targetID)
+		`SELECT id, target_id, subject_type, subject, created_by FROM target_grants WHERE target_id = $1 ORDER BY id`, targetID)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.TargetGrant, error) {
 		var g store.TargetGrant
-		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject)
+		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject, &g.CreatedBy)
 		return g, err
 	})
 }
@@ -367,8 +367,8 @@ func (s *PGStore) DeleteSafe(ctx context.Context, id int64) error {
 // AddSafeMember adds a member to a safe.
 func (s *PGStore) AddSafeMember(ctx context.Context, m *store.SafeMember) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO safe_members (safe_id, subject_type, subject, can_manage) VALUES ($1, $2, $3, $4) RETURNING id`,
-		m.SafeID, m.SubjectType, m.Subject, m.CanManage,
+		`INSERT INTO safe_members (safe_id, subject_type, subject, can_manage, created_by) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		m.SafeID, m.SubjectType, m.Subject, m.CanManage, m.CreatedBy,
 	).Scan(&m.ID)
 	switch pgCode(err) {
 	case pgUniqueViolation:
@@ -382,13 +382,13 @@ func (s *PGStore) AddSafeMember(ctx context.Context, m *store.SafeMember) error 
 // ListSafeMembers returns a safe's members ordered by id.
 func (s *PGStore) ListSafeMembers(ctx context.Context, safeID int64) ([]store.SafeMember, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, safe_id, subject_type, subject, can_manage FROM safe_members WHERE safe_id = $1 ORDER BY id`, safeID)
+		`SELECT id, safe_id, subject_type, subject, can_manage, created_by FROM safe_members WHERE safe_id = $1 ORDER BY id`, safeID)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.SafeMember, error) {
 		var m store.SafeMember
-		err := row.Scan(&m.ID, &m.SafeID, &m.SubjectType, &m.Subject, &m.CanManage)
+		err := row.Scan(&m.ID, &m.SafeID, &m.SubjectType, &m.Subject, &m.CanManage, &m.CreatedBy)
 		return m, err
 	})
 }
@@ -473,9 +473,9 @@ func (s *PGStore) AddCampaignItem(ctx context.Context, item *store.CampaignItem)
 		item.Decision = "pending"
 	}
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO campaign_items (campaign_id, kind, ref_id, subject_type, subject, detail, decision)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-		item.CampaignID, item.Kind, item.RefID, item.SubjectType, item.Subject, item.Detail, item.Decision,
+		`INSERT INTO campaign_items (campaign_id, kind, ref_id, subject_type, subject, detail, granted_by, decision)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+		item.CampaignID, item.Kind, item.RefID, item.SubjectType, item.Subject, item.Detail, item.GrantedBy, item.Decision,
 	).Scan(&item.ID)
 	if pgCode(err) == pgForeignKeyViolation {
 		return store.ErrNotFound
@@ -503,7 +503,7 @@ func (s *PGStore) DecideCampaignItem(ctx context.Context, id int64, decision, de
 		`UPDATE campaign_items SET decision = $2, decided_by = $3, decided_at = $4 WHERE id = $1`, id, decision, decidedBy, at)
 }
 
-const campaignItemCols = `id, campaign_id, kind, ref_id, subject_type, subject, detail, decision, decided_by, decided_at`
+const campaignItemCols = `id, campaign_id, kind, ref_id, subject_type, subject, detail, granted_by, decision, decided_by, decided_at`
 
 // scanCampaign scans one campaign row.
 func scanCampaign(row pgx.CollectableRow) (store.Campaign, error) {
@@ -515,7 +515,7 @@ func scanCampaign(row pgx.CollectableRow) (store.Campaign, error) {
 // scanCampaignItem scans one campaign-item row.
 func scanCampaignItem(row pgx.CollectableRow) (store.CampaignItem, error) {
 	var it store.CampaignItem
-	err := row.Scan(&it.ID, &it.CampaignID, &it.Kind, &it.RefID, &it.SubjectType, &it.Subject, &it.Detail, &it.Decision, &it.DecidedBy, &it.DecidedAt)
+	err := row.Scan(&it.ID, &it.CampaignID, &it.Kind, &it.RefID, &it.SubjectType, &it.Subject, &it.Detail, &it.GrantedBy, &it.Decision, &it.DecidedBy, &it.DecidedAt)
 	return it, err
 }
 

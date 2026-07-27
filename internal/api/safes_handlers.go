@@ -125,7 +125,8 @@ func (s *Server) addSafeMember(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	m := store.SafeMember{SafeID: id, SubjectType: in.SubjectType, Subject: in.Subject, CanManage: in.CanManage}
+	// The creator is recorded for the certification four-eyes check (Phase 46).
+	m := store.SafeMember{SafeID: id, SubjectType: in.SubjectType, Subject: in.Subject, CanManage: in.CanManage, CreatedBy: actorFrom(r.Context())}
 	if err := s.store.AddSafeMember(r.Context(), &m); err != nil {
 		storeError(w, err)
 		return
