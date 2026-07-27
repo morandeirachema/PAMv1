@@ -785,6 +785,7 @@ func run() error {
 		RecordingDays: cfg.RecordingRetentionDays,
 		AuditDays:     cfg.AuditRetentionDays,
 		AuditChained:  cfg.AuditHMACKey != "",
+		ArchiveDir:    cfg.RetentionArchiveDir,
 	})
 	// SIEM audit forwarding (Phase 35): stream every audit event to a collector.
 	if cfg.AuditForwardAddr != "" {

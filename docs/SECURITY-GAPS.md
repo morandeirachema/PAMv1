@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-07-27 · Reflects: Phases 0–48 + the 2026-07 hardening passes.
+> Last updated: 2026-07-27 · Reflects: Phases 0–49 + the 2026-07 hardening passes.
 
 ## How the review was run
 
@@ -111,9 +111,12 @@ what the same sweep found and did **not** fix is listed under
   `prev_hash` to be nil), so the retention worker prunes audit rows only for the
   *unchained* table and skips (loudly) when the chain is enabled. This is a
   deliberate integrity-over-convenience choice: tamper-evidence is never silently
-  traded for disk space. With the chain on, retention is an operator step — export
-  to WORM (`GET /api/audit/export`, digest-stamped) then re-anchor. Recording-file
-  pruning always runs (it preserves the `.chain` head).
+  traded for disk space. Since **Phase 49** `PAM_RETENTION_ARCHIVE_DIR` makes the
+  scheduled **WORM export** happen automatically even with the chain on (JSON
+  Lines, digest-stamped into `audit.archived`) — only the delete stays a manual
+  re-anchor — and for the unchained table the prune runs **only if that archive
+  succeeded**. Recording-file pruning always runs (it preserves the `.chain` head),
+  and with an archive configured aged recordings are moved there rather than deleted.
 
 ## Open findings from the 2026-07-26 sweep
 

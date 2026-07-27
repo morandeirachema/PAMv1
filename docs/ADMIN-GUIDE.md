@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-07-27 · Reflects: Phases 0–48 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-07-27 · Reflects: Phases 0–49 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -265,6 +265,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_AUDIT_SIGN_SEED` | | (off) | base64 32-byte ed25519 seed (needs `PAM_AUDIT_HMAC_KEY`) enabling **signed checkpoints** (`GET /api/audit/head`) so an auditor can detect **tail truncation**. See §9.2. |
 | `PAM_AUDIT_FORWARD_ADDR` | | (off) | host:port of a SIEM collector; **continuously forwards** every audit event (Phase 35). `PAM_AUDIT_FORWARD_PROTO` (`udp`/`tcp`/`tls` — tls verifies the collector's certificate, always), `PAM_AUDIT_FORWARD_FORMAT` (`rfc5424`/`cef`/`leef`), `PAM_AUDIT_FORWARD_CA` (PEM bundle pinning the collector's CA, tls only), `PAM_AUDIT_FORWARD_INTERVAL_SEC` (`10`) tune it. See §9.2. |
 | `PAM_RECORDING_RETENTION_DAYS` / `PAM_AUDIT_RETENTION_DAYS` | | `0` (∞) | **Prune** recordings / audit rows older than N days (Phase 36). Audit pruning is skipped while the HMAC chain is on. `PAM_RETENTION_INTERVAL_HOURS` (`24`) is the sweep cadence. See §9.2. |
+| `PAM_RETENTION_ARCHIVE_DIR` | | (delete on expiry) | **Archive before pruning** (Phase 49): aged audit rows are exported as digest-stamped JSON Lines and aged recordings are moved here (write-once, `0400`), and the delete runs **only if the archive succeeded**. Point it at WORM storage. See §9.2. |
 | `PAM_BROKER_POLICY_FILE` | | (off) | YAML policy file — **its presence enables the AI-agent access broker** (Phase 13). |
 | `PAM_BROKER_AUDIT_KEY` | broker only | — | base64 32-byte HMAC key for the verifiable audit chain (required once the broker is on). |
 | `PAM_BROKER_AUDIT_SIGN_SEED` | broker only | — | base64 32-byte ed25519 seed signing the audit-chain head (truncation detection). |
@@ -1327,11 +1328,33 @@ export PAM_RETENTION_INTERVAL_HOURS=24    # sweep daily (default)
 Recording pruning preserves the `.chain` head (and any non-recording file), so it
 never corrupts the recordings' hash chain. **Audit pruning is refused while the
 tamper-evident HMAC chain is enabled** (`PAM_AUDIT_HMAC_KEY`): deleting old rows
-would break `GET /api/audit/verify`, so the worker skips it and logs a warning.
-With the chain on, do retention out-of-band — **export to WORM storage**
-(`GET /api/audit/export`, which stamps a SHA-256 digest) and re-anchor — rather
-than delete in place. Both windows default to `0` (keep forever). Each sweep
-audits what it removed (`recording.pruned`, `audit.pruned`).
+would break `GET /api/audit/verify`, so the worker declines the delete and logs a
+warning. Both windows default to `0` (keep forever). Each sweep audits what it
+removed (`recording.pruned`, `audit.pruned`).
+
+**Archive to WORM before pruning (Phase 49).** Deleting evidence is only
+acceptable once it is safely somewhere else. Point the worker at an archive
+directory — an S3 Object Lock mount, a WORM appliance, any write-once volume —
+and pruning becomes archive-then-prune:
+
+```bash
+export PAM_RETENTION_ARCHIVE_DIR=/mnt/worm/pamv1
+```
+
+- Aged audit rows are exported as **JSON Lines** (one complete event per line, so
+  a truncated file still parses up to the break) and aged recordings are **moved**
+  there instead of destroyed — the artifact and its hash-chain membership survive.
+- **The prune runs only if the archive succeeded.** A full or unwritable archive
+  costs you disk space, never the trail: the worker logs an error and deletes
+  nothing.
+- Each export appends `audit.archived` / `recording.archived` naming the file and
+  stamping the **SHA-256 of the bytes on disk**, so an auditor re-hashes the
+  archive and proves it is what was removed.
+- Files are written once (`O_EXCL`, mode `0400`) and never overwritten. pamv1
+  can't make your storage immutable — that's the mount — but it will not replace
+  an archived artifact.
+- **With the HMAC chain on you now still get the scheduled export**; only the
+  delete stays manual (re-anchor the chain, then reclaim the space).
 
 ### 9.3 Session recordings
 
@@ -1361,10 +1384,9 @@ where reading it needs `read_audit`, exactly like replaying the recording. The
 console's recordings screen (menu 19) resolves it back, so it still lists
 Target and Actor per row; `GET /api/recordings` returns the same two fields.
 Set both flags together to cover content and metadata. Recordings written under
-the old naming keep their names and keep replaying; nothing is migrated.
-- **The file name is not encrypted.** It still carries the target and the actor, so
-  treat the directory listing itself as metadata worth protecting.
-
+the old naming keep their names and keep replaying; nothing is migrated. Leave
+the flag off and the file name still carries target and actor, so treat the
+directory listing itself as metadata worth protecting.
 
 Each proxied session is recorded in [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/)
 under `PAM_RECORDING_DIR`, and its SHA-256 is written to the audit trail (tamper
@@ -1687,6 +1709,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-07-27 | **Phase 49 — archive to WORM before pruning.** `PAM_RETENTION_ARCHIVE_DIR` makes retention archive-then-prune: aged audit rows are exported as digest-stamped JSON Lines and aged recordings are moved into a write-once archive, and **the delete runs only if the archive succeeded** — a broken archive costs disk space, not evidence. New audit actions `audit.archived` / `recording.archived`. With the HMAC chain on you now get the scheduled export too; only the delete stays a manual re-anchor. See §9.2 and §4. |
 | 2026-07-27 | **Phase 48 — opaque recording file names.** `PAM_RECORDING_OPAQUE_NAMES=true` names recordings by timestamp + random hex, so the recording volume (and its backups) no longer reveals who accessed which system. Target and actor move to the audit trail; the console's recordings screen and `GET /api/recordings` resolve them back for anyone who may already read audit. Pair with `PAM_RECORDING_ENCRYPT` for content + metadata. See §9.3 and §4. |
 | 2026-07-27 | **Phase 47 — LEEF + TLS for the SIEM forwarder.** `PAM_AUDIT_FORWARD_FORMAT=leef` speaks IBM QRadar's LEEF 2.0, and `PAM_AUDIT_FORWARD_PROTO=tls` streams the trail over verified TLS (RFC 5425, octet-counted syslog framing) — pin the collector's CA with `PAM_AUDIT_FORWARD_CA`, or leave it empty for the system roots. Verification cannot be disabled. See §9.2 and §4. |
 | 2026-07-27 | **Phase 46 — per-item four-eyes on certification.** Grants record their creator (migration `0023`), campaign items snapshot it ("granted by X"), and certifying a grant you created is refused + audited; self-revoke stays allowed. Legacy rows without a recorded creator are not blocked. See §9.6 |
