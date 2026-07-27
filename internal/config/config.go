@@ -176,6 +176,12 @@ type Config struct {
 	RecordingRetentionDays int
 	AuditRetentionDays     int
 	RetentionIntervalHours int
+	// RetentionArchiveDir, when set, turns pruning into archive-then-prune
+	// (Phase 49): aged audit rows are exported as digest-stamped JSON Lines and
+	// aged recordings are MOVED into this directory — meant to be write-once
+	// storage — and the delete runs only if that archive succeeded. Empty keeps
+	// the plain delete-on-expiry behavior.
+	RetentionArchiveDir string
 
 	// OT hardening (Phase 8). RequireApproval gates every target's connect paths
 	// behind an approved access request (4-eyes / maintenance window).
@@ -430,6 +436,7 @@ func Load() (*Config, error) {
 		RecordingRetentionDays:  integer("PAM_RECORDING_RETENTION_DAYS", 0),
 		AuditRetentionDays:      integer("PAM_AUDIT_RETENTION_DAYS", 0),
 		RetentionIntervalHours:  integer("PAM_RETENTION_INTERVAL_HOURS", 24),
+		RetentionArchiveDir:     os.Getenv("PAM_RETENTION_ARCHIVE_DIR"),
 		RequireApproval:         boolean("PAM_REQUIRE_APPROVAL", false),
 		ApprovalWindow:          time.Duration(integer("PAM_APPROVAL_WINDOW_MIN", 60)) * time.Minute,
 		RequireTicket:           boolean("PAM_REQUIRE_TICKET", false),

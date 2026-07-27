@@ -944,13 +944,42 @@ the metadata half of the same exposure.
   unchanged
 - Opt-in, one new environment variable; no schema change, no new routes
 
+## Phase 49 — Archive to WORM before pruning ✅
+
+Phase 36's follow-on. Retention could *delete* aged audit rows and recordings;
+deleting evidence with nowhere for it to go is only acceptable once it has been
+written somewhere durable first.
+
+- [x] **`PAM_RETENTION_ARCHIVE_DIR`** turns pruning into **archive-then-prune**.
+  Aged audit rows are exported as **JSON Lines** (one complete event per line —
+  a truncated array is unparseable, a truncated JSONL file still yields every
+  line before the break) and aged recordings are **moved** into the archive
+  rather than destroyed, preserving the artifact and its hash-chain membership
+- [x] **Fail-closed, which is the point**: the prune runs **only if the archive
+  succeeded**. A full, unwritable or misconfigured archive costs disk space,
+  never the audit trail — proven by a test that points the archive at a
+  non-directory and asserts nothing was pruned and no `audit.pruned` was emitted
+- [x] **Write-once by construction**: every archived file is created with
+  `O_EXCL` and mode `0400`, so a re-run cannot silently replace an artifact and
+  a careless process cannot append to one; a partial write is removed rather
+  than left looking complete. pamv1 cannot make storage immutable from inside
+  the process — that is the operator's WORM mount — but it never overwrites
+- [x] **Verifiable after the fact**: each export appends **`audit.archived`**
+  with the file name, event count and the **SHA-256 of the bytes on disk**, so
+  an auditor re-hashes the archive and proves it is the trail that was removed.
+  Recordings get `recording.archived`
+- [x] **The chained trail is now served rather than skipped**: with the HMAC
+  chain on, the scheduled WORM export still runs — only the delete stays a
+  manual re-anchor (deleting the chain head would break `VerifyAuditChain`), and
+  the log says exactly that instead of just refusing
+- Opt-in, one new environment variable; no schema change, no new routes
+
 ### Smaller follow-ons, recorded where they were deferred ⬜
 
 - **Cross-replica live monitoring** (Phase 34) — the SSE watch stream is still
   served by the pod hosting the session.
-- **Archive-to-WORM before pruning** (Phase 36) · **per-file SFTP content
-  recording and path allow/deny** (Phase 32) · **clipboard-content auditing**
-  (Phase 33).
+- **Per-file SFTP content recording and path allow/deny** (Phase 32) ·
+  **clipboard-content auditing** (Phase 33).
 
 ---
 
