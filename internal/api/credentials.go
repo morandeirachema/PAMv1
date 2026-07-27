@@ -105,7 +105,8 @@ func (s *Server) listCredentials(w http.ResponseWriter, r *http.Request) {
 		}
 		targetID = id
 	}
-	creds, err := s.store.ListCredentials(r.Context(), targetID)
+	limit, after := listWindow(r)
+	creds, err := s.store.ListCredentials(r.Context(), targetID, limit, after)
 	if err != nil {
 		storeError(w, err)
 		return
@@ -229,7 +230,7 @@ func (s *Server) runWinRM(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "connection requires an approved access request")
 		return
 	}
-	creds, err := s.store.ListCredentials(r.Context(), target.ID)
+	creds, err := s.store.ListCredentials(r.Context(), target.ID, 0, 0)
 	if err != nil {
 		storeError(w, err)
 		return

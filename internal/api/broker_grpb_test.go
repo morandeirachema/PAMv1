@@ -45,7 +45,7 @@ func TestBrokerApprovalRevealNotLeakedToApprover(t *testing.T) {
 	const rules = "rules:\n  - id: reveal-needs-human\n    tool: reveal_credential\n    effect: require_approval\n    approvers: [team]\n"
 	srv, st := newTestServerOpts(t, nil, brokerOpts(t, &fakeWinRM{result: winrm.Result{}}, rules))
 	seedWinRMTarget(t, srv, "win-rv", "top-secret-pw")
-	creds, _ := st.ListCredentials(context.Background(), 0)
+	creds, _ := st.ListCredentials(context.Background(), 0, 0, 0)
 	credID := creds[0].ID
 	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-rv", "owner": "alice"})
 	tok, _ := jsonMap(t, ad)["token"].(string)

@@ -51,7 +51,7 @@ func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 // campaign cid, returning how many were captured.
 func (s *Server) snapshotAccess(ctx context.Context, cid int64) (int, error) {
 	n := 0
-	targets, err := s.store.ListTargets(ctx)
+	targets, err := s.store.ListTargets(ctx, 0, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -71,7 +71,7 @@ func (s *Server) snapshotAccess(ctx context.Context, cid int64) (int, error) {
 			n++
 		}
 	}
-	safes, err := s.store.ListSafes(ctx)
+	safes, err := s.store.ListSafes(ctx, 0, 0)
 	if err != nil {
 		return 0, err
 	}

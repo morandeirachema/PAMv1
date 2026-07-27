@@ -493,7 +493,7 @@ func TestDBProxyOneTimeApproval(t *testing.T) {
 	v := mustVault(t)
 	fake := startFakePostgres(t, upstreamSecret)
 	seedPGTarget(t, st, v, fake.addr)
-	targets, err := st.ListTargets(context.Background())
+	targets, err := st.ListTargets(context.Background(), 0, 0)
 	if err != nil || len(targets) != 1 {
 		t.Fatalf("seeded targets: %d err %v", len(targets), err)
 	}

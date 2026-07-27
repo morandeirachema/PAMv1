@@ -173,7 +173,7 @@ func TestRotateVaultKEKResumesPartial(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("rotated %d, want 1 (only the pending row)", n)
 	}
-	creds, _ := st.ListCredentials(ctx, target.ID)
+	creds, _ := st.ListCredentials(ctx, target.ID, 0, 0)
 	for _, c := range creds {
 		if _, err := to.Decrypt(ctx, c.SecretEnc, store.CredentialAAD(target.ID, c.ID)); err != nil {
 			t.Fatalf("credential %q should decrypt under the new KEK after resume: %v", c.Username, err)

@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-07-26 · Reflects: Phases 0–43 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-07-27 · Reflects: Phases 0–44 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -313,13 +313,33 @@ that includes it).
 curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/targets \
   -d '{"name":"web-01","host":"10.0.0.5","port":22,"os_type":"linux","protocol":"ssh"}'
 
-# List / inspect / delete
+# List / inspect / edit / delete
 curl -H "X-API-Key: $PAM_API_KEY" http://localhost:8080/api/targets
 curl -H "X-API-Key: $PAM_API_KEY" http://localhost:8080/api/targets/1
+curl -H "X-API-Key: $PAM_API_KEY" -X PUT http://localhost:8080/api/targets/1 \
+  -d '{"name":"web-01","host":"10.0.0.50","port":2222,"os_type":"linux","protocol":"ssh"}'
 curl -H "X-API-Key: $PAM_API_KEY" -X DELETE http://localhost:8080/api/targets/1   # cascades to its credentials
 ```
 
 `os_type` ∈ `linux|windows`; `protocol` ∈ `ssh|winrm|rdp|postgres`.
+
+**Edit, don't recreate** (Phase 44). `PUT /api/targets/{id}` changes a target in
+place with the same validation as create — its credentials, grants, dependencies
+and safe assignment survive, where delete + recreate cascades them away. The
+safe assignment is deliberately not part of the body (`PUT
+/api/targets/{id}/safe` owns it). Safes (`PUT /api/safes/{id}`), users (`PUT
+/api/users/{id}`, role/profile only — the token survives, so a promotion does
+not re-mint it, and you cannot assign capabilities you do not hold) and vendors
+(`PUT /api/vendors/{id}`, org label only) edit the same way. In the console,
+type **2=Change** next to a row. Grants and safe members are not editable by
+design: delete + recreate them (two audited events are a clearer trail).
+
+**Bounded lists.** Every inventory list (`/api/targets`, `/api/credentials`,
+`/api/users`, `/api/safes`, `/api/checkouts`, `/api/access-requests`,
+`/api/vendors`) serves at most 500 rows per request: `?limit=` (default 100,
+clamped 1..500) and `?after=<last id>` page through in ascending id order —
+request the next page starting after the last id you received until a short
+page comes back. The console does this automatically.
 
 **Per-target access grants** restrict who may connect. A target with no grants is
 open to any connect-capable user; add grants to lock it down (admins always have
@@ -1640,6 +1660,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-07-27 | **Phase 44 — editable objects and bounded lists.** Targets, safes, users and vendors now have `PUT` endpoints that edit in place — fixing a target's port no longer means delete + recreate (which cascaded away its credentials, grants, dependencies and safe assignment), a role change keeps the user's token, and the same validation, authorization and privilege-escalation guard as create apply. Grants and safe members stay create + delete by design. Every inventory list serves a clamped `?limit=&after=` window (default 100, max 500, ascending id) — page until a short page returns; the console does it automatically and gains 2=Change. Audit gains `target.update`/`safe.update`/`user.update`/`vendor.update`. See §5 |
 | 2026-07-27 | **Phase 43 — the console's two human decision points.** New screens: **Approve AI-agent tool calls** (menu 20) shows each parked call with the agent, who it acts on behalf of, the rule that gated it and its **arguments**, and approves or rejects it; **In-session step-up decisions** (menu 21) lists paused statements and allows or refuses them. Both were previously curl-only, and both are decisions with a deadline — a step-up expires, a parked call blocks its agent. Listing step-ups needs `read_audit`; deciding either needs `approve`. Portal-only: no new routes, schema or settings. See §7 and §9.4 |
 | 2026-07-27 | **Phase 42 — shared custody of the SSH host and CA keys.** Both keys were per-pod files, so running more than one replica handed operators a different host key depending on which pod answered (a warning indistinguishable from a MITM) and a different certificate authority, and broke the operator-certificate challenge. They are now claimed atomically in the database, vault-encrypted, so replicas converge on one key. **Upgrading is safe**: a key already on disk seeds the shared custody rather than being replaced, so a single node keeps the host key it has been serving. A key that cannot be decrypted stops startup instead of being silently regenerated — if you see that, check `PAM_MASTER_KEY`. Recordings are still written per pod; put them on shared storage if you scale out. See §3.4 and §4 |
 | 2026-07-27 | **Phase 41 — session recordings encrypted at rest.** `PAM_RECORDING_ENCRYPT=true` seals session recordings and WinRM transcripts with a per-recording key wrapped by your KEK (local / Vault Transit / AWS KMS / PKCS#11), so the artifact that holds what the operator typed and saw is protected like a credential rather than by file permissions. Replay from the console is unchanged and the tamper-evidence verdict still works — the hash covers the stored bytes. Existing recordings keep replaying (the format is detected per file). Note the file NAME still carries target and actor. See §4 and §9.3 |

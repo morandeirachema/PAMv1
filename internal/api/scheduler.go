@@ -93,7 +93,7 @@ func (s *Server) invalidateCheckout(ctx context.Context, co store.Checkout, now 
 // checkout and marks the lease returned, so a secret revealed at checkout stops
 // working even when the holder never checks it back in. Returns the count rotated.
 func (s *Server) sweepExpiredCheckouts(ctx context.Context, now time.Time) int {
-	cos, err := s.store.ListCheckouts(ctx, false, now)
+	cos, err := s.store.ListCheckouts(ctx, false, now, 0, 0)
 	if err != nil {
 		s.log.Error("lifecycle: list checkouts", "err", err)
 		return 0
@@ -124,7 +124,7 @@ func (s *Server) sweepExpiredCheckouts(ctx context.Context, now time.Time) int {
 // holder's still-valid secret. Returns whether it rotated; an error means an
 // expired lease existed but could not be invalidated (the caller must not proceed).
 func (s *Server) invalidateExpiredCheckoutFor(ctx context.Context, credentialID int64, now time.Time) (bool, error) {
-	cos, err := s.store.ListCheckouts(ctx, false, now)
+	cos, err := s.store.ListCheckouts(ctx, false, now, 0, 0)
 	if err != nil {
 		return false, err
 	}
@@ -214,7 +214,7 @@ func (s *Server) runLifecycleOnce(ctx context.Context, maxAge time.Duration, now
 	// never returned, so "the password the holder saw stops working" holds even
 	// without an explicit check-in.
 	rep.Rotated += s.sweepExpiredCheckouts(ctx, now)
-	creds, err := s.store.ListCredentials(ctx, 0)
+	creds, err := s.store.ListCredentials(ctx, 0, 0, 0)
 	if err != nil {
 		s.log.Error("lifecycle: list credentials", "err", err)
 		return rep

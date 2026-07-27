@@ -18,7 +18,7 @@ func TestPostSessionRotationCallback(t *testing.T) {
 	st := memstore.New()
 	v := mustVault(t)
 	target := seedTarget(t, st, v, host, port)
-	creds, _ := st.ListCredentials(context.Background(), target.ID)
+	creds, _ := st.ListCredentials(context.Background(), target.ID, 0, 0)
 	credID := creds[0].ID
 
 	fired := make(chan int64, 1)
