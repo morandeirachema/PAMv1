@@ -916,10 +916,36 @@ trail — the evidence — previously left the building only as cleartext UDP/TC
 - One new environment variable (`PAM_AUDIT_FORWARD_CA`); no new routes, no
   schema change
 
+## Phase 48 — Opaque recording file names ✅
+
+Phase 41's documented limit, closed: the recording *content* was sealed, but
+the file **name** — `<unixnano>_<target>_<actor>` — still told anyone with
+volume, backup or snapshot access who reached which system and when. That is
+the metadata half of the same exposure.
+
+- [x] **`PAM_RECORDING_OPAQUE_NAMES`** names a recording
+  `<unixnano>_<8 random hex>`. One helper (`recording.Title`) serves all four
+  recorders — interactive SSH, SSH exec, PostgreSQL and WinRM transcripts —
+  and lives in `internal/recording`, which `proxy` and `api` both already
+  import, so this adds no package edge
+- [x] **The timestamp prefix survives** in both modes, because retention
+  pruning and the newest-first listing key off the name alone; 500 names
+  minted in the same nanosecond are all distinct. A `crypto/rand` failure
+  falls back to the descriptive name rather than a predictable one — a
+  collision would overwrite another session's evidence, which is worse than
+  the metadata it hides
+- [x] **The metadata moves to where reading it is already gated**:
+  `GET /api/recordings` (read_audit, like replay) resolves each file's target
+  and actor from the audited `session.record` / `winrm.run` event, matching on
+  base name so the SSH proxy's full-path detail and the DB/WinRM bare-name
+  detail both work. Best-effort — an audit read failure degrades the listing
+  to names only, and an unaudited file lists empty rather than guessed. The
+  console gains Target and Actor columns, so the operator experience is
+  unchanged
+- Opt-in, one new environment variable; no schema change, no new routes
+
 ### Smaller follow-ons, recorded where they were deferred ⬜
 
-- **Recording file names carry target and actor** (Phase 41) — the content is
-  sealed, the metadata is not.
 - **Cross-replica live monitoring** (Phase 34) — the SSE watch stream is still
   served by the pod hosting the session.
 - **Archive-to-WORM before pruning** (Phase 36) · **per-file SFTP content

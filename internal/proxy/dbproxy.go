@@ -60,6 +60,9 @@ type DBConfig struct {
 	OnSessionEnd func(credentialID int64)
 	// EncryptRecordings seals recordings at rest (PAM_RECORDING_ENCRYPT).
 	EncryptRecordings bool
+	// OpaqueRecordingNames names recording files by timestamp + random hex
+	// (PAM_RECORDING_OPAQUE_NAMES, Phase 48).
+	OpaqueRecordingNames bool
 	// CommandGuard blocks SQL statements matching its deny patterns (Phase 16).
 	CommandGuard *cmdguard.Guard
 	// Live receives each recorded statement keyed by session id, so a supervisor
@@ -88,6 +91,7 @@ type DBProxy struct {
 	store        store.Store
 	vault        *vault.Vault
 	recKey       recording.KeyWrapper
+	opaqueNames  bool
 	resolver     *auth.Resolver
 	log          *slog.Logger
 	recordingDir string
@@ -132,6 +136,7 @@ func NewDB(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg DBConfig
 		store:        st,
 		vault:        v,
 		recKey:       recKeyFor(cfg.EncryptRecordings, v),
+		opaqueNames:  cfg.OpaqueRecordingNames,
 		resolver:     resolver,
 		log:          logging.Component("dbproxy"),
 		recordingDir: cfg.RecordingDir,
@@ -488,7 +493,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	d.log.Info("db session started", "actor", actor, "target", target.Name, "db", database, "cred_user", cred.Username, "remote", remote)
 
 	var rec *Recording
-	if r, rerr := newRecording(context.Background(), d.recordingDir, "pgsql-"+actor+"-"+target.Name+"-"+time.Now().UTC().Format("20060102-150405"), time.Now(), d.maxRecBytes, d.recKey); rerr == nil {
+	if r, rerr := newRecording(context.Background(), d.recordingDir, recording.Title(d.opaqueNames, time.Now(), "pgsql-"+target.Name, actor), time.Now(), d.maxRecBytes, d.recKey); rerr == nil {
 		rec = r
 	} else {
 		d.audit(ctx, actor, "session.record_failed", "proto:postgres target:"+target.Name+" err:"+rerr.Error())

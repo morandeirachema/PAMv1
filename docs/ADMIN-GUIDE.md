@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-07-27 · Reflects: Phases 0–47 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-07-27 · Reflects: Phases 0–48 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -239,6 +239,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_GUACD_ADDR` | | (RDP off) | `host:port` of the `guacd` daemon that brokers RDP (the Docker/K8s/Helm deploys ship one). See §5 → *RDP*. |
 | `PAM_GUACD_RECORDING_PATH` | | (off) | Directory where **guacd** writes its own server-side RDP session recordings; the recording's name lands in the `rdp.connect` audit event. Separate from `PAM_RECORDING_DIR`, which holds the SSH/WinRM/PostgreSQL asciicasts. |
 | `PAM_RECORDING_DIR` | | `recordings` | Where session recordings are written. |
+| `PAM_RECORDING_OPAQUE_NAMES` | | `false` | Name recording files `<timestamp>_<random hex>` instead of `<timestamp>_<target>_<actor>` (Phase 48), so a backup or snapshot of the recording volume reveals no access metadata. Target and actor then live only in the audit trail — the console's recordings screen (menu 19) still shows both, resolved from it. Pair with `PAM_RECORDING_ENCRYPT` to cover content *and* metadata. See §9.3. |
 | `PAM_RECORDING_ENCRYPT` | | `false` | **Seal recordings and WinRM transcripts at rest** (Phase 41): chunked AES-256-GCM under a per-recording data key wrapped by your KEK, so they inherit the same root of trust as credentials. Replay through the portal is unaffected — playback decrypts, and detects the format per file so recordings written before you enabled it still work. The trade: a `.cast` can no longer be fed straight to `asciinema`. See §9.3. |
 | `PAM_LOG_LEVEL` | | `info` | `debug` \| `info` \| `warn` \| `error`. |
 | `PAM_LOG_FORMAT` | | `json` | `json` (for SIEM) \| `text` (for humans). |
@@ -1349,6 +1350,18 @@ your credentials (local, Vault Transit, AWS KMS or a PKCS#11 HSM). Practical not
   (which is the audited path anyway).
 - **A KEK outage fails closed** — the session is refused rather than recorded in
   the clear.
+
+**Opaque file names (Phase 48).** Encryption seals the *content*; the file
+**name** was still `<timestamp>_<target>_<actor>`, so a backup, a snapshot or
+read access to the recording volume told you who reached which system and when
+without opening a single file. Set `PAM_RECORDING_OPAQUE_NAMES=true` and
+recordings are named `<timestamp>_<random hex>` instead. The mapping does not
+disappear — it moves into the audited `session.record` / `winrm.run` event,
+where reading it needs `read_audit`, exactly like replaying the recording. The
+console's recordings screen (menu 19) resolves it back, so it still lists
+Target and Actor per row; `GET /api/recordings` returns the same two fields.
+Set both flags together to cover content and metadata. Recordings written under
+the old naming keep their names and keep replaying; nothing is migrated.
 - **The file name is not encrypted.** It still carries the target and the actor, so
   treat the directory listing itself as metadata worth protecting.
 
@@ -1674,6 +1687,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-07-27 | **Phase 48 — opaque recording file names.** `PAM_RECORDING_OPAQUE_NAMES=true` names recordings by timestamp + random hex, so the recording volume (and its backups) no longer reveals who accessed which system. Target and actor move to the audit trail; the console's recordings screen and `GET /api/recordings` resolve them back for anyone who may already read audit. Pair with `PAM_RECORDING_ENCRYPT` for content + metadata. See §9.3 and §4. |
 | 2026-07-27 | **Phase 47 — LEEF + TLS for the SIEM forwarder.** `PAM_AUDIT_FORWARD_FORMAT=leef` speaks IBM QRadar's LEEF 2.0, and `PAM_AUDIT_FORWARD_PROTO=tls` streams the trail over verified TLS (RFC 5425, octet-counted syslog framing) — pin the collector's CA with `PAM_AUDIT_FORWARD_CA`, or leave it empty for the system roots. Verification cannot be disabled. See §9.2 and §4. |
 | 2026-07-27 | **Phase 46 — per-item four-eyes on certification.** Grants record their creator (migration `0023`), campaign items snapshot it ("granted by X"), and certifying a grant you created is refused + audited; self-revoke stays allowed. Legacy rows without a recorded creator are not blocked. See §9.6 |
 | 2026-07-27 | **Phase 45 — the remaining console screens.** Everything that was curl-only now has a 5250 screen: vendors & contract grants (menu 22 — register, change org, offboard, add/approve/revoke grants, evidence export with its SHA-256), operator SSH certificates (23 — plus a new `GET /api/ca/ssh/certs` listing so the serials a revocation needs are visible), identity blast radius (24), login sessions (25), AI-agent keys (26), credential dependents (option 9 on a credential), and the audit screen's chain controls (F6=Verify, F7=Signed head, F10=OCSF export). The console is back at **full parity**. See §5–§9 |
