@@ -89,6 +89,7 @@
   let profiles = [], configItems = [], configNote = "", effCfg = null, iacText = "", iacFormat = "";
   let safes = [], safeMembers = [], membersSafe = 0, safeTarget = null;
   let campaigns = [], campView = null, risk = null, riskMin = "", riskWin = "";
+  let brokerApprovals = [], stepUps = [];
   let watchSess = null, watchAbort = null, watchText = "";
   let liveTimer = null;
   let recordings = [], replay = null; // replay = one loaded recording + player state
@@ -163,6 +164,22 @@
   async function openAudit() { try { audit = await api("GET", "/api/audit?limit=100"); } catch (e) { audit = []; } go("audit"); }
   async function openReconcile() { reconcileReport = null; try { reconcileReport = await api("GET", "/api/reconcile"); } catch (e) {} go("reconcile"); }
   async function openGrants(tid) { grantsTarget = tid; try { grants = await api("GET", `/api/targets/${tid}/grants`); } catch (e) { grants = []; } go("grants"); }
+  // Broker approvals (Phase 43): a parked agent tool call waits for a human. The
+  // routes exist only when the broker is enabled, so a 404 shows a hint rather
+  // than an error, matching the application-secrets screen.
+  async function openBrokerApprovals() {
+    brokerApprovals = [];
+    try { brokerApprovals = await api("GET", "/v1/approvals"); }
+    catch (e) { if (e.status === 404) say("AI-AGENT BROKER IS DISABLED (set PAM_BROKER_POLICY_FILE)."); }
+    go("brokerapprovals");
+  }
+  // Step-ups (Phase 43): a paused statement is waiting on a supervisor and will
+  // be refused when its TTL expires, so this screen is time-critical.
+  async function openStepUps() {
+    stepUps = [];
+    try { stepUps = await api("GET", "/api/sessions/stepups"); } catch (e) {}
+    go("stepups");
+  }
   async function openRequests() {
     requests = [];
     if (can("approve")) { try { requests = await api("GET", "/api/access-requests"); } catch (e) {} }
@@ -540,6 +557,8 @@ ${fkeys("")}
           line(17, can("read_audit"), "Certification campaigns") +
           line(18, can("read_audit"), "Risk analytics") +
           line(19, can("read_audit"), "Session recordings (replay)") +
+          line(20, can("approve"), "Approve AI-agent tool calls") +
+          line(21, can("read_audit"), "In-session step-up decisions") +
           "90. Sign off\n";
         term.innerHTML = `${head("PAMMAIN", "PAMV1 Main Menu")}
 Select one of the following:
@@ -557,7 +576,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
             "8": openUsers, "9": openMfa, "10": openAudit, "11": () => go("breakglass"),
             "12": openProfiles, "13": openConfig, "14": openEffective,
             "15": openApps, "16": openSafes, "17": openCampaigns, "18": openRisk,
-            "19": openRecordings, "90": signoff,
+            "19": openRecordings, "20": openBrokerApprovals, "21": openStepUps, "90": signoff,
           };
           if (routes[c]) { try { await routes[c](); } catch (e) { say("CPF9999: " + e.message, true); render(); } }
           else { say("CPF0001: SELECTION " + c.toUpperCase() + " NOT VALID.", true); render(); }
@@ -805,6 +824,69 @@ Session <span class="white">${esc(String(s.id).slice(0, 8))}</span>  actor <span
 ${fkeys("F3=Exit   F12=Stop watching")}`;
         const pane = document.getElementById("watch-pane");
         if (pane) pane.scrollTop = pane.scrollHeight;
+      },
+
+      // Broker approvals (Phase 43). A parked agent tool call shows what the agent
+      // asked for AND its arguments — the arguments are what policy gated on, so an
+      // approver who cannot see them is not really deciding. Approving executes the
+      // call server-side with a just-in-time credential; the agent never sees it.
+      brokerapprovals() {
+        back = "main";
+        term.innerHTML = `${head("PAMBRKAPR", "Approve AI-Agent Tool Calls")}
+Parked calls awaiting a human decision. Type options, press Enter.
+  <span class="cyan">5=Approve (executes server-side)   6=Reject</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>Call</th><th>Agent</th><th>On behalf of</th><th>Tool</th><th>Arguments</th><th>Rule</th><th>Approvers</th><th>Waiting since</th></tr>
+${brokerApprovals.map((a) => `<tr><td>${opt(a.call_id)}</td><td>${pad(String(a.call_id).slice(0, 8), 9)}</td><td class="white">${pad(a.agent, 10)}</td><td>${pad(a.on_behalf_of || "-", 10)}</td><td class="amber">${pad(a.tool, 14)}</td><td>${pad(JSON.stringify(a.args || {}), 34)}</td><td>${pad(a.rule_id || "-", 10)}</td><td class="cyan">${pad((a.approvers || []).join(",") || "any", 12)}</td><td class="cyan">${fmtTime(a.requested_at)}</td></tr>`).join("")}
+</table>${brokerApprovals.length ? "" : `<div class="cyan indent">(No parked tool calls.)</div>`}
+<input type="submit" hidden></form>
+<span class="cyan">Four-eyes: you cannot approve a call made by an agent you own. Separation of duties: the rule's approver groups decide.</span>
+${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const a of brokerApprovals) {
+              const o = optVal(ev.target, a.call_id);
+              if (o === "5") { await api("POST", `/v1/approvals/${a.call_id}/decision`, { approve: true }); say(`CALL ${String(a.call_id).slice(0, 8)} APPROVED AND EXECUTED.`); }
+              else if (o === "6") { await api("POST", `/v1/approvals/${a.call_id}/decision`, { approve: false }); say(`CALL ${String(a.call_id).slice(0, 8)} REJECTED.`); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openBrokerApprovals();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      // In-session step-up (Phase 43). Unlike every other list in this console
+      // these entries EXPIRE: a paused statement is refused when PAM_DB_STEPUP_TTL_SEC
+      // runs out, so the screen states that plainly and the session survives either way.
+      stepups() {
+        back = "main";
+        const canDecide = can("approve");
+        term.innerHTML = `${head("PAMSTEPUP", "In-Session Step-Up Decisions")}
+Statements paused mid-session, waiting for a supervisor. ${canDecide ? `Type options, press Enter.
+  <span class="cyan">5=Allow the statement   6=Refuse it</span>` : `<span class="cyan">You may watch; deciding needs the approve capability.</span>`}
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>Session</th><th>Actor</th><th>Statement</th><th>Paused at</th></tr>
+${stepUps.map((p) => `<tr><td>${canDecide ? opt(p.session_id) : ""}</td><td>${pad(String(p.session_id).slice(0, 8), 9)}</td><td class="white">${pad(p.actor, 12)}</td><td class="amber">${pad(p.statement, 46)}</td><td class="cyan">${fmtTime(p.requested_at)}</td></tr>`).join("")}
+</table>${stepUps.length ? "" : `<div class="cyan indent">(Nothing is waiting. Paused statements appear here the moment they match PAM_DB_STEPUP_FILE.)</div>`}
+<input type="submit" hidden></form>
+<span class="cyan">These expire: a statement left undecided is refused when its TTL runs out. The session stays open either way.</span>
+${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          if (!canDecide) { say("CPF0002: DECIDING REQUIRES THE APPROVE CAPABILITY.", true); return render(); }
+          try {
+            for (const p of stepUps) {
+              const o = optVal(ev.target, p.session_id);
+              if (o === "5") { await api("POST", `/api/sessions/${p.session_id}/stepup`, { approve: true }); say("STATEMENT ALLOWED."); }
+              else if (o === "6") { await api("POST", `/api/sessions/${p.session_id}/stepup`, { approve: false }); say("STATEMENT REFUSED."); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openStepUps();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
       },
 
       requests() {
