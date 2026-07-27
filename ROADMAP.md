@@ -1035,6 +1035,50 @@ actually matters.
   both rename directions, an allowed path still working in the same session,
   and nothing bearing a denied path ever reaching the target
 
+### Open findings from the post-beta sweep (2026-07-27) ⬜
+
+A second full read-only sweep, run right after the beta milestone across six
+dimensions in parallel, found **thirty** issues — every one confirmed by reading
+the code, all recorded with their reasoning in
+**[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md#open-findings-from-the-2026-07-27-sweep-post-beta)**,
+which is the authoritative detail. Two were housekeeping and are already fixed in
+that same change (a CI filter that left two live-PostgreSQL security tests
+running nowhere, and a deployment env reference five phases stale). The rest is
+real work, in rough priority order:
+
+1. **Remote code execution through credential dependencies** — the dependency
+   name is interpolated into a `cmd.exe` command line with no metacharacter
+   check, the host is never constrained to the target inventory, and the path
+   calls WinRM directly so it escapes command control, session supervision and
+   recording. The related `net user` rotation blocklist misses `&` and friends.
+   Fix these first.
+2. **`-rotate-kek` is broken by its own successors** — it does not re-wrap the
+   Phase-42 key-custody envelopes, so the documented rotation leaves the server
+   unable to start on a default config, and it strands every sealed recording,
+   whose data keys are wrapped in the files rather than the store.
+3. **Two same-day regressions from phases 44–51** — Phase 48's metadata lookup
+   asks for 2000 audit events where PostgreSQL silently returns 100, so it works
+   on the test store and not in production; and Phase 45's certificate listing
+   serialises a nanosecond-seeded serial as a JSON number, past the exact-integer
+   range, so the console's revoke option cannot revoke a real certificate. Both
+   passed their tests. The root cause of the first — the store contract not
+   covering limit semantics — is worth closing on its own.
+4. **The RDP tunnel authenticates itself and reproduces none of the middleware's
+   failure handling** — the only bearer surface with neither throttling nor an
+   `api.auth_failed` record, and its authorization denials are unaudited too.
+5. **Cancellation and deadlines at the edges** — a killed `ssh_exec` keeps
+   running on the target, neither proxy has a pre-authentication deadline, and a
+   global 30-second write timeout has been silently capping every live-monitoring
+   stream since the feature shipped.
+6. **Gates that do not match their peers** — in-session step-up allows
+   self-approval, the broker's credential tools skip the approval gate,
+   `createVendor` skips the privilege-escalation guard, and the RDP and REST
+   WinRM paths audit best-effort where the proxies fail closed.
+7. **The rest** — audit-trail integrity (unauthenticated unbounded appends,
+   unquoted details), archive duplication and wedging under Phase 49, expired
+   login sessions never collected, 50-bit MFA recovery codes, and a handful of
+   smaller consistency gaps.
+
 ### Smaller follow-ons, recorded where they were deferred ⬜
 
 - **Cross-replica live monitoring** (Phase 34) — the SSE watch stream is still
