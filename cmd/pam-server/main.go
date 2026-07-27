@@ -42,6 +42,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/config"
 	"github.com/morandeirachema/pamv1/internal/conjur"
+	"github.com/morandeirachema/pamv1/internal/keycustody"
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/maint"
 	"github.com/morandeirachema/pamv1/internal/oidc"
@@ -663,9 +664,19 @@ func run() error {
 	// short-lived certificates JIT) and the API (which publishes its public key).
 	var sshCA *sshca.CertAuthority
 	if cfg.SSHCAKeyPath != "" {
-		sshCA, err = sshca.LoadOrCreate(cfg.SSHCAKeyPath)
+		caPEM, adopted, kerr := keycustody.Ensure(ctx, st, v, keycustody.NameSSHCAKey, cfg.SSHCAKeyPath, sshca.GenerateKeyPEM)
+		if caPEM == nil {
+			return fmt.Errorf("ssh ca key: %w", kerr)
+		}
+		if kerr != nil {
+			log.Warn("ssh ca key custody", "err", kerr) // mirror failed; the key itself is fine
+		}
+		sshCA, err = sshca.FromPEM(caPEM)
 		if err != nil {
 			return fmt.Errorf("ssh ca key: %w", err)
+		}
+		if adopted {
+			log.Info("adopted the cluster's SSH certificate authority from shared custody")
 		}
 		log.Info("zero standing privilege enabled (SSH certificate authority)",
 			"fingerprint", sshCA.Fingerprint(), "cert_ttl", cfg.SSHCertTTL.String())
@@ -806,9 +817,22 @@ func run() error {
 		close(dbProxyDone)
 	}
 	if cfg.SSHAddr != "off" {
-		hostKey, err := proxy.LoadOrCreateHostKey(cfg.SSHHostKeyPath)
+		// Shared custody (Phase 42): every replica ends up serving the SAME host key,
+		// so an operator hitting a different pod does not get a host-key-changed
+		// warning that is indistinguishable from a MITM.
+		hostPEM, adopted, kerr := keycustody.Ensure(ctx, st, v, keycustody.NameSSHHostKey, cfg.SSHHostKeyPath, proxy.GenerateHostKeyPEM)
+		if hostPEM == nil {
+			return fmt.Errorf("ssh host key: %w", kerr)
+		}
+		if kerr != nil {
+			log.Warn("ssh host key custody", "err", kerr)
+		}
+		hostKey, err := proxy.HostKeyFromPEM(hostPEM)
 		if err != nil {
 			return fmt.Errorf("ssh host key: %w", err)
+		}
+		if adopted {
+			log.Info("adopted the cluster's SSH host key from shared custody")
 		}
 		var onSessionEnd func(int64)
 		if cfg.RotateAfterSession {

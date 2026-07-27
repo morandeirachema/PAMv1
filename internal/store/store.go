@@ -32,6 +32,10 @@ func CredentialAAD(targetID, credentialID int64) string {
 	return fmt.Sprintf("target:%d/cred:%d", targetID, credentialID)
 }
 
+// KeyMaterialAAD binds a vault-encrypted long-lived key to its name, so a host
+// key envelope cannot be swapped in as the CA key (Phase 42).
+func KeyMaterialAAD(name string) string { return "keymaterial:" + name }
+
 // MFAAAD binds a vaulted TOTP secret to its owning user.
 func MFAAAD(username string) string {
 	return "mfa:" + username
@@ -666,6 +670,13 @@ type Store interface {
 	// DeleteExpiredBrokerTokens removes spent or expired tokens, returning the
 	// count deleted; a periodic sweep keeps the table bounded.
 	DeleteExpiredBrokerTokens(ctx context.Context) (int64, error)
+
+	// EnsureKeyMaterial claims custody of a named long-lived key. It stores value
+	// only if no row exists for name, and returns whatever is stored either way —
+	// so N replicas starting at the same moment all converge on ONE key instead of
+	// each generating its own (Phase 42). value is the vault envelope of the PEM:
+	// the database never holds usable key material.
+	EnsureKeyMaterial(ctx context.Context, name, value string) (string, error)
 
 	// PutSetting upserts a configuration override, stamping UpdatedAt.
 	PutSetting(ctx context.Context, s *Setting) error

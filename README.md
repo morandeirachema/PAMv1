@@ -293,7 +293,8 @@ All twenty-six phases (0–25) have shipped — full per-phase detail in **[ROAD
 | 39 | Approver capability on the two decision points (step-up release and certification decisions move to `approve`) | ✅ shipped |
 | 40 | Every brokered execution is a supervised session (REST WinRM + agent exec tools join the live-session registry) | ✅ shipped |
 | 41 | Session recordings encrypted at rest (chunked AES-256-GCM under the vault KEK; tamper evidence unchanged) | ✅ shipped |
-| 42–44 | **Planned** — shared host/CA key custody in HA · console parity, second pass · editable objects + bounded lists ([roadmap](ROADMAP.md#next--planned-)) | ⬜ planned |
+| 42 | Shared custody of the SSH host and CA keys in HA (atomic claim in the store; replicas converge on one key) | ✅ shipped |
+| 43–44 | **Planned** — console parity, second pass · editable objects + bounded lists ([roadmap](ROADMAP.md#next--planned-)) | ⬜ planned |
 
 ## Coverage vs. commercial PAM (CyberArk, Wallix, …)
 
