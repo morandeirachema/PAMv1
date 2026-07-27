@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/morandeirachema/pamv1/internal/agentid"
 	"github.com/morandeirachema/pamv1/internal/auditchain"
@@ -93,5 +94,54 @@ func TestProcessCallExecutesWhenAuditWorks(t *testing.T) {
 	out := b.ProcessCall(context.Background(), &agentid.Identity{AgentName: "bot"}, Call{Tool: "t"})
 	if out.Status != StatusExecuted || !ran {
 		t.Fatalf("status=%q ran=%v, want executed/true", out.Status, ran)
+	}
+}
+
+// parkEngine is a policy whose only rule parks tool "t" for human approval.
+func parkEngine(t *testing.T) *policy.Engine {
+	t.Helper()
+	e, err := policy.Load(strings.NewReader("rules:\n  - id: p\n    tool: t\n    effect: require_approval\n    approvers: [ops]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+// TestSweepExpiredParked proves an abandoned parked call is evicted once it
+// outlives the resume-token TTL: the agent polling its status sees a terminal
+// failed outcome (not an eternal pending), the approval queue empties, and a
+// call still inside the TTL survives the sweep.
+func TestSweepExpiredParked(t *testing.T) {
+	chain := newTestChain(t, memstore.New())
+	reg := NewRegistry()
+	ran := false
+	reg.Register(recordingTool{ran: &ran})
+	b := New(parkEngine(t), reg, chain)
+
+	out := b.ProcessCall(context.Background(), &agentid.Identity{AgentName: "bot"}, Call{Tool: "t"})
+	if out.Status != StatusPendingApproval {
+		t.Fatalf("status = %q, want pending_approval", out.Status)
+	}
+	if n := len(b.PendingApprovals()); n != 1 {
+		t.Fatalf("parked = %d, want 1", n)
+	}
+
+	// Inside the TTL nothing is evicted.
+	if n := b.SweepExpiredParked(context.Background(), time.Now()); n != 0 {
+		t.Fatalf("early sweep evicted %d, want 0", n)
+	}
+	// Past the TTL the call is evicted, terminal, and audited.
+	if n := b.SweepExpiredParked(context.Background(), time.Now().Add(16*time.Minute)); n != 1 {
+		t.Fatalf("sweep evicted %d, want 1", n)
+	}
+	if n := len(b.PendingApprovals()); n != 0 {
+		t.Fatalf("parked after sweep = %d, want 0", n)
+	}
+	got, ok := b.Lookup(out.CallID)
+	if !ok || got.Status != StatusFailed || !strings.Contains(got.Reason, "expired") {
+		t.Fatalf("swept outcome = %+v ok=%v, want a terminal failed outcome naming expiry", got, ok)
+	}
+	if ran {
+		t.Fatal("a swept call must never execute")
 	}
 }

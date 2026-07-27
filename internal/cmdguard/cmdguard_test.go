@@ -53,3 +53,23 @@ func TestGuard(t *testing.T) {
 		t.Fatal("expected an error for a malformed pattern")
 	}
 }
+
+// TestParseDeny proves the deny-file loader keeps every line verbatim (New is
+// where comments/blank handling and compilation happen) and round-trips into a
+// working guard — the PAM_COMMAND_DENY_FILE path main.go uses.
+func TestParseDeny(t *testing.T) {
+	lines := ParseDeny("rm -rf /\n# a comment\n\n^shutdown\\b\n")
+	if len(lines) != 4 {
+		t.Fatalf("ParseDeny kept %d lines, want 4 (verbatim)", len(lines))
+	}
+	g, err := New(lines)
+	if err != nil {
+		t.Fatalf("New from parsed file: %v", err)
+	}
+	if _, blocked := g.Blocked("shutdown -h now"); !blocked {
+		t.Fatal("pattern from a parsed file did not block")
+	}
+	if _, blocked := g.Blocked("ls -la"); blocked {
+		t.Fatal("innocent command blocked")
+	}
+}
