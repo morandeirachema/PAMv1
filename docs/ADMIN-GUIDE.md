@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-07-27 · Reflects: Phases 0–46 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-07-27 · Reflects: Phases 0–47 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -262,7 +262,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_REVEAL_DISABLED` | | `false` | Make `reveal` break-glass-only (also forces the broker's `reveal_credential` closed). |
 | `PAM_AUDIT_HMAC_KEY` | | (off) | base64 32-byte key enabling the **tamper-evident HMAC chain** over the primary audit trail; verify with `GET /api/audit/verify`. See §9.2. |
 | `PAM_AUDIT_SIGN_SEED` | | (off) | base64 32-byte ed25519 seed (needs `PAM_AUDIT_HMAC_KEY`) enabling **signed checkpoints** (`GET /api/audit/head`) so an auditor can detect **tail truncation**. See §9.2. |
-| `PAM_AUDIT_FORWARD_ADDR` | | (off) | host:port of a SIEM collector; **continuously forwards** every audit event (Phase 35). `PAM_AUDIT_FORWARD_PROTO` (`udp`/`tcp`), `PAM_AUDIT_FORWARD_FORMAT` (`rfc5424`/`cef`), `PAM_AUDIT_FORWARD_INTERVAL_SEC` (`10`) tune it. See §9.2. |
+| `PAM_AUDIT_FORWARD_ADDR` | | (off) | host:port of a SIEM collector; **continuously forwards** every audit event (Phase 35). `PAM_AUDIT_FORWARD_PROTO` (`udp`/`tcp`/`tls` — tls verifies the collector's certificate, always), `PAM_AUDIT_FORWARD_FORMAT` (`rfc5424`/`cef`/`leef`), `PAM_AUDIT_FORWARD_CA` (PEM bundle pinning the collector's CA, tls only), `PAM_AUDIT_FORWARD_INTERVAL_SEC` (`10`) tune it. See §9.2. |
 | `PAM_RECORDING_RETENTION_DAYS` / `PAM_AUDIT_RETENTION_DAYS` | | `0` (∞) | **Prune** recordings / audit rows older than N days (Phase 36). Audit pruning is skipped while the HMAC chain is on. `PAM_RETENTION_INTERVAL_HOURS` (`24`) is the sweep cadence. See §9.2. |
 | `PAM_BROKER_POLICY_FILE` | | (off) | YAML policy file — **its presence enables the AI-agent access broker** (Phase 13). |
 | `PAM_BROKER_AUDIT_KEY` | broker only | — | base64 32-byte HMAC key for the verifiable audit chain (required once the broker is on). |
@@ -1294,11 +1294,18 @@ collector:
 
 ```bash
 export PAM_AUDIT_FORWARD_ADDR=siem.internal:514
-export PAM_AUDIT_FORWARD_PROTO=udp          # or tcp
-export PAM_AUDIT_FORWARD_FORMAT=rfc5424      # or cef (ArcSight)
+export PAM_AUDIT_FORWARD_PROTO=udp          # or tcp, or tls (syslog over TLS, RFC 5425)
+export PAM_AUDIT_FORWARD_FORMAT=rfc5424      # or cef (ArcSight), or leef (IBM QRadar)
+# For tls: verification is ALWAYS on (there is no insecure switch — this stream
+# is your evidence). Optionally pin the collector's CA; empty = system roots.
+export PAM_AUDIT_FORWARD_CA=/etc/pam/siem-ca.pem
 ```
 
-Every audit event is then streamed as it is written, in order. The forwarder
+Every audit event is then streamed as it is written, in order. Over `tls` the
+syslog format uses the octet-counted framing RFC 5425 requires (rsyslog's
+`imtcp` with TLS and syslog-ng accept it natively); `cef` and `leef` records
+stay newline-delimited on every transport, which is what ArcSight and QRadar
+collectors expect. The forwarder
 tracks a **durable cursor** (the last event it delivered, persisted in the
 settings table), so a restart resumes exactly where it left off — no gap, no
 replay — and a collector outage just means the backlog is delivered once it comes
@@ -1667,6 +1674,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-07-27 | **Phase 47 — LEEF + TLS for the SIEM forwarder.** `PAM_AUDIT_FORWARD_FORMAT=leef` speaks IBM QRadar's LEEF 2.0, and `PAM_AUDIT_FORWARD_PROTO=tls` streams the trail over verified TLS (RFC 5425, octet-counted syslog framing) — pin the collector's CA with `PAM_AUDIT_FORWARD_CA`, or leave it empty for the system roots. Verification cannot be disabled. See §9.2 and §4. |
 | 2026-07-27 | **Phase 46 — per-item four-eyes on certification.** Grants record their creator (migration `0023`), campaign items snapshot it ("granted by X"), and certifying a grant you created is refused + audited; self-revoke stays allowed. Legacy rows without a recorded creator are not blocked. See §9.6 |
 | 2026-07-27 | **Phase 45 — the remaining console screens.** Everything that was curl-only now has a 5250 screen: vendors & contract grants (menu 22 — register, change org, offboard, add/approve/revoke grants, evidence export with its SHA-256), operator SSH certificates (23 — plus a new `GET /api/ca/ssh/certs` listing so the serials a revocation needs are visible), identity blast radius (24), login sessions (25), AI-agent keys (26), credential dependents (option 9 on a credential), and the audit screen's chain controls (F6=Verify, F7=Signed head, F10=OCSF export). The console is back at **full parity**. See §5–§9 |
 | 2026-07-27 | **Phase 44 — editable objects and bounded lists.** Targets, safes, users and vendors now have `PUT` endpoints that edit in place — fixing a target's port no longer means delete + recreate (which cascaded away its credentials, grants, dependencies and safe assignment), a role change keeps the user's token, and the same validation, authorization and privilege-escalation guard as create apply. Grants and safe members stay create + delete by design. Every inventory list serves a clamped `?limit=&after=` window (default 100, max 500, ascending id) — page until a short page returns; the console does it automatically and gains 2=Change. Audit gains `target.update`/`safe.update`/`user.update`/`vendor.update`. See §5 |

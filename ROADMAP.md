@@ -503,7 +503,7 @@ pamv1 could already *alert* on a specific event (`internal/alert`: webhook/syslo
 - [x] **Injection-safe**: actor/action/detail are CR/LF-stripped (and CEF metacharacters escaped), so a directory-supplied name carrying a newline can't forge an extra syslog record
 - [x] **Config** `PAM_AUDIT_FORWARD_ADDR` (host:port; empty = off), `PAM_AUDIT_FORWARD_PROTO` (udp/tcp), `PAM_AUDIT_FORWARD_FORMAT` (rfc5424/cef), `PAM_AUDIT_FORWARD_INTERVAL_SEC` — validated fail-loud
 - [x] **Tests**: a real in-process UDP syslog sink receives forwarded RFC 5424 and CEF messages; the cursor advances (a second flush sends nothing); a "restarted" forwarder resumes from the persisted cursor without replaying; the store contract covers `AuditSince` (pgstore in CI)
-- Deferred (documented): **LEEF** (QRadar) as a third format (trivial to add on the same seam), and **TLS syslog** (RFC 5425) for the transport
+- Deferred (documented): **LEEF** (QRadar) as a third format (trivial to add on the same seam), and **TLS syslog** (RFC 5425) for the transport — both since shipped in Phase 47
 
 ## Phase 36 — Retention / pruning ✅
 
@@ -887,15 +887,44 @@ including the four-eyes follow-on. What remains planned are the smaller
 deferred follow-ons below — each buildable in process; the infra-bound list
 stays in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
 
+## Phase 47 — LEEF format + TLS transport for the SIEM forwarder ✅
+
+The two follow-ons Phase 35 deferred on its own seam, closing them: the audit
+trail — the evidence — previously left the building only as cleartext UDP/TCP.
+
+- [x] **LEEF 2.0** (`PAM_AUDIT_FORWARD_FORMAT=leef`): IBM QRadar's native
+  format — `LEEF:2.0|pamv1|<tag>|1|<action>|` + tab-separated attributes
+  (`devTime` in epoch ms like CEF's `rt`, `usrName`, `msg`). Header fields
+  escape `|`; attribute values strip tabs and CR/LF, so an actor name or
+  detail carrying the delimiter cannot forge an attribute or a record —
+  proven by an injection test
+- [x] **Syslog over TLS** (`PAM_AUDIT_FORWARD_PROTO=tls`, RFC 5425):
+  certificate verification is **always on** — there is deliberately no
+  insecure switch, because the audit trail must never stream to an
+  unauthenticated endpoint. `PAM_AUDIT_FORWARD_CA` pins the collector's CA
+  (PEM bundle; empty = system roots), rejected fail-loud at startup if
+  unreadable or empty, and refused outright on a non-tls proto (a typo must
+  not silently drop the pinning). The syslog format uses the
+  **octet-counted framing** RFC 5425 §4.3 requires; CEF and LEEF are not
+  syslog and stay newline-delimited on every transport
+- [x] **Proven against real sockets**: an in-process TLS collector with a
+  self-signed certificate — pinned via the CA bundle — receives
+  octet-counted syslog; an untrusted collector (different key) is refused,
+  **no audit bytes reach it**, and the cursor stays put so the spooled event
+  is delivered on the next flush through a trusted collector; plus the LEEF
+  wire format and its injection resistance
+- One new environment variable (`PAM_AUDIT_FORWARD_CA`); no new routes, no
+  schema change
+
 ### Smaller follow-ons, recorded where they were deferred ⬜
 
 - **Recording file names carry target and actor** (Phase 41) — the content is
   sealed, the metadata is not.
 - **Cross-replica live monitoring** (Phase 34) — the SSE watch stream is still
   served by the pod hosting the session.
-- **LEEF and TLS syslog** (Phase 35) · **archive-to-WORM before pruning**
-  (Phase 36) · **per-file SFTP content recording and path allow/deny**
-  (Phase 32) · **clipboard-content auditing** (Phase 33).
+- **Archive-to-WORM before pruning** (Phase 36) · **per-file SFTP content
+  recording and path allow/deny** (Phase 32) · **clipboard-content auditing**
+  (Phase 33).
 
 ---
 

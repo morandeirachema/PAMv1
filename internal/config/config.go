@@ -101,12 +101,16 @@ type Config struct {
 	// HMAC chain alone cannot catch). Unset disables the checkpoint endpoint.
 	AuditSignSeed string
 	// AuditForwardAddr, when set (host:port), streams every audit event to a SIEM
-	// collector as it is written. AuditForwardProto is "udp" (default) or "tcp";
-	// AuditForwardFormat is "rfc5424" (default) or "cef"; AuditForwardIntervalSec
-	// is the polling cadence (default 10). Empty AuditForwardAddr disables it.
+	// collector as it is written. AuditForwardProto is "udp" (default), "tcp" or
+	// "tls" (syslog over TLS, RFC 5425 — certificate verification is always on);
+	// AuditForwardFormat is "rfc5424" (default), "cef" or "leef";
+	// AuditForwardCA optionally pins the collector's CA (PEM bundle path) for the
+	// tls transport (empty = system roots); AuditForwardIntervalSec is the
+	// polling cadence (default 10). Empty AuditForwardAddr disables it.
 	AuditForwardAddr        string
 	AuditForwardProto       string
 	AuditForwardFormat      string
+	AuditForwardCA          string
 	AuditForwardIntervalSec int
 	// RevealDisabled makes credential reveal break-glass-only.
 	RevealDisabled bool
@@ -391,6 +395,7 @@ func Load() (*Config, error) {
 		AuditForwardAddr:        os.Getenv("PAM_AUDIT_FORWARD_ADDR"),
 		AuditForwardProto:       strings.ToLower(getenv("PAM_AUDIT_FORWARD_PROTO", "udp")),
 		AuditForwardFormat:      strings.ToLower(getenv("PAM_AUDIT_FORWARD_FORMAT", "rfc5424")),
+		AuditForwardCA:          os.Getenv("PAM_AUDIT_FORWARD_CA"),
 		AuditForwardIntervalSec: integer("PAM_AUDIT_FORWARD_INTERVAL_SEC", 10),
 		AuditSignSeed:           os.Getenv("PAM_AUDIT_SIGN_SEED"),
 		RevealDisabled:          boolean("PAM_REVEAL_DISABLED", false),
@@ -602,11 +607,16 @@ func Load() (*Config, error) {
 	// SIEM audit forwarding: validate the transport and format only when enabled,
 	// fail-loud on a typo rather than silently not forwarding.
 	if cfg.AuditForwardAddr != "" {
-		if cfg.AuditForwardProto != "udp" && cfg.AuditForwardProto != "tcp" {
-			errs = append(errs, fmt.Sprintf("PAM_AUDIT_FORWARD_PROTO must be udp or tcp (got %q)", cfg.AuditForwardProto))
+		if cfg.AuditForwardProto != "udp" && cfg.AuditForwardProto != "tcp" && cfg.AuditForwardProto != "tls" {
+			errs = append(errs, fmt.Sprintf("PAM_AUDIT_FORWARD_PROTO must be udp, tcp or tls (got %q)", cfg.AuditForwardProto))
 		}
-		if cfg.AuditForwardFormat != "rfc5424" && cfg.AuditForwardFormat != "cef" {
-			errs = append(errs, fmt.Sprintf("PAM_AUDIT_FORWARD_FORMAT must be rfc5424 or cef (got %q)", cfg.AuditForwardFormat))
+		if cfg.AuditForwardFormat != "rfc5424" && cfg.AuditForwardFormat != "cef" && cfg.AuditForwardFormat != "leef" {
+			errs = append(errs, fmt.Sprintf("PAM_AUDIT_FORWARD_FORMAT must be rfc5424, cef or leef (got %q)", cfg.AuditForwardFormat))
+		}
+		// A pinned CA only means something on the TLS transport — a typo'd proto
+		// must not silently drop the pinning.
+		if cfg.AuditForwardCA != "" && cfg.AuditForwardProto != "tls" {
+			errs = append(errs, "PAM_AUDIT_FORWARD_CA requires PAM_AUDIT_FORWARD_PROTO=tls")
 		}
 		if cfg.AuditForwardIntervalSec < 1 {
 			errs = append(errs, "PAM_AUDIT_FORWARD_INTERVAL_SEC must be >= 1")
