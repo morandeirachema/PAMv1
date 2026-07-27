@@ -762,33 +762,55 @@ something, so they ship first rather than waiting for a nine-screen phase.
   step-up list and the broker-disabled 404. `node --check` on the embedded script
 - Portal-only: no new routes, no schema, no new environment variable
 
+## Phase 44 — Editable objects and bounded lists ✅
+
+*Finding H*, the last data-shaped gap from the 2026-07-26 sweep. The `Store`
+interface had create and delete but **no update** for targets, safes, users or
+vendors — fixing a target's port meant delete + recreate, which cascades away
+its credentials, grants, dependencies and safe assignment, a data-loss footgun
+in ordinary administration — and no top-level list read was bounded, an
+authenticated memory-exhaustion vector on a large inventory.
+
+- [x] **Edit in place**: `UpdateTarget` (name/host/port/os/protocol/approval —
+  never the safe assignment, which stays `AssignTargetSafe`'s), `UpdateSafe`,
+  `UpdateUserRole` and `UpdateVendorOrg` store methods (`ErrNotFound` /
+  `ErrConflict` on a name collision), surfaced as `PUT /api/targets/{id}`,
+  `/api/safes/{id}` (CapManageTargets), `/api/users/{id}` and
+  `/api/vendors/{id}` (CapManageUsers) with **create-equivalent validation and
+  authorization** — the user edit re-runs the privilege-escalation guard, so a
+  delegated user-admin cannot promote past their own capabilities, and the
+  user's token **survives** a role change (no re-mint). Audited
+  `target.update` / `safe.update` / `user.update` / `vendor.update`
+- [x] **Deliberately not editable**: grants and safe members stay
+  create + delete — they have no dependents to lose, and two audited events
+  (deleted, created) are a clearer trail than one mutated row. Usernames are
+  immutable (the subject key referenced by grants, sessions and vendor rows)
+- [x] **Bounded lists**: `ListTargets`, `ListCredentials`, `ListUsers`,
+  `ListSafes`, `ListCheckouts`, `ListAccessRequests` and `ListVendors` take a
+  shared `(limit, afterID)` window — id-ascending, strictly after the cursor;
+  `limit<=0` (uncapped) is reserved for in-process sweeps. Every list endpoint
+  parses `?limit=&after=` clamped 1..500, default 100, the way `listAudit`
+  already was — a hostile `?limit=0` falls back to the default, never to
+  "return everything"
+- [x] **Console**: the subfiles drain the cursor page by page (`apiAll`), and
+  Work with Targets / Safes / Users gain **2=Change** screens
+  (`PAMCHGTGT`/`PAMCHGSAF`/`PAMCHGUSR`); the target forms now offer
+  `postgres`, which the console had drifted from
+- [x] **Proven in the store contract** (both stores; live PostgreSQL in CI):
+  update round-trips, conflict/absence sentinels, safe-assignment preservation
+  across an edit, window semantics — plus five API tests (dependents survive a
+  target edit; a promoted token immediately carries the new role; pagination
+  clamps)
+- No schema change, no new environment variable
+
 ## Next — planned ⬜
 
-Phases 37–41 came out of a read-only sweep of the codebase whose findings are
+Phases 37–44 came out of a read-only sweep of the codebase whose findings are
 catalogued in **[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md#open-findings-from-the-2026-07-26-sweep)**.
-Six have shipped and a seventh (the console) is half done. What is below is what
-is left, promoted
-here so the roadmap — not a gaps table — is where the remaining work lives. Each
-is buildable and verifiable in process; none is infra-bound (that list stays in
-[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)).
-
-### Phase 44 — Editable objects and bounded lists ⬜
-
-*Finding H.* The `Store` interface has create and delete but **no update** for
-targets, safes, users, vendors or grants, and no list read is bounded except the
-audit ones (`listAudit`/`exportAudit`, bounded by gap #9).
-
-- Fixing a target's port means delete + recreate, which cascades away its
-  credentials, grants, dependencies and safe assignment. That is a data-loss
-  footgun in ordinary administration.
-- `ListTargets`, `ListCredentials`, `ListUsers`, `ListSafes`, `ListCheckouts`,
-  `ListAccessRequests` and `ListVendors` return everything, and
-  `ListBrokerAudit(limit<=0)` explicitly returns all — a scale limit and an
-  authenticated memory-exhaustion vector on a large inventory.
-
-Direction: `Update*` store methods plus `PUT` routes with the same authorization
-as create, and a `limit`/`after` cursor on the list reads, defaulted and clamped
-the way `listAudit` already is.
+All have shipped except the second half of the console finding, below — promoted
+here so the roadmap — not a gaps table — is where the remaining work lives. It
+is buildable and verifiable in process; nothing here is infra-bound (that list
+stays in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)).
 
 ### Phase 45 — The remaining console screens ⬜
 
@@ -832,6 +854,6 @@ The 5250 console is now explicitly **keyboard-first** (the mouse is optional), m
 
 **Tier-2 (access-governance depth) is complete** — certification campaigns (19), the ITSM/ticketing gate (20), and richer approval workflows (21), now including one-time access (26). **Tier-3**: Zero Standing Privilege (22) and privileged threat analytics (23) are shipped; connector/plugin breadth, cloud CIEM, and web/SaaS session proxying remain (infra-bound). **Tier-4 is under way**: the application-secrets API (24) is shipped; a Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, and thick-app components remain, each requiring external infrastructure or an account to build honestly (see [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)). The 5250 console has **full parity** with the backend (Phase 25) — every shipped capability is operable from the portal, keyboard-first — and the session-recording loop is closed end to end (Phase 26): record → watch live → replay later, hash-verified. See the [competitive-coverage section](README.md#coverage-vs-commercial-pam-cyberark-wallix-) for the full picture.
 
-**What is next** is the [planned section above](#next--planned-): editable objects with bounded
-lists (44) and the remaining console screens (45). All three are buildable in process; the items that genuinely
+**What is next** is the [planned section above](#next--planned-): the remaining
+console screens (45), plus the smaller deferred follow-ons. All buildable in process; the items that genuinely
 need external infrastructure stay in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).

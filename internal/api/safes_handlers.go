@@ -39,14 +39,39 @@ func (s *Server) createSafe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, sf)
 }
 
-// listSafes returns all safes (CapReadInventory).
+// listSafes returns a page of the safes (CapReadInventory; ?limit=&after=).
 func (s *Server) listSafes(w http.ResponseWriter, r *http.Request) {
-	safes, err := s.store.ListSafes(r.Context())
+	limit, after := listWindow(r)
+	safes, err := s.store.ListSafes(r.Context(), limit, after)
 	if err != nil {
 		storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, safes)
+}
+
+// updateSafe renames a safe / edits its description in place (CapManageTargets,
+// like create). Membership and target assignment are untouched.
+func (s *Server) updateSafe(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	var in safeIn
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if in.Name == "" {
+		writeError(w, http.StatusUnprocessableEntity, "name is required")
+		return
+	}
+	sf := store.Safe{ID: id, Name: in.Name, Description: in.Description}
+	if err := s.store.UpdateSafe(r.Context(), &sf); err != nil {
+		storeError(w, err)
+		return
+	}
+	s.audit(r.Context(), "safe.update", fmt.Sprintf("safe:%d name:%s", sf.ID, sf.Name))
+	writeJSON(w, http.StatusOK, sf)
 }
 
 // deleteSafe removes a safe (CapManageTargets); its members cascade and its

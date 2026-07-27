@@ -143,7 +143,10 @@ The **main menu** is your whole management surface. This is the complete menu;
 | 90 | Sign off | |
 
 On list screens you type an **option number** next to a row (e.g. `5` to display,
-`4` to delete) and press Enter.
+`4` to delete, and on targets, safes and users `2` to **change** — edit in
+place; the object keeps its credentials, grants and memberships) and press
+Enter. Long lists load completely: the portal pages through the API's bounded
+result windows for you.
 
 Options your role can't use simply don't appear on the menu — that's normal for
 your role, not an error.
@@ -298,6 +301,7 @@ requests on their list.
 
 | Date | Change |
 |---|---|
+| 2026-07-27 | Phase 44: **2=Change** on Work with Targets, Safes and Users — edit a target's host/port, rename a safe, or change a user's role in place; nothing attached to the object is lost, and a changed user keeps their token. The target form now also offers the `postgres` protocol. §4 |
 | 2026-07-25 | Phase 32: **SFTP file transfers are audited**, and may be **read-only** (uploads/deletes refused) or **disabled** by policy. §3 |
 | 2026-07-24 | Phase 26: **Session recordings** (menu 19) — replay stored recordings with a keyboard-first player and an on-screen audit-hash verdict; **one-time access requests** (a single-use approval is consumed by the first connection it admits) with a `1x`/`used` marker on the approver list. §4, §6, §7 |
 | 2026-07-24 | Phase 25 (console parity): menu items **16–18** (safes, certification campaigns, risk analytics), **watching a session live from the portal** (Active Sessions option 5), and the richer access-request form (ticket, N-of-M approvals, active window). §4, §6 |

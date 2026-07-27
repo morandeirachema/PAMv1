@@ -149,7 +149,7 @@ func TestCheckoutDecryptFailureRollsBackLease(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	creds, _ := st.ListCredentials(ctx, target.ID)
+	creds, _ := st.ListCredentials(ctx, target.ID, 0, 0)
 	path := "/api/credentials/" + itoa(creds[0].ID) + "/checkout"
 
 	if status, _ := do(t, srv, http.MethodPost, path, testAPIKey, nil); status < 500 {

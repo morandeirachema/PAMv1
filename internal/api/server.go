@@ -635,6 +635,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/targets", s.authz(auth.CapManageTargets, s.createTarget))
 	s.mux.Handle("GET /api/targets", s.authz(auth.CapReadInventory, s.listTargets))
 	s.mux.Handle("GET /api/targets/{id}", s.authz(auth.CapReadInventory, s.getTarget))
+	s.mux.Handle("PUT /api/targets/{id}", s.authz(auth.CapManageTargets, s.updateTarget))
 	s.mux.Handle("DELETE /api/targets/{id}", s.authz(auth.CapManageTargets, s.deleteTarget))
 
 	s.mux.Handle("POST /api/targets/{id}/grants", s.authz(auth.CapManageTargets, s.createTargetGrant))
@@ -647,6 +648,7 @@ func (s *Server) routes() {
 	// member can grant access to their own safe (canManageSafe enforces it).
 	s.mux.Handle("POST /api/safes", s.authz(auth.CapManageTargets, s.createSafe))
 	s.mux.Handle("GET /api/safes", s.authz(auth.CapReadInventory, s.listSafes))
+	s.mux.Handle("PUT /api/safes/{id}", s.authz(auth.CapManageTargets, s.updateSafe))
 	s.mux.Handle("DELETE /api/safes/{id}", s.authz(auth.CapManageTargets, s.deleteSafe))
 	s.mux.Handle("GET /api/safes/{id}/members", s.authz(auth.CapReadInventory, s.listSafeMembers))
 	s.mux.Handle("POST /api/safes/{id}/members", s.authz(auth.CapReadInventory, s.addSafeMember))
@@ -735,6 +737,7 @@ func (s *Server) routes() {
 
 	s.mux.Handle("POST /api/users", s.authz(auth.CapManageUsers, s.createUser))
 	s.mux.Handle("GET /api/users", s.authz(auth.CapManageUsers, s.listUsers))
+	s.mux.Handle("PUT /api/users/{id}", s.authz(auth.CapManageUsers, s.updateUser))
 	s.mux.Handle("DELETE /api/users/{id}", s.authz(auth.CapManageUsers, s.deleteUser))
 	s.mux.Handle("GET /api/login-sessions", s.authz(auth.CapManageUsers, s.listLoginSessions))
 	s.mux.Handle("POST /api/login-sessions/revoke", s.authz(auth.CapManageUsers, s.revokeLoginSessions))
@@ -743,6 +746,7 @@ func (s *Server) routes() {
 	// Third-party vendor access gate (Phase 29).
 	s.mux.Handle("POST /api/vendors", s.authz(auth.CapManageUsers, s.createVendor))
 	s.mux.Handle("GET /api/vendors", s.authz(auth.CapReadInventory, s.listVendors))
+	s.mux.Handle("PUT /api/vendors/{id}", s.authz(auth.CapManageUsers, s.updateVendor))
 	s.mux.Handle("POST /api/vendors/{id}/offboard", s.authz(auth.CapManageUsers, s.offboardVendor))
 	s.mux.Handle("POST /api/vendors/{id}/grants", s.authz(auth.CapManageTargets, s.createVendorGrant))
 	s.mux.Handle("GET /api/vendors/{id}/grants", s.authz(auth.CapReadInventory, s.listVendorGrants))

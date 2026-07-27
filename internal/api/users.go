@@ -60,14 +60,54 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// listUsers returns all local users; token hashes are never serialized.
+// listUsers returns a page of the local users (?limit=&after=); token hashes
+// are never serialized.
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := s.store.ListUsers(r.Context())
+	limit, after := listWindow(r)
+	users, err := s.store.ListUsers(r.Context(), limit, after)
 	if err != nil {
 		storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, users)
+}
+
+// updateUser changes a user's role or profile in place, so a promotion or
+// demotion no longer means delete + re-mint (which would revoke the token).
+// The same privilege-escalation guard as createUser applies: you cannot assign
+// capabilities you do not hold. The username and token are immutable.
+func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Role string `json:"role"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	grantCaps, err := s.capsForGrant(r.Context(), in.Role)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, `role must be a built-in role (admin|user|auditor|approver) or an existing profile`)
+		return
+	}
+	if !principalFrom(r.Context()).Covers(grantCaps) {
+		writeError(w, http.StatusForbidden, "cannot assign a role or profile with capabilities you do not hold")
+		return
+	}
+	u, err := s.store.GetUser(r.Context(), id)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	if err := s.store.UpdateUserRole(r.Context(), id, in.Role); err != nil {
+		storeError(w, err)
+		return
+	}
+	s.audit(r.Context(), "user.update", fmt.Sprintf("%s role:%s->%s", u.Username, u.Role, in.Role))
+	u.Role = in.Role
+	writeJSON(w, http.StatusOK, u)
 }
 
 // deleteUser removes a user by id and audits it.

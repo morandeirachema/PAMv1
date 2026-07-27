@@ -399,7 +399,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 118 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 122 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -466,6 +466,7 @@ The 118 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/safes` | CapReadInventory |
 | POST | `/api/safes` | CapManageTargets |
 | DELETE | `/api/safes/{id}` | CapManageTargets |
+| PUT | `/api/safes/{id}` | CapManageTargets |
 | GET | `/api/safes/{id}/members` | CapReadInventory |
 | POST | `/api/safes/{id}/members` | CapReadInventory |
 | DELETE | `/api/safes/{id}/members/{mid}` | CapReadInventory |
@@ -478,6 +479,7 @@ The 118 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/targets` | CapManageTargets |
 | DELETE | `/api/targets/{id}` | CapManageTargets |
 | GET | `/api/targets/{id}` | CapReadInventory |
+| PUT | `/api/targets/{id}` | CapManageTargets |
 | GET | `/api/targets/{id}/grants` | CapManageTargets |
 | POST | `/api/targets/{id}/grants` | CapManageTargets |
 | DELETE | `/api/targets/{id}/grants/{gid}` | CapManageTargets |
@@ -487,10 +489,12 @@ The 118 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/users` | CapManageUsers |
 | POST | `/api/users` | CapManageUsers |
 | DELETE | `/api/users/{id}` | CapManageUsers |
+| PUT | `/api/users/{id}` | CapManageUsers |
 | POST | `/api/vendor-grants/{gid}/approve` | CapApprove |
 | POST | `/api/vendor-grants/{gid}/revoke` | CapManageTargets |
 | GET | `/api/vendors` | CapReadInventory |
 | POST | `/api/vendors` | CapManageUsers |
+| PUT | `/api/vendors/{id}` | CapManageUsers |
 | GET | `/api/vendors/{id}/evidence` | CapReadAudit |
 | GET | `/api/vendors/{id}/grants` | CapReadInventory |
 | POST | `/api/vendors/{id}/grants` | CapManageTargets |

@@ -100,7 +100,8 @@ func (s *Server) listAccessRequests(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "status must be pending, approved or denied")
 		return
 	}
-	reqs, err := s.store.ListAccessRequests(r.Context(), status)
+	limit, after := listWindow(r)
+	reqs, err := s.store.ListAccessRequests(r.Context(), status, limit, after)
 	if err != nil {
 		storeError(w, err)
 		return

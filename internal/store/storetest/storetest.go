@@ -134,11 +134,55 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.CreateTarget(ctx, &store.Target{Name: "web-01", Host: "x", Port: 22, OSType: "linux", Protocol: "ssh"}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("duplicate target name: want ErrConflict, got %v", err)
 	}
-	if ts, err := st.ListTargets(ctx); err != nil || len(ts) != 1 {
+	if ts, err := st.ListTargets(ctx, 0, 0); err != nil || len(ts) != 1 {
 		t.Fatalf("ListTargets: %d err %v", len(ts), err)
 	}
 	if _, err := st.GetTarget(ctx, 99999); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("GetTarget missing: want ErrNotFound, got %v", err)
+	}
+
+	// --- list windows (Phase 44): id-ascending, strictly after the cursor,
+	// capped at limit; limit <= 0 returns everything (in-process sweeps). ---
+	tgt2 := &store.Target{Name: "web-02", Host: "10.0.0.6", Port: 22, OSType: "linux", Protocol: "ssh"}
+	tgt3 := &store.Target{Name: "web-03", Host: "10.0.0.7", Port: 22, OSType: "linux", Protocol: "ssh"}
+	for _, extra := range []*store.Target{tgt2, tgt3} {
+		if err := st.CreateTarget(ctx, extra); err != nil {
+			t.Fatalf("CreateTarget(%s): %v", extra.Name, err)
+		}
+	}
+	if page, err := st.ListTargets(ctx, 2, 0); err != nil || len(page) != 2 || page[0].ID != tgt.ID || page[1].ID != tgt2.ID {
+		t.Fatalf("ListTargets(limit=2): %+v err %v", page, err)
+	}
+	if page, err := st.ListTargets(ctx, 2, tgt2.ID); err != nil || len(page) != 1 || page[0].ID != tgt3.ID {
+		t.Fatalf("ListTargets(after=%d): %+v err %v", tgt2.ID, page, err)
+	}
+	if page, err := st.ListTargets(ctx, 0, tgt3.ID); err != nil || len(page) != 0 {
+		t.Fatalf("ListTargets(after=last): %+v err %v", page, err)
+	}
+
+	// --- UpdateTarget (Phase 44): edits in place — no delete + recreate, so
+	// dependents survive; ErrConflict on a name collision, ErrNotFound when absent. ---
+	tgt.Host, tgt.Port, tgt.RequireApproval = "10.0.0.50", 2222, false
+	if err := st.UpdateTarget(ctx, tgt); err != nil {
+		t.Fatalf("UpdateTarget: %v", err)
+	}
+	if got, err := st.GetTarget(ctx, tgt.ID); err != nil || got.Host != "10.0.0.50" || got.Port != 2222 || got.RequireApproval {
+		t.Fatalf("after UpdateTarget: %+v err %v", got, err)
+	}
+	if err := st.UpdateTarget(ctx, &store.Target{ID: tgt2.ID, Name: "web-01", Host: "x", Port: 22, OSType: "linux", Protocol: "ssh"}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("UpdateTarget onto a taken name: want ErrConflict, got %v", err)
+	}
+	if err := st.UpdateTarget(ctx, &store.Target{ID: 99999, Name: "ghost", Host: "x", Port: 22, OSType: "linux", Protocol: "ssh"}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateTarget missing: want ErrNotFound, got %v", err)
+	}
+	// Renaming to its OWN current name is not a conflict.
+	if err := st.UpdateTarget(ctx, tgt); err != nil {
+		t.Fatalf("UpdateTarget(same name): %v", err)
+	}
+	for _, extra := range []*store.Target{tgt2, tgt3} {
+		if err := st.DeleteTarget(ctx, extra.ID); err != nil {
+			t.Fatalf("DeleteTarget(%s): %v", extra.Name, err)
+		}
 	}
 
 	// --- credentials ---
@@ -149,8 +193,11 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.CreateCredential(ctx, &store.Credential{TargetID: 99999, Username: "x", SecretType: "password", SecretEnc: "v2:z"}); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("credential for missing target: want ErrNotFound, got %v", err)
 	}
-	if cs, err := st.ListCredentials(ctx, tgt.ID); err != nil || len(cs) != 1 {
+	if cs, err := st.ListCredentials(ctx, tgt.ID, 0, 0); err != nil || len(cs) != 1 {
 		t.Fatalf("ListCredentials: %d err %v", len(cs), err)
+	}
+	if cs, err := st.ListCredentials(ctx, tgt.ID, 5, cred.ID); err != nil || len(cs) != 0 {
+		t.Fatalf("ListCredentials(after=last): %d err %v", len(cs), err)
 	}
 	if err := st.RotateCredentialSecret(ctx, cred.ID, "v2:two", now); err != nil {
 		t.Fatalf("RotateCredentialSecret: %v", err)
@@ -218,6 +265,42 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	// The target now carries its safe id.
 	if tt, _ := st.GetTarget(ctx, tgt.ID); tt.SafeID == nil || *tt.SafeID != sf.ID {
 		t.Fatalf("target safe_id not persisted: %+v", tt)
+	}
+	// UpdateTarget edits fields but never touches the safe assignment — and it
+	// refreshes the caller's struct with the stored SafeID.
+	tgt.Host = "10.0.0.51"
+	if err := st.UpdateTarget(ctx, tgt); err != nil {
+		t.Fatalf("UpdateTarget(in safe): %v", err)
+	}
+	if tgt.SafeID == nil || *tgt.SafeID != sf.ID {
+		t.Fatalf("UpdateTarget did not refresh SafeID from the stored row: %+v", tgt.SafeID)
+	}
+	if tt, _ := st.GetTarget(ctx, tgt.ID); tt.SafeID == nil || *tt.SafeID != sf.ID || tt.Host != "10.0.0.51" {
+		t.Fatalf("UpdateTarget must preserve the safe assignment: %+v", tt)
+	}
+	// UpdateSafe renames in place; members and assignment are untouched.
+	sf.Name, sf.Description = "prod-db-renamed", "renamed"
+	if err := st.UpdateSafe(ctx, sf); err != nil {
+		t.Fatalf("UpdateSafe: %v", err)
+	}
+	if got, err := st.GetSafe(ctx, sf.ID); err != nil || got.Name != "prod-db-renamed" || got.Description != "renamed" {
+		t.Fatalf("after UpdateSafe: %+v err %v", got, err)
+	}
+	otherSafe := &store.Safe{Name: "dmz"}
+	if err := st.CreateSafe(ctx, otherSafe); err != nil {
+		t.Fatalf("CreateSafe(other): %v", err)
+	}
+	if err := st.UpdateSafe(ctx, &store.Safe{ID: otherSafe.ID, Name: "prod-db-renamed"}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("UpdateSafe onto a taken name: want ErrConflict, got %v", err)
+	}
+	if err := st.UpdateSafe(ctx, &store.Safe{ID: 999999, Name: "ghost"}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateSafe missing: want ErrNotFound, got %v", err)
+	}
+	if safes, err := st.ListSafes(ctx, 1, sf.ID); err != nil || len(safes) != 1 || safes[0].ID != otherSafe.ID {
+		t.Fatalf("ListSafes(after=%d): %+v err %v", sf.ID, safes, err)
+	}
+	if err := st.DeleteSafe(ctx, otherSafe.ID); err != nil {
+		t.Fatalf("DeleteSafe(other): %v", err)
 	}
 	if err := st.DeleteSafeMember(ctx, sm.ID); err != nil {
 		t.Fatalf("DeleteSafeMember: %v", err)
@@ -312,8 +395,11 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if ok, _ := st.HasActiveApproval(ctx, "alice", tgt.ID, future.Add(time.Minute)); ok {
 		t.Fatal("expired approval must not be active")
 	}
-	if reqs, err := st.ListAccessRequests(ctx, "approved"); err != nil || len(reqs) != 1 {
+	if reqs, err := st.ListAccessRequests(ctx, "approved", 0, 0); err != nil || len(reqs) != 1 {
 		t.Fatalf("ListAccessRequests(approved): %d err %v", len(reqs), err)
+	}
+	if reqs, err := st.ListAccessRequests(ctx, "approved", 10, ar.ID); err != nil || len(reqs) != 0 {
+		t.Fatalf("ListAccessRequests(after=last): %d err %v", len(reqs), err)
 	}
 
 	// --- multi-approver chain + scheduled window (Phase 21) ---
@@ -446,11 +532,14 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.CreateCheckout(ctx, &store.Checkout{CredentialID: cred.ID, TargetID: tgt.ID, Holder: "carol", ExpiresAt: future}, now); err != nil {
 		t.Fatalf("re-checkout after checkin: %v", err)
 	}
-	if all, err := st.ListCheckouts(ctx, false, now); err != nil || len(all) != 2 {
+	if all, err := st.ListCheckouts(ctx, false, now, 0, 0); err != nil || len(all) != 2 {
 		t.Fatalf("ListCheckouts(all): %d err %v", len(all), err)
 	}
-	if act, err := st.ListCheckouts(ctx, true, now); err != nil || len(act) != 1 {
+	if act, err := st.ListCheckouts(ctx, true, now, 0, 0); err != nil || len(act) != 1 {
 		t.Fatalf("ListCheckouts(active): %d err %v", len(act), err)
+	}
+	if one, err := st.ListCheckouts(ctx, false, now, 1, 0); err != nil || len(one) != 1 || one[0].ID != co.ID {
+		t.Fatalf("ListCheckouts(limit=1): %+v err %v", one, err)
 	}
 	// An expired-but-unreturned lease must not block a new checkout, and it is no
 	// longer the active one.
@@ -519,6 +608,23 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 	if _, err := st.GetUserByTokenHash(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("GetUserByTokenHash missing: want ErrNotFound, got %v", err)
+	}
+	if by, err := st.GetUser(ctx, u.ID); err != nil || by.Username != "u1" {
+		t.Fatalf("GetUser: %+v err %v", by, err)
+	}
+	if _, err := st.GetUser(ctx, 999999); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetUser missing: want ErrNotFound, got %v", err)
+	}
+	// UpdateUserRole changes the role in place — username and token survive, so
+	// a promotion does not re-key the identity.
+	if err := st.UpdateUserRole(ctx, u.ID, "auditor"); err != nil {
+		t.Fatalf("UpdateUserRole: %v", err)
+	}
+	if by, err := st.GetUserByTokenHash(ctx, "tokhash1"); err != nil || by.Role != "auditor" || by.Username != "u1" {
+		t.Fatalf("after UpdateUserRole: %+v err %v", by, err)
+	}
+	if err := st.UpdateUserRole(ctx, 999999, "user"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateUserRole missing: want ErrNotFound, got %v", err)
 	}
 	if err := st.DeleteUser(ctx, u.ID); err != nil {
 		t.Fatalf("DeleteUser: %v", err)
@@ -614,13 +720,16 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.CreateUser(ctx, &store.User{Username: "list-check", Role: "auditor", TokenHash: "listuserhash"}); err != nil {
 		t.Fatalf("CreateUser(list): %v", err)
 	}
-	if users, err := st.ListUsers(ctx); err != nil || len(users) == 0 {
+	if users, err := st.ListUsers(ctx, 0, 0); err != nil || len(users) == 0 {
 		t.Fatalf("ListUsers: %d users, err %v", len(users), err)
+	}
+	if users, err := st.ListUsers(ctx, 1, 0); err != nil || len(users) != 1 {
+		t.Fatalf("ListUsers(limit=1): %d users, err %v", len(users), err)
 	}
 
 	// --- delete cascades (memstore hand-codes what pgstore FK ON DELETE CASCADE does; assert parity) ---
 	checkoutGone := func(credID int64) bool {
-		cos, _ := st.ListCheckouts(ctx, false, now)
+		cos, _ := st.ListCheckouts(ctx, false, now, 0, 0)
 		for _, c := range cos {
 			if c.CredentialID == credID {
 				return false
@@ -808,6 +917,21 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 	if v, err := st.GetVendorByUsername(ctx, "acme-tech"); err != nil || v.Org != "ACME" {
 		t.Fatalf("GetVendorByUsername: %+v err %v", v, err)
+	}
+	if vs, err := st.ListVendors(ctx, 0, 0); err != nil || len(vs) != 1 || vs[0].Username != "acme-tech" {
+		t.Fatalf("ListVendors: %+v err %v", vs, err)
+	}
+	if vs, err := st.ListVendors(ctx, 10, ven.ID); err != nil || len(vs) != 0 {
+		t.Fatalf("ListVendors(after=last): %d err %v", len(vs), err)
+	}
+	if err := st.UpdateVendorOrg(ctx, ven.ID, "ACME Industries"); err != nil {
+		t.Fatalf("UpdateVendorOrg: %v", err)
+	}
+	if v, _ := st.GetVendorByUsername(ctx, "acme-tech"); v.Org != "ACME Industries" {
+		t.Fatalf("after UpdateVendorOrg: %+v", v)
+	}
+	if err := st.UpdateVendorOrg(ctx, 999999, "x"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateVendorOrg missing: want ErrNotFound, got %v", err)
 	}
 	if _, err := st.GetVendorByUsername(ctx, "nobody"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("unknown vendor: want ErrNotFound, got %v", err)

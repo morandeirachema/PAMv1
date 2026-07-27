@@ -95,6 +95,19 @@ func (m *Memstore) id() int64 {
 	return m.nextID
 }
 
+// window applies the shared list-cursor semantics to an id-ascending slice:
+// rows with id > afterID, capped at limit rows when limit > 0 (Phase 44).
+func window[T any](rows []T, id func(T) int64, limit int, afterID int64) []T {
+	if afterID > 0 {
+		i := sort.Search(len(rows), func(i int) bool { return id(rows[i]) > afterID })
+		rows = rows[i:]
+	}
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows
+}
+
 // CreateTarget inserts a target, assigning its ID and CreatedAt; ErrConflict if the name is taken.
 func (m *Memstore) CreateTarget(_ context.Context, t *store.Target) error {
 	m.mu.Lock()
@@ -110,8 +123,8 @@ func (m *Memstore) CreateTarget(_ context.Context, t *store.Target) error {
 	return nil
 }
 
-// ListTargets returns all targets ordered by ID.
-func (m *Memstore) ListTargets(_ context.Context) ([]store.Target, error) {
+// ListTargets returns targets in the (limit, afterID) window, ordered by ID.
+func (m *Memstore) ListTargets(_ context.Context, limit int, afterID int64) ([]store.Target, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]store.Target, 0, len(m.targets))
@@ -119,7 +132,7 @@ func (m *Memstore) ListTargets(_ context.Context) ([]store.Target, error) {
 		out = append(out, t)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return window(out, func(t store.Target) int64 { return t.ID }, limit, afterID), nil
 }
 
 // GetTarget returns the target with the given ID, or ErrNotFound.
@@ -131,6 +144,27 @@ func (m *Memstore) GetTarget(_ context.Context, id int64) (*store.Target, error)
 		return nil, store.ErrNotFound
 	}
 	return &t, nil
+}
+
+// UpdateTarget replaces a target's editable fields, preserving its safe
+// assignment and creation time; ErrNotFound if absent, ErrConflict if the new
+// name belongs to another target.
+func (m *Memstore) UpdateTarget(_ context.Context, t *store.Target) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cur, ok := m.targets[t.ID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	for id, ex := range m.targets {
+		if id != t.ID && ex.Name == t.Name {
+			return store.ErrConflict
+		}
+	}
+	t.SafeID = cur.SafeID
+	t.CreatedAt = cur.CreatedAt
+	m.targets[t.ID] = *t
+	return nil
 }
 
 // DeleteTarget removes a target and cascades to its credentials, grants, and
@@ -247,16 +281,36 @@ func (m *Memstore) CreateSafe(_ context.Context, sf *store.Safe) error {
 	return nil
 }
 
-// ListSafes returns all safes ordered by name.
-func (m *Memstore) ListSafes(_ context.Context) ([]store.Safe, error) {
+// ListSafes returns safes in the (limit, afterID) window, ordered by ID
+// (creation order — the stable order a cursor needs).
+func (m *Memstore) ListSafes(_ context.Context, limit int, afterID int64) ([]store.Safe, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]store.Safe, 0, len(m.safes))
 	for _, sf := range m.safes {
 		out = append(out, sf)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out, nil
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return window(out, func(sf store.Safe) int64 { return sf.ID }, limit, afterID), nil
+}
+
+// UpdateSafe replaces a safe's name and description; ErrNotFound if absent,
+// ErrConflict if the new name belongs to another safe.
+func (m *Memstore) UpdateSafe(_ context.Context, sf *store.Safe) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cur, ok := m.safes[sf.ID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	for id, ex := range m.safes {
+		if id != sf.ID && ex.Name == sf.Name {
+			return store.ErrConflict
+		}
+	}
+	sf.CreatedAt = cur.CreatedAt
+	m.safes[sf.ID] = *sf
+	return nil
 }
 
 // GetSafe returns a safe by ID, or ErrNotFound.
@@ -552,8 +606,8 @@ func (m *Memstore) GetAccessRequest(_ context.Context, id int64) (*store.AccessR
 }
 
 // ListAccessRequests returns requests with the given status (all when status is
-// ""), ordered by ID.
-func (m *Memstore) ListAccessRequests(_ context.Context, status string) ([]store.AccessRequest, error) {
+// "") in the (limit, afterID) window, ordered by ID.
+func (m *Memstore) ListAccessRequests(_ context.Context, status string, limit int, afterID int64) ([]store.AccessRequest, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]store.AccessRequest, 0, len(m.accessReq))
@@ -565,7 +619,7 @@ func (m *Memstore) ListAccessRequests(_ context.Context, status string) ([]store
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return window(out, func(ar store.AccessRequest) int64 { return ar.ID }, limit, afterID), nil
 }
 
 // DecideAccessRequest records an approve/deny decision, approver, and decision
@@ -702,9 +756,9 @@ func (m *Memstore) CheckinCheckout(_ context.Context, id int64, at time.Time) er
 	return nil
 }
 
-// ListCheckouts returns checkouts ordered by ID; activeOnly limits to
-// unreturned, unexpired ones as of now.
-func (m *Memstore) ListCheckouts(_ context.Context, activeOnly bool, now time.Time) ([]store.Checkout, error) {
+// ListCheckouts returns checkouts in the (limit, afterID) window, ordered by
+// ID; activeOnly limits to unreturned, unexpired ones as of now.
+func (m *Memstore) ListCheckouts(_ context.Context, activeOnly bool, now time.Time, limit int, afterID int64) ([]store.Checkout, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]store.Checkout, 0, len(m.checkouts))
@@ -716,7 +770,7 @@ func (m *Memstore) ListCheckouts(_ context.Context, activeOnly bool, now time.Ti
 		out = append(out, co)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return window(out, func(co store.Checkout) int64 { return co.ID }, limit, afterID), nil
 }
 
 // CreateCredential inserts a credential for an existing target, assigning its ID
@@ -733,9 +787,9 @@ func (m *Memstore) CreateCredential(_ context.Context, c *store.Credential) erro
 	return nil
 }
 
-// ListCredentials returns credentials for one target, or all when targetID is 0,
-// ordered by ID.
-func (m *Memstore) ListCredentials(_ context.Context, targetID int64) ([]store.Credential, error) {
+// ListCredentials returns credentials for one target (or all when targetID is
+// 0) in the (limit, afterID) window, ordered by ID.
+func (m *Memstore) ListCredentials(_ context.Context, targetID int64, limit int, afterID int64) ([]store.Credential, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]store.Credential, 0, len(m.creds))
@@ -746,7 +800,7 @@ func (m *Memstore) ListCredentials(_ context.Context, targetID int64) ([]store.C
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return window(out, func(c store.Credential) int64 { return c.ID }, limit, afterID), nil
 }
 
 // GetCredential returns the credential with the given ID, or ErrNotFound.
@@ -989,8 +1043,8 @@ func (m *Memstore) CreateUser(_ context.Context, u *store.User) error {
 	return nil
 }
 
-// ListUsers returns all users ordered by ID.
-func (m *Memstore) ListUsers(_ context.Context) ([]store.User, error) {
+// ListUsers returns users in the (limit, afterID) window, ordered by ID.
+func (m *Memstore) ListUsers(_ context.Context, limit int, afterID int64) ([]store.User, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]store.User, 0, len(m.users))
@@ -998,7 +1052,32 @@ func (m *Memstore) ListUsers(_ context.Context) ([]store.User, error) {
 		out = append(out, u)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return window(out, func(u store.User) int64 { return u.ID }, limit, afterID), nil
+}
+
+// GetUser returns the user with the given ID, or ErrNotFound.
+func (m *Memstore) GetUser(_ context.Context, id int64) (*store.User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return &u, nil
+}
+
+// UpdateUserRole changes a user's role, leaving username and token untouched;
+// ErrNotFound if absent.
+func (m *Memstore) UpdateUserRole(_ context.Context, id int64, role string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	u.Role = role
+	m.users[id] = u
+	return nil
 }
 
 // GetUserByTokenHash returns the user whose token hash matches, or ErrNotFound.
@@ -1173,8 +1252,8 @@ func (m *Memstore) GetVendorByUsername(_ context.Context, username string) (*sto
 	return nil, store.ErrNotFound
 }
 
-// ListVendors returns all vendors, ordered by ID.
-func (m *Memstore) ListVendors(_ context.Context) ([]store.Vendor, error) {
+// ListVendors returns vendors in the (limit, afterID) window, ordered by ID.
+func (m *Memstore) ListVendors(_ context.Context, limit int, afterID int64) ([]store.Vendor, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make([]store.Vendor, 0, len(m.vendors))
@@ -1182,7 +1261,20 @@ func (m *Memstore) ListVendors(_ context.Context) ([]store.Vendor, error) {
 		out = append(out, v)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return window(out, func(v store.Vendor) int64 { return v.ID }, limit, afterID), nil
+}
+
+// UpdateVendorOrg changes a vendor's organization label; ErrNotFound if absent.
+func (m *Memstore) UpdateVendorOrg(_ context.Context, id int64, org string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := m.vendors[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	v.Org = org
+	m.vendors[id] = v
+	return nil
 }
 
 // SetVendorDisabled enables/disables a vendor by id, or ErrNotFound.

@@ -146,6 +146,16 @@ func execExpectingRow(ctx context.Context, pool *pgxpool.Pool, sql string, args 
 	return nil
 }
 
+// limitArg maps the shared list-window limit to a SQL LIMIT argument: NULL
+// (no cap) when limit <= 0, so one query serves both the bounded HTTP reads
+// and the unbounded in-process sweeps (Phase 44).
+func limitArg(limit int) any {
+	if limit <= 0 {
+		return nil
+	}
+	return limit
+}
+
 // CreateTarget inserts a target, populating its ID and CreatedAt; ErrConflict if the name is taken.
 func (s *PGStore) CreateTarget(ctx context.Context, t *store.Target) error {
 	err := s.pool.QueryRow(ctx,
@@ -159,15 +169,33 @@ func (s *PGStore) CreateTarget(ctx context.Context, t *store.Target) error {
 	return err
 }
 
-// ListTargets returns all targets ordered by ID.
-func (s *PGStore) ListTargets(ctx context.Context) ([]store.Target, error) {
+// ListTargets returns targets in the (limit, afterID) window, ordered by ID.
+func (s *PGStore) ListTargets(ctx context.Context, limit int, afterID int64) ([]store.Target, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, created_at
-		 FROM targets ORDER BY id`)
+		 FROM targets WHERE id > $1 ORDER BY id LIMIT $2`, afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, scanTarget)
+}
+
+// UpdateTarget replaces a target's editable fields, refreshing t's SafeID and
+// CreatedAt from the stored row; ErrNotFound if absent, ErrConflict if the new
+// name belongs to another target.
+func (s *PGStore) UpdateTarget(ctx context.Context, t *store.Target) error {
+	err := s.pool.QueryRow(ctx,
+		`UPDATE targets SET name = $1, host = $2, port = $3, os_type = $4, protocol = $5, require_approval = $6
+		 WHERE id = $7 RETURNING safe_id, created_at`,
+		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.ID,
+	).Scan(&t.SafeID, &t.CreatedAt)
+	switch {
+	case pgCode(err) == pgUniqueViolation:
+		return store.ErrConflict
+	case errors.Is(err, pgx.ErrNoRows):
+		return store.ErrNotFound
+	}
+	return err
 }
 
 // GetTarget returns the target with the given ID, or ErrNotFound.
@@ -196,12 +224,13 @@ func (s *PGStore) CreateCredential(ctx context.Context, c *store.Credential) err
 	return err
 }
 
-// ListCredentials returns credentials for one target, or all when targetID is 0,
-// ordered by ID.
-func (s *PGStore) ListCredentials(ctx context.Context, targetID int64) ([]store.Credential, error) {
+// ListCredentials returns credentials for one target (or all when targetID is
+// 0) in the (limit, afterID) window, ordered by ID.
+func (s *PGStore) ListCredentials(ctx context.Context, targetID int64, limit int, afterID int64) ([]store.Credential, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, target_id, username, secret_type, secret_enc, created_at, rotated_at
-		 FROM credentials WHERE ($1 = 0 OR target_id = $1) ORDER BY id`, targetID)
+		 FROM credentials WHERE ($1 = 0 OR target_id = $1) AND id > $2 ORDER BY id LIMIT $3`,
+		targetID, afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -296,13 +325,33 @@ func (s *PGStore) CreateSafe(ctx context.Context, sf *store.Safe) error {
 	return err
 }
 
-// ListSafes returns all safes ordered by name.
-func (s *PGStore) ListSafes(ctx context.Context) ([]store.Safe, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, name, description, created_at FROM safes ORDER BY name`)
+// ListSafes returns safes in the (limit, afterID) window, ordered by ID
+// (creation order — the stable order a cursor needs).
+func (s *PGStore) ListSafes(ctx context.Context, limit int, afterID int64) ([]store.Safe, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, name, description, created_at FROM safes WHERE id > $1 ORDER BY id LIMIT $2`,
+		afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, scanSafe)
+}
+
+// UpdateSafe replaces a safe's name and description, refreshing s.CreatedAt
+// from the stored row; ErrNotFound if absent, ErrConflict if the new name
+// belongs to another safe.
+func (s *PGStore) UpdateSafe(ctx context.Context, sf *store.Safe) error {
+	err := s.pool.QueryRow(ctx,
+		`UPDATE safes SET name = $1, description = $2 WHERE id = $3 RETURNING created_at`,
+		sf.Name, sf.Description, sf.ID,
+	).Scan(&sf.CreatedAt)
+	switch {
+	case pgCode(err) == pgUniqueViolation:
+		return store.ErrConflict
+	case errors.Is(err, pgx.ErrNoRows):
+		return store.ErrNotFound
+	}
+	return err
 }
 
 // GetSafe returns a safe by ID, or ErrNotFound.
@@ -510,11 +559,12 @@ func (s *PGStore) GetAccessRequest(ctx context.Context, id int64) (*store.Access
 }
 
 // ListAccessRequests returns requests with the given status (all when status is
-// ""), ordered by ID.
-func (s *PGStore) ListAccessRequests(ctx context.Context, status string) ([]store.AccessRequest, error) {
+// "") in the (limit, afterID) window, ordered by ID.
+func (s *PGStore) ListAccessRequests(ctx context.Context, status string, limit int, afterID int64) ([]store.AccessRequest, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, requester, target_id, reason, status, approver, created_at, decided_at, expires_at, ticket, required_approvals, approved_by, not_before, one_time, consumed_at
-		 FROM access_requests WHERE ($1 = '' OR status = $1) ORDER BY id`, status)
+		 FROM access_requests WHERE ($1 = '' OR status = $1) AND id > $2 ORDER BY id LIMIT $3`,
+		status, afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -752,14 +802,14 @@ func (s *PGStore) CheckinCheckout(ctx context.Context, id int64, at time.Time) e
 		`UPDATE checkouts SET returned_at = $1 WHERE id = $2 AND returned_at IS NULL`, at.UTC(), id)
 }
 
-// ListCheckouts returns checkouts ordered by ID; activeOnly limits to
-// unreturned, unexpired ones as of now.
-func (s *PGStore) ListCheckouts(ctx context.Context, activeOnly bool, now time.Time) ([]store.Checkout, error) {
+// ListCheckouts returns checkouts in the (limit, afterID) window, ordered by
+// ID; activeOnly limits to unreturned, unexpired ones as of now.
+func (s *PGStore) ListCheckouts(ctx context.Context, activeOnly bool, now time.Time, limit int, afterID int64) ([]store.Checkout, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, credential_id, target_id, holder, reason, checked_out_at, expires_at, returned_at
 		 FROM checkouts
-		 WHERE (NOT $1) OR (returned_at IS NULL AND expires_at > $2)
-		 ORDER BY id`, activeOnly, now.UTC())
+		 WHERE ((NOT $1) OR (returned_at IS NULL AND expires_at > $2)) AND id > $3
+		 ORDER BY id LIMIT $4`, activeOnly, now.UTC(), afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -860,14 +910,27 @@ func (s *PGStore) CreateUser(ctx context.Context, u *store.User) error {
 	return err
 }
 
-// ListUsers returns all users ordered by ID.
-func (s *PGStore) ListUsers(ctx context.Context) ([]store.User, error) {
+// ListUsers returns users in the (limit, afterID) window, ordered by ID.
+func (s *PGStore) ListUsers(ctx context.Context, limit int, afterID int64) ([]store.User, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, username, role, token_hash, created_at FROM users ORDER BY id`)
+		`SELECT id, username, role, token_hash, created_at FROM users WHERE id > $1 ORDER BY id LIMIT $2`,
+		afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, scanUser)
+}
+
+// GetUser returns the user with the given ID, or ErrNotFound.
+func (s *PGStore) GetUser(ctx context.Context, id int64) (*store.User, error) {
+	return getOne(ctx, s.pool, scanUser,
+		`SELECT id, username, role, token_hash, created_at FROM users WHERE id = $1`, id)
+}
+
+// UpdateUserRole changes a user's role, leaving username and token untouched;
+// ErrNotFound if absent.
+func (s *PGStore) UpdateUserRole(ctx context.Context, id int64, role string) error {
+	return execExpectingRow(ctx, s.pool, `UPDATE users SET role = $1 WHERE id = $2`, role, id)
 }
 
 // GetUserByTokenHash returns the user whose token hash matches, or ErrNotFound.
@@ -1020,9 +1083,11 @@ func (s *PGStore) GetVendorByUsername(ctx context.Context, username string) (*st
 	}, `SELECT id, username, org, disabled, created_at FROM vendors WHERE username = $1`, username)
 }
 
-// ListVendors returns all vendors, ordered by ID.
-func (s *PGStore) ListVendors(ctx context.Context) ([]store.Vendor, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, username, org, disabled, created_at FROM vendors ORDER BY id`)
+// ListVendors returns vendors in the (limit, afterID) window, ordered by ID.
+func (s *PGStore) ListVendors(ctx context.Context, limit int, afterID int64) ([]store.Vendor, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, username, org, disabled, created_at FROM vendors WHERE id > $1 ORDER BY id LIMIT $2`,
+		afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
 	}
@@ -1036,6 +1101,11 @@ func (s *PGStore) ListVendors(ctx context.Context) ([]store.Vendor, error) {
 // SetVendorDisabled enables/disables a vendor by id, or ErrNotFound.
 func (s *PGStore) SetVendorDisabled(ctx context.Context, id int64, disabled bool) error {
 	return execExpectingRow(ctx, s.pool, `UPDATE vendors SET disabled = $2 WHERE id = $1`, id, disabled)
+}
+
+// UpdateVendorOrg changes a vendor's organization label; ErrNotFound if absent.
+func (s *PGStore) UpdateVendorOrg(ctx context.Context, id int64, org string) error {
+	return execExpectingRow(ctx, s.pool, `UPDATE vendors SET org = $2 WHERE id = $1`, id, org)
 }
 
 // CreateVendorGrant records a pending contract grant; ErrNotFound if the vendor
