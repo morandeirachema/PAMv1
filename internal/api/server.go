@@ -123,6 +123,10 @@ type Options struct {
 	// Playback detects the format per file, so recordings written before it was
 	// turned on keep replaying.
 	EncryptRecordings bool
+	// RDPClipboardAudit records what crosses the RDP clipboard bridge (Phase 50):
+	// "off" (default), "meta" (direction, mimetype, size, SHA-256) or "full"
+	// (also the content — see the warning in clipboard.go).
+	RDPClipboardAudit string
 	// OpaqueRecordingNames names WinRM transcripts by timestamp + random hex; the
 	// target/actor metadata then lives only in the audited winrm.run event
 	// (PAM_RECORDING_OPAQUE_NAMES, Phase 48).
@@ -268,6 +272,7 @@ type Server struct {
 	cmdGuard           *cmdguard.Guard
 	recKey             recording.KeyWrapper
 	opaqueRecNames     bool
+	rdpClipAudit       string
 	trustedProxyHops   int
 	sessions           *session.Registry
 	live               *session.Hub
@@ -468,6 +473,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		cmdGuard:           opts.CommandGuard,
 		recKey:             apiRecKey(opts.EncryptRecordings, v),
 		opaqueRecNames:     opts.OpaqueRecordingNames,
+		rdpClipAudit:       normalizeClipAudit(opts.RDPClipboardAudit),
 		trustedProxyHops:   opts.TrustedProxyHops,
 		sessions:           opts.Sessions,
 		live:               opts.Live,

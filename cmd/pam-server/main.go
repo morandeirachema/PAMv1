@@ -711,6 +711,7 @@ func run() error {
 		RecordingDir:            cfg.RecordingDir,
 		EncryptRecordings:       cfg.EncryptRecordings,
 		OpaqueRecordingNames:    cfg.OpaqueRecordingNames,
+		RDPClipboardAudit:       cfg.RDPClipboardAudit,
 		WinRM:                   winrmClient,
 		OIDC:                    oidcProvider,
 		OIDCRoleMap:             roleMap(cfg.OIDCRoleAdmin, cfg.OIDCRoleUser, cfg.OIDCRoleAuditor, cfg.OIDCRoleApprover),
