@@ -1007,11 +1007,40 @@ unwatched channel into and out of a privileged desktop.
   covering both, plus watcher tests for each mode, non-clipboard streams,
   independent directions, and truncation
 
+## Phase 51 — SFTP path policy ✅
+
+Phase 32's follow-on. SFTP could be `allow` / `readonly` / `deny` — a policy
+about the *operation*, never about **which file**. So a read-only session could
+still download `/etc/shadow` or a private key, which is the transfer that
+actually matters.
+
+- [x] **`PAM_SSH_SFTP_DENY_FILE`** — regular expressions, one per line, `#`
+  comments — matched against every SFTP path. It **reuses the `cmdguard`
+  engine**, so one regex-denylist semantic (and one file format, and one
+  fail-loud-on-a-bad-pattern path) covers commands and file paths alike; no
+  second policy engine
+- [x] **Denied in every mode, reads included.** A path you deny that an
+  operator can still download is not denied at all — so the check runs before
+  the read/write distinction, in `allow` mode too, and the target is never
+  told the path
+- [x] **A rename cannot launder a path**: both the source and destination are
+  checked, so neither moving a denied file to an innocuous name nor moving an
+  allowed file onto a denied one gets through
+- [x] The refusal is a proper SFTP `SSH_FX_PERMISSION_DENIED` (the client sees
+  an error instead of hanging) and audits `sftp.blocked` with
+  `reason:path-denied` **and the pattern that matched**, so an operator can see
+  *why* without guessing which rule fired
+- [x] Proven against the Phase 32 harness — a real SFTP conversation, no mocks:
+  a denied download refused in `allow` mode, a denied upload, a denied delete,
+  both rename directions, an allowed path still working in the same session,
+  and nothing bearing a denied path ever reaching the target
+
 ### Smaller follow-ons, recorded where they were deferred ⬜
 
 - **Cross-replica live monitoring** (Phase 34) — the SSE watch stream is still
   served by the pod hosting the session.
-- **Per-file SFTP content recording and path allow/deny** (Phase 32).
+- **Per-file SFTP content recording** (Phase 32) — operations are audited and
+  paths are gatable; the file *bytes* are not captured.
 
 ---
 

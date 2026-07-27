@@ -99,6 +99,12 @@ type Config struct {
 	// SFTPAllow (default, forward + audit every operation), SFTPReadOnly (refuse
 	// writes), or SFTPDeny (refuse the subsystem). An empty value means SFTPAllow.
 	SFTPMode SFTPMode
+	// SFTPPathGuard, when set, refuses any SFTP operation whose path matches one
+	// of its deny patterns — in EVERY mode, including reads, since denying a path
+	// that can still be downloaded protects nothing (PAM_SSH_SFTP_DENY_FILE,
+	// Phase 51). It reuses the cmdguard engine so one regex-denylist semantic
+	// covers commands and paths alike.
+	SFTPPathGuard *cmdguard.Guard
 }
 
 // JumpConfig configures reaching SSH targets through an SSH bastion.
@@ -136,6 +142,7 @@ type Proxy struct {
 	authLimiter  *ratelimit.Limiter
 	maxRecBytes  int64
 	sftpMode     SFTPMode
+	sftpPaths    *cmdguard.Guard
 
 	bg sync.WaitGroup // background tasks (post-session rotation) to drain on shutdown
 
@@ -187,6 +194,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		authLimiter:  ratelimit.New(cfg.AuthRatePerMin),
 		maxRecBytes:  cfg.MaxRecordingBytes,
 		sftpMode:     cfg.SFTPMode,
+		sftpPaths:    cfg.SFTPPathGuard,
 		conns:        make(map[net.Conn]struct{}),
 	}
 	if p.certTTL <= 0 {
@@ -837,7 +845,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	// inspector parses that binary stream to audit each file operation and, in
 	// read-only mode, refuse writes; onSubsystem gates the subsystem request itself
 	// (deny mode refuses it, otherwise it activates the inspector for sftp).
-	insp := newSFTPInspector(p.sftpMode, func(action, detail string) {
+	insp := newSFTPInspector(p.sftpMode, p.sftpPaths, func(action, detail string) {
 		p.audit(ctx, actor, action, fmt.Sprintf("target:%s cred_user:%s %s", target.Name, cred.Username, detail))
 	})
 	onSubsystem := func(payload []byte) bool {

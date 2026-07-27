@@ -566,6 +566,23 @@ func run() error {
 		log.Info("command control enabled", "patterns", cmdGuard.Size())
 	}
 
+	// SFTP path policy (Phase 51): the same regex-denylist engine, matched against
+	// file paths instead of commands, so one semantic covers both. Fail-loud on a
+	// bad pattern — an operator who configured a path deny and got none would not
+	// find out until a file left the building.
+	var sftpPathGuard *cmdguard.Guard
+	if cfg.SSHSFTPDenyFile != "" {
+		pathBytes, derr := os.ReadFile(cfg.SSHSFTPDenyFile)
+		if derr != nil {
+			return fmt.Errorf("sftp path deny file %q: %w", cfg.SSHSFTPDenyFile, derr)
+		}
+		sftpPathGuard, derr = cmdguard.New(cmdguard.ParseDeny(string(pathBytes)))
+		if derr != nil {
+			return fmt.Errorf("sftp path deny file %q: %w", cfg.SSHSFTPDenyFile, derr)
+		}
+		log.Info("sftp path control enabled", "patterns", sftpPathGuard.Size())
+	}
+
 	// In-session step-up (Phase 30): SQL statements matching the step-up file pause
 	// for a supervisor's live decision. The coordinator is shared by the DB proxy
 	// (which awaits) and the API (which decides).
@@ -876,6 +893,7 @@ func run() error {
 			EncryptRecordings:    cfg.EncryptRecordings,
 			OpaqueRecordingNames: cfg.OpaqueRecordingNames,
 			SFTPMode:             proxy.SFTPMode(cfg.SSHSFTPMode),
+			SFTPPathGuard:        sftpPathGuard,
 		})
 		if err != nil {
 			return err
