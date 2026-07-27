@@ -56,14 +56,44 @@ func (s *Server) createVendor(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// listVendors returns the registered vendors. Requires CapReadInventory.
+// listVendors returns a page of the registered vendors (?limit=&after=).
+// Requires CapReadInventory.
 func (s *Server) listVendors(w http.ResponseWriter, r *http.Request) {
-	vendors, err := s.store.ListVendors(r.Context())
+	limit, after := listWindow(r)
+	vendors, err := s.store.ListVendors(r.Context(), limit, after)
 	if err != nil {
 		storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, vendors)
+}
+
+// updateVendor edits a vendor's organization label in place. The username is
+// immutable (it links the vendor to its login identity); disabling is the
+// offboard cascade, never an edit. Requires CapManageUsers, like create.
+func (s *Server) updateVendor(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Org string `json:"org"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	v, err := s.vendorByID(r.Context(), id)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	if err := s.store.UpdateVendorOrg(r.Context(), id, in.Org); err != nil {
+		storeError(w, err)
+		return
+	}
+	s.audit(r.Context(), "vendor.update", fmt.Sprintf("vendor:%s org:%q", v.Username, in.Org))
+	v.Org = in.Org
+	writeJSON(w, http.StatusOK, v)
 }
 
 // offboardVendor disables the vendor, revokes every contract grant, and cuts all
@@ -309,7 +339,7 @@ func (s *Server) vendorGate(w http.ResponseWriter, r *http.Request, target *stor
 // vendorByID resolves a vendor by row id (via the list, since lookups are by
 // username in the store).
 func (s *Server) vendorByID(ctx context.Context, id int64) (*store.Vendor, error) {
-	vendors, err := s.store.ListVendors(ctx)
+	vendors, err := s.store.ListVendors(ctx, 0, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -323,7 +353,7 @@ func (s *Server) vendorByID(ctx context.Context, id int64) (*store.Vendor, error
 
 // vendorGrant resolves a grant by id and its owning vendor.
 func (s *Server) vendorGrant(ctx context.Context, gid int64) (*store.VendorGrant, *store.Vendor, error) {
-	vendors, err := s.store.ListVendors(ctx)
+	vendors, err := s.store.ListVendors(ctx, 0, 0)
 	if err != nil {
 		return nil, nil, err
 	}

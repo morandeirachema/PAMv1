@@ -97,6 +97,29 @@ func (s *Server) killSession(w http.ResponseWriter, r *http.Request) {
 // --- audit ---
 
 // listAudit returns recent audit events, capped by ?limit= (default 100).
+// listWindow parses the shared ?limit=&after= cursor of the inventory list
+// endpoints (Phase 44): limit defaults to 100 and is clamped to 1..500 — the
+// same bound listAudit uses — so an authenticated client can never pull an
+// unbounded result set; after is the last id of the previous page (rows with
+// id > after are returned, ascending). Page until a short page comes back.
+func listWindow(r *http.Request) (limit int, after int64) {
+	limit = 100
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil {
+			limit = n
+		}
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if q := r.URL.Query().Get("after"); q != "" {
+		if n, err := strconv.ParseInt(q, 10, 64); err == nil && n > 0 {
+			after = n
+		}
+	}
+	return limit, after
+}
+
 func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 	limit := 100
 	if q := r.URL.Query().Get("limit"); q != "" {

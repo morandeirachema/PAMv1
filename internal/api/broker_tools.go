@@ -24,7 +24,7 @@ func (s *Server) registerBrokerTools(reg *broker.Registry) {
 
 // targetByName resolves a target by its unique name.
 func (s *Server) targetByName(ctx context.Context, name string) (*store.Target, error) {
-	targets, err := s.store.ListTargets(ctx)
+	targets, err := s.store.ListTargets(ctx, 0, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +71,7 @@ func (s *Server) authorizeAgentTarget(ctx context.Context, p *auth.Principal, na
 
 // firstCredential returns a target's first credential, or an error if it has none.
 func (s *Server) firstCredential(ctx context.Context, target *store.Target) (*store.Credential, error) {
-	creds, err := s.store.ListCredentials(ctx, target.ID)
+	creds, err := s.store.ListCredentials(ctx, target.ID, 0, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +260,7 @@ func (t *listTargetsTool) Capability() auth.Capability { return auth.CapCallTool
 
 // Execute returns target metadata; credential material is never included.
 func (t *listTargetsTool) Execute(ctx context.Context, _ *auth.Principal, _ broker.Args) (broker.Result, error) {
-	targets, err := t.s.store.ListTargets(ctx)
+	targets, err := t.s.store.ListTargets(ctx, 0, 0)
 	if err != nil {
 		return broker.Result{}, err
 	}
@@ -301,7 +301,7 @@ func (t *listCredentialsTool) Execute(ctx context.Context, _ *auth.Principal, ar
 		}
 		targetID = target.ID
 	}
-	creds, err := t.s.store.ListCredentials(ctx, targetID)
+	creds, err := t.s.store.ListCredentials(ctx, targetID, 0, 0)
 	if err != nil {
 		return broker.Result{}, err
 	}

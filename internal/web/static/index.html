@@ -88,6 +88,7 @@
   let viewCred = null, grantsTarget = 0, newUser = null, mfaInfo = null, mfaEnroll = null, recoveryCodes = [], discovered = null, reconcileReport = null;
   let profiles = [], configItems = [], configNote = "", effCfg = null, iacText = "", iacFormat = "";
   let safes = [], safeMembers = [], membersSafe = 0, safeTarget = null;
+  let editTarget = null, editSafe = null, editUser = null; // 2=Change subjects (Phase 44)
   let campaigns = [], campView = null, risk = null, riskMin = "", riskWin = "";
   let brokerApprovals = [], stepUps = [];
   let watchSess = null, watchAbort = null, watchText = "";
@@ -132,6 +133,20 @@
     return data;
   }
 
+  // apiAll drains a cursor-paged list endpoint (Phase 44): the API caps every
+  // page at 500 rows, so follow the ?after= cursor until a short page comes
+  // back. Keeps the subfiles complete while each request stays bounded.
+  async function apiAll(path) {
+    const sep = path.includes("?") ? "&" : "?";
+    let out = [], after = 0;
+    for (;;) {
+      const page = await api("GET", `${path}${sep}limit=500&after=${after}`);
+      out = out.concat(page);
+      if (!Array.isArray(page) || page.length < 500) return out;
+      after = page[page.length - 1].id;
+    }
+  }
+
   // loadMe resolves the caller's identity + capabilities so the menu shows only
   // the options the role may use. Panels still tolerate a 403 as a backstop.
   async function loadMe() { me = await api("GET", "/api/me"); }
@@ -152,11 +167,11 @@
   const optVal = (form, id) => (form["o" + id]?.value || "").trim();
 
   // --- async openers: fetch the screen's data, then render it. Also used by F5. ---
-  async function openTargets() { try { [targets, safes] = await Promise.all([api("GET", "/api/targets"), api("GET", "/api/safes").catch(() => safes)]); } catch (e) { targets = []; } go("targets"); }
-  async function openCreds() { try { [targets, creds] = await Promise.all([api("GET", "/api/targets").catch(() => []), api("GET", "/api/credentials")]); } catch (e) { creds = []; } go("creds"); }
+  async function openTargets() { try { [targets, safes] = await Promise.all([apiAll("/api/targets"), apiAll("/api/safes").catch(() => safes)]); } catch (e) { targets = []; } go("targets"); }
+  async function openCreds() { try { [targets, creds] = await Promise.all([apiAll("/api/targets").catch(() => []), apiAll("/api/credentials")]); } catch (e) { creds = []; } go("creds"); }
   async function openSessions() { try { sessions = await api("GET", "/api/sessions"); } catch (e) { sessions = []; } go("sessions"); }
-  async function openCheckouts() { try { [targets, checkouts] = await Promise.all([api("GET", "/api/targets").catch(() => []), api("GET", "/api/checkouts?active=true")]); } catch (e) { checkouts = []; } go("checkouts"); }
-  async function openUsers() { try { [users, profiles] = await Promise.all([api("GET", "/api/users"), api("GET", "/api/profiles").catch(() => [])]); } catch (e) { users = []; } go("users"); }
+  async function openCheckouts() { try { [targets, checkouts] = await Promise.all([apiAll("/api/targets").catch(() => []), apiAll("/api/checkouts?active=true")]); } catch (e) { checkouts = []; } go("checkouts"); }
+  async function openUsers() { try { [users, profiles] = await Promise.all([apiAll("/api/users"), api("GET", "/api/profiles").catch(() => [])]); } catch (e) { users = []; } go("users"); }
   async function openProfiles() { try { profiles = await api("GET", "/api/profiles"); } catch (e) { profiles = []; } go("profiles"); }
   async function openConfig() { try { const r = await api("GET", "/api/config"); configItems = r.settings || []; configNote = r.note || ""; } catch (e) { configItems = []; } go("config"); }
   async function openEffective() { try { effCfg = await api("GET", "/api/config/effective"); } catch (e) { effCfg = null; } go("effective"); }
@@ -182,8 +197,8 @@
   }
   async function openRequests() {
     requests = [];
-    if (can("approve")) { try { requests = await api("GET", "/api/access-requests"); } catch (e) {} }
-    if (targets.length === 0) { try { targets = await api("GET", "/api/targets"); } catch (e) {} }
+    if (can("approve")) { try { requests = await apiAll("/api/access-requests"); } catch (e) {} }
+    if (targets.length === 0) { try { targets = await apiAll("/api/targets"); } catch (e) {} }
     go("requests");
   }
   // Application-secrets console (Phase 24). The routes exist only when the API is
@@ -198,10 +213,10 @@
     grantsApp = aid; appGrants = [];
     try {
       [creds, appGrants] = await Promise.all([
-        api("GET", "/api/credentials").catch(() => creds),
+        apiAll("/api/credentials").catch(() => creds),
         api("GET", `/v1/apps/${aid}/grants`),
       ]);
-      if (targets.length === 0) { try { targets = await api("GET", "/api/targets"); } catch (e) {} }
+      if (targets.length === 0) { try { targets = await apiAll("/api/targets"); } catch (e) {} }
     } catch (e) { appGrants = []; }
     go("appgrants");
   }
@@ -209,7 +224,7 @@
   // Safes console (Phase 17). Targets are loaded alongside so the safe screens
   // can show how many targets each safe holds.
   async function openSafes() {
-    try { [safes, targets] = await Promise.all([api("GET", "/api/safes"), api("GET", "/api/targets").catch(() => targets)]); }
+    try { [safes, targets] = await Promise.all([apiAll("/api/safes"), apiAll("/api/targets").catch(() => targets)]); }
     catch (e) { safes = []; }
     go("safes");
   }
@@ -222,7 +237,7 @@
   // list is loaded for the picker.
   async function openTargetSafe(t) {
     safeTarget = t;
-    if (safes.length === 0) { try { safes = await api("GET", "/api/safes"); } catch (e) {} }
+    if (safes.length === 0) { try { safes = await apiAll("/api/safes"); } catch (e) {} }
     go("targetsafe");
   }
   // Certification campaigns console (Phase 19).
@@ -589,7 +604,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
         const canConnect = can("connect");
         term.innerHTML = `${head("PAMWRKTGT", "Work with Targets")}
 Type options, press Enter.
-  <span class="cyan">${[canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "7=Open RDP (rdp targets)" : "", canManage ? "8=Assign to safe" : "", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
+  <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "7=Open RDP (rdp targets)" : "", canManage ? "8=Assign to safe" : "", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Name</th><th>Host</th><th>Port</th><th>OS</th><th>Proto</th><th>Approval</th><th>Safe</th></tr>
@@ -602,7 +617,8 @@ ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add target" : ""}   F12=Cancel
           try {
             for (const t of targets) {
               const o = optVal(ev.target, t.id);
-              if (o === "4") { await api("DELETE", `/api/targets/${t.id}`); say(`TARGET ${String(t.name).toUpperCase()} DELETED.`); }
+              if (o === "2") { editTarget = t; return go("targetchange"); }
+              else if (o === "4") { await api("DELETE", `/api/targets/${t.id}`); say(`TARGET ${String(t.name).toUpperCase()} DELETED.`); }
               else if (o === "5") { return openGrants(t.id); }
               else if (o === "7") { return openRDP(t); }
               else if (o === "8") { return openTargetSafe(t); }
@@ -623,7 +639,7 @@ Type choices, press Enter.
 <label>Host  . . . . . . . :  <input name="host" size="24" required></label>
 <label>Port  . . . . . . . :  <input name="port" type="number" value="22" min="1" max="65535" size="6" required></label>
 <label>OS type . . . . . . :  <select name="os_type"><option>linux</option><option>windows</option></select>   <span class="cyan">linux, windows</span></label>
-<label>Protocol  . . . . . :  <select name="protocol"><option>ssh</option><option>winrm</option><option>rdp</option></select>   <span class="cyan">ssh, winrm, rdp</span></label>
+<label>Protocol  . . . . . :  <select name="protocol"><option>ssh</option><option>winrm</option><option>rdp</option><option>postgres</option></select>   <span class="cyan">ssh, winrm, rdp, postgres</span></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox">   <span class="cyan">connections need an approved request (4-eyes)</span></label>
 <input type="submit" hidden>
 </form>
@@ -633,6 +649,36 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           const f = Object.fromEntries(new FormData(ev.target));
           const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked };
           try { await api("POST", "/api/targets", body); say(`TARGET ${String(f.name).toUpperCase()} ADDED.`); await openTargets(); }
+          catch (e) { say("CPF9898: " + e.message, true); render(); }
+        };
+      },
+
+      // 2=Change on Work with Targets (Phase 44): edit in place — no
+      // delete + recreate, so credentials, grants, dependencies and the safe
+      // assignment survive. The safe assignment itself is option 8.
+      targetchange() {
+        back = "targets";
+        const t = editTarget || {};
+        const sel = (opts, cur) => opts.map((o) => `<option${o === cur ? " selected" : ""}>${o}</option>`).join("");
+        term.innerHTML = `${head("PAMCHGTGT", "Change Target")}
+Editing target <span class="white">${esc(t.name)}</span> (id ${esc(t.id)}). Type choices, press Enter.
+
+<form id="f-chg" class="indent">
+<label>Name  . . . . . . . :  <input name="name" size="20" required autofocus value="${esc(t.name)}"></label>
+<label>Host  . . . . . . . :  <input name="host" size="24" required value="${esc(t.host)}"></label>
+<label>Port  . . . . . . . :  <input name="port" type="number" min="1" max="65535" size="6" required value="${esc(t.port)}"></label>
+<label>OS type . . . . . . :  <select name="os_type">${sel(["linux", "windows"], t.os_type)}</select></label>
+<label>Protocol  . . . . . :  <select name="protocol">${sel(["ssh", "winrm", "rdp", "postgres"], t.protocol)}</select></label>
+<label>Require approval  . :  <input name="require_approval" type="checkbox"${t.require_approval ? " checked" : ""}>   <span class="cyan">connections need an approved request (4-eyes)</span></label>
+<div class="cyan">Credentials, grants and safe assignment are kept. Safe: use option 8.</div>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-chg").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked };
+          try { await api("PUT", `/api/targets/${t.id}`, body); say(`TARGET ${String(f.name).toUpperCase()} CHANGED.`); await openTargets(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
       },
@@ -955,7 +1001,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         back = "main";
         term.innerHTML = `${head("PAMWRKUSR", "Work with Users & Profiles")}
 Type options, press Enter.
-  <span class="cyan">4=Delete</span>
+  <span class="cyan">2=Change role   4=Delete</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Username</th><th>Role / profile</th><th>Created</th></tr>
@@ -969,7 +1015,8 @@ ${fkeys("F3=Exit   F5=Refresh   F6=Add user   F9=Reconcile directory   F12=Cance
           try {
             for (const u of users) {
               const o = optVal(ev.target, u.id);
-              if (o === "4") { await api("DELETE", `/api/users/${u.id}`); say(`USER ${String(u.username).toUpperCase()} DELETED.`); }
+              if (o === "2") { editUser = u; return go("userchange"); }
+              else if (o === "4") { await api("DELETE", `/api/users/${u.id}`); say(`USER ${String(u.username).toUpperCase()} DELETED.`); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
             await openUsers();
@@ -992,6 +1039,29 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
           try { newUser = await api("POST", "/api/users", f); go("usercreated"); }
+          catch (e) { say("CPF9898: " + e.message, true); render(); }
+        };
+      },
+
+      // 2=Change role (Phase 44): a promotion or demotion no longer re-mints
+      // the token — the identity and its credential survive the role change.
+      userchange() {
+        back = "users";
+        const u = editUser || {};
+        const roles = ["user", "auditor", "approver", "admin"];
+        term.innerHTML = `${head("PAMCHGUSR", "Change User Role")}
+Editing user <span class="white">${esc(u.username)}</span> (id ${esc(u.id)}). The username and token are kept.
+
+<form id="f-chg" class="indent">
+<label>Role / profile  . . :  <select name="role" autofocus>${roles.map((r) => `<option${r === u.role ? " selected" : ""}>${r}</option>`).join("")}${profiles.map((p) => `<option value="${esc(p.name)}"${p.name === u.role ? " selected" : ""}>${esc(p.name)} (profile)</option>`).join("")}</select></label>
+<div class="cyan">You cannot assign capabilities you do not hold.</div>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-chg").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          try { await api("PUT", `/api/users/${u.id}`, { role: f.role }); say(`USER ${String(u.username).toUpperCase()} IS NOW ${String(f.role).toUpperCase()}.`); await openUsers(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
       },
@@ -1387,7 +1457,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         term.innerHTML = `${head("PAMWRKSAF", "Work with Safes")}
 Named containers that group targets and delegate access: a safe member may
 connect to every target in the safe. Type options, press Enter.
-  <span class="cyan">${[canManage ? "4=Delete" : "", "5=Work with members"].filter(Boolean).join("   ")}</span>
+  <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", "5=Work with members"].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Name</th><th>Description</th><th>Targets</th><th>Created</th></tr>
@@ -1401,7 +1471,8 @@ ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add safe" : ""}   F12=Cancel`)
           try {
             for (const s of safes) {
               const o = optVal(ev.target, s.id);
-              if (o === "4") { await api("DELETE", `/api/safes/${s.id}`); say(`SAFE ${String(s.name).toUpperCase()} DELETED.`); }
+              if (o === "2") { editSafe = s; return go("safechange"); }
+              else if (o === "4") { await api("DELETE", `/api/safes/${s.id}`); say(`SAFE ${String(s.name).toUpperCase()} DELETED.`); }
               else if (o === "5") { return openSafeMembers(s.id); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
@@ -1425,6 +1496,28 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
           try { await api("POST", "/api/safes", f); say(`SAFE ${String(f.name).toUpperCase()} CREATED.`); await openSafes(); }
+          catch (e) { say("CPF9898: " + e.message, true); render(); }
+        };
+      },
+
+      // 2=Change on Work with Safes (Phase 44): rename / re-describe in place —
+      // members and target assignments survive.
+      safechange() {
+        back = "safes";
+        const s = editSafe || {};
+        term.innerHTML = `${head("PAMCHGSAF", "Change Safe")}
+Editing safe <span class="white">${esc(s.name)}</span> (id ${esc(s.id)}). Members and targets are kept.
+
+<form id="f-chg" class="indent">
+<label>Name  . . . . . . . :  <input name="name" size="20" required autofocus value="${esc(s.name)}"></label>
+<label>Description . . . . :  <input name="description" size="40" value="${esc(s.description || "")}"></label>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-chg").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          try { await api("PUT", `/api/safes/${s.id}`, f); say(`SAFE ${String(f.name).toUpperCase()} CHANGED.`); await openSafes(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
       },

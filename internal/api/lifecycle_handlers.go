@@ -325,10 +325,12 @@ func (s *Server) checkinCredential(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// listCheckouts reports checkouts (activeOnly via ?active=true).
+// listCheckouts reports a page of checkouts (activeOnly via ?active=true;
+// ?limit=&after= cursor).
 func (s *Server) listCheckouts(w http.ResponseWriter, r *http.Request) {
 	activeOnly := r.URL.Query().Get("active") == "true"
-	cos, err := s.store.ListCheckouts(r.Context(), activeOnly, time.Now())
+	limit, after := listWindow(r)
+	cos, err := s.store.ListCheckouts(r.Context(), activeOnly, time.Now(), limit, after)
 	if err != nil {
 		storeError(w, err)
 		return
@@ -368,7 +370,7 @@ func (s *Server) reconcileCredentialHandler(w http.ResponseWriter, r *http.Reque
 // reconcileAllHandler reconciles every credential and reports drift. It is a
 // read-only scan (no remediation) so it is safe to run on a schedule.
 func (s *Server) reconcileAllHandler(w http.ResponseWriter, r *http.Request) {
-	creds, err := s.store.ListCredentials(r.Context(), 0)
+	creds, err := s.store.ListCredentials(r.Context(), 0, 0, 0)
 	if err != nil {
 		storeError(w, err)
 		return

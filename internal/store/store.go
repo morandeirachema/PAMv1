@@ -409,20 +409,38 @@ type MFAEnrollment struct {
 	LastTOTPStep int64 `json:"-"`
 }
 
+// List-cursor semantics (Phase 44). Every top-level inventory list read takes a
+// (limit, afterID) window: rows are returned in ascending id order, starting
+// strictly after afterID, at most limit rows when limit > 0. limit <= 0 means
+// "no cap" — reserved for in-process sweeps (rotation, reconciliation, the
+// vendor sweeper); the HTTP handlers always pass a clamped limit so an
+// authenticated client can never pull an unbounded result set. afterID <= 0
+// starts from the beginning. Child lists scoped to one parent (a target's
+// grants, a safe's members) stay unwindowed — they are bounded by their parent.
+
 type Store interface {
 	// CreateTarget inserts a target, populating its ID and CreatedAt.
 	CreateTarget(ctx context.Context, t *Target) error
-	// ListTargets returns all targets.
-	ListTargets(ctx context.Context) ([]Target, error)
+	// ListTargets returns targets in the (limit, afterID) window, id-ascending.
+	ListTargets(ctx context.Context, limit int, afterID int64) ([]Target, error)
 	// GetTarget returns one target by ID, or ErrNotFound.
 	GetTarget(ctx context.Context, id int64) (*Target, error)
+	// UpdateTarget replaces the editable fields (Name, Host, Port, OSType,
+	// Protocol, RequireApproval) of the target with t.ID, refreshing t's SafeID
+	// and CreatedAt from the stored row. It deliberately does NOT touch the safe
+	// assignment (AssignTargetSafe owns that). ErrNotFound if the target is
+	// missing, ErrConflict if the new name is taken — so fixing a host or port
+	// no longer means delete + recreate, which cascades away the target's
+	// credentials, grants, dependencies and safe assignment.
+	UpdateTarget(ctx context.Context, t *Target) error
 	// DeleteTarget removes a target (cascading to its dependents), or ErrNotFound.
 	DeleteTarget(ctx context.Context, id int64) error
 
 	// CreateCredential inserts a credential for a target, or ErrNotFound if the target is missing.
 	CreateCredential(ctx context.Context, c *Credential) error
-	// ListCredentials returns credentials for one target, or all when targetID is 0.
-	ListCredentials(ctx context.Context, targetID int64) ([]Credential, error)
+	// ListCredentials returns credentials for one target (or all when targetID
+	// is 0) in the (limit, afterID) window, id-ascending.
+	ListCredentials(ctx context.Context, targetID int64, limit int, afterID int64) ([]Credential, error)
 	// GetCredential returns one credential by ID, or ErrNotFound.
 	GetCredential(ctx context.Context, id int64) (*Credential, error)
 	// UpdateCredentialSecretEnc replaces a credential's encrypted secret (used
@@ -450,10 +468,16 @@ type Store interface {
 
 	// CreateSafe inserts a safe, populating its ID and CreatedAt.
 	CreateSafe(ctx context.Context, s *Safe) error
-	// ListSafes returns all safes ordered by name.
-	ListSafes(ctx context.Context) ([]Safe, error)
+	// ListSafes returns safes in the (limit, afterID) window, id-ascending
+	// (creation order — the stable order a cursor needs).
+	ListSafes(ctx context.Context, limit int, afterID int64) ([]Safe, error)
 	// GetSafe returns a safe by ID, or ErrNotFound.
 	GetSafe(ctx context.Context, id int64) (*Safe, error)
+	// UpdateSafe replaces the Name and Description of the safe with s.ID,
+	// refreshing s.CreatedAt from the stored row. ErrNotFound if the safe is
+	// missing, ErrConflict if the new name is taken. Membership and target
+	// assignment are untouched — renaming a safe never changes who may reach what.
+	UpdateSafe(ctx context.Context, s *Safe) error
 	// DeleteSafe removes a safe by ID (its members cascade; member targets are
 	// unassigned), or ErrNotFound.
 	DeleteSafe(ctx context.Context, id int64) error
@@ -496,9 +520,9 @@ type Store interface {
 	CreateAccessRequest(ctx context.Context, ar *AccessRequest) error
 	// GetAccessRequest returns one access request by ID, or ErrNotFound.
 	GetAccessRequest(ctx context.Context, id int64) (*AccessRequest, error)
-	// ListAccessRequests returns requests with the given status, or all when
-	// status is "".
-	ListAccessRequests(ctx context.Context, status string) ([]AccessRequest, error)
+	// ListAccessRequests returns requests with the given status (all when
+	// status is "") in the (limit, afterID) window, id-ascending.
+	ListAccessRequests(ctx context.Context, status string, limit int, afterID int64) ([]AccessRequest, error)
 	// DecideAccessRequest records an approve/deny decision by approver.
 	DecideAccessRequest(ctx context.Context, id int64, status, approver string, decidedAt time.Time) error
 	// SetApprovalState records a multi-approver decision (Phase 21): the updated
@@ -528,8 +552,9 @@ type Store interface {
 	GetActiveCheckout(ctx context.Context, credentialID int64, now time.Time) (*Checkout, error)
 	// CheckinCheckout marks a checkout returned; ErrNotFound if missing or already returned.
 	CheckinCheckout(ctx context.Context, id int64, at time.Time) error
-	// ListCheckouts lists checkouts; activeOnly limits to unreturned, unexpired ones.
-	ListCheckouts(ctx context.Context, activeOnly bool, now time.Time) ([]Checkout, error)
+	// ListCheckouts lists checkouts in the (limit, afterID) window,
+	// id-ascending; activeOnly limits to unreturned, unexpired ones.
+	ListCheckouts(ctx context.Context, activeOnly bool, now time.Time, limit int, afterID int64) ([]Checkout, error)
 
 	// AppendAudit appends an audit event, populating its ID and TS. When an audit
 	// HMAC key has been configured (EnableAuditChain), the event is linked into the
@@ -571,10 +596,18 @@ type Store interface {
 
 	// CreateUser inserts a user, populating its ID and CreatedAt.
 	CreateUser(ctx context.Context, u *User) error
-	// ListUsers returns all users.
-	ListUsers(ctx context.Context) ([]User, error)
+	// ListUsers returns users in the (limit, afterID) window, id-ascending.
+	ListUsers(ctx context.Context, limit int, afterID int64) ([]User, error)
+	// GetUser returns one user by ID, or ErrNotFound.
+	GetUser(ctx context.Context, id int64) (*User, error)
 	// GetUserByTokenHash returns the user whose token hash matches, or ErrNotFound.
 	GetUserByTokenHash(ctx context.Context, tokenHashHex string) (*User, error)
+	// UpdateUserRole changes a user's role (a built-in role or a custom profile
+	// name), or ErrNotFound. The username and token are immutable: the username
+	// is the subject key referenced by grants, sessions and vendor records, and
+	// re-keying an identity is a delete + re-mint, not an edit. Local tokens are
+	// re-resolved on every request, so a role change takes effect immediately.
+	UpdateUserRole(ctx context.Context, id int64, role string) error
 	// DeleteUser removes a user by ID, or ErrNotFound.
 	DeleteUser(ctx context.Context, id int64) error
 
@@ -609,10 +642,14 @@ type Store interface {
 	CreateVendor(ctx context.Context, v *Vendor) error
 	// GetVendorByUsername returns the vendor for a login, or ErrNotFound.
 	GetVendorByUsername(ctx context.Context, username string) (*Vendor, error)
-	// ListVendors returns all vendors.
-	ListVendors(ctx context.Context) ([]Vendor, error)
+	// ListVendors returns vendors in the (limit, afterID) window, id-ascending.
+	ListVendors(ctx context.Context, limit int, afterID int64) ([]Vendor, error)
 	// SetVendorDisabled enables/disables a vendor by id, or ErrNotFound.
 	SetVendorDisabled(ctx context.Context, id int64, disabled bool) error
+	// UpdateVendorOrg changes a vendor's organization label, or ErrNotFound. The
+	// username is immutable (it links the vendor to its users row); disabling is
+	// SetVendorDisabled / OffboardVendor, never an edit.
+	UpdateVendorOrg(ctx context.Context, id int64, org string) error
 	// CreateVendorGrant records a pending contract grant, populating ID/CreatedAt;
 	// ErrNotFound if the vendor or target is missing.
 	CreateVendorGrant(ctx context.Context, g *VendorGrant) error

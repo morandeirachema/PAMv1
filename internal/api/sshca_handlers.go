@@ -121,7 +121,7 @@ func (s *Server) signOperatorCert(w http.ResponseWriter, r *http.Request) {
 	// mint a cert for an arbitrary login (e.g. root) the vault doesn't govern.
 	// Checked BEFORE the approval gate below, so a bad principal is rejected without
 	// consuming a one-time access approval.
-	creds, err := s.store.ListCredentials(r.Context(), target.ID)
+	creds, err := s.store.ListCredentials(r.Context(), target.ID, 0, 0)
 	if err != nil {
 		storeError(w, err)
 		return

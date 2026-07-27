@@ -36,7 +36,7 @@ func (s *Server) discoveryScan(w http.ResponseWriter, r *http.Request) {
 
 	created := []store.Target{}
 	if in.Create {
-		existing, err := s.store.ListTargets(r.Context())
+		existing, err := s.store.ListTargets(r.Context(), 0, 0)
 		if err != nil {
 			storeError(w, err)
 			return

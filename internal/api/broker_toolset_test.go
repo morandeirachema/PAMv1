@@ -60,7 +60,7 @@ func TestBrokerRotateTool(t *testing.T) {
 	srv, st := newTestServerOpts(t, nil, brokerOpts(t, fake, toolsetRules))
 	seedWinRMTarget(t, srv, "win-rot", "before-pw")
 	// Find the credential id.
-	creds, err := st.ListCredentials(context.Background(), 0)
+	creds, err := st.ListCredentials(context.Background(), 0, 0, 0)
 	if err != nil || len(creds) != 1 {
 		t.Fatalf("seed creds: %v %d", err, len(creds))
 	}
@@ -85,7 +85,7 @@ func TestBrokerRevealDefaultDeny(t *testing.T) {
 	fake := &fakeWinRM{result: winrm.Result{Stdout: "ok"}}
 	srv, st := newTestServerOpts(t, nil, brokerOpts(t, fake, toolsetRules))
 	seedWinRMTarget(t, srv, "win-rev", "reveal-me-pw")
-	creds, _ := st.ListCredentials(context.Background(), 0)
+	creds, _ := st.ListCredentials(context.Background(), 0, 0, 0)
 	credID := creds[0].ID
 	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-rev"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
@@ -105,7 +105,7 @@ func TestBrokerRevealWhenAllowed(t *testing.T) {
 	fake := &fakeWinRM{result: winrm.Result{Stdout: "ok"}}
 	srv, st := newTestServerOpts(t, nil, brokerOpts(t, fake, rules))
 	seedWinRMTarget(t, srv, "win-rev2", "reveal-me-pw")
-	creds, _ := st.ListCredentials(context.Background(), 0)
+	creds, _ := st.ListCredentials(context.Background(), 0, 0, 0)
 	credID := creds[0].ID
 	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-rev2"})
 	tok, _ := jsonMap(t, ad)["token"].(string)

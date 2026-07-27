@@ -24,7 +24,7 @@ func (s *Server) reconcileIdentities(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dryRun := r.URL.Query().Get("dry_run") == "true"
-	users, err := s.store.ListUsers(r.Context())
+	users, err := s.store.ListUsers(r.Context(), 0, 0)
 	if err != nil {
 		storeError(w, err)
 		return

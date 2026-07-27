@@ -17,7 +17,7 @@ import (
 func RotateVaultKEK(ctx context.Context, st store.Store, from, to *vault.Vault) (int, error) {
 	n := 0
 
-	creds, err := st.ListCredentials(ctx, 0)
+	creds, err := st.ListCredentials(ctx, 0, 0, 0)
 	if err != nil {
 		return n, fmt.Errorf("list credentials: %w", err)
 	}

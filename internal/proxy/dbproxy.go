@@ -935,7 +935,7 @@ func lookupTargetCred(ctx context.Context, st store.Store, targetName, credUser 
 	if targetName == "" {
 		return nil, nil, errors.New("no target specified")
 	}
-	targets, err := st.ListTargets(ctx)
+	targets, err := st.ListTargets(ctx, 0, 0)
 	if err != nil {
 		return nil, nil, errors.New("target lookup failed")
 	}
@@ -949,7 +949,7 @@ func lookupTargetCred(ctx context.Context, st store.Store, targetName, credUser 
 	if target == nil {
 		return nil, nil, fmt.Errorf("unknown target %q", targetName)
 	}
-	creds, err := st.ListCredentials(ctx, target.ID)
+	creds, err := st.ListCredentials(ctx, target.ID, 0, 0)
 	if err != nil {
 		return nil, nil, errors.New("credential lookup failed")
 	}

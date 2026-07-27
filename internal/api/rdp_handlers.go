@@ -121,7 +121,7 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 			s.audit(withPrincipal(r.Context(), principal), "access.consumed", fmt.Sprintf("request:%d target:%s", consumedID, target.Name))
 		}
 	}
-	creds, err := s.store.ListCredentials(r.Context(), target.ID)
+	creds, err := s.store.ListCredentials(r.Context(), target.ID, 0, 0)
 	if err != nil {
 		storeError(w, err)
 		return

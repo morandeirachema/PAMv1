@@ -65,14 +65,57 @@ func (s *Server) createTarget(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, t)
 }
 
-// listTargets returns all targets in the inventory.
+// listTargets returns a page of the target inventory (?limit=&after= cursor).
 func (s *Server) listTargets(w http.ResponseWriter, r *http.Request) {
-	targets, err := s.store.ListTargets(r.Context())
+	limit, after := listWindow(r)
+	targets, err := s.store.ListTargets(r.Context(), limit, after)
 	if err != nil {
 		storeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, targets)
+}
+
+// updateTarget edits a target in place — the same validation and authorization
+// as create, without the delete + recreate that would cascade away its
+// credentials, grants, dependencies and safe assignment. The safe assignment
+// itself is not editable here (PUT /api/targets/{id}/safe owns it).
+func (s *Server) updateTarget(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	var in targetIn
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if in.Port == 0 {
+		in.Port = 22
+	}
+	switch {
+	case in.Name == "" || in.Host == "":
+		writeError(w, http.StatusUnprocessableEntity, "name and host are required")
+		return
+	case in.Port < 1 || in.Port > 65535:
+		writeError(w, http.StatusUnprocessableEntity, "port must be 1-65535")
+		return
+	case !validOS[in.OSType]:
+		writeError(w, http.StatusUnprocessableEntity, `os_type must be "linux" or "windows"`)
+		return
+	case !validProtocol[in.Protocol]:
+		writeError(w, http.StatusUnprocessableEntity, `protocol must be "ssh", "winrm", "rdp" or "postgres"`)
+		return
+	case !s.protocolAllowed(in.Protocol):
+		writeError(w, http.StatusUnprocessableEntity, "protocol "+in.Protocol+" is not allowed by policy")
+		return
+	}
+	t := store.Target{ID: id, Name: in.Name, Host: in.Host, Port: in.Port, OSType: in.OSType, Protocol: in.Protocol, RequireApproval: in.RequireApproval}
+	if err := s.store.UpdateTarget(r.Context(), &t); err != nil {
+		storeError(w, err)
+		return
+	}
+	s.audit(r.Context(), "target.update", fmt.Sprintf("target:%d name:%s host:%s:%d", t.ID, t.Name, t.Host, t.Port))
+	writeJSON(w, http.StatusOK, t)
 }
 
 // getTarget returns a single target by its {id} path value.
