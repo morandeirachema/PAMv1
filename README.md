@@ -1,9 +1,12 @@
 # pamv1
 
-> ⚠️ **Alpha · for learning purposes.** This is an early-stage (**alpha**) educational
-> project built to explore how a Privileged Access Management system works end to end. It has
-> **not** been security-audited and is **not** production-ready — do not use it to guard real
-> privileged credentials. Use it to learn, experiment and contribute.
+> ⚠️ **Beta · for learning purposes.** This is an educational project built to explore how a
+> Privileged Access Management system works end to end. **Beta** means feature-complete against
+> its [roadmap](ROADMAP.md) — every phase through 51 has shipped, every finding of its own
+> [security self-audit](docs/SECURITY-GAPS.md) is closed, and every capability is exercised by
+> tests and deploys as code. It still has **not** been audited by anyone outside the project and
+> is **not** production-ready — do not use it to guard real privileged credentials. Use it to
+> learn, experiment and contribute.
 
 [![CI](https://github.com/morandeirachema/pamv1/actions/workflows/ci.yml/badge.svg)](https://github.com/morandeirachema/pamv1/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -43,8 +46,9 @@ propagation** — which closes all four Tier-1 gaps against the commercial leade
 approval workflows — Tier-2), **Zero Standing Privilege** (ephemeral short-lived SSH
 certificates) and **privileged threat analytics** (behavioral risk scoring + automated
 response — Tier-3), and a **Conjur-style application-secrets API** for non-agent apps
-(Tier-4). It remains an **alpha, educational** codebase — read it, run it, learn from it,
-but don't trust it with real secrets.
+(Tier-4). It is a **beta, educational** codebase — feature-complete against its roadmap and
+self-audited, but unaudited by outsiders: read it, run it, learn from it, and don't trust it
+with real secrets.
 
 🔎 **Live overview:** [interactive project page](https://claude.ai/code/artifact/a1b34e5b-cd84-4fc7-8389-ebb1897495f7) — what works, architecture and roadmap at a glance &nbsp;·&nbsp; 📖 **[Léelo en español →](README.es.md)**
 
@@ -138,7 +142,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–26, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–51, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 
@@ -150,11 +154,13 @@ Phases 0–26, grouped by area. Every capability is exercised by tests and deplo
 ### Sessions & the JIT proxy
 
 - **Session proxy with JIT injection** — operators connect through an SSH gateway; the proxy authenticates them, pulls the credential from the vault, **decrypts it only at connection time** (and only after every authorization gate passes), injects it into the upstream session and records everything. Proven end to end by an integration test where the upstream accepts *only* the vaulted password the client never possessed. Upstream host keys can be pinned (`PAM_SSH_KNOWN_HOSTS`); a jump-host/bastion path and read-only **observer** sessions are supported.
-- **Windows targets (WinRM + RDP)** — run commands on Windows hosts via `POST /api/targets/{id}/winrm` (basic or NTLM) or an interactive WinRM loop through the proxy, or broker a full **RDP** desktop through [Apache Guacamole](https://guacamole.apache.org/) (`GET /api/targets/{id}/rdp` WebSocket tunnel, cert-verified by default). The **in-portal viewer is built in** — open *Work with Targets* → option 7 and the desktop renders on a canvas (the portal vendors the Guacamole JS client; guacd itself ships in the deploys). Either way the credential is injected just-in-time (AD-joined accounts work), sessions are audited, and the operator never sees the secret. The **session clipboard is gated** by `PAM_RDP_CLIPBOARD` (`allow`/`readonly`/`deny`) and drive redirection is always disabled — so an RDP session can't be used as an unaudited copy-out/paste-in or file channel.
+- **Windows targets (WinRM + RDP)** — run commands on Windows hosts via `POST /api/targets/{id}/winrm` (basic or NTLM) or an interactive WinRM loop through the proxy, or broker a full **RDP** desktop through [Apache Guacamole](https://guacamole.apache.org/) (`GET /api/targets/{id}/rdp` WebSocket tunnel, cert-verified by default). The **in-portal viewer is built in** — open *Work with Targets* → option 7 and the desktop renders on a canvas (the portal vendors the Guacamole JS client; guacd itself ships in the deploys). Either way the credential is injected just-in-time (AD-joined accounts work), sessions are audited, and the operator never sees the secret. The **session clipboard is gated** by `PAM_RDP_CLIPBOARD` (`allow`/`readonly`/`deny`) and drive redirection is always disabled — so an RDP session can't be used as an unaudited copy-out/paste-in or file channel — and `PAM_RDP_CLIPBOARD_AUDIT` **records what actually crossed it** (direction, type, size, SHA-256; content only under an explicit opt-in, since a privileged clipboard often holds a just-copied password).
 - **Database session proxy (PostgreSQL)** — point `psql` at pamv1 (`PAM_DB_ADDR`, e.g. `:5433`) with `user=<dbcred>@<target>` and your PAM key as the password; the proxy runs the same authorization gates as the SSH proxy, injects the vaulted DB credential just-in-time (upstream auth via cleartext / MD5 / **SCRAM-SHA-256**), and brokers the wire protocol — **auditing every SQL statement** (`db.query`) and recording the session. The operator never learns the database password. Proven end to end by a fake upstream that accepts *only* the vaulted secret.
 - **Session recording** — every session (stdout **and** stderr, or each SQL statement) captured in [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/), hashed with SHA-256 into a tamper-evident chain, and the hash written to the audit trail. Recording failures are audited, and `PAM_REQUIRE_RECORDING` can refuse an unrecordable session outright.
 - **Supervised sessions (live monitoring + command control)** — a supervisor can **watch an SSH or PostgreSQL session live** over `GET /api/sessions/{id}/stream` (Server-Sent Events, `CapReadAudit`), and a regex denylist (`PAM_COMMAND_DENY_FILE`) **blocks a dangerous command before it reaches the target** on the exec, WinRM and SQL paths — refused and audited (`command.blocked`). Interactive SSH shells use read-only observer mode instead.
-- **SFTP file-transfer control** — SFTP rides an SSH subsystem carrying a binary protocol that command control never saw. The proxy now **parses that stream** to audit every file operation (`sftp.open`/`sftp.modify`), and `PAM_SSH_SFTP` sets the policy: `allow` (forward + audit), `readonly` (**refuse uploads, deletes and renames** with a synthesized permission-denied — the target is never contacted; downloads still work), or `deny` (refuse the subsystem entirely). Closes an otherwise unaudited file-exfiltration path. Proven end to end by a real SFTP client + server exchanging genuine packets through the proxy.
+- **In-session step-up** — where command control is a hard block, `PAM_DB_STEPUP_FILE` marks statements that **pause for a live supervisor decision** instead of killing the session: the statement waits (audited, visible on the live monitor), an approver allows or refuses it from the console, and the session survives either way.
+- **Cluster-wide kill switch** — a kill issued on any replica terminates the session **wherever it is hosted** (published over Postgres LISTEN/NOTIFY), so the kill switch, the revoke cascade, the vendor sweeper and the analytics auto-response all work in HA. Every brokered execution — the REST WinRM endpoint and the agent broker's exec tools included — is a registered, killable, capped session, not just the interactive proxies.
+- **SFTP file-transfer control** — SFTP rides an SSH subsystem carrying a binary protocol that command control never saw. The proxy now **parses that stream** to audit every file operation (`sftp.open`/`sftp.modify`), and `PAM_SSH_SFTP` sets the policy: `allow` (forward + audit), `readonly` (**refuse uploads, deletes and renames** with a synthesized permission-denied — the target is never contacted; downloads still work), or `deny` (refuse the subsystem entirely). `PAM_SSH_SFTP_DENY_FILE` adds the other dimension — a **regex denylist over paths** (the same engine as command control), refused in *every* mode including downloads and on both sides of a rename, because a path you deny that can still be fetched is not denied at all. Closes an otherwise unaudited file-exfiltration path. Proven end to end by a real SFTP client + server exchanging genuine packets through the proxy.
 
 ### Vault & credential lifecycle
 
@@ -162,15 +168,21 @@ Phases 0–26, grouped by area. Every capability is exercised by tests and deplo
 - **Target inventory & credentials API** — Linux/Windows machines with ssh/winrm/rdp endpoints; credentials are vaulted, listed (never returning secret material), revealed on demand (audited), and deleted. The JSON model *cannot* serialize the ciphertext (`json:"-"`).
 - **Credential lifecycle (rotation · reconciliation · checkout · discovery)** — `POST /api/credentials/{id}/rotate` generates a strong secret, sets it **on the target** (SSH `chpasswd` / WinRM `net user` / fresh `ssh_key`), and re-vaults it — the new password is never shown. `/reconcile` verifies the vaulted secret still authenticates and flags **out-of-sync drift** (`?remediate=true` heals it). **Checkout/check-in** grants an exclusive time-boxed lease and rotates the secret on return. **Discovery** (`/api/discovery/scan`) probes hosts for SSH/WinRM/RDP ports and can auto-onboard targets. A background worker rotates aged secrets and reconciles on a schedule; secrets can be rotated the moment a proxied session ends. **Dependent accounts** — declare a credential's consumers (Windows Services / Scheduled Tasks / IIS App Pools) and rotation updates each over WinRM, so rotating a service account doesn't break production.
 
+- **Zero Standing Privilege & operator certificates** — an `ssh_ca` credential stores **no secret at all**: the proxy mints a short-lived SSH certificate just-in-time per session. Operators can also prove possession of their own key and receive a short-lived certificate scoped to one principal and source address, revocable by serial through a published **KRL**. The host and CA keys are held in **shared custody** (vault-encrypted in the database, claimed atomically), so scaling past one replica no longer hands operators a different host key per pod.
+
 ### Audit, break-glass & alerting
 
 - **Audit trail** — an append-only record of every sensitive action, with actor attribution, plus a tamper-evident export (`GET /api/audit/export`, JSON/CSV + SHA-256 digest) for incident reporting.
 - **Operational logs** — structured [slog](https://pkg.go.dev/log/slog) to stdout, one line per HTTP request and per proxy session, tagged by service (`server`/`api`/`proxy`/`store`); JSON for a SIEM or text for humans (`PAM_LOG_LEVEL`, `PAM_LOG_FORMAT`). Separate from the audit trail; secrets are never logged.
+- **Tamper-evident audit chain** — set `PAM_AUDIT_HMAC_KEY` and every audit event is HMAC-linked to the previous one, so an edit, a reorder or a deletion is detectable (`GET /api/audit/verify`); an ed25519-**signed head checkpoint** (`/api/audit/head`), archived out-of-band, also catches tail truncation, which a chain alone cannot.
+- **Continuous audit→SIEM forwarding** — every event streamed to a collector as it is written (`PAM_AUDIT_FORWARD_ADDR`) in **RFC 5424 syslog, ArcSight CEF or IBM QRadar LEEF**, over UDP, TCP or **TLS with always-on certificate verification** — from a durable cursor with spool-and-retry, leader-locked so N replicas produce one stream. Plus a pull-based **[OCSF](https://schema.ocsf.io/) export** for schema-normalized SIEM ingest.
+- **Retention with WORM archiving** — aged recordings and audit rows are swept on a schedule, and with `PAM_RETENTION_ARCHIVE_DIR` set the sweep becomes **archive-then-prune**: rows are exported as digest-stamped JSON Lines and recordings are *moved* into a write-once archive, and the delete runs **only if the archive succeeded** — a broken archive costs disk space, never evidence.
+- **Recordings protected at rest** — `PAM_RECORDING_ENCRYPT` seals each recording as chunked AES-256-GCM under a per-recording key wrapped by the same KEK that protects credentials, and `PAM_RECORDING_OPAQUE_NAMES` strips target and actor from the *file name* too (the mapping moves into the audit trail, behind the same capability as replay).
 - **Break-glass (v2)** — a sealed emergency key, or **M-of-N quorum unseal** ([Shamir shares](https://en.wikipedia.org/wiki/Shamir%27s_secret_sharing) split with `-split-key`; custodians POST shares to reconstruct it). Either way you get a **short-lived, auto-expiring** admin session, and every break-glass access/unseal is loudly audited and **alerted in real time** (webhook, syslog or email).
 
 ### Configuration & the management console
 
-- **AS/400 management console** — a full role-aware console in green phosphor: Sign On, a numbered main menu, and menu-driven `Work with…` screens for targets & grants, credentials (reveal/check-out/rotate/reconcile), active sessions (live monitor + kill + a **live watch pane**), 4-eyes access requests (ticket, N-of-M approvals, scheduled windows), users & profiles, MFA, discovery, reconciliation, audit (filter + CSV export), break-glass, **permission profiles**, **system configuration**, **effective config + IaC export**, **application secrets**, **safes**, **certification campaigns** and **risk analytics** — numeric options (`4=Delete`, `5=Display`), F-keys, scanlines. It is **keyboard-first** (the mouse is optional): focus lands on each screen's field, `Esc` goes back, `↑/↓` move between rows. The menu shows only what your role permits.
+- **AS/400 management console** — a full role-aware console in green phosphor: Sign On, a numbered main menu, and menu-driven `Work with…` screens for targets & grants, credentials (reveal/check-out/rotate/reconcile), active sessions (live monitor + kill + a **live watch pane**), 4-eyes access requests (ticket, N-of-M approvals, scheduled windows), users & profiles, MFA, discovery, reconciliation, audit (filter + CSV export), break-glass, **permission profiles**, **system configuration**, **effective config + IaC export**, **application secrets**, **safes**, **certification campaigns**, **risk analytics**, **session-recording replay**, the two human decision points (**approve an agent's parked tool call** · **decide a paused statement**), **vendors & contract grants**, **operator SSH certificates**, **identity blast radius**, **login sessions** and **AI-agent keys** — numeric options (`2=Change`, `4=Delete`, `5=Display`), F-keys, scanlines. Every shipped capability is operable from the console; nothing is curl-only. It is **keyboard-first** (the mouse is optional): focus lands on each screen's field, `Esc` goes back, `↑/↓` move between rows. The menu shows only what your role permits.
 
 <p align="center">
   <img src="docs/img/portal-app-secrets.svg" alt="Work with application secrets — the 5250 console screen" width="720">
@@ -192,6 +204,9 @@ PAM for AI agents — the same chokepoint, extended to autonomous tools. Opt-in 
 ### OT / industrial & compliance
 
 - **OT session approval (4-eyes)** — gate a target behind an **approved access request**: a user files it, a *different* approver approves (self-approval refused), and only then may the user connect — enforced on the SSH proxy, WinRM **and** RDP, with break-glass as the bypass. Per-target (`require_approval`) or global (`PAM_REQUIRE_APPROVAL`), time-boxed for maintenance windows.
+- **Third-party vendor access gate** — a vendor reaches a target only inside a **time-boxed contract grant** a *customer* approved (never the vendor), with live employment attestation; an offboard revokes every grant and cuts live sessions instantly, a sweeper ends sessions the moment the window closes, and per-vendor evidence exports carry a SHA-256 digest.
+- **Access certification with real separation of duties** — periodic campaigns snapshot who has access to what; a dedicated `approver` certifies or revokes each item **without** holding any access-granting capability, and the principal who *created* a grant cannot certify it themselves (revoking your own grant stays allowed — it only reduces access).
+- **Identity blast radius (CIEM)** — a read-only AWS IAM effective-permission evaluator over a normalized identity graph: escalation-path traversal, toxic-combination findings, and remediation-as-code that names the earliest edge to cut.
 - **OT hardening** — per-zone **protocol allowlists** (`PAM_ALLOWED_PROTOCOLS`), read-only **observer** sessions, and an **air-gap mode** (`PAM_OT_AIRGAP`) that makes zero outbound calls. See the [OT Deployment Guide](docs/OT-DEPLOYMENT.md) and the [NIS2 Compliance Pack](docs/NIS2-COMPLIANCE.md).
 
 ### Storage & operations
@@ -247,7 +262,7 @@ disable the proxy with `PAM_SSH_ADDR=off`.
 
 ## Roadmap
 
-All twenty-six phases (0–25) have shipped — full per-phase detail in **[ROADMAP.md](ROADMAP.md)**:
+All fifty-two phases (0–51) have shipped — full per-phase detail in **[ROADMAP.md](ROADMAP.md)**:
 
 | Phase | Theme | Status |
 |---|---|---|
@@ -295,11 +310,18 @@ All twenty-six phases (0–25) have shipped — full per-phase detail in **[ROAD
 | 41 | Session recordings encrypted at rest (chunked AES-256-GCM under the vault KEK; tamper evidence unchanged) | ✅ shipped |
 | 42 | Shared custody of the SSH host and CA keys in HA (atomic claim in the store; replicas converge on one key) | ✅ shipped |
 | 43 | Console: the two human decision points (approve an agent's parked tool call · decide a paused statement) | ✅ shipped |
-| 44–45 | **Planned** — editable objects + bounded lists · the remaining console screens ([roadmap](ROADMAP.md#next--planned-)) | ⬜ planned |
+| 44 | Editable objects and bounded lists (`PUT` edit-in-place; every inventory list is a clamped `?limit=&after=` cursor) | ✅ shipped |
+| 45 | The remaining console screens (vendors, operator certs, blast radius, login sessions, agent keys, dependents, audit chain) | ✅ shipped |
+| 46 | Per-item four-eyes on certification (grants record their creator; you cannot certify access you granted) | ✅ shipped |
+| 47 | LEEF format + TLS transport for the SIEM forwarder (RFC 5425, always-on certificate verification) | ✅ shipped |
+| 48 | Opaque recording file names (metadata moves from the filename into the audit trail) | ✅ shipped |
+| 49 | Archive to WORM before pruning (digest-stamped export; the delete runs only if the archive succeeded) | ✅ shipped |
+| 50 | Clipboard auditing on the RDP bridge (direction, type, size, digest; content opt-in) | ✅ shipped |
+| 51 | SFTP path policy (regex denylist over paths, refused in every mode and on both sides of a rename) | ✅ shipped |
 
 ## Coverage vs. commercial PAM (CyberArk, Wallix, …)
 
-pamv1 is an **educational, alpha** project — not a drop-in replacement for
+pamv1 is an **educational, beta** project — not a drop-in replacement for
 [CyberArk](https://www.cyberark.com/products/privileged-access-manager/),
 [Wallix Bastion](https://www.wallix.com/privileged-access-management/),
 [BeyondTrust](https://www.beyondtrust.com/),
@@ -372,11 +394,19 @@ vault + proxy chokepoint, and is **out of scope** by design.
 
 ### Candidate next phases
 
-1. ~~**Phase 15 — Database session proxy**~~ ✅ **shipped** (PostgreSQL; MySQL/MSSQL/Oracle are follow-on connectors on the same pattern).
-2. ~~**Phase 16 — Live monitoring + command control**~~ ✅ **shipped** (SSE live stream + regex command control on exec/WinRM/SQL).
-3. ~~**Phase 17 — Safes / containers + dependent-account propagation**~~ ✅ **shipped** — the authorization upgrade for multi-team use and *safe* service-account rotation.
+Every phase through 51 has shipped, including the whole 2026-07 self-audit: each
+finding from the read-only security sweep is closed (see
+[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md)), and so are the smaller items
+those phases deferred — WORM archiving before pruning, LEEF + TLS syslog,
+opaque recording names, clipboard auditing, SFTP path policy, per-item
+four-eyes on certification.
 
-**All four Tier-1 gaps and all three Tier-2 gaps are closed** (including one-time access, Phase 26), **two of the five Tier-3 gaps** (Zero Standing Privilege, privileged threat analytics), and the **first Tier-4 gap** (the application-secrets API). Session recordings now **replay in the portal, hash-verified against the audit trail** (Phase 26). The rest of Tier 3 (connector breadth, cloud CIEM, web proxying) and Tier 4 (Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, thick-app components) are the next frontier — each gated on external infrastructure or accounts, catalogued in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
+What is left in process is **cross-replica live monitoring** (fanning session
+*bytes* across replicas is a heavier pub/sub than the kill signal already
+broadcast) and **per-file SFTP content recording** — both recorded in
+[ROADMAP.md](ROADMAP.md#smaller-follow-ons-recorded-where-they-were-deferred-).
+
+**All four Tier-1 gaps and all three Tier-2 gaps are closed** (including one-time access, Phase 26), **two of the five Tier-3 gaps** (Zero Standing Privilege, privileged threat analytics), and the **first Tier-4 gap** (the application-secrets API). The rest of Tier 3 (connector breadth, cloud CIEM, web proxying) and Tier 4 (Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, thick-app components) are the next frontier — each gated on external infrastructure or accounts, catalogued in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
 
 ## Quickstart
 
