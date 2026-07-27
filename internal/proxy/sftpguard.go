@@ -22,6 +22,8 @@ import (
 	"sync/atomic"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/morandeirachema/pamv1/internal/cmdguard"
 )
 
 // SFTPMode is the SSH proxy's file-transfer policy.
@@ -98,17 +100,33 @@ const sftpMaxPacket = 1 << 20 // 1 MiB
 // goroutine when it accepts the sftp subsystem.
 type sftpInspector struct {
 	mode   SFTPMode
+	paths  *cmdguard.Guard             // path denylist; nil = no path policy
 	audit  func(action, detail string) // bound to this session's actor + target
 	active atomic.Bool                 // set once the sftp subsystem is accepted
 	buf    bytes.Buffer                // accumulates bytes until a full packet is framed
 	giveUp bool                        // set on a parse error: forward the rest opaquely
 }
 
-// newSFTPInspector builds an inspector for mode, auditing through audit. audit is
-// invoked from the data path, so it must not block for long (it records a file
-// operation, not a byte).
-func newSFTPInspector(mode SFTPMode, audit func(action, detail string)) *sftpInspector {
-	return &sftpInspector{mode: mode, audit: audit}
+// newSFTPInspector builds an inspector for mode, with an optional path denylist,
+// auditing through audit. audit is invoked from the data path, so it must not
+// block for long (it records a file operation, not a byte).
+func newSFTPInspector(mode SFTPMode, paths *cmdguard.Guard, audit func(action, detail string)) *sftpInspector {
+	return &sftpInspector{mode: mode, paths: paths, audit: audit}
+}
+
+// pathDenied reports whether path matches the denylist, and the pattern that
+// matched. A nil guard denies nothing, so callers need no branch.
+func (s *sftpInspector) pathDenied(path string) (string, bool) {
+	return s.paths.Blocked(path)
+}
+
+// denyPath refuses one operation because its path is on the denylist, audits it
+// with the matched pattern, and answers the client so it sees a permission
+// error rather than hanging. It reports forward=false for the caller to return.
+func (s *sftpInspector) denyPath(client ssh.Channel, id uint32, op, path, pattern string) bool {
+	s.audit("sftp.blocked", fmt.Sprintf("op:%s path:%s reason:path-denied pattern:%s", op, path, pattern))
+	s.deny(client, id)
+	return false
 }
 
 // activate marks the stream as SFTP (called when the subsystem request is
@@ -248,6 +266,11 @@ func (s *sftpInspector) handleOpen(rest []byte, client ssh.Channel) (forward boo
 	if !(ok && ok2 && ok3) {
 		return true // can't parse the open; forward rather than guess
 	}
+	// A denied path is refused in every mode and in both directions: allowing
+	// the read of a path you have denied would protect nothing.
+	if pattern, denied := s.pathDenied(name); denied {
+		return s.denyPath(client, id, "open", name, pattern)
+	}
 	write := pflags&fxfWriteMask != 0
 	mode := "read"
 	if write {
@@ -271,6 +294,9 @@ func (s *sftpInspector) handleMutating(rest []byte, client ssh.Channel, op strin
 	if !(ok && ok2) {
 		return true
 	}
+	if pattern, denied := s.pathDenied(path); denied {
+		return s.denyPath(client, id, op, path, pattern)
+	}
 	if s.mode == SFTPReadOnly {
 		s.audit("sftp.blocked", fmt.Sprintf("op:%s path:%s reason:readonly", op, path))
 		s.deny(client, id)
@@ -288,6 +314,13 @@ func (s *sftpInspector) handleRename(rest []byte, client ssh.Channel) (forward b
 	newp, _, ok3 := readString(r2)
 	if !(ok && ok2 && ok3) {
 		return true
+	}
+	// BOTH paths are checked: renaming a denied file to an allowed name, or an
+	// allowed file onto a denied one, would each defeat the policy.
+	for _, p := range []string{oldp, newp} {
+		if pattern, denied := s.pathDenied(p); denied {
+			return s.denyPath(client, id, "rename", p, pattern)
+		}
 	}
 	if s.mode == SFTPReadOnly {
 		s.audit("sftp.blocked", fmt.Sprintf("op:rename path:%s reason:readonly", oldp))
