@@ -1,10 +1,13 @@
 # pamv1
 
-> ⚠️ **Alpha · con fines educativos.** Este es un proyecto educativo en fase temprana
-> (**alpha**) creado para explorar cómo funciona de principio a fin un sistema de Gestión de
-> Acceso Privilegiado (PAM). **No** ha sido auditado en seguridad y **no** está listo para
-> producción — no lo uses para custodiar credenciales privilegiadas reales. Úsalo para
-> aprender, experimentar y contribuir.
+> ⚠️ **Beta · con fines educativos.** Este es un proyecto educativo creado para explorar cómo
+> funciona de principio a fin un sistema de Gestión de Acceso Privilegiado (PAM). **Beta**
+> significa completo frente a su [hoja de ruta](ROADMAP.md) — han entregado todas las fases
+> hasta la 51, están cerrados todos los hallazgos de su propia
+> [autoauditoría de seguridad](docs/SECURITY-GAPS.md), y cada capacidad tiene pruebas y se
+> despliega como código. Sigue **sin** haber sido auditado por nadie ajeno al proyecto y **no**
+> está listo para producción — no lo uses para custodiar credenciales privilegiadas reales.
+> Úsalo para aprender, experimentar y contribuir.
 >
 > 🟢 **Documento vivo** — se actualiza en el mismo cambio que el código, sin pedir permiso
 > aparte (ver la política en el [centro de documentación](docs/README.md)).
@@ -34,7 +37,7 @@ de fósforo verde** sin concesiones, porque tocar un PAM debe *sentirse* serio.
 
 Construido fase a fase con una regla: **cada fase es funcional de principio a fin** — arranca,
 pasa los tests y se despliega como Infraestructura-como-Código. El **[roadmap](ROADMAP.md)**
-abarca de la 0 a la 25 y **se han entregado las veintiséis fases** — desde el proxy SSH JIT y el
+abarca de la 0 a la 51 y **se han entregado todas las fases** — desde el proxy SSH JIT y el
 RBAC, pasando por el login AD/Entra/OIDC, los objetivos Windows, el quórum de break-glass, la
 adaptación OT/industrial, las herramientas NIS2, escala/HA y la consola 5250 completa, hasta un
 subsistema de configuración con hot-swap y RBAC de perfiles personalizados, un **bróker de
@@ -49,8 +52,8 @@ certificación, una pasarela ITSM/tickets y flujos de aprobación más ricos —
 **Privilegio Cero Permanente** (certificados SSH efímeros y de corta vida) y la **analítica de
 amenazas privilegiadas** (puntuación de riesgo conductual + respuesta automática — Nivel 3), y
 una **API de secretos para aplicaciones** estilo Conjur para apps que no son agentes (Nivel 4).
-Sigue siendo un proyecto **alpha y educativo** — léelo, ejecútalo, aprende de él, pero no le
-confíes secretos reales.
+Es un proyecto **beta y educativo** — completo frente a su hoja de ruta y autoauditado, pero
+sin auditoría externa: léelo, ejecútalo, aprende de él, pero no le confíes secretos reales.
 
 🔎 **Resumen interactivo:** [página del proyecto](https://claude.ai/code/artifact/b9f19443-5ad1-42d2-955f-e43ca17ac542) — qué funciona, arquitectura y hoja de ruta de un vistazo &nbsp;·&nbsp; 📖 **[Read it in English →](README.md)**
 
@@ -141,7 +144,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–26, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–51, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -249,7 +252,7 @@ ves la credencial. Las grabaciones van a `PAM_RECORDING_DIR`; desactiva el proxy
 
 ## Hoja de ruta
 
-Se han entregado las veintiséis fases (0–25) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
+Se han entregado las cincuenta y dos fases (0–51) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
 
 | Fase | Tema | Estado |
 |---|---|---|
@@ -297,11 +300,18 @@ Se han entregado las veintiséis fases (0–25) — detalle por fase en **[ROADM
 | 41 | Grabaciones de sesión cifradas en disco (AES-256-GCM por bloques bajo la KEK del vault; la evidencia de manipulación no cambia) | ✅ entregada |
 | 42 | Custodia compartida de las claves de host y CA en HA (reclamación atómica en el store; las réplicas convergen en una sola clave) | ✅ entregada |
 | 43 | Consola: los dos puntos de decisión humana (aprobar la llamada de un agente · decidir una sentencia en pausa) | ✅ entregada |
-| 44–45 | **Planificadas** — objetos editables + listados acotados · el resto de pantallas de consola ([hoja de ruta](ROADMAP.md#next--planned-)) | ⬜ planificada |
+| 44 | Objetos editables y listados acotados (`PUT` para editar in situ; todo listado usa un cursor `?limit=&after=` acotado) | ✅ entregada |
+| 45 | El resto de pantallas de consola (proveedores, certificados de operador, radio de impacto, sesiones de login, claves de agente, dependientes, cadena de auditoría) | ✅ entregada |
+| 46 | Cuatro ojos por ítem en la certificación (los permisos registran quién los creó; no puedes certificar el acceso que concediste) | ✅ entregada |
+| 47 | Formato LEEF + transporte TLS para el reenvío a SIEM (RFC 5425, verificación de certificado siempre activa) | ✅ entregada |
+| 48 | Nombres de grabación opacos (los metadatos pasan del nombre de fichero a la traza de auditoría) | ✅ entregada |
+| 49 | Archivado WORM antes de purgar (exportación sellada con digest; el borrado solo ocurre si el archivado tuvo éxito) | ✅ entregada |
+| 50 | Auditoría del portapapeles en el puente RDP (dirección, tipo, tamaño, digest; el contenido es opcional) | ✅ entregada |
+| 51 | Política de rutas en SFTP (lista de denegación por regex, rechazada en todos los modos y en ambos lados de un rename) | ✅ entregada |
 
 ## Cobertura frente al PAM comercial (CyberArk, Wallix, …)
 
-pamv1 es un proyecto **educativo y alpha** — no un reemplazo directo de
+pamv1 es un proyecto **educativo y beta** — no un reemplazo directo de
 [CyberArk](https://www.cyberark.com/products/privileged-access-manager/),
 [Wallix Bastion](https://www.wallix.com/privileged-access-management/),
 [BeyondTrust](https://www.beyondtrust.com/),
