@@ -71,3 +71,64 @@ func TestRotationPropagatesToDependency(t *testing.T) {
 		t.Fatal("no credential.dependency_updated audit event")
 	}
 }
+
+// TestDependencyNameRejectsCommandInjection proves a dependency name cannot
+// smuggle a second command into the WinRM command line that rotation builds.
+//
+// Why this matters: the name is interpolated into a cmd.exe line such as
+//
+//	sc.exe config "<name>" password= "<secret>"
+//
+// so a name containing a double quote closes the quoted argument and anything
+// after `&` runs as its own command — on a host of the caller's choosing. The
+// fix is an allowlist (letters, digits, spaces and a few separators), checked
+// when the dependency is created and again when the command is built.
+func TestDependencyNameRejectsCommandInjection(t *testing.T) {
+	srv := newTestServer(t)
+	targetID := createTestTarget(t, srv, "dep-win", "10.7.0.1")
+	code, data := do(t, srv, http.MethodPost, "/api/credentials", testAPIKey, map[string]any{
+		"target_id": targetID, "username": "svc", "secret": secretPassword,
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("create credential: %d %s", code, data)
+	}
+	credID := int64(jsonMap(t, data)["id"].(float64))
+	depURL := fmt.Sprintf("/api/credentials/%d/dependencies", credID)
+
+	for _, bad := range []string{
+		`svc" & powershell -enc AAA & rem `, // the canonical break-out
+		`svc" | whoami & rem `,
+		`svc%USERNAME%`,
+		"svc\nnet user pwn",
+		`svc;calc`,
+		`svc<in`,
+		`svc>out`,
+		`svc^&calc`,
+	} {
+		if code, _ := do(t, srv, http.MethodPost, depURL, testAPIKey, map[string]any{
+			"kind": "windows_service", "host": "win01", "name": bad,
+		}); code != http.StatusUnprocessableEntity {
+			t.Fatalf("dependency name %q accepted with status %d; want 422", bad, code)
+		}
+	}
+
+	// A hostile host is refused for the same reason (it selects where the
+	// command runs, and must not carry shell syntax either).
+	for _, badHost := range []string{"win01 & calc", "win01;calc", "win01\nx", `win01"`} {
+		if code, _ := do(t, srv, http.MethodPost, depURL, testAPIKey, map[string]any{
+			"kind": "windows_service", "host": badHost, "name": "svc",
+		}); code != http.StatusUnprocessableEntity {
+			t.Fatalf("dependency host %q accepted with status %d; want 422", badHost, code)
+		}
+	}
+
+	// Names real deployments actually use must still be accepted: services and
+	// app pools routinely contain spaces and dots, scheduled tasks a backslash.
+	for _, good := range []string{"MSSQLSERVER", "My App Pool", "Contoso.Web", `Corp\Nightly Backup`, "svc-01_x"} {
+		if code, body := do(t, srv, http.MethodPost, depURL, testAPIKey, map[string]any{
+			"kind": "windows_service", "host": "win01", "name": good,
+		}); code != http.StatusCreated {
+			t.Fatalf("legitimate dependency name %q refused: %d %s", good, code, body)
+		}
+	}
+}
