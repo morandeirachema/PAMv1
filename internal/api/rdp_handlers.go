@@ -218,7 +218,14 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	bridgeGuacd(ctx, ws, gconn)
+	// Clipboard auditing (Phase 50): observe what crosses the bridge Phase 33
+	// gates. The audit is written on a cancel-detached context so a transfer
+	// completed as the session tears down is still recorded.
+	clip := newClipWatcher(s.rdpClipAudit)
+	auditCtx := context.WithoutCancel(ctx)
+	bridgeGuacd(ctx, ws, gconn, clip, func(t clipTransfer) {
+		s.audit(auditCtx, "rdp.clipboard", "target:"+target.Name+" "+t.Detail())
+	})
 }
 
 // tunnelUUID returns a random identifier for the Guacamole tunnel handshake. The
@@ -245,9 +252,17 @@ func guacamolePrelude(uuid, connID string) [][]byte {
 }
 
 // bridgeGuacd pipes Guacamole protocol text between the browser WebSocket and
-// the guacd connection until either side closes.
-func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn) {
+// the guacd connection until either side closes. When clip is non-nil it also
+// observes clipboard transfers in both directions (Phase 50) — observation
+// only: every frame is forwarded byte-for-byte regardless, because dropping one
+// would corrupt the display, and blocking the clipboard is Phase 33's gate.
+func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, clip *clipWatcher, onClip func(clipTransfer)) {
 	done := make(chan struct{}, 2)
+	note := func(direction string, frame []byte) {
+		if t := clip.Observe(direction, frame); t != nil && onClip != nil {
+			onClip(*t)
+		}
+	}
 	go func() { // guacd → browser
 		// Forward one whole Guacamole instruction per WebSocket message: the browser
 		// tunnel parses each message independently and closes on a partial instruction,
@@ -259,6 +274,7 @@ func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn) {
 				if werr := ws.Write(ctx, websocket.MessageText, inst); werr != nil {
 					break
 				}
+				note("out", inst) // copied FROM the target to the operator
 			}
 			if err != nil {
 				break
@@ -275,6 +291,7 @@ func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn) {
 			if _, werr := gconn.Write(data); werr != nil {
 				break
 			}
+			note("in", data) // pasted INTO the target by the operator
 		}
 		done <- struct{}{}
 	}()

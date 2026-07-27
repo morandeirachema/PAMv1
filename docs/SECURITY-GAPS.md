@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-07-27 · Reflects: Phases 0–49 + the 2026-07 hardening passes.
+> Last updated: 2026-07-27 · Reflects: Phases 0–50 + the 2026-07 hardening passes.
 
 ## How the review was run
 
@@ -95,7 +95,7 @@ what the same sweep found and did **not** fix is listed under
   *transfer* is now audited and gatable even though interactive shell *content* is
   not. (File transfer initiated as `scp` over an interactive shell, or shell
   redirection, still rides the unparsed PTY and is out of scope — use `readonly`
-  plus shell restriction for containment.) The **RDP** viewer got the same treatment in Phase 33: `PAM_RDP_CLIPBOARD` gates the Guacamole clipboard bridge (copy-out / paste-in) and drive redirection is always disabled, so the graphical session's side-channels are audited/gatable too.
+  plus shell restriction for containment.) The **RDP** viewer got the same treatment in Phase 33: `PAM_RDP_CLIPBOARD` gates the Guacamole clipboard bridge (copy-out / paste-in) and drive redirection is always disabled, so the graphical session's side-channels are audited/gatable too. **Phase 50** added the observation half: `PAM_RDP_CLIPBOARD_AUDIT` records each transfer's direction, mimetype, size and SHA-256 as `rdp.clipboard` (content only under an explicit `full` opt-in — a privileged clipboard routinely carries a just-copied password, and the trail is auditor-readable).
 - **Session recording is fail-open unless `PAM_REQUIRE_RECORDING`** — the opt-in
   fail-closed control already exists; the default is kept permissive for demos.
 - **Decrypted plaintext lives in Go `string`s** (only the data key is zeroed) —

@@ -974,12 +974,44 @@ written somewhere durable first.
   the log says exactly that instead of just refusing
 - Opt-in, one new environment variable; no schema change, no new routes
 
+## Phase 50 — Clipboard auditing on the RDP bridge ✅
+
+Phase 33's follow-on. The clipboard bridge could already be **gated** (`allow` /
+`readonly` / `deny`) but never **observed**, so an allowed clipboard was an
+unwatched channel into and out of a privileged desktop.
+
+- [x] **`PAM_RDP_CLIPBOARD_AUDIT`** = `off` (default) · `meta` · `full`. The
+  tunnel already frames the Guacamole stream one instruction at a time, so the
+  watcher is an observer on that seam: a transfer is `clipboard` (open, with a
+  mimetype) → `blob`* (base64) → `end`, and reassembling those three yields the
+  direction (**out** = copied from the target, **in** = pasted into it),
+  mimetype, byte count and SHA-256 — audited as **`rdp.clipboard`**
+- [x] **Content is NOT recorded by default, deliberately.** A privileged
+  desktop's clipboard routinely carries a password the operator just copied out
+  of the vault; writing that into a trail every auditor can read would create
+  the exposure this system exists to prevent. `meta` proves what moved and
+  matches two transfers by digest; `full` adds the content, truncated, and is a
+  separate opt-in. A typo in the setting fails startup rather than silently
+  choosing either extreme
+- [x] **Observation only — never interference.** Every frame is forwarded
+  byte-for-byte whatever the watcher decides; a dropped frame would corrupt the
+  display, and blocking the clipboard is Phase 33's gate, not this one's.
+  Malformed frames are forwarded unread
+- [x] **Bounded**: a transfer buffers at most 1 MiB (and a `full` audit records
+  at most 4 KiB), flagged `truncated:true` rather than dropped, so a huge or
+  hostile clipboard cannot exhaust memory or flood the trail. Newlines in
+  recorded content are flattened, so one transfer stays one audit line and
+  cannot forge a second
+- [x] New `guacd.Decode` (the exact inverse of `Encode`, length-prefix
+  authoritative so a value containing `,` or `;` round-trips) with tests
+  covering both, plus watcher tests for each mode, non-clipboard streams,
+  independent directions, and truncation
+
 ### Smaller follow-ons, recorded where they were deferred ⬜
 
 - **Cross-replica live monitoring** (Phase 34) — the SSE watch stream is still
   served by the pod hosting the session.
-- **Per-file SFTP content recording and path allow/deny** (Phase 32) ·
-  **clipboard-content auditing** (Phase 33).
+- **Per-file SFTP content recording and path allow/deny** (Phase 32).
 
 ---
 

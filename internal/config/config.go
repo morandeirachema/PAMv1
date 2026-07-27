@@ -286,6 +286,12 @@ type Config struct {
 	// "readonly" (block paste into the target — no clipboard injection), or "deny"
 	// (clipboard off both ways). Drive redirection is always disabled.
 	RDPClipboard string
+	// RDPClipboardAudit records what crosses that bridge (Phase 50): "off"
+	// (default), "meta" (direction, mimetype, byte count, SHA-256) or "full"
+	// (also the content, truncated). Content auditing is opt-in on purpose: a
+	// privileged desktop's clipboard routinely carries a password an operator
+	// just copied, and the audit trail is readable by every auditor.
+	RDPClipboardAudit string
 
 	// KEKProvider selects the vault Key Encryption Key backend:
 	// "local" (default, dev/test — uses MasterKey) or "vault-transit".
@@ -432,6 +438,7 @@ func Load() (*Config, error) {
 		MaxSessionsTotal:        integer("PAM_MAX_SESSIONS_TOTAL", 0),
 		EncryptRecordings:       boolean("PAM_RECORDING_ENCRYPT", false),
 		OpaqueRecordingNames:    boolean("PAM_RECORDING_OPAQUE_NAMES", false),
+		RDPClipboardAudit:       strings.ToLower(getenv("PAM_RDP_CLIPBOARD_AUDIT", "off")),
 		MaxRecordingMB:          integer("PAM_MAX_RECORDING_MB", 0),
 		RecordingRetentionDays:  integer("PAM_RECORDING_RETENTION_DAYS", 0),
 		AuditRetentionDays:      integer("PAM_AUDIT_RETENTION_DAYS", 0),
@@ -614,6 +621,14 @@ func Load() (*Config, error) {
 	case "allow", "readonly", "deny":
 	default:
 		errs = append(errs, fmt.Sprintf("PAM_RDP_CLIPBOARD must be one of allow, readonly, deny (got %q)", cfg.RDPClipboard))
+	}
+	// Clipboard auditing is a fixed enum too. A typo must fail loud rather than
+	// silently fall back to "off" — an operator who asked for clipboard evidence
+	// and got none would not find out until they needed it.
+	switch cfg.RDPClipboardAudit {
+	case "off", "meta", "full":
+	default:
+		errs = append(errs, fmt.Sprintf("PAM_RDP_CLIPBOARD_AUDIT must be one of off, meta, full (got %q)", cfg.RDPClipboardAudit))
 	}
 	// Retention windows are "0 = keep forever"; a negative value is a fat-finger
 	// that must fail loud rather than silently delete or disable.
