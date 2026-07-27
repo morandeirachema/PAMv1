@@ -84,6 +84,19 @@ func readInstruction(r *bufio.Reader) (Instruction, error) {
 	return Instruction{Opcode: elems[0], Args: elems[1:]}, nil
 }
 
+// Decode parses one complete instruction from its wire bytes — the inverse of
+// Encode, over the frames NextInstruction hands the tunnel. It reports ok=false
+// on anything malformed rather than erroring, because its caller is an
+// observer on a live session: an instruction it cannot read must be forwarded
+// untouched, never dropped or rejected.
+func Decode(raw []byte) (Instruction, bool) {
+	inst, err := readInstruction(bufio.NewReader(strings.NewReader(string(raw))))
+	if err != nil {
+		return Instruction{}, false
+	}
+	return inst, true
+}
+
 // Params carries the connection settings; Credentials are injected JIT.
 type Params struct {
 	Protocol string // rdp | vnc | ...
