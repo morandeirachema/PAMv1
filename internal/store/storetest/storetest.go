@@ -78,6 +78,48 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("Ping: %v", err)
 	}
 
+	// --- key material (Phase 42): the claim must be atomic, because the whole
+	// point is that racing replicas converge on ONE key instead of each keeping
+	// its own. ---
+	first, err := st.EnsureKeyMaterial(ctx, "contract_key", "sealed-A")
+	if err != nil {
+		t.Fatalf("EnsureKeyMaterial: %v", err)
+	}
+	if first != "sealed-A" {
+		t.Fatalf("first claim returned %q, want the value it stored", first)
+	}
+	second, err := st.EnsureKeyMaterial(ctx, "contract_key", "sealed-B")
+	if err != nil {
+		t.Fatalf("EnsureKeyMaterial (second): %v", err)
+	}
+	if second != "sealed-A" {
+		t.Fatalf("second claim returned %q, want the already-stored %q — a late replica must adopt, not overwrite", second, first)
+	}
+	if other, err := st.EnsureKeyMaterial(ctx, "contract_key_2", "sealed-C"); err != nil || other != "sealed-C" {
+		t.Fatalf("a different name must have its own custody: %q %v", other, err)
+	}
+	var keyWG sync.WaitGroup
+	raced := make([]string, 6)
+	for i := range raced {
+		keyWG.Add(1)
+		go func(i int) {
+			defer keyWG.Done()
+			v, rerr := st.EnsureKeyMaterial(ctx, "contract_key_race", fmt.Sprintf("sealed-%d", i))
+			if rerr == nil {
+				raced[i] = v
+			}
+		}(i)
+	}
+	keyWG.Wait()
+	for i, v := range raced {
+		if v == "" {
+			t.Fatalf("racer %d failed to claim", i)
+		}
+		if v != raced[0] {
+			t.Fatalf("racers disagreed: %q vs %q", v, raced[0])
+		}
+	}
+
 	// --- targets ---
 	tgt := &store.Target{Name: "web-01", Host: "10.0.0.5", Port: 22, OSType: "linux", Protocol: "ssh", RequireApproval: true}
 	if err := st.CreateTarget(ctx, tgt); err != nil {

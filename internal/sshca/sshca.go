@@ -339,3 +339,26 @@ func standardExtensions() map[string]string {
 		"permit-user-rc":          "",
 	}
 }
+
+// GenerateKeyPEM returns a fresh ed25519 CA key in OpenSSH PEM form, for callers
+// that persist the key themselves (shared custody, Phase 42).
+func GenerateKeyPEM() ([]byte, error) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	block, err := ssh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		return nil, err
+	}
+	return encodePEM(block), nil
+}
+
+// FromPEM builds a CertAuthority from a CA key a custodian handed back.
+func FromPEM(pem []byte) (*CertAuthority, error) {
+	signer, err := ssh.ParsePrivateKey(pem)
+	if err != nil {
+		return nil, fmt.Errorf("sshca: parse CA key: %w", err)
+	}
+	return New(signer), nil
+}

@@ -1278,6 +1278,24 @@ func (s *PGStore) DeleteExpiredBrokerTokens(ctx context.Context) (int64, error) 
 	return tag.RowsAffected(), nil
 }
 
+// EnsureKeyMaterial atomically claims custody of a named key: the insert either
+// wins or is a no-op, and the following select returns whichever value is stored.
+// Two replicas racing at startup therefore agree on one key — the loser adopts
+// the winner's rather than quietly running with its own.
+func (s *PGStore) EnsureKeyMaterial(ctx context.Context, name, value string) (string, error) {
+	if _, err := s.pool.Exec(ctx,
+		`INSERT INTO key_material (name, value) VALUES ($1, $2) ON CONFLICT (name) DO NOTHING`,
+		name, value); err != nil {
+		return "", err
+	}
+	var stored string
+	if err := s.pool.QueryRow(ctx,
+		`SELECT value FROM key_material WHERE name = $1`, name).Scan(&stored); err != nil {
+		return "", err
+	}
+	return stored, nil
+}
+
 // PutSetting upserts a configuration override, stamping UpdatedAt.
 func (s *PGStore) PutSetting(ctx context.Context, st *store.Setting) error {
 	return s.pool.QueryRow(ctx,

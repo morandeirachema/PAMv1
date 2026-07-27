@@ -40,6 +40,7 @@ type Memstore struct {
 	brokerLog     []store.BrokerAuditEvent
 	brokerTok     map[string]store.BrokerToken
 	settings      map[string]store.Setting
+	keyMaterial   map[string]string
 	profiles      map[int64]store.Profile
 	safes         map[int64]store.Safe
 	safeMembers   map[int64]store.SafeMember
@@ -71,6 +72,7 @@ func New() *Memstore {
 		appGrants:     make(map[int64]store.AppSecretGrant),
 		brokerTok:     make(map[string]store.BrokerToken),
 		settings:      make(map[string]store.Setting),
+		keyMaterial:   make(map[string]string),
 		profiles:      make(map[int64]store.Profile),
 		safes:         make(map[int64]store.Safe),
 		safeMembers:   make(map[int64]store.SafeMember),
@@ -1515,6 +1517,19 @@ func (m *Memstore) DeleteExpiredBrokerTokens(_ context.Context) (int64, error) {
 		}
 	}
 	return n, nil
+}
+
+// EnsureKeyMaterial claims custody of a named key under the store lock, so even
+// in-process racers converge on one value — the same guarantee pgstore gets from
+// the primary key.
+func (m *Memstore) EnsureKeyMaterial(_ context.Context, name, value string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if existing, ok := m.keyMaterial[name]; ok {
+		return existing, nil
+	}
+	m.keyMaterial[name] = value
+	return value, nil
 }
 
 // PutSetting upserts a configuration override, stamping UpdatedAt.

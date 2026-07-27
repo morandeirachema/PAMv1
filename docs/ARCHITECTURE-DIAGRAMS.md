@@ -68,6 +68,7 @@ flowchart LR
     n_blast[blast]
     n_cmdguard[cmdguard]
     n_conjur[conjur]
+    n_keycustody[keycustody]
     n_ocsf[ocsf]
     n_ratelimit[ratelimit]
     n_recording[recording]
@@ -123,6 +124,7 @@ flowchart LR
   n_broker --> n_policy
   n_broker --> n_store
   n_conjur --> n_logging
+  n_keycustody --> n_store
   n_maint --> n_store
   n_maint --> n_vault
   n_memstore --> n_session
@@ -138,6 +140,7 @@ flowchart LR
   n_pam_server --> n_cmdguard
   n_pam_server --> n_config
   n_pam_server --> n_conjur
+  n_pam_server --> n_keycustody
   n_pam_server --> n_logging
   n_pam_server --> n_maint
   n_pam_server --> n_memstore

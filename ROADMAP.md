@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–41 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
+**Phases 0–42 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
 with command control, safes, dependent-account propagation), optional CyberArk Conjur
@@ -47,7 +47,9 @@ certifying access are now `CapApprove`, not a read-only or user-admin gate — a
 and the agent broker's exec tools join the proxies in the live-session registry, so
 they are listable, countable and killable — and **session recordings are encrypted
 at rest** (41): the other high-value artifact finally gets the same envelope
-encryption and KEK as the credentials themselves. The portal is
+encryption and KEK as the credentials themselves — and **shared custody of the host
+and CA keys** (42), so a scaled deployment stops handing out a different SSH host key
+and a different certificate authority per pod. The portal is
 also **keyboard-first** (mouse optional). See their sections below. Beyond those,
 a number of items genuinely require external infrastructure or a paid account to build
 and verify honestly, so they are left as documented follow-ons rather than faked. The
@@ -683,37 +685,57 @@ it. This closes that, opt-in via `PAM_RECORDING_ENCRYPT`.
   The content is sealed; that metadata is not. Naming recordings by opaque id is a
   follow-on, and would cost the operator the ability to find a session by eye
 
+## Phase 42 — Shared custody of the host and CA keys (HA) ✅
+
+Finding **B** of the 2026-07-26 sweep. `proxy.LoadOrCreateHostKey` and
+`sshca.LoadOrCreate` persisted to a **local file**, while the Helm PVC is
+`ReadWriteOnce`, defaults to `emptyDir`, and `replicaCount` is freely configurable.
+Nothing stopped a second replica starting — and when it did, each pod generated
+its own keys, so:
+
+- operators got a **host-key-changed warning** depending on which pod answered,
+  which is indistinguishable from a MITM and trains people to click through it;
+- a certificate minted on one pod was **not trusted** by targets configured with
+  another pod's `TrustedUserCAKeys`, and `GET /api/ca/ssh` returned a different key
+  per pod;
+- the operator-certificate challenge — an HMAC keyed off the CA private key, and
+  documented as "HA-safe across replicas" — **failed across pods**, which was only
+  true if that key were shared.
+
+- [x] **Atomic claim in the store** (migration `0022` `key_material`,
+  `store.EnsureKeyMaterial`): `INSERT … ON CONFLICT DO NOTHING` followed by a read
+  back, so N replicas starting at the same instant all converge on **one** key —
+  exactly one wins, the rest adopt. The memory store takes the same lock-guarded
+  path, and the contract test races six claimants against live PostgreSQL in CI
+- [x] **Sealed, and bound to its name** (`internal/keycustody`): the database holds
+  the vault envelope, never usable key material, with
+  `store.KeyMaterialAAD(name)` so a host-key envelope cannot be substituted for the
+  CA key
+- [x] **An existing file seeds custody, it does not lose to it**: a single node that
+  upgrades keeps serving the key it already had — that key becomes the shared one —
+  and later replicas adopt it and mirror it back to their own path, so tooling that
+  reads the file keeps working. Adoption is logged, because it is the moment a
+  deployment stops having two host keys
+- [x] **A key that cannot be unwrapped is fatal**, never a silent regeneration:
+  quietly rotating the host key or the CA would break every target that pinned them,
+  so the error names the likely cause (a changed master key) and startup stops
+- [x] **Tests**: eight concurrent replicas converge on one key; an existing file
+  seeds custody and a second replica adopts + mirrors it; the store holds no usable
+  key material and the envelope refuses the other key's AAD; an unwrappable key is
+  fatal and returns no key; a failing generator propagates
+- Still open (recorded, not closed by this): **recordings remain per-pod**, so
+  `GET /api/recordings` lists what the serving replica holds — shared recording
+  storage is an operator decision (RWX volume or object storage) rather than a code
+  fix, and cross-replica live monitoring stays the Phase 34 follow-on
+
 ## Next — planned ⬜
 
 Phases 37–41 came out of a read-only sweep of the codebase whose findings are
 catalogued in **[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md#open-findings-from-the-2026-07-26-sweep)**.
-Five of those findings shipped. The three below are the ones still open, promoted
+Six of those findings shipped. The two below are the ones still open, promoted
 here so the roadmap — not a gaps table — is where the remaining work lives. Each
 is buildable and verifiable in process; none is infra-bound (that list stays in
 [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)).
-
-### Phase 42 — Shared custody of the host and CA keys (HA) ⬜
-
-*Finding B.* `proxy.LoadOrCreateHostKey` and `sshca.LoadOrCreate` persist to a
-**local file**, while the Helm PVC is `ReadWriteOnce` and defaults to `emptyDir`
-and `replicaCount` is freely configurable. Scaling past one replica therefore:
-
-- gives each pod a different **SSH host key**, so operators get host-key-changed
-  warnings that look exactly like a MITM;
-- gives each pod a different **ZSP CA key**, so a certificate minted on one pod is
-  not trusted by targets configured with another's `TrustedUserCAKeys`, and
-  `GET /api/ca/ssh` returns a different key depending on which pod answers;
-- breaks the operator-certificate challenge, which is an HMAC keyed off the CA
-  private key and is documented as "HA-safe across replicas" — true only if that
-  key is shared;
-- scatters recordings per pod, so `GET /api/recordings` lists only what the
-  serving pod happens to hold.
-
-Direction: custody both keys in the store, vault-encrypted (the pattern already
-used for MFA secrets and configuration settings), with the file as a fallback for
-single-node deploys — or, if that is rejected, make RWX storage a hard documented
-requirement and refuse to start a multi-replica deployment without it. Phase 34
-closed the kill-switch half of HA correctness; this is the key-material half.
 
 ### Phase 43 — Console parity, second pass ⬜
 
@@ -778,8 +800,7 @@ The 5250 console is now explicitly **keyboard-first** (the mouse is optional), m
 
 **Tier-2 (access-governance depth) is complete** — certification campaigns (19), the ITSM/ticketing gate (20), and richer approval workflows (21), now including one-time access (26). **Tier-3**: Zero Standing Privilege (22) and privileged threat analytics (23) are shipped; connector/plugin breadth, cloud CIEM, and web/SaaS session proxying remain (infra-bound). **Tier-4 is under way**: the application-secrets API (24) is shipped; a Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, and thick-app components remain, each requiring external infrastructure or an account to build honestly (see [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)). The 5250 console has **full parity** with the backend (Phase 25) — every shipped capability is operable from the portal, keyboard-first — and the session-recording loop is closed end to end (Phase 26): record → watch live → replay later, hash-verified. See the [competitive-coverage section](README.md#coverage-vs-commercial-pam-cyberark-wallix-) for the full picture.
 
-**What is next** is the [planned section above](#next--planned-): shared custody of
-the host and CA keys in HA (42), a second console-parity pass (43), and editable
-objects with bounded lists (44) — the three findings from the 2026-07 sweep that
-have not shipped yet. All three are buildable in process; the items that genuinely
+**What is next** is the [planned section above](#next--planned-): a second
+console-parity pass (43) and editable objects with bounded lists (44) — the two
+findings from the 2026-07 sweep that have not shipped yet. All three are buildable in process; the items that genuinely
 need external infrastructure stay in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
