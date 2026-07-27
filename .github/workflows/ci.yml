@@ -103,10 +103,16 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.26"
-      - name: store contract test (live Postgres)
+      # No -run filter: every test in the package must run. The live-Postgres
+      # tests skip themselves without PAM_TEST_DATABASE_URL, so this job is the
+      # ONLY place they execute — a filter here silently retires them. It once
+      # read `-run PGStoreContract`, which matched the contract suite alone and
+      # left the audit-chain tamper detection and the leader-lock mutual
+      # exclusion (both backing security claims) running nowhere at all.
+      - name: store tests (live Postgres)
         env:
           PAM_TEST_DATABASE_URL: postgres://pam:pam@localhost:5432/pam?sslmode=disable
-        run: go test ./internal/store/pgstore/ -run PGStoreContract -v
+        run: go test ./internal/store/pgstore/ -race -count=1 -v
 
   docker:
     runs-on: ubuntu-latest
