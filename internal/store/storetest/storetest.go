@@ -119,6 +119,34 @@ func RunStoreContract(t *testing.T, st store.Store) {
 			t.Fatalf("racers disagreed: %q vs %q", v, raced[0])
 		}
 	}
+	// List + Update exist so a KEK rotation can RE-WRAP these envelopes. Without
+	// them `-rotate-kek` re-encrypted credentials, MFA secrets and settings but
+	// left the SSH host key and the ZSP CA key sealed under the old key, and the
+	// next startup refused to boot — the rotation the documentation tells you to
+	// run. List must be ordered by name so a rotation is deterministic.
+	mats, err := st.ListKeyMaterial(ctx)
+	if err != nil {
+		t.Fatalf("ListKeyMaterial: %v", err)
+	}
+	if len(mats) < 3 {
+		t.Fatalf("ListKeyMaterial returned %d keys, want at least the 3 claimed above", len(mats))
+	}
+	for i := 1; i < len(mats); i++ {
+		if mats[i-1].Name >= mats[i].Name {
+			t.Fatalf("ListKeyMaterial is not ordered by name: %q before %q", mats[i-1].Name, mats[i].Name)
+		}
+	}
+	if err := st.UpdateKeyMaterial(ctx, "contract_key", "sealed-REWRAPPED"); err != nil {
+		t.Fatalf("UpdateKeyMaterial: %v", err)
+	}
+	if got, _ := st.EnsureKeyMaterial(ctx, "contract_key", "ignored"); got != "sealed-REWRAPPED" {
+		t.Fatalf("after re-wrap the stored envelope is %q, want the re-wrapped one", got)
+	}
+	// A name nobody claimed must fail, so a rotation cannot invent custody of a
+	// key that does not exist.
+	if err := st.UpdateKeyMaterial(ctx, "contract_key_absent", "x"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateKeyMaterial on an unknown name = %v, want ErrNotFound", err)
+	}
 
 	// --- targets ---
 	tgt := &store.Target{Name: "web-01", Host: "10.0.0.5", Port: 22, OSType: "linux", Protocol: "ssh", RequireApproval: true}

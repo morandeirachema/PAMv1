@@ -1624,6 +1624,29 @@ func (m *Memstore) EnsureKeyMaterial(_ context.Context, name, value string) (str
 	return value, nil
 }
 
+// ListKeyMaterial returns every named key envelope, ordered by name.
+func (m *Memstore) ListKeyMaterial(_ context.Context) ([]store.KeyMaterial, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]store.KeyMaterial, 0, len(m.keyMaterial))
+	for name, value := range m.keyMaterial {
+		out = append(out, store.KeyMaterial{Name: name, Value: value})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// UpdateKeyMaterial replaces a named key's envelope; ErrNotFound if absent.
+func (m *Memstore) UpdateKeyMaterial(_ context.Context, name, value string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.keyMaterial[name]; !ok {
+		return store.ErrNotFound
+	}
+	m.keyMaterial[name] = value
+	return nil
+}
+
 // PutSetting upserts a configuration override, stamping UpdatedAt.
 func (m *Memstore) PutSetting(_ context.Context, s *store.Setting) error {
 	m.mu.Lock()

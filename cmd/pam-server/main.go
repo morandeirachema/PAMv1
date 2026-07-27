@@ -48,6 +48,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/oidc"
 	"github.com/morandeirachema/pamv1/internal/policy"
 	"github.com/morandeirachema/pamv1/internal/proxy"
+	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/shamir"
 	"github.com/morandeirachema/pamv1/internal/sshca"
@@ -270,7 +271,68 @@ func runRotateKEK() error {
 		Detail: fmt.Sprintf("from:%s to:%s secrets:%d", oldKEK.ID(), newKEK.ID(), n),
 	})
 	fmt.Printf("rotated %d secrets from KEK %q to %q; now point PAM_KEK_*/PAM_MASTER_KEY at the new KEK and restart\n", n, oldKEK.ID(), newKEK.ID())
+	recDir := os.Getenv("PAM_RECORDING_DIR")
+	if recDir == "" {
+		recDir = "recordings" // same default as config.Load
+	}
+	warnSealedRecordings(recDir, oldKEK.ID())
 	return nil
+}
+
+// warnSealedRecordings tells the operator, loudly and at the moment it matters,
+// that a sealed recording's data key is wrapped inside the FILE by whichever KEK
+// was current when it was written — so the old KEK cannot simply be discarded
+// after a rotation.
+//
+// It is a warning rather than a re-wrap on purpose: rewriting a recording's
+// header would change the bytes on disk, and the SHA-256 of those exact bytes is
+// what the audit trail and the recording hash chain record. Re-wrapping would
+// therefore make every archived recording read as "never audited" — destroying
+// the tamper evidence the sealing exists to provide, in order to save a key.
+// Keeping the old KEK for the retention window is the cheaper, honest trade.
+func warnSealedRecordings(dir, oldKEKID string) {
+	if dir == "" {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return // no recordings directory yet; nothing to warn about
+	}
+	sealed := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		// OpenInRoot refuses to escape dir even if a name somehow contained a
+		// traversal, which os.Open + filepath.Join would happily follow. ReadDir
+		// only ever yields base names, so this is belt-and-braces — but it is the
+		// belt-and-braces the compiler enforces rather than a comment claiming it.
+		f, oerr := os.OpenInRoot(dir, e.Name())
+		if oerr != nil {
+			continue
+		}
+		hdr := make([]byte, recording.HeaderLen)
+		nRead, _ := io.ReadFull(f, hdr)
+		f.Close()
+		if nRead == len(hdr) && recording.IsSealed(hdr) {
+			sealed++
+		}
+	}
+	if sealed == 0 {
+		return
+	}
+	fmt.Printf(`
+WARNING: %d sealed recording(s) in %s still need KEK %q.
+
+A sealed recording carries its own data key wrapped INSIDE THE FILE by the KEK
+that was current when it was written, so rotating the KEK does not re-wrap them
+and this tool deliberately does not try: rewriting a recording would change its
+bytes and invalidate the SHA-256 held in the audit trail and the recording hash
+chain, which is the tamper evidence the sealing exists to provide.
+
+Keep the old KEK available for at least as long as you retain these recordings,
+or they become permanently unreadable.
+`, sealed, dir, oldKEKID)
 }
 
 // kekOptionsFromEnv reads a KEK option set from PAM_<prefix>KEK_* variables
