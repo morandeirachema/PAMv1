@@ -803,33 +803,59 @@ authenticated memory-exhaustion vector on a large inventory.
   clamps)
 - No schema change, no new environment variable
 
+## Phase 45 — The remaining console screens ✅
+
+The other half of finding **G**, closing it. Seven capabilities had a backend,
+tests and docs but no screen — an operator drove them with curl. All seven are
+now first-class 5250 screens, keyboard-first, in the single embedded page:
+
+- [x] **Work with vendors & contract grants** (menus 22): register (token shown
+  once), 2=Change org, 4=Offboard (shows how many sessions were cut),
+  5=contract grants — add a grant (target picker, account, `datetime-local`
+  window), 5=Approve (`CapApprove`; the screen states four-eyes: a customer,
+  never the vendor) and 6=Revoke — and 6=Evidence export, a real download
+  carrying the `X-PAM-Export-SHA256` digest into the message line
+- [x] **Work with operator SSH certificates** (menu 23): every issued cert with
+  serial, key id, principal, operator, validity and revocation state;
+  4=Revoke; F9 downloads the KRL; the CA fingerprint heads the screen, or an
+  amber "ZSP not enabled" hint when there is no CA — certs stay revocable
+  either way
+- [x] **Identity blast radius** (menu 24): paste a normalized graph (the
+  placeholder is a valid example; the edge-kind vocabulary is on screen),
+  optional source/target focus, and the findings render with severity, path
+  (`from ─kind:via→ to`) and the cut-this-edge remediation hint
+- [x] **Work with login sessions** (menu 25): active password/SSO logins with
+  role(s), scope and expiry; 4=Revoke reports both logins revoked and live
+  target sessions cut
+- [x] **Work with AI-agent keys** (menu 26): mint (token shown once, owner
+  mandatory — the accountable human), revoke; broker-disabled shows the
+  configuration hint, the app-secrets pattern
+- [x] **Credential dependencies**: option **9=Dependents** on Work with
+  Credentials — list, declare (kind/name/host/port) and delete the consumers
+  updated on rotation
+- [x] **Audit chain + OCSF on the audit screen**: F6=Verify chain (INTACT /
+  BROKEN AT id banner), F7=Signed head (a screen rendering the ed25519
+  checkpoint: last id, head HMAC, signature, public key, and why to archive
+  it), F10=OCSF export (download); F9 CSV stays
+- [x] **One deliberate deviation from "no new routes"**: `GET
+  /api/ca/ssh/certs` (CapReadInventory, `?limit=` clamped 1..500) — the store
+  could list issued certificates but no route exposed them, so the serials a
+  revocation needs were invisible outside the audit trail. Metadata only,
+  never key material. Test: `api.TestListSSHCertsEndpoint`
+- [x] **Verified against a running server** (broker + audit chain + checkpoint
+  signing enabled): vendor registered → grant added → approved → evidence
+  digest header; agent minted → listed → revoked (204); blast analyze
+  returning a real `high` finding with path + remediation; audit verify
+  `ok:true`, head with every rendered field, OCSF 200; the CA-disabled hint;
+  `node --check` on the embedded script
+
 ## Next — planned ⬜
 
-Phases 37–44 came out of a read-only sweep of the codebase whose findings are
-catalogued in **[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md#open-findings-from-the-2026-07-26-sweep)**.
-All have shipped except the second half of the console finding, below — promoted
-here so the roadmap — not a gaps table — is where the remaining work lives. It
-is buildable and verifiable in process; nothing here is infra-bound (that list
-stays in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)).
-
-### Phase 45 — The remaining console screens ⬜
-
-The other half of finding **G**. These have a backend, tests and docs, but no
-screen — an operator drives them with curl:
-
-| Capability | Route(s) |
-|---|---|
-| Vendors and contract grants | `/api/vendors*`, `/api/vendor-grants/*` |
-| Operator SSH certificates | `/api/ca/ssh/{challenge,sign,revoke,krl}` |
-| Credential dependencies | `/api/credentials/{id}/dependencies` |
-| Identity blast radius | `POST /api/blast/analyze` |
-| Audit chain + OCSF export | `/api/audit/{verify,head,ocsf}` |
-| Login-session revocation | `/api/login-sessions*` |
-| Agent keys | `/v1/agents` |
-
-None of them is time-critical the way the Phase 43 pair was, which is why they
-follow rather than lead. Same shape as Phase 25: one embedded page, keyboard-first,
-no new routes or schema.
+Phases 37–45 closed every finding from the 2026-07-26 read-only sweep
+(**[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md#open-findings-from-the-2026-07-26-sweep)**).
+What remains planned are the smaller deferred follow-ons below — each buildable
+in process; the infra-bound list stays in
+[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
 
 ### Smaller follow-ons, recorded where they were deferred ⬜
 
@@ -854,6 +880,7 @@ The 5250 console is now explicitly **keyboard-first** (the mouse is optional), m
 
 **Tier-2 (access-governance depth) is complete** — certification campaigns (19), the ITSM/ticketing gate (20), and richer approval workflows (21), now including one-time access (26). **Tier-3**: Zero Standing Privilege (22) and privileged threat analytics (23) are shipped; connector/plugin breadth, cloud CIEM, and web/SaaS session proxying remain (infra-bound). **Tier-4 is under way**: the application-secrets API (24) is shipped; a Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, and thick-app components remain, each requiring external infrastructure or an account to build honestly (see [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)). The 5250 console has **full parity** with the backend (Phase 25) — every shipped capability is operable from the portal, keyboard-first — and the session-recording loop is closed end to end (Phase 26): record → watch live → replay later, hash-verified. See the [competitive-coverage section](README.md#coverage-vs-commercial-pam-cyberark-wallix-) for the full picture.
 
-**What is next** is the [planned section above](#next--planned-): the remaining
-console screens (45), plus the smaller deferred follow-ons. All buildable in process; the items that genuinely
+**What is next** is the [planned section above](#next--planned-): the smaller
+deferred follow-ons. With Phase 45 the console is back at **full parity** — every
+shipped capability is operable from the portal, keyboard-first. The items that genuinely
 need external infrastructure stay in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).

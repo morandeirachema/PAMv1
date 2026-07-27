@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-07-27 · Reflects: Phases 0–44 + the 2026-07 hardening passes.
+> Last updated: 2026-07-27 · Reflects: Phases 0–45 + the 2026-07 hardening passes.
 
 ## How the review was run
 
@@ -119,11 +119,11 @@ what the same sweep found and did **not** fix is listed under
 
 Found by the same pass, **not** fixed in it — each is a phase-sized change or a
 deliberate design decision to take, not a one-line correction. They are recorded
-here rather than left implicit. Struck-through rows have since shipped (Phases
-38–44); the one remaining half-open item — the seven non-time-critical console
-screens — is **[planned Phase 45 in the ROADMAP](../ROADMAP.md#next--planned-)**,
-which is the authoritative place for what happens next — this table is the finding,
-the roadmap is the plan.
+here rather than left implicit. **Every finding has since shipped** (Phases
+38–45, struck through below); what remains planned are the smaller follow-ons
+listed in the **[ROADMAP](../ROADMAP.md#next--planned-)**, which is the
+authoritative place for what happens next — this table is the finding, the
+roadmap is the plan.
 
 | # | Finding | Why it matters | Direction |
 |---|---|---|---|
@@ -133,7 +133,7 @@ the roadmap is the plan.
 | ~~D~~ | ~~**The REST WinRM endpoint runs outside the live-session registry.**~~ | Was: a WinRM run was absent from `GET /api/sessions`, unkillable, uncounted against `PAM_MAX_SESSIONS_*`, and out of reach of the analytics auto-kill and the vendor sweeper. | **Fixed in Phase 40** — a new `Server.superviseSession` caps, registers and cancels a brokered execution, and **every** execution path uses it: the REST WinRM endpoint *and* the agent broker's `winrm_exec`/`ssh_exec` tools (which had the same hole). The cap runs before the just-in-time decrypt, so a refused run never causes a secret to exist; a kill cancels the run's context and it returns 503. Test: `api.TestWinRMRunIsASupervisedSession`. |
 | ~~E~~ | ~~**Step-up decisions are gated on `CapReadAudit`.**~~ | Was: the role defined as read-only could release a statement the step-up policy flagged — an execution-authorizing power. | **Fixed in Phase 39** — `POST /api/sessions/{id}/stepup` now requires `CapApprove`. Listing paused statements stays `CapReadAudit` (the live-monitor gate), so a supervisor still sees everything they watch; only the release is an approver's act. Test: `api.TestStepUpEndpoints`. |
 | ~~F~~ | ~~**Certification decisions have no separation of duties.**~~ | Was: only `CapManageUsers` (i.e. an admin) could certify or revoke, so the principal who grants access was the only one who could attest to it. | **Partly fixed in Phase 39** — deciding an item now requires `CapApprove`, so a dedicated `approver` can run a recertification **without** holding the access-granting capability; creating and closing a campaign stay `CapManageUsers`. This delegates the review; it does not by itself stop an admin (who holds `CapApprove`) from certifying a grant they made. True per-item four-eyes needs the grant's creator recorded — a schema change, tracked as a follow-on. Test: `api.TestCertificationAuthz`. |
-| ~~G~~ (half) | **Console parity has drifted since Phase 25.** | Nine capabilities had no screen. Two of them — a parked agent tool call and a paused SQL statement — are human decisions **with a deadline**, which is what made curl-only actually cost something. | **Half fixed in Phase 43** — *Approve AI-agent tool calls* (menu 20, showing the arguments the policy matched on) and *In-session step-up decisions* (menu 21, stating that entries expire and the session survives either way) now exist, verified against a running server. The other seven screens — vendors, operator SSH certificates, credential dependencies, blast radius, audit verify/head/OCSF, login-session revocation, agent keys — are **planned Phase 45**; none is time-critical, which is why they follow. |
+| ~~G~~ | ~~**Console parity has drifted since Phase 25.**~~ | Was: nine capabilities had no screen. Two of them — a parked agent tool call and a paused SQL statement — are human decisions **with a deadline**, which is what made curl-only actually cost something. | **Fixed across Phases 43 + 45** — Phase 43 shipped the two time-critical screens (*Approve AI-agent tool calls*, menu 20, showing the arguments the policy matched on; *In-session step-up decisions*, menu 21). Phase 45 shipped the other seven: vendors & contract grants (22), operator SSH certificates (23), identity blast radius (24), login-session revocation (25), agent keys (26), credential dependencies (option 9 on a credential), and the audit chain verify / signed head / OCSF export on the audit screen. One deliberate new route: `GET /api/ca/ssh/certs` (CapReadInventory) — the issued-cert serials a revocation needs were listable in the store but invisible over HTTP. All verified against a running server; the console is back at **full parity**. |
 | ~~H~~ | ~~**No update endpoints and no pagination.**~~ | Was: the `Store` interface had create/delete but no update for targets, safes, users or vendors — fixing a target's port meant delete + recreate, cascading away its credentials, grants, dependencies and safe assignment — and no list method except the audit reads was bounded (an authenticated memory-exhaustion vector). | **Fixed in Phase 44** — `UpdateTarget`/`UpdateSafe`/`UpdateUserRole`/`UpdateVendorOrg` + `PUT` routes with create-equivalent validation and authorization (the user edit re-runs the privilege-escalation guard; tokens survive a role change), audited `*.update`; the seven top-level list reads take an id-ascending `(limit, afterID)` window and every list endpoint clamps `?limit=&after=` to 1..500 (default 100) the way `listAudit` already did. Grants and safe members deliberately stay create + delete (no dependents to lose; two audited events beat one mutated row), and usernames stay immutable (they are the subject key in grants/sessions/vendor rows). Console: cursor-draining fetches + 2=Change screens. Tests: the store contract (both stores, live PostgreSQL in CI) + `api/update_test.go`. |
 
 ## Tier 3 — Missing capabilities (deferred; new roadmap phases, not fixes)

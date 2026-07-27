@@ -89,6 +89,10 @@
   let profiles = [], configItems = [], configNote = "", effCfg = null, iacText = "", iacFormat = "";
   let safes = [], safeMembers = [], membersSafe = 0, safeTarget = null;
   let editTarget = null, editSafe = null, editUser = null; // 2=Change subjects (Phase 44)
+  // Phase 45: the remaining console screens.
+  let vendors = [], vendorGrants = [], grantsVendor = 0, newVendor = null, editVendor = null;
+  let sshCerts = [], caInfo = null, loginSessions = [], agents = [], newAgent = null;
+  let deps = [], depsCred = null, blastResult = null, auditHead = null;
   let campaigns = [], campView = null, risk = null, riskMin = "", riskWin = "";
   let brokerApprovals = [], stepUps = [];
   let watchSess = null, watchAbort = null, watchText = "";
@@ -254,6 +258,74 @@
       risk = await api("GET", "/api/analytics/risk" + (q ? "?" + q : ""));
     } catch (e) { if (e.status === 404) say("THREAT ANALYTICS IS NOT ENABLED."); }
     go("risk");
+  }
+
+  // --- Phase 45 openers: vendors, operator certificates, blast radius, login
+  // sessions, agent keys, and a credential's dependent accounts. ---
+  async function openVendors() {
+    try { [vendors, targets] = await Promise.all([apiAll("/api/vendors"), apiAll("/api/targets").catch(() => targets)]); }
+    catch (e) { vendors = []; }
+    go("vendors");
+  }
+  async function openVendorGrants(vid) {
+    grantsVendor = vid; vendorGrants = [];
+    try { vendorGrants = await api("GET", `/api/vendors/${vid}/grants`); } catch (e) {}
+    if (targets.length === 0) { try { targets = await apiAll("/api/targets"); } catch (e) {} }
+    go("vendorgrants");
+  }
+  async function openSSHCerts() {
+    sshCerts = []; caInfo = null;
+    try { sshCerts = await api("GET", "/api/ca/ssh/certs"); } catch (e) {}
+    // The CA key is separate state: certs list fine while ZSP is not enabled.
+    try { caInfo = await api("GET", "/api/ca/ssh"); }
+    catch (e) { if (e.status === 404) caInfo = { disabled: true }; }
+    go("sshcerts");
+  }
+  async function openLoginSessions() {
+    try { loginSessions = await api("GET", "/api/login-sessions"); } catch (e) { loginSessions = []; }
+    go("loginsessions");
+  }
+  // Agent keys (Phase 13): the routes exist only when the broker is enabled, so
+  // a 404 shows a hint rather than an error — the app-secrets screen's pattern.
+  async function openAgents() {
+    agents = [];
+    try { agents = await api("GET", "/v1/agents"); }
+    catch (e) { if (e.status === 404) say("AI-AGENT BROKER IS DISABLED (set PAM_BROKER_POLICY_FILE)."); }
+    go("agents");
+  }
+  async function openDeps(credID) {
+    depsCred = creds.find((c) => c.id === credID) || { id: credID };
+    deps = [];
+    try { deps = await api("GET", `/api/credentials/${credID}/dependencies`); } catch (e) {}
+    go("deps");
+  }
+  // verifyChain / fetchAuditHead surface the tamper-evidence controls on the
+  // audit screen (Phase 45); both endpoints answer 501 with a config hint when
+  // the chain / checkpoint signing is not enabled.
+  async function verifyChain() {
+    try {
+      const r = await api("GET", "/api/audit/verify");
+      say(r.ok ? "AUDIT CHAIN VERIFIED — INTACT." : "AUDIT CHAIN BROKEN AT EVENT " + r.broke_at_id + ".", !r.ok);
+    } catch (e) { say("CPF9999: " + e.message, true); }
+    render();
+  }
+  async function fetchAuditHead() {
+    try { auditHead = await api("GET", "/api/audit/head"); go("auditheadview"); }
+    catch (e) { say("CPF9999: " + e.message, true); render(); }
+  }
+
+  // download fetches an authenticated export and hands it to the browser as a
+  // file, surfacing the digest header when the endpoint stamps one.
+  async function download(path, filename, label) {
+    const res = await fetch(path, { headers: { "X-API-Key": apiKey } });
+    if (!res.ok) { say("CPF9999: EXPORT FAILED (" + res.status + ")", true); render(); return; }
+    const digest = res.headers.get("X-PAM-Export-SHA256") || "";
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+    say(label + " EXPORTED" + (digest ? " — SHA256 " + digest.slice(0, 16) + "…" : "."));
+    render();
   }
 
   // stripCtl removes ANSI escape sequences and carriage returns from a live
@@ -574,6 +646,11 @@ ${fkeys("")}
           line(19, can("read_audit"), "Session recordings (replay)") +
           line(20, can("approve"), "Approve AI-agent tool calls") +
           line(21, can("read_audit"), "In-session step-up decisions") +
+          line(22, can("read_inventory"), "Work with vendors & contract grants") +
+          line(23, can("read_inventory"), "Work with operator SSH certificates") +
+          line(24, can("read_audit"), "Identity blast radius (CIEM)") +
+          line(25, can("manage_users"), "Work with login sessions") +
+          line(26, can("manage_users"), "Work with AI-agent keys") +
           "90. Sign off\n";
         term.innerHTML = `${head("PAMMAIN", "PAMV1 Main Menu")}
 Select one of the following:
@@ -591,7 +668,9 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
             "8": openUsers, "9": openMfa, "10": openAudit, "11": () => go("breakglass"),
             "12": openProfiles, "13": openConfig, "14": openEffective,
             "15": openApps, "16": openSafes, "17": openCampaigns, "18": openRisk,
-            "19": openRecordings, "20": openBrokerApprovals, "21": openStepUps, "90": signoff,
+            "19": openRecordings, "20": openBrokerApprovals, "21": openStepUps,
+            "22": openVendors, "23": openSSHCerts, "24": () => go("blast"),
+            "25": openLoginSessions, "26": openAgents, "90": signoff,
           };
           if (routes[c]) { try { await routes[c](); } catch (e) { say("CPF9999: " + e.message, true); render(); } }
           else { say("CPF0001: SELECTION " + c.toUpperCase() + " NOT VALID.", true); render(); }
@@ -732,7 +811,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         back = "main";
         const tn = Object.fromEntries(targets.map((t) => [t.id, t.name]));
         const canManage = can("manage_credentials"), canReveal = can("reveal_secret");
-        const optsHelp = [canReveal && "5=Display secret   6=Check-out", canManage && "7=Rotate   8=Reconcile", canManage && "4=Delete"].filter(Boolean).join("   ");
+        const optsHelp = [canReveal && "5=Display secret   6=Check-out", canManage && "7=Rotate   8=Reconcile", canManage && "4=Delete", "9=Dependents"].filter(Boolean).join("   ");
         term.innerHTML = `${head("PAMWRKCRD", "Work with Vaulted Credentials")}
 Type options, press Enter.
   <span class="cyan">${optsHelp || "(read-only role)"}</span>
@@ -753,6 +832,7 @@ ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add credential" : ""}   F12=Ca
               else if (o === "6") { const r = await api("POST", `/api/credentials/${c.id}/checkout`, {}); viewCred = { id: r.credential_id, target_id: r.target, username: r.username, secret_type: "check-out", secret: r.secret, expires_at: r.expires_at }; return go("credview"); }
               else if (o === "7") { await api("POST", `/api/credentials/${c.id}/rotate`, {}); say(`CREDENTIAL ${c.id} ROTATED.`); }
               else if (o === "8") { const r = await api("POST", `/api/credentials/${c.id}/reconcile`, {}); say(`CREDENTIAL ${c.id}: ${String(r.status || "checked").toUpperCase()}${r.detail ? " — " + r.detail : ""}.`); }
+              else if (o === "9") { return openDeps(c.id); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
             await openCreds();
@@ -933,6 +1013,379 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
             await openStepUps();
           } catch (e) { say("CPF9999: " + e.message, true); render(); }
         };
+      },
+
+      // --- Phase 45: the remaining console screens ---
+
+      vendors() {
+        back = "main";
+        const canAdmin = can("manage_users"), canAudit = can("read_audit");
+        term.innerHTML = `${head("PAMWRKVEN", "Work with Vendors")}
+Third parties whose access is governed by time-boxed, customer-approved contract grants.
+Type options, press Enter.
+  <span class="cyan">${[canAdmin ? "2=Change org" : "", canAdmin ? "4=Offboard (revokes everything, cuts sessions)" : "", "5=Work with contract grants", canAudit ? "6=Evidence export" : ""].filter(Boolean).join("   ")}</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>ID</th><th>Username</th><th>Organization</th><th>Status</th><th>Created</th></tr>
+${vendors.map((v) => `<tr><td>${opt(v.id)}</td><td>${esc(v.id)}</td><td>${pad(v.username, 16)}</td><td>${pad(v.org || "-", 20)}</td><td>${v.disabled ? '<span class="red">offboarded</span>' : '<span class="white">active</span>'}</td><td class="cyan">${fmtTime(v.created_at)}</td></tr>`).join("")}
+</table>${vendors.length ? "" : `<div class="cyan indent">(No vendors.${canAdmin ? " Press F6 to register one." : ""})</div>`}
+<input type="submit" hidden></form>
+<div class="cyan">A vendor connects only while an approved, unexpired contract grant is active.</div>
+${fkeys(`F3=Exit   F5=Refresh${canAdmin ? "   F6=Register vendor" : ""}   F12=Cancel`)}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const v of vendors) {
+              const o = optVal(ev.target, v.id);
+              if (o === "2") { editVendor = v; return go("vendorchange"); }
+              else if (o === "4") { const r = await api("POST", `/api/vendors/${v.id}/offboard`); say(`VENDOR ${String(v.username).toUpperCase()} OFFBOARDED — ${r.sessions_killed} SESSION(S) CUT.`); }
+              else if (o === "5") { return openVendorGrants(v.id); }
+              else if (o === "6") { return download(`/api/vendors/${v.id}/evidence`, `pamv1-vendor-${v.username}-evidence.json`, "EVIDENCE"); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openVendors();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      vendoradd() {
+        back = "vendors";
+        term.innerHTML = `${head("PAMADDVEN", "Register Vendor")}
+Mints a user-role login for the vendor (token shown once) and links a vendor record.
+
+<form id="f-add" class="indent">
+<label>Username  . . . . . :  <input name="username" size="20" required autofocus></label>
+<label>Organization  . . . :  <input name="org" size="30"></label>
+<input type="submit" hidden>
+</form>
+<div class="cyan">Access still needs a contract grant, approved by a customer (four-eyes).</div>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-add").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          try { newVendor = await api("POST", "/api/vendors", f); go("vendorcreated"); }
+          catch (e) { say("CPF9898: " + e.message, true); render(); }
+        };
+      },
+
+      vendorcreated() {
+        back = "vendors";
+        const v = newVendor || {};
+        term.innerHTML = `${head("PAMVENTOK", "Vendor Access Token")}
+<span class="red blink">COPY THIS TOKEN NOW — IT IS SHOWN ONLY ONCE.</span>
+
+<div class="indent">
+Username  . . . . . :  <span class="white">${esc(v.username)}</span>
+Organization  . . . :  <span class="white">${esc(v.org || "-")}</span>
+
+Access token  . . . :  <span class="white">${esc(v.token)}</span>
+</div>
+<div class="cyan indent">Give it to the vendor; only its hash is stored. They connect only in-contract.</div>
+${fkeys("F3=Exit   F12=Cancel")}`;
+      },
+
+      vendorchange() {
+        back = "vendors";
+        const v = editVendor || {};
+        term.innerHTML = `${head("PAMCHGVEN", "Change Vendor")}
+Editing vendor <span class="white">${esc(v.username)}</span> (id ${esc(v.id)}). The username is immutable; offboarding is option 4, never an edit.
+
+<form id="f-chg" class="indent">
+<label>Organization  . . . :  <input name="org" size="30" autofocus value="${esc(v.org || "")}"></label>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-chg").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          try { await api("PUT", `/api/vendors/${v.id}`, { org: f.org }); say(`VENDOR ${String(v.username).toUpperCase()} CHANGED.`); await openVendors(); }
+          catch (e) { say("CPF9898: " + e.message, true); render(); }
+        };
+      },
+
+      vendorgrants() {
+        back = "vendors";
+        const v = vendors.find((x) => x.id === grantsVendor);
+        const tn = Object.fromEntries(targets.map((t) => [t.id, t.name]));
+        const canApprove = can("approve"), canManage = can("manage_targets");
+        term.innerHTML = `${head("PAMVENGRT", "Work with Contract Grants")}
+Grants for vendor <span class="white">${esc(v ? v.username : grantsVendor)}</span>. A grant admits the vendor to one target,
+as one account, inside a time window — after a customer (never the vendor) approves it.
+Type options, press Enter.  <span class="cyan">${[canApprove ? "5=Approve" : "", canManage ? "6=Revoke" : ""].filter(Boolean).join("   ") || "(read-only)"}</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>ID</th><th>Target</th><th>Account</th><th>Window</th><th>Status</th><th>Approver</th></tr>
+${vendorGrants.map((g) => `<tr><td>${opt(g.id)}</td><td>${esc(g.id)}</td><td>${pad(tn[g.target_id] || g.target_id, 14)}</td><td>${pad(g.principal || "any", 10)}</td><td class="cyan">${fmtTime(g.not_before)} → ${fmtTime(g.not_after)}</td><td class="${g.status === "approved" ? "white" : g.status === "revoked" ? "red" : "amber"}">${esc(g.status)}</td><td>${pad(g.approver || "-", 10)}</td></tr>`).join("")}
+</table>${vendorGrants.length ? "" : `<div class="cyan indent">(No grants.${canManage ? " Press F6 to add one; a customer must then approve it." : ""})</div>`}
+<input type="submit" hidden></form>
+${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add grant" : ""}   F12=Cancel`)}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const g of vendorGrants) {
+              const o = optVal(ev.target, g.id);
+              if (o === "5") { await api("POST", `/api/vendor-grants/${g.id}/approve`); say(`GRANT ${g.id} APPROVED.`); }
+              else if (o === "6") { await api("POST", `/api/vendor-grants/${g.id}/revoke`); say(`GRANT ${g.id} REVOKED.`); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openVendorGrants(grantsVendor);
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      vendorgrantadd() {
+        back = "vendorgrants";
+        term.innerHTML = `${head("PAMADDVGR", "Add Contract Grant")}
+Record the contract: which target, as which account, and the time window.
+
+<form id="f-add" class="indent">
+<label>Target  . . . . . . :  <select name="target" autofocus>${targets.map((t) => `<option>${esc(t.name)}</option>`).join("")}</select></label>
+<label>Account . . . . . . :  <input name="principal" size="16" required>   <span class="cyan">the login the vendor may use on the target</span></label>
+<label>Active from . . . . :  <input name="not_before" type="datetime-local">   <span class="cyan">optional — contract start</span></label>
+<label>Active until  . . . :  <input name="not_after" type="datetime-local" required>   <span class="cyan">contract end — access stops here, mid-session if needed</span></label>
+<input type="submit" hidden>
+</form>
+<div class="cyan">The grant starts pending; a customer with the approve capability must approve it (four-eyes).</div>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-add").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          const body = { target: f.target, principal: f.principal, not_after: new Date(f.not_after).toISOString() };
+          if (f.not_before) body.not_before = new Date(f.not_before).toISOString();
+          try { await api("POST", `/api/vendors/${grantsVendor}/grants`, body); say("CONTRACT GRANT RECORDED — awaiting customer approval."); await openVendorGrants(grantsVendor); }
+          catch (e) { say("CPF9898: " + e.message, true); render(); }
+        };
+      },
+
+      sshcerts() {
+        back = "main";
+        const canRevoke = can("manage_targets");
+        const ca = caInfo && !caInfo.disabled ? `CA fingerprint <span class="white">${esc(caInfo.fingerprint)}</span>` : `<span class="amber">Zero Standing Privilege is not enabled (set PAM_SSH_CA_KEY)${sshCerts.length ? " — issued certificates remain revocable" : ""}.</span>`;
+        term.innerHTML = `${head("PAMWRKCRT", "Work with Operator SSH Certificates")}
+Short-lived certificates pamv1 signed for an operator's own key (proof-of-possession).
+${ca}
+Type options, press Enter.  <span class="cyan">${canRevoke ? "4=Revoke (published in the KRL)" : "(read-only role)"}</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>Serial</th><th>Key ID</th><th>Principal</th><th>Operator</th><th>Issued</th><th>Valid before</th><th>Status</th></tr>
+${sshCerts.map((c) => `<tr><td>${opt(c.serial)}</td><td>${esc(c.serial)}</td><td>${pad(c.key_id, 20)}</td><td>${pad(c.principal, 10)}</td><td>${pad(c.actor, 10)}</td><td class="cyan">${fmtTime(c.issued_at)}</td><td class="cyan">${fmtTime(c.valid_before)}</td><td>${c.revoked_at ? '<span class="red">revoked</span>' : '<span class="white">issued</span>'}</td></tr>`).join("")}
+</table>${sshCerts.length ? "" : `<div class="cyan indent">(No certificates issued. Operators request one with POST /api/ca/ssh/challenge + /sign.)</div>`}
+<input type="submit" hidden></form>
+<div class="cyan">Install the KRL as sshd's RevokedKeys on the targets so a revocation takes effect before expiry.</div>
+${fkeys("F3=Exit   F5=Refresh   F9=Download KRL   F12=Cancel")}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const c of sshCerts) {
+              const o = optVal(ev.target, c.serial);
+              if (o === "4") { await api("POST", "/api/ca/ssh/revoke", { serial: String(c.serial) }); say(`CERTIFICATE ${c.serial} REVOKED — republish the KRL to the targets.`); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openSSHCerts();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      blast() {
+        back = "main";
+        term.innerHTML = `${head("PAMBLAST", "Identity Blast Radius (CIEM)")}
+Paste a normalized identity graph (from the AWS IAM ingester or handwritten) and analyze
+who can reach what. Read-only: no cloud credentials are involved.
+
+<form id="f-blast" class="indent">
+<label>Source (optional) . :  <input name="source" size="24">   <span class="cyan">whose blast radius?</span></label>
+<label>Target (optional) . :  <input name="target" size="24">   <span class="cyan">who can reach this?</span></label>
+Graph JSON:
+<textarea name="graph" rows="12" cols="76" required autofocus placeholder='{"principals":[{"id":"user:alice","kind":"user"},{"id":"role:admin","kind":"role","admin":true}],"edges":[{"from":"user:alice","to":"role:admin","kind":"can_assume","via":"sts:AssumeRole"}]}'></textarea>
+<div class="cyan">Edge kinds: can_assume, member_of, can_escalate_to, credential_for (pivots) — contains, reads (structural).</div>
+<input type="submit" hidden>
+</form>
+<div class="cyan">Press Enter (in a field) to analyze. Findings are toxic combinations and escalation paths.</div>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-blast").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          let graph;
+          try { graph = JSON.parse(f.graph); } catch (e) { say("CPF9898: GRAPH IS NOT VALID JSON.", true); return render(); }
+          const body = { graph };
+          if (f.source) body.source = f.source;
+          if (f.target) body.target = f.target;
+          try { blastResult = await api("POST", "/api/blast/analyze", body); go("blastresult"); }
+          catch (e) { say("CPF9898: " + e.message, true); render(); }
+        };
+      },
+
+      blastresult() {
+        back = "blast";
+        const r = blastResult || {};
+        const s = r.summary || {};
+        const sev = (x) => x === "critical" ? "red" : x === "high" ? "amber" : "cyan";
+        const path = (p) => (p || []).map((e) => `${e.from} ─${e.kind}${e.via ? ":" + e.via : ""}→ ${e.to}`).join("  ");
+        term.innerHTML = `${head("PAMBLSTRS", "Blast-Radius Findings")}
+Graph: <span class="white">${esc(s.principals ?? "?")}</span> principals, <span class="white">${esc(s.edges ?? "?")}</span> edges (${esc(s.pivot_edges ?? 0)} pivot, ${esc(s.admins ?? 0)} admin) — <span class="${(r.findings || []).length ? "amber" : "white"}">${(r.findings || []).length} finding(s)</span>.
+${r.blast_radius ? `Blast radius: ${r.blast_radius.map((x) => esc(x.principal) + (x.uncertain ? " (uncertain)" : "")).join(", ") || "(reaches nothing)"}\n` : ""}${r.who_can_reach ? `Can reach the target: ${r.who_can_reach.map(esc).join(", ") || "(nobody)"}\n` : ""}
+<table>
+<tr><th>Sev</th><th>Finding</th><th>Path</th></tr>
+${(r.findings || []).map((f) => `<tr><td class="${sev(f.severity)}">${pad(f.severity, 8)}</td><td>${pad(f.title, 34)}${f.uncertain ? ' <span class="cyan">(uncertain)</span>' : ""}</td><td class="detail">${esc(path(f.path))}</td></tr>`).join("")}
+</table>${(r.findings || []).length ? `<div class="cyan indent">Remediation for each finding: cut the earliest pivot edge on its path (shown first).</div>` : `<div class="white indent">Clean graph — no toxic combinations found.</div>`}
+${fkeys("F3=Exit   F12=Back to the graph")}`;
+      },
+
+      loginsessions() {
+        back = "main";
+        term.innerHTML = `${head("PAMWRKSES", "Work with Login Sessions")}
+Active password / SSO login sessions (distinct from proxied target sessions, menu 4).
+Type options, press Enter.  <span class="cyan">4=Revoke every session for that username (also cuts their live target sessions)</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>ID</th><th>Username</th><th>Role(s)</th><th>Scope</th><th>Created</th><th>Expires</th></tr>
+${loginSessions.map((sx) => `<tr><td>${opt(sx.id)}</td><td>${esc(sx.id)}</td><td class="white">${pad(sx.username, 14)}</td><td>${pad(sx.roles || sx.role, 12)}</td><td>${pad(sx.scope || "full", 8)}</td><td class="cyan">${fmtTime(sx.created_at)}</td><td class="amber">${fmtTime(sx.expires_at)}</td></tr>`).join("")}
+</table>${loginSessions.length ? "" : `<div class="cyan indent">(No login sessions. Token-based API access does not create one.)</div>`}
+<input type="submit" hidden></form>
+${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const sx of loginSessions) {
+              const o = optVal(ev.target, sx.id);
+              if (o === "4") { const r = await api("POST", "/api/login-sessions/revoke", { username: sx.username }); say(`USER ${String(sx.username).toUpperCase()}: ${r.revoked} LOGIN(S) REVOKED, ${r.killed} LIVE SESSION(S) CUT.`); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openLoginSessions();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      agents() {
+        back = "main";
+        term.innerHTML = `${head("PAMWRKAGT", "Work with AI-Agent Keys")}
+Non-human identities for the access broker: an agent may only request brokered tool
+calls — never a credential. Every call is attributed to its accountable owner.
+Type options, press Enter.  <span class="cyan">4=Revoke (the bearer token stops resolving)</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>ID</th><th>Name</th><th>Owner (accountable)</th><th>Status</th><th>Created</th></tr>
+${agents.map((a) => `<tr><td>${opt(a.id)}</td><td>${esc(a.id)}</td><td class="white">${pad(a.name, 16)}</td><td>${pad(a.owner || "-", 18)}</td><td>${a.disabled ? '<span class="red">disabled</span>' : "active"}</td><td class="cyan">${fmtTime(a.created_at)}</td></tr>`).join("")}
+</table>${agents.length ? "" : `<div class="cyan indent">(No agent keys. Press F6 to mint one — requires the broker to be enabled.)</div>`}
+<input type="submit" hidden></form>
+<div class="cyan">Parked calls awaiting a human are on menu 20. The broker audit chain is verified at /v1/audit/verify.</div>
+${fkeys("F3=Exit   F5=Refresh   F6=Mint agent key   F12=Cancel")}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const a of agents) {
+              const o = optVal(ev.target, a.id);
+              if (o === "4") { await api("DELETE", `/v1/agents/${a.id}`); say(`AGENT ${String(a.name).toUpperCase()} REVOKED.`); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openAgents();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      agentadd() {
+        back = "agents";
+        term.innerHTML = `${head("PAMADDAGT", "Mint Agent Key")}
+A bearer key for an AI agent (token shown once). Owner is the accountable human or
+service recorded in every audit entry the agent produces.
+
+<form id="f-add" class="indent">
+<label>Agent name  . . . . :  <input name="name" size="20" required autofocus></label>
+<label>Owner . . . . . . . :  <input name="owner" size="20" required></label>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-add").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          try { newAgent = await api("POST", "/v1/agents", f); go("agentcreated"); }
+          catch (e) { say("CPF9898: " + (e.status === 404 ? "AI-AGENT BROKER IS DISABLED (set PAM_BROKER_POLICY_FILE)." : e.message), true); render(); }
+        };
+      },
+
+      agentcreated() {
+        back = "agents";
+        const a = newAgent || {};
+        term.innerHTML = `${head("PAMAGTTOK", "Agent Access Token")}
+<span class="red blink">COPY THIS TOKEN NOW — IT IS SHOWN ONLY ONCE.</span>
+
+<div class="indent">
+Agent . . . . . . . :  <span class="white">${esc(a.name)}</span>
+Owner . . . . . . . :  <span class="white">${esc(a.owner)}</span>
+
+Access token  . . . :  <span class="white">${esc(a.token)}</span>
+</div>
+<div class="cyan indent">The agent presents it on /v1/tool-calls or /mcp; only its hash is stored.</div>
+${fkeys("F3=Exit   F12=Cancel")}`;
+      },
+
+      deps() {
+        back = "creds";
+        const c = depsCred || {};
+        const canManage = can("manage_credentials");
+        term.innerHTML = `${head("PAMWRKDEP", "Work with Dependent Accounts")}
+Consumers of credential <span class="white">${esc(c.username || c.id)}</span> (id ${esc(c.id)}) — services that log on with this
+account. On rotation, pamv1 also updates each consumer over WinRM so rotation does not break production.
+Type options, press Enter.  <span class="cyan">${canManage ? "4=Delete" : "(read-only role)"}</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>ID</th><th>Kind</th><th>Name</th><th>Host</th><th>Port</th></tr>
+${deps.map((d) => `<tr><td>${opt(d.id)}</td><td>${esc(d.id)}</td><td>${pad(d.kind, 16)}</td><td class="white">${pad(d.name, 18)}</td><td>${pad(d.host, 18)}</td><td>${esc(d.port || 5985)}</td></tr>`).join("")}
+</table>${deps.length ? "" : `<div class="cyan indent">(No dependents declared.${canManage ? " Press F6 to add one." : ""})</div>`}
+<input type="submit" hidden></form>
+${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add dependent" : ""}   F12=Cancel`)}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const d of deps) {
+              const o = optVal(ev.target, d.id);
+              if (o === "4") { await api("DELETE", `/api/credentials/${c.id}/dependencies/${d.id}`); say(`DEPENDENT ${d.id} DELETED.`); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openDeps(c.id);
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      depadd() {
+        back = "deps";
+        const c = depsCred || {};
+        term.innerHTML = `${head("PAMADDDEP", "Add Dependent Account")}
+Declare a consumer of credential <span class="white">${esc(c.username || c.id)}</span> to update on rotation.
+
+<form id="f-add" class="indent">
+<label>Kind  . . . . . . . :  <select name="kind" autofocus><option>windows_service</option><option>scheduled_task</option><option>iis_apppool</option></select></label>
+<label>Name  . . . . . . . :  <input name="name" size="24" required>   <span class="cyan">service / task / app-pool name</span></label>
+<label>Host  . . . . . . . :  <input name="host" size="24" required>   <span class="cyan">WinRM-reachable host running it</span></label>
+<label>Port  . . . . . . . :  <input name="port" type="number" min="0" max="65535" size="6" value="5985"></label>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-add").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          const body = { kind: f.kind, name: f.name, host: f.host, port: Number(f.port) || 0 };
+          try { await api("POST", `/api/credentials/${c.id}/dependencies`, body); say(`DEPENDENT ${String(f.name).toUpperCase()} DECLARED.`); await openDeps(c.id); }
+          catch (e) { say("CPF9898: " + e.message, true); render(); }
+        };
+      },
+
+      auditheadview() {
+        back = "audit";
+        const h = auditHead || {};
+        term.innerHTML = `${head("PAMAUDHED", "Signed Audit Checkpoint")}
+An ed25519-signed checkpoint of the audit chain's head. Store it out-of-band: re-verifying
+a later head against an archived one detects TAIL TRUNCATION, which the HMAC chain alone cannot.
+
+<div class="indent">
+Last event id . . . :  <span class="white">${esc(h.last_id)}</span>
+Head HMAC . . . . . :  <span class="white">${esc(h.head || "(empty chain)")}</span>
+Signed at . . . . . :  <span class="white">${fmtTime(h.ts)}</span>
+Signature . . . . . :  <span class="detail">${esc(h.signature)}</span>
+Public key  . . . . :  <span class="detail">${esc(h.public_key)}</span>
+</div>
+<div class="cyan indent">Archive this JSON (GET /api/audit/head) with your evidence exports.</div>
+${fkeys("F3=Exit   F12=Cancel")}`;
       },
 
       requests() {
@@ -1419,7 +1872,7 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
 <tr><th>Timestamp</th><th>Actor</th><th>Action</th><th>Detail</th></tr>
 ${auditRows(audit)}
 </table>${audit.length ? "" : `<div class="cyan indent">(Audit trail is empty.)</div>`}
-${fkeys("F3=Exit   F5=Refresh   F9=Export CSV   F12=Cancel")}`;
+${fkeys("F3=Exit   F5=Refresh   F6=Verify chain   F7=Signed head   F9=Export CSV   F10=OCSF export   F12=Cancel")}`;
         const fin = document.getElementById("in-filter");
         fin.oninput = () => {
           const q = fin.value.toLowerCase();
@@ -1775,8 +2228,8 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   }
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
-  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), risk: openRisk, recordings: openRecordings };
-  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: () => go("campaignadd") };
+  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, deps: () => depsCred && openDeps(depsCred.id) };
+  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: () => go("campaignadd"), vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), deps: () => go("depadd") };
 
   window.addEventListener("keydown", async (ev) => {
     // While the RDP viewer is open it owns the keyboard (its own capture-phase
@@ -1810,16 +2263,17 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
       go(back);
       return;
     }
-    if (!["F3", "F5", "F6", "F7", "F8", "F9", "F12"].includes(k)) return;
+    if (!["F3", "F5", "F6", "F7", "F8", "F9", "F10", "F12"].includes(k)) return;
     ev.preventDefault();
     if (screen === "signon") return;
     try {
       if (k === "F3") { screen === "main" ? signoff() : go("main"); }
       else if (k === "F5") { const r = refreshers[screen]; if (r) await r(); else render(); }
-      else if (k === "F6") { if (screen === "effective") await exportIaC("env"); else { const a = adders[screen]; if (a) a(); } }
-      else if (k === "F7") { if (screen === "effective") await exportIaC("helm"); }
+      else if (k === "F6") { if (screen === "effective") await exportIaC("env"); else if (screen === "audit") await verifyChain(); else { const a = adders[screen]; if (a) a(); } }
+      else if (k === "F7") { if (screen === "effective") await exportIaC("helm"); else if (screen === "audit") await fetchAuditHead(); }
       else if (k === "F8") { if (screen === "effective") await exportIaC("terraform"); }
-      else if (k === "F9") { if (screen === "audit") await exportAudit(); else if (screen === "users") await reconcileIdentities(); }
+      else if (k === "F9") { if (screen === "audit") await exportAudit(); else if (screen === "users") await reconcileIdentities(); else if (screen === "sshcerts") await download("/api/ca/ssh/krl", "pamv1-revoked-certs.krl", "KRL"); }
+      else if (k === "F10") { if (screen === "audit") await download("/api/audit/ocsf", "pamv1-audit-ocsf.json", "OCSF"); }
       else if (k === "F12") { go(back); }
     } catch (e) { say("CPF9999: " + e.message, true); render(); }
   });
