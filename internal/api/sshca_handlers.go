@@ -34,6 +34,30 @@ func (s *Server) sshCAPublicKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// listSSHCertsHandler returns recently issued operator certificates, newest
+// first (?limit=, clamped 1..500, default 100) — the revocation handles: each
+// row's serial is what POST /api/ca/ssh/revoke takes, and until Phase 45 the
+// store had this listing but no route, so the serials were invisible outside
+// the audit trail. Requires CapReadInventory (metadata only — key IDs,
+// principals, validity, revocation state; never key material).
+func (s *Server) listSSHCertsHandler(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil {
+			limit = n
+		}
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	certs, err := s.store.ListSSHCerts(r.Context(), limit)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, certs)
+}
+
 // sshCertChallengeTTL bounds a proof-of-possession challenge's lifetime.
 const sshCertChallengeTTL = 2 * time.Minute
 

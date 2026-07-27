@@ -666,6 +666,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/ca/ssh/sign", s.authz(auth.CapConnect, s.signOperatorCert))
 	s.mux.Handle("POST /api/ca/ssh/revoke", s.authz(auth.CapManageTargets, s.revokeOperatorCert))
 	s.mux.Handle("GET /api/ca/ssh/krl", s.authz(auth.CapReadInventory, s.sshCAKRL))
+	s.mux.Handle("GET /api/ca/ssh/certs", s.authz(auth.CapReadInventory, s.listSSHCertsHandler))
 
 	s.mux.Handle("POST /api/credentials", s.authz(auth.CapManageCredentials, s.createCredential))
 	s.mux.Handle("GET /api/credentials", s.authz(auth.CapReadInventory, s.listCredentials))

@@ -140,7 +140,19 @@ The **main menu** is your whole management surface. This is the complete menu;
 | 17 | Certification campaigns (review access, certify / revoke) | |
 | 18 | Risk analytics (behavioral risk per actor) | |
 | 19 | Session recordings (replay stored sessions, hash-verified) | |
+| 20 | Approve AI-agent tool calls (parked calls, with the arguments policy matched on) | approver |
+| 21 | In-session step-up decisions (paused SQL statements — these expire) | |
+| 22 | Work with vendors & contract grants (register, approve, offboard, evidence) | |
+| 23 | Work with operator SSH certificates (issued certs, revoke, KRL download) | |
+| 24 | Identity blast radius (paste a graph, see escalation paths + remediation) | |
+| 25 | Work with login sessions (see and revoke active password/SSO logins) | admin |
+| 26 | Work with AI-agent keys (mint / revoke broker identities) | admin |
 | 90 | Sign off | |
+
+The audit screen (10) also carries the tamper-evidence controls: **F6** verifies
+the HMAC chain, **F7** shows the signed head checkpoint, **F9** exports CSV and
+**F10** exports OCSF for a SIEM. On a credential row, option **9** opens its
+dependent accounts (the services updated on rotation).
 
 On list screens you type an **option number** next to a row (e.g. `5` to display,
 `4` to delete, and on targets, safes and users `2` to **change** — edit in
@@ -301,6 +313,7 @@ requests on their list.
 
 | Date | Change |
 |---|---|
+| 2026-07-27 | Phase 45: **console parity restored** — menus **22–26** (vendors & contract grants, operator SSH certificates, identity blast radius, login sessions, AI-agent keys), option **9=Dependents** on a credential, and the audit screen's tamper-evidence keys (F6=Verify chain, F7=Signed head, F10=OCSF export). The menu table above now lists 20/21 too (shipped in Phase 43). §4 |
 | 2026-07-27 | Phase 44: **2=Change** on Work with Targets, Safes and Users — edit a target's host/port, rename a safe, or change a user's role in place; nothing attached to the object is lost, and a changed user keeps their token. The target form now also offers the `postgres` protocol. §4 |
 | 2026-07-25 | Phase 32: **SFTP file transfers are audited**, and may be **read-only** (uploads/deletes refused) or **disabled** by policy. §3 |
 | 2026-07-24 | Phase 26: **Session recordings** (menu 19) — replay stored recordings with a keyboard-first player and an on-screen audit-hash verdict; **one-time access requests** (a single-use approval is consumed by the first connection it admits) with a `1x`/`used` marker on the approver list. §4, §6, §7 |
