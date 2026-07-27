@@ -2166,10 +2166,11 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         term.innerHTML = `${head("PAMWRKREC", "Session Recordings (replay)")}
 Stored recordings, newest first. Type options, press Enter.
   <span class="cyan">5=Replay</span>   <span class="cyan">Every replay is audited (session.playback) and hash-checked against the audit trail.</span>
+  <span class="cyan">Target and actor come from the audit trail, so they show even when file names are opaque.</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>Recording</th><th>Kind</th><th>Size</th><th>Recorded</th></tr>
-${recordings.map((c) => `<tr><td>${opt(c.name)}</td><td class="detail">${esc(c.name)}</td><td>${pad(c.kind, 10)}</td><td>${pad(kb(c.size), 7)}</td><td class="cyan">${fmtTime(c.modified)}</td></tr>`).join("")}
+<tr><th>Opt</th><th>Recording</th><th>Target</th><th>Actor</th><th>Kind</th><th>Size</th><th>Recorded</th></tr>
+${recordings.map((c) => `<tr><td>${opt(c.name)}</td><td class="detail">${esc(c.name)}</td><td class="white">${pad(c.target || "-", 14)}</td><td>${pad(c.actor || "-", 12)}</td><td>${pad(c.kind, 10)}</td><td>${pad(kb(c.size), 7)}</td><td class="cyan">${fmtTime(c.modified)}</td></tr>`).join("")}
 </table>${recordings.length ? "" : `<div class="cyan indent">(No recordings on disk yet — proxied sessions write asciicasts as they run.)</div>`}
 <input type="submit" hidden></form>
 ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;

@@ -379,7 +379,7 @@ func (s *Server) recordWinRM(target *store.Target, credUser, actor, command stri
 		return "", ""
 	}
 	ts := time.Now()
-	name := fmt.Sprintf("%d_%s_%s.winrm.log", ts.UnixNano(), sanitizeName(target.Name), sanitizeName(actor))
+	name := recording.Title(s.opaqueRecNames, ts, sanitizeName(target.Name), sanitizeName(actor)) + ".winrm.log"
 	path := filepath.Join(s.recordingDir, name)
 	transcript := fmt.Sprintf(
 		"# pamv1 WinRM session\n# target: %s (%s:%d)\n# user: %s\n# actor: %s\n# time: %s\n\n$ %s\n\n--- stdout ---\n%s\n--- stderr ---\n%s\n--- exit: %d ---\n",
