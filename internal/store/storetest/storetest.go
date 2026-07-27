@@ -1250,6 +1250,74 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("a recent event must survive a past cutoff, got %d (err %v)", len(remaining), err)
 	}
 
+	// --- ListAudit limit semantics ---
+	// This exists because the two stores silently disagreed here and nothing
+	// caught it: pgstore collapsed any limit above 500 back to the 100 default,
+	// so a caller asking for 2000 got 2000 from memstore in tests and 100 from
+	// Postgres in production. An interface with two implementations is only as
+	// good as the contract test holding them together, so the limit rule is now
+	// part of that contract rather than an implementation detail each side
+	// invented for itself.
+	//
+	// The assertions below are deliberately built to FAIL against the old
+	// pgstore. That takes more than 100 events and a mid-sized explicit limit:
+	// with fewer events, or comparing only against the default page, the broken
+	// and correct implementations return identical results and the test proves
+	// nothing.
+	const auditFill = store.DefaultAuditPage + 60 // 160: comfortably over the default page
+	for i := 0; i < auditFill; i++ {
+		if err := st.AppendAudit(ctx, &store.AuditEvent{
+			Actor: "limit-contract", Action: "test.page", Detail: fmt.Sprintf("n:%d", i),
+		}); err != nil {
+			t.Fatalf("AppendAudit: %v", err)
+		}
+	}
+	const midLimit = store.DefaultAuditPage + 40 // 140: above the default, below any cap
+	mid, err := st.ListAudit(ctx, midLimit)
+	if err != nil {
+		t.Fatalf("ListAudit(%d): %v", midLimit, err)
+	}
+	if len(mid) != midLimit {
+		t.Fatalf("ListAudit(%d) returned %d events, want exactly %d", midLimit, len(mid), midLimit)
+	}
+	// An oversized limit must be CAPPED, never reduced to the default: asking for
+	// more must never return less. This is the assertion the old pgstore fails —
+	// it answered an oversized request with the 100-event default, fewer than the
+	// 140 a smaller request returned.
+	big, err := st.ListAudit(ctx, store.MaxAuditPage*10)
+	if err != nil {
+		t.Fatalf("ListAudit(oversized): %v", err)
+	}
+	if len(big) < len(mid) {
+		t.Fatalf("ListAudit(oversized) returned %d events but ListAudit(%d) returned %d — asking for more must never return less",
+			len(big), midLimit, len(mid))
+	}
+	if len(big) > store.MaxAuditPage {
+		t.Fatalf("ListAudit returned %d events, above the MaxAuditPage cap of %d", len(big), store.MaxAuditPage)
+	}
+	// A non-positive limit means the default page — not "everything", which is
+	// what memstore used to do.
+	zero, err := st.ListAudit(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListAudit(0): %v", err)
+	}
+	if len(zero) != store.DefaultAuditPage {
+		t.Fatalf("ListAudit(0) returned %d events, want the default page of %d", len(zero), store.DefaultAuditPage)
+	}
+	// A small explicit limit is honoured exactly, newest first.
+	page, err := st.ListAudit(ctx, 5)
+	if err != nil {
+		t.Fatalf("ListAudit(5): %v", err)
+	}
+	if len(page) != 5 {
+		t.Fatalf("ListAudit(5) returned %d events, want exactly 5", len(page))
+	}
+	for i := 1; i < len(page); i++ {
+		if page[i-1].ID <= page[i].ID {
+			t.Fatalf("ListAudit is not newest-first: id %d before id %d", page[i-1].ID, page[i].ID)
+		}
+	}
+
 	// --- session kill bus (Phase 34) ---
 	// A selector published on the bus is delivered to a subscriber, JSON-intact
 	// (Postgres LISTEN/NOTIFY for pgstore; an in-process hub for memstore).

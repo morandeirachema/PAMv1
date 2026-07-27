@@ -730,12 +730,14 @@ func (s *PGStore) VerifyAuditChain(ctx context.Context) (bool, int64, error) {
 	return true, 0, rows.Err()
 }
 
-// ListAudit returns the most recent audit events, newest first; limit is clamped
-// to [1,500] (defaulting to 100 when out of range).
+// ListAudit returns the most recent audit events, newest first, applying the
+// limit semantics defined on store.Store: non-positive means the default page,
+// and an oversized limit is CAPPED at store.MaxAuditPage rather than collapsed
+// back to the default (which is what this function used to do, so a caller
+// asking for 2000 silently received 100 here while receiving all 2000 from
+// memstore).
 func (s *PGStore) ListAudit(ctx context.Context, limit int) ([]store.AuditEvent, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
+	limit = store.ClampAuditLimit(limit)
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, ts, actor, action, detail
 		 FROM audit_events ORDER BY id DESC LIMIT $1`, limit)

@@ -946,13 +946,17 @@ func (m *Memstore) VerifyAuditChain(_ context.Context) (bool, int64, error) {
 	return true, 0, nil
 }
 
-// ListAudit returns up to limit audit events, newest first (all when limit <= 0).
+// ListAudit returns the most recent audit events, newest first, applying the
+// limit semantics defined on store.Store. It used to return EVERYTHING for a
+// non-positive or oversized limit, which made tests pass against behaviour
+// pgstore did not share.
 func (m *Memstore) ListAudit(_ context.Context, limit int) ([]store.AuditEvent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	n := len(m.audit)
-	if limit <= 0 || limit > n {
-		limit = n
+	limit = store.ClampAuditLimit(limit)
+	if limit > n {
+		limit = n // fewer events exist than were asked for
 	}
 	out := make([]store.AuditEvent, 0, limit)
 	for i := n - 1; i >= n-limit; i-- {

@@ -1105,6 +1105,42 @@ something went wrong, so it failing quietly is the worst possible time for it.
 - [x] Directory reads use `os.OpenInRoot`, so "this cannot traverse" is enforced
   by the API rather than asserted in a comment
 
+## Phase 52b — Fix the two same-day regressions, and the gap that hid them ✅
+
+Findings **AF**, **AG** and **AL**. Both regressions shipped the same day as the
+sweep that found them, and both **passed their tests** — which is the part worth
+dwelling on. Neither was caught by review; both were caught by asking what the
+tests were actually proving.
+
+- [x] **`ListAudit` limit semantics are now part of the contract.** `pgstore`
+  collapsed any limit above 500 back to the 100 default, so asking for *more*
+  returned dramatically *fewer*, while `memstore` returned everything it had. A
+  caller asking for 2000 got 2000 in tests and 100 in production. The rule now
+  lives on the interface and is shared through `store.ClampAuditLimit`: a
+  non-positive limit means the default page, and an oversized one is **capped,
+  not reduced**
+- [x] **The recordings listing no longer depends on a magic number.**
+  `recordingOwners` takes the set of names the listing actually needs and stops
+  as soon as they are all resolved, so the work is bounded by what is being
+  displayed rather than by a constant someone guessed
+- [x] **Certificate serials survive the trip to the console.**
+  `SSHCert.Serial` carries the `,string` tag, so it serializes as a JSON string
+  exactly as `/sign` already did. Seeded from a nanosecond clock, a real serial
+  is ~1.7×10¹⁸ — above 2⁵³, where JavaScript stops representing integers
+  exactly — so the console received a rounded value, and a rounded serial
+  revokes nothing: the published KRL names a certificate that does not exist
+  while the real one stays valid until it expires
+- [x] **The tests are rebuilt to fail against the old code**, which is the actual
+  lesson. The certificate test used serials 101 and 102 — small enough that the
+  defect could not appear — and now uses two realistic values differing only in
+  their last digit. The audit-limit contract needed more than 100 events and a
+  mid-sized limit before broken and correct implementations differ at all. Both
+  were verified by reintroducing the bug and watching them fail
+- [x] **The root cause is closed, not just the symptoms** (finding AL): an
+  interface with two implementations is only as good as the contract test
+  holding them together, so limit semantics now live there instead of being
+  re-invented on each side
+
 ### Open findings from the post-beta sweep (2026-07-27) ⬜
 
 A second full read-only sweep, run right after the beta milestone across six
@@ -1122,13 +1158,8 @@ real work, in rough priority order:
    (above); the sealed-recording half is resolved as a documented retention rule
    plus a warning, because re-wrapping would destroy the recordings' tamper
    evidence.
-3. **Two same-day regressions from phases 44–51** — Phase 48's metadata lookup
-   asks for 2000 audit events where PostgreSQL silently returns 100, so it works
-   on the test store and not in production; and Phase 45's certificate listing
-   serialises a nanosecond-seeded serial as a JSON number, past the exact-integer
-   range, so the console's revoke option cannot revoke a real certificate. Both
-   passed their tests. The root cause of the first — the store contract not
-   covering limit semantics — is worth closing on its own.
+3. ~~**Two same-day regressions from phases 44–51**~~ — **fixed in Phase 52b**
+   (above), together with the store-contract gap that let them through.
 4. **The RDP tunnel authenticates itself and reproduces none of the middleware's
    failure handling** — the only bearer surface with neither throttling nor an
    `api.auth_failed` record, and its authorization denials are unaudited too.
