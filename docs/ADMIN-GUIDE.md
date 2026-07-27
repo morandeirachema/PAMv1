@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-07-27 · Reflects: Phases 0–50 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-07-27 · Reflects: Phases 0–51 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -223,6 +223,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_REQUIRE_DB_CLIENT_TLS` | | `false` | Refuse to start the DB proxy without operator-leg TLS (so the PAM key is never sent to it in cleartext). |
 | `PAM_COMMAND_DENY_FILE` | | (off) | Regex denylist file for command control (Phases 16, 38). One policy blocks matching commands on **every** path where a discrete command is visible: SSH `exec`, the WinRM command loop, PostgreSQL statements, `POST /api/targets/{id}/winrm`, and the agent broker's `ssh_exec`/`winrm_exec` tools. See §9.4. |
 | `PAM_SSH_SFTP` | | `allow` | SFTP file-transfer policy (Phase 32): `allow` (forward + audit every op), `readonly` (refuse writes/deletes/renames), `deny` (refuse the subsystem). See §9.4. |
+| `PAM_SSH_SFTP_DENY_FILE` | | (off) | **Path denylist for SFTP** (Phase 51): regexes, one per line (same format as `PAM_COMMAND_DENY_FILE`). A matching path is refused in **every** mode — downloads too — and on both sides of a rename; audited `sftp.blocked reason:path-denied` with the matched pattern. See §5. |
 | `PAM_RDP_CLIPBOARD` | | `allow` | RDP clipboard policy (Phase 33): `allow`, `readonly` (block paste into the target), `deny` (clipboard off both ways); drive redirection always off. |
 | `PAM_RDP_CLIPBOARD_AUDIT` | | `off` | **Audit clipboard transfers** (Phase 50): `meta` records direction, mimetype, size and SHA-256; `full` also records the content (truncated). Content is opt-in because a privileged desktop's clipboard often holds a password the operator just copied. Emits `rdp.clipboard`. See §9.4. |
 | `PAM_DB_STEPUP_FILE` | | (off) | Regex file marking PostgreSQL statements that **pause for a supervisor's live approval** — in-session step-up (Phase 30). See §9.4. |
@@ -1510,6 +1511,31 @@ passed through opaque. Note it governs SFTP specifically — `scp` run *inside* 
 interactive shell rides the unparsed PTY (as above); pair `readonly` with shell
 restriction for full containment.
 
+**Path policy (Phase 51).** The three modes govern the *operation*; they say
+nothing about *which file*. `readonly` still lets an operator download
+`/etc/shadow` or a private key — often the transfer that actually matters. Point
+`PAM_SSH_SFTP_DENY_FILE` at a regex file (same format as the command deny file)
+to gate by path:
+
+```bash
+# /etc/pam/sftp-deny.txt
+^/etc/shadow$
+^/etc/ssh/ssh_host_.*_key$
+\.pem$
+```
+
+- A matching path is refused in **every** mode, **downloads included** — a path
+  you deny that can still be fetched is not denied at all.
+- **Both sides of a rename** are checked, so a denied file cannot be moved to an
+  innocuous name (nor an allowed file onto a denied one).
+- The operator gets a proper permission-denied error (not a hang), the path is
+  never sent to the target, and the audit records
+  `sftp.blocked … reason:path-denied pattern:<the rule that matched>` — so you
+  can tell *which* rule fired.
+- A bad pattern fails startup, like the command deny file.
+
+Patterns are regular expressions, not shell globs: write `\.pem$`, not `*.pem`.
+
 **In-session step-up (Phase 30).** Where command control is a hard block, step-up
 is a **pause for a live human decision** — the session stays open. Point
 `PAM_DB_STEPUP_FILE` at a regex file (same format as the deny file); a matching
@@ -1736,6 +1762,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-07-27 | **Phase 51 — SFTP path policy.** `PAM_SSH_SFTP_DENY_FILE` gates file transfer by **path**, not just by operation: a matching path is refused in every mode (downloads included) and on both sides of a rename, audited `sftp.blocked reason:path-denied` with the rule that matched. Same regex-file format as command control, and a bad pattern fails startup. See §9.4. |
 | 2026-07-27 | **Phase 50 — clipboard auditing on the RDP bridge.** `PAM_RDP_CLIPBOARD_AUDIT=meta` records every clipboard transfer as `rdp.clipboard` — direction (out = copied from the target, in = pasted into it), mimetype, byte count and SHA-256; `full` also records the content, which is opt-in because a privileged clipboard often holds a just-copied password. Auditing never blocks a transfer; gating stays `PAM_RDP_CLIPBOARD`. See §5 (RDP) and §4. |
 | 2026-07-27 | **Phase 49 — archive to WORM before pruning.** `PAM_RETENTION_ARCHIVE_DIR` makes retention archive-then-prune: aged audit rows are exported as digest-stamped JSON Lines and aged recordings are moved into a write-once archive, and **the delete runs only if the archive succeeded** — a broken archive costs disk space, not evidence. New audit actions `audit.archived` / `recording.archived`. With the HMAC chain on you now get the scheduled export too; only the delete stays a manual re-anchor. See §9.2 and §4. |
 | 2026-07-27 | **Phase 48 — opaque recording file names.** `PAM_RECORDING_OPAQUE_NAMES=true` names recordings by timestamp + random hex, so the recording volume (and its backups) no longer reveals who accessed which system. Target and actor move to the audit trail; the console's recordings screen and `GET /api/recordings` resolve them back for anyone who may already read audit. Pair with `PAM_RECORDING_ENCRYPT` for content + metadata. See §9.3 and §4. |

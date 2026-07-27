@@ -44,6 +44,11 @@ type Config struct {
 	// "allow" (default — forward + audit every operation), "readonly" (refuse
 	// writes/deletes/renames), or "deny" (refuse the SFTP subsystem entirely).
 	SSHSFTPMode string
+	// SSHSFTPDenyFile is a file of regular expressions (one per line, '#'
+	// comments) matched against every SFTP path. A matching path is refused in
+	// EVERY mode, reads included — denying a path an operator can still download
+	// protects nothing (Phase 51). Empty disables the path policy.
+	SSHSFTPDenyFile string
 	// SSHJump* route SSH targets through an SSH bastion (for legacy equipment only
 	// reachable via a jump host). Empty SSHJumpHost disables it.
 	SSHJumpHost string
@@ -458,6 +463,7 @@ func Load() (*Config, error) {
 		CheckoutTTL:             time.Duration(integer("PAM_CHECKOUT_TTL_MIN", 30)) * time.Minute,
 		AllowedProtocols:        os.Getenv("PAM_ALLOWED_PROTOCOLS"),
 		CommandDenyFile:         os.Getenv("PAM_COMMAND_DENY_FILE"),
+		SSHSFTPDenyFile:         os.Getenv("PAM_SSH_SFTP_DENY_FILE"),
 		DBStepUpFile:            os.Getenv("PAM_DB_STEPUP_FILE"),
 		DBStepUpTTL:             time.Duration(integer("PAM_DB_STEPUP_TTL_SEC", 120)) * time.Second,
 

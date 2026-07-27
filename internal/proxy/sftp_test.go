@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
+	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/proxy"
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/store/memstore"
@@ -33,6 +34,7 @@ const (
 	tRead    = 5
 	tWrite   = 6
 	tRemove  = 13
+	tRename  = 18
 	tStatus  = 101
 	tHandle  = 102
 	tData    = 103
@@ -243,6 +245,12 @@ func (up *sftpUpstream) await(t *testing.T) string {
 // upstream (for asserting what actually reached the target).
 func startProxySFTP(t *testing.T, mode proxy.SFTPMode) (store.Store, string, *sftpUpstream) {
 	t.Helper()
+	return startProxySFTPPaths(t, mode, nil)
+}
+
+// startProxySFTPPaths is startProxySFTP with an SFTP path denylist (Phase 51).
+func startProxySFTPPaths(t *testing.T, mode proxy.SFTPMode, denyPatterns []string) (store.Store, string, *sftpUpstream) {
+	t.Helper()
 	up := startUpstreamSFTP(t)
 	st := memstore.New()
 	v := mustVault(t)
@@ -251,11 +259,19 @@ func startProxySFTP(t *testing.T, mode proxy.SFTPMode) (store.Store, string, *sf
 	if err != nil {
 		t.Fatal(err)
 	}
+	var pathGuard *cmdguard.Guard
+	if len(denyPatterns) > 0 {
+		pathGuard, err = cmdguard.New(denyPatterns)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	px, err := proxy.New(st, v, resolver, proxy.Config{
-		HostKey:      mustSigner(t),
-		RecordingDir: t.TempDir(),
-		DialTimeout:  5 * time.Second,
-		SFTPMode:     mode,
+		HostKey:       mustSigner(t),
+		RecordingDir:  t.TempDir(),
+		DialTimeout:   5 * time.Second,
+		SFTPMode:      mode,
+		SFTPPathGuard: pathGuard,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -415,4 +431,106 @@ func TestParseSFTPMode(t *testing.T) {
 	if _, err := proxy.ParseSFTPMode("nonsense"); err == nil {
 		t.Fatal("an unknown SFTP mode must be rejected")
 	}
+}
+
+// TestSFTPPathDenyBlocksReadAndWrite proves the Phase 51 path policy against a
+// real SFTP conversation: a denied path is refused in ALLOW mode — the mode that
+// permits everything else — for a DOWNLOAD as well as an upload, because a path
+// you deny that can still be fetched is not denied at all. Nothing reaches the
+// target, the refusal is a proper permission-denied status, the audit names the
+// matched pattern, and an undenied path in the same session still works.
+func TestSFTPPathDenyBlocksReadAndWrite(t *testing.T) {
+	st, addr, up := startProxySFTPPaths(t, proxy.SFTPAllow, []string{`^/etc/shadow$`, `\.pem$`})
+	client, ch, ok := openSFTPChannel(t, addr)
+	if !ok {
+		t.Fatal("sftp subsystem refused in allow mode")
+	}
+	defer client.Close()
+	initSFTP(t, ch)
+
+	// A READ of a denied path is refused, even though the mode allows writes.
+	ch.Write(sftpPacket(tOpen, be32(1), sftpStr("/etc/shadow"), be32(pRead), be32(0)))
+	typ, body, err := readPacket(ch)
+	if err != nil {
+		t.Fatalf("read open reply: %v", err)
+	}
+	if typ != tStatus {
+		t.Fatalf("denied-path open(read) should be refused with STATUS, got type=%d", typ)
+	}
+	if code := binary.BigEndian.Uint32(body[4:8]); code != 3 { // SSH_FX_PERMISSION_DENIED
+		t.Fatalf("refusal code = %d, want 3 (permission denied)", code)
+	}
+
+	// A WRITE to a path matching the second pattern is refused too.
+	ch.Write(sftpPacket(tOpen, be32(2), sftpStr("/srv/keys/server.pem"), be32(pWrite|pCreat), be32(0)))
+	if typ, _, _ := readPacket(ch); typ != tStatus {
+		t.Fatalf("denied-path open(write) reply type = %d, want STATUS(denied)", typ)
+	}
+	// A delete of a denied path is refused by the path policy, not the mode.
+	ch.Write(sftpPacket(tRemove, be32(3), sftpStr("/etc/shadow")))
+	if typ, _, _ := readPacket(ch); typ != tStatus {
+		t.Fatalf("denied-path remove reply type = %d, want STATUS(denied)", typ)
+	}
+
+	// An allowed path in the same session is unaffected.
+	ch.Write(sftpPacket(tOpen, be32(4), sftpStr("/srv/report.csv"), be32(pRead), be32(0)))
+	if typ, _, _ := readPacket(ch); typ != tHandle {
+		t.Fatalf("allowed path should be forwarded → HANDLE, got type=%d", typ)
+	}
+	client.Close()
+
+	// Only the allowed open reached the target: no denied path was ever named to it.
+	for {
+		select {
+		case got := <-up.got:
+			if strings.Contains(got, "shadow") || strings.Contains(got, ".pem") {
+				t.Fatalf("a denied path reached the target: %q", got)
+			}
+			continue
+		default:
+		}
+		break
+	}
+	assertAuditContains(t, st, "sftp.blocked", "op:open path:/etc/shadow reason:path-denied pattern:^/etc/shadow$")
+	assertAuditContains(t, st, "sftp.blocked", "op:open path:/srv/keys/server.pem reason:path-denied")
+	assertAuditContains(t, st, "sftp.blocked", "op:remove path:/etc/shadow reason:path-denied")
+	assertAuditContains(t, st, "sftp.open", "path:/srv/report.csv")
+}
+
+// TestSFTPPathDenyCoversBothRenameSides proves a rename cannot launder a denied
+// path in either direction: neither moving a denied file to an allowed name nor
+// moving an allowed file onto a denied one is permitted.
+func TestSFTPPathDenyCoversBothRenameSides(t *testing.T) {
+	st, addr, up := startProxySFTPPaths(t, proxy.SFTPAllow, []string{`^/etc/shadow$`})
+	client, ch, ok := openSFTPChannel(t, addr)
+	if !ok {
+		t.Fatal("sftp subsystem refused")
+	}
+	defer client.Close()
+	initSFTP(t, ch)
+
+	// Denied → allowed.
+	ch.Write(sftpPacket(tRename, be32(1), sftpStr("/etc/shadow"), sftpStr("/tmp/harmless")))
+	if typ, _, _ := readPacket(ch); typ != tStatus {
+		t.Fatalf("rename FROM a denied path: type=%d, want STATUS(denied)", typ)
+	}
+	// Allowed → denied.
+	ch.Write(sftpPacket(tRename, be32(2), sftpStr("/tmp/harmless"), sftpStr("/etc/shadow")))
+	if typ, _, _ := readPacket(ch); typ != tStatus {
+		t.Fatalf("rename TO a denied path: type=%d, want STATUS(denied)", typ)
+	}
+	client.Close()
+
+	for {
+		select {
+		case got := <-up.got:
+			if strings.Contains(got, "shadow") {
+				t.Fatalf("a denied rename reached the target: %q", got)
+			}
+			continue
+		default:
+		}
+		break
+	}
+	assertAuditContains(t, st, "sftp.blocked", "op:rename path:/etc/shadow reason:path-denied")
 }
