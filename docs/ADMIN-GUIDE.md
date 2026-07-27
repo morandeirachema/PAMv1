@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-07-27 · Reflects: Phases 0–45 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-07-27 · Reflects: Phases 0–46 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -1521,11 +1521,17 @@ The middle row is the point: a recertification is a *review*, so a dedicated
 decision is audited (`certification.item_certified` / `certification.item_revoked`),
 and the campaign itself is the point-in-time record for your evidence file.
 
-One honest limit: an admin holds `approve` too, so this **delegates** the review
-rather than forcing separation — nothing yet stops an admin certifying a grant
-they created. Enforcing that needs the grant's creator recorded (a schema change)
-and is a documented follow-on; until then, assign campaigns to approvers who are
-not target administrators if your control requires it.
+**Per-item four-eyes (Phase 46).** Every access grant records who created it,
+the campaign snapshot carries that creator (each item reads *"…, granted by
+X"*), and **certifying an item you granted yourself is refused** (403, audited
+`certification.decision_denied reason:four-eyes`) — the reviewer and the
+grantor cannot be the same person. Revoking your own grant stays allowed (it
+only reduces access). Grants created before the upgrade have no recorded
+creator and are not blocked retroactively — the guarantee is complete once
+every reviewed grant post-dates migration `0023`. Practical consequence: the
+bootstrap admin key is one actor (`bootstrap-admin`), so grants it created
+cannot be certified with it — mint a dedicated approver user for reviews (you
+should anyway).
 
 ### 9.7 Privileged threat analytics (Phase 23)
 
@@ -1661,6 +1667,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-07-27 | **Phase 46 — per-item four-eyes on certification.** Grants record their creator (migration `0023`), campaign items snapshot it ("granted by X"), and certifying a grant you created is refused + audited; self-revoke stays allowed. Legacy rows without a recorded creator are not blocked. See §9.6 |
 | 2026-07-27 | **Phase 45 — the remaining console screens.** Everything that was curl-only now has a 5250 screen: vendors & contract grants (menu 22 — register, change org, offboard, add/approve/revoke grants, evidence export with its SHA-256), operator SSH certificates (23 — plus a new `GET /api/ca/ssh/certs` listing so the serials a revocation needs are visible), identity blast radius (24), login sessions (25), AI-agent keys (26), credential dependents (option 9 on a credential), and the audit screen's chain controls (F6=Verify, F7=Signed head, F10=OCSF export). The console is back at **full parity**. See §5–§9 |
 | 2026-07-27 | **Phase 44 — editable objects and bounded lists.** Targets, safes, users and vendors now have `PUT` endpoints that edit in place — fixing a target's port no longer means delete + recreate (which cascaded away its credentials, grants, dependencies and safe assignment), a role change keeps the user's token, and the same validation, authorization and privilege-escalation guard as create apply. Grants and safe members stay create + delete by design. Every inventory list serves a clamped `?limit=&after=` window (default 100, max 500, ascending id) — page until a short page returns; the console does it automatically and gains 2=Change. Audit gains `target.update`/`safe.update`/`user.update`/`vendor.update`. See §5 |
 | 2026-07-27 | **Phase 43 — the console's two human decision points.** New screens: **Approve AI-agent tool calls** (menu 20) shows each parked call with the agent, who it acts on behalf of, the rule that gated it and its **arguments**, and approves or rejects it; **In-session step-up decisions** (menu 21) lists paused statements and allows or refuses them. Both were previously curl-only, and both are decisions with a deadline — a step-up expires, a parked call blocks its agent. Listing step-ups needs `read_audit`; deciding either needs `approve`. Portal-only: no new routes, schema or settings. See §7 and §9.4 |

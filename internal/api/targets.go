@@ -179,7 +179,9 @@ func (s *Server) createTargetGrant(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	g := store.TargetGrant{TargetID: id, SubjectType: in.SubjectType, Subject: in.Subject}
+	// The creator is recorded so a certification review can enforce four-eyes:
+	// the principal who granted access may not be the one certifying it (Phase 46).
+	g := store.TargetGrant{TargetID: id, SubjectType: in.SubjectType, Subject: in.Subject, CreatedBy: actorFrom(r.Context())}
 	if err := s.store.CreateTargetGrant(r.Context(), &g); err != nil {
 		storeError(w, err)
 		return
