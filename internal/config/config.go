@@ -157,6 +157,14 @@ type Config struct {
 	// replayed with asciinema directly (replay through the portal instead).
 	// Playback detects the format per file, so existing recordings keep working.
 	EncryptRecordings bool
+	// OpaqueRecordingNames names recording files by timestamp + random hex
+	// instead of target + actor (Phase 48). Sealing (above) protects the
+	// CONTENT; the file NAME still told anyone with volume, backup or snapshot
+	// access who accessed which system, when. With this on, that metadata lives
+	// only in the audited session.record / winrm.run events (which name the
+	// file, the target and the actor), where reading it requires read_audit.
+	// The console joins the two, so its listing still shows target and actor.
+	OpaqueRecordingNames bool
 	// MaxRecordingMB caps a single session recording's output in megabytes
 	// (0 = unlimited); a session that exceeds it is terminated rather than run
 	// unrecorded, so one runaway session can't fill the recording disk.
@@ -417,6 +425,7 @@ func Load() (*Config, error) {
 		MaxSessionsPerUser:      integer("PAM_MAX_SESSIONS_PER_USER", 0),
 		MaxSessionsTotal:        integer("PAM_MAX_SESSIONS_TOTAL", 0),
 		EncryptRecordings:       boolean("PAM_RECORDING_ENCRYPT", false),
+		OpaqueRecordingNames:    boolean("PAM_RECORDING_OPAQUE_NAMES", false),
 		MaxRecordingMB:          integer("PAM_MAX_RECORDING_MB", 0),
 		RecordingRetentionDays:  integer("PAM_RECORDING_RETENTION_DAYS", 0),
 		AuditRetentionDays:      integer("PAM_AUDIT_RETENTION_DAYS", 0),

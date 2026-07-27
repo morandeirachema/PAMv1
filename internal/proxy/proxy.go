@@ -71,6 +71,10 @@ type Config struct {
 	// EncryptRecordings seals session recordings at rest with a per-recording
 	// data key wrapped by the vault KEK (PAM_RECORDING_ENCRYPT).
 	EncryptRecordings bool
+	// OpaqueRecordingNames names recording files by timestamp + random hex; the
+	// target/actor metadata then lives only in the audited session.record event
+	// (PAM_RECORDING_OPAQUE_NAMES, Phase 48).
+	OpaqueRecordingNames bool
 	// CommandGuard, when set, blocks commands matching its deny patterns on the
 	// exec and WinRM paths (Phase 16 command control). nil disables it.
 	CommandGuard *cmdguard.Guard
@@ -109,6 +113,7 @@ type Proxy struct {
 	store        store.Store
 	vault        *vault.Vault
 	recKey       recording.KeyWrapper // non-nil = seal recordings at rest
+	opaqueNames  bool                 // name recordings by timestamp+hex, not target/actor
 	resolver     *auth.Resolver
 	log          *slog.Logger
 	sshCfg       *ssh.ServerConfig
@@ -161,6 +166,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		store:        st,
 		vault:        v,
 		recKey:       recKeyFor(cfg.EncryptRecordings, v),
+		opaqueNames:  cfg.OpaqueRecordingNames,
 		resolver:     resolver,
 		log:          logging.Component("proxy"),
 		hostKey:      cfg.HostKey,
@@ -789,7 +795,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	defer upChan.Close()
 
 	now := time.Now()
-	title := fmt.Sprintf("%d_%s_%s", now.UnixNano(), target.Name, actor)
+	title := recording.Title(p.opaqueNames, now, target.Name, actor)
 	rec, err := newRecording(context.Background(), p.recordingDir, title, now, p.maxRecBytes, p.recKey)
 	if err != nil {
 		p.log.Error("recording setup failed", "actor", actor, "target", target.Name, "err", err)
@@ -987,7 +993,7 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 	defer ch.Close()
 
 	now := time.Now()
-	rec, err := newRecording(context.Background(), p.recordingDir, fmt.Sprintf("%d_%s_%s", now.UnixNano(), target.Name, actor), now, p.maxRecBytes, p.recKey)
+	rec, err := newRecording(context.Background(), p.recordingDir, recording.Title(p.opaqueNames, now, target.Name, actor), now, p.maxRecBytes, p.recKey)
 	if err != nil {
 		p.log.Error("recording setup failed", "actor", actor, "target", target.Name, "err", err)
 		p.audit(ctx, actor, "session.record_failed",

@@ -37,11 +37,57 @@ const recordingMaxList = 500
 var recordingNameRe = regexp.MustCompile(`^[A-Za-z0-9_@-][A-Za-z0-9._@-]*\.(cast|winrm\.log)$`)
 
 // recordingInfo is one stored session recording in the playback listing.
+// Target and Actor are resolved from the audit trail rather than parsed out of
+// the file name (Phase 48): with PAM_RECORDING_OPAQUE_NAMES the name carries no
+// metadata at all, so the audited session.record / winrm.run event is the only
+// place that mapping exists. They are empty when no audit event names the file.
 type recordingInfo struct {
 	Name     string    `json:"name"`
 	Size     int64     `json:"size"`
 	Modified time.Time `json:"modified"`
 	Kind     string    `json:"kind"` // asciicast (timed replay) | transcript (plain text)
+	Target   string    `json:"target,omitempty"`
+	Actor    string    `json:"actor,omitempty"`
+}
+
+// recordingOwners maps recording file names to the target and actor recorded in
+// the audit trail. The recorders write `file:<path-or-name>` into
+// session.record / winrm.run, so this reverses that: it reads the recent audit
+// window once and indexes by base name (the SSH proxy logs a full path, the DB
+// proxy and WinRM log a bare name — indexing by base covers all three).
+//
+// Best-effort by design: a failed audit read returns an empty map so the
+// listing still renders (degraded to names only) instead of erroring.
+func (s *Server) recordingOwners(r *http.Request) map[string][2]string {
+	out := map[string][2]string{}
+	events, err := s.store.ListAudit(r.Context(), 2000)
+	if err != nil {
+		return out
+	}
+	for _, e := range events {
+		if e.Action != "session.record" && e.Action != "winrm.run" {
+			continue
+		}
+		var file, target string
+		for _, f := range strings.Fields(e.Detail) {
+			switch {
+			case strings.HasPrefix(f, "file:"):
+				file = filepath.Base(strings.TrimPrefix(f, "file:"))
+			case strings.HasPrefix(f, "target:"):
+				target = strings.TrimPrefix(f, "target:")
+			}
+		}
+		// Newest-first: the first event naming a file wins, so a later re-use of
+		// a name (which the timestamp prefix makes near-impossible) can't
+		// relabel an older recording.
+		if file == "" {
+			continue
+		}
+		if _, seen := out[file]; !seen {
+			out[file] = [2]string{target, e.Actor}
+		}
+	}
+	return out
 }
 
 // recordingKind classifies a recording filename for the listing/player:
@@ -67,6 +113,7 @@ func (s *Server) listRecordings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "recordings unavailable")
 		return
 	}
+	owners := s.recordingOwners(r)
 	for _, e := range entries {
 		if !e.Type().IsRegular() || !recordingNameRe.MatchString(e.Name()) {
 			continue
@@ -75,8 +122,10 @@ func (s *Server) listRecordings(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
+		who := owners[e.Name()]
 		out = append(out, recordingInfo{
 			Name: e.Name(), Size: fi.Size(), Modified: fi.ModTime().UTC(), Kind: recordingKind(e.Name()),
+			Target: who[0], Actor: who[1],
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Modified.After(out[j].Modified) })

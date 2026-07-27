@@ -123,6 +123,10 @@ type Options struct {
 	// Playback detects the format per file, so recordings written before it was
 	// turned on keep replaying.
 	EncryptRecordings bool
+	// OpaqueRecordingNames names WinRM transcripts by timestamp + random hex; the
+	// target/actor metadata then lives only in the audited winrm.run event
+	// (PAM_RECORDING_OPAQUE_NAMES, Phase 48).
+	OpaqueRecordingNames bool
 	// TrustedProxyHops is how many trusted reverse-proxy hops sit in front of the
 	// server; it selects the real client IP from X-Forwarded-For for rate limiting
 	// (0 = use RemoteAddr directly).
@@ -263,6 +267,7 @@ type Server struct {
 	keyFailLimiter     *ratelimit.Limiter
 	cmdGuard           *cmdguard.Guard
 	recKey             recording.KeyWrapper
+	opaqueRecNames     bool
 	trustedProxyHops   int
 	sessions           *session.Registry
 	live               *session.Hub
@@ -462,6 +467,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		keyFailLimiter:     ratelimit.New(opts.AuthRatePerMin),
 		cmdGuard:           opts.CommandGuard,
 		recKey:             apiRecKey(opts.EncryptRecordings, v),
+		opaqueRecNames:     opts.OpaqueRecordingNames,
 		trustedProxyHops:   opts.TrustedProxyHops,
 		sessions:           opts.Sessions,
 		live:               opts.Live,
