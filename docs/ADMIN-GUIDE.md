@@ -1195,6 +1195,42 @@ export PAM_DATABASE_URL=postgres://…
 Within a single Vault-Transit / KMS key, day-to-day rotation is handled by the
 KMS itself; use `-rotate-kek` to change the *version envelope* or migrate providers.
 
+#### What a rotation covers — and the one thing it cannot
+
+`-rotate-kek` re-wraps **all four** kinds of vaulted secret, and the list is
+exhaustive on purpose: anything missed is a secret the server can no longer
+decrypt after you switch keys.
+
+| Secret | Bound by | Symptom if it were missed |
+|---|---|---|
+| Credentials | `CredentialAAD` | Sessions fail at JIT decryption |
+| TOTP enrollments | `MFAAAD` | Enrolled users cannot complete MFA |
+| Secret config values (LDAP bind password, SSO client secrets) | `ConfigAAD` | Directory login breaks |
+| **Key custody** — SSH proxy host key, Zero Standing Privilege CA key | `KeyMaterialAAD` | **The server refuses to start** |
+
+That last row was a real defect, fixed in Phase 52a: the rotation reported
+success and the *next start-up* failed, because `keycustody.Ensure` read back an
+envelope still sealed under the old key. If you hit this on a version before the
+fix, do **not** delete the `key_material` rows to get past it — that regenerates
+the SSH host key and the CA, which is indistinguishable from a
+machine-in-the-middle to every operator and every issued certificate. Roll back
+to the old key instead, and upgrade.
+
+The rotation is **resumable**: a secret that already decrypts under the new key
+is skipped, so an interrupted run can simply be run again rather than leaving a
+half-rotated store.
+
+> ⚠️ **Keep the old KEK for as long as you keep sealed recordings.** A sealed
+> session recording (`PAM_RECORDING_KEY_*`) carries its own data key wrapped
+> **inside the file** by whichever KEK was current when it was written, so a KEK
+> rotation does not re-wrap it — and `-rotate-kek` deliberately does not try.
+> Rewriting a recording would change its bytes, and the SHA-256 of those exact
+> bytes is what the audit trail and the recording hash chain hold; re-wrapping
+> would make every archived recording read as *never audited*, destroying the
+> tamper evidence the sealing exists to provide, in order to save a key. The
+> command counts sealed recordings and warns you by name of the KEK they still
+> need. Discard that key and those recordings become permanently unreadable.
+
 ### On-prem HSM (PKCS#11 KEK)
 
 For a hardware security module, the AES wrapping key lives *inside* the HSM and

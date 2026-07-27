@@ -148,6 +148,7 @@ flowchart LR
   n_pam_server --> n_pgstore
   n_pam_server --> n_policy
   n_pam_server --> n_proxy
+  n_pam_server --> n_recording
   n_pam_server --> n_session
   n_pam_server --> n_shamir
   n_pam_server --> n_sshca
@@ -289,6 +290,9 @@ erDiagram
     string Kind
     string Host
     int Port
+    string Name
+  }
+  KeyMaterial {
     string Name
   }
   MFAEnrollment {
