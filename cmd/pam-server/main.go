@@ -788,9 +788,10 @@ func run() error {
 	// SIEM audit forwarding (Phase 35): stream every audit event to a collector.
 	if cfg.AuditForwardAddr != "" {
 		fwd, ferr := auditfwd.New(st, auditfwd.Config{
-			Network: cfg.AuditForwardProto,
-			Addr:    cfg.AuditForwardAddr,
-			Format:  auditfwd.Format(cfg.AuditForwardFormat),
+			Network:   cfg.AuditForwardProto,
+			Addr:      cfg.AuditForwardAddr,
+			Format:    auditfwd.Format(cfg.AuditForwardFormat),
+			TLSCAFile: cfg.AuditForwardCA,
 		})
 		if ferr != nil {
 			return fmt.Errorf("audit forwarder: %w", ferr)

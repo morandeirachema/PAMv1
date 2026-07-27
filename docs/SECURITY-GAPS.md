@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-07-27 · Reflects: Phases 0–46 + the 2026-07 hardening passes.
+> Last updated: 2026-07-27 · Reflects: Phases 0–47 + the 2026-07 hardening passes.
 
 ## How the review was run
 
@@ -166,7 +166,8 @@ is a phase each, out of scope for a security *fix*:
 - ~~**Native audit→SIEM forwarding**~~ **✅ shipped (Phase 35)** — `internal/auditfwd`
   continuously streams every audit event to a syslog/CEF collector (UDP/TCP) from a
   durable cursor with spool-and-retry, leader-locked in HA (`PAM_AUDIT_FORWARD_ADDR`).
-  LEEF and TLS-syslog transport remain follow-ons on the same seam.
+  LEEF (QRadar) and the RFC 5425 TLS transport — with always-on, optionally
+  CA-pinned certificate verification — shipped in Phase 47 on the same seam.
 - **HA correctness** — the periodic-job scheduler runs under a Postgres
   advisory **leader lock** (one replica per tick), and the **kill-switch is now
   cluster-wide** (Phase 34: a kill is broadcast over Postgres LISTEN/NOTIFY and

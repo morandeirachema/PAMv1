@@ -2,8 +2,12 @@
 // grows. Where internal/alert fires a message on a specific event (break-glass,
 // a risk spike) and the OCSF endpoint is pull-based, this is a continuous push:
 // every audit row is forwarded, in order, as an RFC 5424 syslog message
-// (https://datatracker.ietf.org/doc/html/rfc5424) or an ArcSight CEF record
-// (https://www.microfocus.com/documentation/arcsight/arcsight-smartconnectors-8.4/cef-implementation-standard/).
+// (https://datatracker.ietf.org/doc/html/rfc5424), an ArcSight CEF record
+// (https://www.microfocus.com/documentation/arcsight/arcsight-smartconnectors-8.4/cef-implementation-standard/)
+// or an IBM QRadar LEEF 2.0 record
+// (https://www.ibm.com/docs/en/dsm?topic=leef-overview), over UDP, TCP, or
+// TLS with fail-closed certificate verification (RFC 5425 for the syslog
+// format, https://datatracker.ietf.org/doc/html/rfc5425).
 //
 // It tails the trail from a durable cursor (the id of the last event forwarded,
 // persisted in the settings store), so a restart resumes exactly where it left
@@ -15,6 +19,8 @@ package auditfwd
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"net"
@@ -41,6 +47,7 @@ type Format string
 const (
 	FormatRFC5424 Format = "rfc5424"
 	FormatCEF     Format = "cef"
+	FormatLEEF    Format = "leef"
 )
 
 // ParseFormat validates a format string, defaulting empty to RFC 5424.
@@ -50,8 +57,10 @@ func ParseFormat(s string) (Format, error) {
 		return FormatRFC5424, nil
 	case FormatCEF:
 		return FormatCEF, nil
+	case FormatLEEF:
+		return FormatLEEF, nil
 	default:
-		return "", fmt.Errorf("invalid audit-forward format %q (want rfc5424 or cef)", s)
+		return "", fmt.Errorf("invalid audit-forward format %q (want rfc5424, cef or leef)", s)
 	}
 }
 
@@ -66,12 +75,17 @@ type source interface {
 
 // Config configures a Forwarder.
 type Config struct {
-	Network string // "udp" or "tcp"
+	Network string // "udp", "tcp" or "tls" (RFC 5425 syslog over TLS)
 	Addr    string // host:port of the SIEM collector
 	Format  Format
 	Tag     string // syslog APP-NAME / CEF device product (default "pamv1")
 	Host    string // syslog HOSTNAME (default the OS hostname)
 	Batch   int    // max events per flush (default 500)
+	// TLSCAFile, for the "tls" transport, is a PEM bundle the collector's
+	// certificate must chain to (pinning); empty uses the system roots.
+	// Verification is always on — the audit trail must not be streamed to an
+	// unauthenticated endpoint, so there is deliberately no insecure switch.
+	TLSCAFile string
 }
 
 // Forwarder pushes new audit events to a SIEM collector.
@@ -88,13 +102,14 @@ type Forwarder struct {
 }
 
 // New builds a Forwarder, validating the transport and format. dial defaults to a
-// timeout-bounded net dialer; tests inject their own.
+// timeout-bounded net dialer (a verifying tls.Dial for the "tls" transport);
+// tests inject their own.
 func New(src source, cfg Config) (*Forwarder, error) {
 	if cfg.Addr == "" {
 		return nil, fmt.Errorf("auditfwd: Addr is required")
 	}
-	if cfg.Network != "udp" && cfg.Network != "tcp" {
-		return nil, fmt.Errorf("auditfwd: Network must be udp or tcp (got %q)", cfg.Network)
+	if cfg.Network != "udp" && cfg.Network != "tcp" && cfg.Network != "tls" {
+		return nil, fmt.Errorf("auditfwd: Network must be udp, tcp or tls (got %q)", cfg.Network)
 	}
 	format, err := ParseFormat(string(cfg.Format))
 	if err != nil {
@@ -118,8 +133,27 @@ func New(src source, cfg Config) (*Forwarder, error) {
 	if f.batch <= 0 {
 		f.batch = 500
 	}
-	f.dial = func(network, addr string) (net.Conn, error) {
-		return net.DialTimeout(network, addr, 5*time.Second)
+	switch cfg.Network {
+	case "tls":
+		tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+		if cfg.TLSCAFile != "" {
+			pem, err := os.ReadFile(cfg.TLSCAFile)
+			if err != nil {
+				return nil, fmt.Errorf("auditfwd: read TLS CA bundle: %w", err)
+			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(pem) {
+				return nil, fmt.Errorf("auditfwd: no certificates in TLS CA bundle %s", cfg.TLSCAFile)
+			}
+			tlsCfg.RootCAs = pool
+		}
+		f.dial = func(_, addr string) (net.Conn, error) {
+			return tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", addr, tlsCfg)
+		}
+	default:
+		f.dial = func(network, addr string) (net.Conn, error) {
+			return net.DialTimeout(network, addr, 5*time.Second)
+		}
 	}
 	return f, nil
 }
@@ -169,7 +203,7 @@ func (f *Forwarder) Flush(ctx context.Context) error {
 		sent := cursor
 		for _, e := range events {
 			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if _, werr := conn.Write([]byte(f.format.render(e, f.tag, f.host) + "\n")); werr != nil {
+			if _, werr := conn.Write(f.frame(f.format.render(e, f.tag, f.host))); werr != nil {
 				conn.Close()
 				if sent != cursor {
 					_ = f.saveCursor(ctx, sent) // persist partial progress
@@ -212,10 +246,26 @@ func (f *Forwarder) saveCursor(ctx context.Context, id int64) error {
 	return f.src.PutSetting(ctx, &store.Setting{Key: cursorKey, Value: strconv.FormatInt(id, 10)})
 }
 
+// frame wraps one rendered record for the transport. UDP and TCP use
+// newline-delimited records (RFC 6587 non-transparent framing, which every
+// CEF/LEEF collector also expects). Syslog over TLS uses the octet-counted
+// framing RFC 5425 §4.3 REQUIRES ("MSG-LEN SP MSG") — but only for the syslog
+// format: CEF and LEEF records are not syslog messages, so they stay
+// newline-delimited on every transport.
+func (f *Forwarder) frame(msg string) []byte {
+	if f.network == "tls" && f.format == FormatRFC5424 {
+		return []byte(strconv.Itoa(len(msg)) + " " + msg)
+	}
+	return []byte(msg + "\n")
+}
+
 // render formats an audit event in the forwarder's wire format.
 func (fm Format) render(e store.AuditEvent, tag, host string) string {
-	if fm == FormatCEF {
+	switch fm {
+	case FormatCEF:
 		return renderCEF(e, tag)
+	case FormatLEEF:
+		return renderLEEF(e, tag)
 	}
 	return renderRFC5424(e, tag, host)
 }
@@ -237,6 +287,27 @@ func renderCEF(e store.AuditEvent, tag string) string {
 	return fmt.Sprintf("CEF:0|pamv1|%s|1|%s|%s|3|rt=%d suser=%s msg=%s",
 		cefHeader(tag), sig, sig, e.TS.UnixMilli(),
 		cefExt(e.Actor), cefExt(e.Detail))
+}
+
+// renderLEEF formats an event as an IBM QRadar LEEF 2.0 record: a pipe-headed
+// prologue then tab-separated key=value attributes. devTime is milliseconds
+// since epoch, matching CEF's rt. Header fields escape '|'; attribute values
+// strip tabs (the delimiter) and CR/LF, so an actor name carrying either cannot
+// forge an attribute or a record.
+func renderLEEF(e store.AuditEvent, tag string) string {
+	return fmt.Sprintf("LEEF:2.0|pamv1|%s|1|%s|devTime=%d\tusrName=%s\tmsg=%s",
+		leefHeader(tag), leefHeader(e.Action), e.TS.UnixMilli(),
+		leefAttr(e.Actor), leefAttr(e.Detail))
+}
+
+// leefHeader escapes the LEEF header-field metacharacters (\ and |).
+func leefHeader(s string) string {
+	return strings.NewReplacer("\r", " ", "\n", " ", "\t", " ", `\`, `\\`, "|", `\|`).Replace(s)
+}
+
+// leefAttr strips the attribute delimiter and record terminators from a value.
+func leefAttr(s string) string {
+	return strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(s)
 }
 
 // oneLine strips CR/LF so an attacker-controlled field cannot inject a new record.
