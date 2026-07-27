@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -64,7 +65,8 @@ func (s *Server) snapshotAccess(ctx context.Context, cid int64) (int, error) {
 			if err := s.store.AddCampaignItem(ctx, &store.CampaignItem{
 				CampaignID: cid, Kind: "target_grant", RefID: g.ID,
 				SubjectType: g.SubjectType, Subject: g.Subject,
-				Detail: fmt.Sprintf("grant on target %q", t.Name),
+				Detail:    itemDetail(fmt.Sprintf("grant on target %q", t.Name), g.CreatedBy),
+				GrantedBy: g.CreatedBy,
 			}); err != nil {
 				return 0, err
 			}
@@ -84,7 +86,8 @@ func (s *Server) snapshotAccess(ctx context.Context, cid int64) (int, error) {
 			if err := s.store.AddCampaignItem(ctx, &store.CampaignItem{
 				CampaignID: cid, Kind: "safe_member", RefID: mem.ID,
 				SubjectType: mem.SubjectType, Subject: mem.Subject,
-				Detail: fmt.Sprintf("member of safe %q", sf.Name),
+				Detail:    itemDetail(fmt.Sprintf("member of safe %q", sf.Name), mem.CreatedBy),
+				GrantedBy: mem.CreatedBy,
 			}); err != nil {
 				return 0, err
 			}
@@ -92,6 +95,15 @@ func (s *Server) snapshotAccess(ctx context.Context, cid int64) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+// itemDetail appends the grant's creator to an item's human-readable detail
+// when it was recorded, so the reviewer sees who they are attesting for.
+func itemDetail(base, grantedBy string) string {
+	if grantedBy == "" {
+		return base
+	}
+	return fmt.Sprintf("%s, granted by %s", base, grantedBy)
 }
 
 // listCampaigns returns all campaigns (CapReadAudit).
@@ -164,6 +176,16 @@ func (s *Server) decideCampaignItem(w http.ResponseWriter, r *http.Request) {
 	}
 	if item.CampaignID != id {
 		writeError(w, http.StatusNotFound, "item not in this campaign")
+		return
+	}
+	// Per-item four-eyes (Phase 46): the principal who granted the access may
+	// not CERTIFY it — attesting to your own grant is what an access review
+	// exists to prevent. Revoking your own grant is allowed (it reduces
+	// access), and an item whose creator was never recorded (pre-migration)
+	// cannot be enforced retroactively.
+	if in.Decision == "certify" && item.GrantedBy != "" && strings.EqualFold(item.GrantedBy, actorFrom(ctx)) {
+		s.audit(ctx, "certification.decision_denied", fmt.Sprintf("campaign:%d item:%d reason:four-eyes granted_by:%s", id, iid, item.GrantedBy))
+		writeError(w, http.StatusForbidden, "four-eyes: you cannot certify access you granted yourself")
 		return
 	}
 
