@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -17,6 +18,26 @@ var validDependencyKind = map[string]bool{
 	"scheduled_task":  true,
 	"iis_apppool":     true,
 }
+
+// A dependency's name and host are interpolated into a WinRM command line, so
+// they are restricted to an ALLOWLIST rather than screened by a blocklist: a
+// service, scheduled-task or app-pool name legitimately needs letters, digits,
+// spaces and a few separators, and nothing else. Everything a shell could act on
+// — quotes, &, |, ^, <, >, %, backticks, semicolons, newlines — is simply not a
+// legal name here.
+//
+// This is enforced at creation AND again where the command is built, so a row
+// written before this rule existed (or straight into the database) still cannot
+// reach a command line.
+//
+// MustCompile panics if the pattern is malformed, which is what you want for a
+// constant: the failure happens once at program start, not on the first request
+// that needs it.
+var (
+	validDependencyName = regexp.MustCompile(`^[A-Za-z0-9 ._\-()\\/]{1,128}$`)
+	// Hostname or IPv4/IPv6 literal; no metacharacters, no spaces.
+	validDependencyHost = regexp.MustCompile(`^[A-Za-z0-9._\-:\[\]]{1,253}$`)
+)
 
 type dependencyIn struct {
 	Kind string `json:"kind"`
@@ -41,6 +62,13 @@ func (s *Server) createDependency(w http.ResponseWriter, r *http.Request) {
 		return
 	case in.Host == "" || in.Name == "":
 		writeError(w, http.StatusUnprocessableEntity, "host and name are required")
+		return
+	case !validDependencyName.MatchString(in.Name):
+		writeError(w, http.StatusUnprocessableEntity,
+			"name may contain only letters, digits, spaces and . _ - ( ) \\ / — it is used in a command line")
+		return
+	case !validDependencyHost.MatchString(in.Host):
+		writeError(w, http.StatusUnprocessableEntity, "host must be a hostname or IP address")
 		return
 	case in.Port < 0 || in.Port > 65535:
 		writeError(w, http.StatusUnprocessableEntity, "port must be 0-65535")
