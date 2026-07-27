@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"regexp"
 	"strings"
 	"time"
 
@@ -357,10 +358,20 @@ func (c WinRMConnector) Verify(ctx context.Context, target store.Target, usernam
 	return nil
 }
 
+// winrmSafeUsername is an ALLOWLIST for the account name, because `net user`
+// takes it on a cmd.exe command line UNQUOTED. A blocklist was tried and was
+// wrong: it caught space, quote, CR and LF but not `&`, `|`, `^`, `<`, `>`,
+// `(`, `)` or `%`, and in cmd.exe `&` needs no surrounding space to chain a
+// second command. A Windows account name legitimately needs letters, digits,
+// and a handful of separators (DOMAIN\user, user@realm, service$) — nothing
+// a shell can act on. Contrast SSHConnector.Rotate, which needs almost no
+// screening because it feeds `user:pass` on stdin rather than a command line.
+var winrmSafeUsername = regexp.MustCompile(`^[A-Za-z0-9._@\\$-]{1,104}$`)
+
 // Rotate sets the account's password with `net user` (the account must be able
 // to change its own password, or the connector account must be privileged).
 func (c WinRMConnector) Rotate(ctx context.Context, target store.Target, username, oldSecret, newSecret string) error {
-	if strings.ContainsAny(username, " \"\n\r") {
+	if !winrmSafeUsername.MatchString(username) {
 		return fmt.Errorf("rotate: unsafe username")
 	}
 	// /y auto-confirms net.exe's ">14 characters ... continue? (Y/N)" prompt,

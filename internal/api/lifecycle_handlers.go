@@ -139,11 +139,28 @@ func (s *Server) propagateDependencies(ctx context.Context, cred *store.Credenti
 		return
 	}
 	for _, d := range deps {
+		// Reject an unusable host before anything else — it is interpolated
+		// nowhere, but an unvalidated one means the row was not written through
+		// the API and should not be acted on.
+		if !validDependencyHost.MatchString(d.Host) {
+			s.audit(ctx, "credential.dependency_failed",
+				fmt.Sprintf("credential:%d %s:%q reason:invalid-host", cred.ID, d.Kind, d.Host))
+			continue
+		}
 		cmd, ok := dependencyCommand(d, newSecret)
 		if !ok {
+			// Either an unknown kind or a name that cannot safely reach a command
+			// line. Both are refusals, and the name is quoted so the audit entry
+			// itself cannot be forged by the value that caused the refusal.
 			s.audit(ctx, "credential.dependency_failed",
-				fmt.Sprintf("credential:%d %s:%s@%s reason:unknown-kind", cred.ID, d.Kind, d.Name, d.Host))
+				fmt.Sprintf("credential:%d %s:%q@%s reason:unusable-kind-or-name", cred.ID, d.Kind, d.Name, d.Host))
 			continue
+		}
+		// Command control applies here too (Phase 38's principle: every path where
+		// a discrete command is visible obeys one policy). Rotation runs
+		// unattended, so the actor is the system.
+		if err := s.guardCommand(ctx, actorFrom(ctx), d.Host, "dependency", cmd); err != nil {
+			continue // guardCommand already audited command.blocked
 		}
 		port := d.Port
 		if port == 0 {
@@ -162,7 +179,18 @@ func (s *Server) propagateDependencies(ctx context.Context, cred *store.Credenti
 // dependencyCommand builds the WinRM command that updates a consumer's stored
 // password. The new secret is injected into the command (never audited or
 // recorded), consistent with how rotation sets the account password itself.
+//
+// The name is re-validated here, not only at creation: this function is the last
+// point before the value reaches a command line, and a row could predate the
+// validation rule or have been written straight into the database. An
+// unacceptable name makes this return ok=false (Go functions return several
+// values at once; here it is "the command" plus "was it usable"), which the
+// caller audits and skips — the consumer simply does not get updated, which is
+// the safe failure.
 func dependencyCommand(d store.CredentialDependency, newSecret string) (string, bool) {
+	if !validDependencyName.MatchString(d.Name) {
+		return "", false
+	}
 	switch d.Kind {
 	case "windows_service":
 		return fmt.Sprintf(`sc.exe config "%s" password= "%s"`, d.Name, newSecret), true

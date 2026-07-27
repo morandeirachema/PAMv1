@@ -1035,6 +1035,44 @@ actually matters.
   both rename directions, an allowed path still working in the same session,
   and nothing bearing a denied path ever reaching the target
 
+## Phase 52 — Close the command-injection findings ✅
+
+The first and most serious pair from the post-beta sweep (findings **W** and
+**X**), fixed together because they are the same mistake in two places: a value
+an operator supplies being interpolated into a Windows command line that a shell
+then parses.
+
+- [x] **Credential dependencies can no longer carry a command.** The dependency
+  `Name` and `Host` are checked against an **allowlist** — letters, digits,
+  spaces and a few separators for the name, a hostname/IP shape for the host.
+  An allowlist rather than a blocklist because the legitimate inputs are
+  narrow and knowable, while the set of characters a shell acts on is not:
+  the previous code had no check at all, and its sibling in `rotate` had a
+  blocklist that missed `&`
+- [x] **Checked twice, on purpose.** Validation runs at creation *and* again in
+  `dependencyCommand`, the last point before the value reaches a command line —
+  so a row written before this rule existed, or inserted straight into the
+  database, still cannot execute. An unusable name is audited and skipped, which
+  means the consumer silently does not get its password updated: the safe
+  failure, and a visible one
+- [x] **The path obeys command control now.** `propagateDependencies` calls
+  `guardCommand` before executing, so Phase 38's "one policy on every path where
+  a discrete command is visible" finally includes this one. It was the last
+  WinRM execution path that bypassed it
+- [x] **The `net user` username is allowlisted too** (`DOMAIN\user`,
+  `user@realm`, `gMSA$` all still work), replacing a blocklist that caught
+  space, quote, CR and LF but not `&`, `|`, `^`, `<`, `>`, `(`, `)` or `%` — and
+  in `cmd.exe`, `&` needs no surrounding space to chain a second command
+- [x] **Proven by tests that assert nothing executes**: eight break-out shapes
+  and four hostile hosts refused at the API, thirteen hostile usernames refused
+  in the rotator *without reaching the runner*, and eleven legitimate
+  real-world names still accepted — because a security fix that breaks
+  `My App Pool` or `Contoso.Web` would just be reverted
+- Honest remaining limit, recorded rather than quietly closed: the dependency
+  host is validated in *shape* but is still not required to be a target in the
+  inventory, since a consumer may legitimately run on a host that is not itself
+  a PAM target
+
 ### Open findings from the post-beta sweep (2026-07-27) ⬜
 
 A second full read-only sweep, run right after the beta milestone across six
@@ -1046,12 +1084,8 @@ that same change (a CI filter that left two live-PostgreSQL security tests
 running nowhere, and a deployment env reference five phases stale). The rest is
 real work, in rough priority order:
 
-1. **Remote code execution through credential dependencies** — the dependency
-   name is interpolated into a `cmd.exe` command line with no metacharacter
-   check, the host is never constrained to the target inventory, and the path
-   calls WinRM directly so it escapes command control, session supervision and
-   recording. The related `net user` rotation blocklist misses `&` and friends.
-   Fix these first.
+1. ~~**Remote code execution through credential dependencies**~~ — **fixed in
+   Phase 52** (above), together with the `net user` blocklist that missed `&`.
 2. **`-rotate-kek` is broken by its own successors** — it does not re-wrap the
    Phase-42 key-custody envelopes, so the documented rotation leaves the server
    unable to start on a default config, and it strands every sealed recording,

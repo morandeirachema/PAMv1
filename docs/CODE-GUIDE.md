@@ -8,7 +8,12 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-07-24 · Reflects: Phases 0–25 + the 2026-07 hardening pass.
+> Last updated: 2026-07-27 · Reflects: Phases 0–52 + the 2026-07 hardening passes.
+>
+> New here and more comfortable in Python than Go? Read
+> [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
+> first — it is the translation table for the Go habits that appear on nearly
+> every page of this codebase.
 
 ---
 
@@ -22,6 +27,88 @@ functions so you can jump straight to the source.
 Prerequisites: Go 1.26 on `PATH` (this environment installs it under
 `~/.local/go/bin`). Build with `go build ./...`, test with `go test ./...` (CI
 runs `go test -race ./...`), format with `gofmt -l .` (must print nothing).
+
+## 0.1 Reading Go when you write Python
+
+You do not need to *write* Go to follow this codebase, but a handful of Go
+habits look strange from Python and appear on nearly every page. This section is
+the translation table. If something in a source file confuses you, it is
+probably here.
+
+**Errors are returned, not raised.** There is no `try`/`except`. A function that
+can fail returns its result *and* an error, and the caller checks it
+immediately:
+
+```go
+target, err := s.store.GetTarget(ctx, id)   // two return values at once
+if err != nil {                             // nil == Python's None
+    return err                               // pass the failure upward
+}
+```
+
+That `if err != nil` appears constantly. It is the equivalent of an `except`
+block written inline, and it is why Go code has no invisible control flow — a
+function either returns normally or you can see exactly where it bailed out.
+In a security codebase this is a feature: every failure path is visible on the
+page, which is what makes "fail closed" auditable.
+
+**`nil` is Python's `None`,** with one trap worth knowing: a method can be
+called on a `nil` value if it is written to expect it. You will see this
+deliberately, e.g. `cmdguard.Guard.Blocked` returns "not blocked" when the guard
+itself is `nil`, so callers need no `if guard != nil` around every use.
+
+**`ctx context.Context` is the first argument almost everywhere.** Think of it as
+a cancellation signal plus request-scoped values, threaded manually instead of
+living in a thread-local. When an HTTP request is aborted or a session is
+killed, the context is *cancelled*, and every function holding it can notice and
+stop. Passing the wrong context (or `context.Background()`, which is never
+cancelled) is a real bug class — see finding O in
+[SECURITY-GAPS.md](SECURITY-GAPS.md).
+
+**`defer` runs a line when the function exits,** like a `finally:` block or a
+context manager's `__exit__`. `defer f.Close()` right after opening a file means
+"close this whichever way we leave".
+
+**Methods hang off a type via a receiver.** `func (s *Server) listTargets(...)`
+is roughly Python's `def list_targets(self, ...)` on class `Server`, where `s`
+is `self`. The `*` means the method gets a pointer — a reference to the same
+object rather than a copy.
+
+**Capitalisation is visibility.** An identifier starting with a capital letter is
+exported (public, importable by other packages); lowercase is private to its
+package. `Server` is public, `listTargets` is not. There is no `_private`
+convention because the compiler enforces it.
+
+**Interfaces are implicit.** A type satisfies an interface simply by having the
+right methods — no `implements` declaration. This is why `store.Store` can have
+two completely independent implementations (`memstore` for tests, `pgstore` for
+production) that never mention each other. It is also why the *contract test*
+(`internal/store/storetest`) matters so much: it is the only thing holding the
+two to identical behaviour, and when it misses a case they can silently diverge
+(finding AF).
+
+**Goroutines and channels are the concurrency model.** `go doSomething()` starts
+a lightweight thread; a `chan` is a typed queue used to pass values between
+them. `select` waits on several channels at once. Closest Python analogue is
+`asyncio` tasks and queues, except goroutines are pre-emptive and can run truly
+in parallel — hence `sync.Mutex` for shared state and the `-race` flag in CI,
+which detects unsynchronised access at runtime.
+
+**Slices and maps.** `[]Target` is a list; `map[string]bool` is a dict. Both are
+passed by reference-like semantics, so a function can mutate the caller's data —
+which is why several places in this codebase deliberately copy before returning
+(`memstore` clones time pointers so callers cannot mutate stored rows).
+
+**Tests live beside the code** in `*_test.go` files and run with `go test`.
+`t.Fatalf` is an assertion that stops the test. A file ending `_internal_test.go`
+here is a test *inside* the package (it can see private identifiers); the others
+sit in an external `package api_test` and exercise only the public surface.
+
+**Struct tags control JSON.** The backticked text after a field —
+`` Name string `json:"name"` `` — is metadata. The one that matters most in this
+codebase is `` `json:"-"` ``, which means *never serialise this field*. It is
+what stops `Credential.SecretEnc` from ever reaching an API response, and it is
+load-bearing security, not decoration.
 
 ---
 

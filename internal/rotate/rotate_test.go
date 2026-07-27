@@ -346,3 +346,45 @@ func mustSigner(t *testing.T) ssh.Signer {
 	}
 	return signer
 }
+
+// TestWinRMConnectorRejectsInjectableUsername proves the account name cannot
+// carry a second command into `net user`. The name reaches an UNQUOTED cmd.exe
+// command line, where `&` chains without needing surrounding space — so the
+// earlier blocklist (space, quote, CR, LF) was insufficient and an allowlist
+// replaced it. Nothing must reach the runner when the name is rejected.
+func TestWinRMConnectorRejectsInjectableUsername(t *testing.T) {
+	target := store.Target{Host: "win01", Port: 5985, Protocol: "winrm"}
+	for _, bad := range []string{
+		`svc&calc`,               // chains a second command
+		`svc|whoami`,             // pipes into another
+		`svc^&calc`,              // caret-escaped chain
+		`svc>out.txt`,            // redirects
+		`svc<in.txt`,             // reads
+		`svc(1)`,                 // grouping
+		`%USERNAME%`,             // environment expansion
+		`svc calc`,               // argument split (caught before, kept covered)
+		`svc"x`,                  // quote break (caught before, kept covered)
+		"svc\ncalc",              // newline
+		"svc\rcalc",              // carriage return
+		"",                       // empty
+		strings.Repeat("a", 105), // beyond the length bound
+	} {
+		fr := &fakeRunner{}
+		conn := WinRMConnector{Runner: fr}
+		if err := conn.Rotate(context.Background(), target, bad, "old", "N3w-Pass_1"); err == nil {
+			t.Fatalf("username %q was accepted; it must be refused", bad)
+		}
+		if fr.lastCmd != "" {
+			t.Fatalf("username %q reached the runner as %q — nothing may execute", bad, fr.lastCmd)
+		}
+	}
+
+	// Legitimate Windows account shapes still rotate.
+	for _, ok := range []string{"Administrator", "svc_backup", "svc-1", "CORP\\svcaccount", "svc@corp.example", "gMSA$"} {
+		fr := &fakeRunner{}
+		conn := WinRMConnector{Runner: fr}
+		if err := conn.Rotate(context.Background(), target, ok, "old", "N3w-Pass_1"); err != nil {
+			t.Fatalf("legitimate username %q was refused: %v", ok, err)
+		}
+	}
+}
