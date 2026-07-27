@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–42 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
+**Phases 0–43 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
 with command control, safes, dependent-account propagation), optional CyberArk Conjur
@@ -49,7 +49,9 @@ they are listable, countable and killable — and **session recordings are encry
 at rest** (41): the other high-value artifact finally gets the same envelope
 encryption and KEK as the credentials themselves — and **shared custody of the host
 and CA keys** (42), so a scaled deployment stops handing out a different SSH host key
-and a different certificate authority per pod. The portal is
+and a different certificate authority per pod — and the console's **two human
+decision points** (43): approving an agent's parked tool call, and releasing or
+refusing a paused statement, both of which had been curl-only. The portal is
 also **keyboard-first** (mouse optional). See their sections below. Beyond those,
 a number of items genuinely require external infrastructure or a paid account to build
 and verify honestly, so they are left as documented follow-ons rather than faked. The
@@ -728,36 +730,47 @@ its own keys, so:
   storage is an operator decision (RWX volume or object storage) rather than a code
   fix, and cross-replica live monitoring stays the Phase 34 follow-on
 
+## Phase 43 — Console: the two human decision points ✅
+
+The first half of finding **G**. Phase 25 brought the 5250 console to full backend
+parity and Phases 27–42 drifted away from it again — nine capabilities ended up
+with no screen. Two of them are not like the others: **a parked agent tool call**
+and **a paused SQL statement** are *human decisions with a deadline*. A step-up is
+refused when `PAM_DB_STEPUP_TTL_SEC` runs out; a parked call blocks an agent until
+someone answers. Leaving those two on curl-only was the part that actually cost
+something, so they ship first rather than waiting for a nine-screen phase.
+
+- [x] **Approve AI-agent tool calls** (menu 20, `approve`): the parked call, the
+  agent, who it acts **on behalf of**, the rule that gated it — and its
+  **arguments**, because the arguments are what the policy matched on and an
+  approver who cannot see them is not really deciding. Option 5 approves (the
+  broker then executes server-side with a just-in-time credential the agent never
+  sees), option 6 rejects. The screen states the two rules that will refuse a
+  decision: four-eyes (you cannot approve a call by an agent you own) and the
+  rule's approver groups. With the broker disabled the routes are absent, so a 404
+  shows a hint instead of an error — the pattern the application-secrets screen
+  already uses
+- [x] **In-session step-up decisions** (menu 21, `read_audit` to watch, `approve`
+  to decide — the Phase 39 split): the paused statement, its session and actor.
+  Option 5 allows it, option 6 refuses it, and the screen says plainly that these
+  entries **expire** and that the session survives either way, because that is the
+  one thing a supervisor needs to know and cannot infer from a list
+- [x] **Verified against a running server**, the way Phase 25 was: a real agent key
+  minted, a real `list_targets` call parked by a `require_approval` rule, the exact
+  `GET /v1/approvals` the screen issues returning every field it renders, the exact
+  decision `POST` returning 200, and the list emptying afterwards — plus the
+  step-up list and the broker-disabled 404. `node --check` on the embedded script
+- Portal-only: no new routes, no schema, no new environment variable
+
 ## Next — planned ⬜
 
 Phases 37–41 came out of a read-only sweep of the codebase whose findings are
 catalogued in **[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md#open-findings-from-the-2026-07-26-sweep)**.
-Six of those findings shipped. The two below are the ones still open, promoted
+Six have shipped and a seventh (the console) is half done. What is below is what
+is left, promoted
 here so the roadmap — not a gaps table — is where the remaining work lives. Each
 is buildable and verifiable in process; none is infra-bound (that list stays in
 [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)).
-
-### Phase 43 — Console parity, second pass ⬜
-
-*Finding G.* Phase 25 brought the 5250 console back to full backend parity, and
-Phases 27–41 then drifted away from it again. Comparing the mux's routes against
-the endpoints the portal calls, these have no screen:
-
-| Capability | Route(s) | Why it matters |
-|---|---|---|
-| **Broker approvals** | `GET /v1/approvals`, `POST /v1/approvals/{id}/decision` | A human approval gate with no UI at all |
-| **In-session step-ups** | `GET /api/sessions/stepups`, `POST /api/sessions/{id}/stepup` | Time-boxed: a paused statement expires while you find a terminal |
-| Vendors | `/api/vendors*`, `/api/vendor-grants/*` | Acknowledged follow-on since Phase 29 |
-| Operator SSH certificates | `/api/ca/ssh/{challenge,sign,revoke,krl}` | Issue and revoke by hand today |
-| Credential dependencies | `/api/credentials/{id}/dependencies` | |
-| Identity blast radius | `POST /api/blast/analyze` | |
-| Audit chain + OCSF | `/api/audit/{verify,head,ocsf}` | An auditor cannot check the chain from the console |
-| Login-session revocation | `/api/login-sessions*` | |
-| Agent keys | `/v1/agents` | |
-
-The first two are the point: both are **human decision points with a deadline**,
-which makes a curl-only path operationally fragile. Shape it like Phase 25 — same
-austere look, keyboard-first, no new routes or schema.
 
 ### Phase 44 — Editable objects and bounded lists ⬜
 
@@ -776,6 +789,25 @@ audit ones (`listAudit`/`exportAudit`, bounded by gap #9).
 Direction: `Update*` store methods plus `PUT` routes with the same authorization
 as create, and a `limit`/`after` cursor on the list reads, defaulted and clamped
 the way `listAudit` already is.
+
+### Phase 45 — The remaining console screens ⬜
+
+The other half of finding **G**. These have a backend, tests and docs, but no
+screen — an operator drives them with curl:
+
+| Capability | Route(s) |
+|---|---|
+| Vendors and contract grants | `/api/vendors*`, `/api/vendor-grants/*` |
+| Operator SSH certificates | `/api/ca/ssh/{challenge,sign,revoke,krl}` |
+| Credential dependencies | `/api/credentials/{id}/dependencies` |
+| Identity blast radius | `POST /api/blast/analyze` |
+| Audit chain + OCSF export | `/api/audit/{verify,head,ocsf}` |
+| Login-session revocation | `/api/login-sessions*` |
+| Agent keys | `/v1/agents` |
+
+None of them is time-critical the way the Phase 43 pair was, which is why they
+follow rather than lead. Same shape as Phase 25: one embedded page, keyboard-first,
+no new routes or schema.
 
 ### Smaller follow-ons, recorded where they were deferred ⬜
 
@@ -800,7 +832,6 @@ The 5250 console is now explicitly **keyboard-first** (the mouse is optional), m
 
 **Tier-2 (access-governance depth) is complete** — certification campaigns (19), the ITSM/ticketing gate (20), and richer approval workflows (21), now including one-time access (26). **Tier-3**: Zero Standing Privilege (22) and privileged threat analytics (23) are shipped; connector/plugin breadth, cloud CIEM, and web/SaaS session proxying remain (infra-bound). **Tier-4 is under way**: the application-secrets API (24) is shipped; a Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, and thick-app components remain, each requiring external infrastructure or an account to build honestly (see [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)). The 5250 console has **full parity** with the backend (Phase 25) — every shipped capability is operable from the portal, keyboard-first — and the session-recording loop is closed end to end (Phase 26): record → watch live → replay later, hash-verified. See the [competitive-coverage section](README.md#coverage-vs-commercial-pam-cyberark-wallix-) for the full picture.
 
-**What is next** is the [planned section above](#next--planned-): a second
-console-parity pass (43) and editable objects with bounded lists (44) — the two
-findings from the 2026-07 sweep that have not shipped yet. All three are buildable in process; the items that genuinely
+**What is next** is the [planned section above](#next--planned-): editable objects with bounded
+lists (44) and the remaining console screens (45). All three are buildable in process; the items that genuinely
 need external infrastructure stay in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).

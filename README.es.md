@@ -296,7 +296,8 @@ Se han entregado las veintiséis fases (0–25) — detalle por fase en **[ROADM
 | 40 | Toda ejecución intermediada es una sesión supervisada (el endpoint WinRM REST y las herramientas exec del broker entran en el registro de sesiones vivas) | ✅ entregada |
 | 41 | Grabaciones de sesión cifradas en disco (AES-256-GCM por bloques bajo la KEK del vault; la evidencia de manipulación no cambia) | ✅ entregada |
 | 42 | Custodia compartida de las claves de host y CA en HA (reclamación atómica en el store; las réplicas convergen en una sola clave) | ✅ entregada |
-| 43–44 | **Planificadas** — segunda pasada de paridad de consola · objetos editables + listados acotados ([hoja de ruta](ROADMAP.md#next--planned-)) | ⬜ planificada |
+| 43 | Consola: los dos puntos de decisión humana (aprobar la llamada de un agente · decidir una sentencia en pausa) | ✅ entregada |
+| 44–45 | **Planificadas** — objetos editables + listados acotados · el resto de pantallas de consola ([hoja de ruta](ROADMAP.md#next--planned-)) | ⬜ planificada |
 
 ## Cobertura frente al PAM comercial (CyberArk, Wallix, …)
 
