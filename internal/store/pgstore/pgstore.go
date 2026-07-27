@@ -1366,6 +1366,24 @@ func (s *PGStore) EnsureKeyMaterial(ctx context.Context, name, value string) (st
 	return stored, nil
 }
 
+// ListKeyMaterial returns every named key envelope, ordered by name.
+func (s *PGStore) ListKeyMaterial(ctx context.Context) ([]store.KeyMaterial, error) {
+	rows, err := s.pool.Query(ctx, `SELECT name, value FROM key_material ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.KeyMaterial, error) {
+		var k store.KeyMaterial
+		err := row.Scan(&k.Name, &k.Value)
+		return k, err
+	})
+}
+
+// UpdateKeyMaterial replaces a named key's envelope; ErrNotFound if absent.
+func (s *PGStore) UpdateKeyMaterial(ctx context.Context, name, value string) error {
+	return execExpectingRow(ctx, s.pool, `UPDATE key_material SET value = $2 WHERE name = $1`, name, value)
+}
+
 // PutSetting upserts a configuration override, stamping UpdatedAt.
 func (s *PGStore) PutSetting(ctx context.Context, st *store.Setting) error {
 	return s.pool.QueryRow(ctx,

@@ -1073,6 +1073,38 @@ then parses.
   inventory, since a consumer may legitimately run on a host that is not itself
   a PAM target
 
+## Phase 52a — Make `-rotate-kek` whole again ✅
+
+Findings **I** and **J**: the documented key-rotation procedure did not survive
+the features built after it. A rotation is the operation you run *because*
+something went wrong, so it failing quietly is the worst possible time for it.
+
+- [x] **Key custody is re-wrapped.** `Store` gains `ListKeyMaterial` and
+  `UpdateKeyMaterial`, and `RotateVaultKEK` re-wraps the SSH proxy host key and
+  the Zero Standing Privilege CA key alongside credentials, MFA secrets and
+  settings. Without this the tool reported success and the **next start-up
+  failed**, because key custody deliberately treats an unwrappable envelope as
+  fatal — and the intuitive recovery, deleting those rows, regenerates the host
+  key and the CA, which is indistinguishable from a machine-in-the-middle
+- [x] **The omission is now hard to repeat.** The function's doc comment carries
+  the exhaustive four-item list of what must be re-wrapped, because this bug was
+  omission rather than faulty logic, and a comment that enumerates is the only
+  thing that catches the fifth kind when someone adds it
+- [x] **Both stores are held to it.** The contract suite covers list ordering,
+  re-wrap read-back and `ErrNotFound` on an unclaimed name, so `memstore` and
+  `pgstore` cannot drift apart on the new methods the way they did on list
+  limits (finding AF, still open)
+- [x] **Verified the test fails without the fix**, rather than assuming it would
+- [x] **Sealed recordings: warned, not re-wrapped — and this is the right
+  answer.** A recording's data key is wrapped inside the *file*, and the SHA-256
+  of those exact bytes is what the audit trail and the hash chain hold.
+  Re-wrapping would make every archived recording read as *never audited*,
+  destroying the tamper evidence sealing exists to provide, to avoid keeping a
+  key. So `-rotate-kek` counts sealed recordings and warns, naming the KEK they
+  still need, and the admin guide states the retention rule plainly
+- [x] Directory reads use `os.OpenInRoot`, so "this cannot traverse" is enforced
+  by the API rather than asserted in a comment
+
 ### Open findings from the post-beta sweep (2026-07-27) ⬜
 
 A second full read-only sweep, run right after the beta milestone across six
@@ -1086,10 +1118,10 @@ real work, in rough priority order:
 
 1. ~~**Remote code execution through credential dependencies**~~ — **fixed in
    Phase 52** (above), together with the `net user` blocklist that missed `&`.
-2. **`-rotate-kek` is broken by its own successors** — it does not re-wrap the
-   Phase-42 key-custody envelopes, so the documented rotation leaves the server
-   unable to start on a default config, and it strands every sealed recording,
-   whose data keys are wrapped in the files rather than the store.
+2. ~~**`-rotate-kek` is broken by its own successors**~~ — **fixed in Phase 52a**
+   (above); the sealed-recording half is resolved as a documented retention rule
+   plus a warning, because re-wrapping would destroy the recordings' tamper
+   evidence.
 3. **Two same-day regressions from phases 44–51** — Phase 48's metadata lookup
    asks for 2000 audit events where PostgreSQL silently returns 100, so it works
    on the test store and not in production; and Phase 45's certificate listing

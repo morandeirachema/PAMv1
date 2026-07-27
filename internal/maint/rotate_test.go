@@ -180,3 +180,63 @@ func TestRotateVaultKEKResumesPartial(t *testing.T) {
 		}
 	}
 }
+
+// TestRotateVaultKEKKeyMaterial proves shared key custody (Phase 42) is
+// re-wrapped by a KEK rotation.
+//
+// Why it earns its own test: the SSH proxy host key and the Zero Standing
+// Privilege CA key are the only vaulted secrets NOT reached through a
+// credential, an MFA enrollment or a setting, and leaving them out was a real
+// outage rather than a cosmetic omission. `-rotate-kek` reported success, and
+// the next startup read back an envelope still sealed under the OLD key, failed
+// to unwrap it, and refused to boot — correctly, because silently regenerating
+// a host key or a CA is exactly the MITM-shaped event Phase 42 exists to
+// prevent. This test fails if that path is ever dropped again.
+func TestRotateVaultKEKKeyMaterial(t *testing.T) {
+	ctx := context.Background()
+	st := memstore.New()
+	from, to := newVault(t), newVault(t)
+
+	const hostPEM, caPEM = "-----BEGIN OPENSSH PRIVATE KEY----- host", "-----BEGIN OPENSSH PRIVATE KEY----- ca"
+	for name, pem := range map[string]string{"ssh_host_key": hostPEM, "ssh_ca_key": caPEM} {
+		enc, err := from.Encrypt(ctx, pem, store.KeyMaterialAAD(name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.EnsureKeyMaterial(ctx, name, enc); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := RotateVaultKEK(ctx, st, from, to); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+
+	keys, err := st.ListKeyMaterial(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 2 {
+		t.Fatalf("got %d keys, want 2", len(keys))
+	}
+	want := map[string]string{"ssh_ca_key": caPEM, "ssh_host_key": hostPEM}
+	for _, k := range keys {
+		// The new KEK must unwrap it — this is what startup will do.
+		got, err := to.Decrypt(ctx, k.Value, store.KeyMaterialAAD(k.Name))
+		if err != nil {
+			t.Fatalf("key %q does not decrypt under the new KEK (the server would refuse to boot): %v", k.Name, err)
+		}
+		if got != want[k.Name] {
+			t.Fatalf("key %q round-tripped to %q, want %q", k.Name, got, want[k.Name])
+		}
+		// And the old KEK must NOT, or the rotation did not actually move it.
+		if _, err := from.Decrypt(ctx, k.Value, store.KeyMaterialAAD(k.Name)); err == nil {
+			t.Fatalf("key %q still decrypts under the OLD KEK; it was not re-wrapped", k.Name)
+		}
+	}
+
+	// Rotation is resumable: a second run is a no-op rather than a failure.
+	if n, err := RotateVaultKEK(ctx, st, from, to); err != nil || n != 0 {
+		t.Fatalf("second run rotated %d with err %v; want 0, nil (idempotent)", n, err)
+	}
+}

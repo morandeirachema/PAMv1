@@ -9,11 +9,30 @@ import (
 	"github.com/morandeirachema/pamv1/internal/vault"
 )
 
-// RotateVaultKEK re-encrypts every vaulted secret — credentials, TOTP
-// enrollments, and vault-encrypted config settings (bind password, client
-// secrets) — from the `from` vault to the `to` vault, preserving each secret's
-// AAD binding. It returns the number of secrets re-encrypted. Run it offline
-// (nothing else writing secrets), then switch the server to the new key.
+// RotateVaultKEK re-encrypts every vaulted secret from the `from` vault to the
+// `to` vault, preserving each secret's AAD binding, and returns how many were
+// re-encrypted. Run it offline (nothing else writing secrets), then switch the
+// server to the new key.
+//
+// "Every vaulted secret" means all four kinds, and the list is exhaustive on
+// purpose — anything missed here is a secret the server can no longer decrypt
+// after the switch:
+//
+//  1. credentials          (store.CredentialAAD)
+//  2. TOTP enrollments     (store.MFAAAD)
+//  3. secret config values (store.ConfigAAD) — LDAP bind password, SSO secrets
+//  4. key custody          (store.KeyMaterialAAD) — SSH host key, ZSP CA key
+//
+// Each step is idempotent: if a secret already decrypts under `to`, a previous
+// interrupted run rotated it, so it is skipped rather than failed on. That makes
+// the whole operation safely resumable instead of leaving a half-rotated store.
+//
+// NOT covered, and it cannot be: sealed session recordings carry their own data
+// key wrapped by the KEK inside each FILE, not in the store. Re-wrapping them
+// here would rewrite the file bytes and so invalidate the SHA-256 recorded in
+// the audit trail and the recording hash chain — destroying the tamper evidence
+// the recordings exist to provide. The old KEK must therefore be retained for as
+// long as sealed recordings are kept; the caller warns about this.
 func RotateVaultKEK(ctx context.Context, st store.Store, from, to *vault.Vault) (int, error) {
 	n := 0
 
@@ -93,6 +112,37 @@ func RotateVaultKEK(ctx context.Context, st store.Store, from, to *vault.Vault) 
 		sg.Value = enc
 		if err := st.PutSetting(ctx, &sg); err != nil {
 			return n, fmt.Errorf("setting %s update: %w", sg.Key, err)
+		}
+		n++
+	}
+
+	// Shared key custody (Phase 42): the SSH proxy host key and the Zero Standing
+	// Privilege CA key live in the store as vault envelopes too. They MUST be
+	// re-wrapped here. Leaving them out was a real outage: `-rotate-kek` reported
+	// success, and the next startup called keycustody.Ensure, read back an
+	// envelope still sealed under the OLD key, failed to unwrap it, and treated
+	// that as fatal — correctly, since silently regenerating a host key or a CA is
+	// exactly the MITM-shaped event Phase 42 exists to prevent. The naive recovery
+	// (deleting the rows) causes that very event.
+	keys, err := st.ListKeyMaterial(ctx)
+	if err != nil {
+		return n, fmt.Errorf("list key material: %w", err)
+	}
+	for _, k := range keys {
+		aad := store.KeyMaterialAAD(k.Name)
+		if _, err := to.Decrypt(ctx, k.Value, aad); err == nil {
+			continue // already rotated under the new KEK
+		}
+		plain, err := from.Decrypt(ctx, k.Value, aad)
+		if err != nil {
+			return n, fmt.Errorf("key material %s decrypt: %w", k.Name, err)
+		}
+		enc, err := to.Encrypt(ctx, plain, aad)
+		if err != nil {
+			return n, fmt.Errorf("key material %s encrypt: %w", k.Name, err)
+		}
+		if err := st.UpdateKeyMaterial(ctx, k.Name, enc); err != nil {
+			return n, fmt.Errorf("key material %s update: %w", k.Name, err)
 		}
 		n++
 	}

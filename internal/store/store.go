@@ -36,6 +36,15 @@ func CredentialAAD(targetID, credentialID int64) string {
 // key envelope cannot be swapped in as the CA key (Phase 42).
 func KeyMaterialAAD(name string) string { return "keymaterial:" + name }
 
+// KeyMaterial is one named long-lived key held in shared custody (Phase 42): the
+// SSH proxy host key and the Zero Standing Privilege CA key. Value is the vault
+// envelope of the PEM — never the PEM itself — so the database holds nothing
+// usable on its own.
+type KeyMaterial struct {
+	Name  string `json:"name"`
+	Value string `json:"-"` // vault envelope; never serialized
+}
+
 // MFAAAD binds a vaulted TOTP secret to its owning user.
 func MFAAAD(username string) string {
 	return "mfa:" + username
@@ -726,6 +735,17 @@ type Store interface {
 	// each generating its own (Phase 42). value is the vault envelope of the PEM:
 	// the database never holds usable key material.
 	EnsureKeyMaterial(ctx context.Context, name, value string) (string, error)
+	// ListKeyMaterial returns every named key envelope, ordered by name. It exists
+	// so KEK rotation can re-wrap them: without a read path, `-rotate-kek` could
+	// re-encrypt credentials, MFA secrets and settings but silently leave the SSH
+	// host key and the ZSP CA key sealed under the OLD key, and the next startup
+	// would fail to unwrap them (which is deliberately fatal). Values are vault
+	// envelopes; the database never holds usable key material.
+	ListKeyMaterial(ctx context.Context) ([]KeyMaterial, error)
+	// UpdateKeyMaterial replaces a named key's envelope — the re-wrap half of the
+	// pair above. ErrNotFound when the name is absent, so a rotation cannot
+	// silently create custody of a key nobody claimed.
+	UpdateKeyMaterial(ctx context.Context, name, value string) error
 
 	// PutSetting upserts a configuration override, stamping UpdatedAt.
 	PutSetting(ctx context.Context, s *Setting) error
