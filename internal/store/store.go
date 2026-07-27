@@ -32,6 +32,32 @@ func CredentialAAD(targetID, credentialID int64) string {
 	return fmt.Sprintf("target:%d/cred:%d", targetID, credentialID)
 }
 
+// Paging bounds for ListAudit. They live here, not in an implementation, because
+// they are part of the interface's contract: a caller must be able to reason
+// about how many events it will get back without knowing which store it holds.
+const (
+	// DefaultAuditPage is returned when a caller passes a non-positive limit.
+	DefaultAuditPage = 100
+	// MaxAuditPage bounds a single read so one call cannot pull an unbounded
+	// slice of the audit table into memory. A caller needing more must page with
+	// AuditSince.
+	MaxAuditPage = 5000
+)
+
+// ClampAuditLimit applies the ListAudit limit contract. Both store
+// implementations call it rather than each writing the rule out, because the
+// bug it fixes was precisely the two of them writing it out differently.
+func ClampAuditLimit(limit int) int {
+	switch {
+	case limit <= 0:
+		return DefaultAuditPage
+	case limit > MaxAuditPage:
+		return MaxAuditPage
+	default:
+		return limit
+	}
+}
+
 // KeyMaterialAAD binds a vault-encrypted long-lived key to its name, so a host
 // key envelope cannot be swapped in as the CA key (Phase 42).
 func KeyMaterialAAD(name string) string { return "keymaterial:" + name }
@@ -331,8 +357,16 @@ type VendorGrant struct {
 // target's sshd cuts the cert off before ValidBefore. RevokedAt is nil until
 // revoked.
 type SSHCert struct {
-	ID          int64      `json:"id"`
-	Serial      int64      `json:"serial"`
+	ID int64 `json:"id"`
+	// Serial serializes as a JSON STRING (`,string`), not a number. It is seeded
+	// from a nanosecond clock, so its value is far above 2^53 — the largest
+	// integer JavaScript's number type represents exactly. As a JSON number it
+	// arrived in the console rounded, and a rounded serial revokes nothing: the
+	// KRL would name a certificate that does not exist while the real one stayed
+	// valid until expiry. The /sign response already returned a string for this
+	// reason; this listing did not, which is why the console's revoke option
+	// could not revoke a real certificate.
+	Serial      int64      `json:"serial,string"`
 	KeyID       string     `json:"key_id"`
 	Principal   string     `json:"principal"`
 	Actor       string     `json:"actor"`
@@ -595,6 +629,18 @@ type Store interface {
 	// row that carries an HMAC.
 	GetAuditHead(ctx context.Context) (*AuditEvent, error)
 	// ListAudit returns the most recent audit events, newest first.
+	//
+	// limit semantics are part of the contract, and both implementations must
+	// obey them exactly:
+	//   limit <= 0            → DefaultAuditPage events
+	//   limit >  MaxAuditPage → MaxAuditPage events (capped, NOT reduced)
+	//   otherwise             → at most limit events
+	//
+	// The "capped, not reduced" clause is the one that was wrong. pgstore used to
+	// collapse any limit above 500 back to the 100 default, so asking for more
+	// returned dramatically FEWER — while memstore returned everything it had.
+	// A caller asking for 2000 got 2000 in tests and 100 in production, which is
+	// the worst possible way for two implementations of one interface to differ.
 	ListAudit(ctx context.Context, limit int) ([]AuditEvent, error)
 	// ExportAudit returns every audit event with since <= ts < until, ordered
 	// oldest-first (for NIS2 incident-report exports). A zero since means "from

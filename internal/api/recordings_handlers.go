@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/morandeirachema/pamv1/internal/store"
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/recording"
@@ -52,19 +54,35 @@ type recordingInfo struct {
 
 // recordingOwners maps recording file names to the target and actor recorded in
 // the audit trail. The recorders write `file:<path-or-name>` into
-// session.record / winrm.run, so this reverses that: it reads the recent audit
-// window once and indexes by base name (the SSH proxy logs a full path, the DB
+// session.record / winrm.run, so this reverses that: it reads a window of recent
+// audit events and indexes by base name (the SSH proxy logs a full path, the DB
 // proxy and WinRM log a bare name — indexing by base covers all three).
+//
+// `want` is the set of file names the listing actually needs. It lets the scan
+// stop as soon as every one is resolved, which is the common case: the listing
+// shows the newest recordings, and their audit events are the newest too. The
+// window is bounded by store.MaxAuditPage so one console request can never pull
+// an unbounded slice of the audit table into memory.
+//
+// The bound used to be a bare 2000, which was worse than it looked: pgstore
+// silently answered any request above 500 with 100 events, so this resolved
+// owners for the newest hundred events in production while resolving all 2000
+// against the in-memory store the tests use. The store contract now pins those
+// semantics (asking for more never returns less), so the bound here means what
+// it says.
 //
 // Best-effort by design: a failed audit read returns an empty map so the
 // listing still renders (degraded to names only) instead of erroring.
-func (s *Server) recordingOwners(r *http.Request) map[string][2]string {
+func (s *Server) recordingOwners(r *http.Request, want map[string]bool) map[string][2]string {
 	out := map[string][2]string{}
-	events, err := s.store.ListAudit(r.Context(), 2000)
+	events, err := s.store.ListAudit(r.Context(), store.MaxAuditPage)
 	if err != nil {
 		return out
 	}
 	for _, e := range events {
+		if len(want) > 0 && len(out) == len(want) {
+			break // every listed recording is accounted for
+		}
 		if e.Action != "session.record" && e.Action != "winrm.run" {
 			continue
 		}
@@ -82,6 +100,9 @@ func (s *Server) recordingOwners(r *http.Request) map[string][2]string {
 		// relabel an older recording.
 		if file == "" {
 			continue
+		}
+		if len(want) > 0 && !want[file] {
+			continue // an audit event for a recording this listing does not show
 		}
 		if _, seen := out[file]; !seen {
 			out[file] = [2]string{target, e.Actor}
@@ -113,7 +134,6 @@ func (s *Server) listRecordings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "recordings unavailable")
 		return
 	}
-	owners := s.recordingOwners(r)
 	for _, e := range entries {
 		if !e.Type().IsRegular() || !recordingNameRe.MatchString(e.Name()) {
 			continue
@@ -122,15 +142,24 @@ func (s *Server) listRecordings(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		who := owners[e.Name()]
 		out = append(out, recordingInfo{
 			Name: e.Name(), Size: fi.Size(), Modified: fi.ModTime().UTC(), Kind: recordingKind(e.Name()),
-			Target: who[0], Actor: who[1],
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Modified.After(out[j].Modified) })
 	if len(out) > recordingMaxList {
 		out = out[:recordingMaxList]
+	}
+	// Resolve owners only for the recordings actually being returned, so the
+	// audit scan can stop early instead of always walking the whole window.
+	want := make(map[string]bool, len(out))
+	for _, rec := range out {
+		want[rec.Name] = true
+	}
+	owners := s.recordingOwners(r, want)
+	for i := range out {
+		who := owners[out[i].Name]
+		out[i].Target, out[i].Actor = who[0], who[1]
 	}
 	writeJSON(w, http.StatusOK, out)
 }
