@@ -3,7 +3,9 @@
 > **Living document.** Update whenever the RDP path (guacd handshake, the tunnel
 > prelude, the token endpoint, or the in-portal viewer) changes.
 >
-> Last updated: 2026-07-23 · Reflects: Phases 0–24 + the in-portal RDP viewer.
+> Last updated: 2026-07-28 · Reflects: Phases 0–52g — RDP has changed in Phases 33
+> (clipboard control), 40 (brokered runs are supervised sessions), 50 (clipboard
+> auditing), 52c (recording-required, throttled tunnel auth) and 52e.
 
 This is the procedure to verify pamv1's **RDP function** end to end: an operator
 opens an RDP target from the 5250 portal, the credential is injected server-side
@@ -53,7 +55,7 @@ for the daemon, so **no real Windows host or guacd is required**.
 ```bash
 # The whole RDP surface (prelude wire-format, token endpoint, and a full
 # WebSocket round-trip against a fake guacd):
-go test ./internal/api -run 'RDP|Guacamole|TunnelUUID' -v
+go test ./internal/api -run 'RDP|Guac|Clip|TunnelUUID' -v
 
 # The guacd protocol client (handshake + credential injection ordering):
 go test ./internal/guacd -v
@@ -129,7 +131,7 @@ docker compose -f docker-compose.rdp-demo.yml up --build
 #   Ctrl+Alt+Q disconnects
 ```
 
-It's **demo-only** (throwaway master key, weak creds, an unhardened root xrdp
+It's **demo-only** (throwaway master key, weak creds, an unhardened xrdp
 target — never deploy it). If the desktop never paints, set
 `PAM_GUACD_RDP_SECURITY=rdp` on the `pam` service and re-up. Then run the
 verification checklist in §4b against `demo-rdp`.
@@ -155,6 +157,25 @@ See [EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md).
      mints a fresh one automatically);
    - **least privilege** — an `auditor` (no connect) never sees option 7 and is
      refused by both `/api/rdp-token` (403) and the tunnel (403).
+
+### Two things that will change what you see
+
+**`PAM_REQUIRE_RECORDING` breaks this demo.** Neither compose file sets
+`PAM_GUACD_RECORDING_PATH`, so with the flag on the tunnel returns **503
+`recording is required but not configured for RDP`** and audits `rdp.refused`
+— *before* guacd is contacted and before the credential is decrypted. That is
+the correct behaviour (Phase 52c widened the flag to cover the viewer); set the
+recording path if you want both.
+
+**The clipboard is wide open by default.** Compose sets neither
+`PAM_RDP_CLIPBOARD` nor `PAM_RDP_CLIPBOARD_AUDIT`, so the demo runs with
+`allow` and no content auditing. To exercise the gate, set
+`PAM_RDP_CLIPBOARD=readonly` (copy out, no paste in) or `deny` on the `pam`
+service. To see the audit half, set `PAM_RDP_CLIPBOARD_AUDIT=meta`, copy text
+out of the XFCE desktop, and look for an `rdp.clipboard` event carrying
+direction, mimetype, size and SHA-256 — `full` records the content too. The mode
+in force also rides the `rdp.connect` event as `clipboard:<mode>`. Drive
+redirection is forced off in every mode.
 
 ## 5. Troubleshooting
 
