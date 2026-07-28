@@ -284,7 +284,7 @@ Turn the existing recording + kill-switch into **supervised** sessions — the t
 - [x] **Command control**: a `CommandGuard` (regex denylist from `PAM_COMMAND_DENY_FILE`, one pattern per line) blocks a dangerous command **before it reaches the target** on every path where a discrete command is visible — SSH `exec` (the request is refused, never forwarded), each WinRM command-loop line, and each PostgreSQL `Query`/`Parse` (a simple query is refused but the session stays usable; an extended-protocol statement fails closed). Blocks are audited `command.blocked` with the matched pattern
 - [x] **Shared writer plumbing**: the proxy tees session output to the hub via `teeLive`; the DB relay serializes all client-facing writes under one mutex (pgproto3 is not concurrency-safe), proven race-free under `-race`
 - [x] **Tests**: the guard (match / comment-skip / fail-loud / nil no-op), the hub (pub-sub, cancel, slow-watcher drop), a blocked SSH exec and a blocked SQL statement (neither reaches the upstream), a live SQL frame observed over the hub, and the SSE endpoint (200 + frame for an auditor, 403 without `CapReadAudit`)
-- Deferred (documented): interactive-shell command filtering (a raw PTY stream is not parsed — use observer sessions or restrict shell access) and WinRM live streaming. *(The in-portal 5250 viewer for the live stream shipped in Phase 25.)*
+- Deferred (documented): interactive-shell command filtering (a raw PTY stream is not parsed — use observer sessions or restrict shell access). *(The in-portal 5250 viewer for the live stream shipped in Phase 25; WinRM live streaming, deferred here, shipped 2026-07-29.)*
 
 ## Phase 17 — Safes & dependent-account propagation ✅
 
@@ -1433,9 +1433,12 @@ Buildable without external infrastructure, each deferred by the phase named.
   signal.
 - **Per-file SFTP content recording** (32) — operations are audited and paths are
   gatable; the file *bytes* are not captured.
-- **WinRM live streaming** (16) — WinRM output is recorded but never reaches the
-  live-monitoring hub, so a supervisor cannot watch a WinRM session as it happens
-  the way they can an SSH or PostgreSQL one.
+- ~~**WinRM live streaming** (16)~~ — ✅ closed 2026-07-29. Every WinRM path now
+  tees to the live-monitoring hub under its session id: the proxy's interactive
+  shell (banner, prompt, command echo, output, refusals — the same bytes the
+  recording sees), and the REST endpoint + broker `winrm_exec` through their
+  shared chokepoint (`winrm>` command echo, output, blocked/error notices). A
+  supervisor watches a WinRM session exactly as an SSH or PostgreSQL one.
 - **Per-target RDP clipboard override** (33) — `PAM_RDP_CLIPBOARD` and
   `PAM_RDP_CLIPBOARD_AUDIT` are global; a high-sensitivity target cannot be
   stricter than the rest.

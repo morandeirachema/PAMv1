@@ -249,14 +249,14 @@ func (s *Server) runWinRM(w http.ResponseWriter, r *http.Request) {
 	// A WinRM run is a brokered privileged session like any other, so it belongs in
 	// the live-session registry (Phase 40).
 	actor := actorFrom(r.Context())
-	ctx, release, err := s.superviseSession(r.Context(), actor, target.Name, "winrm", r.RemoteAddr)
+	ctx, release, sid, err := s.superviseSession(r.Context(), actor, target.Name, "winrm", r.RemoteAddr)
 	if errors.Is(err, errSessionLimit) {
 		writeError(w, http.StatusTooManyRequests, "session limit reached")
 		return
 	}
 	defer release()
 
-	res, err := s.execWinRM(ctx, target, &cred, in.Command, actor)
+	res, err := s.execWinRM(ctx, target, &cred, in.Command, actor, sid)
 	if errors.Is(err, errCommandBlocked) {
 		writeError(w, http.StatusForbidden, "command blocked by policy")
 		return
@@ -307,20 +307,24 @@ var errSessionLimit = errors.New("session limit reached")
 // Every path that executes something privileged goes through this — the REST
 // WinRM endpoint and the agent broker's exec tools alike — so an AI agent's run
 // is exactly as supervisable as an operator's. A nil registry is a no-op.
-func (s *Server) superviseSession(ctx context.Context, actor, target, protocol, remote string) (context.Context, func(), error) {
+func (s *Server) superviseSession(ctx context.Context, actor, target, protocol, remote string) (context.Context, func(), string, error) {
 	if s.sessions == nil {
 		cctx, cancel := context.WithCancel(ctx)
-		return cctx, cancel, nil
+		return cctx, cancel, "", nil
 	}
 	if !s.sessions.AllowNew(actor) {
 		s.auditAs(ctx, actor, "session.denied", "target:"+target+" reason:session-limit")
-		return ctx, func() {}, errSessionLimit
+		return ctx, func() {}, "", errSessionLimit
 	}
 	cctx, cancel := context.WithCancel(ctx)
 	sid := s.sessions.Register(session.Info{
 		Actor: actor, Target: target, Protocol: protocol, Remote: remote, Started: time.Now(),
 	}, cancel)
-	return cctx, func() { s.sessions.Remove(sid); cancel() }, nil
+	// The session id is returned so the execution can also tee what it does to
+	// the live-monitoring hub under it — a registered-but-silent session is
+	// listable and killable yet not watchable, which is how WinRM behaved for a
+	// long time while SSH and PostgreSQL streamed.
+	return cctx, func() { s.sessions.Remove(sid); cancel() }, sid, nil
 }
 
 // errDecryptFailed marks a just-in-time vault decrypt failure, so callers can map
@@ -365,11 +369,17 @@ func (s *Server) guardCommand(ctx context.Context, actor, targetName, path, comm
 // WinRM, records the transcript, and audits the run — returning only the result.
 // The plaintext secret never leaves this function. Shared by the REST handler and
 // the agent-broker winrm_exec tool.
-func (s *Server) execWinRM(ctx context.Context, target *store.Target, cred *store.Credential, command, actor string) (winrm.Result, error) {
+func (s *Server) execWinRM(ctx context.Context, target *store.Target, cred *store.Credential, command, actor string, sid string) (winrm.Result, error) {
+	// Live monitoring (Phase 16 follow-on): a supervisor watching this session
+	// sees the command as it is attempted — echoed the way the PostgreSQL proxy
+	// echoes `psql> ` lines — then whatever it produced. WinRM never echoes
+	// input, so without this the watch pane would show output with no cause.
+	s.live.Publish(sid, []byte("winrm> "+command+"\r\n"))
 	// Command control, before the credential is decrypted: this is the one
 	// chokepoint the REST WinRM endpoint and the broker's winrm_exec tool share,
 	// so the deny policy covers a human and an agent identically.
 	if err := s.guardCommand(ctx, actor, target.Name, "winrm", command); err != nil {
+		s.live.Publish(sid, []byte("pamv1: command blocked by policy\r\n"))
 		return winrm.Result{}, err
 	}
 	// PAM_REQUIRE_RECORDING covers this path too now. The check must come BEFORE
@@ -390,7 +400,14 @@ func (s *Server) execWinRM(ctx context.Context, target *store.Target, cred *stor
 	if err != nil {
 		s.log.Error("winrm run failed", "target", target.Name, "err", err)
 		s.audit(ctx, "winrm.error", fmt.Sprintf("target:%s cred_user:%s error:%v", target.Name, cred.Username, err))
+		s.live.Publish(sid, []byte(fmt.Sprintf("pamv1: winrm error: %v\r\n", err)))
 		return winrm.Result{}, err
+	}
+	if res.Stdout != "" {
+		s.live.Publish(sid, []byte(res.Stdout))
+	}
+	if res.Stderr != "" {
+		s.live.Publish(sid, []byte(res.Stderr))
 	}
 	file, sum := s.recordWinRM(target, cred.Username, actor, command, res)
 	// The command has already run on the target, so this audit cannot refuse it —

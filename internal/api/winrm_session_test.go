@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,5 +133,72 @@ func TestWinRMRunIsASupervisedSession(t *testing.T) {
 	// JIT injection still holds: the runner received the vaulted secret.
 	if fake.gotPass != "vaulted-pw" {
 		t.Fatalf("runner got password %q, want vaulted-pw", fake.gotPass)
+	}
+}
+
+// TestWinRMRunStreamsLive proves the REST WinRM run reaches the live-monitoring
+// hub (Phase 16 follow-on): a supervisor subscribed to the session id sees the
+// run's output the moment it completes. Before this, the run was registered —
+// listable, capped, killable — but silent on the watch stream, so a supervisor
+// could see THAT a WinRM run existed and never WHAT it did.
+func TestWinRMRunStreamsLive(t *testing.T) {
+	fake := &blockingWinRM{started: make(chan struct{}), release: make(chan struct{})}
+	reg := session.NewRegistry()
+	hub := session.NewHub()
+	srv, _ := newTestServerOpts(t, nil, api.Options{
+		WinRM: fake, RecordingDir: t.TempDir(), Sessions: reg, Live: hub,
+	})
+
+	_, td := do(t, srv, http.MethodPost, "/api/targets", testAPIKey, map[string]any{
+		"name": "win-live", "host": "10.0.0.8", "port": 5986, "os_type": "windows", "protocol": "winrm",
+	})
+	targetID := int64(jsonMap(t, td)["id"].(float64))
+	if code, body := do(t, srv, http.MethodPost, "/api/credentials", testAPIKey, map[string]any{
+		"target_id": targetID, "username": "Administrator", "secret": "vaulted-pw",
+	}); code != http.StatusCreated {
+		t.Fatalf("seed credential: %d %s", code, body)
+	}
+
+	done := make(chan int, 1)
+	go func() {
+		code, _ := do(t, srv, http.MethodPost, fmt.Sprintf("/api/targets/%d/winrm", targetID),
+			testAPIKey, map[string]any{"command": "Get-Service"})
+		done <- code
+	}()
+	select {
+	case <-fake.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the WinRM run never reached the runner")
+	}
+
+	// The run is parked inside the runner; subscribe to its session, then let it
+	// finish — the output must arrive on the hub.
+	var sid string
+	for i := 0; i < 200 && sid == ""; i++ {
+		if ls := reg.List(); len(ls) > 0 {
+			sid = ls[0].ID
+		} else {
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	if sid == "" {
+		t.Fatal("winrm run was not registered")
+	}
+	frames, cancel := hub.Subscribe(sid)
+	defer cancel()
+	close(fake.release)
+
+	var acc string
+	deadline := time.After(3 * time.Second)
+	for !strings.Contains(acc, "done") { // blockingWinRM's canned stdout
+		select {
+		case b := <-frames:
+			acc += string(b)
+		case <-deadline:
+			t.Fatalf("live stream missing the run's output; saw %q", acc)
+		}
+	}
+	if code := <-done; code != http.StatusOK {
+		t.Fatalf("run returned %d, want 200", code)
 	}
 }

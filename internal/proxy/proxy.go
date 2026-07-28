@@ -1013,8 +1013,12 @@ func (p *Proxy) serveWinRM(ctx context.Context, sconn *ssh.ServerConn, chans <-c
 		mode = "observer"
 	}
 	p.log.Info("winrm session started", "actor", actor, "target", target.Name, "mode", mode)
+	// sid is hoisted out of the if so the command loop can tee output to the
+	// live-monitoring hub under it — for a long time it was scoped inside,
+	// which is why WinRM sessions were listable and killable but not watchable.
+	var sid string
 	if p.sessions != nil {
-		sid := p.sessions.Register(session.Info{
+		sid = p.sessions.Register(session.Info{
 			Actor: actor, Target: target.Name, Protocol: "winrm", Remote: remote, Started: time.Now(),
 		}, func() { sconn.Close() })
 		defer p.sessions.Remove(sid)
@@ -1030,14 +1034,16 @@ func (p *Proxy) serveWinRM(ctx context.Context, sconn *ssh.ServerConn, chans <-c
 			nc.Reject(ssh.UnknownChannelType, "pamv1: only session channels are proxied")
 			continue
 		}
-		p.handleWinRMSession(ctx, nc, target, cred, secret, actor, observe)
+		p.handleWinRMSession(ctx, nc, target, cred, secret, actor, observe, sid)
 	}
 }
 
 // handleWinRMSession answers channel requests for one WinRM session channel: it
 // runs a "shell" as an interactive command loop and an "exec" as a single
-// command, tee'ing output into an asciicast recording.
-func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, target *store.Target, cred *store.Credential, secret, actor string, observe bool) {
+// command, tee'ing output into an asciicast recording and — under sid — into
+// the live-monitoring hub, so a supervisor can watch a WinRM session as it
+// happens the way they can an SSH or PostgreSQL one.
+func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, target *store.Target, cred *store.Credential, secret, actor string, observe bool, sid string) {
 	ch, reqs, err := nc.Accept()
 	if err != nil {
 		return
@@ -1074,7 +1080,7 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 			if req.WantReply {
 				req.Reply(true, nil)
 			}
-			p.winrmShellLoop(ctx, ch, target, cred, secret, actor, observe, rec)
+			p.winrmShellLoop(ctx, ch, target, cred, secret, actor, observe, rec, sid)
 			ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{0}))
 			return
 		case "exec":
@@ -1083,7 +1089,7 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 			}
 			var m struct{ Command string }
 			_ = ssh.Unmarshal(req.Payload, &m)
-			code := p.winrmRun(ctx, ch, target, cred, secret, actor, observe, rec, m.Command)
+			code := p.winrmRun(ctx, ch, target, cred, secret, actor, observe, rec, m.Command, sid)
 			ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{uint32(code)}))
 			return
 		default:
@@ -1096,8 +1102,8 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 
 // winrmShellLoop reads operator lines and runs each as a WinRM command, printing
 // a prompt and streaming output. "exit"/"quit"/"logout" or EOF ends the session.
-func (p *Proxy) winrmShellLoop(ctx context.Context, ch ssh.Channel, target *store.Target, cred *store.Credential, secret, actor string, observe bool, rec io.Writer) {
-	out := recWriter(ch, rec)
+func (p *Proxy) winrmShellLoop(ctx context.Context, ch ssh.Channel, target *store.Target, cred *store.Credential, secret, actor string, observe bool, rec io.Writer, sid string) {
+	out := p.teeLive(recWriter(ch, rec), sid)
 	fmt.Fprintf(out, "pamv1 WinRM shell for %s (each line is a separate command; type 'exit' to quit)\r\n", target.Name)
 	prompt := "pamv1 " + target.Name + "> "
 	scanner := bufio.NewScanner(ch)
@@ -1117,14 +1123,15 @@ func (p *Proxy) winrmShellLoop(ctx context.Context, ch ssh.Channel, target *stor
 			return
 		}
 		// winrmRun echoes the command into the recording itself.
-		p.winrmRun(ctx, ch, target, cred, secret, actor, observe, rec, line)
+		p.winrmRun(ctx, ch, target, cred, secret, actor, observe, rec, line, sid)
 	}
 }
 
-// winrmRun executes one WinRM command, streams its output (tee'd to rec) and
-// audits it, returning the remote exit code. In observer mode it refuses to run.
-func (p *Proxy) winrmRun(ctx context.Context, ch ssh.Channel, target *store.Target, cred *store.Credential, secret, actor string, observe bool, rec io.Writer, command string) int {
-	out := recWriter(ch, rec)
+// winrmRun executes one WinRM command, streams its output (tee'd to rec and to
+// the live-monitoring hub under sid) and audits it, returning the remote exit
+// code. In observer mode it refuses to run.
+func (p *Proxy) winrmRun(ctx context.Context, ch ssh.Channel, target *store.Target, cred *store.Credential, secret, actor string, observe bool, rec io.Writer, command string, sid string) int {
+	out := p.teeLive(recWriter(ch, rec), sid)
 	// Echo the command into the recording (WinRM output doesn't echo the input the
 	// way an interactive SSH shell does) so the .cast is a faithful record of what
 	// was run — the non-repudiation guarantee.

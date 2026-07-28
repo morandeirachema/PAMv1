@@ -11,6 +11,11 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **WinRM live streaming** (Phase 16 follow-on) — a supervisor can now watch a
+  WinRM session live (`GET /api/sessions/{id}/stream`, portal option 5) exactly
+  like an SSH or PostgreSQL one: the proxy's interactive shell streams what its
+  recording sees, and REST/agent-broker runs stream a `winrm>` command echo
+  plus the output.
 - **Broker audit keys under shared custody** (Phase 13 follow-on) —
   `PAM_BROKER_AUDIT_KEY` and `PAM_BROKER_AUDIT_SIGN_SEED` are now optional:
   when unset, each is generated once and sealed by the KEK into the store's
