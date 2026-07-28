@@ -63,9 +63,6 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
-// main parses the utility flags and dispatches: -genkey prints a fresh vault
-// master key, -hashkey prints the SHA-256 of a break-glass key read from stdin,
-// -rotate-kek re-encrypts secrets under a new master key, -split-key emits
 // Build metadata, set at link time by the release build:
 //
 //	go build -ldflags="-X main.version=v0.10.0 -X main.commit=$(git rev-parse --short HEAD)"
@@ -85,6 +82,9 @@ var (
 // buildInfo renders the version and commit as a single human-readable string.
 func buildInfo() string { return version + " (" + commit + ")" }
 
+// main parses the utility flags and dispatches: -genkey prints a fresh vault
+// master key, -hashkey prints the SHA-256 of a break-glass key read from stdin,
+// -rotate-kek re-encrypts secrets under a new master key, -split-key emits
 // Shamir shares of a break-glass key, and the default path runs the server.
 func main() {
 	genkey := flag.Bool("genkey", false, "print a new vault master key and exit")
@@ -99,22 +99,13 @@ func main() {
 	case *showVersion:
 		fmt.Println("pam-server", buildInfo())
 	case *genkey:
-		key, err := vault.GenerateMasterKey()
-		if err != nil {
+		if err := runGenKey(); err != nil {
 			fatal(err)
 		}
-		fmt.Println(key)
 	case *hashkey:
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
+		if err := runHashKey(); err != nil {
 			fatal(err)
 		}
-		key := strings.TrimSpace(string(data))
-		if key == "" {
-			fatal(fmt.Errorf("no key on stdin (would hash the empty string, yielding an unusable break-glass hash)"))
-		}
-		sum := sha256.Sum256([]byte(key))
-		fmt.Println(hex.EncodeToString(sum[:]))
 	case *rotateKEK:
 		if err := runRotateKEK(); err != nil {
 			fatal(err)
@@ -132,6 +123,35 @@ func main() {
 			fatal(err)
 		}
 	}
+}
+
+// runGenKey prints a freshly generated vault master key (the PAM_MASTER_KEY
+// value) to stdout.
+func runGenKey() error {
+	key, err := vault.GenerateMasterKey()
+	if err != nil {
+		return err
+	}
+	fmt.Println(key)
+	return nil
+}
+
+// runHashKey reads the emergency break-glass key from stdin and prints its
+// SHA-256 as hex — the only form of it the server is ever configured with
+// (PAM_BREAK_GLASS_KEY_HASH). An empty stdin is refused: hashing the empty
+// string would yield a syntactically valid but unusable break-glass hash.
+func runHashKey() error {
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return err
+	}
+	key := strings.TrimSpace(string(data))
+	if key == "" {
+		return fmt.Errorf("no key on stdin (would hash the empty string, yielding an unusable break-glass hash)")
+	}
+	sum := sha256.Sum256([]byte(key))
+	fmt.Println(hex.EncodeToString(sum[:]))
+	return nil
 }
 
 // runHealthcheck probes the local liveness endpoint and exits non-zero unless it

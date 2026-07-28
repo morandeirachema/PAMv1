@@ -416,8 +416,8 @@ What is left is consolidated in
 **[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**. The short version:
 **[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0) shipped
 on 2026-07-28** — the last of the four beta criteria, so the Kubernetes, Helm and
-Terraform paths now pull a real, signed image; `cmd/pam-server` has no
-tests; and a dozen in-process feature follow-ons remain, the largest being
+Terraform paths now pull a real, signed image; and a dozen in-process feature
+follow-ons remain, the largest being
 **cross-replica live monitoring** (fanning session *bytes* across replicas is a
 heavier pub/sub than the kill signal already broadcast), **per-file SFTP content
 recording**, and **WinRM live streaming** (WinRM output is recorded but does not
