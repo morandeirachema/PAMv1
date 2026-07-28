@@ -22,6 +22,7 @@ go vet ./...
 staticcheck ./...                                # CI gate (go install honnef.co/go/tools/cmd/staticcheck@latest)
 govulncheck ./...                                # CI gate (go install golang.org/x/vuln/cmd/govulncheck@latest)
 gosec -confidence high -exclude=G104,G115,G304,G306,G101 ./...   # CI gate; deliberate findings carry `#nosec Gxxx -- reason`
+go run ./cmd/archgen                             # regenerates docs/ARCHITECTURE-DIAGRAMS.md; CI diffs it — run after route/store/schema changes
 go mod tidy                                      # after changing imports
 ```
 
@@ -39,7 +40,7 @@ export PAM_DATABASE_URL=memory
 
 Full stack (hardened Postgres + server): from `deploy/docker/`, `cp .env.example .env` (fill the keys), then `docker compose up --build`. The Docker/compose files live in `deploy/docker/` (`Dockerfile`, `Dockerfile.pkcs11`, `docker-compose.yml`, `.env.example`, plus `docker-compose.rdp-demo.yml` + `rdp-target/` — a throwaway xrdp desktop to demo the in-portal RDP viewer end to end); other deploy manifests live in `deploy/k8s/`, `deploy/helm/` and `deploy/terraform/` (all infra is IaC — do not hand-apply). The SOPS config is `deploy/.sops.yaml` (pass `--config deploy/.sops.yaml` when encrypting; decryption needs no config). The repo root keeps only `go.mod`/`go.sum`, `README*`, `ROADMAP.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, `LICENSE`, `NOTICE`, `CLAUDE.md` and the two position-sensitive dotfiles `.dockerignore` and `.gitignore`; community/CI plumbing (CODEOWNERS, issue/PR templates, `dependabot.yml`, workflows) lives under `.github/`.
 
-CI (`.github/workflows/ci.yml`) gates on: `gofmt -l`, `go vet`, `staticcheck`, `govulncheck`, `gosec`, `go build`, `go test -race`, and a Docker image build.
+CI (`.github/workflows/ci.yml`) gates on: `gofmt -l`, `go vet`, `staticcheck`, `govulncheck`, `gosec`, `go build`, the `archgen` diagram drift check, and `go test -race -coverpkg=./...` — plus parallel jobs: the live-Postgres store suite (which also runs `cmd/pam-server`'s Postgres-gated tests), SoftHSM PKCS#11, a Docker image build, Helm lint + kubeconform manifest validation, and SOPS round-trip verification.
 
 ## Architecture
 
