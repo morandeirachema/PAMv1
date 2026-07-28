@@ -26,9 +26,7 @@ func clipFrames(stream, mimetype string, chunks ...string) [][]byte {
 func observeAll(w *clipWatcher, direction string, frames [][]byte) []clipTransfer {
 	var got []clipTransfer
 	for _, f := range frames {
-		if t := w.Observe(direction, f); t != nil {
-			got = append(got, *t)
-		}
+		got = append(got, w.Observe(direction, f)...)
 	}
 	return got
 }
@@ -197,17 +195,47 @@ func TestClipWatcherSeesBatchedInstructions(t *testing.T) {
 	}
 
 	got := w.Observe("in", batch)
-	if got == nil {
-		t.Fatal("a clipboard transfer batched into a single frame was not observed; prefixing a `nop` evades the clipboard audit entirely")
+	if len(got) != 1 {
+		t.Fatalf("a clipboard transfer batched into a single frame produced %d observations, want 1; prefixing a `nop` must not evade the clipboard audit", len(got))
 	}
-	if got.Direction != "in" {
-		t.Fatalf("direction = %q, want %q", got.Direction, "in")
+	if got[0].Direction != "in" {
+		t.Fatalf("direction = %q, want %q", got[0].Direction, "in")
 	}
-	if got.Bytes != len("exfiltrated-secret") {
-		t.Fatalf("bytes = %d, want %d", got.Bytes, len("exfiltrated-secret"))
+	if got[0].Bytes != len("exfiltrated-secret") {
+		t.Fatalf("bytes = %d, want %d", got[0].Bytes, len("exfiltrated-secret"))
 	}
-	if got.Mimetype != "text/plain" {
-		t.Fatalf("mimetype = %q, want text/plain", got.Mimetype)
+	if got[0].Mimetype != "text/plain" {
+		t.Fatalf("mimetype = %q, want text/plain", got[0].Mimetype)
+	}
+}
+
+// TestClipWatcherReportsEveryTransferInAFrame proves a frame that completes
+// SEVERAL transfers reports all of them.
+//
+// Returning only the last was a subtler version of the evasion the batching fix
+// closed: two clipboard streams concatenated into one WebSocket message meant
+// the first transfer happened with no audit record of it at all. The fix that
+// made the watcher decode every instruction still reported a single transfer,
+// so the hole was narrower but not shut.
+func TestClipWatcherReportsEveryTransferInAFrame(t *testing.T) {
+	w := newClipWatcher("meta")
+
+	var batch []byte
+	for _, f := range clipFrames("1", "text/plain", "first-secret") {
+		batch = append(batch, f...)
+	}
+	for _, f := range clipFrames("2", "text/plain", "second-secret-longer") {
+		batch = append(batch, f...)
+	}
+
+	got := w.Observe("in", batch)
+	if len(got) != 2 {
+		t.Fatalf("a frame completing two transfers reported %d; the others are absent from the audit trail entirely", len(got))
+	}
+	sizes := map[int]bool{got[0].Bytes: true, got[1].Bytes: true}
+	if !sizes[len("first-secret")] || !sizes[len("second-secret-longer")] {
+		t.Fatalf("reported sizes %v do not cover both transfers (%d and %d)",
+			[]int{got[0].Bytes, got[1].Bytes}, len("first-secret"), len("second-secret-longer"))
 	}
 }
 

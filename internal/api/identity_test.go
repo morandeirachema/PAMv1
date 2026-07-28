@@ -22,6 +22,14 @@ func (f fakeDirectory) UserStatus(_ context.Context, username string) (bool, boo
 	return s.exists, s.enabled, nil
 }
 
+// TestIdentityReconcile proves reconciliation cuts off accounts the directory
+// has disabled, and leaves everyone else alone.
+//
+// This is the joiner-mover-leaver path: when HR disables someone upstream, that
+// must reach pamv1 without an administrator remembering to act. A local-only
+// account (absent from the directory entirely) must NOT be treated as disabled —
+// break-glass and service identities live there, and disabling them on a
+// directory outage would be an outage of its own.
 func TestIdentityReconcile(t *testing.T) {
 	dir := fakeDirectory{status: map[string]struct{ exists, enabled bool }{
 		"enabled-user":  {true, true},
@@ -73,6 +81,10 @@ func TestIdentityReconcile(t *testing.T) {
 	}
 }
 
+// TestIdentityReconcileNoDirectory proves reconciliation refuses to run with no
+// directory configured, rather than reporting a successful pass over nothing.
+// A "reconcile" that silently compared against an empty directory would be the
+// most dangerous possible answer.
 func TestIdentityReconcileNoDirectory(t *testing.T) {
 	srv := newTestServer(t) // no Directory configured
 	if status, _ := do(t, srv, http.MethodPost, "/api/identity/reconcile", testAPIKey, nil); status != http.StatusServiceUnavailable {

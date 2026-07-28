@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/morandeirachema/pamv1/internal/store"
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/recording"
@@ -52,6 +51,13 @@ type recordingInfo struct {
 	Actor    string    `json:"actor,omitempty"`
 }
 
+// recordingOwnerWindow is how far back the recordings listing looks to attribute
+// a file to a target and actor. Deliberately modest, and deliberately not
+// store.MaxAuditPage: this runs on every console refresh, and reading five
+// thousand rows with their full detail text to label at most five hundred
+// entries is a poor trade for a screen that degrades gracefully.
+const recordingOwnerWindow = 2000
+
 // recordingOwners maps recording file names to the target and actor recorded in
 // the audit trail. The recorders write `file:<path-or-name>` into
 // session.record / winrm.run, so this reverses that: it reads a window of recent
@@ -68,14 +74,21 @@ type recordingInfo struct {
 // silently answered any request above 500 with 100 events, so this resolved
 // owners for the newest hundred events in production while resolving all 2000
 // against the in-memory store the tests use. The store contract now pins those
-// semantics (asking for more never returns less), so the bound here means what
-// it says.
+// semantics (asking for more never returns less), so the bound means what it
+// says — which is exactly why it must be chosen deliberately rather than set to
+// the maximum. The early exit only fires once EVERY listed name is resolved, so
+// a single recording with no `session.record` event (pruned, or predating the
+// feature) makes every request read the full window. A page an order of
+// magnitude above the listing cap is enough to attribute the newest recordings
+// while keeping the cost of a console refresh bounded; anything older degrades
+// to a name with no target or actor, which is how this function has always
+// failed.
 //
 // Best-effort by design: a failed audit read returns an empty map so the
 // listing still renders (degraded to names only) instead of erroring.
 func (s *Server) recordingOwners(r *http.Request, want map[string]bool) map[string][2]string {
 	out := map[string][2]string{}
-	events, err := s.store.ListAudit(r.Context(), store.MaxAuditPage)
+	events, err := s.store.ListAudit(r.Context(), recordingOwnerWindow)
 	if err != nil {
 		return out
 	}

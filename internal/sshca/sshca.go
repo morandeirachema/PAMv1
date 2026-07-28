@@ -317,12 +317,17 @@ func putU32(b []byte, v uint32) []byte {
 	return append(b, x[:]...)
 }
 
+// putU64 appends v to b as a big-endian uint64, the wire encoding the SSH
+// certificate format uses for 64-bit fields.
 func putU64(b []byte, v uint64) []byte {
 	var x [8]byte
 	binary.BigEndian.PutUint64(x[:], v)
 	return append(b, x[:]...)
 }
 
+// putString appends s to b as an SSH wire string: a big-endian uint32 length
+// followed by the raw bytes. Length-prefixed rather than delimited, so a value
+// containing any byte — including a NUL or a newline — encodes unambiguously.
 func putString(b, s []byte) []byte {
 	b = putU32(b, uint32(len(s)))
 	return append(b, s...)

@@ -18,9 +18,20 @@ type setting struct {
 	apply  func(cfg *Config, val string) error
 }
 
+// applyStr adapts a plain setter into the apply signature the settings table
+// uses. A string needs no parsing, so this can never fail.
+//
+// The three applyX helpers exist so the settings table stays a table: each row
+// names an env var and how to store it, and the parsing rules live here once
+// instead of being repeated per setting.
 func applyStr(set func(*Config, string)) func(*Config, string) error {
 	return func(c *Config, v string) error { set(c, v); return nil }
 }
+
+// applyBool parses a boolean setting and reports a malformed value as an error
+// rather than defaulting it. That is deliberate: silently reading a mistyped
+// "ture" as false would disable a security control while the operator believed
+// they had enabled it.
 func applyBool(set func(*Config, bool)) func(*Config, string) error {
 	return func(c *Config, v string) error {
 		b, err := strconv.ParseBool(v)
@@ -31,6 +42,10 @@ func applyBool(set func(*Config, bool)) func(*Config, string) error {
 		return nil
 	}
 }
+
+// applyMinutes parses an integer setting expressed in MINUTES and stores it as a
+// duration, so the config table can hold "60" while the code works in
+// time.Duration. A malformed value is an error, never a default.
 func applyMinutes(set func(*Config, time.Duration)) func(*Config, string) error {
 	return func(c *Config, v string) error {
 		n, err := strconv.Atoi(v)

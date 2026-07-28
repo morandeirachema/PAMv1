@@ -10,6 +10,11 @@ import (
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
+// mfaEnroll starts (or restarts) TOTP enrollment for the caller: it generates a
+// secret, stores it unconfirmed, and returns the provisioning URI an
+// authenticator app scans. The factor is not active until mfaConfirm proves the
+// user can produce a code from it — so a half-finished enrollment can never lock
+// anyone out.
 func (s *Server) mfaEnroll(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r.Context())
 	// Replacing a CONFIRMED second factor requires proving the current one, so a

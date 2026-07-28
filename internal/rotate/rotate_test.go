@@ -166,6 +166,15 @@ func TestSSHConnectorVerifySSHKey(t *testing.T) {
 	}
 }
 
+// TestSSHConnectorRejectsUnsafeUsername proves a username containing ':' or a
+// newline is refused before it reaches chpasswd.
+//
+// The SSH connector feeds "user:newpassword\n" on stdin, so a colon would split
+// the field and a newline would start a second entry — letting a crafted
+// username set the password of an account other than the one being rotated.
+// (Contrast the WinRM connector, whose username lands on a cmd.exe command line
+// and therefore needs a full allowlist; see
+// TestWinRMConnectorRejectsInjectableUsername.)
 func TestSSHConnectorRejectsUnsafeUsername(t *testing.T) {
 	conn := SSHConnector{}
 	err := conn.Rotate(context.Background(), store.Target{Host: "127.0.0.1", Port: 1}, "bad:user", "old", "new")

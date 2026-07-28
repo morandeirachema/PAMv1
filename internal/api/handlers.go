@@ -15,6 +15,10 @@ import (
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
+// listSessions returns the sessions currently live on THIS replica, so a
+// supervisor can see who is connected to what and kill a session. In an HA
+// deployment each replica knows only its own; the kill path is what crosses
+// replicas, via the kill bus. Requires CapReadAudit.
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	if s.sessions == nil {
 		writeJSON(w, http.StatusOK, []any{})
@@ -129,17 +133,29 @@ func listWindow(r *http.Request) (limit int, after int64) {
 	return limit, after
 }
 
+// maxAuditResponsePage bounds how many audit events one HTTP response may carry.
+// Deliberately far below store.MaxAuditPage: an internal job like the retention
+// archiver may legitimately read thousands of rows, an API client should page.
+const maxAuditResponsePage = 500
+
+// listAudit returns the most recent audit events, newest first, capped by
+// ?limit= so an authenticated client cannot pull the whole trail in one request.
+// Requires CapReadAudit.
+//
+// The clamp is applied here as well as in the store. That is not redundancy for
+// its own sake: this bound is an API contract about response size, while the
+// store's is about how much a caller may load into memory, and they are allowed
+// to differ — the store permits far more for internal jobs such as retention
+// archiving than any HTTP response should carry.
 func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
-	limit := 100
+	limit := store.DefaultAuditPage
 	if q := r.URL.Query().Get("limit"); q != "" {
 		if n, err := strconv.Atoi(q); err == nil {
 			limit = n
 		}
 	}
-	// Clamp here so the response size is bounded and identical on both stores
-	// (memstore would otherwise return everything for limit<=0).
-	if limit <= 0 || limit > 500 {
-		limit = 100
+	if limit <= 0 || limit > maxAuditResponsePage {
+		limit = store.DefaultAuditPage
 	}
 	events, err := s.store.ListAudit(r.Context(), limit)
 	if err != nil {

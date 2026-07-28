@@ -30,11 +30,20 @@ var validDependencyKind = map[string]bool{
 // written before this rule existed (or straight into the database) still cannot
 // reach a command line.
 //
+// `$` is in the allowlist because Windows requires it: a named SQL Server
+// instance registers services as `MSSQL$INSTANCE` and `SQLAgent$INSTANCE`, which
+// is the textbook credential-dependency case for a PAM. It is inert in cmd.exe
+// (where these commands run — the iis_apppool command relies on `%windir%`
+// expanding, which is a cmd.exe behaviour), so admitting it costs nothing. The
+// sibling allowlist for `net user` accepts `$` for the same reason, for gMSA
+// accounts; the two must not disagree about what a legal Windows name looks
+// like.
+//
 // MustCompile panics if the pattern is malformed, which is what you want for a
 // constant: the failure happens once at program start, not on the first request
 // that needs it.
 var (
-	validDependencyName = regexp.MustCompile(`^[A-Za-z0-9 ._\-()\\/]{1,128}$`)
+	validDependencyName = regexp.MustCompile(`^[A-Za-z0-9 ._$\-()\\/]{1,128}$`)
 	// Hostname or IPv4/IPv6 literal; no metacharacters, no spaces.
 	validDependencyHost = regexp.MustCompile(`^[A-Za-z0-9._\-:\[\]]{1,253}$`)
 )

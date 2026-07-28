@@ -32,6 +32,12 @@ import (
 // which is a denial of service delivered through the login path.
 const maxMetadataBytes = 1 << 20 // 1 MiB; a large JWKS is a few KiB
 
+// GeneratePKCE returns a fresh PKCE verifier and its S256 challenge (RFC 7636).
+//
+// PKCE binds an authorization code to the client that requested it: the
+// challenge goes out with the authorization request, the verifier comes back
+// with the code exchange, and a stolen code is useless without the verifier that
+// was never transmitted. Required for public clients and worth using regardless.
 func GeneratePKCE() (verifier, challenge string, err error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {

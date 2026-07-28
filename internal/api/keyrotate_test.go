@@ -27,6 +27,10 @@ func (f *fakeKeyConnector) RotateKey(_ context.Context, _ store.Target, _, _, ne
 	return nil
 }
 
+// TestSSHKeyRotation proves rotating an ssh_key credential generates a NEW
+// private key, installs its public half on the target, and vaults the new
+// private key — so the old key stops working and the new one is never seen by
+// the operator.
 func TestSSHKeyRotation(t *testing.T) {
 	fc := &fakeKeyConnector{}
 	srv, _ := newTestServerOpts(t, nil, api.Options{

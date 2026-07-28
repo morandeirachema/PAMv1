@@ -385,7 +385,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	principal, err := d.resolver.Resolve(ctx, pw.Password)
 	if err != nil {
 		d.log.Warn("db authentication failed", "login", login, "remote", remote)
-		d.audit(ctx, login, "proxy.auth_failed", "proto:postgres remote:"+remote)
+		d.audit(ctx, auditField(login, 64), "proxy.auth_failed", "proto:postgres remote:"+remote)
 		d.fail(backend, "28P01", "pamv1: authentication failed")
 		return
 	}

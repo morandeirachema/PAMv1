@@ -25,6 +25,11 @@ import (
 	"strings"
 )
 
+// main regenerates docs/ARCHITECTURE-DIAGRAMS.md from the source tree.
+//
+// The diagrams are generated rather than hand-drawn so they cannot drift from
+// the code: CI runs this and fails if the committed file differs, which turns
+// "the diagram is out of date" from a thing nobody notices into a build failure.
 func main() {
 	root, module, err := moduleRoot()
 	if err != nil {
@@ -49,6 +54,8 @@ func main() {
 	fmt.Println("wrote", rel)
 }
 
+// fatal prints err and exits non-zero. Used for the unrecoverable setup errors
+// of a developer tool, where a stack trace would add nothing.
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "archgen:", err)
 	os.Exit(1)
@@ -79,6 +86,9 @@ func moduleRoot() (root, module string, err error) {
 	}
 }
 
+// writeHeader writes the generated file's preamble, including the warning not to
+// edit it by hand and the command that regenerates it — so someone who opens the
+// file and wants to change something is told immediately where to go instead.
 func writeHeader(b *strings.Builder) {
 	b.WriteString(`# pamv1 — Architecture Diagrams (generated)
 
@@ -115,6 +125,10 @@ var pkgLayer = []struct {
 	{"Platform", []string{"config", "logging", "metrics", "alert", "session", "maint"}},
 }
 
+// layerOf returns the architectural layer a package belongs to (core security,
+// front doors, identity, and so on), or "" when it is unclassified. The layers
+// are what give the generated package diagram its shape; without them it would
+// be an unreadable mesh of every import edge in the tree.
 func layerOf(pkg string) string {
 	for _, l := range pkgLayer {
 		for _, p := range l.pkgs {
@@ -222,6 +236,8 @@ func packageDirs(root string) ([]string, error) {
 	return dirs, nil
 }
 
+// dirHasGo reports whether dir contains any .go file, so directories that merely
+// hold sub-packages (or assets) are not drawn as packages themselves.
 func dirHasGo(dir string) (bool, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -278,6 +294,9 @@ func shortName(rel string) string {
 
 var nonID = regexp.MustCompile(`[^A-Za-z0-9_]`)
 
+// nodeID turns an arbitrary name into a Mermaid-safe node identifier: everything
+// outside [A-Za-z0-9_] becomes an underscore, with an "n_" prefix so an
+// identifier never starts with a digit.
 func nodeID(s string) string { return "n_" + nonID.ReplaceAllString(s, "_") }
 
 // --- data model (ER) ----------------------------------------------------------
