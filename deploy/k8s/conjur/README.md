@@ -44,6 +44,10 @@ value in Conjur takes effect on the next restart.
    conjur variable set -i pamv1/api-key              -v "$(openssl rand -hex 24)"
    conjur variable set -i pamv1/database-url         -v 'postgres://pam:...@postgres:5432/pam?sslmode=verify-full'
    conjur variable set -i pamv1/break-glass-key-hash -v '<sha256-hex>'
+   # Only if the AI-agent broker is enabled (PAM_BROKER_POLICY_FILE) — the policy
+   # declares both, and pamv1 fetches them at startup like the four above.
+   conjur variable set -i pamv1/broker-audit-key       -v "$(openssl rand -base64 32)"
+   conjur variable set -i pamv1/broker-audit-sign-seed -v "$(openssl rand -base64 32)"
    ```
 
 2. Point pam-server at Conjur and pick an authenticator:

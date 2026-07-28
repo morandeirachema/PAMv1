@@ -35,7 +35,7 @@ export PAM_DATABASE_URL=memory
 ./pam-server      # portal+API on :8080, SSH proxy on :2222
 ```
 
-`pam-server` utility flags: `-genkey` prints a new `PAM_MASTER_KEY`; `-hashkey` reads an emergency key on stdin and prints its SHA-256 for `PAM_BREAK_GLASS_KEY_HASH`.
+`pam-server` utility flags (each does one job and exits): `-genkey` prints a new `PAM_MASTER_KEY`; `-hashkey` reads an emergency key on stdin and prints its SHA-256 for `PAM_BREAK_GLASS_KEY_HASH`; `-split-key` reads an emergency key on stdin and prints N Shamir shares; `-rotate-kek` re-encrypts every vaulted secret under a new KEK (any provider via `PAM_KEK_*`/`PAM_NEW_KEK_*`, so it is also the migration path) — run it offline; `-healthcheck` probes the local `/healthz` and exits 0 if healthy, which is what the container HEALTHCHECK uses.
 
 Full stack (hardened Postgres + server): from `deploy/docker/`, `cp .env.example .env` (fill the keys), then `docker compose up --build`. The Docker/compose files live in `deploy/docker/` (`Dockerfile`, `Dockerfile.pkcs11`, `docker-compose.yml`, `.env.example`, plus `docker-compose.rdp-demo.yml` + `rdp-target/` — a throwaway xrdp desktop to demo the in-portal RDP viewer end to end); other deploy manifests live in `deploy/k8s/`, `deploy/helm/` and `deploy/terraform/` (all infra is IaC — do not hand-apply). The SOPS config is `deploy/.sops.yaml` (pass `--config deploy/.sops.yaml` when encrypting; decryption needs no config). The repo root keeps only `go.mod`/`go.sum`, `README*`, `ROADMAP.md`, `LICENSE`, `CLAUDE.md` and the two position-sensitive dotfiles `.dockerignore` and `.gitignore`.
 
