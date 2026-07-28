@@ -412,10 +412,16 @@ those phases deferred — WORM archiving before pruning, LEEF + TLS syslog,
 opaque recording names, clipboard auditing, SFTP path policy, per-item
 four-eyes on certification.
 
-What is left in process is **cross-replica live monitoring** (fanning session
-*bytes* across replicas is a heavier pub/sub than the kill signal already
-broadcast) and **per-file SFTP content recording** — both recorded in
-[ROADMAP.md](ROADMAP.md#smaller-follow-ons-recorded-where-they-were-deferred-).
+What is left is consolidated in
+**[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**. The short version:
+**no release has been cut**, which is the one beta criterion still unmet and the
+reason the Kubernetes and Helm paths do not work yet; `cmd/pam-server` has no
+tests; and a dozen in-process feature follow-ons remain, the largest being
+**cross-replica live monitoring** (fanning session *bytes* across replicas is a
+heavier pub/sub than the kill signal already broadcast), **per-file SFTP content
+recording**, and **WinRM live streaming** (WinRM output is recorded but does not
+reach the live monitor). Anything needing external infrastructure stays in
+[EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
 
 **All four Tier-1 gaps and all three Tier-2 gaps are closed** (including one-time access, Phase 26), **three of the five Tier-3 gaps** (Zero Standing Privilege, privileged threat analytics, and the identity blast-radius / CIEM engine), and the **first Tier-4 gap** (the application-secrets API). The rest of Tier 3 (connector breadth, *live* cloud-CIEM ingestion, web proxying) and Tier 4 (Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, thick-app components) are the next frontier — each gated on external infrastructure or accounts, catalogued in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
 

@@ -274,7 +274,7 @@ Extend the JIT chokepoint to **databases** — the first of the [Tier-1 competit
 - [x] **Upstream authentication with the vaulted secret**: trust, cleartext, MD5, and **SCRAM-SHA-256** (RFC 5802, stdlib `crypto/hmac`·`sha256` + `x/crypto/pbkdf2`), plus best-effort upstream TLS (`sslmode=prefer` style) — so it reaches self-hosted **and** managed/SCRAM Postgres. Optional operator-leg TLS when `PAM_TLS_CERT/KEY` are set
 - [x] **Per-statement query audit + recording**: every `Query`/`Parse` becomes a `db.query` audit event and a line in the session recording (asciicast, SHA-256 hash-chained like SSH/WinRM); live in the session registry (list + kill) as protocol `postgres`; post-session rotation honored
 - [x] **End-to-end JIT proof**: an in-process fake PostgreSQL upstream that accepts **only** the vaulted secret — a passing test proves the operator's PAM key was swapped for the vault secret and the SQL was audited; a bad-key operator is refused before any upstream contact
-- Deferred (documented): MySQL/MSSQL/Oracle connectors (same pattern, new wire protocols), CA-pinned upstream TLS, and result-row redaction policies
+- Deferred (documented): MySQL/MSSQL/Oracle connectors (same pattern, new wire protocols) and result-row redaction policies. **CA-pinned upstream TLS has since shipped** (`PAM_DB_UPSTREAM_CA` / `PAM_DB_UPSTREAM_TLS_VERIFY`, in the 2026-07-22 hardening pass)
 
 ## Phase 16 — Live session monitoring + command control ✅
 
@@ -1374,20 +1374,120 @@ Three things worth carrying forward:
   both directions showed hijacked WebSockets do not inherit the server deadline,
   so the RDP viewer correctly got no change
 
-### Smaller follow-ons, recorded where they were deferred ⬜
+### What is left ⬜
 
-This is the canonical "what is next". Both read-only security sweeps are closed —
-the 2026-07-26 one by phases 37–46, and the 2026-07-27 post-beta one by phases
-52–52g — so what remains in process is short, and each item is recorded against
-the phase that deferred it. Anything genuinely needing external infrastructure or
-a paid account stays in
-[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md) rather than being
-faked here.
+The canonical backlog. Both read-only security sweeps are closed — the
+2026-07-26 one by phases 37–46, the 2026-07-27 post-beta one by phases 52–52g —
+so nothing here is a known defect. It is the honest remainder, grouped by what it
+would take to close, with each item recorded against the phase that deferred it.
 
-- **Cross-replica live monitoring** (Phase 34) — the SSE watch stream is still
-  served by the pod hosting the session.
-- **Per-file SFTP content recording** (Phase 32) — operations are audited and
-  paths are gatable; the file *bytes* are not captured.
+#### 1. Blocking the beta claim
+
+The README defines beta as *feature-complete against the roadmap, self-audit
+closed, exercised by tests, and deploys as code*. Three of those four hold. This
+is the fourth:
+
+- **Cut a release.** There are zero tags, so the image every manifest pins
+  (`ghcr.io/morandeirachema/pamv1:0.10.0`) has never been published and
+  `kubectl apply`, `helm install` and the Terraform module all fail with
+  `ImagePullBackOff`. Everything else is prepared: the version is stamped by
+  ldflags and reported three ways (`-version`, the startup log,
+  `pam_build_info`), `release.yml` is test-gated and rehearsable via
+  `workflow_dispatch`, and the README documents `cosign verify`. The remaining
+  steps are `git tag v0.10.0 && git push --tags` and flipping the GHCR package
+  public — GHCR defaults new packages to private. Closing this also closes
+  [SECURITY-GAPS finding 18](docs/SECURITY-GAPS.md), which is deliberately
+  reopened until then.
+
+#### 2. Test gaps
+
+- **`cmd/pam-server` is at 0% coverage** — 1,181 lines with 39 distinct error and
+  validation exit paths: key custody at startup, the fail-closed deny-file
+  handling, listener wiring. It is where the `PAM_OT_AIRGAP` gap was found, and
+  the air-gap fix was tested in `internal/config` where the validation lives, so
+  the wiring layer itself is still untested. The clearest remaining gap in the
+  tree.
+- **Four small, cheap ones**, each against an existing fixture: the ITSM gate's
+  unreachable-webhook path (does it deny? the code says yes, nothing proves it),
+  the broker's 1024 parked-approval cap, `guacd`'s handshake protocol-error
+  branches, and `oidc.Discover`.
+
+#### 3. Feature follow-ons, in process
+
+Buildable without external infrastructure, each deferred by the phase named.
+
+- **Cross-replica live monitoring** (34) — the SSE watch stream and session
+  *listing* are still served by the pod hosting the session. Termination is
+  already cluster-wide; fanning session bytes is a heavier pub/sub than a kill
+  signal.
+- **Per-file SFTP content recording** (32) — operations are audited and paths are
+  gatable; the file *bytes* are not captured.
+- **WinRM live streaming** (16) — WinRM output is recorded but never reaches the
+  live-monitoring hub, so a supervisor cannot watch a WinRM session as it happens
+  the way they can an SSH or PostgreSQL one.
+- **Per-target RDP clipboard override** (33) — `PAM_RDP_CLIPBOARD` and
+  `PAM_RDP_CLIPBOARD_AUDIT` are global; a high-sensitivity target cannot be
+  stricter than the rest.
+- **Safe-scoped policy** (17) — per-safe approval and dual control, plus a
+  per-consumer management credential for dependent-account propagation (which
+  currently connects as the rotated account).
+- **Campaign depth** (19) — scheduled/recurring campaigns, safe- or owner-scoped
+  campaigns, reviewer assignment and reminders.
+- **Ticket gate depth** (20) — a first-class ServiceNow/Jira connector (the
+  generic webhook ships) and gating the *connect* path on a live ticket lookup
+  rather than validating at request time.
+- **Vendor console screen** (29) — the API is complete; the 5250 screens are a
+  follow-on, as they were for earlier phases.
+- **Config depth** (12) — runtime secret refresh without a restart (sourcing is
+  one-shot at boot) and a per-variable override map.
+- **KEK-wrap the broker audit keys** (13) — `PAM_BROKER_AUDIT_KEY` and
+  `PAM_BROKER_AUDIT_SIGN_SEED` are plain environment values while every other
+  long-lived key is either vault-wrapped or in shared custody.
+- **Analytics depth** (23) — peer-baseline and new-target novelty scoring (needs
+  a longer history model), and step-up-MFA as an automated response.
+- **Deploy examples** (14) — cloud-KMS recipients wired into the Helm chart, a
+  Flux `Kustomization` example, and sealing the CloudNativePG app-secret. The
+  SOPS README advertises a `helm secrets` flow with no example behind it.
+
+#### 4. Repo furniture
+
+Absent, and each cheap:
+
+- `CHANGELOG.md`; `CONTRIBUTING.md`; `CODEOWNERS`; issue and PR templates.
+- `dependabot.yml` — there is no automated dependency update path despite
+  `govulncheck` gating CI.
+- A `helm lint` / `kubeconform` job, so a broken chart or manifest fails in CI
+  rather than at `apply` time.
+- Housekeeping: 40-odd stale `phase-*` branches on the remote.
+
+#### 5. Infra-bound — not here
+
+Anything needing external infrastructure or a paid account to build and verify
+honestly stays in
+**[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)** rather than being
+faked: Kerberos bind and Kerberos WinRM (a KDC), serial connectors (RS-232
+hardware), MySQL/MSSQL/Oracle and network-device connectors, live cloud-CIEM
+ingestion and short-lived cloud-credential brokering, web/SaaS session proxying,
+SPIRE workload attestation and RFC 8693 token exchange, ephemeral local accounts,
+and the Tier-4 ecosystem items (a Terraform provider, Secrets-Hub sync-out,
+SSH-key fleet discovery, thick-app components).
+
+#### 6. Deliberate limits, not backlog
+
+Recorded so they are not mistaken for unfinished work:
+
+- **An interactive PTY is never parsed**, so command control and per-action
+  step-up cover the exec, WinRM and SQL paths but not a raw shell. Use observer
+  sessions or restrict shell access. This is the boundary, not a gap.
+- **Numeric policy comparators do not apply to raw SQL** — statements are not
+  structured arguments; in-session step-up covers that path instead.
+- **Sealed recordings are not re-wrapped by `-rotate-kek`**, because rewriting
+  them would invalidate the SHA-256 the audit trail attests to. Retain the old
+  KEK for as long as you retain sealed recordings.
+- **Operator certificates (28) deliberately bypass the proxy.** Authorization is
+  enforced at issuance and certificates are revocable by serial, but the session
+  is direct and unrecorded — keep the feature off, or the path off the OT
+  firewall, if that is not what you want.
 
 ---
 
@@ -1399,9 +1499,10 @@ The 5250 console is now explicitly **keyboard-first** (the mouse is optional), m
 
 **Tier-2 (access-governance depth) is complete** — certification campaigns (19), the ITSM/ticketing gate (20), and richer approval workflows (21), now including one-time access (26). **Tier-3**: Zero Standing Privilege (22), privileged threat analytics (23) and the identity blast-radius / CIEM engine (31) are shipped — three of five; connector/plugin breadth and web/SaaS session proxying remain, along with *live* cloud-CIEM ingestion, all infra-bound. **Tier-4 is under way**: the application-secrets API (24) is shipped; a Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, and thick-app components remain, each requiring external infrastructure or an account to build honestly (see [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)). The 5250 console has **full parity** with the backend (Phase 25) — every shipped capability is operable from the portal, keyboard-first — and the session-recording loop is closed end to end (Phase 26): record → watch live → replay later, hash-verified. See the [competitive-coverage section](README.md#coverage-vs-commercial-pam-cyberark-wallix-) for the full picture.
 
-**What is next** is the
-[smaller follow-ons](#smaller-follow-ons-recorded-where-they-were-deferred-): two
-in-process items, plus the infra-bound catalogue in
+**What is next** is consolidated in [What is left](#what-is-left-) above: the
+release that would complete the beta claim, the `cmd/pam-server` test gap, a
+dozen in-process feature follow-ons, and the repo furniture — with the
+infra-bound catalogue kept separately in
 [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md). The console is at
 **full parity** — every shipped capability is operable from the portal,
 keyboard-first.
