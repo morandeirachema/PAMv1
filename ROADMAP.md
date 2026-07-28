@@ -1401,12 +1401,19 @@ last to hold, and now does:
 
 #### 2. Test gaps
 
-- **`cmd/pam-server` is at 0% coverage** — 1,181 lines with 39 distinct error and
-  validation exit paths: key custody at startup, the fail-closed deny-file
-  handling, listener wiring. It is where the `PAM_OT_AIRGAP` gap was found, and
-  the air-gap fix was tested in `internal/config` where the validation lives, so
-  the wiring layer itself is still untested. The clearest remaining gap in the
-  tree.
+- ~~**`cmd/pam-server` is at 0% coverage**~~ — ✅ closed 2026-07-28.
+  `cmd/pam-server/main_test.go` now drives the wiring layer the way a
+  misconfigured deployment would: every fail-closed startup path reachable
+  without external infrastructure (deny files, audit-chain keys, TLS
+  requirements, identity backends, listener conflicts) triggered through the
+  environment; a full boot of the real server — both proxies, audit chain, SSH
+  CA, broker policy, background workers — health-checked live and shut down
+  with a real SIGTERM; the utility flags proven end to end (`-split-key` shares
+  actually reconstruct the key); and `-rotate-kek` proven against live
+  PostgreSQL in the pgstore CI job (old KEK stops decrypting, new one starts).
+  82.8% of the package's statements; the remainder is `main()`'s flag dispatch
+  and `fatal()`, which call `os.Exit` and are one-line wrappers around what is
+  tested.
 - **Four small, cheap ones**, each against an existing fixture: the ITSM gate's
   unreachable-webhook path (does it deny? the code says yes, nothing proves it),
   the broker's 1024 parked-approval cap, `guacd`'s handshake protocol-error

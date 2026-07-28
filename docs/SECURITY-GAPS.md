@@ -271,14 +271,22 @@ accounting attributes none of that work back to them. Measured naively,
 right one (three broker controls that were asserted by the threat model and
 executed by no test) had nothing to do with the numbers.
 
-Repo-wide the real figure is **68.3% of statements**, and the honest measurement
-makes one outlier obvious: **`cmd/pam-server` is at 0%**. That is 1,181 lines
-with 39 distinct error and validation exit paths — key custody at startup, the
-fail-closed deny-file handling, listener wiring — and it is where the
-`PAM_OT_AIRGAP` gap was found. The air-gap fix was tested in `internal/config`,
-where the validation actually lives, so the wiring layer itself remains
-uncovered. Recorded here rather than quietly left: it is the clearest remaining
-test gap in the tree.
+Repo-wide the real figure is **72.7% of statements** (68.3% before 2026-07-28).
+The honest measurement had made one outlier obvious — **`cmd/pam-server` at
+0%**: 1,181 lines with 39 distinct error and validation exit paths, where the
+`PAM_OT_AIRGAP` gap was found, and where the air-gap fix's test (placed in
+`internal/config`, where the validation lives) never reached. **Closed the same
+day** by `cmd/pam-server/main_test.go`: every fail-closed startup path
+reachable without external infrastructure is triggered through the environment
+the way a real misconfigured deployment would trigger it; the full server is
+booted for real (in-memory store, both proxies, audit chain, SSH CA, broker,
+workers), health-checked live, and shut down with a real SIGTERM; the utility
+flags are proven end to end (`-split-key`'s shares reconstruct the key,
+`-hashkey` matches the server's expectation); and `-rotate-kek` is proven
+against live PostgreSQL in the pgstore CI job — the secret decrypts under the
+new KEK and **stops** decrypting under the old one. The package sits at
+**82.8%**; the remainder is `main()`'s flag dispatch and `fatal()`, which call
+`os.Exit` and wrap one covered call each.
 
 **Not findings, explicitly checked and clean:** AAD parity across all twenty
 credential encrypt/decrypt sites and the `MFAAAD`/`ConfigAAD`/`KeyMaterialAAD`

@@ -425,8 +425,8 @@ Lo que queda está consolidado en
 **[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**. En resumen: la
 **[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0) se
 publicó el 2026-07-28** — el último de los cuatro criterios de beta, así que las
-rutas de Kubernetes, Helm y Terraform ya obtienen una imagen real y firmada;
-`cmd/pam-server` no tiene tests; y quedan una docena de mejoras en curso, las
+rutas de Kubernetes, Helm y Terraform ya obtienen una imagen real y firmada; y
+quedan una docena de mejoras en curso, las
 mayores la **monitorización en vivo entre réplicas** (repartir los *bytes* de una
 sesión entre réplicas es un pub/sub más pesado que la señal de terminación que ya
 se difunde), la **grabación del contenido de cada fichero SFTP** y el **streaming
