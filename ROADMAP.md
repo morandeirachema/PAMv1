@@ -199,11 +199,11 @@ Mapping to [Directive (EU) 2022/2555](https://eur-lex.europa.eu/eli/dir/2022/255
 
 - [x] **Observability**: Prometheus `/metrics` (`internal/metrics`, dependency-free exposition — request counts by status, audit volume, break-glass use, rotations, active-sessions gauge), structured JSON logs, **health/readiness split** (`/healthz` liveness + `/readyz` store-reachability readiness, `store.Ping`)
 - [x] **Helm chart** (`deploy/helm/pamv1`): deployment/service/secret/ingress/ServiceMonitor, configurable replicas, PVC or emptyDir, hardened pod security context
-- [x] **Signed releases** (`.github/workflows/release.yml`): build + push by digest on a version tag, **SBOM** (SPDX) generation + attestation, **cosign** keyless image signing, GitHub Release
+- [x] **Signed release pipeline** (built, test-gated and rehearsable; ⬜ no release cut yet — there are no tags, so nothing has been published or verified end to end) (`.github/workflows/release.yml`): build + push by digest on a version tag, **SBOM** (SPDX) generation + attestation, **cosign** keyless image signing, GitHub Release
 - [x] **HA — OIDC login state shared** via the store (migration `0004`, `store.PutOIDCState`/`TakeOIDCState`), so the auth-code callback can land on any replica. The auth rate-limiter stays best-effort per-replica; break-glass quorum-unseal keeps its shares in memory **by design** (persisting key shares to the DB would weaken the offline-shares guarantee — use a sticky session or a single replica for the unseal flow)
 - [x] **Postgres HA** via [CloudNativePG](https://cloudnative-pg.io/): a 3-instance `Cluster` manifest (`deploy/k8s/postgres-cnpg.yaml`, automatic failover, scram-sha-256, optional PITR)
 - [x] **Terraform module for cloud-managed Postgres** (`deploy/terraform/cloud-postgres/` — AWS RDS example: multi-AZ, encrypted, `force_ssl`)
-- [x] **SLSA build provenance** attested on release (`actions/attest-build-provenance` in `release.yml`, pushed to the registry alongside the cosign signature + SBOM)
+- [x] **SLSA build provenance** attested by the release pipeline (not yet exercised — no tags exist) (`actions/attest-build-provenance` in `release.yml`, pushed to the registry alongside the cosign signature + SBOM)
 
 ## Phase 11 — Management console ✅
 
