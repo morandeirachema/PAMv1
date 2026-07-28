@@ -1141,6 +1141,47 @@ tests were actually proving.
   holding them together, so limit semantics now live there instead of being
   re-invented on each side
 
+## Phase 52c — Make the authorization gates consistent ✅
+
+Findings **K**, **L**, **M**, **T**, **Y** and **Z**. Every one is the same class
+of defect: a gate that all comparable paths enforce, missing on exactly one. That
+is how this kind of bug survives review — a reviewer looking at the handler sees
+nothing wrong, because the problem is only visible next to its siblings.
+
+- [x] **The RDP tunnel stops being the exception.** It resolves its own principal
+  (a browser cannot set headers on a WebSocket handshake), and that is how it
+  drifted: a bare 401 instead of `authFailed`. It was the one bearer surface
+  where token guessing was neither throttled nor recorded — invisible to the risk
+  engine and the SIEM forwarder — while identical guessing against `/api/*` was
+  both. Authorization denials are audited now too
+- [x] **No self-approval on in-session step-up.** The pause exists to put a
+  *second* person in the loop; self-approval turns it into a confirmation prompt
+  and leaves an audit entry that reads like independent review — worse than no
+  gate, because it manufactures false assurance. Checked under the same lock as
+  the claim, reported distinctly from "nothing pending" so the status is honest,
+  and a refused attempt leaves the step-up **still pending** for a real
+  supervisor
+- [x] **The broker's credential tools obey the approval gate.** With
+  `require_approval` set, a human needed an approved request while an agent
+  permitted `reveal_credential` got the plaintext at any hour, outside every
+  window. The least-trusted actor in the system had the weakest gate
+- [x] **Vendor creation applies the escalation guard.** Its role is fixed at
+  `user` rather than caller-chosen, which is exactly why the check was missed —
+  but a fixed role is not a safe one
+- [x] **`PAM_REQUIRE_RECORDING` finally means what its name says.** It enforced
+  recording for the SSH, WinRM and PostgreSQL proxies but not for the two paths
+  that reach a target through the HTTP server — the in-portal RDP viewer and the
+  REST WinRM endpoint. An operator who set it believed every session was
+  recorded, and the two newest ways to reach a machine were the two it did not
+  cover. Both checks run *before* anything happens on the target
+- [x] **Audit fails closed where it already did elsewhere**: a privileged desktop
+  that leaves no record of being opened is what this system exists to prevent,
+  and a WinRM result the audit trail never accounted for is now withheld rather
+  than returned
+- [x] Tests assert the *consequence*, not just the status code: that guacd was
+  never contacted, that the command never ran, that the refusal reached the audit
+  trail, and that the legitimate path still works
+
 ### Open findings from the post-beta sweep (2026-07-27) ⬜
 
 A second full read-only sweep, run right after the beta milestone across six
@@ -1160,17 +1201,14 @@ real work, in rough priority order:
    evidence.
 3. ~~**Two same-day regressions from phases 44–51**~~ — **fixed in Phase 52b**
    (above), together with the store-contract gap that let them through.
-4. **The RDP tunnel authenticates itself and reproduces none of the middleware's
-   failure handling** — the only bearer surface with neither throttling nor an
-   `api.auth_failed` record, and its authorization denials are unaudited too.
+4. ~~**The RDP tunnel authenticates itself**~~ — **fixed in Phase 52c** (above).
 5. **Cancellation and deadlines at the edges** — a killed `ssh_exec` keeps
    running on the target, neither proxy has a pre-authentication deadline, and a
    global 30-second write timeout has been silently capping every live-monitoring
    stream since the feature shipped.
-6. **Gates that do not match their peers** — in-session step-up allows
-   self-approval, the broker's credential tools skip the approval gate,
-   `createVendor` skips the privilege-escalation guard, and the RDP and REST
-   WinRM paths audit best-effort where the proxies fail closed.
+6. ~~**Gates that do not match their peers**~~ — **fixed in Phase 52c** (above),
+   including `PAM_REQUIRE_RECORDING` finally covering the RDP viewer and the REST
+   WinRM endpoint.
 7. **The rest** — audit-trail integrity (unauthenticated unbounded appends,
    unquoted details), archive duplication and wedging under Phase 49, expired
    login sessions never collected, 50-bit MFA recovery codes, and a handful of

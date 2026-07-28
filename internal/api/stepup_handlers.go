@@ -24,6 +24,13 @@ type stepUpDecisionIn struct {
 // run, deny refuses it — the session stays open either way. The supervisor is the
 // one watching the session (CapReadAudit, the live-monitor gate). 404 if no
 // step-up is pending for the session.
+//
+// An operator may not decide their own session's step-up. The whole point of the
+// pause is to put a second person in the loop before a sensitive statement runs;
+// self-approval would turn it into a confirmation prompt while leaving an audit
+// entry that reads like independent review. Every other decision point in pamv1
+// already refuses this, so the refusal is audited here in the same shape
+// (`*.self_*_denied`) rather than silently 403ing.
 func (s *Server) decideStepUp(w http.ResponseWriter, r *http.Request) {
 	if s.stepup == nil {
 		writeError(w, http.StatusNotFound, "in-session step-up is not enabled")
@@ -34,7 +41,13 @@ func (s *Server) decideStepUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if !s.stepup.Decide(id, in.Approve) {
+	ok, selfApproval := s.stepup.DecideBy(id, in.Approve, actorFrom(r.Context()))
+	if selfApproval {
+		s.audit(r.Context(), "session.self_stepup_denied", "session:"+id)
+		writeError(w, http.StatusForbidden, "you cannot decide the step-up for your own session")
+		return
+	}
+	if !ok {
 		writeError(w, http.StatusNotFound, "no step-up is pending for this session")
 		return
 	}

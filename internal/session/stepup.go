@@ -80,25 +80,48 @@ func (s *StepUp) Await(ctx context.Context, sessionID, actor, statement string, 
 	}
 }
 
-// Decide resolves a session's pending step-up (approve/deny). It claims the
-// pending entry by removing it from the map under the lock — the same atomic
-// point Await's timeout path contends for — so exactly one of the two wins.
-// Returns false if no step-up is pending (or one was already claimed/decided).
+// Decide resolves a session's pending step-up (approve/deny) with no
+// separation-of-duties check. Use DecideBy for anything reachable by a human;
+// this exists for tests and for callers that have already established who is
+// deciding.
 func (s *StepUp) Decide(sessionID string, approve bool) bool {
+	ok, _ := s.DecideBy(sessionID, approve, "")
+	return ok
+}
+
+// DecideBy resolves a session's pending step-up on behalf of decider. It claims
+// the pending entry by removing it from the map under the lock — the same atomic
+// point Await's timeout path contends for — so exactly one of the two wins.
+//
+// It returns (false, true) when decider is the very operator whose session is
+// paused. A step-up exists to put a second person in the loop before a sensitive
+// statement runs; letting the operator approve their own turns the pause into a
+// confirmation prompt, which is worse than no gate at all because the audit trail
+// then records an approval that never happened. Every other decision point in
+// pamv1 — access requests, vendor grants, broker approvals, access certification
+// — already refuses self-approval; this one did not.
+//
+// The check happens under the same lock as the claim, so a concurrent decision
+// cannot slip a self-approval through between a lookup and a claim.
+func (s *StepUp) DecideBy(sessionID string, approve bool, decider string) (ok, selfApproval bool) {
 	if s == nil {
-		return false
+		return false, false
 	}
 	s.mu.Lock()
-	p, ok := s.pending[sessionID]
-	if ok {
+	p, found := s.pending[sessionID]
+	if found && decider != "" && p.actor == decider {
+		s.mu.Unlock()
+		return false, true // leave it pending for someone else to decide
+	}
+	if found {
 		delete(s.pending, sessionID)
 	}
 	s.mu.Unlock()
-	if !ok {
-		return false
+	if !found {
+		return false, false
 	}
 	p.decided <- approve // buffered (cap 1); the waiting Await receives it
-	return true
+	return true, false
 }
 
 // Pending lists the sessions awaiting a step-up decision (for a supervisor).

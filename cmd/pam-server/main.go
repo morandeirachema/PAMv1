@@ -788,6 +788,7 @@ func run() error {
 		SSHHostKeyCallback:      upstreamHostKey,
 		MFARequired:             cfg.MFARequired,
 		RecordingDir:            cfg.RecordingDir,
+		RequireRecording:        cfg.RequireRecording,
 		EncryptRecordings:       cfg.EncryptRecordings,
 		OpaqueRecordingNames:    cfg.OpaqueRecordingNames,
 		RDPClipboardAudit:       cfg.RDPClipboardAudit,
