@@ -437,16 +437,34 @@ func (p *Proxy) Addr() net.Addr {
 	return p.ln.Addr()
 }
 
+// handshakeTimeout bounds the pre-authentication phase of a proxied connection:
+// the SSH handshake, and the PostgreSQL startup/authentication exchange. It is
+// generous for a real client (a handshake takes milliseconds) and short enough
+// that an unauthenticated peer cannot hold a slot indefinitely.
+const handshakeTimeout = 30 * time.Second
+
 // handleConn completes the SSH handshake and runs every authorization gate in
 // order (enrollment, role CapConnect, target/credential resolution, per-target
 // grants and the approval gate) before dialing the upstream with the
 // JIT-decrypted secret and proxying its session channels. Each denial and the
 // session lifecycle are audited.
 func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
+	// Bound the handshake. Until it completes, an unauthenticated peer holds a
+	// connection slot, a goroutine and (with PAM_MAX_SESSIONS) part of a finite
+	// budget — and ssh.NewServerConn will wait indefinitely on a client that
+	// connects and then says nothing. Cheap to open, free to hold, is the shape
+	// of a resource-exhaustion problem, so it gets a deadline; a real handshake
+	// finishes in milliseconds.
+	//
+	// The deadline is cleared immediately afterwards: an established session is
+	// legitimately idle for long stretches while an operator reads output, and a
+	// deadline that survived the handshake would cut working sessions off.
+	_ = nConn.SetDeadline(time.Now().Add(handshakeTimeout))
 	sconn, chans, reqs, err := ssh.NewServerConn(nConn, p.sshCfg)
 	if err != nil {
 		return // handshake/auth failure; nothing authenticated to audit
 	}
+	_ = nConn.SetDeadline(time.Time{})
 	defer sconn.Close()
 	go ssh.DiscardRequests(reqs)
 
