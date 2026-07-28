@@ -96,6 +96,23 @@ approver.
 - **SIEM forwarding** — the trail exports as **OCSF** (`/api/audit/ocsf`, API
   Activity 6003 + Detection Finding 2004) for detection engineering off-box.
 
+
+## Which controls are proven, and by what
+
+Every mitigation this document claims is asserted by a test. That was not true
+until 2026-07-28: three of the controls named above had **never executed** in the
+test suite, which is a poor footing for a threat model.
+
+| Control | Proven by |
+|---|---|
+| Delegated approver-group separation of duties (Phase 27) | `api.TestBrokerDelegatedApproverGroupGrants` — every other successful broker approval in the suite decides as the bootstrap admin, so `approverPermitted` short-circuits on `IsAdmin` and the group-matching loop had never once returned true |
+| Capability backstop — policy YAML is never the sole gate | `broker.TestCapabilityBackstopDeniesWhatPolicyAllows`, on **both** the immediate and the post-approval path: a human approval must not confer a capability the agent does not hold |
+| Withdrawal is limited to the requester | `broker.TestWithdrawRejectsForeignRequester` and `TestSameAgentIdentityMatching`, the latter pinning the case-folded **name fallback** used whenever an identity carries no static-key row id — which is every SVID-authenticated agent, i.e. the intended production posture |
+| Fail-closed on an unavailable audit chain | `broker.TestProcessCallFailsClosedWhenAuditUnavailable` and its previously-missing twin `TestDecideFailsClosedWhenAuditUnavailable` |
+
+Each was verified to **fail against the code with the control removed**, not
+merely to pass with it present.
+
 ## Known boundaries (documented, not hidden)
 
 - **Administrator bypass** — a built-in admin may approve any group and connect
