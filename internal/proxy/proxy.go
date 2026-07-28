@@ -237,9 +237,12 @@ func recKeyFor(enabled bool, v *vault.Vault) recording.KeyWrapper {
 func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
 	// Throttle online guessing of the PAM key before doing any resolve work.
 	if !p.authLimiter.Allow(remoteHost(c.RemoteAddr())) {
-		remote := c.RemoteAddr().String()
-		p.log.Warn("authentication rate limited", "login", c.User(), "remote", remote)
-		p.audit(context.Background(), c.User(), "proxy.auth_rate_limited", "remote:"+remote)
+		// Log but do NOT append. The failures that preceded the throttle are the
+		// signal; writing one audit row per attempt under a flood makes the audit
+		// trail the amplifier, and with the HMAC chain enabled the retention
+		// worker deliberately refuses to prune those rows. This mirrors the API
+		// middleware, which returns before auditing for exactly this reason.
+		p.log.Warn("authentication rate limited", "login", auditField(c.User(), 64), "remote", c.RemoteAddr().String())
 		return nil, fmt.Errorf("pamv1: too many attempts; try again shortly")
 	}
 	principal, err := p.resolver.Resolve(context.Background(), string(password))
@@ -923,6 +926,11 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		defer errCopyDone.Done()
 		io.Copy(errOut, upChan.Stderr())
 	}()
+	// One serialized view of the operator's channel, shared by everything that
+	// writes to it: the target-output copy below and the SFTP inspector's
+	// refusals, which run on their own goroutine.
+	clientOut := &syncWriter{w: clientChan}
+
 	if observe {
 		// Read-only: drop operator keystrokes; never touch the upstream channel.
 		go io.Copy(io.Discard, clientChan)
@@ -931,7 +939,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 			// Operator keystrokes -> target. For an SFTP session the inspector parses
 			// this leg to audit + gate file operations; for a shell/exec session it is
 			// a transparent pass-through (the inspector stays inactive).
-			insp.pump(upChan, clientChan)
+			insp.pump(upChan, clientChan, clientOut)
 			// Propagate a client stdin half-close (CHANNEL_EOF) upstream, but keep
 			// the channel open so the command's remaining output and exit-status
 			// still flow back. Full upstream teardown happens in handleConn when the
@@ -940,10 +948,11 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		}()
 	}
 
-	// Target output -> operator, tee'd into the recording and the live hub.
-	var out io.Writer = clientChan
+	// Target output -> operator, tee'd into the recording and the live hub. This
+	// writes through clientOut so it cannot overlap an SFTP refusal.
+	var out io.Writer = clientOut
 	if rec != nil {
-		out = io.MultiWriter(clientChan, rec)
+		out = io.MultiWriter(clientOut, rec)
 	}
 	out = p.teeLive(out, sid)
 	if _, cerr := io.Copy(out, upChan); errors.Is(cerr, errRecordingLimit) {
@@ -1131,12 +1140,48 @@ func (p *Proxy) winrmRun(ctx context.Context, ch ssh.Channel, target *store.Targ
 
 // auditCmd renders a command for an audit detail, quoted and length-capped so a
 // long or newline-bearing command can't bloat or break the audit row.
-func auditCmd(command string) string {
-	const cap = 400
-	if len(command) > cap {
-		command = command[:cap] + "…"
+func auditCmd(command string) string { return auditField(command, 400) }
+
+// auditField makes an untrusted string safe to place in an audit detail or actor:
+// bounded in length and quoted, so embedded newlines, quotes and forged
+// `key:value` pairs cannot restructure the record around it.
+//
+// Audit details are a space-separated `key:value` format read by humans and by
+// the SIEM forwarder. Interpolating raw client input into one lets a caller
+// invent fields — a login of `alice target:prod-db action:approved` reads as
+// three legitimate keys. Every current consumer sanitizes on the way out, so
+// this is defence for the raw column, which is the copy an investigator reads.
+func auditField(s string, limit int) string {
+	if len(s) > limit {
+		s = s[:limit] + "…"
 	}
-	return strconv.Quote(command)
+	return strconv.Quote(s)
+}
+
+// syncWriter serializes concurrent writes to one destination.
+//
+// It exists for the operator's SSH channel, which two goroutines write to at
+// once: the session's main goroutine copying target output back, and the SFTP
+// inspector answering a refusal with a status packet. x/crypto/ssh documents
+// in-source that concurrent WriteExtended calls for the same extended code share
+// a pooled buffer and are not safe, and beyond the data race the practical
+// result is a status packet interleaved into a split read response — a corrupted
+// SFTP stream on the client.
+//
+// The race was latent while refusals only happened in read-only mode. Phase 51's
+// path denylist made them possible in the default allow mode too, where an
+// ordinary `mget` over a mixed allowed/denied set triggers exactly this overlap.
+// Sequential request/response tests never produce it.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+// Write forwards to the wrapped writer while holding the lock.
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
 }
 
 // recWriter returns a writer that sends to the client channel and, when set, tees

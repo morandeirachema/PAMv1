@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"sync/atomic"
 
 	"golang.org/x/crypto/ssh"
@@ -107,6 +108,15 @@ type sftpInspector struct {
 	giveUp bool                        // set on a parse error: forward the rest opaquely
 }
 
+// auditPath makes a client-supplied SFTP path safe for an audit detail. These
+// paths come straight off the wire from the operator's SFTP client, so they can
+// contain newlines, quotes, or text shaped like the `key:value` pairs the detail
+// format uses — a filename of `x reason:allowed op:read` would read as three
+// legitimate fields to a human or a SIEM parser. The same package already did
+// this for commands (auditCmd); the SFTP inspector, added later, interpolated
+// raw.
+func auditPath(path string) string { return auditField(path, 400) }
+
 // newSFTPInspector builds an inspector for mode, with an optional path denylist,
 // auditing through audit. audit is invoked from the data path, so it must not
 // block for long (it records a file operation, not a byte).
@@ -123,9 +133,9 @@ func (s *sftpInspector) pathDenied(path string) (string, bool) {
 // denyPath refuses one operation because its path is on the denylist, audits it
 // with the matched pattern, and answers the client so it sees a permission
 // error rather than hanging. It reports forward=false for the caller to return.
-func (s *sftpInspector) denyPath(client ssh.Channel, id uint32, op, path, pattern string) bool {
-	s.audit("sftp.blocked", fmt.Sprintf("op:%s path:%s reason:path-denied pattern:%s", op, path, pattern))
-	s.deny(client, id)
+func (s *sftpInspector) denyPath(reply io.Writer, id uint32, op, path, pattern string) bool {
+	s.audit("sftp.blocked", fmt.Sprintf("op:%s path:%s reason:path-denied pattern:%s", op, auditPath(path), auditField(pattern, 200)))
+	s.deny(reply, id)
 	return false
 }
 
@@ -142,17 +152,26 @@ func (s *sftpInspector) activate() {
 func (s *sftpInspector) enabled() bool { return s != nil && s.active.Load() }
 
 // pump copies the operator's channel to the target, inspecting it as SFTP once
-// activated. Forwarded packets go to dst (the upstream channel); a read-only
-// refusal is answered directly to client (the operator's channel) so the client
-// gets a proper SFTP status instead of hanging. It returns when the source
-// (client) reaches EOF or errors, mirroring io.Copy's termination.
-func (s *sftpInspector) pump(dst, client ssh.Channel) {
+// activated. Forwarded packets go to dst (the upstream channel); a refusal is
+// answered on reply (the operator's channel) so the client gets a proper SFTP
+// status instead of hanging. It returns when src reaches EOF or errors,
+// mirroring io.Copy's termination.
+//
+// reply is an io.Writer rather than the channel itself, and that is the whole
+// point: this runs on its own goroutine while the session's main goroutine is
+// copying target output to the SAME channel. x/crypto/ssh documents that
+// concurrent WriteExtended calls on one extended code share a pooled buffer and
+// are unsafe, so the caller passes a writer that serializes them. Before Phase
+// 51 a refusal only fired in readonly mode; path denials fire in allow mode too,
+// which makes an ordinary mget over a mixed allowed/denied set a realistic
+// trigger for a status packet interleaved into a split read response.
+func (s *sftpInspector) pump(dst ssh.Channel, src io.Reader, reply io.Writer) {
 	rbuf := make([]byte, 32*1024)
 	for {
-		n, err := client.Read(rbuf)
+		n, err := src.Read(rbuf)
 		if n > 0 {
 			if s.enabled() && !s.giveUp {
-				if perr := s.process(rbuf[:n], dst, client); perr != nil {
+				if perr := s.process(rbuf[:n], dst, reply); perr != nil {
 					return
 				}
 			} else if _, werr := dst.Write(rbuf[:n]); werr != nil {
@@ -170,7 +189,7 @@ func (s *sftpInspector) pump(dst, client ssh.Channel) {
 // makes the inspector give up (flush the buffer and pass the rest through), so a
 // protocol quirk degrades to today's opaque behavior rather than corrupting the
 // session.
-func (s *sftpInspector) process(chunk []byte, dst, client ssh.Channel) error {
+func (s *sftpInspector) process(chunk []byte, dst ssh.Channel, reply io.Writer) error {
 	s.buf.Write(chunk)
 	for {
 		b := s.buf.Bytes()
@@ -190,7 +209,7 @@ func (s *sftpInspector) process(chunk []byte, dst, client ssh.Channel) error {
 		copy(packet, b[:4+plen])
 		s.buf.Next(int(4 + plen))
 
-		if s.handlePacket(packet[4:], client) {
+		if s.handlePacket(packet[4:], reply) {
 			if _, err := dst.Write(packet); err != nil {
 				return err
 			}
@@ -216,7 +235,7 @@ func (s *sftpInspector) abandon(dst ssh.Channel) error {
 // handlePacket audits and applies policy to one SFTP packet (body = type byte +
 // payload). It reports whether the packet should be forwarded upstream. An
 // unparseable body is forwarded (fail-open) rather than dropped.
-func (s *sftpInspector) handlePacket(body []byte, client ssh.Channel) (forward bool) {
+func (s *sftpInspector) handlePacket(body []byte, reply io.Writer) (forward bool) {
 	if len(body) < 1 {
 		return true
 	}
@@ -224,33 +243,33 @@ func (s *sftpInspector) handlePacket(body []byte, client ssh.Channel) (forward b
 	case fxpInit, fxpVersion:
 		return true // the version handshake carries no request id
 	case fxpOpen:
-		return s.handleOpen(body[1:], client)
+		return s.handleOpen(body[1:], reply)
 	case fxpWrite:
 		// Defence in depth: a read-only session should never have obtained a
 		// writable handle (its OPEN was refused), but block any WRITE regardless.
 		if s.mode == SFTPReadOnly {
-			return !s.refuse(client, body[1:], "write", "")
+			return !s.refuse(reply, body[1:], "write", "")
 		}
 		return true
 	case fxpRemove:
-		return s.handleMutating(body[1:], client, "remove")
+		return s.handleMutating(body[1:], reply, "remove")
 	case fxpRmdir:
-		return s.handleMutating(body[1:], client, "rmdir")
+		return s.handleMutating(body[1:], reply, "rmdir")
 	case fxpMkdir:
-		return s.handleMutating(body[1:], client, "mkdir")
+		return s.handleMutating(body[1:], reply, "mkdir")
 	case fxpSetstat:
-		return s.handleMutating(body[1:], client, "setstat")
+		return s.handleMutating(body[1:], reply, "setstat")
 	case fxpFsetstat:
 		// FSETSTAT names a handle, not a path — block/audit without a path.
 		if s.mode == SFTPReadOnly {
-			return !s.refuse(client, body[1:], "setstat", "")
+			return !s.refuse(reply, body[1:], "setstat", "")
 		}
 		s.audit("sftp.modify", "op:setstat path:<handle>")
 		return true
 	case fxpRename:
-		return s.handleRename(body[1:], client)
+		return s.handleRename(body[1:], reply)
 	case fxpSymlink:
-		return s.handleMutating(body[1:], client, "symlink")
+		return s.handleMutating(body[1:], reply, "symlink")
 	default:
 		return true // read-family op (close/read/opendir/readdir/stat/realpath/…)
 	}
@@ -259,7 +278,7 @@ func (s *sftpInspector) handlePacket(body []byte, client ssh.Channel) (forward b
 // handleOpen audits a file open and, in read-only mode, refuses one that carries
 // any write-intent flag. rest is the packet body after the type byte:
 // uint32 id, string filename, uint32 pflags, ATTRS…
-func (s *sftpInspector) handleOpen(rest []byte, client ssh.Channel) (forward bool) {
+func (s *sftpInspector) handleOpen(rest []byte, reply io.Writer) (forward bool) {
 	id, r, ok := readU32(rest)
 	name, r2, ok2 := readString(r)
 	pflags, _, ok3 := readU32(r2)
@@ -269,7 +288,7 @@ func (s *sftpInspector) handleOpen(rest []byte, client ssh.Channel) (forward boo
 	// A denied path is refused in every mode and in both directions: allowing
 	// the read of a path you have denied would protect nothing.
 	if pattern, denied := s.pathDenied(name); denied {
-		return s.denyPath(client, id, "open", name, pattern)
+		return s.denyPath(reply, id, "open", name, pattern)
 	}
 	write := pflags&fxfWriteMask != 0
 	mode := "read"
@@ -277,38 +296,38 @@ func (s *sftpInspector) handleOpen(rest []byte, client ssh.Channel) (forward boo
 		mode = "write"
 	}
 	if write && s.mode == SFTPReadOnly {
-		s.audit("sftp.blocked", fmt.Sprintf("op:open path:%s reason:readonly", name))
-		s.deny(client, id)
+		s.audit("sftp.blocked", fmt.Sprintf("op:open path:%s reason:readonly", auditPath(name)))
+		s.deny(reply, id)
 		return false
 	}
-	s.audit("sftp.open", fmt.Sprintf("path:%s mode:%s", name, mode))
+	s.audit("sftp.open", fmt.Sprintf("path:%s mode:%s", auditPath(name), mode))
 	return true
 }
 
 // handleMutating handles a single-path mutating op (remove/rmdir/mkdir/setstat/
 // symlink): it audits the op and, in read-only mode, refuses it. rest begins with
 // uint32 id, string path.
-func (s *sftpInspector) handleMutating(rest []byte, client ssh.Channel, op string) (forward bool) {
+func (s *sftpInspector) handleMutating(rest []byte, reply io.Writer, op string) (forward bool) {
 	id, r, ok := readU32(rest)
 	path, _, ok2 := readString(r)
 	if !(ok && ok2) {
 		return true
 	}
 	if pattern, denied := s.pathDenied(path); denied {
-		return s.denyPath(client, id, op, path, pattern)
+		return s.denyPath(reply, id, op, path, pattern)
 	}
 	if s.mode == SFTPReadOnly {
-		s.audit("sftp.blocked", fmt.Sprintf("op:%s path:%s reason:readonly", op, path))
-		s.deny(client, id)
+		s.audit("sftp.blocked", fmt.Sprintf("op:%s path:%s reason:readonly", op, auditPath(path)))
+		s.deny(reply, id)
 		return false
 	}
-	s.audit("sftp.modify", fmt.Sprintf("op:%s path:%s", op, path))
+	s.audit("sftp.modify", fmt.Sprintf("op:%s path:%s", op, auditPath(path)))
 	return true
 }
 
 // handleRename handles SSH_FXP_RENAME (uint32 id, string oldpath, string
 // newpath): it audits both paths and, in read-only mode, refuses it.
-func (s *sftpInspector) handleRename(rest []byte, client ssh.Channel) (forward bool) {
+func (s *sftpInspector) handleRename(rest []byte, reply io.Writer) (forward bool) {
 	id, r, ok := readU32(rest)
 	oldp, r2, ok2 := readString(r)
 	newp, _, ok3 := readString(r2)
@@ -319,32 +338,32 @@ func (s *sftpInspector) handleRename(rest []byte, client ssh.Channel) (forward b
 	// allowed file onto a denied one, would each defeat the policy.
 	for _, p := range []string{oldp, newp} {
 		if pattern, denied := s.pathDenied(p); denied {
-			return s.denyPath(client, id, "rename", p, pattern)
+			return s.denyPath(reply, id, "rename", p, pattern)
 		}
 	}
 	if s.mode == SFTPReadOnly {
-		s.audit("sftp.blocked", fmt.Sprintf("op:rename path:%s reason:readonly", oldp))
-		s.deny(client, id)
+		s.audit("sftp.blocked", fmt.Sprintf("op:rename path:%s reason:readonly", auditPath(oldp)))
+		s.deny(reply, id)
 		return false
 	}
-	s.audit("sftp.modify", fmt.Sprintf("op:rename path:%s to:%s", oldp, newp))
+	s.audit("sftp.modify", fmt.Sprintf("op:rename path:%s to:%s", auditPath(oldp), auditPath(newp)))
 	return true
 }
 
 // refuse audits a read-only block for op (reading the request id from rest, whose
 // first field is the uint32 id) and sends the permission-denied status. It
 // reports true so the caller can invert it into "do not forward".
-func (s *sftpInspector) refuse(client ssh.Channel, rest []byte, op, path string) bool {
+func (s *sftpInspector) refuse(reply io.Writer, rest []byte, op, path string) bool {
 	id, _, _ := readU32(rest)
-	s.audit("sftp.blocked", fmt.Sprintf("op:%s path:%s reason:readonly", op, path))
-	s.deny(client, id)
+	s.audit("sftp.blocked", fmt.Sprintf("op:%s path:%s reason:readonly", op, auditPath(path)))
+	s.deny(reply, id)
 	return true
 }
 
 // deny writes an SSH_FXP_STATUS(SSH_FX_PERMISSION_DENIED) for request id back to
 // the operator's channel, so the client sees a clean refusal instead of hanging
 // on a dropped request. A write error is ignored: the session is already ending.
-func (s *sftpInspector) deny(client ssh.Channel, id uint32) {
+func (s *sftpInspector) deny(reply io.Writer, id uint32) {
 	const msg = "pamv1: read-only session — write operation denied by policy"
 	body := []byte{fxpStatus}
 	body = binary.BigEndian.AppendUint32(body, id)
@@ -353,7 +372,7 @@ func (s *sftpInspector) deny(client ssh.Channel, id uint32) {
 	body = appendString(body, "") // language tag
 	pkt := binary.BigEndian.AppendUint32(nil, uint32(len(body)))
 	pkt = append(pkt, body...)
-	_, _ = client.Write(pkt)
+	_, _ = reply.Write(pkt)
 }
 
 // readU32 reads a big-endian uint32 off the front of b, returning the value, the

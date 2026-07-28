@@ -1223,36 +1223,83 @@ scheduled, a failure that was reported as success.
   token limit silently discarded every pattern after one long line — with its
   `Err()` unchecked, a half-loaded policy looked exactly like a loaded one
 
-### Open findings from the post-beta sweep (2026-07-27) ⬜
+## Phase 52e — Audit-trail integrity, archiving, and two concurrency bugs ✅
 
-A second full read-only sweep, run right after the beta milestone across six
-dimensions in parallel, found **thirty** issues — every one confirmed by reading
-the code, all recorded with their reasoning in
-**[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md#open-findings-from-the-2026-07-27-sweep-post-beta)**,
-which is the authoritative detail. Two were housekeeping and are already fixed in
-that same change (a CI filter that left two live-PostgreSQL security tests
-running nowhere, and a deployment env reference five phases stale). The rest is
-real work, in rough priority order:
+The last nine findings from the post-beta sweep (**R**, **S**, **AC**, **AD**,
+**AE**, **AH**, **AI**, **AJ**, **AK**).
 
-1. ~~**Remote code execution through credential dependencies**~~ — **fixed in
-   Phase 52** (above), together with the `net user` blocklist that missed `&`.
-2. ~~**`-rotate-kek` is broken by its own successors**~~ — **fixed in Phase 52a**
-   (above); the sealed-recording half is resolved as a documented retention rule
-   plus a warning, because re-wrapping would destroy the recordings' tamper
-   evidence.
-3. ~~**Two same-day regressions from phases 44–51**~~ — **fixed in Phase 52b**
-   (above), together with the store-contract gap that let them through.
-4. ~~**The RDP tunnel authenticates itself**~~ — **fixed in Phase 52c** (above).
-5. ~~**Cancellation and deadlines at the edges**~~ — **fixed in Phase 52d**
-   (above), along with the uncollected login sessions, the kill that reported
-   success on failure, and the deny file that could fail open.
-6. ~~**Gates that do not match their peers**~~ — **fixed in Phase 52c** (above),
-   including `PAM_REQUIRE_RECORDING` finally covering the RDP viewer and the REST
-   WinRM endpoint.
-7. **The rest** — audit-trail integrity (unauthenticated unbounded appends,
-   unquoted details), archive duplication and wedging under Phase 49, expired
-   login sessions never collected, 50-bit MFA recovery codes, and a handful of
-   smaller consistency gaps.
+- [x] **The audit trail stops accepting unauthenticated, unbounded input.** Both
+  proxies log without appending on the throttled branch — the failures *before*
+  the throttle are the signal, and one row per attempt under a flood makes the
+  system of record the amplifier, which bites hardest with the HMAC chain on
+  because those rows are then deliberately never pruned. Client-supplied paths,
+  patterns and request paths are quoted and bounded, so a filename of
+  `x reason:allowed op:read` can no longer read as three legitimate fields
+- [x] **SSE framing escapes CR as well as LF.** Server-Sent Events treats both as
+  end-of-line, and the data being escaped is deliberately CRLF-bearing — so a
+  supervisor's view of a live session could be split into frames the session
+  never produced
+- [x] **The OIDC JWKS and discovery reads are bounded**, matching the token
+  endpoint eight lines away
+- [x] **Archiving no longer duplicates the whole trail every tick.** With the
+  chain enabled the aged rows are never pruned, so exporting everything older
+  than a moving cutoff rewrote all of history under a new name each pass, into
+  storage that is immutable and usually billed. It now archives only the delta,
+  with the high-water mark read from the audit trail itself — the fact was
+  already recorded there, and a mark kept elsewhere could disagree with the
+  archives that exist
+- [x] **One stuck recording no longer wedges archiving forever.** An interrupted
+  move (copy succeeded, remove failed) is now finished rather than treated as a
+  collision, a real collision is still refused, and the sweep continues past a
+  failure instead of stopping — with names sorted and timestamp-led, stopping
+  blocked every later recording permanently
+- [x] **A data race on the operator's SSH channel is closed.** Phase 51's path
+  denylist made refusals possible in the default mode, so the inspector's status
+  packet could interleave with target output mid-response. The test asserts the
+  property that matters — every payload arrives *whole* — not just the absence
+  of a crash
+- [x] **Batched Guacamole instructions can no longer evade clipboard auditing.**
+  The protocol has no one-instruction-per-message rule and the bridge forwards
+  whole messages, so a leading `nop` used to carry the clipboard and blob
+  instructions past inspection unexamined
+- [x] **A certification revoke cuts the user's live sessions**, as the equivalent
+  grant-delete route already did. A campaign whose purpose is deciding someone
+  should no longer have access was removing the grant and leaving them connected
+- [x] **MFA recovery codes carry 120 bits instead of 50.** They are a full
+  second-factor bypass, valid until used, stored as an unsalted SHA-256 — so they
+  are attacked offline from a backup, where rate limiting cannot reach. Plain
+  SHA-256 stays, and the reasoning is in the code: precomputation needs a small
+  input space, and the fix for a generated secret is to stop generating it small
+
+### The post-beta sweep (2026-07-27) — all thirty findings closed ✅
+
+The second full read-only sweep found **thirty** issues, every one confirmed by
+reading the code. All are now fixed, across phases 52–52e; the detail of each fix
+lives in
+**[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md#the-2026-07-27-post-beta-sweep--all-30-findings-now-closed)**.
+
+| Phase | What it closed |
+|---|---|
+| **52** | Command injection: credential dependencies (RCE) and the `net user` blocklist |
+| **52a** | `-rotate-kek` re-wraps key custody; sealed recordings documented rather than broken |
+| **52b** | The two same-day regressions, and the store-contract gap that hid one |
+| **52c** | Six authorization gates that did not match their peers |
+| **52d** | Lifetimes, deadlines and fail-open defaults |
+| **52e** | Audit-trail integrity, archiving, and two concurrency bugs |
+
+Three things worth carrying forward:
+
+- **Two findings were regressions introduced the same day, and both passed their
+  tests.** One test used certificate serials small enough that the defect could
+  not appear; the other used the in-memory store, which was the generous
+  implementation. Where practical each fix's test was then verified to **fail
+  against the old code**, not merely pass against the new
+- **The obvious fix was sometimes the wrong one.** Re-wrapping sealed recordings
+  during a KEK rotation would have destroyed the tamper evidence they exist to
+  provide, so that is resolved as a documented retention rule plus a warning
+- **One suspected finding was not one.** Verifying the write-timeout problem in
+  both directions showed hijacked WebSockets do not inherit the server deadline,
+  so the RDP viewer correctly got no change
 
 ### Smaller follow-ons, recorded where they were deferred ⬜
 

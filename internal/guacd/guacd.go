@@ -97,6 +97,33 @@ func Decode(raw []byte) (Instruction, bool) {
 	return inst, true
 }
 
+// DecodeAll parses EVERY instruction in raw, stopping at the first malformed or
+// incomplete one and returning what it read up to that point.
+//
+// The Guacamole protocol is a stream of self-delimiting instructions, and
+// nothing requires one instruction per message: a client may concatenate
+// several, and browsers do. Decode returns only the first, which is fine for
+// inspecting a frame the server itself produced one at a time — and wrong for
+// inspecting a frame that arrived from a client, because everything after the
+// first instruction went unexamined while being forwarded in full. That is how
+// a batched `nop;clipboard;blob` slipped past clipboard auditing.
+//
+// A bounded number of instructions is read, so a single oversized message cannot
+// turn inspection into the expensive part of the data path.
+func DecodeAll(raw []byte) []Instruction {
+	const maxInstructions = 256
+	r := bufio.NewReader(strings.NewReader(string(raw)))
+	out := make([]Instruction, 0, 4)
+	for len(out) < maxInstructions {
+		inst, err := readInstruction(r)
+		if err != nil {
+			break // malformed or exhausted; keep what parsed cleanly
+		}
+		out = append(out, inst)
+	}
+	return out
+}
+
 // Params carries the connection settings; Credentials are injected JIT.
 type Params struct {
 	Protocol string // rdp | vnc | ...

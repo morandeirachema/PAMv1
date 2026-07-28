@@ -174,3 +174,60 @@ func TestGuacdDecodeRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// TestClipWatcherSeesBatchedInstructions proves a clipboard transfer is audited
+// even when the whole thing arrives in ONE WebSocket message.
+//
+// The Guacamole protocol is a stream of self-delimiting instructions, and
+// nothing requires one per message — a client may concatenate them, and the
+// bridge forwards whatever it receives to guacd in full. The watcher used to
+// decode only the FIRST instruction in a frame, so prefixing a batch with a
+// harmless `nop` meant the clipboard and blob instructions behind it were
+// forwarded to the target completely unexamined. Data left a privileged desktop
+// with nothing in the audit trail, which is precisely what Phase 50 exists to
+// prevent.
+func TestClipWatcherSeesBatchedInstructions(t *testing.T) {
+	w := newClipWatcher("meta")
+
+	// Everything in one frame, led by a decoy instruction.
+	var batch []byte
+	batch = append(batch, []byte(guacd.Instruction{Opcode: "nop"}.Encode())...)
+	for _, f := range clipFrames("7", "text/plain", "exfiltrated-secret") {
+		batch = append(batch, f...)
+	}
+
+	got := w.Observe("in", batch)
+	if got == nil {
+		t.Fatal("a clipboard transfer batched into a single frame was not observed; prefixing a `nop` evades the clipboard audit entirely")
+	}
+	if got.Direction != "in" {
+		t.Fatalf("direction = %q, want %q", got.Direction, "in")
+	}
+	if got.Bytes != len("exfiltrated-secret") {
+		t.Fatalf("bytes = %d, want %d", got.Bytes, len("exfiltrated-secret"))
+	}
+	if got.Mimetype != "text/plain" {
+		t.Fatalf("mimetype = %q, want text/plain", got.Mimetype)
+	}
+}
+
+// TestGuacdDecodeAllStopsCleanly proves DecodeAll reads every instruction in a
+// buffer and stops at the first unreadable one rather than looping or panicking.
+// The observer must degrade to "saw what I could parse", never to a hang on the
+// data path of a live desktop.
+func TestGuacdDecodeAllStopsCleanly(t *testing.T) {
+	two := guacd.Instruction{Opcode: "nop"}.Encode() +
+		guacd.Instruction{Opcode: "clipboard", Args: []string{"1", "text/plain"}}.Encode()
+	if got := guacd.DecodeAll([]byte(two)); len(got) != 2 || got[1].Opcode != "clipboard" {
+		t.Fatalf("DecodeAll(two instructions) = %+v, want both", got)
+	}
+	// Trailing garbage: keep the clean prefix, discard the rest.
+	if got := guacd.DecodeAll([]byte(two + "not-an-instruction")); len(got) != 2 {
+		t.Fatalf("DecodeAll with trailing garbage returned %d instructions, want the 2 clean ones", len(got))
+	}
+	for _, bad := range []string{"", "nonsense", "5.abc", "99999999999999.x;"} {
+		if got := guacd.DecodeAll([]byte(bad)); len(got) != 0 {
+			t.Fatalf("DecodeAll(%q) = %+v, want none", bad, got)
+		}
+	}
+}

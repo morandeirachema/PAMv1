@@ -63,7 +63,15 @@ func (s *Server) streamSession(w http.ResponseWriter, r *http.Request) {
 // replacing raw newlines (which would otherwise split the event) with a literal
 // marker; the terminal content is otherwise passed through.
 func sseEscape(b []byte) string {
-	return strings.ReplaceAll(string(b), "\n", "\\n")
+	// BOTH line terminators must be escaped, not just LF. Server-Sent Events
+	// treats CR, LF and CRLF alike as end-of-line, so a lone CR ends the `data:`
+	// field just as an LF does — and the data being escaped here is deliberately
+	// CRLF-bearing: the SSH proxy emits \r\n, and the DB proxy frames statements
+	// as "psql> " + sql + "\r\n". Escaping LF alone left every one of those
+	// carriage returns able to terminate the field early, so a supervisor's view
+	// of a live session could be split into frames the session never produced.
+	s := strings.ReplaceAll(string(b), "\r", "\\r")
+	return strings.ReplaceAll(s, "\n", "\\n")
 }
 
 // killSession terminates a live session by id via the registry and audits it. In

@@ -113,17 +113,31 @@ func (t clipTransfer) Detail() string {
 	return d
 }
 
-// Observe feeds one raw instruction to the watcher and returns a completed
-// transfer when this frame ended one. A nil watcher observes nothing, so the
-// caller needs no branch.
+// Observe feeds one raw frame to the watcher and returns a completed transfer
+// when the frame ended one. A nil watcher observes nothing, so the caller needs
+// no branch.
+//
+// The frame may hold SEVERAL instructions — the Guacamole protocol is a stream
+// of self-delimiting instructions and a client may batch them in one WebSocket
+// message, which the bridge forwards whole. Observing only the first (which is
+// what Decode returns) meant a batched `nop;clipboard;blob` was forwarded to the
+// target with only the `nop` examined, so the clipboard audit could be evaded by
+// a client that simply did not send one instruction per message.
 func (w *clipWatcher) Observe(direction string, raw []byte) *clipTransfer {
 	if w == nil {
 		return nil
 	}
-	inst, ok := guacd.Decode(raw)
-	if !ok {
-		return nil
+	var completed *clipTransfer
+	for _, inst := range guacd.DecodeAll(raw) {
+		if t := w.observeOne(direction, inst); t != nil {
+			completed = t // a frame can complete more than one; report the last
+		}
 	}
+	return completed
+}
+
+// observeOne applies a single decoded instruction to the watcher's stream state.
+func (w *clipWatcher) observeOne(direction string, inst guacd.Instruction) *clipTransfer {
 	switch inst.Opcode {
 	case "clipboard":
 		// clipboard,<stream index>,<mimetype>

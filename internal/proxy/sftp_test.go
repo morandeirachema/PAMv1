@@ -344,7 +344,7 @@ func TestSFTPAllowAudits(t *testing.T) {
 	client.Close()
 
 	assertAuditContains(t, st, "sftp.session", "mode:allow")
-	assertAuditContains(t, st, "sftp.open", "path:/srv/report.csv mode:write")
+	assertAuditContains(t, st, "sftp.open", `path:"/srv/report.csv" mode:write`)
 }
 
 // TestSFTPReadOnlyBlocksWrites proves read-only mode refuses an upload and a
@@ -401,8 +401,8 @@ func TestSFTPReadOnlyBlocksWrites(t *testing.T) {
 		}
 		break
 	}
-	assertAuditContains(t, st, "sftp.blocked", "op:open path:/srv/evil.sh reason:readonly")
-	assertAuditContains(t, st, "sftp.blocked", "op:remove path:/srv/report.csv reason:readonly")
+	assertAuditContains(t, st, "sftp.blocked", `op:open path:"/srv/evil.sh" reason:readonly`)
+	assertAuditContains(t, st, "sftp.blocked", `op:remove path:"/srv/report.csv" reason:readonly`)
 	assertAuditContains(t, st, "sftp.open", "mode:read")
 }
 
@@ -491,10 +491,10 @@ func TestSFTPPathDenyBlocksReadAndWrite(t *testing.T) {
 		}
 		break
 	}
-	assertAuditContains(t, st, "sftp.blocked", "op:open path:/etc/shadow reason:path-denied pattern:^/etc/shadow$")
-	assertAuditContains(t, st, "sftp.blocked", "op:open path:/srv/keys/server.pem reason:path-denied")
-	assertAuditContains(t, st, "sftp.blocked", "op:remove path:/etc/shadow reason:path-denied")
-	assertAuditContains(t, st, "sftp.open", "path:/srv/report.csv")
+	assertAuditContains(t, st, "sftp.blocked", `op:open path:"/etc/shadow" reason:path-denied pattern:"^/etc/shadow$"`)
+	assertAuditContains(t, st, "sftp.blocked", `op:open path:"/srv/keys/server.pem" reason:path-denied`)
+	assertAuditContains(t, st, "sftp.blocked", `op:remove path:"/etc/shadow" reason:path-denied`)
+	assertAuditContains(t, st, "sftp.open", `path:"/srv/report.csv"`)
 }
 
 // TestSFTPPathDenyCoversBothRenameSides proves a rename cannot launder a denied
@@ -532,5 +532,5 @@ func TestSFTPPathDenyCoversBothRenameSides(t *testing.T) {
 		}
 		break
 	}
-	assertAuditContains(t, st, "sftp.blocked", "op:rename path:/etc/shadow reason:path-denied")
+	assertAuditContains(t, st, "sftp.blocked", `op:rename path:"/etc/shadow" reason:path-denied`)
 }
