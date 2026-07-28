@@ -25,8 +25,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/morandeirachema/pamv1/internal/store"
 )
 
 // errArchiveExists guards the write-once property: an archive file for a given
@@ -127,24 +125,26 @@ func (s *Server) archiveAuditBefore(ctx context.Context, dir string, cutoff time
 // re-exports more than necessary rather than skipping events — the safe
 // direction to fail in for an archive.
 func (s *Server) lastArchivedThrough(ctx context.Context) (time.Time, error) {
-	events, err := s.store.ListAudit(ctx, store.MaxAuditPage)
+	// A targeted lookup, not a scan of recent events: on a busy deployment the
+	// marker would fall off the end of any fixed page, and losing it means
+	// re-exporting history that is already archived — the exact problem this is
+	// here to prevent.
+	e, err := s.store.LatestAuditByAction(ctx, "audit.archived")
 	if err != nil {
 		return time.Time{}, err
 	}
-	for _, e := range events { // newest first
-		if e.Action != "audit.archived" {
+	if e == nil {
+		return time.Time{}, nil // nothing archived yet
+	}
+	for _, f := range strings.Fields(e.Detail) {
+		if !strings.HasPrefix(f, "older_than:") {
 			continue
 		}
-		for _, f := range strings.Fields(e.Detail) {
-			if !strings.HasPrefix(f, "older_than:") {
-				continue
-			}
-			ts, perr := time.Parse(time.RFC3339, strings.TrimPrefix(f, "older_than:"))
-			if perr != nil {
-				return time.Time{}, nil // unreadable marker: re-export rather than skip
-			}
-			return ts, nil
+		ts, perr := time.Parse(time.RFC3339, strings.TrimPrefix(f, "older_than:"))
+		if perr != nil {
+			return time.Time{}, nil // unreadable marker: re-export rather than skip
 		}
+		return ts, nil
 	}
 	return time.Time{}, nil
 }

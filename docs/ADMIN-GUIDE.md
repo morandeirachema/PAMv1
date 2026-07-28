@@ -1866,6 +1866,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 | 2026-07-18 | Phase 3b: OIDC single sign-on (Authorization Code + PKCE, JWKS validation) |
 | 2026-07-18 | Phase 4: Windows targets — WinRM command execution with JIT credentials |
 | 2026-07-18 | Phase 3b: enforce-MFA policy (`PAM_MFA_REQUIRED`) + single-use recovery codes |
+| 2026-07-28 | **Phases 52–52e: the post-beta security sweep, all thirty findings closed.** Operationally relevant: `PAM_REQUIRE_RECORDING` now covers the in-portal RDP viewer and the REST WinRM endpoint as well as the three proxies, so a deployment that sets it without `PAM_GUACD_RECORDING_PATH` / `PAM_RECORDING_DIR` will now **refuse those sessions** rather than run them unrecorded (§4). A deny file that yields no usable patterns (`PAM_COMMAND_DENY_FILE`, `PAM_SSH_SFTP_DENY_FILE`, `PAM_DB_STEPUP_FILE`) is now **fatal at startup** instead of silently disabling the control — an unmounted ConfigMap fails loudly. `-rotate-kek` re-wraps the Phase-42 key custody and warns about sealed recordings (§8). Audit details now quote client-supplied paths and patterns, and MFA recovery codes are longer; both are format changes for anything parsing them |
 | 2026-07-18 | Phase 3b: Microsoft Entra ID (Azure AD) login setup (app roles → roles, sovereign host) |
 | 2026-07-18 | Phase 3b: TOTP MFA (self-service enroll/verify, enforced on login) |
 | 2026-07-18 | Phase 3b: Active Directory login setup (LDAPS, group→role, session tokens); envelope-encryption KEK config |

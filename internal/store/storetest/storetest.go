@@ -1350,6 +1350,32 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		}
 	}
 
+	// --- LatestAuditByAction ---
+	// Retention's archiver uses this to find where the previous archive finished,
+	// so both stores must agree on "most recent" and on "none" — a wrong answer
+	// here re-exports history that is already archived, or (worse) skips events.
+	if err := st.AppendAudit(ctx, &store.AuditEvent{Actor: "sys", Action: "marker.test", Detail: "n:1"}); err != nil {
+		t.Fatalf("AppendAudit: %v", err)
+	}
+	if err := st.AppendAudit(ctx, &store.AuditEvent{Actor: "sys", Action: "other.action", Detail: "noise"}); err != nil {
+		t.Fatalf("AppendAudit: %v", err)
+	}
+	if err := st.AppendAudit(ctx, &store.AuditEvent{Actor: "sys", Action: "marker.test", Detail: "n:2"}); err != nil {
+		t.Fatalf("AppendAudit: %v", err)
+	}
+	latest, err := st.LatestAuditByAction(ctx, "marker.test")
+	if err != nil {
+		t.Fatalf("LatestAuditByAction: %v", err)
+	}
+	if latest == nil || latest.Detail != "n:2" {
+		t.Fatalf("LatestAuditByAction returned %+v, want the newest marker (n:2)", latest)
+	}
+	// An action with no events is (nil, nil) — not an error, and not the newest
+	// event of some other action.
+	if missing, err := st.LatestAuditByAction(ctx, "marker.never.happened"); err != nil || missing != nil {
+		t.Fatalf("LatestAuditByAction(unknown) = %+v, %v; want nil, nil", missing, err)
+	}
+
 	// --- session kill bus (Phase 34) ---
 	// A selector published on the bus is delivered to a subscriber, JSON-intact
 	// (Postgres LISTEN/NOTIFY for pgstore; an in-process hub for memstore).
