@@ -199,7 +199,7 @@ Mapping to [Directive (EU) 2022/2555](https://eur-lex.europa.eu/eli/dir/2022/255
 
 - [x] **Observability**: Prometheus `/metrics` (`internal/metrics`, dependency-free exposition — request counts by status, audit volume, break-glass use, rotations, active-sessions gauge), structured JSON logs, **health/readiness split** (`/healthz` liveness + `/readyz` store-reachability readiness, `store.Ping`)
 - [x] **Helm chart** (`deploy/helm/pamv1`): deployment/service/secret/ingress/ServiceMonitor, configurable replicas, PVC or emptyDir, hardened pod security context
-- [x] **Signed release pipeline** (built, test-gated and rehearsable; ⬜ no release cut yet — there are no tags, so nothing has been published or verified end to end) (`.github/workflows/release.yml`): build + push by digest on a version tag, **SBOM** (SPDX) generation + attestation, **cosign** keyless image signing, GitHub Release
+- [x] **Signed release pipeline** (`.github/workflows/release.yml`): build + push by digest on a version tag, **SBOM** (SPDX) generation + attestation, **cosign** keyless image signing, GitHub Release. First executed for real on 2026-07-28: **v0.10.0** published, signed and attested end to end
 - [x] **HA — OIDC login state shared** via the store (migration `0004`, `store.PutOIDCState`/`TakeOIDCState`), so the auth-code callback can land on any replica. The auth rate-limiter stays best-effort per-replica; break-glass quorum-unseal keeps its shares in memory **by design** (persisting key shares to the DB would weaken the offline-shares guarantee — use a sticky session or a single replica for the unseal flow)
 - [x] **Postgres HA** via [CloudNativePG](https://cloudnative-pg.io/): a 3-instance `Cluster` manifest (`deploy/k8s/postgres-cnpg.yaml`, automatic failover, scram-sha-256, optional PITR)
 - [x] **Terraform module for cloud-managed Postgres** (`deploy/terraform/cloud-postgres/` — AWS RDS example: multi-AZ, encrypted, `force_ssl`)
@@ -1381,23 +1381,23 @@ The canonical backlog. Both read-only security sweeps are closed — the
 so nothing here is a known defect. It is the honest remainder, grouped by what it
 would take to close, with each item recorded against the phase that deferred it.
 
-#### 1. Blocking the beta claim
+#### 1. Blocking the beta claim — ✅ resolved 2026-07-28
 
 The README defines beta as *feature-complete against the roadmap, self-audit
-closed, exercised by tests, and deploys as code*. Three of those four hold. This
-is the fourth:
+closed, exercised by tests, and deploys as code*. The fourth criterion was the
+last to hold, and now does:
 
-- **Cut a release.** There are zero tags, so the image every manifest pins
-  (`ghcr.io/morandeirachema/pamv1:0.10.0`) has never been published and
-  `kubectl apply`, `helm install` and the Terraform module all fail with
-  `ImagePullBackOff`. Everything else is prepared: the version is stamped by
-  ldflags and reported three ways (`-version`, the startup log,
-  `pam_build_info`), `release.yml` is test-gated and rehearsable via
-  `workflow_dispatch`, and the README documents `cosign verify`. The remaining
-  steps are `git tag v0.10.0 && git push --tags` and flipping the GHCR package
-  public — GHCR defaults new packages to private. Closing this also closes
-  [SECURITY-GAPS finding 18](docs/SECURITY-GAPS.md), which is deliberately
-  reopened until then.
+- **The release is cut.** `v0.10.0` was tagged on 2026-07-28 and `release.yml`
+  ran for real for the first time: its own test job gated the tag, then the
+  image was built and pushed as
+  `ghcr.io/morandeirachema/pamv1:0.10.0` (digest
+  `sha256:ab2a5fa5db27fae805f9096dfdf526497ddff4cc3774b33469ab108b98637b39`),
+  cosign-signed keyless, with an SPDX SBOM attestation and SLSA build
+  provenance, and a GitHub Release carrying the SBOM. The package is public —
+  anonymous pull verified — so `kubectl apply`, `helm install` and the
+  Terraform module resolve the pin they always carried. This also closed
+  [SECURITY-GAPS finding 18](docs/SECURITY-GAPS.md), which had been
+  deliberately reopened until a release existed.
 
 #### 2. Test gaps
 

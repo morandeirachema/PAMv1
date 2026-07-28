@@ -216,7 +216,7 @@ PAM for AI agents — the same chokepoint, extended to autonomous tools. Opt-in 
 
 - **PostgreSQL storage** via [pgx](https://github.com/jackc/pgx) with embedded, versioned migrations; an in-memory store for tests and demos; optional **[CloudNativePG](https://cloudnative-pg.io/) HA**.
 - **Observability** — a dependency-free [Prometheus](https://prometheus.io/) `/metrics` endpoint (request counts by status, audit volume, break-glass use, rotations, active-sessions gauge), plus a health/readiness split (`/healthz` liveness, `/readyz` checks the database).
-- **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. The release pipeline builds by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance** — see [Verifying a release](#verifying-a-release). *No release has been cut yet: there are no tags, so the published-artifact paths below are not yet usable.*
+- **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. The release pipeline builds by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance** — see [Verifying a release](#verifying-a-release). *First release: **[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** (2026-07-28) — the signed image is public at `ghcr.io/morandeirachema/pamv1:0.10.0`, so the published-artifact paths below work.*
 - **Encrypted secrets in git** — the Kubernetes secret manifest can be sealed with **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: values are encrypted while `kind`/`metadata` stay reviewable, decrypted at deploy time (`sops -d | kubectl apply -f -`, plaintext never on disk) or natively by Flux / Argo / helm-secrets — so secrets live in the **same IaC repo** without leaking. See **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **Or source secrets from CyberArk Conjur** — as a runtime alternative to SOPS, set `PAM_CONJUR_URL` and pamv1 fetches its own bootstrap secrets (master key, API key, DB URL, …) from **[Conjur](https://www.conjur.org/)** at startup, authenticating with a host API key or a **Kubernetes `authn-jwt`** projected token — so no bootstrap secret lives in Git at all. Both mechanisms ship; SOPS stays the zero-dependency default. See **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
 
@@ -414,8 +414,9 @@ four-eyes on certification.
 
 What is left is consolidated in
 **[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**. The short version:
-**no release has been cut**, which is the one beta criterion still unmet and the
-reason the Kubernetes and Helm paths do not work yet; `cmd/pam-server` has no
+**[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0) shipped
+on 2026-07-28** — the last of the four beta criteria, so the Kubernetes, Helm and
+Terraform paths now pull a real, signed image; `cmd/pam-server` has no
 tests; and a dozen in-process feature follow-ons remain, the largest being
 **cross-replica live monitoring** (fanning session *bytes* across replicas is a
 heavier pub/sub than the kill signal already broadcast), **per-file SFTP content
@@ -454,17 +455,13 @@ docker compose up --build
 
 ### Kubernetes
 
-> ⚠️ **Two things to know before you run this.**
-> 1. **No release has been published yet** — there are zero tags, so the image
->    the manifests pin (`ghcr.io/morandeirachema/pamv1:0.10.0`) does not exist
->    and the pods will sit in `ImagePullBackOff`. Until a release is cut, build
->    and push your own image and point the manifests at it, or use the
->    docker-compose path above, which builds from source.
-> 2. `deploy/k8s/postgres-cnpg.yaml` declares a **CloudNativePG** `Cluster`, so
->    `kubectl apply -f deploy/k8s/` fails on an unknown kind unless the
->    [CloudNativePG operator](https://cloudnative-pg.io/) is installed first.
->    Install it, or apply the individual manifests you want and bring your own
->    PostgreSQL.
+> ⚠️ **One thing to know before you run this:**
+> `deploy/k8s/postgres-cnpg.yaml` declares a **CloudNativePG** `Cluster`, so
+> `kubectl apply -f deploy/k8s/` fails on an unknown kind unless the
+> [CloudNativePG operator](https://cloudnative-pg.io/) is installed first.
+> Install it, or apply the individual manifests you want and bring your own
+> PostgreSQL. (The image the manifests pin,
+> `ghcr.io/morandeirachema/pamv1:0.10.0`, is published and public.)
 
 ```bash
 kubectl apply -f deploy/k8s/namespace.yaml
@@ -557,13 +554,15 @@ gh attestation verify "oci://$IMAGE:${TAG#v}" --repo morandeirachema/pamv1
 And to confirm what you are actually running:
 
 ```bash
-kubectl -n pamv1 exec deploy/pamv1 -- /pam-server -version   # → pam-server v0.10.0 (abc1234)
+kubectl -n pamv1 exec deploy/pamv1 -- /pam-server -version   # → pam-server 0.10.0 (<full commit sha>)
 curl -s http://pamv1:8080/metrics | grep pam_build_info      # same, for monitoring
 ```
 
-**Status:** the pipeline is built, test-gated and rehearsable, but **no release
-has been cut** — there are no tags, so nothing has been signed or attested yet.
-The commands above are what will work once one is.
+**Status:** **[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)
+was released on 2026-07-28** — image digest
+`sha256:ab2a5fa5db27fae805f9096dfdf526497ddff4cc3774b33469ab108b98637b39`, with the
+cosign signature, SPDX SBOM attestation and SLSA provenance published alongside it
+in GHCR. The commands above work against it today.
 
 ## Break-glass procedure
 

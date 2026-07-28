@@ -90,7 +90,7 @@ database to verify end-to-end (see [EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.
 | **Credential lifecycle** | Rotation (SSH/WinRM connectors), reconciliation + drift remediation, scheduled worker | ✅ Phase 7 |
 | **OT session approval** | 4-eyes access-request workflow, per-target/global gate, air-gap mode | ✅ Phase 8 |
 | **NIS2 incident export** | Tamper-evident audit export (JSON/CSV, SHA-256), Art. 21 control matrix | ✅ Phase 9 |
-| **Observability & ops** | Prometheus `/metrics`, `/healthz`+`/readyz`, Helm chart, SBOM + cosign-signed release **pipeline** | ✅ Phase 10 (pipeline built and test-gated; **no release cut yet — zero tags**) | |
+| **Observability & ops** | Prometheus `/metrics`, `/healthz`+`/readyz`, Helm chart, SBOM + cosign-signed releases | ✅ Phase 10 (first real release **v0.10.0** published, signed and attested 2026-07-28) | |
 | **Custom profiles & config subsystem** | Named capability sets beyond the four roles; DB-persisted, hot-swappable `PAM_*` overrides | ✅ Phase 12 |
 | **AI-agent access broker** | Policy over tool + args, JIT server-side execution, keyed-HMAC verifiable audit, MCP transport, SPIFFE SVID | ✅ Phase 13 |
 | **Zero Standing Privilege** | `ssh_ca` credentials store no secret; a short-lived SSH certificate is minted per session | ✅ Phase 22 |
@@ -190,6 +190,7 @@ flowchart LR
 | 2026-07-25 | Phase 32: **SFTP file-transfer control + audit** — the SSH proxy now parses the SFTP subsystem stream (`internal/proxy/sftpguard.go`) instead of passing it through opaque. `PAM_SSH_SFTP` sets the policy: `allow` (forward + audit every file op — `sftp.session`/`open`/`modify`), `readonly` (refuse uploads/deletes/renames with a synthesized permission-denied, `sftp.blocked` — the target is never contacted), or `deny` (refuse the subsystem, `sftp.denied`). Closes an unaudited file-exfiltration path in the flagship proxy; no schema change |
 | Date | Change |
 |---|---|
+| 2026-07-28 | **First release cut: v0.10.0** — the tag ran the test-gated release pipeline end to end for the first time; `ghcr.io/morandeirachema/pamv1:0.10.0` is published (public), cosign-signed, with SPDX SBOM attestation and SLSA provenance. The image pin in the K8s/Helm/Terraform manifests now resolves, meeting the last beta criterion (deploys as code). Docs only — no code change |
 | 2026-07-27 | Phase 51: **SFTP path policy** — file transfer could be restricted by operation but not by path, so a read-only session could still download a private key; a regex denylist (the same engine as command control) now refuses named paths in every mode, reads included, and on both sides of a rename |
 | 2026-07-27 | Phase 50: **clipboard auditing on the RDP bridge** — the clipboard could be gated but not observed; each transfer is now audited with its direction, type, size and digest (content only on an explicit opt-in, since a privileged clipboard often holds a just-copied password), and auditing never blocks what gating allows |
 | 2026-07-27 | Phase 49: **archive to WORM before pruning** — retention no longer just deletes: with `PAM_RETENTION_ARCHIVE_DIR` set, aged audit rows are exported as digest-stamped JSON Lines and aged recordings are moved into a write-once archive, and the delete runs only if that archive succeeded, so a broken archive costs disk space rather than evidence |
