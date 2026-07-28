@@ -144,7 +144,7 @@ Found by the same pass, **not** fixed in it — each is a phase-sized change or 
 deliberate design decision to take, not a one-line correction. They are recorded
 here rather than left implicit. **Every finding has since shipped** (Phases
 38–45, struck through below); what remains planned are the smaller follow-ons
-listed in the **[ROADMAP](../ROADMAP.md#smaller-follow-ons-recorded-where-they-were-deferred-)**, which is the
+listed in the **[ROADMAP](../ROADMAP.md#what-is-left-)**, which is the
 authoritative place for what happens next — this table is the finding, the
 roadmap is the plan.
 
