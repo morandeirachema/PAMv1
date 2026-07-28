@@ -146,6 +146,48 @@ func TestSweepExpiredParked(t *testing.T) {
 	}
 }
 
+// TestParkedApprovalCap proves the DoS guard on the approval queue: the
+// 1025th simultaneously-parked call is refused terminally (failed, with a
+// try-again reason and no approval id) rather than evicting someone else's
+// pending approval or growing without bound — and the 1024 already parked stay
+// exactly as they were. The cap existed only as a constant until now; nothing
+// executed the refusal branch.
+func TestParkedApprovalCap(t *testing.T) {
+	chain := newTestChain(t, memstore.New())
+	reg := NewRegistry()
+	ran := false
+	reg.Register(recordingTool{ran: &ran})
+	b := New(parkEngine(t), reg, chain)
+	id := &agentid.Identity{AgentName: "bot"}
+
+	for i := 0; i < maxParked; i++ {
+		out := b.ProcessCall(context.Background(), id, Call{Tool: "t"})
+		if out.Status != StatusPendingApproval {
+			t.Fatalf("call %d: status = %q, want pending_approval", i, out.Status)
+		}
+	}
+	if n := len(b.PendingApprovals()); n != maxParked {
+		t.Fatalf("parked = %d, want %d", n, maxParked)
+	}
+
+	out := b.ProcessCall(context.Background(), id, Call{Tool: "t"})
+	if out.Status != StatusFailed {
+		t.Fatalf("call over the cap: status = %q, want failed", out.Status)
+	}
+	if !strings.Contains(out.Reason, "too many pending approvals") {
+		t.Fatalf("refusal reason = %q", out.Reason)
+	}
+	if out.ApprovalID != "" {
+		t.Fatalf("refused call still got approval id %q", out.ApprovalID)
+	}
+	if n := len(b.PendingApprovals()); n != maxParked {
+		t.Fatalf("cap refusal changed the queue: parked = %d, want %d (nothing evicted)", n, maxParked)
+	}
+	if ran {
+		t.Fatal("a parked or refused call must never execute")
+	}
+}
+
 // privilegedTool is a tool whose capability an agent identity never holds.
 // Agents resolve to auth.RoleAgent, which carries CapCallTool and nothing else,
 // so this stands in for "a tool the policy YAML says yes to and the RBAC model

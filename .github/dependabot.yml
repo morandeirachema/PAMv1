@@ -1,0 +1,21 @@
+# Automated dependency updates. govulncheck gates CI on known-vulnerable
+# dependencies our code reaches; this is the path that actually delivers the
+# fixed versions. Actions are SHA-pinned in the workflows — dependabot bumps
+# the SHA and the version comment together.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-deps:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /deploy/docker
+    schedule:
+      interval: weekly

@@ -4,9 +4,97 @@ import (
 	"bufio"
 	"context"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
+
+// rawGuacd plays a misbehaving guacd: it accepts one connection, writes raw
+// pre-canned bytes without ever reading, and either closes immediately or holds
+// the connection open. Pre-writing works because Connect writes its half of the
+// handshake into the socket buffer regardless of whether the peer has read it.
+func rawGuacd(t *testing.T, raw string, keepOpen bool) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		if raw != "" {
+			_, _ = conn.Write([]byte(raw))
+		}
+		if keepOpen {
+			t.Cleanup(func() { conn.Close() })
+			return
+		}
+		conn.Close()
+	}()
+	return ln.Addr().String()
+}
+
+// TestConnectHandshakeErrors walks the handshake's protocol-error branches —
+// the responses a wrong, crashed or hostile guacd would produce. Each must
+// surface as an error from Connect (which also closes the socket) rather than
+// as a half-established RDP bridge: this code runs pre-authentication against
+// whatever PAM_GUACD_ADDR points at, so garbage must never be mistaken for
+// progress.
+func TestConnectHandshakeErrors(t *testing.T) {
+	ctx := context.Background()
+	t.Run("dial failure", func(t *testing.T) {
+		if _, err := Connect(ctx, "127.0.0.1:1", Params{}); err == nil {
+			t.Fatal("dial to a dead address succeeded")
+		}
+	})
+	t.Run("immediate close", func(t *testing.T) {
+		addr := rawGuacd(t, "", false)
+		if _, err := Connect(ctx, addr, Params{}); err == nil {
+			t.Fatal("EOF before args accepted")
+		}
+	})
+	t.Run("first instruction is not args", func(t *testing.T) {
+		addr := rawGuacd(t, Instruction{Opcode: "error", Args: []string{"nope"}}.Encode(), true)
+		_, err := Connect(ctx, addr, Params{})
+		if err == nil || !strings.Contains(err.Error(), "expected args") {
+			t.Fatalf("want expected-args error, got %v", err)
+		}
+	})
+	t.Run("oversized element length", func(t *testing.T) {
+		// 9999999999 exceeds the 1 MiB element bound in readInstruction.
+		addr := rawGuacd(t, "9999999999.x;", true)
+		if _, err := Connect(ctx, addr, Params{}); err == nil {
+			t.Fatal("oversized length accepted")
+		}
+	})
+	t.Run("garbage instead of an instruction", func(t *testing.T) {
+		addr := rawGuacd(t, "not-a-guacamole-instruction", false)
+		if _, err := Connect(ctx, addr, Params{}); err == nil {
+			t.Fatal("garbage accepted")
+		}
+	})
+	t.Run("ready without a connection id", func(t *testing.T) {
+		raw := Instruction{Opcode: "args", Args: []string{"VERSION_1_5_0", "hostname"}}.Encode() +
+			Instruction{Opcode: "ready"}.Encode()
+		addr := rawGuacd(t, raw, true)
+		_, err := Connect(ctx, addr, Params{})
+		if err == nil || !strings.Contains(err.Error(), "expected ready") {
+			t.Fatalf("want expected-ready error, got %v", err)
+		}
+	})
+	t.Run("second instruction is not ready", func(t *testing.T) {
+		raw := Instruction{Opcode: "args", Args: []string{"VERSION_1_5_0", "hostname"}}.Encode() +
+			Instruction{Opcode: "disconnect", Args: []string{"bye"}}.Encode()
+		addr := rawGuacd(t, raw, true)
+		_, err := Connect(ctx, addr, Params{})
+		if err == nil || !strings.Contains(err.Error(), "expected ready") {
+			t.Fatalf("want expected-ready error, got %v", err)
+		}
+	})
+}
 
 // TestInstructionEncode checks the wire encoding and that element lengths count
 // Unicode code points, not bytes.
