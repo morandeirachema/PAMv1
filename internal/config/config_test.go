@@ -209,3 +209,101 @@ func TestLoadOffCaseInsensitive(t *testing.T) {
 		t.Errorf("SSHAddr = %q, want normalized \"off\"", cfg.SSHAddr)
 	}
 }
+
+// TestAirGapRefusesEgressingIntegrations proves PAM_OT_AIRGAP now enforces what
+// its name promises.
+//
+// The flag used to be consulted in exactly one place — choosing the alerter — so
+// it silenced alerts and nothing else. The ITSM webhook, the vendor-attestation
+// webhook, the SIEM forwarder, Conjur, a cloud KEK and a cloud identity provider
+// all still egressed, while an operator who set the flag believed the opposite.
+// A control that manufactures confidence is worse than no control.
+func TestAirGapRefusesEgressingIntegrations(t *testing.T) {
+	for _, tc := range []struct{ name, key, value, wantIn string }{
+		{"ITSM webhook", "PAM_TICKET_VALIDATE_URL", "https://itsm.example/api", "PAM_TICKET_VALIDATE_URL"},
+		{"vendor attestation", "PAM_VENDOR_ATTEST_URL", "https://vendor.example/attest", "PAM_VENDOR_ATTEST_URL"},
+		{"SIEM forwarder", "PAM_AUDIT_FORWARD_ADDR", "siem.example:514", "PAM_AUDIT_FORWARD_ADDR"},
+		{"OIDC issuer", "PAM_OIDC_ISSUER", "https://idp.example", "PAM_OIDC_ISSUER"},
+		{"Conjur", "PAM_CONJUR_URL", "https://conjur.example", "PAM_CONJUR_URL"},
+		{"alert webhook", "PAM_ALERT_WEBHOOK", "https://hooks.example/x", "PAM_ALERT_WEBHOOK"},
+		{"cloud KEK", "PAM_KEK_PROVIDER", "aws-kms", "PAM_KEK_PROVIDER"},
+		{"cloud identity", "PAM_ENTRA_TENANT_ID", "a-tenant-guid", "PAM_ENTRA_TENANT_ID"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setRequired(t)
+			t.Setenv("PAM_OT_AIRGAP", "true")
+			t.Setenv(tc.key, tc.value)
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("%s was accepted alongside PAM_OT_AIRGAP; the flag would silence alerts while this still reached the network", tc.key)
+			}
+			if !strings.Contains(err.Error(), tc.wantIn) {
+				t.Fatalf("the error does not name the offender (%s): %v", tc.wantIn, err)
+			}
+		})
+	}
+}
+
+// TestAirGapAllowsDeclaredInternalEndpoints proves the escape hatch works, and
+// that it is per-variable rather than a blanket override.
+//
+// "Air-gapped" rarely means "no network" — it usually means "nothing leaves this
+// enclave". A local Conjur, an in-DMZ SIEM collector or a self-hosted Keycloak
+// are legitimate, and refusing them outright would push operators to turn the
+// flag off entirely, which is the opposite of the intent. So egress is
+// impossible by accident and possible on purpose, with the exceptions written
+// down in the deployment instead of living in somebody's head.
+func TestAirGapAllowsDeclaredInternalEndpoints(t *testing.T) {
+	t.Run("declared endpoint is accepted", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_OT_AIRGAP", "true")
+		t.Setenv("PAM_AUDIT_FORWARD_ADDR", "siem.internal:514")
+		t.Setenv("PAM_OT_AIRGAP_ALLOW", "PAM_AUDIT_FORWARD_ADDR")
+		if _, err := Load(); err != nil {
+			t.Fatalf("an endpoint declared internal was still refused: %v", err)
+		}
+	})
+
+	t.Run("the allowance is per-variable, not a blanket off-switch", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_OT_AIRGAP", "true")
+		t.Setenv("PAM_AUDIT_FORWARD_ADDR", "siem.internal:514")
+		t.Setenv("PAM_TICKET_VALIDATE_URL", "https://itsm.example/api")
+		t.Setenv("PAM_OT_AIRGAP_ALLOW", "PAM_AUDIT_FORWARD_ADDR")
+		err := Load2Err(t)
+		if err == nil {
+			t.Fatal("allowing one endpoint allowed an undeclared one too")
+		}
+		if !strings.Contains(err.Error(), "PAM_TICKET_VALIDATE_URL") {
+			t.Fatalf("the undeclared endpoint was not named: %v", err)
+		}
+		if strings.Contains(err.Error(), "PAM_AUDIT_FORWARD_ADDR") {
+			t.Fatalf("the declared endpoint was still reported: %v", err)
+		}
+	})
+
+	t.Run("no escape hatch for inherently external providers", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_OT_AIRGAP", "true")
+		t.Setenv("PAM_KEK_PROVIDER", "aws-kms")
+		t.Setenv("PAM_OT_AIRGAP_ALLOW", "PAM_KEK_PROVIDER")
+		if _, err := Load(); err == nil {
+			t.Fatal("AWS KMS was allowed inside an air-gapped enclave; there is no in-enclave version of somebody else's cloud")
+		}
+	})
+
+	t.Run("air-gap off changes nothing", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_TICKET_VALIDATE_URL", "https://itsm.example/api")
+		if _, err := Load(); err != nil {
+			t.Fatalf("an ordinary deployment was refused: %v", err)
+		}
+	})
+}
+
+// Load2Err calls Load and returns only the error, for readability above.
+func Load2Err(t *testing.T) error {
+	t.Helper()
+	_, err := Load()
+	return err
+}
