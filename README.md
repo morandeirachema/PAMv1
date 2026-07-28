@@ -216,7 +216,7 @@ PAM for AI agents — the same chokepoint, extended to autonomous tools. Opt-in 
 
 - **PostgreSQL storage** via [pgx](https://github.com/jackc/pgx) with embedded, versioned migrations; an in-memory store for tests and demos; optional **[CloudNativePG](https://cloudnative-pg.io/) HA**.
 - **Observability** — a dependency-free [Prometheus](https://prometheus.io/) `/metrics` endpoint (request counts by status, audit volume, break-glass use, rotations, active-sessions gauge), plus a health/readiness split (`/healthz` liveness, `/readyz` checks the database).
-- **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. Releases are built by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance**.
+- **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. The release pipeline builds by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance** — see [Verifying a release](#verifying-a-release). *No release has been cut yet: there are no tags, so the published-artifact paths below are not yet usable.*
 - **Encrypted secrets in git** — the Kubernetes secret manifest can be sealed with **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: values are encrypted while `kind`/`metadata` stay reviewable, decrypted at deploy time (`sops -d | kubectl apply -f -`, plaintext never on disk) or natively by Flux / Argo / helm-secrets — so secrets live in the **same IaC repo** without leaking. See **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **Or source secrets from CyberArk Conjur** — as a runtime alternative to SOPS, set `PAM_CONJUR_URL` and pamv1 fetches its own bootstrap secrets (master key, API key, DB URL, …) from **[Conjur](https://www.conjur.org/)** at startup, authenticating with a host API key or a **Kubernetes `authn-jwt`** projected token — so no bootstrap secret lives in Git at all. Both mechanisms ship; SOPS stays the zero-dependency default. See **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
 
@@ -448,6 +448,18 @@ docker compose up --build
 
 ### Kubernetes
 
+> ⚠️ **Two things to know before you run this.**
+> 1. **No release has been published yet** — there are zero tags, so the image
+>    the manifests pin (`ghcr.io/morandeirachema/pamv1:0.10.0`) does not exist
+>    and the pods will sit in `ImagePullBackOff`. Until a release is cut, build
+>    and push your own image and point the manifests at it, or use the
+>    docker-compose path above, which builds from source.
+> 2. `deploy/k8s/postgres-cnpg.yaml` declares a **CloudNativePG** `Cluster`, so
+>    `kubectl apply -f deploy/k8s/` fails on an unknown kind unless the
+>    [CloudNativePG operator](https://cloudnative-pg.io/) is installed first.
+>    Install it, or apply the individual manifests you want and bring your own
+>    PostgreSQL.
+
 ```bash
 kubectl apply -f deploy/k8s/namespace.yaml
 kubectl -n pamv1 create secret generic pam-secrets \
@@ -510,6 +522,42 @@ bootstrap and transport keys below stay environment-only.
 | `-split-key` | Read an emergency key on stdin, print N Shamir shares |
 | `-rotate-kek` | Re-encrypt every vaulted secret under a new KEK — credentials, MFA enrollments, secret settings **and** the shared SSH host/CA keys. Works across providers (local ⇄ Vault-Transit ⇄ KMS ⇄ HSM), so it is also how you migrate. Warns if sealed recordings still need the old key |
 | `-healthcheck` | Probe the local `/healthz` and exit 0 if healthy (what the container HEALTHCHECK uses) |
+
+## Verifying a release
+
+Once a release exists, every artifact is verifiable — and these are the commands
+to do it, because a signature nobody can check is decoration.
+
+```bash
+TAG=v0.10.0                       # the released version
+IMAGE=ghcr.io/morandeirachema/pamv1
+
+# 1. The image was built by this repository's release workflow, not by someone else.
+cosign verify \
+  --certificate-identity-regexp "^https://github.com/morandeirachema/pamv1/.github/workflows/release.yml@refs/tags/" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "$IMAGE:${TAG#v}"
+
+# 2. The SBOM attached to it is the one that build produced.
+cosign verify-attestation --type spdxjson \
+  --certificate-identity-regexp "^https://github.com/morandeirachema/pamv1/.github/workflows/release.yml@refs/tags/" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "$IMAGE:${TAG#v}"
+
+# 3. SLSA build provenance.
+gh attestation verify "oci://$IMAGE:${TAG#v}" --repo morandeirachema/pamv1
+```
+
+And to confirm what you are actually running:
+
+```bash
+kubectl -n pamv1 exec deploy/pamv1 -- /pam-server -version   # → pam-server v0.10.0 (abc1234)
+curl -s http://pamv1:8080/metrics | grep pam_build_info      # same, for monitoring
+```
+
+**Status:** the pipeline is built, test-gated and rehearsable, but **no release
+has been cut** — there are no tags, so nothing has been signed or attested yet.
+The commands above are what will work once one is.
 
 ## Break-glass procedure
 

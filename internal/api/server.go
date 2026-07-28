@@ -85,6 +85,10 @@ type Options struct {
 	MFARequired bool
 	// WinRM runs commands on Windows targets; defaults to a real HTTPS client.
 	WinRM winrm.Runner
+	// BuildVersion and BuildCommit identify the running binary. They are exported
+	// as the pam_build_info metric so an operator can answer "which build is
+	// this?" from monitoring during an incident — previously unanswerable in-band.
+	BuildVersion, BuildCommit string
 	// RecordingDir is where session/command transcripts are written.
 	RecordingDir string
 	// RequireRecording refuses a session that cannot be recorded, matching what
@@ -530,6 +534,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 	// A flagged actor is re-alerted (and, if critical, re-killed) once per cooldown
 	// so a sustained or recurring incident isn't suppressed forever; the cooldown
 	// tracks the scoring window.
+	s.metrics.SetBuildInfo(opts.BuildVersion, opts.BuildCommit)
 	s.analyticsCooldown = s.analyticsWindow
 	if s.sessions != nil {
 		s.metrics.SetActiveSessionsSource(func() int { return len(s.sessions.List()) })
