@@ -220,7 +220,7 @@ Opcional vía `PAM_BROKER_POLICY_FILE`.
 
 - **Almacenamiento PostgreSQL** con [pgx](https://github.com/jackc/pgx) y migraciones embebidas y versionadas; un almacén en memoria para tests y demos; **alta disponibilidad con [CloudNativePG](https://cloudnative-pg.io/)** opcional.
 - **Observabilidad** — un endpoint [Prometheus](https://prometheus.io/) `/metrics` sin dependencias (conteos por estado, volumen de auditoría, uso de break-glass, rotaciones, gauge de sesiones activas), más una separación liveness/readiness (`/healthz`, `/readyz` que comprueba la BD).
-- **Despliegue como código** — [Docker](https://docs.docker.com/) (distroless, sin root), [docker-compose](https://docs.docker.com/compose/) con Postgres endurecida, manifiestos [Kubernetes](https://kubernetes.io/) bajo el PSS restringido, un **[chart de Helm](deploy/helm/pamv1)** y un módulo de [Terraform](https://developer.hashicorp.com/terraform). El pipeline de release construye por digest con **[SBOM](https://www.cisa.gov/sbom), firma keyless [cosign](https://docs.sigstore.dev/) y procedencia SLSA**. *Todavía no se ha publicado ninguna release: no hay etiquetas, así que las rutas de instalación por artefacto publicado aún no funcionan.*
+- **Despliegue como código** — [Docker](https://docs.docker.com/) (distroless, sin root), [docker-compose](https://docs.docker.com/compose/) con Postgres endurecida, manifiestos [Kubernetes](https://kubernetes.io/) bajo el PSS restringido, un **[chart de Helm](deploy/helm/pamv1)** y un módulo de [Terraform](https://developer.hashicorp.com/terraform). El pipeline de release construye por digest con **[SBOM](https://www.cisa.gov/sbom), firma keyless [cosign](https://docs.sigstore.dev/) y procedencia SLSA**. *Primera release: **[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** (2026-07-28) — la imagen firmada es pública en `ghcr.io/morandeirachema/pamv1:0.10.0`, así que las rutas de instalación por artefacto publicado ya funcionan.*
 - **Secretos cifrados en git** — el manifiesto de Secret de Kubernetes puede sellarse con **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: los valores se cifran mientras `kind`/`metadata` quedan legibles, y se descifra al desplegar (`sops -d | kubectl apply -f -`, el texto plano nunca toca el disco) o de forma nativa con Flux / Argo / helm-secrets — así los secretos viven en el **mismo repo de IaC** sin filtrarse. Ver **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **O aprovisiona los secretos desde CyberArk Conjur** — como alternativa en tiempo de ejecución a SOPS, define `PAM_CONJUR_URL` y pamv1 obtiene sus secretos de arranque (clave maestra, clave de API, URL de la BD, …) de **[Conjur](https://www.conjur.org/)** al arrancar, autenticándose con una clave de API de host o un token proyectado de Kubernetes (**`authn-jwt`**) — de modo que ningún secreto de arranque vive en Git. Ambos mecanismos se entregan; SOPS sigue siendo el predeterminado sin dependencias. Ver **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
 
@@ -422,9 +422,10 @@ portapapeles, política de rutas SFTP y cuatro ojos por elemento en la
 certificación.
 
 Lo que queda está consolidado en
-**[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**. En resumen: **no se ha
-publicado ninguna release**, que es el único criterio de beta aún sin cumplir y
-la razón de que las rutas de Kubernetes y Helm todavía no funcionen;
+**[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**. En resumen: la
+**[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0) se
+publicó el 2026-07-28** — el último de los cuatro criterios de beta, así que las
+rutas de Kubernetes, Helm y Terraform ya obtienen una imagen real y firmada;
 `cmd/pam-server` no tiene tests; y quedan una docena de mejoras en curso, las
 mayores la **monitorización en vivo entre réplicas** (repartir los *bytes* de una
 sesión entre réplicas es un pub/sub más pesado que la señal de terminación que ya
