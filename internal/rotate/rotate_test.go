@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/winrm"
@@ -386,5 +387,115 @@ func TestWinRMConnectorRejectsInjectableUsername(t *testing.T) {
 		if err := conn.Rotate(context.Background(), target, ok, "old", "N3w-Pass_1"); err != nil {
 			t.Fatalf("legitimate username %q was refused: %v", ok, err)
 		}
+	}
+}
+
+// hangingSSHServer accepts a session and an exec request but never replies with
+// an exit status, so a client blocks in CombinedOutput exactly as it would
+// against a wedged target or a command that simply does not finish. It reports
+// when the channel it is holding is closed from the client side.
+func hangingSSHServer(t *testing.T, wantUser, wantPass string) (*sshServer, <-chan struct{}) {
+	t.Helper()
+	closed := make(chan struct{}, 1)
+	cfg := &ssh.ServerConfig{
+		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
+			if c.User() == wantUser && string(pass) == wantPass {
+				return &ssh.Permissions{}, nil
+			}
+			return nil, io.EOF
+		},
+	}
+	cfg.AddHostKey(mustSigner(t))
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				sconn, chans, reqs, err := ssh.NewServerConn(conn, cfg)
+				if err != nil {
+					return
+				}
+				defer sconn.Close()
+				go ssh.DiscardRequests(reqs)
+				for nc := range chans {
+					if nc.ChannelType() != "session" {
+						nc.Reject(ssh.UnknownChannelType, "")
+						continue
+					}
+					_, chReqs, err := nc.Accept()
+					if err != nil {
+						continue
+					}
+					go func() {
+						for req := range chReqs {
+							if req.WantReply {
+								req.Reply(true, nil)
+							}
+							// Deliberately no exit-status and no Close: the
+							// "command" runs forever.
+						}
+						// chReqs closes when the client tears the channel down.
+						select {
+						case closed <- struct{}{}:
+						default:
+						}
+					}()
+				}
+			}(conn)
+		}
+	}()
+	h, p, _ := net.SplitHostPort(ln.Addr().String())
+	port, _ := strconv.Atoi(p)
+	return &sshServer{host: h, port: port}, closed
+}
+
+// TestSSHExecStopsWhenContextIsCancelled proves that cancelling the context
+// stops a running remote command, rather than merely abandoning it.
+//
+// This is the difference between a kill and a look-away. The session supervisor
+// terminates a run by cancelling its context, and execGuard used to close the
+// SSH session only when the deadline expired — a plain cancellation did
+// nothing. An `ssh_exec` killed from the console therefore reported "session
+// terminated" to the operator while the command kept running on the target, for
+// as long as it liked. A kill that only stops you watching is not a kill.
+//
+// The test asserts BOTH halves: that Exec returns promptly on cancellation
+// (rather than hanging for the full 15-second connector timeout), and that the
+// SSH channel to the target was actually torn down.
+func TestSSHExecStopsWhenContextIsCancelled(t *testing.T) {
+	const user, pass = "svc-pam", "old-Secret.1"
+	srv, channelClosed := hangingSSHServer(t, user, pass)
+	target := store.Target{Host: srv.host, Port: srv.port, Protocol: "ssh"}
+	conn := SSHConnector{Timeout: 15 * time.Second} // far longer than this test
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := conn.Exec(ctx, target, user, pass, "sleep forever")
+		done <- err
+	}()
+
+	// Let the command get going, then kill it.
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+		// Returned promptly, which is the point; the error value itself is a
+		// transport error and not interesting.
+	case <-time.After(5 * time.Second):
+		t.Fatal("Exec did not return within 5s of cancellation; the command is still running on the target and only the caller gave up")
+	}
+	select {
+	case <-channelClosed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the SSH channel to the target was never closed, so the remote command was abandoned rather than stopped")
 	}
 }

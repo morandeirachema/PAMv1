@@ -1580,6 +1580,15 @@ func (s *PGStore) DeleteSessionsByUsername(ctx context.Context, username string)
 	return int(tag.RowsAffected()), nil
 }
 
+// DeleteExpiredSessions removes login sessions past their expiry.
+func (s *PGStore) DeleteExpiredSessions(ctx context.Context, now time.Time) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at <= $1`, now)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // UpsertMFAEnrollment creates or replaces a user's TOTP enrollment, populating CreatedAt.
 func (s *PGStore) UpsertMFAEnrollment(ctx context.Context, e *store.MFAEnrollment) error {
 	return s.pool.QueryRow(ctx,

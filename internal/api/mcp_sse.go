@@ -162,24 +162,18 @@ func (s *mcpSession) resolveElicit(reqID string, res elicitResult) bool {
 // HTTP+SSE transport), then relays server-initiated messages and heartbeats until
 // the client disconnects. Auth is the same agent bearer as POST /mcp.
 func (s *Server) serveMCPStream(w http.ResponseWriter, r *http.Request, id *agentid.Identity) {
-	flusher, ok := w.(http.Flusher)
+	rc, ok := s.beginStream(w)
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
 	sess := s.mcpSessions.open(id)
 	defer s.mcpSessions.close(sess)
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
 	// The `endpoint` event tells the client where to POST JSON-RPC messages for
 	// this session; the session id lets a server elicitation's response route back.
 	if _, err := fmt.Fprintf(w, "event: endpoint\ndata: /mcp?session=%s\n\n", sess.id); err != nil {
 		return
 	}
-	flusher.Flush()
+	_ = rc.Flush()
 
 	ticker := time.NewTicker(mcpStreamHeartbeat)
 	defer ticker.Stop()
@@ -191,12 +185,12 @@ func (s *Server) serveMCPStream(w http.ResponseWriter, r *http.Request, id *agen
 			if _, err := w.Write(frame); err != nil {
 				return
 			}
-			flusher.Flush()
+			_ = rc.Flush()
 		case <-ticker.C:
 			if _, err := w.Write([]byte(": ping\n\n")); err != nil {
 				return
 			}
-			flusher.Flush()
+			_ = rc.Flush()
 		}
 	}
 }

@@ -12,6 +12,7 @@ package session
 
 import (
 	"context"
+	"log/slog"
 	"time"
 )
 
@@ -43,6 +44,12 @@ const (
 	KillNotFound KillOutcome = iota
 	// KillLocal: the session was found and terminated on this replica.
 	KillLocal
+	// KillDispatchFailed: the session was not on this replica and the broadcast
+	// to the cluster FAILED, so nothing was killed anywhere. Distinguished from
+	// KillDispatched because an operator cutting off a live privileged session
+	// must not be told it worked when it did not — "accepted" would leave them
+	// believing the session was gone while it kept running on another replica.
+	KillDispatchFailed
 	// KillDispatched: the session was not on this replica, but the kill was
 	// broadcast to the cluster; whichever replica hosts it will terminate it.
 	KillDispatched
@@ -89,19 +96,34 @@ func (r *Registry) applyKill(sel KillSelector) {
 	}
 }
 
-// publish broadcasts a kill selector to the cluster when a bus is configured. It
-// is fire-and-forget with a short timeout: a broadcast failure must not block the
-// caller (the local kill has already happened), only lose cross-replica reach.
-func (r *Registry) publish(sel KillSelector) {
+// publish broadcasts a kill selector to the cluster when a bus is configured,
+// reporting whether a bus exists and whether the broadcast succeeded.
+//
+// It stays bounded by a short timeout — a slow bus must not block the caller,
+// whose local kill has already happened — but the error is no longer discarded.
+// A caller that cannot distinguish "broadcast" from "broadcast failed" can only
+// report success, and for a kill that is the wrong default: an operator cutting
+// off a live privileged session would be told it worked while it kept running on
+// another replica.
+func (r *Registry) publish(sel KillSelector) (hasBus, published bool) {
 	r.mu.Lock()
 	bus := r.bus
 	r.mu.Unlock()
 	if bus == nil {
-		return
+		return false, false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = bus.PublishSessionKill(ctx, sel)
+	if err := bus.PublishSessionKill(ctx, sel); err != nil {
+		// The bulk-kill paths (by actor, by actor+target) do not return an outcome
+		// to a caller, so a log line is all they can offer — but a silent failure
+		// here means a revoked operator keeps a live session on another replica,
+		// which is worth an operator noticing.
+		slog.Error("session kill broadcast failed; other replicas were not told",
+			"selector_id", sel.ID, "selector_actor", sel.Actor, "selector_target", sel.Target, "err", err)
+		return true, false
+	}
+	return true, true
 }
 
 // KillDistributed terminates a single session by id and reports the outcome:
@@ -111,15 +133,16 @@ func (r *Registry) publish(sel KillSelector) {
 // /api/sessions/{id} in an HA deployment.
 func (r *Registry) KillDistributed(id string) KillOutcome {
 	local := r.killLocalByID(id)
-	r.mu.Lock()
-	hasBus := r.bus != nil
-	r.mu.Unlock()
-	r.publish(KillSelector{ID: id})
+	hasBus, published := r.publish(KillSelector{ID: id})
 	switch {
 	case local:
+		// Killed here. A failed broadcast cannot un-kill it, and the session is
+		// registered on exactly one replica, so this is the honest answer.
 		return KillLocal
-	case hasBus:
+	case hasBus && published:
 		return KillDispatched
+	case hasBus:
+		return KillDispatchFailed
 	default:
 		return KillNotFound
 	}

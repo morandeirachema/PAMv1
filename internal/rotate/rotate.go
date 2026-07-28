@@ -182,25 +182,43 @@ func authMethod(secret string) (ssh.AuthMethod, error) {
 	return ssh.Password(secret), nil
 }
 
-// execGuard bounds a remote command by c.timeout() (and honors ctx), closing the
-// session to unblock a CombinedOutput that a wedged target would otherwise hang
-// on forever. The returned func stops the guard and must be deferred.
+// execGuard bounds a remote command by c.timeout() AND by the caller's context,
+// closing the session to unblock a CombinedOutput that a wedged target would
+// otherwise hang on forever. The returned func stops the guard and must be
+// deferred.
+//
+// Both triggers matter, and only one of them used to work. The previous version
+// derived a timeout context and closed the session only when ctx.Err() was
+// DeadlineExceeded — so a *cancellation* did nothing. That is the case that
+// matters most: the session supervisor kills a run by cancelling the context, and
+// an `ssh_exec` killed from the console would return to the operator as
+// terminated while the command kept running on the target. A kill that only
+// stops you watching is not a kill.
+//
+// The reason cancellation was excluded is real, though: the returned stop func
+// itself cancelled the derived context, so treating cancellation as a trigger
+// would have closed the session on every NORMAL completion too. The fix is to
+// separate the two signals rather than conflate them — a timer for the timeout,
+// the caller's context for a kill, and a `done` channel that the stop func
+// closes when the command finished on its own.
 func (c SSHConnector) execGuard(ctx context.Context, sess io.Closer) func() {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(ctx, c.timeout())
+	timer := time.NewTimer(c.timeout())
 	done := make(chan struct{})
 	go func() {
+		defer timer.Stop()
 		select {
+		case <-timer.C:
+			sess.Close() // wedged target: unblock the read
 		case <-ctx.Done():
-			if ctx.Err() == context.DeadlineExceeded {
-				sess.Close()
-			}
+			sess.Close() // killed or client gone: stop the command on the target
 		case <-done:
+			// finished normally; leave the session to the caller's defer
 		}
 	}()
-	return func() { cancel(); close(done) }
+	return func() { close(done) }
 }
 
 // Verify dials the target and completes an SSH handshake with secret (a password

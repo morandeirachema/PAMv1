@@ -71,6 +71,33 @@ func newTestServerOpts(t *testing.T, authn auth.Authenticator, opts api.Options)
 	return srv, st
 }
 
+// newTestHandler builds the API handler without starting a server, so a test can
+// configure the http.Server itself — notably WriteTimeout, which a stream must
+// survive.
+func newTestHandler(t *testing.T, opts api.Options) http.Handler {
+	t.Helper()
+	masterKey, err := vault.GenerateMasterKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := vault.New(masterKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := memstore.New()
+	bgHash := sha256.Sum256([]byte(breakGlassKey))
+	resolver, err := auth.NewResolver(st, testAPIKey, hex.EncodeToString(bgHash[:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver.WithProfiles(st)
+	handler, err := api.New(st, v, resolver, nil, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return handler
+}
+
 // newTestServer returns a running server with the default (no-authenticator) options.
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
