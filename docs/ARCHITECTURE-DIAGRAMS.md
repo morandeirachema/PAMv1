@@ -355,6 +355,8 @@ erDiagram
     string Protocol
     bool RequireApproval
     ptr_int64 SafeID
+    string RDPClipboard
+    string RDPClipboardAudit
     time_Time CreatedAt
   }
   TargetGrant {

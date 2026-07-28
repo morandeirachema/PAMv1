@@ -224,8 +224,8 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_COMMAND_DENY_FILE` | | (off) | Regex denylist file for command control (Phases 16, 38). One policy blocks matching commands on **every** path where a discrete command is visible: SSH `exec`, the WinRM command loop, PostgreSQL statements, `POST /api/targets/{id}/winrm`, and the agent broker's `ssh_exec`/`winrm_exec` tools. See §9.4. |
 | `PAM_SSH_SFTP` | | `allow` | SFTP file-transfer policy (Phase 32): `allow` (forward + audit every op), `readonly` (refuse writes/deletes/renames), `deny` (refuse the subsystem). See §9.4. |
 | `PAM_SSH_SFTP_DENY_FILE` | | (off) | **Path denylist for SFTP** (Phase 51): regexes, one per line (same format as `PAM_COMMAND_DENY_FILE`). A matching path is refused in **every** mode — downloads too — and on both sides of a rename; audited `sftp.blocked reason:path-denied` with the matched pattern. See §5. |
-| `PAM_RDP_CLIPBOARD` | | `allow` | RDP clipboard policy (Phase 33): `allow`, `readonly` (block paste into the target), `deny` (clipboard off both ways); drive redirection always off. |
-| `PAM_RDP_CLIPBOARD_AUDIT` | | `off` | **Audit clipboard transfers** (Phase 50): `meta` records direction, mimetype, size and SHA-256; `full` also records the content (truncated). Content is opt-in because a privileged desktop's clipboard often holds a password the operator just copied. Emits `rdp.clipboard`. See §9.4. |
+| `PAM_RDP_CLIPBOARD` | | `allow` | RDP clipboard policy (Phase 33): `allow`, `readonly` (block paste into the target), `deny` (clipboard off both ways); drive redirection always off. A target's `rdp_clipboard` field can tighten this per target — the **stricter** of the two wins. |
+| `PAM_RDP_CLIPBOARD_AUDIT` | | `off` | **Audit clipboard transfers** (Phase 50): `meta` records direction, mimetype, size and SHA-256; `full` also records the content (truncated). Content is opt-in because a privileged desktop's clipboard often holds a password the operator just copied. Emits `rdp.clipboard`. A target's `rdp_clipboard_audit` field can raise this per target (whichever records more wins). See §9.4. |
 | `PAM_DB_STEPUP_FILE` | | (off) | Regex file marking PostgreSQL statements that **pause for a supervisor's live approval** — in-session step-up (Phase 30). See §9.4. |
 | `PAM_DB_STEPUP_TTL_SEC` | | `120` | How long a paused statement waits for a decision before it is denied. |
 | `PAM_ANALYTICS_INTERVAL_MIN` | | `0` (off) | Threat-analytics worker interval (Phase 23); `0` leaves the read-only `GET /api/analytics/risk` endpoint on. See §9.7. |
@@ -325,7 +325,7 @@ curl -H "X-API-Key: $PAM_API_KEY" -X PUT http://localhost:8080/api/targets/1 \
 curl -H "X-API-Key: $PAM_API_KEY" -X DELETE http://localhost:8080/api/targets/1   # cascades to its credentials
 ```
 
-`os_type` ∈ `linux|windows`; `protocol` ∈ `ssh|winrm|rdp|postgres`.
+`os_type` ∈ `linux|windows`; `protocol` ∈ `ssh|winrm|rdp|postgres`; optional `rdp_clipboard` ∈ `allow|readonly|deny` and `rdp_clipboard_audit` ∈ `off|meta|full` tighten the global RDP clipboard policy for this target (strictest wins; empty inherits).
 
 **Edit, don't recreate** (Phase 44). `PUT /api/targets/{id}` changes a target in
 place with the same validation as create — its credentials, grants, dependencies
@@ -568,7 +568,16 @@ PAM_RDP_CLIPBOARD=readonly     # block paste INTO the target (no clipboard injec
 PAM_RDP_CLIPBOARD=deny         # clipboard off in both directions
 ```
 
-The active mode is recorded in the `rdp.connect` audit event (`clipboard:<mode>`).
+**Per-target tightening** (Phase 33 follow-on): a target's `rdp_clipboard`
+field (portal *Change Target*, or the create/update API) overrides the global
+for that one target, and the **stricter** policy always wins
+(`allow < readonly < deny`) — a high-sensitivity target can deny what the fleet
+allows, but no target row can loosen a global `deny`. The same shape applies to
+`rdp_clipboard_audit` (whichever records more wins; remember `full` records
+clipboard *content*, which is an exposure to choose deliberately).
+
+The active — effective — mode is recorded in the `rdp.connect` audit event
+(`clipboard:<mode>`).
 
 **Clipboard auditing (Phase 50).** Gating says what *may* cross; auditing says
 what *did*. `PAM_RDP_CLIPBOARD_AUDIT` records each transfer as an
@@ -1817,6 +1826,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-07-29 | **Per-target RDP clipboard override (Phase 33 follow-on).** A target's `rdp_clipboard` / `rdp_clipboard_audit` fields (portal *Add/Change Target*, create/update API) tighten the global `PAM_RDP_CLIPBOARD` / `_AUDIT` for that one target — the stricter policy always wins, so a high-sensitivity target can deny what the fleet allows and no target row can loosen a global deny. The effective mode is what `rdp.connect` audits. See §5 and the RDP section. |
 | 2026-07-29 | **WinRM sessions stream live (Phase 16 follow-on).** *Work with Active Sessions* option 5 (and `GET /api/sessions/{id}/stream`) now works for WinRM too: the proxy's interactive shell streams exactly what its recording sees, and a REST or agent-broker run streams a `winrm>` command echo plus the output. RDP remains recording-and-clipboard-audit only. See §9.4. |
 | 2026-07-28 | **Broker audit keys under shared custody (Phase 13 follow-on).** `PAM_BROKER_AUDIT_KEY` and `PAM_BROKER_AUDIT_SIGN_SEED` are now optional: unset, each is generated once and sealed by the KEK into `key_material` (every replica converges on the same chain key and signer, and `-rotate-kek` re-wraps them like the SSH host/CA keys). An explicit env value still wins — that is how a signer rotation is driven; if the seed was custody-held, read the outgoing public key from `GET /v1/audit/jwks` *before* rotating. See §4 and the broker section. |
 | 2026-07-27 | **Phase 51 — SFTP path policy.** `PAM_SSH_SFTP_DENY_FILE` gates file transfer by **path**, not just by operation: a matching path is refused in every mode (downloads included) and on both sides of a rename, audited `sftp.blocked reason:path-denied` with the rule that matched. Same regex-file format as command control, and a bad pattern fails startup. See §9.4. |

@@ -173,9 +173,11 @@ recording path if you want both.
 `PAM_RDP_CLIPBOARD=readonly` (copy out, no paste in) or `deny` on the `pam`
 service. To see the audit half, set `PAM_RDP_CLIPBOARD_AUDIT=meta`, copy text
 out of the XFCE desktop, and look for an `rdp.clipboard` event carrying
-direction, mimetype, size and SHA-256 — `full` records the content too. The mode
-in force also rides the `rdp.connect` event as `clipboard:<mode>`. Drive
-redirection is forced off in every mode.
+direction, mimetype, size and SHA-256 — `full` records the content too. Both
+can also be tightened on the demo target alone (its `rdp_clipboard` /
+`rdp_clipboard_audit` fields — portal *Change Target*); the stricter of global
+and target wins. The mode in force also rides the `rdp.connect` event as
+`clipboard:<mode>`. Drive redirection is forced off in every mode.
 
 ## 5. Troubleshooting
 
