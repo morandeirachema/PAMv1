@@ -7,6 +7,9 @@
 > tests and deploys as code. It still has **not** been audited by anyone outside the project and
 > is **not** production-ready — do not use it to guard real privileged credentials. Use it to
 > learn, experiment and contribute.
+>
+> 🟢 **Living document** — updated in the same change as the code, without a
+> separate ask (the policy is in the [documentation hub](docs/README.md)).
 
 [![CI](https://github.com/morandeirachema/pamv1/actions/workflows/ci.yml/badge.svg)](https://github.com/morandeirachema/pamv1/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -186,7 +189,7 @@ Phases 0–52g, grouped by area. Every capability is exercised by tests and depl
 
 <p align="center">
   <img src="docs/img/portal-app-secrets.svg" alt="Work with application secrets — the 5250 console screen" width="720">
-  <br><em>Menu 15 — <em>Work with application secrets</em>: mint app identities and grant them individual credentials (Tier-4).</em>
+  <br><em>Menu 15 — Work with application secrets</em>: mint app identities and grant them individual credentials (Tier-4).</em>
 </p>
 
 - **Hot-swappable configuration** — the identity, SSO and operational-policy settings become editable settings **persisted in the database** and **applied live without a restart** (secrets vault-encrypted at rest, a rejected change rolled back). A read-only effective-config + backend-health screen and an **IaC export** (`env` / Helm / Terraform) round-trip console changes back into code. Bootstrap and networking/TLS deliberately stay environment-only.

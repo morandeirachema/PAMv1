@@ -3,7 +3,7 @@
 > ⚠️ **Beta · con fines educativos.** Este es un proyecto educativo creado para explorar cómo
 > funciona de principio a fin un sistema de Gestión de Acceso Privilegiado (PAM). **Beta**
 > significa completo frente a su [hoja de ruta](ROADMAP.md) — han entregado todas las fases
-> hasta la 51, están cerrados todos los hallazgos de su propia
+> hasta la 52g, están cerrados todos los hallazgos de su propia
 > [autoauditoría de seguridad](docs/SECURITY-GAPS.md), y cada capacidad tiene pruebas y se
 > despliega como código. Sigue **sin** haber sido auditado por nadie ajeno al proyecto y **no**
 > está listo para producción — no lo uses para custodiar credenciales privilegiadas reales.
@@ -37,7 +37,7 @@ de fósforo verde** sin concesiones, porque tocar un PAM debe *sentirse* serio.
 
 Construido fase a fase con una regla: **cada fase es funcional de principio a fin** — arranca,
 pasa los tests y se despliega como Infraestructura-como-Código. El **[roadmap](ROADMAP.md)**
-abarca de la 0 a la 51 y **se han entregado todas las fases** — desde el proxy SSH JIT y el
+abarca de la 0 a la 52g y **se han entregado todas las fases** — desde el proxy SSH JIT y el
 RBAC, pasando por el login AD/Entra/OIDC, los objetivos Windows, el quórum de break-glass, la
 adaptación OT/industrial, las herramientas NIS2, escala/HA y la consola 5250 completa, hasta un
 subsistema de configuración con hot-swap y RBAC de perfiles personalizados, un **bróker de
@@ -57,13 +57,18 @@ sin auditoría externa: léelo, ejecútalo, aprende de él, pero no le confíes 
 
 🔎 **Resumen interactivo:** [página del proyecto](https://claude.ai/code/artifact/b9f19443-5ad1-42d2-955f-e43ca17ac542) — qué funciona, arquitectura y hoja de ruta de un vistazo &nbsp;·&nbsp; 📖 **[Read it in English →](README.md)**
 
-**Documentación** — documentos vivos, mantenidos en sincronía con el código:
+## Documentación
 
+**[📚 Centro de documentación](docs/README.md)** — documentos vivos con rutas de
+lectura por audiencia (nuevo / operador / administrador / desarrollador / auditor
+/ OT). Empieza ahí, o ve directamente a:
+
+- **[Guía de sysadmin — cómo funciona](docs/SYSADMIN-GUIDE.md)** — la mejor primera lectura: qué hace pamv1, cómo encajan las piezas y recetas `curl`/`ssh` para copiar y pegar. El modelo mental + el runbook.
 - **[Guía de usuario](docs/USER-GUIDE.md)** — para operadores / auditores / aprobadores: iniciar sesión, conectar por el proxy, capacidades por rol.
-- **[Guía de administración](docs/ADMIN-GUIDE.md)** — desplegar, configurar, gestionar objetivos / credenciales / usuarios / roles, break-glass, registro y auditoría.
-- **[Arquitectura — alto nivel](docs/ARCHITECTURE-HIGH-LEVEL.md)** y **[bajo nivel](docs/ARCHITECTURE-LOW-LEVEL.md)** (el mapa más completo — léelo primero), más **[diagramas derivados del código](docs/ARCHITECTURE-DIAGRAMS.md)** (grafo de paquetes, modelo de datos, superficie REST — generados desde el código y verificados por CI).
-- **[Matriz de puertos y flujos](docs/PORTS-AND-FLOWS.md)** · **[runbook de copia y restauración](docs/BACKUP-AND-RESTORE.md)** · **[guía de despliegue OT](docs/OT-DEPLOYMENT.md)** · **[pack de cumplimiento NIS2](docs/NIS2-COMPLIANCE.md)**.
-- **[Proyectos PAM relacionados — código abierto y comerciales](docs/RELATED-PROJECTS.md)** — cómo se sitúa pamv1 entre los proyectos de código abierto (JumpServer, Teleport, Warpgate, Vault/OpenBao, step-ca, Guacamole …) y los fabricantes comerciales (CyberArk, BeyondTrust, Delinea, Wallix …), incluyendo cuáles se construyen sobre núcleos de código abierto (documento en inglés).
+- **[Guía de administración](docs/ADMIN-GUIDE.md)** — la referencia completa: desplegar, configurar (cada variable), gestionar objetivos / credenciales / usuarios / roles, break-glass, registro y auditoría.
+- **Arquitectura y código** — **[alto nivel](docs/ARCHITECTURE-HIGH-LEVEL.md)**, **[bajo nivel](docs/ARCHITECTURE-LOW-LEVEL.md)** (el mapa más completo), **[diagramas derivados del código](docs/ARCHITECTURE-DIAGRAMS.md)** (generados desde el código y verificados por CI) y la **[guía del código](docs/CODE-GUIDE.md)** (recorrido narrativo para quien contribuye; abre con un manual de *leer Go si escribes Python*).
+- **Seguridad y operación** — **[brechas de seguridad](docs/SECURITY-GAPS.md)** (auto-auditoría) · **[requisitos](docs/REQUIREMENTS.md)** · **[puertos y flujos](docs/PORTS-AND-FLOWS.md)** · **[copia y restauración](docs/BACKUP-AND-RESTORE.md)** · **[brechas que dependen de infraestructura externa](docs/EXTERNAL-INFRA-GAPS.md)**.
+- **Cumplimiento y panorama** — **[despliegue OT](docs/OT-DEPLOYMENT.md)** · **[cumplimiento NIS2](docs/NIS2-COMPLIANCE.md)** · **[proyectos PAM relacionados](docs/RELATED-PROJECTS.md)** — cómo se sitúa pamv1 entre los proyectos de código abierto (JumpServer, Teleport, Warpgate, Vault/OpenBao, step-ca, Guacamole …) y los fabricantes comerciales (CyberArk, BeyondTrust, Delinea, Wallix …), incluyendo cuáles se construyen sobre núcleos de código abierto (documento en inglés).
 
 ## Arquitectura
 
@@ -144,7 +149,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–51, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–52g, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -156,10 +161,13 @@ Fases 0–51, agrupadas por área. Cada capacidad está cubierta por tests y se 
 ### Sesiones y el proxy JIT
 
 - **Proxy de sesión con inyección JIT** — los operadores conectan por una pasarela SSH; el proxy los autentica, obtiene la credencial del vault, **la descifra solo al conectar** (y solo tras superar toda la autorización), la inyecta en la sesión con el objetivo y lo graba todo. Demostrado de extremo a extremo por un test de integración donde el upstream acepta *solo* la contraseña del vault que el cliente nunca tuvo. Las host keys upstream pueden fijarse (`PAM_SSH_KNOWN_HOSTS`); hay soporte de host de salto (bastión) y sesiones de **observador** de solo lectura.
-- **Objetivos Windows (WinRM + RDP)** — ejecuta comandos en hosts Windows con `POST /api/targets/{id}/winrm` (auth básica o NTLM) o un bucle WinRM interactivo por el proxy, o intermedia un escritorio **RDP** completo con [Apache Guacamole](https://guacamole.apache.org/) (túnel WebSocket `GET /api/targets/{id}/rdp`, con verificación de certificado por defecto). El **visor va integrado en el portal**: abre *Work with Targets* → opción 7 y el escritorio se dibuja en un canvas (el portal incluye el cliente JavaScript de Guacamole; el propio guacd viene en los despliegues). En ambos casos la credencial se inyecta just-in-time (funcionan las cuentas de dominio), las sesiones se auditan y el operador nunca ve el secreto. El **portapapeles de la sesión** se controla con `PAM_RDP_CLIPBOARD` (`allow`/`readonly`/`deny`) y la redirección de unidades está siempre deshabilitada — así una sesión RDP no puede usarse como canal de copia/pegado ni de archivos sin auditar.
+- **Objetivos Windows (WinRM + RDP)** — ejecuta comandos en hosts Windows con `POST /api/targets/{id}/winrm` (auth básica o NTLM) o un bucle WinRM interactivo por el proxy, o intermedia un escritorio **RDP** completo con [Apache Guacamole](https://guacamole.apache.org/) (túnel WebSocket `GET /api/targets/{id}/rdp`, con verificación de certificado por defecto). El **visor va integrado en el portal**: abre *Work with Targets* → opción 7 y el escritorio se dibuja en un canvas (el portal incluye el cliente JavaScript de Guacamole; el propio guacd viene en los despliegues). En ambos casos la credencial se inyecta just-in-time (funcionan las cuentas de dominio), las sesiones se auditan y el operador nunca ve el secreto. El **portapapeles de la sesión** se controla con `PAM_RDP_CLIPBOARD` (`allow`/`readonly`/`deny`) y la redirección de unidades está siempre deshabilitada — así una sesión RDP no puede usarse como canal de copia/pegado ni de archivos sin auditar. `PAM_RDP_CLIPBOARD_AUDIT` añade la otra mitad: `meta` registra dirección, tipo, tamaño y digest de cada transferencia del portapapeles, y `full` guarda además el contenido (opt-in, porque un escritorio privilegiado copia secretos).
 - **Proxy de sesión de base de datos (PostgreSQL)** — apunta `psql` a pamv1 (`PAM_DB_ADDR`, p. ej. `:5433`) con `user=<credbd>@<objetivo>` y tu clave PAM como contraseña; el proxy aplica las mismas comprobaciones de autorización que el proxy SSH, inyecta la credencial de BD del vault just-in-time (auth upstream por cleartext / MD5 / **SCRAM-SHA-256**) e intermedia el protocolo — **auditando cada sentencia SQL** (`db.query`) y grabando la sesión. El operador nunca conoce la contraseña de la base de datos. Demostrado de extremo a extremo por un upstream falso que acepta *solo* el secreto del vault.
-- **Grabación de sesiones** — cada sesión (stdout **y** stderr, o cada sentencia SQL) capturada en [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/), encadenada por hash SHA-256 a prueba de manipulación, y el hash escrito en la auditoría. Los fallos de grabación se auditan y `PAM_REQUIRE_RECORDING` puede rechazar de plano una sesión no grabable.
-- **Sesiones supervisadas (monitorización en vivo + control de comandos)** — un supervisor puede **ver una sesión SSH o PostgreSQL en vivo** por `GET /api/sessions/{id}/stream` (Server-Sent Events, `CapReadAudit`), y una lista de denegación por regex (`PAM_COMMAND_DENY_FILE`) **bloquea un comando peligroso antes de que llegue al objetivo** en las rutas de exec, WinRM y SQL — rechazado y auditado (`command.blocked`). Para las shells SSH interactivas se usa el modo observador de solo lectura.
+- **Grabación de sesiones** — cada sesión (stdout **y** stderr, o cada sentencia SQL) capturada en [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/), encadenada por hash SHA-256 a prueba de manipulación, y el hash escrito en la auditoría. Los fallos de grabación se auditan y `PAM_REQUIRE_RECORDING` rechaza de plano una sesión no grabable — en los proxies SSH, WinRM y PostgreSQL **y**, desde la Fase 52c, en el visor RDP del portal y en el endpoint WinRM REST, comprobado *antes* de que nada llegue al objetivo.
+- **Sesiones supervisadas (monitorización en vivo + control de comandos)** — un supervisor puede **ver una sesión SSH o PostgreSQL en vivo** por `GET /api/sessions/{id}/stream` (Server-Sent Events, `CapReadAudit`), y una lista de denegación por regex (`PAM_COMMAND_DENY_FILE`) **bloquea un comando peligroso antes de que llegue al objetivo** en las rutas de exec, WinRM y SQL — rechazado y auditado (`command.blocked`). Para las shells SSH interactivas se usa el modo observador de solo lectura. Un fichero de denegación que no produzca ningún patrón utilizable es un **error fatal en el arranque**, no un control silenciosamente desactivado.
+- **Elevación dentro de la sesión** — donde el control de comandos es un bloqueo duro, `PAM_DB_STEPUP_FILE` marca sentencias que **se pausan a la espera de una decisión humana en vivo** en lugar de matar la sesión: la sentencia espera (auditada, visible en el monitor en vivo), un aprobador la permite o la rechaza desde la consola, y la sesión sobrevive en cualquier caso. Nadie puede aprobar la elevación de su propia sesión.
+- **Interruptor de corte para todo el clúster** — una terminación emitida en cualquier réplica corta la sesión **allí donde esté alojada** (publicada por Postgres LISTEN/NOTIFY), de modo que el interruptor, la cascada de revocación, el barrido de proveedores y la respuesta automática de analítica funcionan en HA. Toda ejecución intermediada — el endpoint WinRM REST y las herramientas exec del bróker incluidas — es una sesión registrada, contable y terminable, no solo los proxies interactivos.
+- **Control de transferencia de ficheros SFTP** — SFTP viaja sobre un subsistema SSH con un protocolo binario que el control de comandos nunca veía. El proxy **analiza ese flujo** para auditar cada operación (`sftp.open`/`sftp.modify`), y `PAM_SSH_SFTP` fija la política: `allow` (reenviar + auditar), `readonly` (**rechazar subidas, borrados y renombrados** con un permiso denegado sintetizado — el objetivo nunca se contacta; las descargas siguen funcionando) o `deny` (rechazar el subsistema entero). `PAM_SSH_SFTP_DENY_FILE` añade la otra dimensión — una **lista de denegación por regex sobre rutas** (el mismo motor que el control de comandos), rechazada en *todos* los modos incluidas las descargas y en ambos lados de un renombrado, porque una ruta que deniegas y aun así se puede descargar no está denegada. Cierra una vía de exfiltración de ficheros que de otro modo no se auditaría.
 - **Control de transferencia de archivos (SFTP)** — SFTP viaja sobre un subsistema SSH con un protocolo binario que el control de comandos no veía. Ahora el proxy **analiza ese flujo** para auditar cada operación de archivo (`sftp.open`/`sftp.modify`), y `PAM_SSH_SFTP` fija la política: `allow` (reenviar + auditar), `readonly` (**rechaza subidas, borrados y renombrados** con un permiso denegado sintetizado — el objetivo nunca es contactado; las descargas siguen funcionando) o `deny` (rechaza el subsistema por completo). Cierra una vía de exfiltración de archivos que antes no se auditaba. Probado de extremo a extremo con un cliente y servidor SFTP reales intercambiando paquetes genuinos a través del proxy.
 
 ### Vault y ciclo de vida de credenciales
@@ -167,21 +175,27 @@ Fases 0–51, agrupadas por área. Cada capacidad está cubierta por tests y se 
 - **Vault endurecido (cifrado en sobre)** — cada secreto se sella con una clave de datos [AES-256-GCM](https://pkg.go.dev/crypto/cipher) por secreto, envuelta por una **KEK intercambiable**: una clave local para desarrollo, o en producción **[HashiCorp Vault Transit](https://developer.hashicorp.com/vault/docs/secrets/transit)**, **[AWS KMS](https://aws.amazon.com/kms/)** o un **HSM por [PKCS#11](https://en.wikipedia.org/wiki/PKCS_11)** (build con tag `pkcs11`) — la clave raíz nunca sale del KMS/HSM. El AAD liga cada texto cifrado a su objetivo (un token copiado no descifra); los tokens versionados `v2:` permiten rotar la KEK en caliente.
 - **Inventario de objetivos y API de credenciales** — máquinas Linux/Windows con endpoints ssh/winrm/rdp; las credenciales se guardan en el vault, se listan (sin devolver material secreto), se revelan bajo demanda (auditado) y se borran. El modelo JSON *no puede* serializar el texto cifrado (`json:"-"`).
 - **Ciclo de vida (rotación · reconciliación · préstamo · descubrimiento)** — `POST /api/credentials/{id}/rotate` genera un secreto fuerte, lo fija **en el objetivo** (SSH `chpasswd` / WinRM `net user` / nueva `ssh_key`) y lo re-cifra — la nueva contraseña nunca se muestra. `/reconcile` verifica que el secreto del vault sigue autenticando y detecta **desincronización** (`?remediate=true` la corrige). El **préstamo (checkout)** concede una reserva exclusiva y temporal y rota el secreto al devolverlo. El **descubrimiento** (`/api/discovery/scan`) sondea hosts en busca de puertos SSH/WinRM/RDP y puede dar de alta objetivos. Un worker en segundo plano rota secretos antiguos y reconcilia según un calendario; los secretos pueden rotarse en cuanto termina una sesión proxied. **Cuentas dependientes** — declara los consumidores de una credencial (Servicios de Windows / Tareas programadas / App Pools de IIS) y la rotación actualiza cada uno por WinRM, para que rotar una cuenta de servicio no rompa producción.
+- **Cero Privilegio Permanente y certificados de operador** — una credencial `ssh_ca` **no guarda ningún secreto**: el proxy acuña un certificado SSH de corta vida por sesión, firmado por la CA de pamv1 (`PAM_SSH_CA_KEY`), de modo que la cuenta no tiene credencial permanente que robar. Un operador puede además pedir un certificado para **su propia clave** con prueba de posesión, acotado por principal y dirección de origen, revocable por KRL. En HA, la clave de host y la de la CA se guardan **en custodia compartida** en el store, cifradas con la KEK, para que no se reparta una CA distinta por pod.
 
 ### Auditoría, break-glass y alertas
 
 - **Registro de auditoría** — un registro de solo adición de cada acción sensible, con atribución de actor, más una exportación a prueba de manipulación (`GET /api/audit/export`, JSON/CSV + resumen SHA-256) para el reporte de incidentes.
 - **Logs operativos** — [slog](https://pkg.go.dev/log/slog) estructurado a stdout, una línea por petición HTTP y por sesión del proxy, etiquetado por servicio (`server`/`api`/`proxy`/`store`); JSON para un SIEM o texto para humanos (`PAM_LOG_LEVEL`, `PAM_LOG_FORMAT`). Separado de la auditoría; los secretos nunca se registran.
 - **Break-glass (v2)** — una clave de emergencia sellada, o **apertura por quórum M-de-N** ([shares de Shamir](https://en.wikipedia.org/wiki/Shamir%27s_secret_sharing) divididos con `-split-key`; los custodios envían sus shares para reconstruirla). En ambos casos obtienes una sesión de admin **de corta duración y autoexpiración**, y cada acceso/apertura break-glass se audita con fuerza y se **alerta en tiempo real** (webhook, syslog o correo).
+- **Registro de auditoría a prueba de manipulación** — con `PAM_AUDIT_HMAC_KEY` cada evento encadena un HMAC sobre el anterior, de modo que alterar o borrar una fila rompe la cadena de forma detectable (`GET /api/audit/verify`), y un **checkpoint de cabeza firmado con ed25519** detecta el truncamiento de la cola, que una cadena por sí sola no ve.
+- **Reenvío continuo de auditoría al SIEM** — `PAM_AUDIT_FORWARD_ADDR` transmite cada evento desde un cursor duradero como **syslog RFC 5424**, **CEF** o **LEEF** sobre UDP/TCP/**TLS**, con exportación **OCSF** para las plataformas que la esperan. La evidencia sale del edificio sin depender de que alguien recuerde exportarla.
+- **Retención con archivado WORM** — `PAM_RETENTION_ARCHIVE_DIR` archiva grabaciones y auditoría envejecidas, con digest, **antes** de purgar; el borrado solo se ejecuta si el archivado tuvo éxito. Con la cadena HMAC activada las filas se archivan pero **no** se purgan, porque purgarlas rompería la verificación.
+- **Grabaciones protegidas en reposo** — `PAM_RECORDING_ENCRYPT` sella cada grabación con el mismo cifrado en sobre y la misma KEK que las credenciales, y `PAM_RECORDING_OPAQUE_NAMES` saca los metadatos del nombre de fichero al registro de auditoría, para que el volumen de respaldo no filtre quién accedió a qué. Ojo: la clave de datos de una grabación sellada va envuelta **dentro del fichero**, así que conserva la KEK antigua mientras conserves grabaciones.
 
 ### Configuración y la consola de gestión
 
-- **Consola de gestión AS/400** — una consola completa consciente de roles en fósforo verde: Sign On, un menú principal numerado y pantallas `Work with…` para objetivos y concesiones, credenciales (revelar/prestar/rotar/reconciliar), sesiones activas (monitor en vivo + corte + un **panel de observación en directo**), solicitudes de acceso a cuatro ojos (ticket, aprobaciones N-de-M, ventanas programadas), usuarios y perfiles, MFA, descubrimiento, reconciliación, auditoría (filtro + exportación CSV), break-glass, **perfiles de permisos**, **configuración del sistema**, **config efectiva + exportación a IaC**, **secretos de aplicación**, **cajas fuertes (safes)**, **campañas de certificación** y **analítica de riesgo** — opciones numéricas (`4=Borrar`, `5=Ver`), teclas F, líneas de barrido. Es **orientada al teclado** (el ratón es opcional): el foco cae en el campo de cada pantalla, `Esc` vuelve atrás, `↑/↓` mueven entre filas. El menú muestra solo lo que tu rol permite.
+- **Consola de gestión AS/400** — una consola completa consciente de roles en fósforo verde: Sign On, un menú principal numerado y pantallas `Work with…` para objetivos y concesiones, credenciales (revelar/prestar/rotar/reconciliar), sesiones activas (monitor en vivo + corte + un **panel de observación en directo**), solicitudes de acceso a cuatro ojos (ticket, aprobaciones N-de-M, ventanas programadas), usuarios y perfiles, MFA, descubrimiento, reconciliación, auditoría (filtro + exportación CSV), break-glass, **perfiles de permisos**, **configuración del sistema**, **config efectiva + exportación a IaC**, **secretos de aplicación**, **cajas fuertes (safes)**, **campañas de certificación**, **analítica de riesgo**, **reproducción de grabaciones**, los **dos puntos de decisión humana** (aprobar la llamada de un agente y liberar una sentencia pausada), **proveedores**, **certificados SSH de operador**, **radio de impacto**, **sesiones de inicio** y **claves de agentes de IA** — opciones numéricas (`2=Cambiar`, `4=Borrar`, `5=Ver`), teclas F, líneas de barrido. Toda capacidad entregada se opera desde la consola; nada es solo-curl. Es **orientada al teclado** (el ratón es opcional): el foco cae en el campo de cada pantalla, `Esc` vuelve atrás, `↑/↓` mueven entre filas. El menú muestra solo lo que tu rol permite.
 
 <p align="center">
   <img src="docs/img/portal-app-secrets.svg" alt="Trabajar con secretos de aplicación — pantalla de la consola 5250" width="720">
-  <br><em>Menú 15 — <em>Work with application secrets</em>: acuñar identidades de aplicación y concederles credenciales individuales (Nivel 4).</em>
+  <br><em>Menú 15 — Work with application secrets</em>: acuñar identidades de aplicación y concederles credenciales individuales (Nivel 4).</em>
 </p>
+
 - **Configuración con hot-swap** — los ajustes de identidad, SSO y política operativa pasan a ser editables y **persistidos en la BD**, y se **aplican en caliente sin reiniciar** (secretos cifrados en el vault, un cambio rechazado se revierte). Una pantalla de solo lectura de config efectiva + salud de backends y una **exportación a IaC** (`env` / Helm / Terraform) devuelven los cambios de la consola a código. El arranque y la red/TLS permanecen solo en el entorno a propósito.
 
 ### El bróker de acceso para agentes de IA
@@ -198,13 +212,16 @@ Opcional vía `PAM_BROKER_POLICY_FILE`.
 
 - **Aprobación de sesión OT (cuatro ojos)** — protege un objetivo tras una solicitud de acceso aprobada: un usuario la crea, un aprobador *distinto* la aprueba (se rechaza la auto-aprobación), y solo entonces puede conectar — aplicado en el proxy SSH, WinRM **y** RDP, con break-glass como bypass. Por objetivo (`require_approval`) o global (`PAM_REQUIRE_APPROVAL`), con ventana temporal para mantenimientos.
 - **Endurecimiento OT** — **listas blancas de protocolos** por zona (`PAM_ALLOWED_PROTOCOLS`), sesiones **observador** de solo lectura y un **modo air-gap** (`PAM_OT_AIRGAP`) sin llamadas salientes. Ver la [guía de despliegue OT](docs/OT-DEPLOYMENT.md) y el [pack NIS2](docs/NIS2-COMPLIANCE.md).
+- **Puerta de acceso para terceros (proveedores)** — el acceso de un proveedor externo se rige por **concesiones de contrato acotadas en el tiempo y aprobadas por el cliente**, con atestación de empleo en vivo: si el proveedor deja de emplear a esa persona, el acceso cae. Dar de baja a un proveedor desencadena una **cascada instantánea** — se revocan las concesiones y se cortan las sesiones vivas — y hay exportación de evidencias por proveedor para SOC 2 / DORA.
+- **Campañas de certificación de accesos con separación de funciones** — un revisor recorre quién tiene acceso a qué y certifica o revoca cada elemento; **nadie puede certificar un acceso que él mismo concedió**, y revocar corta también las sesiones vivas de esa persona a los objetivos afectados, no solo la concesión.
+- **Radio de impacto de identidad (CIEM)** — `internal/blast` evalúa permisos efectivos de AWS IAM y recorre rutas de escalada sobre un grafo de identidad normalizado (`POST /api/blast/analyze`), señalando combinaciones tóxicas y proponiendo la remediación como código. Solo análisis de lectura: no toca credenciales de nube ni guarda estado.
 
 ### Almacenamiento y operaciones
 
 - **Almacenamiento PostgreSQL** con [pgx](https://github.com/jackc/pgx) y migraciones embebidas y versionadas; un almacén en memoria para tests y demos; **alta disponibilidad con [CloudNativePG](https://cloudnative-pg.io/)** opcional.
 - **Observabilidad** — un endpoint [Prometheus](https://prometheus.io/) `/metrics` sin dependencias (conteos por estado, volumen de auditoría, uso de break-glass, rotaciones, gauge de sesiones activas), más una separación liveness/readiness (`/healthz`, `/readyz` que comprueba la BD).
 - **Despliegue como código** — [Docker](https://docs.docker.com/) (distroless, sin root), [docker-compose](https://docs.docker.com/compose/) con Postgres endurecida, manifiestos [Kubernetes](https://kubernetes.io/) bajo el PSS restringido, un **[chart de Helm](deploy/helm/pamv1)** y un módulo de [Terraform](https://developer.hashicorp.com/terraform). Las releases se construyen por digest con **[SBOM](https://www.cisa.gov/sbom), firma keyless [cosign](https://docs.sigstore.dev/) y procedencia SLSA**.
-- **Secretos cifrados en git** — el manifiesto de Secret de Kubernetes puede sellarse con **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: los valores se cifran mientras `kind`/`metadata` quedan legibles, y se descifra al desplegar (`sops -d \| kubectl apply -f -`, el texto plano nunca toca el disco) o de forma nativa con Flux / Argo / helm-secrets — así los secretos viven en el **mismo repo de IaC** sin filtrarse. Ver **[deploy/k8s/sops/](deploy/k8s/sops/)**.
+- **Secretos cifrados en git** — el manifiesto de Secret de Kubernetes puede sellarse con **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: los valores se cifran mientras `kind`/`metadata` quedan legibles, y se descifra al desplegar (`sops -d | kubectl apply -f -`, el texto plano nunca toca el disco) o de forma nativa con Flux / Argo / helm-secrets — así los secretos viven en el **mismo repo de IaC** sin filtrarse. Ver **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **O aprovisiona los secretos desde CyberArk Conjur** — como alternativa en tiempo de ejecución a SOPS, define `PAM_CONJUR_URL` y pamv1 obtiene sus secretos de arranque (clave maestra, clave de API, URL de la BD, …) de **[Conjur](https://www.conjur.org/)** al arrancar, autenticándose con una clave de API de host o un token proyectado de Kubernetes (**`authn-jwt`**) — de modo que ningún secreto de arranque vive en Git. Ambos mecanismos se entregan; SOPS sigue siendo el predeterminado sin dependencias. Ver **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
 
 ## Roles, usuarios y perfiles
@@ -252,7 +269,7 @@ ves la credencial. Las grabaciones van a `PAM_RECORDING_DIR`; desactiva el proxy
 
 ## Hoja de ruta
 
-Se han entregado las cincuenta y dos fases (0–51) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
+Se han entregado todas las fases (0–52g) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
 
 | Fase | Tema | Estado |
 |---|---|---|
@@ -308,6 +325,14 @@ Se han entregado las cincuenta y dos fases (0–51) — detalle por fase en **[R
 | 49 | Archivado WORM antes de purgar (exportación sellada con digest; el borrado solo ocurre si el archivado tuvo éxito) | ✅ entregada |
 | 50 | Auditoría del portapapeles en el puente RDP (dirección, tipo, tamaño, digest; el contenido es opcional) | ✅ entregada |
 | 51 | Política de rutas en SFTP (lista de denegación por regex, rechazada en todos los modos y en ambos lados de un rename) | ✅ entregada |
+| 52 | Cerrar los hallazgos de inyección de comandos (dependencias de credenciales; lista de denegación → lista de permitidos en `net user`) | ✅ entregada |
+| 52a | Dejar `-rotate-kek` completo (re-envuelve la custodia de claves; grabaciones selladas documentadas en vez de rotas) | ✅ entregada |
+| 52b | Las dos regresiones del mismo día, y el hueco del contrato de store que ocultó una | ✅ entregada |
+| 52c | Coherencia de las puertas de autorización (seis que no coincidían con sus equivalentes) | ✅ entregada |
+| 52d | Tiempos de vida, plazos y comportamientos que fallaban en abierto | ✅ entregada |
+| 52e | Integridad del registro de auditoría, archivado y dos errores de concurrencia | ✅ entregada |
+| 52f | La marca de agua del archivado, hecha robusta — encontrada al revisar la 52e | ✅ entregada |
+| 52g | Seis más, encontradas al revisar todo lo anterior — incluido un test que no podía fallar | ✅ entregada |
 
 ## Cobertura frente al PAM comercial (CyberArk, Wallix, …)
 
@@ -352,12 +377,15 @@ posibles fases futuras.
 | ~~**Cero Privilegio Permanente**~~ **✅ entregado (Fase 22)** — certificados SSH efímeros de corta vida en lugar de un secreto permanente | [CyberArk ZSP](https://www.cyberark.com/what-is/zero-standing-privileges/), Teleport | una credencial `ssh_ca` **no guarda secreto**; el proxy acuña un certificado de corta vida (`PAM_SSH_CA_KEY`) firmado por la CA de pamv1 por sesión — la cuenta no tiene credencial permanente |
 | ~~**Analítica de amenazas privilegiadas**~~ **✅ entregado (Fase 23)** — puntuación de riesgo conductual + respuesta automática | CyberArk PTA, Wallix | `internal/analytics` puntúa la auditoría en riesgo explicable por actor (`GET /api/analytics/risk`); un worker alerta y puede cortar las sesiones de un actor crítico |
 | **Amplitud de conectores / plugins** — dispositivos de red (Cisco/Juniper/F5/Palo Alto), cuentas de BD, IAM en la nube, VMware/SAP/mainframe | el foso principal de CyberArk | SSH (incl. dispositivos de red) / WinRM / PostgreSQL / rotación ssh_key — **requiere dispositivos/BD reales** para extenderlo con honestidad |
-| **Acceso privilegiado en la nube (CIEM ligero)** — consola federada + credenciales de nube de corta vida, ajuste de derechos | CyberArk, Wallix | solo AWS KMS para la KEK — **requiere una cuenta de nube** para acuñar credenciales de nube de corta vida |
+| ~~**CIEM en la nube (radio de impacto de identidad)**~~ **✅ motor entregado (Fase 31)** — análisis de permisos efectivos + detección de rutas de escalada | CyberArk, Wallix, Sonrai/Wiz | `internal/blast` es un **evaluador real de permisos efectivos de AWS IAM** + recorrido del radio de impacto, hallazgos de combinaciones tóxicas y remediación como código sobre un grafo de identidad normalizado (`POST /api/blast/analyze`). El **motor** está completo y probado; solo la **ingesta en vivo** (boto3/Okta/GitHub) necesita una cuenta y queda fuera. (El *brokering* de credenciales de nube de corta vida sigue siendo la parte que depende de una cuenta) |
 | **Proxy de sesiones web / SaaS** — grabar + inyectar en consolas de administración web | CyberArk Secure Web Sessions, Wallix | solo SSH/WinRM/RDP (el mayor esfuerzo; **requiere un navegador + consola SaaS**) |
 
-Dos de las cinco brechas de Nivel 3 están cerradas. Las tres restantes requieren cada una
-infraestructura externa o una cuenta para construirlas con honestidad — catalogadas, con
-qué levantar, en **[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)**.
+Tres de las cinco brechas de Nivel 3 están cerradas (Cero Privilegio Permanente,
+analítica de amenazas y el **motor** de radio de impacto CIEM); la amplitud de
+conectores y el proxy web/SaaS — más la ingesta CIEM **en vivo** y el brokering de
+credenciales de nube de corta vida — requieren cada uno infraestructura externa o
+una cuenta para construirlos con honestidad, catalogados en
+**[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)**.
 
 ### Nivel 4 — ecosistema
 
@@ -385,11 +413,21 @@ por diseño.
 
 ### Fases candidatas siguientes
 
-1. ~~**Fase 15 — Proxy de sesión de base de datos**~~ ✅ **entregada** (PostgreSQL; MySQL/MSSQL/Oracle son conectores posteriores sobre el mismo patrón).
-2. ~~**Fase 16 — Monitorización en vivo + control de comandos**~~ ✅ **entregada** (stream SSE en vivo + control de comandos regex en exec/WinRM/SQL).
-3. ~~**Fase 17 — Safes / contenedores + propagación a cuentas dependientes**~~ ✅ **entregada** — la mejora de autorización para el uso multiequipo y la rotación *segura* de cuentas de servicio.
+Todas las fases hasta la 52g están entregadas, incluida la auto-auditoría
+completa de 2026-07: cada hallazgo de los dos barridos de seguridad de solo
+lectura está cerrado (ver [docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md)), y
+también los elementos menores que aquellas fases aplazaron — archivado WORM antes
+de purgar, LEEF + syslog sobre TLS, nombres de grabación opacos, auditoría del
+portapapeles, política de rutas SFTP y cuatro ojos por elemento en la
+certificación.
 
-**Las cuatro brechas de Nivel 1 y las tres de Nivel 2 están cerradas** (incluido el acceso de un solo uso, Fase 26), **dos de las cinco de Nivel 3** (Privilegio Cero Permanente, analítica de amenazas) y la **primera de Nivel 4** (la API de secretos para aplicaciones). Las grabaciones de sesión ya se **reproducen en el portal, verificadas por hash contra el registro de auditoría** (Fase 26). El resto del Nivel 3 (amplitud de conectores, CIEM en la nube, proxy web) y del Nivel 4 (provider de Terraform, sincronización Secrets-Hub, descubrimiento de claves SSH, componentes para apps de escritorio) son la siguiente frontera — cada uno condicionado a infraestructura externa o cuentas, catalogado en [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
+Lo que queda en curso es la **monitorización en vivo entre réplicas** (repartir
+los *bytes* de una sesión entre réplicas es un pub/sub más pesado que la señal de
+terminación que ya se difunde) y la **grabación del contenido de cada fichero
+SFTP** — ambos registrados en
+[ROADMAP.md](ROADMAP.md#smaller-follow-ons-recorded-where-they-were-deferred-).
+
+**Las cuatro brechas de Nivel 1 y las tres de Nivel 2 están cerradas** (incluido el acceso de un solo uso, Fase 26), **tres de las cinco de Nivel 3** (Privilegio Cero Permanente, analítica de amenazas y el motor de radio de impacto / CIEM) y la **primera de Nivel 4** (la API de secretos para aplicaciones). Las grabaciones de sesión ya se **reproducen en el portal, verificadas por hash contra el registro de auditoría** (Fase 26). El resto del Nivel 3 (amplitud de conectores, ingesta *en vivo* de CIEM en la nube, proxy web) y del Nivel 4 (provider de Terraform, sincronización Secrets-Hub, descubrimiento de claves SSH, componentes para apps de escritorio) son la siguiente frontera — cada uno condicionado a infraestructura externa o cuentas, catalogado en [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
 
 ## Inicio rápido
 
@@ -468,6 +506,18 @@ las de arranque y transporte de abajo permanecen solo en el entorno.
 | `PAM_SSH_KNOWN_HOSTS` | no | Fija las host keys de los objetivos (fichero known_hosts); vacío = confiar en cualquiera (logueado) |
 | `PAM_RECORDING_DIR` | no | Dónde se escriben las grabaciones, por defecto `recordings` |
 | `PAM_BROKER_POLICY_FILE` | no | Política YAML del bróker de agentes; ponerla activa el bróker de IA |
+
+### Flags de utilidad
+
+`pam-server` arranca como servidor por defecto; cinco flags le hacen una sola cosa y salir.
+
+| Flag | Qué hace |
+|---|---|
+| `-genkey` | Imprime una clave maestra nueva para `PAM_MASTER_KEY` |
+| `-hashkey` | Lee una clave de emergencia por stdin e imprime su SHA-256 para `PAM_BREAK_GLASS_KEY_HASH` |
+| `-split-key` | Lee una clave de emergencia por stdin e imprime N fragmentos de Shamir |
+| `-rotate-kek` | Vuelve a cifrar todo secreto del vault bajo una KEK nueva — credenciales, altas MFA, ajustes secretos **y** las claves compartidas de host SSH y CA. Funciona entre proveedores (local ⇄ Vault-Transit ⇄ KMS ⇄ HSM), así que es también la vía de migración. Avisa si quedan grabaciones selladas que aún necesitan la clave antigua |
+| `-healthcheck` | Sondea el `/healthz` local y sale con 0 si está sano (lo que usa el HEALTHCHECK del contenedor) |
 
 ## Procedimiento break-glass
 
