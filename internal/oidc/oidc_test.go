@@ -155,3 +155,37 @@ func merge(m map[string]any, k string, v any) map[string]any {
 	m[k] = v
 	return m
 }
+
+// TestAudienceContains pins the `aud` claim comparison, including the ARRAY
+// form, which had never been tested.
+//
+// It matters more than its size suggests. RFC 7519 permits `aud` to be either a
+// string or an array of strings, and Microsoft Entra and Keycloak routinely emit
+// the array form — so the untested branch is the one a real identity provider is
+// most likely to exercise. The same function also backs VerifyRS256, which
+// validates the Entra ROPC id_token, so a fault here is an authentication
+// bypass on one path and a total lockout on another.
+func TestAudienceContains(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+		ok   bool
+	}{
+		{"single match", `"client-a"`, "client-a", true},
+		{"single mismatch", `"client-b"`, "client-a", false},
+		{"array match, first", `["client-a","other"]`, "client-a", true},
+		{"array match, later", `["other","client-a"]`, "client-a", true},
+		{"array mismatch", `["other","another"]`, "client-a", false},
+		{"empty array", `[]`, "client-a", false},
+		{"array with empty string", `[""]`, "client-a", false},
+		{"absent claim", `null`, "client-a", false},
+		{"malformed", `{"aud":"client-a"}`, "client-a", false},
+		{"number", `42`, "client-a", false},
+		{"empty want against empty string", `""`, "", true},
+	} {
+		if got := audienceContains(json.RawMessage(tc.raw), tc.want); got != tc.ok {
+			t.Errorf("%s: audienceContains(%s, %q) = %v, want %v", tc.name, tc.raw, tc.want, got, tc.ok)
+		}
+	}
+}
