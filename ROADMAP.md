@@ -1414,10 +1414,14 @@ last to hold, and now does:
   82.8% of the package's statements; the remainder is `main()`'s flag dispatch
   and `fatal()`, which call `os.Exit` and are one-line wrappers around what is
   tested.
-- **Four small, cheap ones**, each against an existing fixture: the ITSM gate's
-  unreachable-webhook path (does it deny? the code says yes, nothing proves it),
-  the broker's 1024 parked-approval cap, `guacd`'s handshake protocol-error
-  branches, and `oidc.Discover`.
+- ~~**Four small, cheap ones**~~ — ✅ closed 2026-07-28, each against its
+  existing fixture: the ITSM gate's unreachable-webhook path **denies** (fail
+  closed — proven against a dead endpoint, plus the 2xx/non-2xx legs); the
+  broker's 1024 parked-approval cap refuses the 1025th call terminally without
+  evicting anyone; `guacd`'s handshake protocol-error branches (wrong opcode,
+  EOF, oversized length, garbage, `ready` without a connection id) all surface
+  as errors; and `oidc.Discover` resolves endpoints (trailing slash included)
+  and errors on unreachable or malformed metadata.
 
 #### 3. Feature follow-ons, in process
 
@@ -1456,16 +1460,20 @@ Buildable without external infrastructure, each deferred by the phase named.
   Flux `Kustomization` example, and sealing the CloudNativePG app-secret. The
   SOPS README advertises a `helm secrets` flow with no example behind it.
 
-#### 4. Repo furniture
+#### 4. Repo furniture — ✅ closed 2026-07-28
 
-Absent, and each cheap:
-
-- `CHANGELOG.md`; `CONTRIBUTING.md`; `CODEOWNERS`; issue and PR templates.
-- `dependabot.yml` — there is no automated dependency update path despite
-  `govulncheck` gating CI.
-- A `helm lint` / `kubeconform` job, so a broken chart or manifest fails in CI
-  rather than at `apply` time.
-- Housekeeping: 40-odd stale `phase-*` branches on the remote.
+- `CHANGELOG.md` (releases; the per-phase history stays here), `CONTRIBUTING.md`,
+  `CODEOWNERS`, issue templates (with a private-security-report contact link)
+  and a PR template carrying the living-docs checklist.
+- `.github/dependabot.yml` — weekly gomod (grouped), github-actions and docker
+  updates, so `govulncheck`'s gate has a delivery path for fixes.
+- A `manifests` CI job: `helm lint`, a full chart render (defaults **and**
+  everything-on, so gated templates are exercised), and `kubeconform` over the
+  raw K8s manifests and both renders — a broken chart fails in CI, not at
+  `apply` time. CRD instances (CNPG `Cluster`, `ServiceMonitor`) are skipped,
+  not failed.
+- Housekeeping: the eight remaining stale `phase-*` branches on the remote are
+  deleted (each verified against its merged PR first).
 
 #### 5. Infra-bound — not here
 

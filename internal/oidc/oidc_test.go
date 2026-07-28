@@ -189,3 +189,45 @@ func TestAudienceContains(t *testing.T) {
 		}
 	}
 }
+
+// TestDiscover exercises the OIDC discovery client, which no test reached
+// before: buildOIDC in cmd/pam-server is its only caller, so an IdP whose
+// metadata endpoint misbehaved was uncharted. It resolves the three endpoints
+// from a well-known document (with and without a trailing slash on the issuer,
+// pinning the TrimRight), and surfaces transport failures and malformed JSON
+// as errors instead of empty endpoints.
+func TestDiscover(t *testing.T) {
+	t.Run("resolves endpoints", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"authorization_endpoint":"https://idp.example/a","token_endpoint":"https://idp.example/t","jwks_uri":"https://idp.example/j"}`))
+		})
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		for _, issuer := range []string{srv.URL, srv.URL + "/"} {
+			authURL, tokenURL, jwksURL, err := Discover(context.Background(), nil, issuer)
+			if err != nil {
+				t.Fatalf("issuer %q: %v", issuer, err)
+			}
+			if authURL != "https://idp.example/a" || tokenURL != "https://idp.example/t" || jwksURL != "https://idp.example/j" {
+				t.Fatalf("issuer %q resolved %q %q %q", issuer, authURL, tokenURL, jwksURL)
+			}
+		}
+	})
+	t.Run("unreachable issuer errors", func(t *testing.T) {
+		if _, _, _, err := Discover(context.Background(), nil, "http://127.0.0.1:1"); err == nil {
+			t.Fatal("dead issuer produced no error")
+		}
+	})
+	t.Run("malformed metadata errors", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"authorization_endpoint": `))
+		})
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		if _, _, _, err := Discover(context.Background(), srv.Client(), srv.URL); err == nil {
+			t.Fatal("truncated metadata produced no error")
+		}
+	})
+}
