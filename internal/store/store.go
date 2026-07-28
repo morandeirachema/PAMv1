@@ -842,6 +842,17 @@ type Store interface {
 	// directory user disabled upstream, or a compromised account), returning how
 	// many were removed. It is idempotent — zero is not an error.
 	DeleteSessionsByUsername(ctx context.Context, username string) (int, error)
+	// DeleteExpiredSessions removes login sessions whose expiry has passed,
+	// returning how many were deleted.
+	//
+	// Expiry was previously enforced only by FILTERING reads, never by removing
+	// rows: the sole deletes were an explicit logout and per-username revocation.
+	// Every portal login, every break-glass activation and every 60-second RDP
+	// viewer token therefore left a row behind forever — table bloat in
+	// PostgreSQL, and in memstore a genuine leak of one permanent map entry per
+	// RDP viewer open. Broker tokens and OIDC states already had this sweep; login
+	// sessions were the omission.
+	DeleteExpiredSessions(ctx context.Context, now time.Time) (int64, error)
 
 	// PublishSessionKill broadcasts a live-session kill to every replica so the
 	// kill-switch works in HA (Postgres LISTEN/NOTIFY; an in-process hub for the

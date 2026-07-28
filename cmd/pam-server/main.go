@@ -622,6 +622,12 @@ func run() error {
 			return fmt.Errorf("command deny file %q: %w", cfg.CommandDenyFile, derr)
 		}
 		cmdGuard, derr = cmdguard.New(cmdguard.ParseDeny(string(denyBytes)))
+		if errors.Is(derr, cmdguard.ErrNoPatterns) {
+			// Fail closed: the operator asked for this control, so silently
+			// running without it is the one outcome that must not happen. An
+			// empty file usually means an unmounted ConfigMap or a bad path.
+			return fmt.Errorf("command deny file %q yielded no usable patterns; PAM_COMMAND_DENY_FILE is set, so refusing to start without the control it asks for", cfg.CommandDenyFile)
+		}
 		if derr != nil {
 			return fmt.Errorf("command deny file %q: %w", cfg.CommandDenyFile, derr)
 		}
@@ -639,6 +645,12 @@ func run() error {
 			return fmt.Errorf("sftp path deny file %q: %w", cfg.SSHSFTPDenyFile, derr)
 		}
 		sftpPathGuard, derr = cmdguard.New(cmdguard.ParseDeny(string(pathBytes)))
+		if errors.Is(derr, cmdguard.ErrNoPatterns) {
+			// Fail closed: the operator asked for this control, so silently
+			// running without it is the one outcome that must not happen. An
+			// empty file usually means an unmounted ConfigMap or a bad path.
+			return fmt.Errorf("sftp path deny file %q yielded no usable patterns; PAM_SSH_SFTP_DENY_FILE is set, so refusing to start without the control it asks for", cfg.SSHSFTPDenyFile)
+		}
 		if derr != nil {
 			return fmt.Errorf("sftp path deny file %q: %w", cfg.SSHSFTPDenyFile, derr)
 		}
@@ -656,6 +668,9 @@ func run() error {
 			return fmt.Errorf("db step-up file %q: %w", cfg.DBStepUpFile, derr)
 		}
 		stepupGuard, derr = cmdguard.New(cmdguard.ParseDeny(string(suBytes)))
+		if errors.Is(derr, cmdguard.ErrNoPatterns) {
+			return fmt.Errorf("db step-up file %q yielded no usable patterns; PAM_DB_STEPUP_FILE is set, so refusing to start without the control it asks for", cfg.DBStepUpFile)
+		}
 		if derr != nil {
 			return fmt.Errorf("db step-up file %q: %w", cfg.DBStepUpFile, derr)
 		}
@@ -852,9 +867,11 @@ func run() error {
 			MaxAge:   cfg.RotateMaxAge,
 		})
 	}
-	if cfg.BrokerPolicyFile != "" {
-		go handler.RunBrokerTokenGC(ctx) // sweep spent/expired resume tokens
-	}
+	// Unconditional: expired login sessions accumulate in every deployment, with
+	// or without the agent broker, and this loop is what bounds them. It was
+	// previously started only when a broker policy file was configured, which
+	// meant the common deployment had no garbage collection at all.
+	go handler.RunGC(ctx)
 	if cfg.AnalyticsInterval > 0 {
 		go handler.RunAnalyticsWorker(ctx, cfg.AnalyticsInterval)
 	}

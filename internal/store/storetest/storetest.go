@@ -683,6 +683,38 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.DeleteSession(ctx, "sesshash"); err != nil {
 		t.Fatalf("DeleteSession: %v", err)
 	}
+	// Expiry must be enforced by REMOVING rows, not only by filtering reads. It
+	// used to be filtering alone, so every portal login, break-glass activation
+	// and 60-second RDP viewer token left a row behind forever — bloat in
+	// PostgreSQL and a genuine leak in the in-memory store.
+	if err := st.CreateSession(ctx, &store.Session{Username: "gc-live", Role: "user", TokenHash: "gc-live", ExpiresAt: future}); err != nil {
+		t.Fatalf("CreateSession(live): %v", err)
+	}
+	for i, h := range []string{"gc-old-1", "gc-old-2"} {
+		if err := st.CreateSession(ctx, &store.Session{
+			Username: "gc-old", Role: "user", TokenHash: h, ExpiresAt: now.Add(-time.Duration(i+1) * time.Hour),
+		}); err != nil {
+			t.Fatalf("CreateSession(expired %d): %v", i, err)
+		}
+	}
+	swept, err := st.DeleteExpiredSessions(ctx, now)
+	if err != nil {
+		t.Fatalf("DeleteExpiredSessions: %v", err)
+	}
+	if swept < 2 {
+		t.Fatalf("DeleteExpiredSessions removed %d rows, want at least the 2 expired ones", swept)
+	}
+	// The live session must survive — a sweep that took it would log everyone out.
+	if s, err := st.GetSessionByTokenHash(ctx, "gc-live"); err != nil || s.Username != "gc-live" {
+		t.Fatalf("the sweep removed a live session: %+v err %v", s, err)
+	}
+	// And it is idempotent: a second pass finds nothing left to do.
+	if again, err := st.DeleteExpiredSessions(ctx, now); err != nil || again != 0 {
+		t.Fatalf("second DeleteExpiredSessions = %d, %v; want 0, nil", again, err)
+	}
+	if err := st.DeleteSession(ctx, "gc-live"); err != nil {
+		t.Fatalf("DeleteSession(gc-live): %v", err)
+	}
 
 	// --- MFA enrollment + recovery codes ---
 	if err := st.UpsertMFAEnrollment(ctx, &store.MFAEnrollment{Username: "u1", SecretEnc: "v2:totp", Confirmed: false}); err != nil {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -86,5 +87,70 @@ func TestSessionStreamRequiresAudit(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+// TestSessionStreamOutlivesWriteTimeout proves a live-monitoring stream is not
+// cut off by the HTTP server's global write timeout.
+//
+// http.Server.WriteTimeout (30s in production) is right for a request/response
+// API and wrong for a stream: net/http arms the deadline before the handler
+// runs, so a supervisor watching a session had the connection dropped mid-frame
+// after thirty seconds however healthy it was — and reconnecting simply started
+// another thirty-second clock. Nothing logged an error, because from the
+// server's point of view the timeout did exactly what it was configured to do.
+//
+// The handler now clears the deadline for the connection with
+// http.ResponseController, which only works because the access-log wrapper
+// exposes Unwrap. This test runs a server with a deliberately tiny WriteTimeout
+// and asserts frames still arrive well after it has elapsed; without either
+// piece it fails in under a second.
+func TestSessionStreamOutlivesWriteTimeout(t *testing.T) {
+	hub := session.NewHub()
+	handler := newTestHandler(t, api.Options{Live: hub})
+
+	srv := httptest.NewUnstartedServer(handler)
+	const writeTimeout = 250 * time.Millisecond
+	srv.Config.WriteTimeout = writeTimeout
+	srv.Start()
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/sessions/sess-slow/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-API-Key", testAPIKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// Publish frames spaced so that the last one lands several write timeouts
+	// after the stream opened. Under the old behaviour the connection is gone
+	// before the second frame.
+	const frames = 4
+	go func() {
+		for i := 0; i < frames; i++ {
+			time.Sleep(writeTimeout * 2)
+			hub.Publish("sess-slow", []byte("frame"))
+		}
+	}()
+
+	sc := bufio.NewScanner(resp.Body)
+	got := 0
+	for got < frames && sc.Scan() {
+		if strings.HasPrefix(sc.Text(), "data: ") {
+			got++
+		}
+	}
+	if got < frames {
+		t.Fatalf("received %d of %d frames before the stream died (scanner err: %v) — the stream is still capped by the server WriteTimeout of %s",
+			got, frames, sc.Err(), writeTimeout)
 	}
 }

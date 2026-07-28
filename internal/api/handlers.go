@@ -33,21 +33,16 @@ func (s *Server) streamSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "live monitoring is not enabled")
 		return
 	}
-	flusher, ok := w.(http.Flusher)
+	rc, ok := s.beginStream(w)
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
 	frames, cancel := s.live.Subscribe(id)
 	defer cancel()
 
 	s.audit(r.Context(), "session.monitor", "session:"+id)
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no") // disable proxy buffering
 	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
+	_ = rc.Flush()
 
 	for {
 		select {
@@ -59,7 +54,7 @@ func (s *Server) streamSession(w http.ResponseWriter, r *http.Request) {
 			if _, err := fmt.Fprintf(w, "data: %s\n\n", sseEscape(b)); err != nil {
 				return
 			}
-			flusher.Flush()
+			_ = rc.Flush()
 		}
 	}
 }
@@ -89,6 +84,12 @@ func (s *Server) killSession(w http.ResponseWriter, r *http.Request) {
 	case session.KillDispatched:
 		s.audit(r.Context(), "session.kill", "session:"+id+" scope:cluster")
 		w.WriteHeader(http.StatusAccepted)
+	case session.KillDispatchFailed:
+		// The session is on another replica and the broadcast did not get there.
+		// Say so: reporting 202 would tell an operator the privileged session was
+		// cut off while it kept running.
+		s.audit(r.Context(), "session.kill_failed", "session:"+id+" scope:cluster reason:broadcast-failed")
+		writeError(w, http.StatusServiceUnavailable, "the session is on another replica and the kill could not be broadcast; retry")
 	default:
 		writeError(w, http.StatusNotFound, "session not found")
 	}

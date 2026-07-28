@@ -583,6 +583,18 @@ func (w *statusWriter) Flush() {
 	}
 }
 
+// Unwrap exposes the writer underneath, which is how http.ResponseController
+// reaches capabilities this wrapper does not implement itself — SetWriteDeadline
+// and SetReadDeadline today, whatever net/http adds tomorrow.
+//
+// Without it the wrapper is opaque: ResponseController stops at statusWriter,
+// finds no deadline support, and returns ErrNotSupported. That is how the
+// live-monitoring stream ended up capped at the server's 30s WriteTimeout even
+// after the handler tried to clear it. The lesson is in the two methods below —
+// Flush and Hijack are hand-forwarded, one per capability, each added after
+// something broke. Unwrap generalises that instead of continuing to enumerate.
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 // Hijack forwards to the underlying writer so the WebSocket handler (the RDP
 // tunnel) can take over the connection. The embedded http.ResponseWriter
 // interface does not promote Hijack, so without this the access-log wrapper
@@ -965,6 +977,40 @@ func (s *Server) mustAuditAs(w http.ResponseWriter, ctx context.Context, actor, 
 // post-hoc check would report a failure the command had already caused.
 func (s *Server) recordingRequired(dir string) bool {
 	return s.requireRecording && dir == ""
+}
+
+// beginStream prepares w for an open-ended Server-Sent Events response and
+// clears this connection's write deadline.
+//
+// The deadline is the part that matters. http.Server carries a global
+// WriteTimeout (30s here) which is exactly right for a request/response API and
+// exactly wrong for a stream: net/http arms it before the handler runs, so a
+// live-monitoring session was cut off mid-frame after thirty seconds no matter
+// how healthy it was. Verified rather than assumed — an SSE stream under a 1s
+// WriteTimeout delivers one frame and then fails with i/o timeout, and clearing
+// the deadline delivers all of them.
+//
+// http.ResponseController is the supported way to reach past the global setting
+// for one connection (Go 1.20+). It returns an error only if the underlying
+// connection does not support deadlines, which for a real server it does; the
+// error is surfaced so a future transport change cannot silently reintroduce a
+// half-hour cap.
+//
+// Note this applies to SSE only. A hijacked WebSocket — the RDP viewer — does
+// NOT inherit the server's write deadline, which was also verified rather than
+// assumed before deciding it needed no change.
+func (s *Server) beginStream(w http.ResponseWriter) (*http.ResponseController, bool) {
+	rc := http.NewResponseController(w)
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+		s.log.Error("stream: cannot clear write deadline; the stream would be cut at the server WriteTimeout", "err", err)
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return nil, false
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // disable proxy buffering
+	return rc, true
 }
 
 // health is the liveness probe: it always reports ok while the process serves.

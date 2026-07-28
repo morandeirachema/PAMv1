@@ -309,6 +309,13 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	conn := nConn
 	defer func() { conn.Close() }()
 
+	// Bound the pre-authentication exchange, for the same reason the SSH proxy
+	// does: until a peer authenticates it holds a connection slot and a goroutine
+	// for free, and the startup/TLS/password sequence will otherwise wait forever
+	// on a client that connects and says nothing. Cleared once authenticated,
+	// because a real database session is legitimately idle between queries.
+	_ = nConn.SetDeadline(time.Now().Add(handshakeTimeout))
+
 	// --- Startup / SSL negotiation ---
 	backend := pgproto3.NewBackend(conn, conn)
 	var startup *pgproto3.StartupMessage
@@ -381,6 +388,11 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		return
 	}
 	actor := principal.Name
+	// Authenticated: lift the pre-authentication deadline. Note this clears it on
+	// nConn, the connection the deadline was set on — `conn` may now be a TLS
+	// wrapper around it, and setting a deadline on the wrapper would not undo one
+	// set on the socket beneath.
+	_ = nConn.SetDeadline(time.Time{})
 
 	// --- Authorization gates (mirror the SSH proxy; decrypt only after all pass) ---
 	// An enrollment-only session (MFA setup pending under PAM_MFA_REQUIRED) may not

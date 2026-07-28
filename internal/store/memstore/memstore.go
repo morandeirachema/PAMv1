@@ -1873,6 +1873,22 @@ func (m *Memstore) DeleteSessionsByUsername(_ context.Context, username string) 
 	return n, nil
 }
 
+// DeleteExpiredSessions removes login sessions past their expiry. In memstore
+// this is the difference between a bounded map and one that grows by an entry
+// per RDP viewer token for the life of the process.
+func (m *Memstore) DeleteExpiredSessions(_ context.Context, now time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var n int64
+	for id, s := range m.sessions {
+		if !s.ExpiresAt.After(now) {
+			delete(m.sessions, id)
+			n++
+		}
+	}
+	return n, nil
+}
+
 // UpsertMFAEnrollment creates or replaces a user's TOTP enrollment.
 func (m *Memstore) UpsertMFAEnrollment(_ context.Context, e *store.MFAEnrollment) error {
 	m.mu.Lock()

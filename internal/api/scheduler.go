@@ -179,15 +179,18 @@ func (s *Server) RunLifecycleWorker(ctx context.Context, pol RotationPolicy) {
 	}
 }
 
-// runLifecycleOnce performs a single reconcile+age-rotation pass. now is passed
-// explicitly so the aging decision is testable.
-// RunBrokerTokenGC periodically deletes spent or expired agent-broker resume
-// tokens so the broker_tokens table stays bounded. It runs only when the broker
-// is enabled and stops when ctx is cancelled.
-func (s *Server) RunBrokerTokenGC(ctx context.Context) {
-	if s.broker == nil {
-		return
-	}
+// RunGC periodically deletes rows whose lifetime has ended, so the tables that
+// grow with ordinary use stay bounded. It stops when ctx is cancelled.
+//
+// It sweeps expired **login sessions** unconditionally, and agent-broker resume
+// tokens and abandoned parked approvals when the broker is enabled. The login
+// sessions are the reason this loop is no longer broker-conditional: expiry used
+// to be enforced only by filtering reads, so every portal login, every
+// break-glass activation and every 60-second RDP viewer token left a row behind
+// forever — bloat in PostgreSQL, and a real leak in the in-memory store. Broker
+// tokens and OIDC states already had a sweep; login sessions were simply
+// forgotten, and a deployment with no broker had no GC at all.
+func (s *Server) RunGC(ctx context.Context) {
 	const interval = 10 * time.Minute
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -196,7 +199,16 @@ func (s *Server) RunBrokerTokenGC(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if n, err := s.store.DeleteExpiredBrokerTokens(systemContext(ctx)); err != nil {
+			sysCtx := systemContext(ctx)
+			if n, err := s.store.DeleteExpiredSessions(sysCtx, time.Now()); err != nil {
+				s.log.Warn("login session GC failed", "err", err)
+			} else if n > 0 {
+				s.log.Debug("login session GC swept expired sessions", "deleted", n)
+			}
+			if s.broker == nil {
+				continue
+			}
+			if n, err := s.store.DeleteExpiredBrokerTokens(sysCtx); err != nil {
 				s.log.Warn("broker token GC failed", "err", err)
 			} else if n > 0 {
 				s.log.Debug("broker token GC swept expired/used tokens", "deleted", n)
@@ -208,6 +220,8 @@ func (s *Server) RunBrokerTokenGC(ctx context.Context) {
 	}
 }
 
+// runLifecycleOnce performs a single reconcile+age-rotation pass. now is passed
+// explicitly so the aging decision is testable.
 func (s *Server) runLifecycleOnce(ctx context.Context, maxAge time.Duration, now time.Time) lifecycleReport {
 	var rep lifecycleReport
 	// Invalidate any secret still outstanding on an expired checkout that was

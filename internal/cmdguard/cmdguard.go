@@ -16,7 +16,7 @@
 package cmdguard
 
 import (
-	"bufio"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -46,17 +46,47 @@ func New(patterns []string) (*Guard, error) {
 		ps = append(ps, re)
 	}
 	if len(ps) == 0 {
-		return nil, nil
+		// A caller that asked for a guard and got none must be able to tell that
+		// apart from "no guard was configured" — see ErrNoPatterns. Returning a
+		// bare nil here is what let an empty or unmounted policy file disable the
+		// control while startup logged it as enabled.
+		return nil, ErrNoPatterns
 	}
 	return &Guard{patterns: ps}, nil
 }
 
+// ErrNoPatterns is returned by New when the input contained no usable pattern —
+// an empty file, one that is only comments, or a ConfigMap that failed to mount.
+//
+// It is an error rather than an empty guard because the alternative fails OPEN:
+// `PAM_COMMAND_DENY_FILE`, `PAM_SSH_SFTP_DENY_FILE` and `PAM_DB_STEPUP_FILE`
+// would each be silently inert while the operator who set them believed
+// otherwise. Setting the variable is a statement of intent, and the only safe
+// reading of "I asked for command control and got none" is to refuse to start.
+var ErrNoPatterns = errors.New("no usable patterns")
+
 // ParseDeny splits a deny file's contents into one pattern per line.
+//
+// It splits the string directly rather than running a bufio.Scanner over it. The
+// Scanner has a 64 KiB default token limit and stops at the first line that
+// exceeds it — and its Err() was never checked, so a single over-long line
+// silently discarded every pattern after it while startup logged the control as
+// enabled. Splitting a string that is already fully in memory has no size limit
+// to get wrong, which is the point: a security control should not be able to
+// half-load.
+//
+// Trailing carriage returns are trimmed so a file saved with CRLF endings
+// produces the same patterns as one with LF.
 func ParseDeny(contents string) []string {
-	var out []string
-	sc := bufio.NewScanner(strings.NewReader(contents))
-	for sc.Scan() {
-		out = append(out, sc.Text())
+	lines := strings.Split(contents, "\n")
+	// A file ending in a newline splits with a trailing empty element; drop it so
+	// the result matches line-oriented reading exactly.
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		out = append(out, strings.TrimSuffix(l, "\r"))
 	}
 	return out
 }

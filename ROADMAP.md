@@ -1182,6 +1182,47 @@ nothing wrong, because the problem is only visible next to its siblings.
   never contacted, that the command never ran, that the refusal reached the audit
   trail, and that the legitimate path still works
 
+## Phase 52d — Lifetimes, deadlines and fail-open defaults ✅
+
+Findings **N**, **O**, **P**, **Q**, **AA** and **AB**. This batch is about
+things that were *almost* right: a guard that fired on one of its two triggers, a
+timeout that applied to the wrong kind of response, a sweep that was never
+scheduled, a failure that was reported as success.
+
+- [x] **A killed command actually stops now.** `execGuard` closed the SSH session
+  only on a deadline, never on cancellation — so an `ssh_exec` killed from the
+  console reported "session terminated" to the operator while the command kept
+  running on the target. The exclusion was deliberate (the stop func cancelled
+  the same context, so treating cancellation as a trigger would have closed every
+  successful run) but it disabled the case that matters most. Now three separate
+  signals — a timer, the caller's context, and normal completion
+- [x] **Live monitoring is no longer cut off after 30 seconds.** The root cause
+  was not the timeout: it was the access-log wrapper having no `Unwrap`, so
+  `http.ResponseController` could not reach the connection to clear the deadline.
+  Adding `Unwrap` generalises the hand-written `Flush` and `Hijack` passthroughs
+  that had each been added after something broke
+- [x] **Verified in both directions rather than assumed.** An SSE stream under a
+  1s write timeout delivers one frame and dies; clearing the deadline delivers
+  all of them. And the WebSocket path — the RDP viewer — turns out **not** to
+  inherit the deadline, so it needed no change and did not get a speculative one
+- [x] **Neither proxy will hold a slot for an unauthenticated peer.** Both now
+  bound the handshake at 30 seconds and clear the deadline once authenticated,
+  since an established session is legitimately idle while an operator reads
+- [x] **Expired login sessions are collected.** Expiry was enforced by filtering
+  reads, never by deleting rows, so every login, break-glass activation and
+  60-second RDP token left a row behind forever. The GC loop also used to start
+  *only* when a broker policy file was configured — so the ordinary deployment
+  had no garbage collection at all
+- [x] **A failed kill says so.** The cluster broadcast error was discarded and
+  the outcome computed from "is a bus configured", so an operator cutting off a
+  live privileged session on another replica was told it worked
+- [x] **A policy file that yields nothing is fatal, not silently inert.** Setting
+  `PAM_COMMAND_DENY_FILE` (or the SFTP/step-up equivalents) is a statement of
+  intent; an unmounted ConfigMap used to disable the control while startup logged
+  it as enabled. `ParseDeny` also no longer runs a `bufio.Scanner`, whose 64 KiB
+  token limit silently discarded every pattern after one long line — with its
+  `Err()` unchecked, a half-loaded policy looked exactly like a loaded one
+
 ### Open findings from the post-beta sweep (2026-07-27) ⬜
 
 A second full read-only sweep, run right after the beta milestone across six
@@ -1202,10 +1243,9 @@ real work, in rough priority order:
 3. ~~**Two same-day regressions from phases 44–51**~~ — **fixed in Phase 52b**
    (above), together with the store-contract gap that let them through.
 4. ~~**The RDP tunnel authenticates itself**~~ — **fixed in Phase 52c** (above).
-5. **Cancellation and deadlines at the edges** — a killed `ssh_exec` keeps
-   running on the target, neither proxy has a pre-authentication deadline, and a
-   global 30-second write timeout has been silently capping every live-monitoring
-   stream since the feature shipped.
+5. ~~**Cancellation and deadlines at the edges**~~ — **fixed in Phase 52d**
+   (above), along with the uncollected login sessions, the kill that reported
+   success on failure, and the deny file that could fail open.
 6. ~~**Gates that do not match their peers**~~ — **fixed in Phase 52c** (above),
    including `PAM_REQUIRE_RECORDING` finally covering the RDP viewer and the REST
    WinRM endpoint.
