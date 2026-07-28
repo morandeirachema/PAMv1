@@ -5,9 +5,9 @@ root) to keep the root uncluttered; the build context is still the **repo root**
 
 | File | What it is |
 |---|---|
-| `Dockerfile` | The default image — `CGO_ENABLED=0`, static, `distroless/static`, non-root, read-only root FS |
+| `Dockerfile` | The default image — `CGO_ENABLED=0`, static, `distroless/static`, non-root. The read-only root filesystem is applied at *run* time by compose (`read_only: true`), not baked into the image |
 | `Dockerfile.pkcs11` | Optional image with the PKCS#11 **HSM KEK** provider (needs cgo + a glibc base) |
-| `docker-compose.yml` | Local full stack: hardened PostgreSQL 17 (scram-sha-256) + pam-server |
+| `docker-compose.yml` | Local full stack: hardened PostgreSQL 17 (scram-sha-256), a `pam-init` volume-ownership one-shot, an internal-only `guacd` (so **RDP brokering works here too**) and pam-server |
 | `.env.example` | Copy to `.env` and fill the keys before `docker compose up` |
 | `docker-compose.rdp-demo.yml` | End-to-end **RDP viewer demo** — a real xrdp desktop + guacd + pam-server, target auto-seeded (see below) |
 | `rdp-target/` | The demo's throwaway RDP target image (XFCE over xrdp). Demo only — never deploy |
@@ -20,6 +20,29 @@ cp .env.example .env      # fill PAM_MASTER_KEY, PAM_API_KEY, POSTGRES_PASSWORD
 docker compose up --build
 # → portal + REST API on http://localhost:8080, SSH proxy on :2222
 ```
+
+Two of those three values have to be generated, not invented — compose fails
+fast if they are missing, but it cannot tell you they are *wrong*:
+
+```bash
+go run ./cmd/pam-server -genkey      # PAM_MASTER_KEY (32-byte urlsafe base64)
+openssl rand -base64 24              # PAM_API_KEY — must be ≥16 chars on a real database
+```
+
+The PostgreSQL session proxy (`PAM_DB_ADDR`, `:5433`) is **not** enabled in this
+compose file, so nothing listens there even though `.env.example` documents the
+variable. Set it and publish the port if you want to try `psql` through pamv1.
+
+> **Two things that will refuse to start, or refuse a session, if you enable them
+> here.** Both are deliberate fail-closed behaviour from Phase 52c/52d, and both
+> are easy to hit in a demo:
+> - `PAM_REQUIRE_RECORDING=true` now also covers the in-portal RDP viewer and the
+>   REST WinRM endpoint. Neither compose file sets `PAM_GUACD_RECORDING_PATH`, so
+>   enabling it without that will **refuse every RDP session**.
+> - A deny file (`PAM_COMMAND_DENY_FILE`, `PAM_SSH_SFTP_DENY_FILE`,
+>   `PAM_DB_STEPUP_FILE`) that yields no usable patterns is now a **fatal startup
+>   error**, not a silently disabled control. Mounting an empty file stops the
+>   server booting.
 
 ## Run the RDP viewer demo (see the pixels, no Windows host)
 

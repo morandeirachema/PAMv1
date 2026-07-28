@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-07-28 · Reflects: Phases 0–52e + the 2026-07 hardening passes,
+> Last updated: 2026-07-28 · Reflects: Phases 0–52g + the 2026-07 hardening passes,
 > including the **post-beta sweep of 2026-07-27**, whose thirty findings are all
 > now closed (see the section below for what each fix actually was).
 
@@ -144,7 +144,7 @@ Found by the same pass, **not** fixed in it — each is a phase-sized change or 
 deliberate design decision to take, not a one-line correction. They are recorded
 here rather than left implicit. **Every finding has since shipped** (Phases
 38–45, struck through below); what remains planned are the smaller follow-ons
-listed in the **[ROADMAP](../ROADMAP.md#next--planned-)**, which is the
+listed in the **[ROADMAP](../ROADMAP.md#smaller-follow-ons-recorded-where-they-were-deferred-)**, which is the
 authoritative place for what happens next — this table is the finding, the
 roadmap is the plan.
 

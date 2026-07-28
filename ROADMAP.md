@@ -6,7 +6,8 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–43 are shipped** — through the CyberArk/Wallix-style console, the AI-agent
+**Phases 0–52g are shipped.** The narrative that follows traces the arc through
+Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
 with command control, safes, dependent-account propagation), optional CyberArk Conjur
@@ -52,7 +53,17 @@ and CA keys** (42), so a scaled deployment stops handing out a different SSH hos
 and a different certificate authority per pod — and the console's **two human
 decision points** (43): approving an agent's parked tool call, and releasing or
 refusing a paused statement, both of which had been curl-only. The portal is
-also **keyboard-first** (mouse optional). See their sections below. Beyond those,
+also **keyboard-first** (mouse optional).
+
+**Phases 44–52g are deliberately not enumerated here** — the sentence above is
+already too long, and its length is precisely why it spent nine phases out of
+date. In summary: 44–51 hardened the console, the audit trail and the recording
+pipeline; **52 through 52g** closed the thirty findings of the
+[post-beta security sweep](#the-post-beta-sweep-2026-07-27--all-thirty-findings-closed-)
+and the six more that reviewing those fixes uncovered. Each phase has its own
+section below, which is the authoritative record.
+
+Beyond those,
 a number of items genuinely require external infrastructure or a paid account to build
 and verify honestly, so they are left as documented follow-ons rather than faked. The
 full catalogue is in **[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)**;
@@ -103,7 +114,7 @@ The flagship: users connect *through* pamv1, never holding the credential.
 - [x] Audit now attributes real usernames; portal tolerates per-role 403s
 - [x] `approver`'s approval endpoints (access-request workflow) — **shipped in Phase 8** (`/api/access-requests`, 4-eyes)
 
-### 3b — Active Directory connector 🚧
+### 3b — Active Directory connector ✅
 
 - [x] LDAP/LDAPS bind against AD ([go-ldap](https://github.com/go-ldap/ldap)): service-account search + user bind to verify the password
 - [x] AD groups → the four pamv1 roles, via `PAM_LDAP_GROUP_*`; a user in several mapped groups carries **all** of them (`Principal.Roles`) and is granted the **union** of their capabilities — not just the single highest role — persisted across a session as `sessions.roles` (same for Entra app-roles/groups)
@@ -472,7 +483,7 @@ Closes an unaudited file-transfer path in the flagship SSH proxy. SFTP is not a 
 - [x] **SFTP inspector** (`internal/proxy/sftpguard.go`): sits on the operator→target leg (a new `pumpRequests` `onSubsystem` hook plus a per-session `pump` replacing the raw `io.Copy`), frames each SFTP request packet directly (no third-party SFTP dependency — an iterative parser over the wire format), and **fails open on forwarding but loud on auditing** (an unframable stream is passed through and flagged `sftp.parse_error`, never silently dropped)
 - [x] **Policy `PAM_SSH_SFTP`** ∈ {`allow`, `readonly`, `deny`} (fail-loud on a typo): **`allow`** (default) forwards but now **audits every operation** (`sftp.session`, `sftp.open` with read/write intent, `sftp.modify` for remove/rename/mkdir/rmdir/setstat/symlink); **`readonly`** refuses any mutating op by **synthesizing an `SSH_FXP_STATUS` permission-denied** to the client (`sftp.blocked`) so the target is never contacted, while reads still flow; **`deny`** refuses the subsystem outright (`sftp.denied`). A non-sftp subsystem is audited `session.subsystem` (refused under `deny`)
 - [x] **Tests**: a **real minimal SFTP client + server** exchange genuine v3 packets through the proxy — `allow` forwards an upload to the target and audits it, `readonly` returns permission-denied for both an upload and a delete (neither reaches the target) yet a download still succeeds, `deny` refuses the subsystem — plus the config-enum mapping. New audit vocab `sftp.*` + `session.subsystem`; no schema change
-- Deferred (documented): **per-file content recording** of transferred bytes and a **path allow/deny list** (a natural follow-on to the framing already in place); **read-only enforcement for interactive shell file tools** (`scp`/shell redirection) stays inherent to the exec-path-only limit of command control
+- Deferred (documented): **per-file content recording** of transferred bytes — still open; the **path allow/deny list** has since shipped in Phase 51 (`PAM_SSH_SFTP_DENY_FILE`). **Read-only enforcement for interactive shell file tools** (`scp`/shell redirection) stays inherent to the exec-path-only limit of command control
 
 ## Phase 33 — RDP clipboard control ✅
 
@@ -481,7 +492,7 @@ The RDP counterpart to Phase 32. The in-portal RDP viewer relies on [Apache Guac
 - [x] **`PAM_RDP_CLIPBOARD` policy** (`internal/api/rdp_handlers.go` `rdpClipboardParams`, threaded into the guacd `connect` handshake via `rdpExtra`): **`allow`** (default) leaves copy + paste on; **`readonly`** blocks paste *into* the target (`disable-paste=true` — no clipboard injection) while copy-out stays on, mirroring SFTP read-only; **`deny`** turns the clipboard off both ways (`disable-copy=true`+`disable-paste=true`). Every mode also forces **`enable-drive=false`**, so no file can be exfiltrated through a mounted client drive regardless of guacd's defaults
 - [x] **Audited**: the chosen mode rides the `rdp.connect` audit detail (`clipboard:<mode>`); config `PAM_RDP_CLIPBOARD` ∈ {allow, readonly, deny} is validated fail-loud
 - [x] **Tests**: the mode→parameter mapping (allow/readonly/deny/unset), that drive redirection is always disabled, and an **end-to-end** assertion that a `deny` policy reaches a fake guacd as `disable-copy=true`/`disable-paste=true`/`enable-drive=false` in the advertised arg order. No new audit vocab, no schema change
-- Deferred (documented): **clipboard-content auditing** (logging *what* was copied — Guacamole exposes clipboard as a stream that could be tee'd, a natural follow-on) and a **per-target** clipboard override (today it is a global policy)
+- Deferred (documented): **clipboard-content auditing** has since shipped in Phase 50 (`PAM_RDP_CLIPBOARD_AUDIT`, modes `off|meta|full`). A **per-target** clipboard override is still open — today it is a global policy
 
 ## Phase 34 — HA live-session kill-switch ✅
 
@@ -513,7 +524,7 @@ Two data stores grew without bound: **session recordings** on disk and **audit r
 - [x] **Audit-row retention** (`store.PruneAuditBefore`): deletes audit events older than `PAM_AUDIT_RETENTION_DAYS`, audited `audit.pruned` — **but only when the tamper-evident HMAC chain is off**. Deleting the chain head breaks `VerifyAuditChain` (it requires the first row's `prev_hash` to be nil), so with the chain on the worker **skips audit pruning with a loud warning** rather than trade integrity for space (the correct pattern there is a WORM export + manual re-anchor)
 - [x] **Leader-locked worker** (`RunRetentionWorker`, `PAM_RETENTION_INTERVAL_HOURS`, default 24) — one replica sweeps per tick, like the other background jobs. Both windows default to `0` = keep forever, validated fail-loud
 - [x] **Tests**: `PruneRecordings` (old removed; the `.chain` head, recent recordings, and non-recording files preserved; a dotfile-`.cast` is never touched); the store contract (`PruneAuditBefore` — a future cutoff prunes all, a past cutoff prunes none); the worker pass (recordings pruned + audited, audit pruned when unchained, and **skipped when chained**)
-- Deferred (documented): **archive-to-WORM before delete** as a built-in (the audit **export** endpoint already produces a digest-stamped artifact for this), and **audit retention with the chain on** via export + automatic re-genesis (a deliberate integrity/operations tradeoff kept manual for now)
+- Deferred (documented): **archive-to-WORM before delete** has since shipped in Phase 49 (`PAM_RETENTION_ARCHIVE_DIR`), which also resolved the chain-on case by archiving without pruning
 
 ## Phase 37 — Gap-analysis pass: child-resource scoping + bearer auth failures ✅
 
@@ -547,11 +558,13 @@ rather than half-built here.
   positive control that in-safe deletion still works), a cross-credential dependency
   delete refused, and 401×N-then-429 with exactly N events audited on each of the
   three bearer surfaces. No schema change, no new environment variable
-- Deferred (documented in SECURITY-GAPS.md, each phase-sized): recording encryption
-  at rest, shared custody of the SSH host/CA keys in HA, command control on the REST
-  WinRM and broker exec paths, the WinRM endpoint's absence from the session
-  registry, `CapApprove` for step-up and certification decisions, the console-parity
-  drift since Phase 25, and update endpoints + pagination
+- Deferred (documented in SECURITY-GAPS.md, each phase-sized) — **all seven have
+  since shipped, in Phases 38–46**: recording encryption at rest (41), shared
+  custody of the SSH host/CA keys in HA (42), command control on the REST WinRM
+  and broker exec paths (38), the WinRM endpoint's absence from the session
+  registry (40), `CapApprove` for step-up and certification decisions (39), the
+  console-parity drift since Phase 25 (43, 45), and update endpoints +
+  pagination (44)
 
 ## Phase 38 — Command control on every command path ✅
 
@@ -879,14 +892,6 @@ review exists to prevent.
   server
 - One additive migration; no new routes, no new environment variable
 
-## Next — planned ⬜
-
-Phases 37–46 closed every finding from the 2026-07-26 read-only sweep
-(**[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md#open-findings-from-the-2026-07-26-sweep)**),
-including the four-eyes follow-on. What remains planned are the smaller
-deferred follow-ons below — each buildable in process; the infra-bound list
-stays in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
-
 ## Phase 47 — LEEF format + TLS transport for the SIEM forwarder ✅
 
 The two follow-ons Phase 35 deferred on its own seam, closing them: the audit
@@ -1093,7 +1098,7 @@ something went wrong, so it failing quietly is the worst possible time for it.
 - [x] **Both stores are held to it.** The contract suite covers list ordering,
   re-wrap read-back and `ErrNotFound` on an unclaimed name, so `memstore` and
   `pgstore` cannot drift apart on the new methods the way they did on list
-  limits (finding AF, still open)
+  limits (finding AF, closed in Phase 52b)
 - [x] **Verified the test fails without the fix**, rather than assuming it would
 - [x] **Sealed recordings: warned, not re-wrapped — and this is the right
   answer.** A recording's data key is wrapped inside the *file*, and the SHA-256
@@ -1206,7 +1211,9 @@ scheduled, a failure that was reported as success.
   all of them. And the WebSocket path — the RDP viewer — turns out **not** to
   inherit the deadline, so it needed no change and did not get a speculative one
 - [x] **Neither proxy will hold a slot for an unauthenticated peer.** Both now
-  bound the handshake at 30 seconds and clear the deadline once authenticated,
+  bound the handshake (30 seconds here, raised to 120 in Phase 52g once it was
+  measured cutting off a human typing the API key) and clear the deadline once
+  authenticated,
   since an established session is legitimately idle while an operator reads
 - [x] **Expired login sessions are collected.** Expiry was enforced by filtering
   reads, never by deleting rows, so every login, break-glass activation and
@@ -1271,6 +1278,34 @@ The last nine findings from the post-beta sweep (**R**, **S**, **AC**, **AD**,
   SHA-256 stays, and the reasoning is in the code: precomputation needs a small
   input space, and the fix for a generated secret is to stop generating it small
 
+## Phase 52f — Make the archive high-water mark robust ✅
+
+Reviewing Phase 52e's own change surfaced a weakness in it, which is the more
+interesting half of this phase.
+
+- [x] **The archive high-water mark can no longer be lost.** Phase 52e stopped
+  the archiver re-exporting the entire aged trail every tick by starting from the
+  newest `audit.archived` event — but it *found* that marker by scanning a page
+  of recent audit events. On a busy deployment the marker falls off the end of
+  any fixed window, and once lost the archiver re-exports history that is already
+  archived: the very duplication the delta logic was added to stop, just less
+  often and considerably harder to notice
+- [x] **`Store.LatestAuditByAction`** — a targeted lookup bounded by `LIMIT 1`
+  rather than by a page size that can miss the row, implemented in both backends
+  and held by the contract suite, returning `(nil, nil)` when there is no such
+  event. It runs from periodic maintenance rather than a request path, so an
+  index scan on id descending is an acceptable cost — and a wrong answer here is
+  worse than a slow one
+- [x] **The guides caught up with Phase 52e's two format changes**: audit details
+  now quote client-supplied paths and patterns, and recovery codes are four
+  groups of six rather than two of five (codes already issued keep working, since
+  only their hashes are stored and the lookup hashes whatever is typed —
+  verified, not assumed)
+- [x] The admin guide also records that `PAM_REQUIRE_RECORDING` now covers the
+  RDP viewer and the REST WinRM endpoint, so a deployment that sets it without a
+  recording path will refuse those sessions rather than run them unrecorded, and
+  that an unusable deny file is now fatal at startup
+
 ## Phase 52g — Fix what the review of the fixes found ✅
 
 Thirty findings across six phases is itself a change large enough to warrant
@@ -1310,8 +1345,8 @@ wrong is the easiest kind to write and the easiest to get wrong.
 ### The post-beta sweep (2026-07-27) — all thirty findings closed ✅
 
 The second full read-only sweep found **thirty** issues, every one confirmed by
-reading the code. All are now fixed, across phases 52–52e; the detail of each fix
-lives in
+reading the code. All are now fixed, across phases 52–52e — with 52f and 52g
+closing what reviewing those fixes then found. The detail of each fix lives in
 **[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md#the-2026-07-27-post-beta-sweep--all-30-findings-now-closed)**.
 
 | Phase | What it closed |
@@ -1322,6 +1357,8 @@ lives in
 | **52c** | Six authorization gates that did not match their peers |
 | **52d** | Lifetimes, deadlines and fail-open defaults |
 | **52e** | Audit-trail integrity, archiving, and two concurrency bugs |
+| **52f** | The archive high-water mark, made robust — found by reviewing 52e |
+| **52g** | Six more, found by reviewing all of the above — including a test that could not fail |
 
 Three things worth carrying forward:
 
@@ -1339,6 +1376,14 @@ Three things worth carrying forward:
 
 ### Smaller follow-ons, recorded where they were deferred ⬜
 
+This is the canonical "what is next". Both read-only security sweeps are closed —
+the 2026-07-26 one by phases 37–46, and the 2026-07-27 post-beta one by phases
+52–52g — so what remains in process is short, and each item is recorded against
+the phase that deferred it. Anything genuinely needing external infrastructure or
+a paid account stays in
+[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md) rather than being
+faked here.
+
 - **Cross-replica live monitoring** (Phase 34) — the SSE watch stream is still
   served by the pod hosting the session.
 - **Per-file SFTP content recording** (Phase 32) — operations are audited and
@@ -1352,9 +1397,11 @@ The 5250 console is now explicitly **keyboard-first** (the mouse is optional), m
 
 ---
 
-**Tier-2 (access-governance depth) is complete** — certification campaigns (19), the ITSM/ticketing gate (20), and richer approval workflows (21), now including one-time access (26). **Tier-3**: Zero Standing Privilege (22) and privileged threat analytics (23) are shipped; connector/plugin breadth, cloud CIEM, and web/SaaS session proxying remain (infra-bound). **Tier-4 is under way**: the application-secrets API (24) is shipped; a Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, and thick-app components remain, each requiring external infrastructure or an account to build honestly (see [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)). The 5250 console has **full parity** with the backend (Phase 25) — every shipped capability is operable from the portal, keyboard-first — and the session-recording loop is closed end to end (Phase 26): record → watch live → replay later, hash-verified. See the [competitive-coverage section](README.md#coverage-vs-commercial-pam-cyberark-wallix-) for the full picture.
+**Tier-2 (access-governance depth) is complete** — certification campaigns (19), the ITSM/ticketing gate (20), and richer approval workflows (21), now including one-time access (26). **Tier-3**: Zero Standing Privilege (22), privileged threat analytics (23) and the identity blast-radius / CIEM engine (31) are shipped — three of five; connector/plugin breadth and web/SaaS session proxying remain, along with *live* cloud-CIEM ingestion, all infra-bound. **Tier-4 is under way**: the application-secrets API (24) is shipped; a Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, and thick-app components remain, each requiring external infrastructure or an account to build honestly (see [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)). The 5250 console has **full parity** with the backend (Phase 25) — every shipped capability is operable from the portal, keyboard-first — and the session-recording loop is closed end to end (Phase 26): record → watch live → replay later, hash-verified. See the [competitive-coverage section](README.md#coverage-vs-commercial-pam-cyberark-wallix-) for the full picture.
 
-**What is next** is the [planned section above](#next--planned-): the smaller
-deferred follow-ons. With Phase 45 the console is back at **full parity** — every
-shipped capability is operable from the portal, keyboard-first. The items that genuinely
-need external infrastructure stay in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
+**What is next** is the
+[smaller follow-ons](#smaller-follow-ons-recorded-where-they-were-deferred-): two
+in-process items, plus the infra-bound catalogue in
+[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md). The console is at
+**full parity** — every shipped capability is operable from the portal,
+keyboard-first.

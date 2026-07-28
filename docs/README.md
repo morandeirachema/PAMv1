@@ -1,8 +1,13 @@
 # pamv1 — documentation
 
-> **Living docs, kept in step with the code.** Every doc here carries a
+> Last updated: 2026-07-28 · Reflects: Phases 0–52g.
+
+> **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
-> change-log table at the foot. New to the project? Read the
+> change-log table at the foot. Two are exempt by nature:
+> [ARCHITECTURE-DIAGRAMS.md](ARCHITECTURE-DIAGRAMS.md) is code-generated, and
+> [RELATED-PROJECTS.md](RELATED-PROJECTS.md) tracks the outside world rather than
+> this repo. New to the project? Read the
 > [main README](../README.md) first, then follow your audience path below.
 >
 > 🟢 **These are living documents — updated in the same change as the code, automatically.**
@@ -16,8 +21,10 @@
 > [Español](https://claude.ai/code/artifact/b9f19443-5ad1-42d2-955f-e43ca17ac542)).
 > `ARCHITECTURE-DIAGRAMS.md` is **code-generated** (`go run ./cmd/archgen`, CI-enforced) — never hand-edited.
 
-> ⚠️ **Alpha · for learning purposes.** pamv1 has not been security-audited and is
-> not production-ready.
+> ⚠️ **Beta · for learning purposes.** pamv1 is feature-complete against its
+> [roadmap](../ROADMAP.md) and has closed every finding of its own security
+> self-audit, but it has not been audited by anyone outside the project and is not
+> production-ready.
 
 ## Pick your path
 
@@ -41,7 +48,7 @@
 - **[ARCHITECTURE-HIGH-LEVEL.md](ARCHITECTURE-HIGH-LEVEL.md)** — conceptual view: components, trust zones, data flows.
 - **[ARCHITECTURE-LOW-LEVEL.md](ARCHITECTURE-LOW-LEVEL.md)** — the engineer's map: packages, schema, wire formats, the full `PAM_*` table, audit vocabulary, invariants. Read it first as a contributor.
 - **[ARCHITECTURE-DIAGRAMS.md](ARCHITECTURE-DIAGRAMS.md)** — code-generated package graph, data model and REST-surface map (CI-enforced current; do not hand-edit).
-- **[CODE-GUIDE.md](CODE-GUIDE.md)** — a narrative walkthrough of how the code actually runs, package by package and flow by flow.
+- **[CODE-GUIDE.md](CODE-GUIDE.md)** — a narrative walkthrough of how the code actually runs, package by package and flow by flow — opens with a *Reading Go when you write Python* primer (§0.1), so you can follow it without writing Go.
 
 ### Deploy & operate
 - **[REQUIREMENTS.md](REQUIREMENTS.md)** — run specs: ports, resource requests/limits, versions, rough sizing.
@@ -65,11 +72,30 @@ Keep the set reading as one product:
 
 1. **H1** is `# pamv1 — <Title>` (project name first, em-dash separator, one per file).
 2. **Status header**, a blockquote right under the H1: `> Last updated: YYYY-MM-DD · Reflects: Phases 0–N …` (use `Last updated`, ISO dates).
-3. **Living-document note** (a blockquote) for any doc that tracks code: `> **Living document.** Update when <trigger> changes.` Generated docs say `> **Do not edit by hand.**` instead.
-4. **Alpha banner** on every reader-facing doc: one blockquote, wording as above.
+3. **Living-document note** (a blockquote) for any doc that tracks code — either `> **Living document.** Update when <trigger> changes.` or the newer `> 🟢 **Living document** — updated in the same change as the code`. Generated docs say `> **Do not edit by hand.**` instead.
+4. **Maturity banner** (`> ⚠️ **Beta · for learning purposes.** …`) on any doc a newcomer might land on first — the guides, the compliance and deployment docs, this hub. Reference docs read in context (the architecture pair, CODE-GUIDE, SECURITY-GAPS) do not repeat it. Keep the wording in step with the [README](../README.md); the two disagreeing is worse than neither carrying it.
 5. **Change-log table** at the foot of any doc that evolves — `| Date | Change |`, newest first, ISO dates. Bump the `Last updated` line to the newest change-log date.
 6. **Diagrams are [Mermaid](https://mermaid.js.org/), never ASCII** (repo hard rule); wrap wide diagrams so they scroll, not the page.
 7. **Cross-links are relative paths**: bare `FILE.md` for siblings here, `../ROADMAP.md` / `../README.md` / `../deploy/…` for repo-root and code; deep-link a section with `#anchor`. No absolute GitHub URLs for in-repo files.
 8. **Fixed vocabulary**: *target* (an onboarded machine/database), *credential* (the vaulted object) vs *secret* (its plaintext), *operator* (a human using the proxy) vs *user* (the RBAC role), *portal* (the web app) vs *console* (its 5250 UI), **PAM token** (a per-user/session token) vs **bootstrap API key** (`PAM_API_KEY`).
-9. **Every reader-facing doc links back** here or to the [README](../README.md), so no doc is a dead end.
+9. **No doc is a dead end** — every reader-facing doc links onward, back to this hub or the [README](../README.md), or to the next doc in its path. Reference docs that are always reached *from* somewhere may rely on their inbound links instead.
 10. **Update the doc in the same commit as the code it describes** — that is what keeps this set trustworthy.
+
+## Deploy references
+
+The deployment directories carry their own READMEs, and nothing in this hub
+linked to them until now:
+
+- **[../deploy/docker/README.md](../deploy/docker/README.md)** — the local full
+  stack (hardened PostgreSQL, guacd, pam-server) and the throwaway RDP demo.
+- **[../deploy/k8s/sops/README.md](../deploy/k8s/sops/README.md)** — SOPS + age
+  encrypted secrets, and the CI check that proves the committed example really is
+  encrypted.
+- **[../deploy/k8s/conjur/README.md](../deploy/k8s/conjur/README.md)** — sourcing
+  bootstrap secrets from CyberArk Conjur instead of env vars.
+
+## Change log
+
+| Date | Change |
+|---|---|
+| 2026-07-28 | Maturity banner corrected to **Beta** (it still said Alpha while the README said Beta — the entry point contradicting the doc that links to it). Added this file's own status header and change log, which house rules 2 and 5 require of every other doc. Rules 3, 4 and 9 rewritten to describe what the doc set actually does rather than a state it never reached. Linked the three deploy READMEs, which nothing in the repo referenced. Noted CODE-GUIDE §0.1 for readers who do not write Go |

@@ -2,7 +2,7 @@
 
 > ⚠️ **Beta · for learning purposes.** This is an educational project built to explore how a
 > Privileged Access Management system works end to end. **Beta** means feature-complete against
-> its [roadmap](ROADMAP.md) — every phase through 51 has shipped, every finding of its own
+> its [roadmap](ROADMAP.md) — every phase through 52g has shipped, every finding of its own
 > [security self-audit](docs/SECURITY-GAPS.md) is closed, and every capability is exercised by
 > tests and deploys as code. It still has **not** been audited by anyone outside the project and
 > is **not** production-ready — do not use it to guard real privileged credentials. Use it to
@@ -33,7 +33,7 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)** runs
-0–25 and **all twenty-six phases have shipped** — from the JIT SSH proxy and RBAC, through
+0–52g and **every phase has shipped** — from the JIT SSH proxy and RBAC, through
 AD/Entra/OIDC login, Windows targets, break-glass quorum, OT/industrial adaptation, NIS2
 tooling, scale/HA and the full 5250 console, to a hot-swappable configuration subsystem with
 custom-profile RBAC, an **AI-agent access broker** (policy engine, JIT tool execution,
@@ -142,7 +142,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–51, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–52g, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 
@@ -156,8 +156,8 @@ Phases 0–51, grouped by area. Every capability is exercised by tests and deplo
 - **Session proxy with JIT injection** — operators connect through an SSH gateway; the proxy authenticates them, pulls the credential from the vault, **decrypts it only at connection time** (and only after every authorization gate passes), injects it into the upstream session and records everything. Proven end to end by an integration test where the upstream accepts *only* the vaulted password the client never possessed. Upstream host keys can be pinned (`PAM_SSH_KNOWN_HOSTS`); a jump-host/bastion path and read-only **observer** sessions are supported.
 - **Windows targets (WinRM + RDP)** — run commands on Windows hosts via `POST /api/targets/{id}/winrm` (basic or NTLM) or an interactive WinRM loop through the proxy, or broker a full **RDP** desktop through [Apache Guacamole](https://guacamole.apache.org/) (`GET /api/targets/{id}/rdp` WebSocket tunnel, cert-verified by default). The **in-portal viewer is built in** — open *Work with Targets* → option 7 and the desktop renders on a canvas (the portal vendors the Guacamole JS client; guacd itself ships in the deploys). Either way the credential is injected just-in-time (AD-joined accounts work), sessions are audited, and the operator never sees the secret. The **session clipboard is gated** by `PAM_RDP_CLIPBOARD` (`allow`/`readonly`/`deny`) and drive redirection is always disabled — so an RDP session can't be used as an unaudited copy-out/paste-in or file channel — and `PAM_RDP_CLIPBOARD_AUDIT` **records what actually crossed it** (direction, type, size, SHA-256; content only under an explicit opt-in, since a privileged clipboard often holds a just-copied password).
 - **Database session proxy (PostgreSQL)** — point `psql` at pamv1 (`PAM_DB_ADDR`, e.g. `:5433`) with `user=<dbcred>@<target>` and your PAM key as the password; the proxy runs the same authorization gates as the SSH proxy, injects the vaulted DB credential just-in-time (upstream auth via cleartext / MD5 / **SCRAM-SHA-256**), and brokers the wire protocol — **auditing every SQL statement** (`db.query`) and recording the session. The operator never learns the database password. Proven end to end by a fake upstream that accepts *only* the vaulted secret.
-- **Session recording** — every session (stdout **and** stderr, or each SQL statement) captured in [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/), hashed with SHA-256 into a tamper-evident chain, and the hash written to the audit trail. Recording failures are audited, and `PAM_REQUIRE_RECORDING` can refuse an unrecordable session outright.
-- **Supervised sessions (live monitoring + command control)** — a supervisor can **watch an SSH or PostgreSQL session live** over `GET /api/sessions/{id}/stream` (Server-Sent Events, `CapReadAudit`), and a regex denylist (`PAM_COMMAND_DENY_FILE`) **blocks a dangerous command before it reaches the target** on the exec, WinRM and SQL paths — refused and audited (`command.blocked`). Interactive SSH shells use read-only observer mode instead.
+- **Session recording** — every session (stdout **and** stderr, or each SQL statement) captured in [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/), hashed with SHA-256 into a tamper-evident chain, and the hash written to the audit trail. Recording failures are audited, and `PAM_REQUIRE_RECORDING` refuses an unrecordable session outright — on the SSH, WinRM and PostgreSQL proxies **and**, since Phase 52c, on the in-portal RDP viewer and the REST WinRM endpoint, checked *before* anything reaches the target.
+- **Supervised sessions (live monitoring + command control)** — a supervisor can **watch an SSH or PostgreSQL session live** over `GET /api/sessions/{id}/stream` (Server-Sent Events, `CapReadAudit`), and a regex denylist (`PAM_COMMAND_DENY_FILE`) **blocks a dangerous command before it reaches the target** on the exec, WinRM and SQL paths — refused and audited (`command.blocked`). A deny file that yields no usable patterns is **fatal at startup** rather than a silently disabled control, so an unmounted ConfigMap fails loudly. Interactive SSH shells use read-only observer mode instead.
 - **In-session step-up** — where command control is a hard block, `PAM_DB_STEPUP_FILE` marks statements that **pause for a live supervisor decision** instead of killing the session: the statement waits (audited, visible on the live monitor), an approver allows or refuses it from the console, and the session survives either way.
 - **Cluster-wide kill switch** — a kill issued on any replica terminates the session **wherever it is hosted** (published over Postgres LISTEN/NOTIFY), so the kill switch, the revoke cascade, the vendor sweeper and the analytics auto-response all work in HA. Every brokered execution — the REST WinRM endpoint and the agent broker's exec tools included — is a registered, killable, capped session, not just the interactive proxies.
 - **SFTP file-transfer control** — SFTP rides an SSH subsystem carrying a binary protocol that command control never saw. The proxy now **parses that stream** to audit every file operation (`sftp.open`/`sftp.modify`), and `PAM_SSH_SFTP` sets the policy: `allow` (forward + audit), `readonly` (**refuse uploads, deletes and renames** with a synthesized permission-denied — the target is never contacted; downloads still work), or `deny` (refuse the subsystem entirely). `PAM_SSH_SFTP_DENY_FILE` adds the other dimension — a **regex denylist over paths** (the same engine as command control), refused in *every* mode including downloads and on both sides of a rename, because a path you deny that can still be fetched is not denied at all. Closes an otherwise unaudited file-exfiltration path. Proven end to end by a real SFTP client + server exchanging genuine packets through the proxy.
@@ -214,7 +214,7 @@ PAM for AI agents — the same chokepoint, extended to autonomous tools. Opt-in 
 - **PostgreSQL storage** via [pgx](https://github.com/jackc/pgx) with embedded, versioned migrations; an in-memory store for tests and demos; optional **[CloudNativePG](https://cloudnative-pg.io/) HA**.
 - **Observability** — a dependency-free [Prometheus](https://prometheus.io/) `/metrics` endpoint (request counts by status, audit volume, break-glass use, rotations, active-sessions gauge), plus a health/readiness split (`/healthz` liveness, `/readyz` checks the database).
 - **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. Releases are built by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance**.
-- **Encrypted secrets in git** — the Kubernetes secret manifest can be sealed with **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: values are encrypted while `kind`/`metadata` stay reviewable, decrypted at deploy time (`sops -d \| kubectl apply -f -`, plaintext never on disk) or natively by Flux / Argo / helm-secrets — so secrets live in the **same IaC repo** without leaking. See **[deploy/k8s/sops/](deploy/k8s/sops/)**.
+- **Encrypted secrets in git** — the Kubernetes secret manifest can be sealed with **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: values are encrypted while `kind`/`metadata` stay reviewable, decrypted at deploy time (`sops -d | kubectl apply -f -`, plaintext never on disk) or natively by Flux / Argo / helm-secrets — so secrets live in the **same IaC repo** without leaking. See **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **Or source secrets from CyberArk Conjur** — as a runtime alternative to SOPS, set `PAM_CONJUR_URL` and pamv1 fetches its own bootstrap secrets (master key, API key, DB URL, …) from **[Conjur](https://www.conjur.org/)** at startup, authenticating with a host API key or a **Kubernetes `authn-jwt`** projected token — so no bootstrap secret lives in Git at all. Both mechanisms ship; SOPS stays the zero-dependency default. See **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
 
 ## Roles, users & profiles
@@ -262,7 +262,7 @@ disable the proxy with `PAM_SSH_ADDR=off`.
 
 ## Roadmap
 
-All fifty-two phases (0–51) have shipped — full per-phase detail in **[ROADMAP.md](ROADMAP.md)**:
+Every phase (0–52g) has shipped — full per-phase detail in **[ROADMAP.md](ROADMAP.md)**:
 
 | Phase | Theme | Status |
 |---|---|---|
@@ -318,6 +318,14 @@ All fifty-two phases (0–51) have shipped — full per-phase detail in **[ROADM
 | 49 | Archive to WORM before pruning (digest-stamped export; the delete runs only if the archive succeeded) | ✅ shipped |
 | 50 | Clipboard auditing on the RDP bridge (direction, type, size, digest; content opt-in) | ✅ shipped |
 | 51 | SFTP path policy (regex denylist over paths, refused in every mode and on both sides of a rename) | ✅ shipped |
+| 52 | Close the command-injection findings (credential dependencies; the `net user` blocklist → allowlist) | ✅ shipped |
+| 52a | Make `-rotate-kek` whole (re-wraps key custody; sealed recordings documented rather than broken) | ✅ shipped |
+| 52b | The two same-day regressions, and the store-contract gap that hid one | ✅ shipped |
+| 52c | Authorization-gate consistency (six gates that did not match their peers) | ✅ shipped |
+| 52d | Lifetimes, deadlines and fail-open defaults | ✅ shipped |
+| 52e | Audit-trail integrity, archiving, and two concurrency bugs | ✅ shipped |
+| 52f | The archive high-water mark, made robust — found by reviewing 52e | ✅ shipped |
+| 52g | Six more, found by reviewing all of the above — including a test that could not fail | ✅ shipped |
 
 ## Coverage vs. commercial PAM (CyberArk, Wallix, …)
 
@@ -394,7 +402,7 @@ vault + proxy chokepoint, and is **out of scope** by design.
 
 ### Candidate next phases
 
-Every phase through 51 has shipped, including the whole 2026-07 self-audit: each
+Every phase through 52g has shipped, including the whole 2026-07 self-audit: each
 finding from the read-only security sweep is closed (see
 [docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md)), and so are the smaller items
 those phases deferred — WORM archiving before pruning, LEEF + TLS syslog,
@@ -406,7 +414,7 @@ What is left in process is **cross-replica live monitoring** (fanning session
 broadcast) and **per-file SFTP content recording** — both recorded in
 [ROADMAP.md](ROADMAP.md#smaller-follow-ons-recorded-where-they-were-deferred-).
 
-**All four Tier-1 gaps and all three Tier-2 gaps are closed** (including one-time access, Phase 26), **two of the five Tier-3 gaps** (Zero Standing Privilege, privileged threat analytics), and the **first Tier-4 gap** (the application-secrets API). The rest of Tier 3 (connector breadth, cloud CIEM, web proxying) and Tier 4 (Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, thick-app components) are the next frontier — each gated on external infrastructure or accounts, catalogued in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
+**All four Tier-1 gaps and all three Tier-2 gaps are closed** (including one-time access, Phase 26), **three of the five Tier-3 gaps** (Zero Standing Privilege, privileged threat analytics, and the identity blast-radius / CIEM engine), and the **first Tier-4 gap** (the application-secrets API). The rest of Tier 3 (connector breadth, *live* cloud-CIEM ingestion, web proxying) and Tier 4 (Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, thick-app components) are the next frontier — each gated on external infrastructure or accounts, catalogued in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
 
 ## Quickstart
 
@@ -484,7 +492,21 @@ bootstrap and transport keys below stay environment-only.
 | `PAM_SSH_HOST_KEY` | no | Path to persist the proxy host key (PEM); empty = ephemeral |
 | `PAM_SSH_KNOWN_HOSTS` | no | Pin upstream target host keys (known_hosts file); empty = trust-any (logged) |
 | `PAM_RECORDING_DIR` | no | Where session recordings are written, default `recordings` |
+| `PAM_REQUIRE_RECORDING` | no | Refuse any session that cannot be recorded — the fail-closed knob; covers every path to a target |
+| `PAM_DB_ADDR` | no | PostgreSQL session proxy listen address, default `off` |
 | `PAM_BROKER_POLICY_FILE` | no | YAML agent-broker policy; set to enable the AI-agent broker |
+
+### Utility flags
+
+`pam-server` runs as a server by default; five flags make it do one job and exit.
+
+| Flag | What it does |
+|---|---|
+| `-genkey` | Print a fresh vault master key for `PAM_MASTER_KEY` |
+| `-hashkey` | Read an emergency key on stdin, print its SHA-256 for `PAM_BREAK_GLASS_KEY_HASH` |
+| `-split-key` | Read an emergency key on stdin, print N Shamir shares |
+| `-rotate-kek` | Re-encrypt every vaulted secret under a new KEK — credentials, MFA enrollments, secret settings **and** the shared SSH host/CA keys. Works across providers (local ⇄ Vault-Transit ⇄ KMS ⇄ HSM), so it is also how you migrate. Warns if sealed recordings still need the old key |
+| `-healthcheck` | Probe the local `/healthz` and exit 0 if healthy (what the container HEALTHCHECK uses) |
 
 ## Break-glass procedure
 
@@ -532,8 +554,10 @@ go test -race ./...        # unit + API + proxy tests (in-memory store) — what
 go vet ./... && gofmt -l . # gofmt must print nothing
 ```
 
-CI additionally runs a live-PostgreSQL store contract, a `pkcs11`-tagged build against
-[SoftHSM2](https://www.opendnssec.org/softhsm/), a Docker image build, and a check that the
+CI additionally runs **`staticcheck`, `govulncheck` and `gosec`**, a live-PostgreSQL
+store contract, a `pkcs11`-tagged build against
+[SoftHSM2](https://www.opendnssec.org/softhsm/), a Docker image build, a check that the
+committed SOPS example really is encrypted, and a check that the
 **code-derived architecture diagrams** are current. The
 [architecture low-level doc](docs/ARCHITECTURE-LOW-LEVEL.md) is the fullest map of the
 codebase — read it first.

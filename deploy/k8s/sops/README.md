@@ -12,8 +12,14 @@ deploy/k8s/sops/
 ├── secrets.sops.example.yaml   # a real SOPS-encrypted Secret you can decrypt & study
 ├── age-example.key             # THROWAWAY demo key (public in this repo — DO NOT reuse)
 ├── apply.sh                    # decrypt → kubectl apply, plaintext never touches disk
+├── verify.sh                   # CI check: proves the example really is encrypted and round-trips
 └── README.md                   # this file
 ```
+
+`verify.sh` is not decoration — CI runs it on every push
+(`.github/workflows/ci.yml`, job `sops`). It fails the build if the committed
+example is not actually encrypted, if it will not decrypt with the demo key, or
+if a plaintext `CHANGE_ME` placeholder has leaked into it.
 
 The encryption rules live in [`deploy/.sops.yaml`](../../.sops.yaml) (it governs the whole
 `deploy/` subtree — both `k8s/sops/secrets*.yaml` and `helm/**/secrets*.yaml`): any matching
@@ -42,7 +48,10 @@ SOPS_AGE_KEY_FILE=deploy/k8s/sops/age-example.key \
 ## Real usage
 
 ```bash
-# 1. Generate YOUR key and keep the private half out of git (.gitignore covers *.key)
+# 1. Generate YOUR key and keep the private half out of git.
+#    .gitignore covers *.key, *.agekey, age.key and keys.txt — but check before
+#    you commit, because deleting a private age key from a later
+#    commit does not remove it from git history.
 age-keygen -o age.key
 grep 'public key' age.key            # copy the age1... recipient
 
@@ -74,3 +83,10 @@ Edit a sealed file later with `sops --config deploy/.sops.yaml deploy/k8s/sops/s
 Nothing in pamv1 *requires* SOPS — a plain `kubectl create secret` (or the Helm
 `secret.data` values) still works. SOPS is the recommended way to keep the secret manifest
 **in the same IaC repo** as the rest of the deployment without leaking it.
+
+One wrinkle if you go that route: `.gitignore` deliberately ignores
+`deploy/k8s/sops/secrets.sops.yaml` — the exact path step 2 above tells you to
+create. That is a safety default, not a contradiction: it stops a *half-finished*
+secrets file being committed before you have confirmed it is sealed. Once you
+have run `verify.sh`-style checks on your own file and want GitOps to see it,
+commit it explicitly with `git add -f`, or drop the ignore rule.
