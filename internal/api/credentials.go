@@ -265,6 +265,16 @@ func (s *Server) runWinRM(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "decryption failed")
 		return
 	}
+	if errors.Is(err, errRecordingRequired) {
+		writeError(w, http.StatusServiceUnavailable, "recording is required but no recording directory is configured")
+		return
+	}
+	if errors.Is(err, errAuditUnavailable) {
+		// The command ran; the record of it did not. Withhold the output rather
+		// than hand back a result the system of record cannot account for.
+		writeError(w, http.StatusServiceUnavailable, "audit log unavailable; result withheld")
+		return
+	}
 	// A kill (or the client going away) cancels ctx: report it as a terminated
 	// session rather than blaming the target for an upstream failure.
 	if err != nil && ctx.Err() != nil {
@@ -322,6 +332,18 @@ var errDecryptFailed = errors.New("decryption failed")
 // than a target failure.
 var errCommandBlocked = errors.New("command blocked by policy")
 
+// errRecordingRequired marks a refusal because PAM_REQUIRE_RECORDING is set and
+// no transcript can be produced. Callers map it to 503: the request was valid,
+// the deployment is misconfigured for it, and the operator should learn that
+// rather than get an unrecorded execution.
+var errRecordingRequired = errors.New("recording is required but not configured")
+
+// errAuditUnavailable marks an execution whose durable audit write failed. The
+// command has already run, so this cannot undo it — but the caller withholds the
+// result and returns 503, so nobody acts on output that the system of record
+// never accounted for.
+var errAuditUnavailable = errors.New("audit log unavailable")
+
 // guardCommand refuses a command matching the deny policy before anything
 // reaches the target — and before the credential is decrypted, so a blocked
 // command never causes a secret to exist in memory. The block is audited
@@ -350,6 +372,15 @@ func (s *Server) execWinRM(ctx context.Context, target *store.Target, cred *stor
 	if err := s.guardCommand(ctx, actor, target.Name, "winrm", command); err != nil {
 		return winrm.Result{}, err
 	}
+	// PAM_REQUIRE_RECORDING covers this path too now. The check must come BEFORE
+	// the command runs: the transcript is written from the result, so refusing
+	// afterwards would report a failure the command had already caused on the
+	// target. This was one of two paths the flag never reached, despite being a
+	// way to run a privileged command on a machine.
+	if s.recordingRequired(s.recordingDir) {
+		s.auditAs(ctx, actor, "winrm.refused", "target:"+target.Name+" reason:recording-required") //nolint:errcheck // refusal already returned below
+		return winrm.Result{}, errRecordingRequired
+	}
 	secret, err := s.vault.Decrypt(ctx, cred.SecretEnc, store.CredentialAAD(target.ID, cred.ID))
 	if err != nil {
 		s.audit(ctx, "credential.decrypt_failed", fmt.Sprintf("credential:%d target:%s op:winrm", cred.ID, target.Name))
@@ -362,8 +393,15 @@ func (s *Server) execWinRM(ctx context.Context, target *store.Target, cred *stor
 		return winrm.Result{}, err
 	}
 	file, sum := s.recordWinRM(target, cred.Username, actor, command, res)
-	s.audit(ctx, "winrm.run",
-		fmt.Sprintf("target:%s cred_user:%s exit:%d file:%s sha256:%s", target.Name, cred.Username, res.ExitCode, file, sum))
+	// The command has already run on the target, so this audit cannot refuse it —
+	// but it MUST be durable, and a failure here is a genuine integrity event
+	// rather than a log line to shrug at. Surfacing the error makes the caller
+	// return 503 with the result withheld, so an operator learns the record is
+	// missing instead of receiving output that was never accounted for.
+	if err := s.auditAs(ctx, actor, "winrm.run",
+		fmt.Sprintf("target:%s cred_user:%s exit:%d file:%s sha256:%s", target.Name, cred.Username, res.ExitCode, file, sum)); err != nil {
+		return winrm.Result{}, errAuditUnavailable
+	}
 	return res, nil
 }
 

@@ -1770,7 +1770,14 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 - **Fail-closed controls to enable in production** (each off by default so the demo stays turnkey):
   - `PAM_REQUIRE_HTTPS` / `PAM_REQUIRE_DB_CLIENT_TLS` — refuse to start without TLS on the API and DB-proxy operator legs.
   - `PAM_DB_UPSTREAM_CA` (or `PAM_DB_UPSTREAM_TLS_VERIFY`) — verify the upstream PostgreSQL certificate so the injected DB credential can't be MITM'd; `PAM_SSH_KNOWN_HOSTS` does the same for SSH targets.
-  - `PAM_REQUIRE_RECORDING` — refuse a proxied session that can't be recorded.
+  - `PAM_REQUIRE_RECORDING` — refuse a session that cannot be recorded. Since
+    Phase 52c this covers **every** path to a target, not only the proxies: the
+    SSH proxy, the WinRM proxy, the PostgreSQL proxy, the in-portal RDP viewer
+    (needs `PAM_GUACD_RECORDING_PATH`) and the REST WinRM endpoint (needs
+    `PAM_RECORDING_DIR`). The check runs *before* anything happens on the target,
+    and each refusal is audited (`rdp.refused`, `winrm.refused`). Before that fix
+    the flag silently did not cover the two HTTP paths, so an operator who set it
+    believed rather more than was true.
   - `PAM_PROXY_AUTH_RATE_LIMIT` (default on, 10/min) — throttles guessing of `PAM_API_KEY` on the SSH/DB proxies; `PAM_AUTH_RATE_LIMIT` (default on, 20/min) does the same for failed `X-API-Key`, agent-key and application-key attempts over HTTP; `PAM_TRUSTED_PROXY_HOPS` keeps both API limiters accurate behind a reverse proxy.
 - **A strong `PAM_API_KEY` is enforced** (≥16 chars) on any real database; the bootstrap key is presented as the proxy password, so treat it like a root credential and rotate it.
 - **Secret delivery is fail-closed on the audit trail** — a reveal/checkout/app-secret is refused (503) and a proxied session is denied if the action can't be durably audited, so a secret is never handed out unrecorded.

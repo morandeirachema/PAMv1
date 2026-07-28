@@ -65,16 +65,31 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 	principal, err := s.resolver.Resolve(r.Context(), r.URL.Query().Get("token"))
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid or missing token")
+		// Route the failure through authFailed, exactly as the authz middleware
+		// does. This handler resolves its own principal, and for a while that
+		// meant it was the ONE bearer surface with neither per-IP throttling nor
+		// an api.auth_failed record — so guessing tunnel tokens here was
+		// unthrottled and invisible to the risk engine and the SIEM forwarder,
+		// while the same guessing against /api/* was both slowed and recorded.
+		s.authFailed(w, r, "rdp", "invalid or missing token")
 		return
 	}
-	// This handler resolves its own principal (WebSocket token, not X-API-Key), so
-	// it bypasses the authz middleware and must reproduce the loud break-glass
-	// audit/alert itself.
+	// Resolving its own principal also means this handler must reproduce the rest
+	// of what the middleware does: the loud break-glass audit/alert, and an
+	// authz.denied record for every refusal. A denial that leaves no trace is
+	// worse here than elsewhere, because this path ends in a live desktop.
 	setActor(r.Context(), principal.Name)
 	r = r.WithContext(withPrincipal(r.Context(), principal))
 	s.noteBreakGlass(r.Context(), principal, r)
-	if principal.EnrollOnly || !principal.Can(auth.CapConnect) {
+	if principal.EnrollOnly {
+		s.audit(r.Context(), "authz.denied", r.Method+" "+r.URL.Path+" reason:mfa-enrollment-incomplete")
+		writeError(w, http.StatusForbidden, "complete MFA enrollment to continue")
+		return
+	}
+	if !principal.Can(auth.CapConnect) {
+		s.log.Warn("authorization denied", "actor", principal.Name, "role", string(principal.Role),
+			"method", r.Method, "path", r.URL.Path)
+		s.audit(r.Context(), "authz.denied", r.Method+" "+r.URL.Path+" role:"+string(principal.Role))
 		writeError(w, http.StatusForbidden, "your role does not permit RDP access")
 		return
 	}
@@ -165,6 +180,14 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 	if port == 0 {
 		port = 3389
 	}
+	// PAM_REQUIRE_RECORDING covers this path too now. guacd writes the recording,
+	// so "can we record?" here means "is a recording path configured?" — checked
+	// before the credential is used and before a desktop exists to watch.
+	if s.recordingRequired(s.guacdRecordingPath) {
+		s.audit(ctx, "rdp.refused", "target:"+target.Name+" reason:recording-required")
+		writeError(w, http.StatusServiceUnavailable, "recording is required but not configured for RDP")
+		return
+	}
 	var recName string
 	if s.guacdRecordingPath != "" {
 		recName = fmt.Sprintf("%d_%s_%s", time.Now().UnixNano(), sanitizeName(target.Name), sanitizeName(principal.Name))
@@ -192,7 +215,16 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.Close(websocket.StatusNormalClosure, "")
 
-	s.audit(ctx, "rdp.connect", "target:"+target.Name+" cred_user:"+cred.Username+" recording:"+recName+" clipboard:"+s.rdpClipboard)
+	// Fail CLOSED on the session-start audit, as both session proxies do: a
+	// privileged desktop that leaves no durable record of having been opened is
+	// exactly what this system exists to prevent. Best-effort was the odd one out
+	// here, not the norm.
+	if err := s.auditAs(ctx, actorFrom(ctx), "rdp.connect",
+		"target:"+target.Name+" cred_user:"+cred.Username+" recording:"+recName+" clipboard:"+s.rdpClipboard); err != nil {
+		s.log.Error("rdp session refused: audit unavailable", "target", target.Name, "err", err)
+		ws.Close(websocket.StatusInternalError, "audit log unavailable")
+		return
+	}
 	defer s.audit(ctx, "rdp.end", "target:"+target.Name)
 	s.log.Info("rdp session", "actor", principal.Name, "target", target.Name)
 

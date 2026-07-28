@@ -81,9 +81,18 @@ func (s *Server) firstCredential(ctx context.Context, target *store.Target) (*st
 	return &creds[0], nil
 }
 
-// authorizeAgentCredential resolves a credential by id and checks the agent is
-// granted its target (the same grant gate the connect tools apply), returning the
-// credential and its target.
+// authorizeAgentCredential resolves a credential by id and applies the SAME two
+// gates the connect tools apply — the target grant and, unless the call already
+// carries an approval, the four-eyes/maintenance-window requirement.
+//
+// The approval half used to be missing here, which meant the least-trusted actor
+// in the system had the weakest gate: with `require_approval` set on a target, a
+// human holding `reveal_secret` needs an approved access request, while an agent
+// permitted `reveal_credential` by broker policy received the plaintext at any
+// hour and outside every window. `rotate_credential` could likewise change a
+// production password ungated. `reveal_credential` ships default-deny, which
+// limited the blast radius, but the omission was silent the moment an operator
+// enabled it.
 func (s *Server) authorizeAgentCredential(ctx context.Context, p *auth.Principal, credID int64) (*store.Credential, *store.Target, error) {
 	cred, err := s.store.GetCredential(ctx, credID)
 	if err != nil {
@@ -99,6 +108,13 @@ func (s *Server) authorizeAgentCredential(ctx context.Context, p *auth.Principal
 	}
 	if !auth.CanConnectTarget(p, grants, target.SafeID != nil) {
 		return nil, nil, fmt.Errorf("agent not authorized for target %q", target.Name)
+	}
+	if !broker.Approved(ctx) {
+		if ok, err := s.enforceApproval(ctx, target); err != nil {
+			return nil, nil, err
+		} else if !ok {
+			return nil, nil, fmt.Errorf("target %q requires an approved access request", target.Name)
+		}
 	}
 	return cred, target, nil
 }
