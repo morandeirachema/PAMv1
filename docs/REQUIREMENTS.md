@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-07-23 · Reflects: Phases 0–24 + the 2026-07 hardening pass.
+> Last updated: 2026-07-28 · Reflects: Phases 0–52g.
 
 > ⚠️ **Alpha · for learning purposes. Not production, not audited.** These are the
 > specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate
@@ -27,7 +27,7 @@
 | 8080/tcp | Portal + REST API | HTTP, or TLS 1.2+ when `PAM_TLS_CERT`/`PAM_TLS_KEY` are set. Front with an HTTPS ingress otherwise. `/metrics`, `/healthz`, `/readyz` live here. |
 | 2222/tcp | SSH session proxy | Operators `ssh -p 2222 <cred>@<target>@host`. Set `PAM_SSH_ADDR=off` to disable. |
 | 5433/tcp | PostgreSQL session proxy | Operators `psql "host=... port=5433 user=<cred>@<target> dbname=..."`. Enable with `PAM_DB_ADDR` (off by default). |
-| 636/5986/3389/5432 | Outbound to targets/IdP | LDAPS to AD, WinRM-HTTPS, RDP-via-guacd, PostgreSQL to `postgres` targets — **egress** from pamv1, not listeners. See [PORTS-AND-FLOWS.md](PORTS-AND-FLOWS.md). |
+| 636/5986/4822/5432 | Outbound to targets/IdP | LDAPS to AD, WinRM-HTTPS, **guacd on 4822** (it is *guacd*, not pam-server, that then reaches RDP on 3389), PostgreSQL to `postgres` targets — **egress** from pamv1, not listeners. See [PORTS-AND-FLOWS.md](PORTS-AND-FLOWS.md). |
 
 ## Prerequisites (secrets)
 
@@ -41,7 +41,10 @@ Generate before first run (see the [Admin Guide](ADMIN-GUIDE.md#31-generate-the-
 ## Docker / docker-compose
 
 Minimums: Docker Engine 24+, Compose v2. The bundled `deploy/docker/docker-compose.yml`
-runs a hardened PostgreSQL 17 (scram-sha-256) plus pam-server.
+runs **four** services: a hardened PostgreSQL 17 (scram-sha-256), a `pam-init`
+one-shot that takes ownership of `/data` for UID 65532, an internal-only `guacd`
+(so RDP brokering works out of the box), and pam-server. Budget for guacd as well
+as pam-server when sizing.
 
 ```bash
 cd deploy/docker
@@ -58,8 +61,14 @@ Container resource guidance (per pam-server instance):
 
 Volumes:
 
-- pam-server `/data` — SSH host key + session recordings (persist it to keep
-  recordings and a stable host key across restarts).
+- pam-server `/data` — session recordings, and an on-disk mirror of the SSH host
+  key. Since Phase 42 the host key and the ZSP CA key are held in the database
+  under shared custody, so losing `/data` no longer changes the host key
+  operators see; recordings are the reason to persist it.
+- **`PAM_RETENTION_ARCHIVE_DIR`, if set, needs its own volume** — separate from
+  `/data`, and genuinely write-once if the archive is to mean anything. The
+  retention sweep moves aged recordings there and writes aged audit rows as
+  digest-stamped JSON Lines; a backup scoped only to `/data` loses them.
 - PostgreSQL `/var/lib/postgresql/data` — the database (a named volume/PVC).
 
 The image has **no shell** and runs read-only as non-root; write paths are limited
@@ -103,10 +112,21 @@ pam-server startup.
 
 **Scaling / HA:** the server is stateless enough to run multiple replicas —
 **OIDC login state is shared via the database**, so the auth-code callback can
-land on any replica. Two things remain per-replica: the auth **rate-limiter**
-(best-effort; slightly looser limits across N replicas, acceptable) and the
+land on any replica. Since Phase 42 the **SSH host key and the ZSP CA key** are
+held in shared custody in the database rather than generated per pod, so a scaled
+deployment no longer hands out a different host key and a different certificate
+authority per replica. Session **termination** is cluster-wide over Postgres
+`LISTEN/NOTIFY` (Phase 34), and the retention, SIEM-forwarding, analytics and
+lifecycle workers each run on exactly one replica behind a Postgres advisory
+leader lock.
+
+Four things remain per-replica: the auth **rate-limiter**
+(best-effort; slightly looser limits across N replicas, acceptable), the
 **break-glass quorum-unseal shares** (kept in memory *by design* — persisting key
-shares to the DB would weaken the offline-shares guarantee). For the unseal flow,
+shares to the DB would weaken the offline-shares guarantee), live-session
+**listing and SSE streaming** (`GET /api/sessions` and `/stream` are served by
+the pod hosting the session — a documented limit; termination is not affected),
+and the `PAM_MAX_SESSIONS_PER_USER` / `_TOTAL` caps. For the unseal flow,
 submit all shares to one replica (a sticky session, or scale to 1 during an
 emergency). All other operations (proxy, WinRM, RDP, rotation, reveal, approval,
 checkout) are safe across replicas.

@@ -4,7 +4,8 @@
 > deployment flow changes. This is the reference for firewall rules, security
 > groups, NetworkPolicies and OT segmentation.
 >
-> Last updated: 2026-07-23 · Reflects: Phases 0–24 + the 2026-07 hardening pass. Ports marked *planned* have
+> Last updated: 2026-07-28 · Reflects: Phases 0–52g. No new listener has been added
+> since Phase 24 — everything from 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
 > **no new listeners**: certification/ticketing/approvals (19–21), threat analytics
 > (23) and the application-secrets API (24) all ride the existing HTTP control plane
@@ -31,7 +32,7 @@ likewise TLS when `PAM_TLS_CERT/KEY` are set (else it warns and runs plaintext �
 terminate TLS at the ingress). Prefer **LDAPS (636)** over LDAP and **TLS** to
 PostgreSQL. Plain-text variants are for isolated local dev only.
 
-Kubernetes Service (`deploy/k8s/service.yaml`) maps `80 → 8080` and `2222 → 2222`;
+Kubernetes Service (`deploy/k8s/service.yaml`) maps `8080 → 8080` and `2222 → 2222` (Helm uses `service.httpPort` / `service.sshPort`, same defaults);
 add `5433 → 5433` when the database proxy is enabled.
 
 ## 2. Ingress — who connects **to** pamv1
@@ -56,7 +57,8 @@ add `5433 → 5433` when the database proxy is enabled.
 | E5 | pam-server | Active Directory / Entra / OIDC (identity zone) | **636** / 443 | **LDAPS** / HTTPS | Authn + group→role mapping (LDAPS, Entra ROPC, OIDC) | ✅ |
 | E6 | pam-server | Active Directory (identity zone) | 88 | Kerberos | Optional Kerberos auth | 🔷 P3b |
 | E7 | pam-server | AD / target | 636 / 22 / 5986 | LDAPS / SSH / WinRM | Credential rotation (password change), reconciliation | ✅ P7 |
-| E8 | pam-server | SIEM / syslog (mgmt zone) | 514 / 6514 | Syslog / TLS | Forward audit for NIS2 retention | ✅ P9 |
+| E8 | pam-server | SIEM / syslog collector (mgmt zone) | 514 / 6514 | Syslog **UDP** (default) / TCP / **TLS** | **Continuous** audit→SIEM forwarding from a durable cursor — RFC 5424, CEF or LEEF (`PAM_AUDIT_FORWARD_ADDR`, `_PROTO` default `udp`, `_FORMAT`, `_CA` pins the collector for TLS) | ✅ P35/P47 |
+| E8b | pam-server | syslog (mgmt zone) | 514 | Syslog | **Event-driven alerts** only (`PAM_ALERT_SYSLOG`) — a different feature from E8 | ✅ P9 |
 | E9 | pam-server | SMTP / webhook (mgmt zone) | 587 / 443 | SMTP / HTTPS | Break-glass & approval alerts | ✅ P6 |
 | E10 | pam-server (DB proxy) | PostgreSQL target (target zone) | 5432 | PostgreSQL/TLS | JIT-injected brokered database session (`:5433` ingress) | ✅ P15 |
 | E11 | pam-server | CyberArk Conjur (identity/secrets zone) | 443 | HTTPS | Source bootstrap secrets at startup (optional) | ✅ P18 |
@@ -126,7 +128,8 @@ allow  pam-server -> <target-cidr>:5985,5986   tcp   # windows targets (WinRM)
 allow  pam-server -> <target-cidr>:5432        tcp   # postgres targets (db proxy)
 allow  pam-server -> guacd:4822                tcp   # rdp broker
 allow  pam-server -> <idp-cidr>:636,443,88     tcp   # AD/Entra/OIDC (+ Conjur:443, if enabled)
-allow  pam-server -> <siem>:514,6514           tcp   # syslog (if enabled)
+allow  pam-server -> <siem>:514                 udp   # audit forwarding (DEFAULT proto)
+allow  pam-server -> <siem>:514,6514           tcp   # audit forwarding over TCP/TLS; syslog alerts
 allow  pam-server -> <smtp/webhook>:587,443    tcp   # alerts (if enabled)
 deny   pam-server -> any                              # default deny
 
@@ -146,10 +149,24 @@ RFC-1918 egress blocks for your topology and CNI before relying on it.
 
 In an [IEC 62443](https://www.isa.org/standards-and-publications/isa-standards/isa-iec-62443-series-of-standards) / Purdue deployment, `pam-server` (the proxy)
 sits in the **industrial DMZ, level 3.5**, and is the **only** node permitted to
-open E2–E4 into the OT cell (levels 2–3). Operators never reach targets directly;
-the only IT→OT path is operator → proxy:2222 → target. Keep egress to the OT zone
-pinned to the specific target hosts and protocols, and default-deny everything
-else across the 3.5 boundary.
+open E2–E4 into the OT cell (levels 2–3). Operators never reach targets directly through the brokered paths; those are
+operator → proxy (`:2222` SSH/WinRM, `:5433` SQL, or `:8080` for the RDP viewer
+and the REST WinRM endpoint) → target. Keep egress to the OT zone pinned to the
+specific target hosts and protocols, and default-deny everything else across the
+3.5 boundary.
+
+> ⚠️ **Operator certificates (Phase 28) create a direct operator→target path, by
+> design.** When `PAM_SSH_CA_KEY` is set, `POST /api/ca/ssh/sign` issues a
+> short-lived certificate that the operator uses with their **own** SSH client,
+> straight to the target on `:22` — no proxy, and therefore no recording.
+> Authorization is still enforced at *issuance* (grants plus the approval gate),
+> and certificates are revocable by serial through the KRL
+> (`GET /api/ca/ssh/krl`, installed as sshd's `RevokedKeys`), but the session
+> itself is not brokered.
+>
+> **Do not permit this across the level-3.5 boundary.** Keep any
+> operator→target:22 rule out of the OT firewall so `:2222` remains the only way
+> in, and leave the feature off (`PAM_SSH_CA_KEY` unset) unless you want it.
 
 ## 8. Change log
 

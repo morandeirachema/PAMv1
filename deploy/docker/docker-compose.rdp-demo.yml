@@ -9,7 +9,7 @@
 #   #   Work with Targets → type 7 next to "demo-rdp" → Enter
 #   #   → an XFCE desktop renders in the portal. Ctrl+Alt+Q disconnects.
 #
-# DEMO ONLY — throwaway master key, a weak API key, and an unhardened root xrdp
+# DEMO ONLY — throwaway master key, a weak API key, and an unhardened xrdp
 # target with a well-known password. Never deploy this compose file.
 name: pamv1-rdp-demo
 
