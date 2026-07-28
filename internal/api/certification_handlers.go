@@ -213,6 +213,11 @@ func (s *Server) decideCampaignItem(w http.ResponseWriter, r *http.Request) {
 // gone (e.g. deleted since the snapshot) is not an error — the goal state is
 // "no access", which already holds.
 func (s *Server) revokeAccess(ctx context.Context, item *store.CampaignItem) error {
+	// Resolve which targets this item granted access to BEFORE deleting it —
+	// afterwards the link is gone and there is nothing left to match sessions
+	// against.
+	affected := s.targetsGrantedBy(ctx, item)
+
 	var err error
 	switch item.Kind {
 	case "target_grant":
@@ -225,7 +230,82 @@ func (s *Server) revokeAccess(ctx context.Context, item *store.CampaignItem) err
 	if errors.Is(err, store.ErrNotFound) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Cut the revoked user's live sessions to those targets, exactly as
+	// DELETE /api/targets/{id}/grants/{gid} does for the same state change.
+	//
+	// Without this a certification campaign — whose entire purpose is a reviewer
+	// deciding someone should no longer have access — removed the grant while
+	// leaving the operator connected to the machine, for as long as they cared to
+	// stay. The reviewer sees "revoked" and the session continues.
+	//
+	// Role grants are not matched: the session registry does not carry each
+	// session actor's role set, so a role revocation still affects only new
+	// connections. That limit is shared with the grant-delete route.
+	if item.SubjectType != "user" || s.sessions == nil {
+		return nil
+	}
+	for _, name := range affected {
+		if killed := s.sessions.KillByActorTarget(item.Subject, name); killed > 0 {
+			s.audit(ctx, "session.killed",
+				fmt.Sprintf("user:%s target:%s count:%d reason:certification-revoked", item.Subject, name, killed))
+		}
+	}
+	return nil
+}
+
+// targetsGrantedBy returns the names of the targets a campaign item's grant
+// authorizes, so live sessions can be cut when it is revoked. Best-effort: a
+// lookup failure yields no names, which loses the session kill rather than
+// blocking the revocation — the grant removal is the part that must not fail.
+func (s *Server) targetsGrantedBy(ctx context.Context, item *store.CampaignItem) []string {
+	targets, err := s.store.ListTargets(ctx, 0, 0)
+	if err != nil {
+		return nil
+	}
+	switch item.Kind {
+	case "target_grant":
+		for _, t := range targets {
+			grants, gerr := s.store.ListTargetGrants(ctx, t.ID)
+			if gerr != nil {
+				continue
+			}
+			for _, g := range grants {
+				if g.ID == item.RefID {
+					return []string{t.Name}
+				}
+			}
+		}
+	case "safe_member":
+		// A safe membership grants every target scoped to that safe, so all of
+		// them lose access at once.
+		safes, serr := s.store.ListSafes(ctx, 0, 0)
+		if serr != nil {
+			return nil
+		}
+		for _, sf := range safes {
+			members, merr := s.store.ListSafeMembers(ctx, sf.ID)
+			if merr != nil {
+				continue
+			}
+			for _, mem := range members {
+				if mem.ID != item.RefID {
+					continue
+				}
+				var names []string
+				for _, t := range targets {
+					if t.SafeID != nil && *t.SafeID == sf.ID {
+						names = append(names, t.Name)
+					}
+				}
+				return names
+			}
+		}
+	}
+	return nil
 }
 
 // closeCampaign marks a campaign closed (CapManageUsers).

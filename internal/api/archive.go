@@ -23,7 +23,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/morandeirachema/pamv1/internal/store"
 )
 
 // errArchiveExists guards the write-once property: an archive file for a given
@@ -69,7 +72,22 @@ func writeArchiveFile(dir, name string, data []byte) (string, string, error) {
 // tools long after the fact, and a truncated array is unparseable while a
 // truncated JSONL file still yields every complete line before the break.
 func (s *Server) archiveAuditBefore(ctx context.Context, dir string, cutoff time.Time) (int, error) {
-	events, err := s.store.ExportAudit(ctx, time.Time{}, cutoff)
+	// Start from where the last archive finished, not from the beginning of time.
+	//
+	// Exporting [zero, cutoff) every pass is only harmless when the rows are
+	// pruned afterwards. With the HMAC chain enabled they deliberately are not —
+	// so each tick re-exported the entire aged trail under a new cutoff-derived
+	// name, writing a fresh, slightly larger copy of the same history into
+	// storage that is by this feature's own premise immutable and usually billed.
+	// A year of daily ticks left hundreds of overlapping, undeletable exports.
+	since, err := s.lastArchivedThrough(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if !since.Before(cutoff) {
+		return 0, nil // everything up to the cutoff is already archived
+	}
+	events, err := s.store.ExportAudit(ctx, since, cutoff)
 	if err != nil {
 		return 0, err
 	}
@@ -97,6 +115,40 @@ func (s *Server) archiveAuditBefore(ctx context.Context, dir string, cutoff time
 	return len(events), nil
 }
 
+// lastArchivedThrough returns the cutoff of the most recent successful audit
+// archive, or the zero time if none has run.
+//
+// The high-water mark lives in the audit trail itself rather than in a new
+// table: every archive already appends `audit.archived` with `older_than:<RFC
+// 3339>`, which is exactly the fact needed, and it is a fact an auditor can see.
+// A mark stored anywhere else could disagree with the archives that exist.
+//
+// A malformed or missing marker reads as "nothing archived yet", which
+// re-exports more than necessary rather than skipping events — the safe
+// direction to fail in for an archive.
+func (s *Server) lastArchivedThrough(ctx context.Context) (time.Time, error) {
+	events, err := s.store.ListAudit(ctx, store.MaxAuditPage)
+	if err != nil {
+		return time.Time{}, err
+	}
+	for _, e := range events { // newest first
+		if e.Action != "audit.archived" {
+			continue
+		}
+		for _, f := range strings.Fields(e.Detail) {
+			if !strings.HasPrefix(f, "older_than:") {
+				continue
+			}
+			ts, perr := time.Parse(time.RFC3339, strings.TrimPrefix(f, "older_than:"))
+			if perr != nil {
+				return time.Time{}, nil // unreadable marker: re-export rather than skip
+			}
+			return ts, nil
+		}
+	}
+	return time.Time{}, nil
+}
+
 // archiveRecording moves one recording into the archive directory instead of
 // deleting it, preserving the artifact (and its hash-chain membership) under
 // whatever immutability the archive mount provides. A cross-filesystem rename
@@ -108,7 +160,24 @@ func archiveRecording(srcDir, dir, name string) error {
 	src := filepath.Join(srcDir, name)
 	dst := filepath.Join(dir, name)
 	if _, err := os.Stat(dst); err == nil {
-		return fmt.Errorf("%w: %s", errArchiveExists, dst)
+		// The destination already exists. Usually that means a previous pass
+		// copied the file and then failed to remove the source — the source and
+		// destination are byte-identical and the move simply needs finishing.
+		// Treating that as a hard error wedged archiving permanently: ReadDir
+		// returns names sorted, recording names begin with a nanosecond
+		// timestamp, and the sweep stopped at the first failure, so one stuck
+		// file blocked every chronologically later recording forever.
+		//
+		// If the contents DIFFER, that is a genuine write-once violation and
+		// still an error: two different recordings must never share a name.
+		same, cerr := sameFileContents(src, dst)
+		if cerr != nil {
+			return cerr
+		}
+		if !same {
+			return fmt.Errorf("%w: %s", errArchiveExists, dst)
+		}
+		return os.Remove(src) // finish the interrupted move
 	}
 	if err := os.Rename(src, dst); err == nil {
 		_ = os.Chmod(dst, 0o400)
@@ -126,10 +195,31 @@ func archiveRecording(srcDir, dir, name string) error {
 	return os.Remove(src)
 }
 
+// sameFileContents reports whether two files hold identical bytes. Used to tell
+// an interrupted move (copy succeeded, remove did not) apart from a genuine
+// name collision between two different recordings.
+func sameFileContents(a, b string) (bool, error) {
+	da, err := os.ReadFile(a) // #nosec G304 -- both names are validated recording files in directories the server owns
+	if err != nil {
+		return false, err
+	}
+	db, err := os.ReadFile(b) // #nosec G304 -- see above
+	if err != nil {
+		return false, err
+	}
+	return sha256.Sum256(da) == sha256.Sum256(db), nil
+}
+
 // archiveRecordingsBefore moves every recording older than cutoff into the
-// archive directory, returning how many were archived. It stops at the first
-// failure and returns it, so the caller can refuse to prune the rest — a
-// half-archived sweep must not be mistaken for a completed one.
+// archive directory, returning how many were archived.
+//
+// It continues past a failing file and returns the accumulated errors, rather
+// than stopping at the first one. Both halves matter: returning an error keeps
+// the caller's refusal to prune a half-archived sweep, while continuing means a
+// single unarchivable file no longer blocks every chronologically later
+// recording — ReadDir returns names sorted and recording names lead with a
+// nanosecond timestamp, so aborting at the first failure was effectively
+// permanent for everything after it.
 func (s *Server) archiveRecordingsBefore(ctx context.Context, dir string, cutoff time.Time) (int, error) {
 	entries, err := os.ReadDir(s.recordingDir)
 	if err != nil {
@@ -139,6 +229,7 @@ func (s *Server) archiveRecordingsBefore(ctx context.Context, dir string, cutoff
 		return 0, err
 	}
 	moved := 0
+	var failures []error
 	for _, e := range entries {
 		// Same filter as the pruner: dotfiles (the .chain head) and unrelated
 		// files are never touched.
@@ -149,10 +240,17 @@ func (s *Server) archiveRecordingsBefore(ctx context.Context, dir string, cutoff
 		if err != nil || !info.ModTime().Before(cutoff) {
 			continue
 		}
-		if err := archiveRecording(s.recordingDir, dir, e.Name()); err != nil {
-			return moved, err
+		if aerr := archiveRecording(s.recordingDir, dir, e.Name()); aerr != nil {
+			s.log.Error("recording archive failed", "file", e.Name(), "err", aerr)
+			failures = append(failures, fmt.Errorf("%s: %w", e.Name(), aerr))
+			continue
 		}
 		moved++
+	}
+	if len(failures) > 0 {
+		// Report every failure, not just the first: an operator fixing a WORM
+		// mount wants the whole list, and the caller still refuses to prune.
+		return moved, errors.Join(failures...)
 	}
 	if moved > 0 {
 		s.audit(ctx, "recording.archived", fmt.Sprintf("count:%d older_than:%s", moved, cutoff.UTC().Format(time.RFC3339)))

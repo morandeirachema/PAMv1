@@ -375,8 +375,10 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	}
 	// Throttle online guessing of the PAM key before any resolve work.
 	if !d.authLimiter.Allow(remoteHost(nConn.RemoteAddr())) {
-		d.log.Warn("db authentication rate limited", "login", login, "remote", remote)
-		d.audit(ctx, login, "proxy.auth_rate_limited", "proto:postgres remote:"+remote)
+		// Log but do NOT append — see the SSH proxy's authenticate for why: the
+		// preceding failures are the signal, and appending per attempt under a
+		// flood turns the system of record into the amplifier.
+		d.log.Warn("db authentication rate limited", "login", auditField(login, 64), "remote", remote)
 		d.fail(backend, "28P01", "pamv1: too many attempts; try again shortly")
 		return
 	}

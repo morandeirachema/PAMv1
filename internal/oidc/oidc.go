@@ -24,6 +24,14 @@ import (
 )
 
 // GeneratePKCE returns a PKCE code_verifier and its S256 code_challenge.
+// maxMetadataBytes bounds the JWKS and discovery documents an identity provider
+// returns. Both were read with an unbounded json.NewDecoder while every other
+// outbound response in this tree is capped — including the token endpoint eight
+// lines away. A provider that is compromised, misconfigured, or simply serving
+// the wrong URL could otherwise stream until the process ran out of memory,
+// which is a denial of service delivered through the login path.
+const maxMetadataBytes = 1 << 20 // 1 MiB; a large JWKS is a few KiB
+
 func GeneratePKCE() (verifier, challenge string, err error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -223,7 +231,7 @@ func keyFromJWKS(ctx context.Context, hc *http.Client, jwksURL, kid string) (*rs
 	var set struct {
 		Keys []jwk `json:"keys"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&set); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxMetadataBytes)).Decode(&set); err != nil {
 		return nil, err
 	}
 	for _, k := range set.Keys {
@@ -359,7 +367,7 @@ func Discover(ctx context.Context, hc *http.Client, issuer string) (authURL, tok
 		TokenEndpoint         string `json:"token_endpoint"`
 		JwksURI               string `json:"jwks_uri"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxMetadataBytes)).Decode(&d); err != nil {
 		return "", "", "", err
 	}
 	return d.AuthorizationEndpoint, d.TokenEndpoint, d.JwksURI, nil

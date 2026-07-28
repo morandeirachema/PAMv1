@@ -3,6 +3,7 @@ package api
 import (
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -55,8 +56,23 @@ func (s *Server) authFailed(w http.ResponseWriter, r *http.Request, surface, msg
 		return
 	}
 	s.log.Warn("authentication failed", "surface", surface, "path", r.URL.Path, "remote", r.RemoteAddr)
-	s.audit(r.Context(), "api.auth_failed", "surface:"+surface+" "+r.Method+" "+r.URL.Path+" remote:"+ip)
+	// The path is percent-DECODED by net/http, so it can hold newlines, quotes or
+	// text shaped like the `key:value` pairs an audit detail is made of — a
+	// request to /api/%0aactor:admin would read as a forged field. Quote and
+	// bound it, the same treatment the proxy gives commands and SFTP paths.
+	s.audit(r.Context(), "api.auth_failed",
+		"surface:"+surface+" "+r.Method+" "+auditField(r.URL.Path, 200)+" remote:"+ip)
 	writeError(w, http.StatusUnauthorized, msg)
+}
+
+// auditField makes an untrusted string safe to place in an audit detail: bounded
+// in length and quoted, so embedded newlines or forged `key:value` pairs cannot
+// restructure the record around it. Mirrors proxy.auditField.
+func auditField(s string, limit int) string {
+	if len(s) > limit {
+		s = s[:limit] + "…"
+	}
+	return strconv.Quote(s)
 }
 
 // clientIP resolves the address the rate limiter keys on. With no trusted proxy

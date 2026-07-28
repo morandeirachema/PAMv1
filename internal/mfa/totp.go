@@ -97,17 +97,39 @@ func ValidateStep(secret, code string, t time.Time) (int64, bool) {
 	return 0, false
 }
 
-// GenerateRecoveryCodes returns n single-use backup codes formatted as
-// "xxxxx-xxxxx" (base32, ~50 bits each). Store only their hashes.
+// recoveryCodeBytes is the entropy behind one recovery code: 15 bytes = 120
+// bits, encoding to exactly 24 base32 characters with no padding.
+//
+// It was 8 bytes truncated to 10 characters, which is **50 bits** — and the
+// codes are stored as a single unsalted SHA-256. Anyone holding a database
+// backup could exhaust that space offline on commodity hardware, and a recovery
+// code is a full second-factor bypass that survives until it is used. Rate
+// limiting does not help: the attack never touches the server.
+//
+// At 120 bits the offline search is infeasible regardless of how the hash is
+// computed, which is also why plain SHA-256 remains appropriate here: rainbow
+// tables and precomputation need a small or predictable input space, and a
+// random 120-bit value has neither. (A slow KDF would defend a *low*-entropy
+// secret; the right fix for a generated one is to stop generating it small.)
+const recoveryCodeBytes = 15
+
+// GenerateRecoveryCodes returns n single-use backup codes formatted as four
+// hyphen-separated groups of six lowercase base32 characters
+// ("abcdef-ghijkl-mnopqr-stuvwx"), each carrying 120 bits of entropy. Store only
+// their hashes — the plaintext is shown to the user once and never persisted.
+//
+// The grouping is for transcription, not for the code: people copy these onto
+// paper and type them back months later under pressure, and hyphens every six
+// characters make that survivable.
 func GenerateRecoveryCodes(n int) ([]string, error) {
 	codes := make([]string, 0, n)
 	for i := 0; i < n; i++ {
-		buf := make([]byte, 8)
+		buf := make([]byte, recoveryCodeBytes)
 		if _, err := rand.Read(buf); err != nil {
 			return nil, err
 		}
-		s := strings.ToLower(b32.EncodeToString(buf)) // 13 chars
-		codes = append(codes, s[:5]+"-"+s[5:10])
+		s := strings.ToLower(b32.EncodeToString(buf)) // exactly 24 chars, no padding
+		codes = append(codes, s[0:6]+"-"+s[6:12]+"-"+s[12:18]+"-"+s[18:24])
 	}
 	return codes, nil
 }
