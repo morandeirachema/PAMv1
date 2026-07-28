@@ -1451,9 +1451,11 @@ Buildable without external infrastructure, each deferred by the phase named.
   follow-on, as they were for earlier phases.
 - **Config depth** (12) — runtime secret refresh without a restart (sourcing is
   one-shot at boot) and a per-variable override map.
-- **KEK-wrap the broker audit keys** (13) — `PAM_BROKER_AUDIT_KEY` and
-  `PAM_BROKER_AUDIT_SIGN_SEED` are plain environment values while every other
-  long-lived key is either vault-wrapped or in shared custody.
+- ~~**KEK-wrap the broker audit keys** (13)~~ — ✅ closed 2026-07-28. The two
+  variables are now optional: unset, each key is generated once and held under
+  shared custody (KEK-sealed in `key_material`, converged on by every replica,
+  re-wrapped by `-rotate-kek`), exactly like the SSH host/CA keys. An explicit
+  env value still wins — that remains the signer-rotation path.
 - **Analytics depth** (23) — peer-baseline and new-target novelty scoring (needs
   a longer history model), and step-up-MFA as an automated response.
 - **Deploy examples** (14) — cloud-KMS recipients wired into the Helm chart, a

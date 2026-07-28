@@ -254,10 +254,13 @@ type Config struct {
 	AppSecretsEnabled bool
 
 	// Broker (Phase 13, AI-agent access broker). Setting BrokerPolicyFile enables
-	// the broker; the audit key + seed are then required (fail-loud).
+	// the broker. The audit key + seed may be set explicitly — that is also how a
+	// signing-key rotation is driven — and when left unset each is generated under
+	// shared custody: sealed by the KEK into the store's key_material, converged
+	// on by every replica, and re-wrapped by -rotate-kek like every other key.
 	BrokerPolicyFile    string        // PAM_BROKER_POLICY_FILE — YAML policy rules; enables the broker
-	BrokerAuditKey      string        // PAM_BROKER_AUDIT_KEY — base64 32-byte HMAC chain key
-	BrokerAuditSignSeed string        // PAM_BROKER_AUDIT_SIGN_SEED — base64 32-byte ed25519 seed
+	BrokerAuditKey      string        // PAM_BROKER_AUDIT_KEY — base64 32-byte HMAC chain key (unset = shared custody)
+	BrokerAuditSignSeed string        // PAM_BROKER_AUDIT_SIGN_SEED — base64 32-byte ed25519 seed (unset = shared custody)
 	BrokerTokenTTL      time.Duration // PAM_BROKER_TOKEN_TTL_MIN — approval resume-token lifetime (default 15m)
 	BrokerMaxArgBytes   int           // PAM_BROKER_MAX_ARG_BYTES — cap on a tool call's serialized args (0 = off)
 	BrokerRatePerMin    int           // PAM_BROKER_RATE_PER_MIN — per-agent tool-call rate limit (0 = off)
@@ -582,11 +585,10 @@ func Load() (*Config, error) {
 	if cfg.BreakGlassThreshold >= 2 && cfg.BreakGlassShares < cfg.BreakGlassThreshold {
 		errs = append(errs, "PAM_BREAK_GLASS_SHARES must be >= PAM_BREAK_GLASS_THRESHOLD")
 	}
-	// When the agent broker is enabled its audit-chain keys are mandatory: a
-	// verifiable log with no key would silently be unverifiable.
-	if cfg.BrokerPolicyFile != "" && (cfg.BrokerAuditKey == "" || cfg.BrokerAuditSignSeed == "") {
-		errs = append(errs, "PAM_BROKER_AUDIT_KEY and PAM_BROKER_AUDIT_SIGN_SEED (base64 32-byte values) are required when PAM_BROKER_POLICY_FILE is set")
-	}
+	// The broker's audit-chain keys are deliberately NOT required here: when unset
+	// they are generated under shared custody at startup (sealed by the KEK in
+	// key_material), so the verifiable log always has a key — the fail-loud check
+	// on an explicitly-set malformed value lives in cmd/pam-server's buildBroker.
 	// SPIFFE SVID identity needs its trust domain and audience to verify a subject
 	// and reject cross-audience token replay; a JWKS file with neither would accept
 	// any well-formed token in any trust domain.

@@ -269,8 +269,8 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_RECORDING_RETENTION_DAYS` / `PAM_AUDIT_RETENTION_DAYS` | | `0` (∞) | **Prune** recordings / audit rows older than N days (Phase 36). Audit pruning is skipped while the HMAC chain is on. `PAM_RETENTION_INTERVAL_HOURS` (`24`) is the sweep cadence. See §9.2. |
 | `PAM_RETENTION_ARCHIVE_DIR` | | (delete on expiry) | **Archive before pruning** (Phase 49): aged audit rows are exported as digest-stamped JSON Lines and aged recordings are moved here (write-once, `0400`), and the delete runs **only if the archive succeeded**. Point it at WORM storage. See §9.2. |
 | `PAM_BROKER_POLICY_FILE` | | (off) | YAML policy file — **its presence enables the AI-agent access broker** (Phase 13). |
-| `PAM_BROKER_AUDIT_KEY` | broker only | — | base64 32-byte HMAC key for the verifiable audit chain (required once the broker is on). |
-| `PAM_BROKER_AUDIT_SIGN_SEED` | broker only | — | base64 32-byte ed25519 seed signing the audit-chain head (truncation detection). |
+| `PAM_BROKER_AUDIT_KEY` | broker only | (shared custody) | base64 32-byte HMAC key for the verifiable audit chain. **Unset = generated once and held under shared custody** (KEK-sealed in `key_material`, same as the SSH host/CA keys); set it explicitly to control the key yourself. |
+| `PAM_BROKER_AUDIT_SIGN_SEED` | broker only | (shared custody) | base64 32-byte ed25519 seed signing the audit-chain head (truncation detection). Unset = shared custody; **setting it is how a signing-key rotation is driven** (see §"Rotate the checkpoint signer"). |
 | `PAM_BROKER_TOKEN_TTL_MIN` | | `15` | Lifetime of the single-use approval resume token (minutes). |
 | `PAM_BROKER_RATE_PER_MIN` | | `0` (off) | Per-agent tool-call rate limit. |
 | `PAM_BROKER_MAX_ARG_BYTES` | | `16384` | Cap on a tool call's serialized arguments (0 = off). |
@@ -993,16 +993,21 @@ The broker extends the "trust the chokepoint, not the agent" model to AI agents:
 an agent holds only an identity key, a **policy** decides `allow` / `require_approval`
 / `deny` on each tool call **and its arguments**, approved actions run **server-side
 with a just-in-time credential**, and the agent gets back only the result — never
-a secret. It is **off** until you point `PAM_BROKER_POLICY_FILE` at a policy file;
-the audit key + sign seed are then required (fail-loud). See the [config
+a secret. It is **off** until you point `PAM_BROKER_POLICY_FILE` at a policy file.
+The audit-chain keys take care of themselves: left unset, each is generated once
+at startup and held under **shared custody** — sealed by the KEK into
+`key_material`, converged on by every replica, re-wrapped by `-rotate-kek` —
+exactly like the SSH host and CA keys. See the [config
 reference](#4-configuration-reference) for the full `PAM_BROKER_*` set.
 
 **Enable it:**
 
 ```bash
 export PAM_BROKER_POLICY_FILE=/etc/pam/broker-policy.yaml
-export PAM_BROKER_AUDIT_KEY=$(openssl rand -base64 32)        # HMAC chain key
-export PAM_BROKER_AUDIT_SIGN_SEED=$(openssl rand -base64 32)  # ed25519 head signer
+# optional — hold the audit-chain keys yourself instead of shared custody
+# (an explicit value always wins, and is how a signer rotation is driven):
+#   export PAM_BROKER_AUDIT_KEY=$(openssl rand -base64 32)        # HMAC chain key
+#   export PAM_BROKER_AUDIT_SIGN_SEED=$(openssl rand -base64 32)  # ed25519 head signer
 # optional: PAM_BROKER_RATE_PER_MIN=60  PAM_BROKER_TOKEN_TTL_MIN=15
 ```
 
@@ -1060,7 +1065,10 @@ archived checkpoint's count) to detect **tail truncation** without an out-of-ban
 anchor. Rotate the checkpoint signer with an overlap: set the new
 `PAM_BROKER_AUDIT_SIGN_SEED` and list the old **public** key in
 `PAM_BROKER_AUDIT_SIGN_PREV`; both are published as a JWKS at `GET /v1/audit/jwks`
-for external verification. **OCSF export:** `GET /api/audit/ocsf` (add
+for external verification. (If the seed has been under shared custody — i.e. you
+never set it — read the outgoing public key from that JWKS **before** rotating:
+an explicit env seed takes over from the custody-held one, which then stays
+sealed in `key_material` but is no longer used.) **OCSF export:** `GET /api/audit/ocsf` (add
 `?format=ndjson` for most collectors) delivers the trail as OCSF events (API
 Activity 6003 / Detection Finding 2004) for your SIEM. The full broker threat
 model is in [AGENT-THREAT-MODEL.md](AGENT-THREAT-MODEL.md).
@@ -1206,7 +1214,7 @@ decrypt after you switch keys.
 | Credentials | `CredentialAAD` | Sessions fail at JIT decryption |
 | TOTP enrollments | `MFAAAD` | Enrolled users cannot complete MFA |
 | Secret config values (LDAP bind password, SSO client secrets) | `ConfigAAD` | Directory login breaks |
-| **Key custody** — SSH proxy host key, Zero Standing Privilege CA key | `KeyMaterialAAD` | **The server refuses to start** |
+| **Key custody** — SSH proxy host key, Zero Standing Privilege CA key, and the broker audit-chain HMAC key + signing seed when custody-held | `KeyMaterialAAD` | **The server refuses to start** (host/CA keys), or the broker's audit chain can no longer be verified |
 
 That last row was a real defect, fixed in Phase 52a: the rotation reported
 success and the *next start-up* failed, because `keycustody.Ensure` read back an
@@ -1805,6 +1813,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-07-28 | **Broker audit keys under shared custody (Phase 13 follow-on).** `PAM_BROKER_AUDIT_KEY` and `PAM_BROKER_AUDIT_SIGN_SEED` are now optional: unset, each is generated once and sealed by the KEK into `key_material` (every replica converges on the same chain key and signer, and `-rotate-kek` re-wraps them like the SSH host/CA keys). An explicit env value still wins — that is how a signer rotation is driven; if the seed was custody-held, read the outgoing public key from `GET /v1/audit/jwks` *before* rotating. See §4 and the broker section. |
 | 2026-07-27 | **Phase 51 — SFTP path policy.** `PAM_SSH_SFTP_DENY_FILE` gates file transfer by **path**, not just by operation: a matching path is refused in every mode (downloads included) and on both sides of a rename, audited `sftp.blocked reason:path-denied` with the rule that matched. Same regex-file format as command control, and a bad pattern fails startup. See §9.4. |
 | 2026-07-27 | **Phase 50 — clipboard auditing on the RDP bridge.** `PAM_RDP_CLIPBOARD_AUDIT=meta` records every clipboard transfer as `rdp.clipboard` — direction (out = copied from the target, in = pasted into it), mimetype, byte count and SHA-256; `full` also records the content, which is opt-in because a privileged clipboard often holds a just-copied password. Auditing never blocks a transfer; gating stays `PAM_RDP_CLIPBOARD`. See §5 (RDP) and §4. |
 | 2026-07-27 | **Phase 49 — archive to WORM before pruning.** `PAM_RETENTION_ARCHIVE_DIR` makes retention archive-then-prune: aged audit rows are exported as digest-stamped JSON Lines and aged recordings are moved into a write-once archive, and **the delete runs only if the archive succeeded** — a broken archive costs disk space, not evidence. New audit actions `audit.archived` / `recording.archived`. With the HMAC chain on you now get the scheduled export too; only the delete stays a manual re-anchor. See §9.2 and §4. |

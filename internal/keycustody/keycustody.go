@@ -42,6 +42,13 @@ import (
 const (
 	NameSSHHostKey = "ssh_host_key"
 	NameSSHCAKey   = "ssh_ca_key"
+	// The AI-agent broker's audit-chain keys (Phase 13 follow-on): the keyed-HMAC
+	// chain key and the ed25519 checkpoint-signing seed. Held here (rather than as
+	// plain environment values) when the operator does not set them explicitly, so
+	// every replica converges on ONE chain key and ONE signer identity — a replica
+	// with a different key would make honest events read as tampering.
+	NameBrokerAuditKey      = "broker_audit_key"
+	NameBrokerAuditSignSeed = "broker_audit_sign_seed"
 )
 
 // Store is the slice of the store this package needs.

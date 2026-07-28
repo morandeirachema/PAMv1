@@ -336,17 +336,29 @@ func TestKekOptionsFromEnv(t *testing.T) {
 // TestBuildBroker checks the broker assembly: disabled cleanly when no policy
 // file is configured, fail-loud on a bad policy or malformed audit keys (a
 // broker that started without its verifiable-audit keys would defeat the point
-// of having them), and fully wired on valid input.
+// of having them), fully wired on explicit env values, and — when the keys are
+// not set — resolved from shared custody so every replica converges on ONE
+// chain key and ONE signer identity instead of each inventing its own.
 func TestBuildBroker(t *testing.T) {
+	ctx := context.Background()
+	log := discardLogger()
+	newVault := func(t *testing.T) *vault.Vault {
+		t.Helper()
+		v, err := vault.New(mustMasterKey(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
 	t.Run("disabled", func(t *testing.T) {
-		engine, key, signer, err := buildBroker(&config.Config{})
+		engine, key, signer, err := buildBroker(ctx, memstore.New(), newVault(t), &config.Config{}, log)
 		if engine != nil || key != nil || signer != nil || err != nil {
 			t.Fatalf("want all nil when no policy file, got %v %v %v %v", engine, key, signer, err)
 		}
 	})
 	t.Run("policy file missing", func(t *testing.T) {
 		cfg := &config.Config{BrokerPolicyFile: filepath.Join(t.TempDir(), "nope.yaml")}
-		if _, _, _, err := buildBroker(cfg); err == nil {
+		if _, _, _, err := buildBroker(ctx, memstore.New(), newVault(t), cfg, log); err == nil {
 			t.Fatal("missing policy file accepted")
 		}
 	})
@@ -355,7 +367,7 @@ func TestBuildBroker(t *testing.T) {
 			BrokerPolicyFile: writeTemp(t, "policy.yaml", minimalPolicy),
 			BrokerAuditKey:   b64Bytes(t, 8), // wrong size
 		}
-		_, _, _, err := buildBroker(cfg)
+		_, _, _, err := buildBroker(ctx, memstore.New(), newVault(t), cfg, log)
 		if err == nil || !strings.Contains(err.Error(), "PAM_BROKER_AUDIT_KEY") {
 			t.Fatalf("want audit-key size error, got %v", err)
 		}
@@ -366,23 +378,69 @@ func TestBuildBroker(t *testing.T) {
 			BrokerAuditKey:      b64Bytes(t, 32),
 			BrokerAuditSignSeed: "not-base64!!!",
 		}
-		_, _, _, err := buildBroker(cfg)
+		_, _, _, err := buildBroker(ctx, memstore.New(), newVault(t), cfg, log)
 		if err == nil || !strings.Contains(err.Error(), "PAM_BROKER_AUDIT_SIGN_SEED") {
 			t.Fatalf("want sign-seed error, got %v", err)
 		}
 	})
-	t.Run("valid", func(t *testing.T) {
+	t.Run("valid env values", func(t *testing.T) {
 		cfg := &config.Config{
 			BrokerPolicyFile:    writeTemp(t, "policy.yaml", minimalPolicy),
 			BrokerAuditKey:      b64Bytes(t, 32),
 			BrokerAuditSignSeed: b64Bytes(t, 32),
 		}
-		engine, key, signer, err := buildBroker(cfg)
+		engine, key, signer, err := buildBroker(ctx, memstore.New(), newVault(t), cfg, log)
 		if err != nil {
 			t.Fatalf("valid broker config rejected: %v", err)
 		}
 		if engine == nil || len(key) != 32 || signer == nil {
 			t.Fatalf("incomplete broker wiring: engine=%v keylen=%d signer=%v", engine, len(key), signer)
+		}
+	})
+	t.Run("unset keys come from shared custody and converge", func(t *testing.T) {
+		st, v := memstore.New(), newVault(t)
+		cfg := &config.Config{BrokerPolicyFile: writeTemp(t, "policy.yaml", minimalPolicy)}
+		engine, key1, signer1, err := buildBroker(ctx, st, v, cfg, log)
+		if err != nil {
+			t.Fatalf("custody path failed: %v", err)
+		}
+		if engine == nil || len(key1) != 32 || signer1 == nil {
+			t.Fatalf("incomplete custody wiring: engine=%v keylen=%d signer=%v", engine, len(key1), signer1)
+		}
+		// A second resolution against the SAME store — another replica, or a
+		// restart — must yield the identical chain key and signer identity;
+		// divergence would make honest events read as tampering.
+		_, key2, signer2, err := buildBroker(ctx, st, v, cfg, log)
+		if err != nil {
+			t.Fatalf("second custody resolution failed: %v", err)
+		}
+		if string(key1) != string(key2) || !signer1.Equal(signer2) {
+			t.Fatal("two replicas resolved different broker audit keys from one store")
+		}
+		// A different store is a different deployment: keys must differ.
+		_, key3, _, err := buildBroker(ctx, memstore.New(), v, cfg, log)
+		if err != nil {
+			t.Fatalf("fresh-store custody failed: %v", err)
+		}
+		if string(key1) == string(key3) {
+			t.Fatal("two independent deployments generated the same chain key")
+		}
+	})
+	t.Run("env key with custody seed mixes", func(t *testing.T) {
+		envKey := b64Bytes(t, 32)
+		cfg := &config.Config{
+			BrokerPolicyFile: writeTemp(t, "policy.yaml", minimalPolicy),
+			BrokerAuditKey:   envKey,
+		}
+		_, key, signer, err := buildBroker(ctx, memstore.New(), newVault(t), cfg, log)
+		if err != nil {
+			t.Fatalf("mixed sources rejected: %v", err)
+		}
+		if base64.StdEncoding.EncodeToString(key) != envKey {
+			t.Fatal("explicit env HMAC key was not honored over custody")
+		}
+		if signer == nil {
+			t.Fatal("custody seed did not produce a signer")
 		}
 	})
 }
@@ -1282,9 +1340,9 @@ func TestRunServesAndShutsDownGracefully(t *testing.T) {
 	t.Setenv("PAM_COMMAND_DENY_FILE", writeTemp(t, "deny.txt", "^rm -rf /\n"))
 	t.Setenv("PAM_SSH_SFTP_DENY_FILE", writeTemp(t, "paths.txt", "id_rsa\n"))
 	t.Setenv("PAM_DB_STEPUP_FILE", writeTemp(t, "stepup.txt", "^DROP \n"))
+	// The broker audit keys are deliberately NOT set: this boot proves they are
+	// generated under shared custody (sealed into key_material) when absent.
 	t.Setenv("PAM_BROKER_POLICY_FILE", writeTemp(t, "policy.yaml", minimalPolicy))
-	t.Setenv("PAM_BROKER_AUDIT_KEY", b64Bytes(t, 32))
-	t.Setenv("PAM_BROKER_AUDIT_SIGN_SEED", b64Bytes(t, 32))
 	t.Setenv("PAM_TICKET_PATTERN", "^CHG[0-9]+$")
 	t.Setenv("PAM_BREAK_GLASS_KEY_HASH", func() string {
 		sum := sha256.Sum256([]byte("sealed-emergency-key"))

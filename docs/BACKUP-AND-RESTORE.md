@@ -30,15 +30,19 @@ handling like the vault key):
   archived `GET /api/audit/head` ed25519 checkpoints are your only tail-truncation
   anchor;
 - the **broker audit keys** `PAM_BROKER_AUDIT_KEY` and
-  `PAM_BROKER_AUDIT_SIGN_SEED`, if the AI-agent broker is enabled — they back a
+  `PAM_BROKER_AUDIT_SIGN_SEED`, **if you set them explicitly** — they back a
   second, independent HMAC + ed25519 chain, and losing them costs the agent trail
-  exactly what losing `PAM_AUDIT_HMAC_KEY` costs the main one;
-- the **SSH proxy host key** and the **ZSP SSH-CA key** — since Phase 42 these
-  live in the database (`key_material`) sealed under the KEK, so a database
-  backup plus the KEK already restores them; the files at `PAM_SSH_HOST_KEY` /
-  `PAM_SSH_CA_KEY` are on-disk *mirrors*, not the system of record. Keeping the
-  PEMs out of band is still worthwhile: it is the only recovery from a lost KEK
-  that does not rotate the host key and the CA;
+  exactly what losing `PAM_AUDIT_HMAC_KEY` costs the main one. Left unset they
+  are custody-held (see the next bullet): a database backup plus the KEK already
+  restores them, and there is nothing separate to hold;
+- the **SSH proxy host key**, the **ZSP SSH-CA key**, and the custody-held
+  **broker audit keys** — these live in the database (`key_material`) sealed
+  under the KEK (host/CA since Phase 42; broker keys since the Phase 13
+  follow-on), so a database backup plus the KEK already restores them; the files
+  at `PAM_SSH_HOST_KEY` / `PAM_SSH_CA_KEY` are on-disk *mirrors*, not the system
+  of record (the broker keys have no mirror). Keeping the host/CA PEMs out of
+  band is still worthwhile: it is the only recovery from a lost KEK that does
+  not rotate the host key and the CA;
 - session recordings (`PAM_RECORDING_DIR`, including the `.chain` head that anchors
   the [recording hash chain](ARCHITECTURE-LOW-LEVEL.md));
 - **the retention archive** (`PAM_RETENTION_ARCHIVE_DIR`), if set — the retention

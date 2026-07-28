@@ -21,7 +21,9 @@ import (
 //  1. credentials          (store.CredentialAAD)
 //  2. TOTP enrollments     (store.MFAAAD)
 //  3. secret config values (store.ConfigAAD) — LDAP bind password, SSO secrets
-//  4. key custody          (store.KeyMaterialAAD) — SSH host key, ZSP CA key
+//  4. key custody          (store.KeyMaterialAAD) — SSH host key, ZSP CA key,
+//     and the broker audit-chain HMAC key + signing seed when they are
+//     custody-held rather than set in the environment
 //
 // Each step is idempotent: if a secret already decrypts under `to`, a previous
 // interrupted run rotated it, so it is skipped rather than failed on. That makes

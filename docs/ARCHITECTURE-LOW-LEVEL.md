@@ -50,7 +50,7 @@ internal/
   api/         # REST handlers, authz middleware, user administration
   cmdguard/    # command denylist, shared by the proxies AND the API/broker paths
   recording/   # at-rest encryption for session recordings (chunked AEAD under the KEK)
-  keycustody/  # shared custody of the SSH host + ZSP CA keys across replicas
+  keycustody/  # shared custody of the SSH host + ZSP CA keys and the broker audit keys across replicas
   proxy/       # SSH + PostgreSQL gateways, JIT injection, recording, sftpguard
   web/         # embedded AS/400 portal (static/index.html) + vendored RDP viewer (guacamole-common.min.js)
 ```
@@ -121,7 +121,8 @@ overrides), `profiles` (custom capability sets), `safes` + `safe_members`,
 `broker_audit_events` (the hash-chained agent-broker audit log), `broker_tokens`,
 `app_keys` + `app_secret_grants`, `ssh_certificates` (operator-cert revocation
 handles, `0020`), `vendors` + `vendor_grants` (`0021`), and `key_material`
-(shared custody of the host/CA keys, `0022`). Cross-process serialization uses Postgres
+(shared custody of the host/CA keys and, when not env-set, the broker
+audit-chain keys, `0022`). Cross-process serialization uses Postgres
 advisory locks keyed `pam_mig` (migrations), `pam_br` (broker chain), `pam_audc`
 (primary audit chain), and `pam_lfc`/`pam_ana` (worker leader election).
 
@@ -565,8 +566,8 @@ cancelled shutdown context so they are not dropped mid-drain.
 | `PAM_OIDC_ROLE_ADMIN` / `_USER` / `_AUDITOR` / `_APPROVER` | — | OIDC app-role/group → role |
 | `PAM_PORTAL_URL` | `/` | OIDC callback redirect base |
 | `PAM_BROKER_POLICY_FILE` | — (broker off) | AI-agent broker: YAML policy rules; set to enable the broker |
-| `PAM_BROKER_AUDIT_KEY` | — | base64 32-byte HMAC key for the broker audit chain (required when the broker is on) |
-| `PAM_BROKER_AUDIT_SIGN_SEED` | — | base64 32-byte ed25519 seed for signed head checkpoints (required when the broker is on) |
+| `PAM_BROKER_AUDIT_KEY` | — (shared custody) | base64 32-byte HMAC key for the broker audit chain; unset = generated once under shared custody (KEK-sealed in `key_material`, converged on by every replica) |
+| `PAM_BROKER_AUDIT_SIGN_SEED` | — (shared custody) | base64 32-byte ed25519 seed for signed head checkpoints; unset = shared custody like the HMAC key. Set it explicitly to drive a signing-key rotation |
 | `PAM_BROKER_TOKEN_TTL_MIN` | `15` | Lifetime (minutes) of a single-use approval resume token |
 | `PAM_BROKER_MAX_ARG_BYTES` | `16384` | Cap on a tool call's serialized arguments; `0` disables |
 | `PAM_BROKER_RATE_PER_MIN` | `0` (off) | Per-agent tool-call rate limit (calls per minute) |
@@ -688,6 +689,7 @@ events are also written to the separate tamper-evident `broker_audit_events` cha
 
 | Date | Change |
 |---|---|
+| 2026-07-28 | **Broker audit keys under shared custody (Phase 13 follow-on).** `PAM_BROKER_AUDIT_KEY` and `PAM_BROKER_AUDIT_SIGN_SEED` were the last long-lived keys held as plain environment values; both are now optional — when unset, `buildBroker` resolves each through `keycustody.Ensure` (new names `broker_audit_key`, `broker_audit_sign_seed`; new `auditchain.GenerateKeyText`/`GenerateSignSeedText` emit base64 text), so the key is generated once, sealed under the KEK in `key_material`, converged on by every replica, and re-wrapped by `-rotate-kek` like the SSH host/CA keys. An explicit env value still wins — that remains how a signing-key rotation is driven (read the outgoing public key from `GET /v1/audit/jwks` first). `config.Load` no longer requires the pair when the policy file is set; a malformed explicit value stays fail-loud in `buildBroker`. No schema change, no new env var |
 | 2026-07-28 | **Four small proofs and the repo's missing furniture.** Tests, each against its existing fixture: the ITSM ticket gate **denies when the webhook is unreachable** (fail closed, plus the 2xx/non-2xx legs — `internal/ticket`); the broker's 1024 parked-approval DoS cap refuses the 1025th call terminally without evicting pending approvals (`internal/broker`); `guacd.Connect` surfaces every handshake protocol error — wrong opcode, EOF, oversized element length, garbage, `ready` without a connection id (`internal/guacd`, new `rawGuacd` misbehaving-server fixture); `oidc.Discover` (previously uncalled by any test) resolves endpoints with and without a trailing slash and errors on unreachable/malformed metadata. Furniture: `CHANGELOG.md`, `CONTRIBUTING.md`, `.github/` CODEOWNERS + issue/PR templates + `dependabot.yml` (gomod/actions/docker weekly), and a `manifests` CI job (`helm lint` + default and everything-on chart renders + `kubeconform` over raw manifests and renders). Remote `phase-*` branches deleted after verifying each PR merged. No production-code change |
 | 2026-07-28 | **The wiring layer gets its tests** (`cmd/pam-server`: 0% → 82.8%; repo-wide 68.3% → 72.7% under `-coverpkg=./...`). New `cmd/pam-server/main_test.go` drives every fail-closed startup path reachable without external infrastructure through the environment (deny/step-up/SFTP files, audit-chain keys, TLS requirements, identity backends, custody, listener conflicts), boots the full server for real (memstore, both proxies on ephemeral ports, audit chain, SSH CA, broker, workers) and shuts it down with a real SIGTERM — plain HTTP and native TLS — and proves the utility flags end to end. `-rotate-kek` is proven against live PostgreSQL: the pgstore CI job now also runs `./cmd/pam-server/` (`-p 1`, shared database). Two mechanical extractions so every `main()` case is one call: `runGenKey`, `runHashKey`. No behavior change, no new env var |
 | 2026-07-28 | **Version identity and an honest release story.** `cmd/pam-server` gains `version`/`commit` package variables stamped by `-ldflags` (the Dockerfile takes `VERSION`/`COMMIT` build args, the release workflow passes them), a **`-version` flag**, the version in the startup log, and **`pam_build_info{version,commit}`** via new `api.Options.BuildVersion`/`BuildCommit` → `metrics.SetBuildInfo` — "which build is this?" had no in-band answer at all. `release.yml` gains `workflow_dispatch` (it was unrehearsable: the first run would have been a real release) and a **test gate**, because `ci.yml` does not trigger on tags and a tag could otherwise publish a signed image built from untested code. Five present-tense claims that signed releases exist were downgraded — including the NIS2 supply-chain ✅ → 🟡, since a workflow file is not evidence for a control — and `SECURITY-GAPS.md` finding 18 is **reopened**: pinning to `0.10.0` replaced a mutable tag with an unreachable one, so `kubectl apply`, `helm install` and Terraform all fail. New `SECURITY.md`; README gains a *Verifying a release* section and a warning that the K8s path needs both a published image and the CloudNativePG operator |
