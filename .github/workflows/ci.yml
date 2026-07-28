@@ -49,7 +49,24 @@ jobs:
       - name: architecture diagrams up to date
         run: go run ./cmd/archgen && git diff --exit-code docs/ARCHITECTURE-DIAGRAMS.md
       - name: test
-        run: go test -race ./...
+        # -coverpkg=./... measures coverage across the WHOLE tree rather than
+        # per-package. It matters here because this codebase deliberately tests
+        # at the integration level: internal/api's tests drive most of the other
+        # packages, and per-package accounting attributes none of that back to
+        # them. Measured the naive way, internal/broker reads as 35% when it is
+        # really 85% — a number low enough to send a reviewer chasing the wrong
+        # problem, which is exactly what happened once.
+        run: go test -race -coverpkg=./... -coverprofile=coverage.out ./...
+      - name: coverage summary
+        # Printed, not gated. A threshold picked today would be arbitrary; the
+        # first useful thing is that a slide is visible in the log.
+        run: |
+          go tool cover -func=coverage.out | tail -1
+          echo "--- lowest-covered packages ---"
+          go tool cover -func=coverage.out \
+            | awk -F'[/:]' '/\.go:/ {print $0}' \
+            | awk '{pkg=$1; sub(/\/[^/]*\.go.*/, "", pkg); n[pkg]++; s[pkg]+=$NF+0} END {for (p in n) printf "%6.1f%%  %s\n", s[p]/n[p], p}' \
+            | sort -n | head -12
 
   # The PKCS#11 HSM KEK provider is behind the "pkcs11" build tag (cgo). Verify
   # it against SoftHSM2 — a software PKCS#11 token — so the HSM path is tested

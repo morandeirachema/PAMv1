@@ -5,8 +5,10 @@
 >
 > Last updated: 2026-07-28 · Reflects: Phases 0–52g.
 
-> ⚠️ **Alpha · for learning purposes.** pamv1 has not been security-audited and is
-> not production-ready. See the [main README](../README.md) and [docs hub](README.md).
+> ⚠️ **Beta · for learning purposes.** pamv1 is feature-complete against its
+> [roadmap](../ROADMAP.md) and has closed every finding of its own security
+> self-audit, but it has **not** been audited by anyone outside the project and is
+> **not** production-ready. See the [main README](../README.md) and [docs hub](README.md).
 
 > **Who this is for.** A system administrator who lives in the shell and writes
 > scripts, not Go. This guide explains **what pamv1 does, why, and how the pieces

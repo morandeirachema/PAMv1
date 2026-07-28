@@ -260,6 +260,26 @@ The lesson from #4 is the one that generalises: the previous round's discipline 
 for *known* bugs but not to a test written for a race. A test asserting that
 nothing went wrong is the easiest kind to write and the easiest to get wrong.
 
+### Test coverage, measured honestly (2026-07-28)
+
+CI now measures with `-coverpkg=./...` rather than per-package, and the
+difference is not cosmetic. This codebase tests deliberately at the integration
+level — `internal/api`'s tests drive most of the other packages — so per-package
+accounting attributes none of that work back to them. Measured naively,
+`internal/broker` reads as **35%** when it is really **85%**; `internal/ticket`
+57% when it is 93%. That gap once sent a review after the wrong problem, and the
+right one (three broker controls that were asserted by the threat model and
+executed by no test) had nothing to do with the numbers.
+
+Repo-wide the real figure is **68.3% of statements**, and the honest measurement
+makes one outlier obvious: **`cmd/pam-server` is at 0%**. That is 1,181 lines
+with 39 distinct error and validation exit paths — key custody at startup, the
+fail-closed deny-file handling, listener wiring — and it is where the
+`PAM_OT_AIRGAP` gap was found. The air-gap fix was tested in `internal/config`,
+where the validation actually lives, so the wiring layer itself remains
+uncovered. Recorded here rather than quietly left: it is the clearest remaining
+test gap in the tree.
+
 **Not findings, explicitly checked and clean:** AAD parity across all twenty
 credential encrypt/decrypt sites and the `MFAAAD`/`ConfigAAD`/`KeyMaterialAAD`
 paths (zero inline constructions); nonce handling in the vault and the chunked

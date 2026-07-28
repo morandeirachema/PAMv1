@@ -4,7 +4,7 @@
 >
 > Last updated: 2026-07-28 · Reflects: Phases 0–52g.
 
-> ⚠️ **Alpha · for learning purposes. Not production, not audited.** These are the
+> ⚠️ **Beta · for learning purposes. Not production, not externally audited.** These are the
 > specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate
 > against your own load.
 
