@@ -682,10 +682,75 @@ func Load() (*Config, error) {
 	if emailSet != 0 && emailSet != 3 {
 		errs = append(errs, "PAM_ALERT_EMAIL_SMTP, PAM_ALERT_EMAIL_FROM and PAM_ALERT_EMAIL_TO must all be set together (or all empty)")
 	}
+	errs = append(errs, airGapConflicts(cfg)...)
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("config: %s", strings.Join(errs, "; "))
 	}
 	return cfg, nil
+}
+
+// airGapConflicts reports the integrations that would still reach the network
+// while PAM_OT_AIRGAP is set.
+//
+// The flag's name is a promise, and for a long time the code kept only a small
+// part of it: it was consulted in exactly one place — choosing the alerter — so
+// the ITSM webhook, the vendor-attestation webhook, the SIEM forwarder, Conjur
+// sourcing, a cloud KEK and a cloud identity provider all still made outbound
+// calls. An operator sets this flag precisely because they cannot afford egress,
+// so a flag that silences alerts and nothing else is worse than no flag: it
+// manufactures confidence.
+//
+// The rule is default-deny with an explicit, per-variable escape hatch, because
+// "air-gapped" rarely means "no network" — it usually means "nothing leaves this
+// enclave". Several of these integrations can legitimately point at something
+// inside the enclave (a local Conjur, an in-DMZ SIEM collector, a self-hosted
+// Keycloak), and refusing those outright would push operators to turn the flag
+// off, which is the opposite of what it is for. So:
+//
+//   - Anything that CANNOT be inside an enclave is refused outright: an AWS KMS
+//     KEK and a Microsoft Entra tenant are somebody else's cloud by definition.
+//   - Anything endpoint-shaped is refused unless the operator names it in
+//     PAM_OT_AIRGAP_ALLOW, certifying that it resolves inside the enclave.
+//
+// The result is that egress is impossible by accident and possible on purpose,
+// and the list of exceptions is written down in the deployment rather than
+// living in somebody's head.
+func airGapConflicts(cfg *Config) []string {
+	if !cfg.AirGap {
+		return nil
+	}
+	allowed := map[string]bool{}
+	for _, name := range strings.Split(os.Getenv("PAM_OT_AIRGAP_ALLOW"), ",") {
+		if n := strings.TrimSpace(name); n != "" {
+			allowed[strings.ToUpper(n)] = true
+		}
+	}
+
+	var errs []string
+	// Endpoint-shaped: allowed if declared internal.
+	for _, c := range []struct{ name, value string }{
+		{"PAM_TICKET_VALIDATE_URL", cfg.TicketValidateURL},
+		{"PAM_VENDOR_ATTEST_URL", cfg.VendorAttestURL},
+		{"PAM_AUDIT_FORWARD_ADDR", cfg.AuditForwardAddr},
+		{"PAM_OIDC_ISSUER", cfg.OIDCIssuer},
+		{"PAM_CONJUR_URL", os.Getenv("PAM_CONJUR_URL")},
+		{"PAM_ALERT_WEBHOOK", cfg.AlertWebhook},
+	} {
+		if c.value != "" && !allowed[c.name] {
+			errs = append(errs, fmt.Sprintf(
+				"PAM_OT_AIRGAP is set but %s would make outbound calls; unset it, or add %s to PAM_OT_AIRGAP_ALLOW to certify that it resolves inside the enclave",
+				c.name, c.name))
+		}
+	}
+	// Inherently external: no escape hatch, because there is no version of these
+	// that lives inside an air-gapped enclave.
+	if cfg.KEKProvider == "aws-kms" {
+		errs = append(errs, "PAM_OT_AIRGAP is set but PAM_KEK_PROVIDER=aws-kms requires reaching AWS; use local, pkcs11 (an on-prem HSM) or an in-enclave vault-transit")
+	}
+	if cfg.EntraTenantID != "" {
+		errs = append(errs, "PAM_OT_AIRGAP is set but PAM_ENTRA_TENANT_ID requires reaching Microsoft Entra; use LDAP against an in-enclave directory instead")
+	}
+	return errs
 }
 
 // getenv returns the environment variable key, or def when it is unset or empty.
