@@ -9,6 +9,10 @@ dist/
 *.tfvars
 
 # SOPS / age private keys — never commit a real one (the demo example is kept).
+# *.key is deliberately broad: the SOPS README tells you to run `age-keygen -o
+# age.key`, and a reader who names theirs prod.key should not be caught out by a
+# pattern that only matched the example filename.
+*.key
 *.agekey
 age.key
 keys.txt

@@ -70,7 +70,7 @@ import (
 func main() {
 	genkey := flag.Bool("genkey", false, "print a new vault master key and exit")
 	hashkey := flag.Bool("hashkey", false, "read a break-glass key from stdin, print its SHA-256 hex and exit")
-	rotateKEK := flag.Bool("rotate-kek", false, "re-encrypt all vaulted secrets from PAM_MASTER_KEY to PAM_NEW_MASTER_KEY and exit")
+	rotateKEK := flag.Bool("rotate-kek", false, "re-encrypt every vaulted secret under a new KEK and exit (any provider, via PAM_KEK_*/PAM_NEW_KEK_* — also how you migrate local\u21c4KMS\u21c4HSM)")
 	splitKey := flag.Bool("split-key", false, "read a break-glass key from stdin and print N Shamir shares (PAM_BREAK_GLASS_SHARES / _THRESHOLD)")
 	healthcheck := flag.Bool("healthcheck", false, "probe the local /healthz endpoint and exit 0 if healthy (for container HEALTHCHECK)")
 	flag.Parse()
