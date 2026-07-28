@@ -84,3 +84,46 @@ func TestRDPClipboardParams(t *testing.T) {
 		}
 	}
 }
+
+// TestStrictestClipboard proves the per-target override can only tighten the
+// global clipboard policy — allow < readonly < deny, "" inherits — because an
+// override that could loosen a global deny would let one mislabeled target row
+// undo a fleet-wide decision.
+func TestStrictestClipboard(t *testing.T) {
+	cases := []struct{ global, target, want string }{
+		{"allow", "", "allow"},
+		{"allow", "readonly", "readonly"},
+		{"allow", "deny", "deny"},
+		{"readonly", "allow", "readonly"}, // an override never loosens
+		{"readonly", "deny", "deny"},
+		{"deny", "allow", "deny"},
+		{"deny", "", "deny"},
+		{"", "readonly", "readonly"}, // empty global normalizes to allow
+	}
+	for _, c := range cases {
+		if got := strictestClipboard(c.global, c.target); got != c.want {
+			t.Errorf("strictestClipboard(%q, %q) = %q, want %q", c.global, c.target, got, c.want)
+		}
+	}
+}
+
+// TestStrictestClipAudit proves the audit-mode merge keeps whichever mode
+// records more (off < meta < full), with "" inheriting the global — so a
+// sensitive target can force auditing on even where the fleet default is off,
+// and a target row can never switch the fleet's auditing off.
+func TestStrictestClipAudit(t *testing.T) {
+	cases := []struct{ global, target, want string }{
+		{"off", "", "off"},
+		{"off", "meta", "meta"},
+		{"meta", "off", "meta"}, // never records less than the global
+		{"meta", "full", "full"},
+		{"full", "meta", "full"},
+		{"", "full", "full"},
+		{"garbage", "meta", "meta"}, // unknown values normalize to off
+	}
+	for _, c := range cases {
+		if got := strictestClipAudit(c.global, c.target); got != c.want {
+			t.Errorf("strictestClipAudit(%q, %q) = %q, want %q", c.global, c.target, got, c.want)
+		}
+	}
+}

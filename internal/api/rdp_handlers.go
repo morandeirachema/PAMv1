@@ -192,6 +192,13 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 	if s.guacdRecordingPath != "" {
 		recName = fmt.Sprintf("%d_%s_%s", time.Now().UnixNano(), sanitizeName(target.Name), sanitizeName(principal.Name))
 	}
+	// Per-target clipboard tightening (Phase 33 follow-on): the effective policy
+	// is the stricter of the global and this target's override, computed once
+	// and used identically by the guacd gate, the connect audit and the
+	// transfer watcher — three views of one decision.
+	clipMode := strictestClipboard(s.rdpClipboard, target.RDPClipboard)
+	clipAudit := strictestClipAudit(s.rdpClipAudit, target.RDPClipboardAudit)
+
 	gconn, err := guacd.Connect(ctx, s.guacdAddr, guacd.Params{
 		Protocol: "rdp", Hostname: target.Host, Port: strconv.Itoa(port),
 		Username: cred.Username, Password: secret,
@@ -199,7 +206,7 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 		Height:        clampDim(atoiOr(r.URL.Query().Get("height"), 768)),
 		RecordingPath: s.guacdRecordingPath,
 		RecordingName: recName,
-		Extra:         rdpExtra(s.guacdRDPSecurity, s.guacdIgnoreCert, s.rdpClipboard),
+		Extra:         rdpExtra(s.guacdRDPSecurity, s.guacdIgnoreCert, clipMode),
 	})
 	if err != nil {
 		s.log.Error("rdp connect failed", "target", target.Name, "err", err)
@@ -220,7 +227,7 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 	// exactly what this system exists to prevent. Best-effort was the odd one out
 	// here, not the norm.
 	if err := s.auditAs(ctx, actorFrom(ctx), "rdp.connect",
-		"target:"+target.Name+" cred_user:"+cred.Username+" recording:"+recName+" clipboard:"+s.rdpClipboard); err != nil {
+		"target:"+target.Name+" cred_user:"+cred.Username+" recording:"+recName+" clipboard:"+clipMode); err != nil {
 		s.log.Error("rdp session refused: audit unavailable", "target", target.Name, "err", err)
 		ws.Close(websocket.StatusInternalError, "audit log unavailable")
 		return
@@ -253,7 +260,7 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 	// Clipboard auditing (Phase 50): observe what crosses the bridge Phase 33
 	// gates. The audit is written on a cancel-detached context so a transfer
 	// completed as the session tears down is still recorded.
-	clip := newClipWatcher(s.rdpClipAudit)
+	clip := newClipWatcher(clipAudit)
 	auditCtx := context.WithoutCancel(ctx)
 	bridgeGuacd(ctx, ws, gconn, clip, func(t clipTransfer) {
 		s.audit(auditCtx, "rdp.clipboard", "target:"+target.Name+" "+t.Detail())
@@ -389,6 +396,41 @@ func rdpClipboardMode(mode string) string {
 		return "allow"
 	}
 	return mode
+}
+
+// clipboardRank orders the clipboard-gate modes by strictness, for the
+// per-target override merge.
+var clipboardRank = map[string]int{"allow": 0, "readonly": 1, "deny": 2}
+
+// clipAuditRank orders the clipboard-audit modes by how much they record.
+var clipAuditRank = map[string]int{clipAuditOff: 0, clipAuditMeta: 1, clipAuditFull: 2}
+
+// strictestClipboard merges the global clipboard policy with a target's
+// override, returning the STRICTER of the two (allow < readonly < deny); an
+// empty target value inherits the global. Tighten-only on purpose: an override
+// that could loosen a global deny would let one mislabeled target row undo a
+// fleet-wide decision, and the codebase's one existing per-target override
+// (Target.RequireApproval) composes the same way — by OR, never by replacement.
+func strictestClipboard(global, target string) string {
+	g, t := rdpClipboardMode(global), rdpClipboardMode(target)
+	if clipboardRank[t] > clipboardRank[g] {
+		return t
+	}
+	return g
+}
+
+// strictestClipAudit merges the global clipboard-audit mode with a target's
+// override, keeping whichever records MORE (off < meta < full); an empty target
+// value inherits the global. Note the exposure trade this can make deliberate:
+// "full" records clipboard CONTENT, which often includes a just-copied
+// password — setting it per target is an explicit admin decision on that
+// target, carrying the same warning as the global flag.
+func strictestClipAudit(global, target string) string {
+	g, t := normalizeClipAudit(global), normalizeClipAudit(target)
+	if clipAuditRank[t] > clipAuditRank[g] {
+		return t
+	}
+	return g
 }
 
 // rdpClipboardParams translates the clipboard policy into the guacd parameters

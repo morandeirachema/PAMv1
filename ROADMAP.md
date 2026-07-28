@@ -492,7 +492,7 @@ The RDP counterpart to Phase 32. The in-portal RDP viewer relies on [Apache Guac
 - [x] **`PAM_RDP_CLIPBOARD` policy** (`internal/api/rdp_handlers.go` `rdpClipboardParams`, threaded into the guacd `connect` handshake via `rdpExtra`): **`allow`** (default) leaves copy + paste on; **`readonly`** blocks paste *into* the target (`disable-paste=true` — no clipboard injection) while copy-out stays on, mirroring SFTP read-only; **`deny`** turns the clipboard off both ways (`disable-copy=true`+`disable-paste=true`). Every mode also forces **`enable-drive=false`**, so no file can be exfiltrated through a mounted client drive regardless of guacd's defaults
 - [x] **Audited**: the chosen mode rides the `rdp.connect` audit detail (`clipboard:<mode>`); config `PAM_RDP_CLIPBOARD` ∈ {allow, readonly, deny} is validated fail-loud
 - [x] **Tests**: the mode→parameter mapping (allow/readonly/deny/unset), that drive redirection is always disabled, and an **end-to-end** assertion that a `deny` policy reaches a fake guacd as `disable-copy=true`/`disable-paste=true`/`enable-drive=false` in the advertised arg order. No new audit vocab, no schema change
-- Deferred (documented): **clipboard-content auditing** has since shipped in Phase 50 (`PAM_RDP_CLIPBOARD_AUDIT`, modes `off|meta|full`). A **per-target** clipboard override is still open — today it is a global policy
+- Deferred (documented): **clipboard-content auditing** has since shipped in Phase 50 (`PAM_RDP_CLIPBOARD_AUDIT`, modes `off|meta|full`), and the **per-target** clipboard override shipped 2026-07-29 (`Target.RDPClipboard[Audit]`, strictest-of-global-and-target)
 
 ## Phase 34 — HA live-session kill-switch ✅
 
@@ -1439,9 +1439,13 @@ Buildable without external infrastructure, each deferred by the phase named.
   recording sees), and the REST endpoint + broker `winrm_exec` through their
   shared chokepoint (`winrm>` command echo, output, blocked/error notices). A
   supervisor watches a WinRM session exactly as an SSH or PostgreSQL one.
-- **Per-target RDP clipboard override** (33) — `PAM_RDP_CLIPBOARD` and
-  `PAM_RDP_CLIPBOARD_AUDIT` are global; a high-sensitivity target cannot be
-  stricter than the rest.
+- ~~**Per-target RDP clipboard override** (33)~~ — ✅ closed 2026-07-29. A
+  target's `rdp_clipboard` / `rdp_clipboard_audit` fields (API + 5250 screens)
+  tighten the globals for that one target; the **stricter** policy always wins
+  (allow < readonly < deny; off < meta < full), so a high-sensitivity target can
+  deny what the fleet allows and no target row can loosen a global deny. Proven
+  end to end: a target `deny` under a global `allow` reaches guacd as
+  `disable-copy`/`disable-paste=true`.
 - **Safe-scoped policy** (17) — per-safe approval and dual control, plus a
   per-consumer management credential for dependent-account propagation (which
   currently connects as the rotated account).

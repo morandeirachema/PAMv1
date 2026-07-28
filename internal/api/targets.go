@@ -16,6 +16,12 @@ var (
 	// "ssh_ca" is a Zero Standing Privilege credential (Phase 22): it stores no
 	// secret — the proxy mints a short-lived certificate just-in-time instead.
 	validSecret = map[string]bool{"password": true, "ssh_key": true, "ssh_ca": true}
+	// The per-target RDP clipboard overrides (Phase 33 follow-on): "" inherits
+	// the global policy; anything else must be a real mode, because a typo that
+	// silently inherited would read as "this target is locked down" while it
+	// wasn't.
+	validClipOverride      = map[string]bool{"": true, "allow": true, "readonly": true, "deny": true}
+	validClipAuditOverride = map[string]bool{"": true, "off": true, "meta": true, "full": true}
 )
 
 // --- targets ---
@@ -27,6 +33,10 @@ type targetIn struct {
 	OSType          string `json:"os_type"`
 	Protocol        string `json:"protocol"`
 	RequireApproval bool   `json:"require_approval"`
+	// Per-target RDP clipboard tightening; "" inherits the global policy and the
+	// effective mode is the stricter of the two.
+	RDPClipboard      string `json:"rdp_clipboard"`
+	RDPClipboardAudit string `json:"rdp_clipboard_audit"`
 }
 
 // createTarget validates and persists a new target (defaulting the port to 22),
@@ -55,8 +65,15 @@ func (s *Server) createTarget(w http.ResponseWriter, r *http.Request) {
 	case !s.protocolAllowed(in.Protocol):
 		writeError(w, http.StatusUnprocessableEntity, "protocol "+in.Protocol+" is not allowed by policy")
 		return
+	case !validClipOverride[in.RDPClipboard]:
+		writeError(w, http.StatusUnprocessableEntity, `rdp_clipboard must be "" (inherit), "allow", "readonly" or "deny"`)
+		return
+	case !validClipAuditOverride[in.RDPClipboardAudit]:
+		writeError(w, http.StatusUnprocessableEntity, `rdp_clipboard_audit must be "" (inherit), "off", "meta" or "full"`)
+		return
 	}
-	t := store.Target{Name: in.Name, Host: in.Host, Port: in.Port, OSType: in.OSType, Protocol: in.Protocol, RequireApproval: in.RequireApproval}
+	t := store.Target{Name: in.Name, Host: in.Host, Port: in.Port, OSType: in.OSType, Protocol: in.Protocol, RequireApproval: in.RequireApproval,
+		RDPClipboard: in.RDPClipboard, RDPClipboardAudit: in.RDPClipboardAudit}
 	if err := s.store.CreateTarget(r.Context(), &t); err != nil {
 		storeError(w, err)
 		return
@@ -108,8 +125,15 @@ func (s *Server) updateTarget(w http.ResponseWriter, r *http.Request) {
 	case !s.protocolAllowed(in.Protocol):
 		writeError(w, http.StatusUnprocessableEntity, "protocol "+in.Protocol+" is not allowed by policy")
 		return
+	case !validClipOverride[in.RDPClipboard]:
+		writeError(w, http.StatusUnprocessableEntity, `rdp_clipboard must be "" (inherit), "allow", "readonly" or "deny"`)
+		return
+	case !validClipAuditOverride[in.RDPClipboardAudit]:
+		writeError(w, http.StatusUnprocessableEntity, `rdp_clipboard_audit must be "" (inherit), "off", "meta" or "full"`)
+		return
 	}
-	t := store.Target{ID: id, Name: in.Name, Host: in.Host, Port: in.Port, OSType: in.OSType, Protocol: in.Protocol, RequireApproval: in.RequireApproval}
+	t := store.Target{ID: id, Name: in.Name, Host: in.Host, Port: in.Port, OSType: in.OSType, Protocol: in.Protocol, RequireApproval: in.RequireApproval,
+		RDPClipboard: in.RDPClipboard, RDPClipboardAudit: in.RDPClipboardAudit}
 	if err := s.store.UpdateTarget(r.Context(), &t); err != nil {
 		storeError(w, err)
 		return

@@ -686,8 +686,8 @@ Type options, press Enter.
   <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "7=Open RDP (rdp targets)" : "", canManage ? "8=Assign to safe" : "", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Name</th><th>Host</th><th>Port</th><th>OS</th><th>Proto</th><th>Approval</th><th>Safe</th></tr>
-${targets.map((t) => `<tr><td>${opt(t.id)}</td><td>${esc(t.id)}</td><td>${pad(t.name, 16)}</td><td>${pad(t.host, 20)}</td><td>${esc(t.port)}</td><td>${pad(t.os_type, 8)}</td><td>${pad(t.protocol, 6)}</td><td>${t.require_approval ? '<span class="amber">required</span>' : "-"}</td><td class="cyan">${esc(safeName(t.safe_id))}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Name</th><th>Host</th><th>Port</th><th>OS</th><th>Proto</th><th>Approval</th><th>Clip</th><th>Safe</th></tr>
+${targets.map((t) => `<tr><td>${opt(t.id)}</td><td>${esc(t.id)}</td><td>${pad(t.name, 16)}</td><td>${pad(t.host, 20)}</td><td>${esc(t.port)}</td><td>${pad(t.os_type, 8)}</td><td>${pad(t.protocol, 6)}</td><td>${t.require_approval ? '<span class="amber">required</span>' : "-"}</td><td>${t.rdp_clipboard ? `<span class="amber">${esc(t.rdp_clipboard)}</span>` : "-"}</td><td class="cyan">${esc(safeName(t.safe_id))}</td></tr>`).join("")}
 </table>${targets.length ? "" : `<div class="cyan indent">(No targets defined.${canManage ? " Press F6 to add." : ""})</div>`}
 <input type="submit" hidden></form>
 ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add target" : ""}   F12=Cancel`)}`;
@@ -720,13 +720,16 @@ Type choices, press Enter.
 <label>OS type . . . . . . :  <select name="os_type"><option>linux</option><option>windows</option></select>   <span class="cyan">linux, windows</span></label>
 <label>Protocol  . . . . . :  <select name="protocol"><option>ssh</option><option>winrm</option><option>rdp</option><option>postgres</option></select>   <span class="cyan">ssh, winrm, rdp, postgres</span></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox">   <span class="cyan">connections need an approved request (4-eyes)</span></label>
+<label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value="">(global)</option><option>allow</option><option>readonly</option><option>deny</option></select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
+<label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value="">(global)</option><option>off</option><option>meta</option><option>full</option></select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
 <input type="submit" hidden>
 </form>
 ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-add").onsubmit = async (ev) => {
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
-          const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked };
+          const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked,
+            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit };
           try { await api("POST", "/api/targets", body); say(`TARGET ${String(f.name).toUpperCase()} ADDED.`); await openTargets(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
@@ -749,6 +752,8 @@ Editing target <span class="white">${esc(t.name)}</span> (id ${esc(t.id)}). Type
 <label>OS type . . . . . . :  <select name="os_type">${sel(["linux", "windows"], t.os_type)}</select></label>
 <label>Protocol  . . . . . :  <select name="protocol">${sel(["ssh", "winrm", "rdp", "postgres"], t.protocol)}</select></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox"${t.require_approval ? " checked" : ""}>   <span class="cyan">connections need an approved request (4-eyes)</span></label>
+<label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value=""${t.rdp_clipboard ? "" : " selected"}>(global)</option>${sel(["allow", "readonly", "deny"], t.rdp_clipboard)}</select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
+<label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value=""${t.rdp_clipboard_audit ? "" : " selected"}>(global)</option>${sel(["off", "meta", "full"], t.rdp_clipboard_audit)}</select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
 <div class="cyan">Credentials, grants and safe assignment are kept. Safe: use option 8.</div>
 <input type="submit" hidden>
 </form>
@@ -756,7 +761,8 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-chg").onsubmit = async (ev) => {
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
-          const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked };
+          const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked,
+            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit };
           try { await api("PUT", `/api/targets/${t.id}`, body); say(`TARGET ${String(f.name).toUpperCase()} CHANGED.`); await openTargets(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };

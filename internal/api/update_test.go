@@ -247,3 +247,56 @@ func TestListWindowPagination(t *testing.T) {
 		t.Fatalf("users limit=1: got %d rows", len(rows))
 	}
 }
+
+// TestTargetClipboardOverrideCRUD proves the per-target RDP clipboard override
+// round-trips through create, read and update, and that a value outside the
+// enum is refused — a typo that silently inherited the global would read as
+// "this target is locked down" while it wasn't.
+func TestTargetClipboardOverrideCRUD(t *testing.T) {
+	srv := newTestServer(t)
+
+	code, data := do(t, srv, http.MethodPost, "/api/targets", testAPIKey, map[string]any{
+		"name": "vault-jump", "host": "10.0.0.40", "port": 3389, "os_type": "windows", "protocol": "rdp",
+		"rdp_clipboard": "readonly", "rdp_clipboard_audit": "meta",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("create: %d %s", code, data)
+	}
+	id := int64(jsonMap(t, data)["id"].(float64))
+
+	_, got := do(t, srv, http.MethodGet, fmt.Sprintf("/api/targets/%d", id), testAPIKey, nil)
+	m := jsonMap(t, got)
+	if m["rdp_clipboard"] != "readonly" || m["rdp_clipboard_audit"] != "meta" {
+		t.Fatalf("round-trip: clipboard=%v audit=%v", m["rdp_clipboard"], m["rdp_clipboard_audit"])
+	}
+
+	// Tighten to deny, drop the audit override back to inherit.
+	if code, body := do(t, srv, http.MethodPut, fmt.Sprintf("/api/targets/%d", id), testAPIKey, map[string]any{
+		"name": "vault-jump", "host": "10.0.0.40", "port": 3389, "os_type": "windows", "protocol": "rdp",
+		"rdp_clipboard": "deny",
+	}); code != http.StatusOK {
+		t.Fatalf("update: %d %s", code, body)
+	}
+	_, got = do(t, srv, http.MethodGet, fmt.Sprintf("/api/targets/%d", id), testAPIKey, nil)
+	m = jsonMap(t, got)
+	if m["rdp_clipboard"] != "deny" {
+		t.Fatalf("after update: clipboard=%v, want deny", m["rdp_clipboard"])
+	}
+	if _, ok := m["rdp_clipboard_audit"]; ok {
+		t.Fatalf("after update: audit override should be inherit (omitted), got %v", m["rdp_clipboard_audit"])
+	}
+
+	// Outside the enum → 422, on create and on update.
+	if code, _ := do(t, srv, http.MethodPost, "/api/targets", testAPIKey, map[string]any{
+		"name": "bad-clip", "host": "10.0.0.41", "port": 3389, "os_type": "windows", "protocol": "rdp",
+		"rdp_clipboard": "sometimes",
+	}); code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid rdp_clipboard on create: %d, want 422", code)
+	}
+	if code, _ := do(t, srv, http.MethodPut, fmt.Sprintf("/api/targets/%d", id), testAPIKey, map[string]any{
+		"name": "vault-jump", "host": "10.0.0.40", "port": 3389, "os_type": "windows", "protocol": "rdp",
+		"rdp_clipboard_audit": "verbose",
+	}); code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid rdp_clipboard_audit on update: %d, want 422", code)
+	}
+}

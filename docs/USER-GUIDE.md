@@ -244,6 +244,12 @@ broker, never your browser — and the session is audited (and may be watched li
 by a supervisor). This needs your admin to have enabled RDP (a `guacd` broker);
 if option 7 does nothing, the target isn't RDP or RDP isn't enabled.
 
+Copy and paste through the session clipboard follow policy, and the policy can
+be **stricter on some targets than others** — if paste (or the clipboard
+entirely) doesn't work on one machine while it works elsewhere, that target is
+deliberately locked down, not broken. What crosses the clipboard may also be
+audited.
+
 ### Automating the password prompt
 
 For scripts, an SSH client can read the password non-interactively (e.g. with
@@ -336,6 +342,7 @@ guard against connections that open and never authenticate, not a fault.
 
 | Date | Change |
 |---|---|
+| 2026-07-29 | **RDP clipboard can differ per target** (Phase 33 follow-on): if copy/paste is blocked on one machine while it works elsewhere, that target is deliberately locked down — the per-target policy is always at least as strict as the global one. Admins set it on *Add/Change Target*. §"Connecting to a Windows desktop" |
 | 2026-07-27 | Phase 45: **console parity restored** — menus **22–26** (vendors & contract grants, operator SSH certificates, identity blast radius, login sessions, AI-agent keys), option **9=Dependents** on a credential, and the audit screen's tamper-evidence keys (F6=Verify chain, F7=Signed head, F10=OCSF export). The menu table above now lists 20/21 too (shipped in Phase 43). §4 |
 | 2026-07-27 | Phase 44: **2=Change** on Work with Targets, Safes and Users — edit a target's host/port, rename a safe, or change a user's role in place; nothing attached to the object is lost, and a changed user keeps their token. The target form now also offers the `postgres` protocol. §4 |
 | 2026-07-25 | Phase 32: **SFTP file transfers are audited**, and may be **read-only** (uploads/deletes refused) or **disabled** by policy. §3 |

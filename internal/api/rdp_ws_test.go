@@ -316,3 +316,78 @@ func TestRDPClipboardReachesGuacd(t *testing.T) {
 		t.Fatal("guacd never received the connect (clipboard params not injected)")
 	}
 }
+
+// TestRDPClipboardTargetOverrideReachesGuacd proves the per-target clipboard
+// override (Phase 33 follow-on) is what guacd actually enforces: with the
+// global policy at its default (allow), a target marked rdp_clipboard=deny
+// still produces disable-copy/disable-paste=true on the wire — the strictest
+// of the two policies wins, end to end, not just in a unit table.
+func TestRDPClipboardTargetOverrideReachesGuacd(t *testing.T) {
+	argNames := []string{"hostname", "port", "username", "password", "disable-copy", "disable-paste", "enable-drive"}
+	connectCh := make(chan []string, 1)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		r := bufio.NewReader(conn)
+		if _, err := readFakeInst(r); err != nil { // select
+			return
+		}
+		conn.Write([]byte(guacd.Instruction{Opcode: "args", Args: append([]string{"VERSION_1_5_0"}, argNames...)}.Encode()))
+		for {
+			inst, err := readFakeInst(r)
+			if err != nil {
+				return
+			}
+			if inst.op == "connect" {
+				connectCh <- inst.args
+				break
+			}
+		}
+		conn.Write([]byte(guacd.Instruction{Opcode: "ready", Args: []string{"$test-conn"}}.Encode()))
+		io.Copy(io.Discard, r)
+	}()
+
+	// Global policy left at the default (allow); only the target tightens it.
+	srv, _ := newTestServerOpts(t, nil, api.Options{GuacdAddr: ln.Addr().String()})
+	_, data := do(t, srv, "POST", "/api/targets", testAPIKey, map[string]any{
+		"name": "win-rdp-strict", "host": "10.0.0.10", "port": 3389, "os_type": "windows", "protocol": "rdp",
+		"rdp_clipboard": "deny",
+	})
+	id := int64(jsonMap(t, data)["id"].(float64))
+	do(t, srv, "POST", "/api/credentials", testAPIKey, map[string]any{
+		"target_id": id, "username": "Administrator", "secret": "Rdp-S3cret!",
+	})
+	status, data := do(t, srv, "POST", "/api/rdp-token", testAPIKey, nil)
+	if status != 200 {
+		t.Fatalf("rdp-token: %d %s", status, data)
+	}
+	tok, _ := jsonMap(t, data)["token"].(string)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/targets/" + strconv.FormatInt(id, 10) + "/rdp?token=" + tok
+	if c, _, derr := websocket.Dial(ctx, wsURL, &websocket.DialOptions{Subprotocols: []string{"guacamole"}}); derr == nil {
+		defer c.Close(websocket.StatusNormalClosure, "")
+	}
+
+	select {
+	case args := <-connectCh:
+		if len(args) != len(argNames)+1 {
+			t.Fatalf("connect args = %v (len %d)", args, len(args))
+		}
+		if args[5] != "true" || args[6] != "true" {
+			t.Fatalf("target deny under global allow: disable-copy=%q disable-paste=%q, want true/true", args[5], args[6])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("guacd never received the connect (target override not applied)")
+	}
+}

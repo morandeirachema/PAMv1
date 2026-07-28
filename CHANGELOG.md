@@ -11,6 +11,11 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **Per-target RDP clipboard override** (Phase 33 follow-on) — a target's
+  `rdp_clipboard` / `rdp_clipboard_audit` fields tighten the global
+  `PAM_RDP_CLIPBOARD` / `_AUDIT` for that one target; the stricter policy
+  always wins, so a high-sensitivity target can deny what the fleet allows.
+  New migration `0024`; editable from the 5250 target screens.
 - **WinRM live streaming** (Phase 16 follow-on) — a supervisor can now watch a
   WinRM session live (`GET /api/sessions/{id}/stream`, portal option 5) exactly
   like an SSH or PostgreSQL one: the proxy's interactive shell streams what its

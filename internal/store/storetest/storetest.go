@@ -149,15 +149,16 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 
 	// --- targets ---
-	tgt := &store.Target{Name: "web-01", Host: "10.0.0.5", Port: 22, OSType: "linux", Protocol: "ssh", RequireApproval: true}
+	tgt := &store.Target{Name: "web-01", Host: "10.0.0.5", Port: 22, OSType: "linux", Protocol: "ssh", RequireApproval: true,
+		RDPClipboard: "deny", RDPClipboardAudit: "meta"}
 	if err := st.CreateTarget(ctx, tgt); err != nil {
 		t.Fatalf("CreateTarget: %v", err)
 	}
 	if tgt.ID == 0 || tgt.CreatedAt.IsZero() {
 		t.Fatal("CreateTarget did not populate ID/CreatedAt")
 	}
-	if got, err := st.GetTarget(ctx, tgt.ID); err != nil || !got.RequireApproval {
-		t.Fatalf("GetTarget require_approval: %+v err %v", got, err)
+	if got, err := st.GetTarget(ctx, tgt.ID); err != nil || !got.RequireApproval || got.RDPClipboard != "deny" || got.RDPClipboardAudit != "meta" {
+		t.Fatalf("GetTarget require_approval/clipboard override: %+v err %v", got, err)
 	}
 	if err := st.CreateTarget(ctx, &store.Target{Name: "web-01", Host: "x", Port: 22, OSType: "linux", Protocol: "ssh"}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("duplicate target name: want ErrConflict, got %v", err)
@@ -191,10 +192,12 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	// --- UpdateTarget (Phase 44): edits in place — no delete + recreate, so
 	// dependents survive; ErrConflict on a name collision, ErrNotFound when absent. ---
 	tgt.Host, tgt.Port, tgt.RequireApproval = "10.0.0.50", 2222, false
+	tgt.RDPClipboard, tgt.RDPClipboardAudit = "readonly", ""
 	if err := st.UpdateTarget(ctx, tgt); err != nil {
 		t.Fatalf("UpdateTarget: %v", err)
 	}
-	if got, err := st.GetTarget(ctx, tgt.ID); err != nil || got.Host != "10.0.0.50" || got.Port != 2222 || got.RequireApproval {
+	if got, err := st.GetTarget(ctx, tgt.ID); err != nil || got.Host != "10.0.0.50" || got.Port != 2222 || got.RequireApproval ||
+		got.RDPClipboard != "readonly" || got.RDPClipboardAudit != "" {
 		t.Fatalf("after UpdateTarget: %+v err %v", got, err)
 	}
 	if err := st.UpdateTarget(ctx, &store.Target{ID: tgt2.ID, Name: "web-01", Host: "x", Port: 22, OSType: "linux", Protocol: "ssh"}); !errors.Is(err, store.ErrConflict) {

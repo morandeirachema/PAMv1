@@ -96,8 +96,15 @@ type Target struct {
 	RequireApproval bool `json:"require_approval"`
 	// SafeID, when set, places the target in a safe (Phase 17): safe members may
 	// connect to every target in the safe. nil means the target is not in a safe.
-	SafeID    *int64    `json:"safe_id,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	SafeID *int64 `json:"safe_id,omitempty"`
+	// RDPClipboard / RDPClipboardAudit tighten the global RDP clipboard policy
+	// (PAM_RDP_CLIPBOARD / PAM_RDP_CLIPBOARD_AUDIT) for this one target; ""
+	// inherits the global. The effective policy is the STRICTER of the two
+	// (allow < readonly < deny; off < meta < full) — a high-sensitivity target
+	// may deny what the fleet allows, but no target can loosen a global deny.
+	RDPClipboard      string    `json:"rdp_clipboard,omitempty"`
+	RDPClipboardAudit string    `json:"rdp_clipboard_audit,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 // Campaign is an access-certification (attestation) campaign: a point-in-time
@@ -481,7 +488,8 @@ type Store interface {
 	// GetTarget returns one target by ID, or ErrNotFound.
 	GetTarget(ctx context.Context, id int64) (*Target, error)
 	// UpdateTarget replaces the editable fields (Name, Host, Port, OSType,
-	// Protocol, RequireApproval) of the target with t.ID, refreshing t's SafeID
+	// Protocol, RequireApproval, RDPClipboard, RDPClipboardAudit) of the target
+	// with t.ID, refreshing t's SafeID
 	// and CreatedAt from the stored row. It deliberately does NOT touch the safe
 	// assignment (AssignTargetSafe owns that). ErrNotFound if the target is
 	// missing, ErrConflict if the new name is taken — so fixing a host or port
