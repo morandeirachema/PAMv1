@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -29,6 +30,31 @@ import (
 
 // KeySize is the required HMAC key length in bytes.
 const KeySize = 32
+
+// GenerateKeyText returns a fresh chain HMAC key — KeySize random bytes — as
+// standard-base64 text, the same form PAM_BROKER_AUDIT_KEY carries. Text rather
+// than raw bytes because the caller stores it under key custody, where every
+// value is a printable artifact (the SSH keys are PEM), and because it keeps
+// one decode path whether the key came from the environment or from custody.
+func GenerateKeyText() ([]byte, error) {
+	return generateB64(KeySize)
+}
+
+// GenerateSignSeedText returns a fresh ed25519 checkpoint-signing seed as
+// standard-base64 text, the same form PAM_BROKER_AUDIT_SIGN_SEED carries.
+func GenerateSignSeedText() ([]byte, error) {
+	return generateB64(ed25519.SeedSize)
+}
+
+// generateB64 returns n cryptographically random bytes encoded as
+// standard-base64 text.
+func generateB64(n int) ([]byte, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return nil, err
+	}
+	return []byte(base64.StdEncoding.EncodeToString(b)), nil
+}
 
 // CheckpointAction is the audit action of an in-chain signed checkpoint event
 // (Phase 27). A checkpoint is a normal chain event whose detail carries an

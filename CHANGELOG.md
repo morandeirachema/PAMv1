@@ -11,6 +11,12 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **Broker audit keys under shared custody** (Phase 13 follow-on) —
+  `PAM_BROKER_AUDIT_KEY` and `PAM_BROKER_AUDIT_SIGN_SEED` are now optional:
+  when unset, each is generated once and sealed by the KEK into the store's
+  `key_material` (every replica converges on the same chain key and signer;
+  `-rotate-kek` re-wraps them). An explicit environment value still wins.
+
 ## [0.10.0] — 2026-07-28
 
 The first tagged release, closing the last of the README's four beta criteria

@@ -222,11 +222,16 @@ func applyStoredConfig(ctx context.Context, st store.Store, v *vault.Vault, cfg 
 	return nil
 }
 
-// buildBroker loads the AI-agent access-broker policy and decodes its
-// audit-chain keys when PAM_BROKER_POLICY_FILE is set. It returns all-nil when
-// the broker is disabled; config.Load already guarantees the keys are present
-// when the policy file is set, so any decode failure here is a fatal misconfig.
-func buildBroker(cfg *config.Config) (*policy.Engine, []byte, ed25519.PrivateKey, error) {
+// buildBroker loads the AI-agent access-broker policy and resolves its
+// audit-chain keys when PAM_BROKER_POLICY_FILE is set (all-nil when the broker
+// is disabled). Each key comes from its environment variable when set — the
+// operator-controlled path, which is also how a signing-key rotation is driven —
+// and otherwise from shared custody: generated once, sealed under the KEK in
+// the store's key_material, and converged on by every replica, exactly like the
+// SSH host and CA keys. A replica with its own chain key would make honest
+// events read as tampering, so "each replica invents one" is never an
+// acceptable fallback.
+func buildBroker(ctx context.Context, st store.Store, v *vault.Vault, cfg *config.Config, log *slog.Logger) (*policy.Engine, []byte, ed25519.PrivateKey, error) {
 	if cfg.BrokerPolicyFile == "" {
 		return nil, nil, nil, nil
 	}
@@ -234,15 +239,50 @@ func buildBroker(cfg *config.Config) (*policy.Engine, []byte, ed25519.PrivateKey
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	key, err := base64.StdEncoding.DecodeString(cfg.BrokerAuditKey)
-	if err != nil || len(key) != auditchain.KeySize {
-		return nil, nil, nil, fmt.Errorf("PAM_BROKER_AUDIT_KEY must be base64 of %d bytes", auditchain.KeySize)
+	key, err := brokerKeyBytes(ctx, st, v, cfg.BrokerAuditKey, "PAM_BROKER_AUDIT_KEY",
+		keycustody.NameBrokerAuditKey, auditchain.KeySize, auditchain.GenerateKeyText, log)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	seed, err := base64.StdEncoding.DecodeString(cfg.BrokerAuditSignSeed)
-	if err != nil || len(seed) != ed25519.SeedSize {
-		return nil, nil, nil, fmt.Errorf("PAM_BROKER_AUDIT_SIGN_SEED must be base64 of %d bytes", ed25519.SeedSize)
+	seed, err := brokerKeyBytes(ctx, st, v, cfg.BrokerAuditSignSeed, "PAM_BROKER_AUDIT_SIGN_SEED",
+		keycustody.NameBrokerAuditSignSeed, ed25519.SeedSize, auditchain.GenerateSignSeedText, log)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	return engine, key, ed25519.NewKeyFromSeed(seed), nil
+}
+
+// brokerKeyBytes resolves one broker audit key to its raw bytes: the explicit
+// environment value when given, else the shared-custody value under custodyName
+// (generated on first use, adopted by every other replica and restart). Both
+// sources carry standard-base64 text of exactly size bytes; anything else is a
+// fatal misconfig, because starting the broker with a garbled audit key would
+// fork the chain and make honest history unverifiable.
+func brokerKeyBytes(ctx context.Context, st store.Store, v *vault.Vault, envValue, envName, custodyName string, size int, generate func() ([]byte, error), log *slog.Logger) ([]byte, error) {
+	if envValue != "" {
+		raw, err := base64.StdEncoding.DecodeString(envValue)
+		if err != nil || len(raw) != size {
+			return nil, fmt.Errorf("%s must be base64 of %d bytes", envName, size)
+		}
+		return raw, nil
+	}
+	stored, adopted, kerr := keycustody.Ensure(ctx, st, v, custodyName, "", generate)
+	if stored == nil {
+		return nil, fmt.Errorf("broker audit key custody (%s): %w", custodyName, kerr)
+	}
+	if kerr != nil {
+		log.Warn("broker audit key custody", "name", custodyName, "err", kerr)
+	}
+	if adopted {
+		log.Info("adopted the cluster's broker audit key from shared custody", "name", custodyName)
+	} else {
+		log.Info("generated a broker audit key into shared custody", "name", custodyName)
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(stored)))
+	if err != nil || len(raw) != size {
+		return nil, fmt.Errorf("broker audit key custody (%s): stored value is not base64 of %d bytes", custodyName, size)
+	}
+	return raw, nil
 }
 
 // parseEd25519PubKeys decodes a comma-separated list of base64 ed25519 public
@@ -737,7 +777,7 @@ func run() error {
 		log.Info("upstream SSH host keys pinned", "known_hosts", cfg.SSHKnownHosts)
 	}
 
-	brokerPolicy, brokerAuditKey, brokerSignKey, err := buildBroker(cfg)
+	brokerPolicy, brokerAuditKey, brokerSignKey, err := buildBroker(ctx, st, v, cfg, log)
 	if err != nil {
 		return err
 	}
