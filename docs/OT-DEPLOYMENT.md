@@ -126,16 +126,31 @@ PAM_OT_AIRGAP=true
 
 - Disables the **alert channels** — webhook, syslog and email are replaced by a
   no-op (alerts still land in the audit trail and local logs).
-- ⚠️ **It does not disable every outbound call, despite the name.** The flag is
-  read in exactly one place: choosing the alerter. Integrations configured
-  elsewhere still egress — the ITSM ticket webhook
-  (`PAM_TICKET_VALIDATE_URL`), the vendor employment-attestation webhook
-  (`PAM_VENDOR_ATTEST_URL`), the SIEM forwarder (`PAM_AUDIT_FORWARD_ADDR`),
-  Conjur secret sourcing, a cloud KMS/HSM KEK, and OIDC/JWKS fetches. In an
-  air-gapped cell, **leave those unset** or point them at endpoints inside the
-  DMZ; setting the flag does not neutralise them. (Recorded as a gap in
-  [SECURITY-GAPS.md](SECURITY-GAPS.md) — the flag should arguably enforce what
-  its name promises.)
+- **It also refuses to start alongside anything that would egress.** The flag
+  used to be read in exactly one place — choosing the alerter — so it silenced
+  alerts and nothing else while the ITSM webhook, the vendor-attestation webhook,
+  the SIEM forwarder, Conjur, a cloud KEK and a cloud identity provider all still
+  reached the network. It now enforces its own name.
+- **The rule is default-deny with a per-variable escape hatch**, because
+  "air-gapped" rarely means "no network" — it usually means *nothing leaves this
+  enclave*. A local Conjur, an in-DMZ SIEM collector or a self-hosted Keycloak
+  are legitimate, so they are permitted when you name them in
+  **`PAM_OT_AIRGAP_ALLOW`** (a comma-separated list of variable names),
+  certifying that they resolve inside the enclave:
+
+  ```bash
+  PAM_OT_AIRGAP=true
+  PAM_AUDIT_FORWARD_ADDR=siem.internal:514
+  PAM_OT_AIRGAP_ALLOW=PAM_AUDIT_FORWARD_ADDR   # yes, that collector is ours
+  ```
+
+  Egress therefore becomes impossible by accident and possible on purpose, with
+  the exceptions written down in the deployment rather than living in somebody's
+  head.
+- **Two have no escape hatch at all**: `PAM_KEK_PROVIDER=aws-kms` and
+  `PAM_ENTRA_TENANT_ID`. There is no in-enclave version of somebody else's cloud
+  — use `local`, `pkcs11` (an on-prem HSM) or an in-enclave Vault Transit, and
+  LDAP against a directory you run.
 - Pair it with local identity (local tokens or an on-prem LDAPS DC reachable
   inside the DMZ) rather than a cloud IdP, and collect logs via a **local**
   syslog/SIEM.
@@ -152,7 +167,7 @@ PAM_OT_AIRGAP=true
 | Restricted use / command control (SR 2.1) | **Command control** (`PAM_COMMAND_DENY_FILE`) blocks dangerous commands before they reach a cell on *every* path a discrete command is visible — SSH exec/shell, the WinRM proxy loop, SQL statements, the REST WinRM endpoint, the agent broker's `ssh_exec`/`winrm_exec`, and dependent-account propagation — all refused with the same `command.blocked` audit action. Read-only observer sessions for interactive shells, which are never parsed |
 | Monitoring (SR 6.1–6.2) | Append-only audit trail + session recording (hash-chained) + **live session monitoring** (a supervisor watches a session as it happens). Recording is only *mandatory* with `PAM_REQUIRE_RECORDING=true`, which refuses a session it cannot record — pair it with `PAM_RECORDING_ENCRYPT` and `PAM_RECORDING_OPAQUE_NAMES` so the artifact is sealed and the filename leaks no metadata. Push evidence to a DMZ collector with `PAM_AUDIT_FORWARD_ADDR` (RFC 5424 / CEF / LEEF over TCP or TLS, from a durable cursor, so a collector outage loses nothing) |
 | Emergency access | Break-glass (M-of-N quorum, auto-expiring, alerted). A live session can be cut cluster-wide from any replica (`DELETE /api/sessions/{id}`, published over Postgres LISTEN/NOTIFY); a broadcast that fails is reported as a failure rather than a false success |
-| Restricted data flow (SR 5.2) | **File and clipboard conduits are the ones that matter in a cell**: `PAM_SSH_SFTP` (`allow`/`readonly`/`deny`) plus `PAM_SSH_SFTP_DENY_FILE` path policy gate SFTP transfers, and `PAM_RDP_CLIPBOARD` plus `PAM_RDP_CLIPBOARD_AUDIT` gate the RDP clipboard, with drive redirection always off. Air-gap mode disables outbound **alerting** — see the caveat in §3 about what it does not disable |
+| Restricted data flow (SR 5.2) | **File and clipboard conduits are the ones that matter in a cell**: `PAM_SSH_SFTP` (`allow`/`readonly`/`deny`) plus `PAM_SSH_SFTP_DENY_FILE` path policy gate SFTP transfers, and `PAM_RDP_CLIPBOARD` plus `PAM_RDP_CLIPBOARD_AUDIT` gate the RDP clipboard, with drive redirection always off. Air-gap mode (`PAM_OT_AIRGAP`) refuses to start alongside any integration that would egress, unless you name it in `PAM_OT_AIRGAP_ALLOW` as resolving inside the enclave |
 | Least functionality | Disable the SSH proxy (`PAM_SSH_ADDR=off`) or RDP/WinRM you don't need; restrict what may be reached at all with `PAM_ALLOWED_PROTOCOLS`, and cut file/clipboard conduits with the SFTP and clipboard policies above |
 
 ## 5. Roadmap (not yet implemented)

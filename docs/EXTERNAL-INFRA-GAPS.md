@@ -111,11 +111,13 @@ to exercise fully:
 | **ITSM ticket gate** | `PAM_TICKET_VALIDATE_URL` + `PAM_TICKET_PATTERN`, `internal/ticket` (Phase 20) | A ServiceNow/Jira-style validation endpoint | An access request without a valid change ticket is refused, audited `access.ticket_rejected` |
 | **WORM archive storage** | `PAM_RETENTION_ARCHIVE_DIR`, `internal/api/archive.go` (Phase 49) | Genuinely write-once storage mounted at that path (S3 Object Lock, a WORM NAS) — the code writes digest-stamped exports and moves recordings, it cannot itself enforce immutability | The `audit.archived` SHA-256 matches a re-hash of the file, and a failed archive leaves the rows unpruned |
 
-`PAM_OT_AIRGAP` disables the **alert channels** (webhook, syslog, email) only —
-it is read in exactly one place. It does **not** suppress the ITSM ticket
-webhook, the vendor-attestation webhook, the SIEM forwarder, Conjur sourcing, a
-cloud KMS/HSM KEK or OIDC/JWKS fetches. In an air-gapped deployment, leave those
-unset or point them inside the DMZ; the flag alone will not neutralise them.
+`PAM_OT_AIRGAP` disables the alert channels **and refuses to start** alongside
+any integration in this catalogue that would reach the network — the ITSM ticket
+webhook, the vendor-attestation webhook, the SIEM forwarder, Conjur sourcing, an
+OIDC issuer, the alert webhook. Each may be re-permitted individually by naming
+it in `PAM_OT_AIRGAP_ALLOW`, which certifies that it resolves inside the enclave;
+`PAM_KEK_PROVIDER=aws-kms` and `PAM_ENTRA_TENANT_ID` have no such hatch, because
+there is no in-enclave version of somebody else's cloud.
 
 ---
 
