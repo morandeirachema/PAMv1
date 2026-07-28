@@ -421,11 +421,17 @@ de purgar, LEEF + syslog sobre TLS, nombres de grabación opacos, auditoría del
 portapapeles, política de rutas SFTP y cuatro ojos por elemento en la
 certificación.
 
-Lo que queda en curso es la **monitorización en vivo entre réplicas** (repartir
-los *bytes* de una sesión entre réplicas es un pub/sub más pesado que la señal de
-terminación que ya se difunde) y la **grabación del contenido de cada fichero
-SFTP** — ambos registrados en
-[ROADMAP.md](ROADMAP.md#smaller-follow-ons-recorded-where-they-were-deferred-).
+Lo que queda está consolidado en
+**[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**. En resumen: **no se ha
+publicado ninguna release**, que es el único criterio de beta aún sin cumplir y
+la razón de que las rutas de Kubernetes y Helm todavía no funcionen;
+`cmd/pam-server` no tiene tests; y quedan una docena de mejoras en curso, las
+mayores la **monitorización en vivo entre réplicas** (repartir los *bytes* de una
+sesión entre réplicas es un pub/sub más pesado que la señal de terminación que ya
+se difunde), la **grabación del contenido de cada fichero SFTP** y el **streaming
+en vivo de WinRM** (su salida se graba pero no llega al monitor en vivo). Todo lo
+que depende de infraestructura externa queda en
+[EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
 
 **Las cuatro brechas de Nivel 1 y las tres de Nivel 2 están cerradas** (incluido el acceso de un solo uso, Fase 26), **tres de las cinco de Nivel 3** (Privilegio Cero Permanente, analítica de amenazas y el motor de radio de impacto / CIEM) y la **primera de Nivel 4** (la API de secretos para aplicaciones). Las grabaciones de sesión ya se **reproducen en el portal, verificadas por hash contra el registro de auditoría** (Fase 26). El resto del Nivel 3 (amplitud de conectores, ingesta *en vivo* de CIEM en la nube, proxy web) y del Nivel 4 (provider de Terraform, sincronización Secrets-Hub, descubrimiento de claves SSH, componentes para apps de escritorio) son la siguiente frontera — cada uno condicionado a infraestructura externa o cuentas, catalogado en [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
 
