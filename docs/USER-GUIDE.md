@@ -8,7 +8,7 @@ review activity. If you deploy or administer pamv1, see the
 > user-facing behavior changes (portal, connecting, roles). Add a row to the
 > [change log](#8-change-log) with each update.
 >
-> Last updated: 2026-07-24 · Reflects: Phases 0–25 + the 2026-07 hardening pass — the 5250 console (11, now keyboard-first and with full backend parity: safes, campaigns, risk analytics, live watch — Phase 25), custom permission profiles (12), the database session proxy you connect to with `psql` (15), supervised sessions (16: a supervisor may watch live, and a command can be blocked by policy), and Zero Standing Privilege on some targets (22: no stored password — pamv1 signs a short-lived certificate for your session). Note: an admin revoking your access now ends your live sessions immediately. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-07-28 · Reflects: Phases 0–52g — the 5250 console (11, now keyboard-first and with full backend parity: safes, campaigns, risk analytics, live watch — Phase 25), custom permission profiles (12), the database session proxy you connect to with `psql` (15), supervised sessions (16: a supervisor may watch live, and a command can be blocked by policy), and Zero Standing Privilege on some targets (22: no stored password — pamv1 signs a short-lived certificate for your session). Since then, the things you are most likely to *notice*: a SQL statement can **pause mid-session** for a supervisor's decision (30) instead of the session dying; your session can be **refused outright** if recording is required but not configured (52c); certification and step-up decisions need the **approver** capability (39) and nobody may decide their own (46, 52c); and recovery codes are now four groups of six (52e). An admin revoking your access still ends your live sessions immediately. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ Educational / pre-production project — see the [README](../README.md).
 
@@ -128,10 +128,10 @@ The **main menu** is your whole management surface. This is the complete menu;
 
 | # | Screen | |
 |---|---|---|
-| 1 | Work with targets (+ access grants, require-approval) | admin |
-| 2 | Work with vaulted credentials (reveal, check-out, rotate, reconcile) | admin |
+| 1 | Work with targets (+ access grants, require-approval) | any inventory-reading role sees it; changing needs `manage_targets`, option 7 (RDP) needs `connect` |
+| 2 | Work with vaulted credentials (reveal, check-out, rotate, reconcile) | any inventory-reading role sees it; `5=Display secret` / `6=Check-out` need `reveal_secret`, the rest need `manage_credentials` |
 | 3 | Credential check-out / check-in (exclusive leases) | admin |
-| 4 | Work with active sessions (live monitor + kill; option 5 watches one live) | |
+| 4 | Work with active sessions (live monitor + kill; option 5 watches one live) | `read_audit` — a plain `user` does not see it; `4=End session` needs `manage_targets` |
 | 5 | Work with access requests (4-eyes approve / deny / file) | |
 | 6 | Rotation & reconciliation report | admin |
 | 7 | Discovery scan (find and onboard hosts) | admin |
@@ -274,7 +274,7 @@ Two more review screens (both need audit-read):
 - **Certification campaigns** (menu 17) — the periodic access review: each item
   is one grant; you (or an admin) certify it (keep) or revoke it (**the grant is
   deleted**). Auditors can read every campaign and its decisions as evidence;
-  deciding needs a user-management role.
+  deciding an item needs the **approver** capability (`approve`) since Phase 39 — creating and closing a campaign is what needs a user-management role. You cannot certify a grant **you** created (four-eyes, Phase 46; revoking your own is still allowed), and a revoke now also terminates that user's live sessions to the affected targets.
 - **Risk analytics** (menu 18) — per-actor behavioral risk over the recent audit
   window. Every score is explainable: the screen lists the named signals
   (break-glass, blocked commands, auth-failure bursts, off-hours, velocity) and
@@ -315,6 +315,22 @@ requests on their list.
 | Your session ended abruptly / `connection closed` mid-session | An admin may have revoked your login or your grant to that target — revocation now ends live sessions. Confirm your access. |
 
 ---
+
+### Things that are not your fault
+
+Four refusals landed in recent phases that look like breakage but are policy
+working as configured. If you hit one, quote it to your administrator.
+
+| What you see | What it means |
+|---|---|
+| `pamv1: session recording is unavailable; session refused` (SSH), `pamv1: session recording unavailable` (psql), or **503 recording is required but not configured** in the portal | Your site requires every session to be recorded and recording is not configured for that path. Nothing to do at your end |
+| `pamv1: statement requires supervisor approval (denied or timed out)` | Your statement matched the step-up policy and paused for a second person. Nobody decided in time, or they refused. **A simple query leaves the session open**; one sent over the extended protocol ends it |
+| `session limit reached` (or HTTP 429) | You are at your concurrent-session cap. Close one and retry |
+| `vendor access requires an approved, in-window contract grant for this account` | You are a third-party user and your contract grant has not been approved, or its window has closed |
+
+Also: leaving the SSH or `psql` password prompt idle now drops the connection
+after **120 seconds** with no message. Reconnect and type promptly — it is a
+guard against connections that open and never authenticate, not a fault.
 
 ## 8. Change log
 

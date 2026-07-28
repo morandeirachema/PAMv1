@@ -3,7 +3,7 @@
 > **Living document.** Update when the operator-facing behavior or the runbook
 > recipes change. See the [change log](#10-change-log).
 >
-> Last updated: 2026-07-23 · Reflects: Phases 0–24 + the 2026-07 hardening pass.
+> Last updated: 2026-07-28 · Reflects: Phases 0–52g.
 
 > ⚠️ **Alpha · for learning purposes.** pamv1 has not been security-audited and is
 > not production-ready. See the [main README](../README.md) and [docs hub](README.md).
@@ -210,7 +210,13 @@ That `v2:` string is what lands in the database. Three things make it robust:
 - **`v2:` is a versioned prefix** so the format and keys can evolve; it is what
   makes online **KEK rotation** possible — `pam-server -rotate-kek` walks every
   token and re-wraps its DEK under a new KEK (even migrating providers, e.g.
-  local → AWS KMS), without ever exposing a plaintext secret.
+  local → AWS KMS), without ever exposing a plaintext secret. It covers all four
+  kinds of envelope held in the store — credentials, TOTP enrollments, secret
+  config values and the Phase-42 SSH host/CA key custody — and is resumable. It
+  does **not** re-wrap sealed session recordings: their key envelope lives inside
+  the file, and rewriting it would invalidate the SHA-256 the audit trail
+  attests to. **Retain the old KEK for as long as you retain sealed
+  recordings.**
 - **The KEK never handles the secret, only the DEK.** Providers:
   - `local` — AES-256-GCM wrap with the base64 `PAM_MASTER_KEY` (**dev/test only** — the key sits in an env var).
   - `vault-transit` — wrap/unwrap calls to HashiCorp Vault over HTTPS; **the KEK never leaves Vault**.
@@ -461,9 +467,14 @@ event, it refuses to hand out the secret.
 | Control | What it does | Turn on with |
 |---|---|---|
 | **Tamper-evident audit** | HMAC-chain the whole audit trail + ed25519 signed checkpoints, so edits, reorders, deletions, and tail-truncation are all detectable (`GET /api/audit/verify` and `/head`) | `PAM_AUDIT_HMAC_KEY`, `PAM_AUDIT_SIGN_SEED` (see ADMIN §9.2) |
-| **Kill-on-revoke** | Revoking a login, disabling a directory user, or deleting a user's grant terminates their matching live sessions (not just future ones) | on by default when the session registry is wired (see §6.7) |
-| **Session recording** | Full replay of every proxied session; hash in the audit trail | on by default; `PAM_REQUIRE_RECORDING=true` refuses an unrecordable session |
-| **Command control** | Block dangerous commands on SSH-exec / WinRM / SQL by regex | `PAM_COMMAND_DENY_FILE` |
+| **Kill-on-revoke** | Revoking a login, disabling a directory user, or deleting a user's grant terminates their matching live sessions — **cluster-wide**: a kill issued on any replica reaches the replica hosting the session, over Postgres `LISTEN/NOTIFY`. If the bus cannot subscribe (a connection pooler in transaction mode will stop it), the server **warns at startup** and the kill switch degrades to replica-local — grep the logs for that warning, because it is a security control failing quietly (not just future ones) | on by default when the session registry is wired (see §6.7) |
+| **Session recording** | Full replay of every proxied session; hash in the audit trail. Optionally **sealed at rest** (`PAM_RECORDING_ENCRYPT`) and **opaque-named** (`PAM_RECORDING_OPAQUE_NAMES`) so the volume leaks no metadata | on by default; `PAM_REQUIRE_RECORDING=true` refuses an unrecordable session — and since Phase 52c that covers **all five** paths to a target, not just the proxies: SSH, PostgreSQL, WinRM-through-proxy, the in-portal **RDP viewer** (needs `PAM_GUACD_RECORDING_PATH`, else 503 + `rdp.refused`) and the **REST WinRM endpoint** (needs `PAM_RECORDING_DIR`, else `winrm.refused`). **If you set this flag, set both paths** |
+| **Command control** | Block dangerous commands by regex on **every** path where a discrete command is visible — SSH exec, the WinRM proxy loop, SQL, the REST WinRM endpoint, the agent broker's exec tools, and dependent-account propagation. **Fail-loud:** a deny file that is unreadable, or that yields no usable patterns, is **fatal at startup** — an unmounted ConfigMap now stops the server instead of silently disabling the control | `PAM_COMMAND_DENY_FILE` |
+| **SFTP file-transfer control** | The proxy parses the SFTP subsystem stream: audits every file operation, refuses writes/deletes in `readonly`, and denies paths by regex in *every* mode including downloads. `deny` refuses the subsystem outright. Same fail-loud rule on its deny file | `PAM_SSH_SFTP`, `PAM_SSH_SFTP_DENY_FILE` |
+| **RDP clipboard control** | Gate the clipboard bridge (`allow`/`readonly`/`deny`) and audit what crosses it (`off`/`meta`/`full`); drive redirection is always off | `PAM_RDP_CLIPBOARD`, `PAM_RDP_CLIPBOARD_AUDIT` |
+| **In-session step-up** | A matched SQL statement pauses mid-session for a supervisor's live decision instead of killing the session; nobody may decide their own | `PAM_DB_STEPUP_FILE`, `PAM_DB_STEPUP_TTL_SEC` |
+| **Audit → SIEM forwarding** | Push every audit event from a durable cursor as RFC 5424 / CEF / LEEF over UDP, TCP or TLS | `PAM_AUDIT_FORWARD_ADDR` |
+| **Retention + WORM archive** | Sweep aged recordings and audit rows; with an archive directory set, export-then-prune, and never prune if the archive failed | `PAM_RECORDING_RETENTION_DAYS`, `PAM_AUDIT_RETENTION_DAYS`, `PAM_RETENTION_ARCHIVE_DIR` |
 | **Live monitoring** | Watch a running session over server-sent events; kill it | `GET /api/sessions/{id}/stream` |
 | **Approvals (4-eyes)** | Require an approved request before connecting; N-of-M chains; maintenance windows; ITSM ticket | `PAM_REQUIRE_APPROVAL`, `PAM_APPROVALS_REQUIRED`, `PAM_REQUIRE_TICKET` |
 | **MFA** | TOTP second factor on login; enroll-only first sign-in until set up | `PAM_MFA_REQUIRED` |
@@ -471,6 +482,15 @@ event, it refuses to hand out the secret.
 | **Brute-force throttling** | Per-IP limits on the login API and the SSH/DB proxies | on by default; `PAM_PROXY_AUTH_RATE_LIMIT` |
 | **Break-glass** | Audited/alerted emergency admin access; optional M-of-N unseal | `PAM_BREAK_GLASS_KEY_HASH`, `PAM_BREAK_GLASS_THRESHOLD` |
 | **Threat analytics** | Behavioral risk scoring over the audit trail; optional auto-kill of critical actors | `PAM_ANALYTICS_INTERVAL_MIN`, `PAM_ANALYTICS_AUTO_KILL` |
+
+> ⚠️ **Upgrading to Phase 52c or later with `PAM_REQUIRE_RECORDING=true` already
+> set?** The flag used to cover only the three session proxies. It now also
+> covers the in-portal RDP viewer and `POST /api/targets/{id}/winrm`, and it
+> *refuses* those sessions when recording is not configured for them. A
+> deployment that never set `PAM_GUACD_RECORDING_PATH` — including the one the
+> shipped compose file produces — will start refusing RDP after the upgrade, with
+> a 503 and an `rdp.refused` audit event. Set the path, or accept the refusal
+> knowingly. It is doing exactly what you asked it to.
 
 ## 8. Running it for real — the short version
 
@@ -488,7 +508,12 @@ all deployment is infrastructure-as-code (do not hand-apply). The essentials:
 - **Strong bootstrap key.** `PAM_API_KEY` is presented as the proxy password —
   treat it like root, keep it ≥16 chars (enforced on a real database), and rotate it.
 - **Back up the KEK out of band.** A database backup without the KEK is inert —
-  that's the point — but it also means losing the KEK loses every secret.
+  that's the point — but the KEK is now load-bearing for three things, not one:
+  every vaulted secret; every **sealed recording** (`PAM_RECORDING_ENCRYPT`,
+  whose data key is wrapped *inside each file*); and the SSH host key and ZSP CA
+  key held in shared custody, whose failed unwrap is **fatal at startup**.
+  `-rotate-kek` re-wraps the first and third but deliberately not the second —
+  keep the old KEK for as long as you keep sealed recordings.
 
 Deployment paths (all in `deploy/`): `docker compose` for pre-prod, Kubernetes
 manifests + a Helm chart (hardened pod security, optional CloudNativePG for HA

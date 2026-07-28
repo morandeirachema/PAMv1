@@ -10,11 +10,14 @@
 > live. This is the operator's checklist of what you must stand up (and what to
 > re-verify) before relying on each capability in production.
 >
-> Last updated: 2026-07-25 · Reflects: Phases 0–31 + the 2026-07 hardening pass.
-> (Phases 25–31 — console parity, recording playback + one-time access, broker
-> completion, operator SSH certificates, the vendor access gate, in-session step-up, and the CIEM blast-radius engine — are fully in-process and add no
+> Last updated: 2026-07-28 · Reflects: Phases 0–52g.
+> (Phases 25–28, 30 and 31 — console parity, recording playback + one-time
+> access, broker completion, operator SSH certificates, in-session step-up and the
+> CIEM blast-radius engine — are fully in-process and add no
 > external-infrastructure requirements; the operator-cert KRL is even verified
-> against a real `ssh-keygen` in CI.)
+> against a real `ssh-keygen` in CI. **Phase 29 is the exception**: the vendor
+> access gate calls an external employment-attestation webhook, catalogued
+> below.)
 
 ## Legend
 
@@ -102,9 +105,17 @@ to exercise fully:
 | **Webhook alerts** | `PAM_ALERT_WEBHOOK` | An HTTP endpoint (Slack/PagerDuty/etc.) | Break-glass and analytics events POST as JSON |
 | **Syslog alerts** | `PAM_ALERT_SYSLOG` | A syslog collector (udp/tcp) | Events arrive at the collector |
 | **Email alerts** | `PAM_ALERT_EMAIL_*` | An SMTP server + credentials | Alert email is delivered to the recipient list |
-| **Audit / SIEM forwarding** | JSON logs on stdout (Phase 9) | A log collector / SIEM | The append-only audit trail and JSON logs are ingested for detection |
+| **Audit → SIEM push forwarding** | `PAM_AUDIT_FORWARD_ADDR`/`_PROTO`/`_FORMAT`/`_CA`, `internal/auditfwd` (Phases 35, 47); in-process fake collector in CI | A syslog/SIEM collector on udp, tcp or **TLS** (`:514`/`:6514`) speaking RFC 5424, ArcSight **CEF** or QRadar **LEEF 2.0** | Events arrive in order from a durable cursor, resume after a restart with no gap or replay, one forwarder per cluster under the Postgres leader lock; with `proto=tls`, `PAM_AUDIT_FORWARD_CA` verifies fail-closed |
+| **Audit / log collection** | JSON logs on stdout (Phase 9); OCSF at `GET /api/audit/ocsf` (Phase 27) | A log collector / SIEM | The append-only audit trail and JSON logs are ingested for detection |
+| **Vendor employment attestation** | `PAM_VENDOR_ATTEST_URL`, `internal/vendor` (Phase 29); CI proves it against an `httptest` fake | A vendor-management or HR system that answers 2xx for a currently-employed technician | An offboarded technician's contract grant is refused at approval, audited `vendor.attestation_failed` |
+| **ITSM ticket gate** | `PAM_TICKET_VALIDATE_URL` + `PAM_TICKET_PATTERN`, `internal/ticket` (Phase 20) | A ServiceNow/Jira-style validation endpoint | An access request without a valid change ticket is refused, audited `access.ticket_rejected` |
+| **WORM archive storage** | `PAM_RETENTION_ARCHIVE_DIR`, `internal/api/archive.go` (Phase 49) | Genuinely write-once storage mounted at that path (S3 Object Lock, a WORM NAS) — the code writes digest-stamped exports and moves recordings, it cannot itself enforce immutability | The `audit.archived` SHA-256 matches a re-hash of the file, and a failed archive leaves the rows unpruned |
 
-Air-gapped deployments (`PAM_OT_AIRGAP`) disable all outbound alerting by design.
+`PAM_OT_AIRGAP` disables the **alert channels** (webhook, syslog, email) only —
+it is read in exactly one place. It does **not** suppress the ITSM ticket
+webhook, the vendor-attestation webhook, the SIEM forwarder, Conjur sourcing, a
+cloud KMS/HSM KEK or OIDC/JWKS fetches. In an air-gapped deployment, leave those
+unset or point them inside the DMZ; the flag alone will not neutralise them.
 
 ---
 

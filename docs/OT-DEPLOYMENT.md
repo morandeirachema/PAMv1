@@ -2,7 +2,7 @@
 
 > **Living document.** Update when an OT-relevant control or flow changes.
 >
-> Last updated: 2026-07-23 · Reflects: Phases 0–24 + the 2026-07 hardening pass (introduced Phase 8).
+> Last updated: 2026-07-28 · Reflects: Phases 0–52g (introduced Phase 8).
 
 > ⚠️ **Alpha · for learning purposes. Not production, not audited.** This guide
 > describes how pamv1 is *designed* to fit an OT architecture; validate every
@@ -96,11 +96,24 @@ PAM_APPROVAL_WINDOW_MIN=60        # an approval is valid for 60 minutes
   self-approval is refused (`access.decision_denied`).
 - **Roles:** the `approver` role (and `admin`) hold `CapApprove`. Requesters need
   `CapConnect` (`user`/`admin`).
-- **Enforced everywhere:** the SSH proxy, WinRM and RDP all check for an active
-  approval before brokering. **Break-glass bypasses** it (emergency access is
-  already loud and alerted).
+- **Enforced everywhere:** the SSH proxy, the **PostgreSQL proxy**, WinRM, RDP,
+  **credential reveal**, **checkout** and the **AI-agent broker's tool calls** all
+  check for an active approval before brokering, through one shared gate. A
+  one-time approval (`PAM_ACCESS_ONE_TIME`) is **consumed** by the first use it
+  admits — audited `access.consumed` — not merely checked.
+  **Break-glass bypasses** it (emergency access is already loud and alerted).
 - **Audited + alerted:** `access.request`, `access.approve`, `access.deny`,
-  `access.denied`; approvals/denials also fire the real-time alert webhook.
+  `access.denied`, `access.consumed` (one-time use), `access.approve_partial`
+  (an M-of-N approval that has not yet reached quorum) and
+  `access.ticket_rejected` (the ITSM gate refused the change ticket);
+  approvals/denials also fire the real-time alert webhook.
+- **In-session step-up (Phase 30).** Where the approval gate is a door, step-up is
+  a checkpoint *inside* the room: `PAM_DB_STEPUP_FILE` marks statements that
+  **pause mid-session** for a second person's live decision instead of killing
+  the session. The operator waits, an approver allows or refuses from the console,
+  and the session survives either way. Nobody may decide the step-up for their own
+  session (audited `session.self_stepup_denied`) — for a plant, this is the
+  strongest available expression of "a privileged session is a change event".
 
 ## 3. Air-gap / offline mode
 
@@ -111,8 +124,18 @@ self-contained:
 PAM_OT_AIRGAP=true
 ```
 
-- Disables **all outbound calls** — the break-glass/approval alert webhook is
-  dropped (alerts still land in the audit trail and local logs).
+- Disables the **alert channels** — webhook, syslog and email are replaced by a
+  no-op (alerts still land in the audit trail and local logs).
+- ⚠️ **It does not disable every outbound call, despite the name.** The flag is
+  read in exactly one place: choosing the alerter. Integrations configured
+  elsewhere still egress — the ITSM ticket webhook
+  (`PAM_TICKET_VALIDATE_URL`), the vendor employment-attestation webhook
+  (`PAM_VENDOR_ATTEST_URL`), the SIEM forwarder (`PAM_AUDIT_FORWARD_ADDR`),
+  Conjur secret sourcing, a cloud KMS/HSM KEK, and OIDC/JWKS fetches. In an
+  air-gapped cell, **leave those unset** or point them at endpoints inside the
+  DMZ; setting the flag does not neutralise them. (Recorded as a gap in
+  [SECURITY-GAPS.md](SECURITY-GAPS.md) — the flag should arguably enforce what
+  its name promises.)
 - Pair it with local identity (local tokens or an on-prem LDAPS DC reachable
   inside the DMZ) rather than a cloud IdP, and collect logs via a **local**
   syslog/SIEM.
@@ -126,11 +149,11 @@ PAM_OT_AIRGAP=true
 | Zones & conduits (SR 5.1) | pamv1 at L3.5 is the sole IT→OT conduit; per-target grants scope who reaches which cell |
 | Least privilege (SR 1.1–1.2) | Four RBAC roles + custom profiles + per-target grants + **safes** (delegated-access containers) + approval gate |
 | Use control / approval (SR 2.1) | 4-eyes access-request workflow, maintenance-window validity |
-| Restricted use / command control (SR 2.1) | **Command control** (`PAM_COMMAND_DENY_FILE`) blocks dangerous commands on exec/WinRM/SQL before they reach a cell; read-only observer sessions |
-| Monitoring (SR 6.1–6.2) | Append-only audit trail + mandatory session recording (hash-chained) + **live session monitoring** (a supervisor watches a session as it happens) |
-| Emergency access | Break-glass (M-of-N quorum, auto-expiring, alerted) |
-| Restricted data flow (SR 5.2) | Air-gap mode: no outbound calls |
-| Least functionality | Disable the SSH proxy (`PAM_SSH_ADDR=off`) or RDP/WinRM you don't need |
+| Restricted use / command control (SR 2.1) | **Command control** (`PAM_COMMAND_DENY_FILE`) blocks dangerous commands before they reach a cell on *every* path a discrete command is visible — SSH exec/shell, the WinRM proxy loop, SQL statements, the REST WinRM endpoint, the agent broker's `ssh_exec`/`winrm_exec`, and dependent-account propagation — all refused with the same `command.blocked` audit action. Read-only observer sessions for interactive shells, which are never parsed |
+| Monitoring (SR 6.1–6.2) | Append-only audit trail + session recording (hash-chained) + **live session monitoring** (a supervisor watches a session as it happens). Recording is only *mandatory* with `PAM_REQUIRE_RECORDING=true`, which refuses a session it cannot record — pair it with `PAM_RECORDING_ENCRYPT` and `PAM_RECORDING_OPAQUE_NAMES` so the artifact is sealed and the filename leaks no metadata. Push evidence to a DMZ collector with `PAM_AUDIT_FORWARD_ADDR` (RFC 5424 / CEF / LEEF over TCP or TLS, from a durable cursor, so a collector outage loses nothing) |
+| Emergency access | Break-glass (M-of-N quorum, auto-expiring, alerted). A live session can be cut cluster-wide from any replica (`DELETE /api/sessions/{id}`, published over Postgres LISTEN/NOTIFY); a broadcast that fails is reported as a failure rather than a false success |
+| Restricted data flow (SR 5.2) | **File and clipboard conduits are the ones that matter in a cell**: `PAM_SSH_SFTP` (`allow`/`readonly`/`deny`) plus `PAM_SSH_SFTP_DENY_FILE` path policy gate SFTP transfers, and `PAM_RDP_CLIPBOARD` plus `PAM_RDP_CLIPBOARD_AUDIT` gate the RDP clipboard, with drive redirection always off. Air-gap mode disables outbound **alerting** — see the caveat in §3 about what it does not disable |
+| Least functionality | Disable the SSH proxy (`PAM_SSH_ADDR=off`) or RDP/WinRM you don't need; restrict what may be reached at all with `PAM_ALLOWED_PROTOCOLS`, and cut file/clipboard conduits with the SFTP and clipboard policies above |
 
 ## 5. Roadmap (not yet implemented)
 

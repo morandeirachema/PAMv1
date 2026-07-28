@@ -2,7 +2,9 @@
 
 > 🟢 **Living document** — updated in the same change as the broker code (see the [docs hub](README.md)).
 >
-> Scope: the **AI-agent access broker** (Phases 13, 27) — `internal/broker`,
+> Last updated: 2026-07-28 · Reflects: Phases 0–52g.
+>
+> Scope: the **AI-agent access broker** (Phases 13, 27, 30, 38, 39, 40, 43, 52c, 52d) — `internal/broker`,
 > `internal/policy`, `internal/agentid`, `internal/auditchain`, `internal/mcp`,
 > and the `/v1/*` + `/mcp` surface. For the human/operator paths see
 > [ARCHITECTURE-LOW-LEVEL.md](ARCHITECTURE-LOW-LEVEL.md).
@@ -33,7 +35,7 @@ the agent decides to attempt.
 | # | Risk | How it reaches a privileged action | Broker control |
 |---|---|---|---|
 | **LLM01** | Prompt injection | A crafted prompt makes the agent call a dangerous tool / arguments | Policy is evaluated on the **tool + arguments** server-side; a call outside policy is denied regardless of what convinced the agent to make it. The agent never holds a credential to misuse directly. |
-| **LLM02** | Sensitive information disclosure | Agent is coaxed into exfiltrating a secret | `reveal_credential` is **default-deny**; secret-bearing results are delivered **once** and never retained in the poll cache; the credential is injected inside `Execute` and never serialized back to the agent (`Result.Sensitive`). |
+| **LLM02** | Sensitive information disclosure | Agent is coaxed into exfiltrating a secret | `reveal_credential` is **default-deny**; secret-bearing results are delivered **once** and never retained in the poll cache; for the exec tools the credential is injected inside `Execute` and never appears in the result; `reveal_credential` marks its result `Sensitive`, which strips it from the poll cache, from the approver's view and from `GET /v1/tool-calls/{id}` unconditionally — it reaches only the requesting agent, once, through the single-use resume token. |
 | **LLM03** | Supply chain (poisoned model/tool) | A subverted model emits malicious tool calls | Same chokepoint: the tool registry is server-defined, not agent-defined; unknown tools are denied; the capability backstop requires the agent principal to actually hold the tool's capability, so policy YAML is never the sole gate. |
 | **LLM04** | Data & model poisoning | — | Out of the broker's scope (it governs *actions*, not training data); noted so the boundary is explicit. |
 | **LLM05** | Improper output handling | Downstream trusts the agent's output | The broker's output is a **structured result of a policy-approved action**, audited; it does not execute agent-authored code. |
@@ -41,7 +43,7 @@ the agent decides to attempt.
 | **LLM07** | System prompt leakage | — | No pamv1 secret lives in a prompt; bootstrap secrets are sourced server-side (SOPS/Conjur), never handed to an agent. |
 | **LLM08** | Vector/embedding weaknesses | — | Out of scope (no RAG in the broker). |
 | **LLM09** | Misinformation / overreliance | Operator over-trusts an agent's claim | The **verifiable audit chain** + signed checkpoints let a human independently confirm what actually executed, rather than trust a narrative. |
-| **LLM10** | Unbounded consumption | Agent floods the broker | **Per-agent rate limits**, an **argument-size cap**, and a **parked-approval cap** (fail-closed) bound tool-call volume, payload size, and pending approvals. |
+| **LLM10** | Unbounded consumption | Agent floods the broker | An **opt-in** per-agent rate limit (`PAM_BROKER_RATE_PER_MIN`, **`0` = off, which is the default**), an **argument-size cap** that *is* on by default (16 KiB), and a fixed **parked-approval cap** (1024, fail-closed, swept by TTL so stale entries cannot hold the budget) bound tool-call volume, payload size, and pending approvals. |
 
 ## MITRE ATLAS techniques → broker controls
 
@@ -49,6 +51,9 @@ the agent decides to attempt.
 |---|---|---|
 | **LLM Prompt Injection** (AML.T0051) | The primary threat: subverting the agent to act | Policy-over-arguments chokepoint; default-deny; no standing credential |
 | **LLM Jailbreak** (AML.T0054) | Bypassing the agent's own guardrails | Irrelevant to authorization — the broker's gate is external to the model |
+| **Gate parity** | Agent bypasses a gate a human obeys | Until Phase 52c, `reveal_credential` and `rotate_credential` checked target grants and stopped, while the human reveal path ran the full gate — so with `require_approval` set, a human needed an approved request and an agent permitted the tool got the plaintext at any hour, outside every window. The least-trusted actor had the weakest gate | Both now run `enforceApproval`, consuming an approved access request that honours four-eyes, the ITSM ticket and the maintenance window. A call parked by `require_approval` and then approved by a human executes as already-approved, so that decision satisfies the gate rather than demanding a second request |
+| **Supervision** | Unsupervised long-running execution (excessive agency) | An agent's command ran outside the session registry — unlistable, unkillable, uncounted | Phase 40: every brokered execution goes through the same supervision as a human's. The concurrent-session cap is enforced **before** the just-in-time decrypt, and the run is registered — listed by `GET /api/sessions`, killable by `DELETE /api/sessions/{id}`, counted against `PAM_MAX_SESSIONS_PER_USER`/`_TOTAL`, and reachable by the analytics auto-response and the vendor sweeper |
+| **Command control** | Dangerous command through `ssh_exec` | The deny policy lived in the proxy and the broker never consulted it | Phase 38: command control runs **before** the credential is fetched, refusing with the same `command.blocked` audit event an operator's `ssh target "cmd"` would produce. One policy, human and agent alike |
 | **Valid Accounts / credential access** | Stealing the target credential the agent uses | The agent has **no** target credential; ZSP-style JIT injection; `reveal` default-deny |
 | **Exfiltration via the model** | Reading a secret out through tool output | `Sensitive` results delivered once, never cached; injection stays inside `Execute` |
 | **Erode ML model integrity / evade detection** | Tampering with the record of what happened | Keyed-HMAC chain + periodic ed25519 in-chain checkpoints + JWKS-published signer keys make edits and truncation detectable |
