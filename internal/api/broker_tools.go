@@ -169,12 +169,12 @@ func (t *winrmExecTool) Execute(ctx context.Context, p *auth.Principal, args bro
 	}
 	// An agent's execution is a supervised session too: capped, listed and killable
 	// exactly like an operator's (Phase 40).
-	sctx, release, err := t.s.superviseSession(ctx, p.Name, target.Name, "winrm", "broker")
+	sctx, release, sid, err := t.s.superviseSession(ctx, p.Name, target.Name, "winrm", "broker")
 	if err != nil {
 		return broker.Result{}, err
 	}
 	defer release()
-	res, err := t.s.execWinRM(sctx, target, cred, command, p.Name)
+	res, err := t.s.execWinRM(sctx, target, cred, command, p.Name, sid)
 	if err != nil {
 		return broker.Result{}, err
 	}
@@ -236,7 +236,7 @@ func (t *sshExecTool) Execute(ctx context.Context, p *auth.Principal, args broke
 	}
 	// Supervise BEFORE the just-in-time decrypt, so a run refused by the
 	// concurrent-session cap never causes a secret to exist (Phase 40).
-	sctx, release, err := t.s.superviseSession(ctx, p.Name, target.Name, "ssh_exec", "broker")
+	sctx, release, _, err := t.s.superviseSession(ctx, p.Name, target.Name, "ssh_exec", "broker")
 	if err != nil {
 		return broker.Result{}, err
 	}

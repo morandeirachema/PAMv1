@@ -569,8 +569,12 @@ has no TLS (the PAM key would travel cleartext).
 - **Live monitoring** — `session.Hub` (`session/hub.go`) fans out every recorded
   output byte keyed by session id; `GET /api/sessions/{id}/stream` (`CapReadAudit`)
   streams it as Server-Sent Events so a supervisor watches a session live. The
-  proxy tees output via `teeLive`/`liveWriter`; fan-out is non-blocking (a slow
-  watcher drops frames, never stalls the session).
+  proxy tees SSH **and WinRM** output via `teeLive`/`liveWriter` (the WinRM shell
+  loop and per-command runner publish the same bytes their recording sees); the
+  DB proxy publishes each SQL line; the REST/broker WinRM chokepoint
+  (`execWinRM`) publishes a `winrm>` command echo plus output under the session
+  id `superviseSession` returns. Fan-out is non-blocking (a slow watcher drops
+  frames, never stalls the session).
 - **Command control** — a `CommandGuard` (`cmdguard.go`, regex denylist from
   `PAM_COMMAND_DENY_FILE`) blocks a dangerous command **before it reaches the
   target**: SSH `exec` (the request is vetoed in `pumpRequests`' `onExec`), each

@@ -1496,8 +1496,12 @@ curl -s https://pam.example/api/sessions -H "X-API-Key: $PAM_API_KEY"
 curl -N https://pam.example/api/sessions/<id>/stream -H "X-API-Key: $PAM_API_KEY"
 ```
 
-It works for SSH and PostgreSQL sessions; delivery is non-blocking (a slow
-watcher drops frames and never stalls the session being observed).
+It works for SSH, PostgreSQL and WinRM sessions — the proxy's interactive WinRM
+shell streams the same bytes its recording sees, and a REST or agent-broker
+WinRM run streams a `winrm>` command echo plus the output — and delivery is
+non-blocking (a slow watcher drops frames and never stalls the session being
+observed). RDP sessions are not streamed to the watch pane; supervise those
+through the clipboard audit and the recording.
 
 **Killing a session (HA).** `DELETE /api/sessions/{id}` terminates a live session.
 In a multi-replica deployment the session may be pinned to a different pod than
@@ -1813,6 +1817,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-07-29 | **WinRM sessions stream live (Phase 16 follow-on).** *Work with Active Sessions* option 5 (and `GET /api/sessions/{id}/stream`) now works for WinRM too: the proxy's interactive shell streams exactly what its recording sees, and a REST or agent-broker run streams a `winrm>` command echo plus the output. RDP remains recording-and-clipboard-audit only. See §9.4. |
 | 2026-07-28 | **Broker audit keys under shared custody (Phase 13 follow-on).** `PAM_BROKER_AUDIT_KEY` and `PAM_BROKER_AUDIT_SIGN_SEED` are now optional: unset, each is generated once and sealed by the KEK into `key_material` (every replica converges on the same chain key and signer, and `-rotate-kek` re-wraps them like the SSH host/CA keys). An explicit env value still wins — that is how a signer rotation is driven; if the seed was custody-held, read the outgoing public key from `GET /v1/audit/jwks` *before* rotating. See §4 and the broker section. |
 | 2026-07-27 | **Phase 51 — SFTP path policy.** `PAM_SSH_SFTP_DENY_FILE` gates file transfer by **path**, not just by operation: a matching path is refused in every mode (downloads included) and on both sides of a rename, audited `sftp.blocked reason:path-denied` with the rule that matched. Same regex-file format as command control, and a bad pattern fails startup. See §9.4. |
 | 2026-07-27 | **Phase 50 — clipboard auditing on the RDP bridge.** `PAM_RDP_CLIPBOARD_AUDIT=meta` records every clipboard transfer as `rdp.clipboard` — direction (out = copied from the target, in = pasted into it), mimetype, byte count and SHA-256; `full` also records the content, which is opt-in because a privileged clipboard often holds a just-copied password. Auditing never blocks a transfer; gating stays `PAM_RDP_CLIPBOARD`. See §5 (RDP) and §4. |
