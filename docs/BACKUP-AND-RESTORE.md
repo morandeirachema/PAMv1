@@ -5,8 +5,10 @@
 >
 > Last updated: 2026-07-28 · Reflects: Phases 0–52g.
 
-> ⚠️ **Alpha · for learning purposes.** pamv1 has not been security-audited and is
-> not production-ready.
+> ⚠️ **Beta · for learning purposes.** pamv1 is feature-complete against its
+> [roadmap](../ROADMAP.md) and has closed every finding of its own security
+> self-audit, but it has **not** been audited by anyone outside the project and is
+> **not** production-ready.
 
 pamv1 has **two** things to protect, and they must be backed up **separately** —
 backing them up together defeats the encryption:

@@ -4,7 +4,7 @@
 >
 > Last updated: 2026-07-28 · Reflects: Phases 0–52g (introduced Phase 8).
 
-> ⚠️ **Alpha · for learning purposes. Not production, not audited.** This guide
+> ⚠️ **Beta · for learning purposes. Not production, not externally audited.** This guide
 > describes how pamv1 is *designed* to fit an OT architecture; validate every
 > control against your own risk assessment and [IEC 62443](https://www.isa.org/standards-and-publications/isa-standards/isa-iec-62443-series-of-standards)
 > program before relying on it.
