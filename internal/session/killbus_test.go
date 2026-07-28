@@ -24,6 +24,11 @@ func waitKilled(t *testing.T, ch <-chan struct{}, what string) {
 	}
 }
 
+// TestKillBusCrossReplica proves a kill reaches a session hosted on a DIFFERENT
+// replica: one registry publishes the selector, the other receives it over the
+// bus and terminates its local session. Without this, "terminate that session"
+// works only if the operator's request happens to land on the replica holding
+// it — which in an HA deployment is a coin toss.
 func TestKillBusCrossReplica(t *testing.T) {
 	st := memstore.New()
 	ctx, cancel := context.WithCancel(context.Background())

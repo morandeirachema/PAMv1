@@ -2,25 +2,48 @@ package proxy
 
 import (
 	"bytes"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 )
 
-// blockWriter records each Write call separately, so a test can tell whether two
-// concurrent writers' payloads were interleaved *within* a call — which is what
-// corrupts an SFTP stream — rather than merely ordered differently.
-type blockWriter struct {
-	mu     sync.Mutex
-	blocks []string
+// splittingWriter models what makes concurrent writes to one SSH channel unsafe:
+// the write is not atomic. It copies the payload out in two halves with a
+// scheduling point between them, exactly as x/crypto/ssh's WriteExtended fills a
+// pooled buffer and then flushes it — so two goroutines calling it without
+// external serialization produce a spliced result.
+//
+// The earlier version of this test recorded each Write as one block under the
+// destination's own lock, which made every block intact whether or not
+// syncWriter serialized anything. That test passed with the mutex removed. This
+// one does not.
+type splittingWriter struct {
+	mu  sync.Mutex // guards out only; deliberately NOT held across the two halves
+	out []byte
 }
 
-// Write appends the payload as one recorded block.
-func (b *blockWriter) Write(p []byte) (int, error) {
+// Write appends p in two halves with a yield in between, so an unsynchronized
+// concurrent caller can interleave its own bytes into the gap.
+func (b *splittingWriter) Write(p []byte) (int, error) {
+	half := len(p) / 2
+	b.mu.Lock()
+	b.out = append(b.out, p[:half]...)
+	b.mu.Unlock()
+
+	runtime.Gosched() // the window a second writer slips through
+
+	b.mu.Lock()
+	b.out = append(b.out, p[half:]...)
+	b.mu.Unlock()
+	return len(p), nil
+}
+
+// bytes returns a copy of everything written so far.
+func (b *splittingWriter) bytes() []byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.blocks = append(b.blocks, string(p))
-	return len(p), nil
+	return append([]byte(nil), b.out...)
 }
 
 // TestSyncWriterKeepsPayloadsWhole proves concurrent writers cannot interleave.
@@ -33,47 +56,45 @@ func (b *blockWriter) Write(p []byte) (int, error) {
 // response, which corrupts the client's SFTP stream.
 //
 // The property that matters is therefore not "no crash" but "every payload
-// arrives whole", which is what this asserts.
+// arrives whole", and the destination here is built so that an unserialized
+// writer visibly violates it: removing the mutex from syncWriter must make this
+// test fail, which was checked.
 func TestSyncWriterKeepsPayloadsWhole(t *testing.T) {
-	dst := &blockWriter{}
+	dst := &splittingWriter{}
 	w := &syncWriter{w: dst}
 
-	const rounds = 200
-	outputPayload := []byte(strings.Repeat("O", 512))  // target output
-	refusalPayload := []byte(strings.Repeat("R", 128)) // an SFTP refusal
+	const rounds = 300
+	output := []byte(strings.Repeat("O", 64))  // target output
+	refusal := []byte(strings.Repeat("R", 64)) // an SFTP refusal packet
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < rounds; i++ {
-			if _, err := w.Write(outputPayload); err != nil {
-				t.Errorf("output write: %v", err)
-				return
+	for _, payload := range [][]byte{output, refusal} {
+		go func(p []byte) {
+			defer wg.Done()
+			for i := 0; i < rounds; i++ {
+				if _, err := w.Write(p); err != nil {
+					t.Errorf("write: %v", err)
+					return
+				}
 			}
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		for i := 0; i < rounds; i++ {
-			if _, err := w.Write(refusalPayload); err != nil {
-				t.Errorf("refusal write: %v", err)
-				return
-			}
-		}
-	}()
+		}(payload)
+	}
 	wg.Wait()
 
-	if len(dst.blocks) != rounds*2 {
-		t.Fatalf("recorded %d blocks, want %d", len(dst.blocks), rounds*2)
+	// The result must be a sequence of whole 64-byte runs of one character each.
+	// A splice shows up as a run that is not 64 long.
+	got := dst.bytes()
+	if len(got) != rounds*2*64 {
+		t.Fatalf("wrote %d bytes, want %d", len(got), rounds*2*64)
 	}
-	// Every block must be one payload entire — never a mixture of the two.
-	for i, b := range dst.blocks {
-		switch {
-		case b == string(outputPayload) || b == string(refusalPayload):
-		default:
-			t.Fatalf("block %d is neither payload intact (len %d, %q…): the two writers interleaved and the client stream would be corrupt",
-				i, len(b), b[:min(24, len(b))])
+	for i := 0; i < len(got); i += 64 {
+		run := got[i : i+64]
+		for j := 1; j < len(run); j++ {
+			if run[j] != run[0] {
+				t.Fatalf("payload boundary at byte %d is spliced (%q): the two writers interleaved and the client's stream would be corrupt",
+					i, string(run))
+			}
 		}
 	}
 }

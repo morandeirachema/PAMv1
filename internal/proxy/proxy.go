@@ -251,7 +251,13 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 		p.log.Warn("authentication failed", "login", c.User(), "remote", remote)
 		// Record failed proxy auth in the audit store (not just the log), so
 		// credential-stuffing against the proxy is visible in the system-of-record.
-		p.audit(context.Background(), c.User(), "proxy.auth_failed", "remote:"+remote)
+		//
+		// The login is quoted and bounded before it becomes the audit ACTOR: it is
+		// unauthenticated, attacker-chosen, and limited only by the SSH packet
+		// size, so raw it could carry newlines, forged `key:value` pairs, or a
+		// quarter-megabyte of padding into a column the retention worker refuses
+		// to prune when the HMAC chain is enabled.
+		p.audit(context.Background(), auditField(c.User(), 64), "proxy.auth_failed", "remote:"+remote)
 		return nil, fmt.Errorf("pamv1: authentication failed")
 	}
 	// A "+observe" suffix requests a read-only (view-only) session: the operator
@@ -441,10 +447,21 @@ func (p *Proxy) Addr() net.Addr {
 }
 
 // handshakeTimeout bounds the pre-authentication phase of a proxied connection:
-// the SSH handshake, and the PostgreSQL startup/authentication exchange. It is
-// generous for a real client (a handshake takes milliseconds) and short enough
-// that an unauthenticated peer cannot hold a slot indefinitely.
-const handshakeTimeout = 30 * time.Second
+// the SSH handshake, and the PostgreSQL startup/authentication exchange.
+//
+// 120 seconds, matching OpenSSH's LoginGraceTime, because this phase is NOT
+// machine-speed. pamv1's documented flow has a human typing or pasting the API
+// key at the password prompt — and OpenSSH re-prompts up to three times within
+// one connection. An earlier value of 30s was measured cutting off a client
+// whose operator took 32 seconds, with no message and no audit event, which
+// looks exactly like a broken server.
+//
+// It still does the job it exists for: a peer that connects and says nothing
+// cannot hold a connection slot, a goroutine and part of the PAM_MAX_SESSIONS
+// budget indefinitely. The deadline is cleared the moment authentication
+// succeeds, since an established session is legitimately idle for long stretches
+// while an operator reads output.
+const handshakeTimeout = 120 * time.Second
 
 // handleConn completes the SSH handshake and runs every authorization gate in
 // order (enrollment, role CapConnect, target/credential resolution, per-target
@@ -1221,24 +1238,33 @@ func crlf(s string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\n", "\r\n")
 }
 
-// pumpRequests forwards SSH channel requests from in to dst, relaying replies,
-// until in closes or done fires. Closing done stops the pump only between
-// requests — a request already dequeued is forwarded and its reply delivered
-// before the pump returns, so a caller can join it to guarantee an in-flight
-// reply (e.g. the exec/shell reply) reaches its channel before that channel is
-// torn down. A nil done means "run until in closes".
-// onExec, when non-nil, is invoked with each "exec" request's payload before it
-// is forwarded, so the caller can capture the command into the recording + audit
-// (the request payload never appears in the tee'd channel data) and can veto it:
-// returning false blocks the command (it is not forwarded and the reply is false).
 // reqHooks intercepts specific channel requests on the client→upstream leg. A nil
 // hook forwards that request type unchanged; a hook returning false refuses the
 // request (it is not sent upstream and the client is replied to with failure).
+//
+// This is where command control reaches an SSH session: the command in an
+// `ssh target "cmd"` arrives as an "exec" request payload and never appears in
+// the channel data the recording tees, so intercepting the request is the only
+// place it is visible as a discrete command.
 type reqHooks struct {
 	onExec      func(payload []byte) bool // "exec" (a discrete `ssh target "cmd"`)
 	onSubsystem func(payload []byte) bool // "subsystem" (notably sftp)
 }
 
+// pumpRequests forwards SSH channel requests from in to dst, relaying replies,
+// until in closes or done fires.
+//
+// Closing done stops the pump only BETWEEN requests: one already dequeued is
+// forwarded and its reply delivered before the pump returns, so a caller can
+// join it and know an in-flight reply (the exec or shell reply, say) reached its
+// channel before that channel is torn down. Without that guarantee an operator's
+// client sees a truncated session rather than a clean exit. A nil done means
+// "run until in closes".
+//
+// h's hooks are consulted before a request is forwarded, which is how a command
+// is captured into the recording and the audit trail, and how command control
+// vetoes one: a hook returning false means the request is not sent upstream and
+// the client is answered with failure.
 func pumpRequests(in <-chan *ssh.Request, dst ssh.Channel, done <-chan struct{}, h reqHooks) {
 	for {
 		select {

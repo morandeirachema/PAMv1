@@ -122,9 +122,18 @@ func TestDependencyNameRejectsCommandInjection(t *testing.T) {
 		}
 	}
 
-	// Names real deployments actually use must still be accepted: services and
-	// app pools routinely contain spaces and dots, scheduled tasks a backslash.
-	for _, good := range []string{"MSSQLSERVER", "My App Pool", "Contoso.Web", `Corp\Nightly Backup`, "svc-01_x"} {
+	// Names real deployments actually use must still be accepted, and this list is
+	// the reason the allowlist is checked rather than assumed. `MSSQL$SQLEXPRESS`
+	// in particular: a named SQL Server instance registers its services with a
+	// `$`, and rejecting it did not merely refuse new dependencies — the same
+	// check runs again when the command is built, so an existing row would have
+	// been skipped at rotation time, leaving SQL Server holding a stale password
+	// until its next restart failed. `$` is inert in cmd.exe, so admitting it
+	// costs nothing.
+	for _, good := range []string{
+		"MSSQLSERVER", "My App Pool", "Contoso.Web", `Corp\Nightly Backup`, "svc-01_x",
+		"MSSQL$SQLEXPRESS", "SQLAgent$PROD", "ReportServer$TEST",
+	} {
 		if code, body := do(t, srv, http.MethodPost, depURL, testAPIKey, map[string]any{
 			"kind": "windows_service", "host": "win01", "name": good,
 		}); code != http.StatusCreated {
