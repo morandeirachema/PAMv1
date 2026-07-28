@@ -113,9 +113,15 @@ func (t clipTransfer) Detail() string {
 	return d
 }
 
-// Observe feeds one raw frame to the watcher and returns a completed transfer
-// when the frame ended one. A nil watcher observes nothing, so the caller needs
-// no branch.
+// Observe feeds one raw frame to the watcher and returns EVERY transfer the
+// frame completed. A nil watcher observes nothing, so the caller needs no
+// branch.
+//
+// Returning a slice rather than a single transfer is the point: one frame can
+// carry several instructions, and therefore finish several transfers. Reporting
+// only the last silently dropped the others from the audit trail — a subtler
+// version of the same evasion this function exists to close, since batching two
+// clipboard streams into one message would have hidden the first.
 //
 // The frame may hold SEVERAL instructions — the Guacamole protocol is a stream
 // of self-delimiting instructions and a client may batch them in one WebSocket
@@ -123,14 +129,14 @@ func (t clipTransfer) Detail() string {
 // what Decode returns) meant a batched `nop;clipboard;blob` was forwarded to the
 // target with only the `nop` examined, so the clipboard audit could be evaded by
 // a client that simply did not send one instruction per message.
-func (w *clipWatcher) Observe(direction string, raw []byte) *clipTransfer {
+func (w *clipWatcher) Observe(direction string, raw []byte) []clipTransfer {
 	if w == nil {
 		return nil
 	}
-	var completed *clipTransfer
+	var completed []clipTransfer
 	for _, inst := range guacd.DecodeAll(raw) {
 		if t := w.observeOne(direction, inst); t != nil {
-			completed = t // a frame can complete more than one; report the last
+			completed = append(completed, *t)
 		}
 	}
 	return completed

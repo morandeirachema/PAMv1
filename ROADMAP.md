@@ -1271,6 +1271,42 @@ The last nine findings from the post-beta sweep (**R**, **S**, **AC**, **AD**,
   SHA-256 stays, and the reasoning is in the code: precomputation needs a small
   input space, and the fix for a generated secret is to stop generating it small
 
+## Phase 52g — Fix what the review of the fixes found ✅
+
+Thirty findings across six phases is itself a change large enough to warrant
+review, so the merged work was re-reviewed against one question — *what did these
+commits break?* — with an explicit instruction to hunt for **tests that cannot
+fail**. It found six things, all reproduced, all fixed here. Two are worth
+knowing about even in summary:
+
+- [x] **The dependency allowlist rejected `$`, which Windows requires.** A named
+  SQL Server instance registers `MSSQL$SQLEXPRESS` — the textbook
+  credential-dependency case for a PAM. And it was retroactive and silent: the
+  same check runs when the command is built, so an *existing* row would be
+  skipped at rotation, changing the account's password on the target and leaving
+  SQL Server holding a stale one until its next restart failed. The sibling
+  allowlist for `net user`, added in the same commit, accepted `$` for gMSA
+  accounts — the two disagreed about what a legal Windows name is
+- [x] **The new handshake deadline cut off human password entry.** Thirty seconds
+  covers the whole pre-authentication phase, which in the documented flow
+  includes an operator typing or pasting the API key. Reproduced: a client taking
+  32 seconds was dropped with no message and no audit event, which looks exactly
+  like a broken server. Now 120s, matching OpenSSH's `LoginGraceTime`
+- [x] **A new test could not fail.** `TestSyncWriterKeepsPayloadsWhole` passed
+  with the mutex removed — its destination recorded each write as one block under
+  its own lock, so every block was intact whether or not anything was serialized.
+  Rewritten against a destination that copies in two halves with a scheduling
+  point between them, and verified to fail without the mutex
+- [x] The clipboard fix was incomplete (a frame completing several transfers
+  audited only the last), the audit **actor** on a failed proxy auth was still
+  unbounded, and the recordings listing read 5000 audit rows per console refresh
+- [x] Every production function in the tree now carries a doc comment
+
+The lesson from the untestable test generalises: last round's discipline was
+"verify the test fails without the fix", and it was applied to tests written for
+known bugs but not to one written for a race. A test asserting that nothing went
+wrong is the easiest kind to write and the easiest to get wrong.
+
 ### The post-beta sweep (2026-07-27) — all thirty findings closed ✅
 
 The second full read-only sweep found **thirty** issues, every one confirmed by

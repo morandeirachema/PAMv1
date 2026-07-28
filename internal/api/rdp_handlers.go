@@ -291,8 +291,14 @@ func guacamolePrelude(uuid, connID string) [][]byte {
 func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, clip *clipWatcher, onClip func(clipTransfer)) {
 	done := make(chan struct{}, 2)
 	note := func(direction string, frame []byte) {
-		if t := clip.Observe(direction, frame); t != nil && onClip != nil {
-			onClip(*t)
+		if onClip == nil {
+			return
+		}
+		// Every transfer the frame completed, not just the last: one message can
+		// finish several, and an unreported one is a clipboard transfer that
+		// happened with no audit record of it.
+		for _, t := range clip.Observe(direction, frame) {
+			onClip(t)
 		}
 	}
 	go func() { // guacd → browser
@@ -385,6 +391,14 @@ func rdpClipboardMode(mode string) string {
 	return mode
 }
 
+// rdpClipboardParams translates the clipboard policy into the guacd parameters
+// that enforce it. Enforcement happens in guacd, not in the browser, because
+// anything the browser decides is advice: the operator controls that side.
+//
+// "deny" blocks both directions, "readonly" allows copy OUT of the target but
+// blocks paste IN, and anything else allows both. Drive redirection is off in
+// every mode — file transfer belongs on the audited SFTP path, not on a channel
+// that leaves no record.
 func rdpClipboardParams(mode string) map[string]string {
 	m := map[string]string{"enable-drive": "false"}
 	switch mode {
