@@ -93,6 +93,14 @@ approver.
   window (`PAM_BROKER_AUDIT_SIGN_PREV`); both current and rotated-out public keys
   are published as a **JWKS** (`/v1/audit/jwks`) so an external verifier validates
   checkpoints across the rotation.
+- **Key custody** — when `PAM_BROKER_AUDIT_KEY` / `PAM_BROKER_AUDIT_SIGN_SEED`
+  are not set in the environment, both keys are generated once and held under
+  shared custody: sealed by the vault KEK into the store's `key_material`, so
+  they are never plaintext at rest, every replica converges on the same chain
+  key and signer identity (a replica with its own key would make honest events
+  read as tampering), and `-rotate-kek` re-wraps them with every other vaulted
+  secret. An explicit environment value always wins, which is what drives the
+  rotation above.
 - **SIEM forwarding** — the trail exports as **OCSF** (`/api/audit/ocsf`, API
   Activity 6003 + Detection Finding 2004) for detection engineering off-box.
 
