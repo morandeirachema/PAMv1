@@ -126,10 +126,13 @@ jobs:
       # read `-run PGStoreContract`, which matched the contract suite alone and
       # left the audit-chain tamper detection and the leader-lock mutual
       # exclusion (both backing security claims) running nowhere at all.
+      # cmd/pam-server rides along for its Postgres-gated test (-rotate-kek end
+      # to end). -p 1 serializes the two packages: they share one database, and
+      # both truncate it on entry.
       - name: store tests (live Postgres)
         env:
           PAM_TEST_DATABASE_URL: postgres://pam:pam@localhost:5432/pam?sslmode=disable
-        run: go test ./internal/store/pgstore/ -race -count=1 -v
+        run: go test -p 1 ./internal/store/pgstore/ ./cmd/pam-server/ -race -count=1 -v
 
   docker:
     runs-on: ubuntu-latest
