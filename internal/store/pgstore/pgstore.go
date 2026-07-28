@@ -847,6 +847,28 @@ func (s *PGStore) ExportAudit(ctx context.Context, since, until time.Time) ([]st
 	})
 }
 
+// LatestAuditByAction returns the most recent event with the given action, or
+// (nil, nil) if there is none.
+//
+// This runs from periodic maintenance (the retention archiver), not a request
+// path, so an index scan on id descending filtered by action is an acceptable
+// cost — and it is bounded by LIMIT 1 rather than by a page size that could miss
+// the row entirely.
+func (s *PGStore) LatestAuditByAction(ctx context.Context, action string) (*store.AuditEvent, error) {
+	var e store.AuditEvent
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, ts, actor, action, detail FROM audit_events
+		 WHERE action = $1 ORDER BY id DESC LIMIT 1`, action).
+		Scan(&e.ID, &e.TS, &e.Actor, &e.Action, &e.Detail)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+
 // AuditSince returns up to limit audit events with id > afterID, oldest-first —
 // the cursor read the SIEM forwarder tails the trail with.
 func (s *PGStore) AuditSince(ctx context.Context, afterID int64, limit int) ([]store.AuditEvent, error) {

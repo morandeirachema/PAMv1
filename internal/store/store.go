@@ -646,6 +646,16 @@ type Store interface {
 	// oldest-first (for NIS2 incident-report exports). A zero since means "from
 	// the beginning"; a zero until means "up to now".
 	ExportAudit(ctx context.Context, since, until time.Time) ([]AuditEvent, error)
+	// LatestAuditByAction returns the most recent audit event with the given
+	// action, or (nil, nil) when there is none.
+	//
+	// It exists so a periodic job can find its own high-water mark in the trail
+	// rather than keeping a separate cursor that could disagree with reality —
+	// retention's archiver reads the last `audit.archived` to know where the
+	// previous archive finished. Scanning a page of recent events instead would
+	// silently lose the marker on a busy system, and losing it means re-exporting
+	// history that is already archived.
+	LatestAuditByAction(ctx context.Context, action string) (*AuditEvent, error)
 	// AuditSince returns up to limit audit events with id > afterID, ordered
 	// oldest-first (ascending id). It is the cursor read for the SIEM forwarder
 	// (Phase 35): tail the trail by advancing afterID past the last event sent.
