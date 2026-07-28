@@ -245,3 +245,56 @@ func TestMCPSSEElicitation(t *testing.T) {
 		t.Fatal("a declined call must not inject a credential")
 	}
 }
+
+// delegatedRules parks winrm_exec for approval restricted to the `approver`
+// group — a group the bootstrap admin does NOT need to be in.
+const delegatedRules = "rules:\n  - id: needs-approver\n    tool: winrm_exec\n    effect: require_approval\n    approvers: [approver]\n    scope: \"t:{target}:x\"\n"
+
+// TestBrokerDelegatedApproverGroupGrants proves a NON-admin decider whose group
+// matches the rule can actually approve — the case that makes separation of
+// duties a delegation mechanism rather than an admin-only ceremony.
+//
+// This needs its own test because the sibling above cannot reach it.
+// `approverPermitted` short-circuits on `IsAdmin` before the group loop runs,
+// and every other successful broker approval in this suite decides as the
+// bootstrap admin — so the group-matching loop, which is the whole of Phase 27's
+// separation of duties and is named as a control in
+// docs/AGENT-THREAT-MODEL.md, had never once returned true.
+//
+// That gap fails dangerously in both directions. If the match were too loose, an
+// out-of-group approver could grant — the authorization bypass the threat model
+// explicitly disclaims. If it were too tight, no non-admin could ever approve
+// anything, and nobody would find out until the first operator delegated.
+func TestBrokerDelegatedApproverGroupGrants(t *testing.T) {
+	fake := &fakeWinRM{result: winrm.Result{Stdout: "ok\r\n"}}
+	srv, _ := newTestServerOpts(t, nil, brokerOpts(t, fake, delegatedRules))
+	seedWinRMTarget(t, srv, "win-deleg", "vault-pw")
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-deleg", "owner": "owner"})
+	tok, _ := jsonMap(t, ad)["token"].(string)
+
+	// A decider who is NOT an administrator, but whose role — which is what
+	// ApproverGroups reports — matches the rule's approver group.
+	delegate := seedUser(t, srv, "dana", "approver")
+
+	_, cd := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok,
+		map[string]any{"tool": "winrm_exec", "args": map[string]any{"target": "win-deleg", "command": "whoami"}})
+	callID, _ := jsonMap(t, cd)["call_id"].(string)
+	if callID == "" || jsonMap(t, cd)["status"] != "pending_approval" {
+		t.Fatalf("expected a parked call: %s", cd)
+	}
+
+	// The delegate approves. This is the assertion that has never held: a grant
+	// reached through the group loop rather than through the admin bypass.
+	code, dd := do(t, srv, http.MethodPost, "/v1/approvals/"+callID+"/decision", delegate,
+		map[string]any{"approve": true})
+	if code != http.StatusOK {
+		t.Fatalf("a delegate in the rule's approver group was refused: %d %s — separation of duties is admin-only, which is not what it claims to be", code, dd)
+	}
+	if jsonMap(t, dd)["status"] != "executed" {
+		t.Fatalf("delegate decision did not execute the call: %s", dd)
+	}
+	// And the approval really did drive a just-in-time execution.
+	if fake.gotPass != "vault-pw" {
+		t.Fatalf("runner got %q, want vault-pw — the call was marked executed without injecting the credential", fake.gotPass)
+	}
+}
