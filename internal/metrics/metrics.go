@@ -23,6 +23,9 @@ type Metrics struct {
 
 	// activeSessions supplies the current live-session count (0 if unset).
 	activeSessions func() int
+
+	// build identifies the running binary, exported as pam_build_info.
+	buildVersion, buildCommit string
 }
 
 // New returns an empty collector.
@@ -58,6 +61,19 @@ func (m *Metrics) inc(p *uint64) {
 
 // SetActiveSessionsSource wires the live-session gauge to a source (e.g. the
 // session registry's List length).
+// SetBuildInfo records the version and commit of the running binary so they are
+// exported as pam_build_info.
+//
+// The Prometheus idiom for this is a gauge that is always 1 whose *labels* carry
+// the information — you never graph the value, you join on the labels to answer
+// "which version is this instance running?" during an incident. Before this,
+// that question had no in-band answer at all.
+func (m *Metrics) SetBuildInfo(version, commit string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.buildVersion, m.buildCommit = version, commit
+}
+
 func (m *Metrics) SetActiveSessionsSource(fn func() int) {
 	m.mu.Lock()
 	m.activeSessions = fn
@@ -79,6 +95,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 		reqs[s] = v
 	}
 	auditTotal, breakglass, authFailures, rotations := m.auditTotal, m.breakglass, m.authFailures, m.rotations
+	buildVersion, buildCommit := m.buildVersion, m.buildCommit
 	activeFn := m.activeSessions
 	m.mu.Unlock()
 
@@ -99,6 +116,12 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	writeCounter(w, "pam_breakglass_access_total", "Total break-glass accesses.", breakglass)
 	writeCounter(w, "pam_auth_failures_total", "Total 401/403 responses.", authFailures)
 	writeCounter(w, "pam_credential_rotations_total", "Total credential rotations.", rotations)
+
+	if buildVersion != "" {
+		fmt.Fprintln(w, "# HELP pam_build_info Build metadata of the running binary; the value is always 1.")
+		fmt.Fprintln(w, "# TYPE pam_build_info gauge")
+		fmt.Fprintf(w, "pam_build_info{version=%q,commit=%q} 1\n", buildVersion, buildCommit)
+	}
 
 	fmt.Fprintln(w, "# HELP pam_active_sessions Current live proxied sessions.")
 	fmt.Fprintln(w, "# TYPE pam_active_sessions gauge")

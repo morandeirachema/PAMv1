@@ -66,6 +66,25 @@ import (
 // main parses the utility flags and dispatches: -genkey prints a fresh vault
 // master key, -hashkey prints the SHA-256 of a break-glass key read from stdin,
 // -rotate-kek re-encrypts secrets under a new master key, -split-key emits
+// Build metadata, set at link time by the release build:
+//
+//	go build -ldflags="-X main.version=v0.10.0 -X main.commit=$(git rev-parse --short HEAD)"
+//
+// They are plain package-level variables rather than constants because that is
+// the only thing `-X` can write to. An unset build reports "dev", which is the
+// honest answer for a binary someone compiled themselves.
+//
+// This exists because "which build is this?" was previously unanswerable for a
+// running pam-server — no flag, no log line, no metric — and for a security
+// product that is a poor position to be in during an incident.
+var (
+	version = "dev"
+	commit  = "none"
+)
+
+// buildInfo renders the version and commit as a single human-readable string.
+func buildInfo() string { return version + " (" + commit + ")" }
+
 // Shamir shares of a break-glass key, and the default path runs the server.
 func main() {
 	genkey := flag.Bool("genkey", false, "print a new vault master key and exit")
@@ -73,9 +92,12 @@ func main() {
 	rotateKEK := flag.Bool("rotate-kek", false, "re-encrypt every vaulted secret under a new KEK and exit (any provider, via PAM_KEK_*/PAM_NEW_KEK_* — also how you migrate local\u21c4KMS\u21c4HSM)")
 	splitKey := flag.Bool("split-key", false, "read a break-glass key from stdin and print N Shamir shares (PAM_BREAK_GLASS_SHARES / _THRESHOLD)")
 	healthcheck := flag.Bool("healthcheck", false, "probe the local /healthz endpoint and exit 0 if healthy (for container HEALTHCHECK)")
+	showVersion := flag.Bool("version", false, "print the build version and commit, then exit")
 	flag.Parse()
 
 	switch {
+	case *showVersion:
+		fmt.Println("pam-server", buildInfo())
 	case *genkey:
 		key, err := vault.GenerateMasterKey()
 		if err != nil {
@@ -802,6 +824,8 @@ func run() error {
 		StepUp:                  stepUp,
 		SSHHostKeyCallback:      upstreamHostKey,
 		MFARequired:             cfg.MFARequired,
+		BuildVersion:            version,
+		BuildCommit:             commit,
 		RecordingDir:            cfg.RecordingDir,
 		RequireRecording:        cfg.RequireRecording,
 		EncryptRecordings:       cfg.EncryptRecordings,
@@ -1089,7 +1113,7 @@ func run() error {
 			errc <- srv.ListenAndServe()
 		}
 	}()
-	log.Info("pam-server listening", "addr", cfg.ListenAddr, "tls", tlsEnabled,
+	log.Info("pam-server listening", "version", version, "commit", commit, "addr", cfg.ListenAddr, "tls", tlsEnabled,
 		"breakglass", cfg.BreakGlassKeyHash != "", "log_level", cfg.LogLevel)
 
 	// drainProxy cancels the run context (so the proxy Serve returns) and waits,

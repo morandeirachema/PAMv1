@@ -1,9 +1,17 @@
 FROM golang:1.26-alpine AS build
+# VERSION and COMMIT are stamped into the binary so a running container can say
+# what it is (`pam-server -version`, the startup log, and the pam_build_info
+# metric). They default to a local-build marker; the release workflow passes the
+# real values.
+ARG VERSION=dev
+ARG COMMIT=none
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/pam-server ./cmd/pam-server
+RUN CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
+    -o /out/pam-server ./cmd/pam-server
 
 # Distroless, static, non-root: minimal attack surface for a credential vault.
 FROM gcr.io/distroless/static-debian12:nonroot
