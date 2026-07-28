@@ -982,6 +982,20 @@ func (m *Memstore) ExportAudit(_ context.Context, since, until time.Time) ([]sto
 	return out, nil
 }
 
+// LatestAuditByAction returns the most recent event with the given action, or
+// (nil, nil) if there is none.
+func (m *Memstore) LatestAuditByAction(_ context.Context, action string) (*store.AuditEvent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := len(m.audit) - 1; i >= 0; i-- {
+		if m.audit[i].Action == action {
+			e := m.audit[i]
+			return &e, nil
+		}
+	}
+	return nil, nil
+}
+
 // AuditSince returns up to limit audit events with id > afterID, oldest-first.
 // The in-memory slice is append-ordered with ascending ids, so a forward scan
 // with a cap satisfies the contract.

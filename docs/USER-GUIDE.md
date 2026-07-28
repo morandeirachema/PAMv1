@@ -81,8 +81,15 @@ From then on, when you sign in with User + Password the portal also asks for you
 protected by MFA; MFA covers the username/password login.)
 
 **Recovery codes:** `POST /api/mfa/recovery-codes` gives you 10 single-use backup
-codes — save them somewhere safe. If you lose your phone, enter one of them in the
-MFA code field to sign in; each works only once.
+codes, each shaped like `abcdef-ghijkl-mnopqr-stuvwx`. Save them somewhere safe —
+this is the only time they are shown. If you lose your phone, enter one in the
+MFA code field to sign in; each works only once, and generating a new set
+replaces the old one.
+
+Treat a recovery code exactly as you would your password: it bypasses your second
+factor completely and stays valid until it is used. The hyphens are only there to
+make the code readable when you copy it onto paper; type it however your client
+accepts it.
 
 If your organization **requires MFA**, your first sign-in gives you a limited
 session that can *only* set up MFA — enroll and confirm, then sign in again
@@ -326,6 +333,7 @@ requests on their list.
 | 2026-07-20 | Phase 11: the portal is now a full role-aware management console — menu options for sessions, check-out, access requests, users, MFA, discovery, reconciliation, audit export and break-glass, in the same 5250 style |
 | 2026-07-18 | Phase 3b: OIDC single sign-on option on Sign On |
 | 2026-07-18 | Phase 3b: recovery codes + enforce-MFA (enrollment-only first sign-in) |
+| 2026-07-28 | Phase 52e: recovery codes are longer — four groups of six (`abcdef-ghijkl-mnopqr-stuvwx`) instead of two groups of five. Codes you already hold keep working; generate a new set to get the longer ones |
 | 2026-07-18 | Phase 3b: TOTP MFA (enroll/confirm, MFA code on Sign On) |
 | 2026-07-18 | Phase 3b: Active Directory login (username + password → session token) added to Sign On |
 | 2026-07-18 | Initial user guide (Phase 3a): roles, tokens, portal Sign On, connecting via the SSH proxy, audit review |
