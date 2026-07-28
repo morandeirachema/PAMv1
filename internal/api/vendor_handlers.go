@@ -34,6 +34,21 @@ func (s *Server) createVendor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "username is required")
 		return
 	}
+	// Same privilege-escalation guard as createUser: you cannot mint an identity
+	// more capable than yourself. The role here is fixed at "user" rather than
+	// caller-chosen, which is why the check was missed — but a delegated
+	// user-admin whose own profile lacks the `user` role's capabilities could
+	// still create a vendor login that HAS them, and the token comes back in the
+	// response. A fixed role is not the same as a safe one.
+	grantCaps, err := s.capsForGrant(r.Context(), "user")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "role lookup failed")
+		return
+	}
+	if !principalFrom(r.Context()).Covers(grantCaps) {
+		writeError(w, http.StatusForbidden, "cannot create a vendor login with capabilities you do not hold")
+		return
+	}
 	token, err := generateToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token generation failed")

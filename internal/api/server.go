@@ -87,6 +87,11 @@ type Options struct {
 	WinRM winrm.Runner
 	// RecordingDir is where session/command transcripts are written.
 	RecordingDir string
+	// RequireRecording refuses a session that cannot be recorded, matching what
+	// PAM_REQUIRE_RECORDING already did for the SSH and PostgreSQL proxies. It
+	// covers the two paths the flag never reached: the in-portal RDP viewer and
+	// the REST WinRM endpoint.
+	RequireRecording bool
 	// OIDC (optional) enables the browser Authorization Code login flow.
 	OIDC *oidc.Provider
 	// OIDCRoleMap maps OIDC app-role/group claims to roles.
@@ -256,6 +261,7 @@ type Server struct {
 	resolver           *auth.Resolver
 	winrm              winrm.Runner
 	recordingDir       string
+	requireRecording   bool
 	portalURL          string
 	guacdAddr          string
 	guacdRecordingPath string
@@ -462,6 +468,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		requireReason:      opts.RequireReason,
 		oneTimeAccess:      opts.OneTimeAccess,
 		recordingDir:       opts.RecordingDir,
+		requireRecording:   opts.RequireRecording,
 		portalURL:          portalURL,
 		guacdAddr:          opts.GuacdAddr,
 		guacdRecordingPath: opts.GuacdRecordingPath,
@@ -940,6 +947,24 @@ func (s *Server) mustAuditAs(w http.ResponseWriter, ctx context.Context, actor, 
 		return false
 	}
 	return true
+}
+
+// recordingRequired reports whether this path must refuse to proceed because
+// PAM_REQUIRE_RECORDING is set and no recording can be produced.
+//
+// The flag shipped enforcing exactly this for the SSH proxy, the WinRM proxy and
+// the PostgreSQL proxy — but not for the two paths that reach a target through
+// the HTTP server: the in-portal RDP viewer and the REST WinRM endpoint. An
+// operator who set it believed every session was recorded, and the two newest
+// ways to reach a machine were the two it did not cover. That is the worst shape
+// for a security control: silently narrower than its name.
+//
+// The check runs BEFORE anything happens on the target, because "refuse the
+// session" only means something while there is still a session to refuse. For
+// WinRM in particular the transcript is written after the command returns, so a
+// post-hoc check would report a failure the command had already caused.
+func (s *Server) recordingRequired(dir string) bool {
+	return s.requireRecording && dir == ""
 }
 
 // health is the liveness probe: it always reports ok while the process serves.
