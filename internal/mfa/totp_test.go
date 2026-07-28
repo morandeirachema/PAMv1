@@ -68,7 +68,15 @@ func TestGenerateSecretDistinct(t *testing.T) {
 }
 
 // TestGenerateRecoveryCodes proves it returns the requested count of uniquely
-// formatted, non-duplicate codes.
+// formatted, non-duplicate codes carrying enough entropy to survive an OFFLINE
+// attack.
+//
+// The entropy assertion is the one that matters. A recovery code is a full
+// second-factor bypass, it stays valid until used, and it is stored as a single
+// unsalted SHA-256 — so anyone with a database backup attacks it offline, where
+// rate limiting cannot reach them. The original codes carried 50 bits (8 random
+// bytes truncated to 10 characters), which is exhaustible on commodity
+// hardware; these carry 120.
 func TestGenerateRecoveryCodes(t *testing.T) {
 	codes, err := GenerateRecoveryCodes(10)
 	if err != nil {
@@ -79,8 +87,27 @@ func TestGenerateRecoveryCodes(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, c := range codes {
-		if len(c) != 11 || c[5] != '-' {
+		// Four groups of six base32 characters: "abcdef-ghijkl-mnopqr-stuvwx".
+		groups := strings.Split(c, "-")
+		if len(groups) != 4 {
 			t.Fatalf("unexpected code format: %q", c)
+		}
+		entropyChars := 0
+		for _, g := range groups {
+			if len(g) != 6 {
+				t.Fatalf("group %q in %q is not 6 characters", g, c)
+			}
+			for _, r := range g {
+				if !strings.ContainsRune("abcdefghijklmnopqrstuvwxyz234567", r) {
+					t.Fatalf("code %q contains %q, which is not lowercase base32", c, r)
+				}
+			}
+			entropyChars += len(g)
+		}
+		// 24 base32 characters × 5 bits = 120 bits. Below ~100 this is
+		// brute-forceable offline from a stolen backup, which is the whole point.
+		if bits := entropyChars * 5; bits < 100 {
+			t.Fatalf("code %q carries only %d bits; a recovery code is a full MFA bypass attacked offline", c, bits)
 		}
 		if seen[c] {
 			t.Fatalf("duplicate recovery code: %q", c)

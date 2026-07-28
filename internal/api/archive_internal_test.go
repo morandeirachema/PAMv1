@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -224,5 +225,105 @@ func TestArchiveIsWriteOnce(t *testing.T) {
 	}
 	if string(body) != "first" {
 		t.Fatalf("archive content was replaced: %q", body)
+	}
+}
+
+// TestChainedAuditArchivesOnlyTheDelta proves repeated retention passes do not
+// re-archive history that is already archived.
+//
+// With the HMAC chain enabled the aged rows are deliberately never pruned, so
+// exporting everything older than the cutoff exported the SAME events again on
+// every tick — each under a new cutoff-derived name, each slightly larger, into
+// storage that is by this feature's premise immutable and usually billed. A year
+// of daily ticks left hundreds of overlapping, undeletable copies. A single-pass
+// test cannot see it, which is why this one runs three.
+func TestChainedAuditArchivesOnlyTheDelta(t *testing.T) {
+	archDir := filepath.Join(t.TempDir(), "worm")
+	srv, st := newRetentionServer(t, t.TempDir())
+	ctx := context.Background()
+	seedAgedAudit(t, st, 3)
+
+	pol := RetentionPolicy{AuditDays: 1, AuditChained: true, ArchiveDir: archDir}
+	first := time.Now().Add(48 * time.Hour)
+	srv.retentionPass(ctx, first, pol)
+
+	matches, _ := filepath.Glob(filepath.Join(archDir, "audit-before-*.jsonl"))
+	if len(matches) != 1 {
+		t.Fatalf("first pass produced %d archives, want 1: %v", len(matches), matches)
+	}
+	firstSize := fileSize(t, matches[0])
+
+	// Two further passes at later cutoffs. Nothing new has aged past the cutoff
+	// beyond what each pass itself audits, so no pass may re-export the history
+	// the first one already wrote.
+	srv.retentionPass(ctx, first.Add(time.Hour), pol)
+	srv.retentionPass(ctx, first.Add(2*time.Hour), pol)
+
+	matches, _ = filepath.Glob(filepath.Join(archDir, "audit-before-*.jsonl"))
+	for _, m := range matches {
+		if m == matches[0] {
+			continue
+		}
+		if sz := fileSize(t, m); sz >= firstSize {
+			t.Fatalf("archive %s is %d bytes, not smaller than the first pass's %d — the whole aged trail is being re-exported every tick",
+				filepath.Base(m), sz, firstSize)
+		}
+	}
+	// And the first archive itself must be untouched: write-once still holds.
+	if sz := fileSize(t, matches[0]); sz != firstSize {
+		t.Fatalf("the first archive changed size (%d -> %d)", firstSize, sz)
+	}
+}
+
+// fileSize returns a file's size in bytes.
+func fileSize(t *testing.T, path string) int64 {
+	t.Helper()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fi.Size()
+}
+
+// TestArchiveRecordingFinishesInterruptedMove proves one stuck file cannot wedge
+// archiving forever.
+//
+// In the cross-filesystem path (the usual case, since a WORM archive is its own
+// mount) a failed os.Remove leaves the destination written and the source in
+// place. The next pass saw the destination, returned errArchiveExists, and the
+// sweep stopped at that entry — and because ReadDir returns names sorted and
+// recording names lead with a nanosecond timestamp, that blocked every
+// chronologically later recording, permanently, with only a log line.
+func TestArchiveRecordingFinishesInterruptedMove(t *testing.T) {
+	srcDir, archDir := t.TempDir(), t.TempDir()
+	const name = "1700000000000000000_target_actor.cast"
+	body := []byte("recording bytes")
+
+	// Simulate the interrupted move: destination written, source still present.
+	if err := os.WriteFile(filepath.Join(srcDir, name), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := writeArchiveFile(archDir, name, body); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := archiveRecording(srcDir, archDir, name); err != nil {
+		t.Fatalf("an interrupted move was not resumable: %v — one stuck file blocks every later recording forever", err)
+	}
+	if _, err := os.Stat(filepath.Join(srcDir, name)); !os.IsNotExist(err) {
+		t.Fatal("the source survived, so the next pass repeats this forever")
+	}
+
+	// A genuine collision — same name, DIFFERENT bytes — must still be refused:
+	// two different recordings must never share an archived name.
+	const other = "1700000000000000001_target_actor.cast"
+	if err := os.WriteFile(filepath.Join(srcDir, other), []byte("different"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := writeArchiveFile(archDir, other, []byte("original")); err != nil {
+		t.Fatal(err)
+	}
+	if err := archiveRecording(srcDir, archDir, other); !errors.Is(err, errArchiveExists) {
+		t.Fatalf("a real name collision returned %v, want errArchiveExists — write-once must still hold", err)
 	}
 }
