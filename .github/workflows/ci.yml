@@ -141,6 +141,40 @@ jobs:
       - name: build image
         run: docker build -f deploy/docker/Dockerfile -t pamv1:ci .
 
+  # A broken chart or manifest should fail here, not at `kubectl apply` time:
+  # helm lint, a full render of the chart (defaults and everything-on, so the
+  # gated templates are exercised too), and kubeconform over the raw manifests
+  # and both renders. CRD instances (the CloudNativePG Cluster, ServiceMonitor)
+  # have no schema in the upstream catalog and are skipped, not failed.
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.26"
+      - name: helm lint
+        run: helm lint deploy/helm/pamv1
+      - name: render chart (defaults, and everything on)
+        # The chart deliberately refuses to render without a credentials source
+        # (so PAM_MASTER_KEY cannot land in Helm release history) — provide one.
+        run: |
+          helm template pamv1 deploy/helm/pamv1 \
+            --set secret.existingSecret=pam-secrets > /tmp/rendered-default.yaml
+          helm template pamv1 deploy/helm/pamv1 \
+            --set secret.create=true --set 'secret.data.PAM_MASTER_KEY=x' \
+            --set ingress.enabled=true --set guacd.enabled=true \
+            --set networkPolicy.enabled=true --set persistence.enabled=true \
+            --set metrics.serviceMonitor.enabled=true > /tmp/rendered-all.yaml
+      - name: kubeconform
+        # conjur/policy.yaml is a Conjur policy document, not a K8s manifest,
+        # and sops/ holds encrypted material — both stay out of scope.
+        run: |
+          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
+          "$(go env GOPATH)/bin/kubeconform" -summary -ignore-missing-schemas \
+            deploy/k8s/*.yaml deploy/k8s/conjur/deployment.yaml \
+            /tmp/rendered-default.yaml /tmp/rendered-all.yaml
+
   # Phase 14: prove the committed SOPS example is really encrypted and round-trips
   # with the throwaway demo key (guards against an accidental plaintext commit).
   sops:

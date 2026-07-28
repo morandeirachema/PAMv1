@@ -2,8 +2,62 @@ package ticket
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+// TestValidatorWebhook covers the webhook leg of the gate in all three
+// outcomes, and above all that an UNREACHABLE ITSM denies. The control's
+// promise is "no privileged access without a validated ticket"; an ITSM outage
+// that silently waved requests through would invert it, so the transport-error
+// branch must fail closed — the code says it does, and until now nothing
+// proved it.
+func TestValidatorWebhook(t *testing.T) {
+	t.Run("2xx accepts", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		t.Cleanup(srv.Close)
+		v, err := New("", srv.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := v.Validate(context.Background(), "CHG1234"); err != nil {
+			t.Fatalf("valid ticket rejected: %v", err)
+		}
+	})
+	t.Run("non-2xx denies", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+		}))
+		t.Cleanup(srv.Close)
+		v, err := New("", srv.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := v.Validate(context.Background(), "CHG1234"); err == nil {
+			t.Fatal("ITSM said 403 and the gate still accepted")
+		}
+	})
+	t.Run("unreachable ITSM denies (fail closed)", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		url := srv.URL
+		srv.Close() // the webhook is now a dead endpoint — connection refused
+		v, err := New("", url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = v.Validate(context.Background(), "CHG1234")
+		if err == nil {
+			t.Fatal("unreachable ITSM and the gate still accepted — fails open")
+		}
+		if !strings.Contains(err.Error(), "ticket validation request failed") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
 
 // TestValidatorPatternAndDisabled covers the no-webhook paths: disabled (nil),
 // fail-loud on a bad pattern, nil accepts anything, and a pattern rejects.
