@@ -45,6 +45,7 @@ flowchart LR
     n_discovery[discovery]
     n_guacd[guacd]
     n_rotate[rotate]
+    n_tds[tds]
     n_winrm[winrm]
   end
   subgraph n_Agent_broker["Agent broker"]
@@ -168,6 +169,7 @@ flowchart LR
   n_proxy --> n_session
   n_proxy --> n_sshca
   n_proxy --> n_store
+  n_proxy --> n_tds
   n_proxy --> n_vault
   n_proxy --> n_winrm
   n_rotate --> n_store

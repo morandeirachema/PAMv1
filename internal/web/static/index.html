@@ -722,7 +722,7 @@ Type choices, press Enter.
 <label>Host  . . . . . . . :  <input name="host" size="24" required></label>
 <label>Port  . . . . . . . :  <input name="port" type="number" value="22" min="1" max="65535" size="6" required></label>
 <label>OS type . . . . . . :  <select name="os_type"><option>linux</option><option>windows</option></select>   <span class="cyan">linux, windows</span></label>
-<label>Protocol  . . . . . :  <select name="protocol"><option>ssh</option><option>winrm</option><option>rdp</option><option>postgres</option></select>   <span class="cyan">ssh, winrm, rdp, postgres</span></label>
+<label>Protocol  . . . . . :  <select name="protocol"><option>ssh</option><option>winrm</option><option>rdp</option><option>postgres</option><option>mssql</option></select>   <span class="cyan">ssh, winrm, rdp, postgres, mssql</span></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox">   <span class="cyan">connections need an approved request (4-eyes)</span></label>
 <label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value="">(global)</option><option>allow</option><option>readonly</option><option>deny</option></select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
 <label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value="">(global)</option><option>off</option><option>meta</option><option>full</option></select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
@@ -754,7 +754,7 @@ Editing target <span class="white">${esc(t.name)}</span> (id ${esc(t.id)}). Type
 <label>Host  . . . . . . . :  <input name="host" size="24" required value="${esc(t.host)}"></label>
 <label>Port  . . . . . . . :  <input name="port" type="number" min="1" max="65535" size="6" required value="${esc(t.port)}"></label>
 <label>OS type . . . . . . :  <select name="os_type">${sel(["linux", "windows"], t.os_type)}</select></label>
-<label>Protocol  . . . . . :  <select name="protocol">${sel(["ssh", "winrm", "rdp", "postgres"], t.protocol)}</select></label>
+<label>Protocol  . . . . . :  <select name="protocol">${sel(["ssh", "winrm", "rdp", "postgres", "mssql"], t.protocol)}</select></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox"${t.require_approval ? " checked" : ""}>   <span class="cyan">connections need an approved request (4-eyes)</span></label>
 <label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value=""${t.rdp_clipboard ? "" : " selected"}>(global)</option>${sel(["allow", "readonly", "deny"], t.rdp_clipboard)}</select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
 <label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value=""${t.rdp_clipboard_audit ? "" : " selected"}>(global)</option>${sel(["off", "meta", "full"], t.rdp_clipboard_audit)}</select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
