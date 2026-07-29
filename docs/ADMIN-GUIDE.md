@@ -269,8 +269,8 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_RECORDING_RETENTION_DAYS` / `PAM_AUDIT_RETENTION_DAYS` | | `0` (∞) | **Prune** recordings / audit rows older than N days (Phase 36). Audit pruning is skipped while the HMAC chain is on. `PAM_RETENTION_INTERVAL_HOURS` (`24`) is the sweep cadence. See §9.2. |
 | `PAM_RETENTION_ARCHIVE_DIR` | | (delete on expiry) | **Archive before pruning** (Phase 49): aged audit rows are exported as digest-stamped JSON Lines and aged recordings are moved here (write-once, `0400`), and the delete runs **only if the archive succeeded**. Point it at WORM storage. See §9.2. |
 | `PAM_BROKER_POLICY_FILE` | | (off) | YAML policy file — **its presence enables the AI-agent access broker** (Phase 13). |
-| `PAM_BROKER_AUDIT_KEY` | broker only | (shared custody) | base64 32-byte HMAC key for the verifiable audit chain. **Unset = generated once and held under shared custody** (KEK-sealed in `key_material`, same as the SSH host/CA keys); set it explicitly to control the key yourself. |
-| `PAM_BROKER_AUDIT_SIGN_SEED` | broker only | (shared custody) | base64 32-byte ed25519 seed signing the audit-chain head (truncation detection). Unset = shared custody; **setting it is how a signing-key rotation is driven** (see §"Rotate the checkpoint signer"). |
+| `PAM_BROKER_AUDIT_KEY` | broker only | (shared custody) | base64 32-byte HMAC key for the verifiable audit chain. **Unset = generated once and held under shared custody** (KEK-sealed in `key_material`, same as the SSH host/CA keys). An explicit value is **written through to custody** (so later unsetting it cannot fork the chain); an explicit value that *disagrees* with custody is a **fatal start** — unset it to adopt the cluster key. |
+| `PAM_BROKER_AUDIT_SIGN_SEED` | broker only | (shared custody) | base64 32-byte ed25519 seed signing the audit-chain head (truncation detection). Unset = shared custody; **setting it is how a signing-key rotation is driven** (see §"Rotate the checkpoint signer") — custody converges to the explicit seed, so the replaced signer cannot silently come back. |
 | `PAM_BROKER_TOKEN_TTL_MIN` | | `15` | Lifetime of the single-use approval resume token (minutes). |
 | `PAM_BROKER_RATE_PER_MIN` | | `0` (off) | Per-agent tool-call rate limit. |
 | `PAM_BROKER_MAX_ARG_BYTES` | | `16384` | Cap on a tool call's serialized arguments (0 = off). |
@@ -331,7 +331,12 @@ curl -H "X-API-Key: $PAM_API_KEY" -X DELETE http://localhost:8080/api/targets/1 
 place with the same validation as create — its credentials, grants, dependencies
 and safe assignment survive, where delete + recreate cascades them away. The
 safe assignment is deliberately not part of the body (`PUT
-/api/targets/{id}/safe` owns it). Safes (`PUT /api/safes/{id}`), users (`PUT
+/api/targets/{id}/safe` owns it). PUT replaces **every editable field**: a body
+that omits `rdp_clipboard`/`rdp_clipboard_audit` **resets those overrides to
+inherit** — include the current values when editing something else (the console
+change screen always sends them), and note the overrides now ride the
+`target.create`/`target.update` audit details (`clipboard:… clip_audit:…`,
+`-` = inherit), so setting or clearing one is visible in the trail. Safes (`PUT /api/safes/{id}`), users (`PUT
 /api/users/{id}`, role/profile only — the token survives, so a promotion does
 not re-mint it, and you cannot assign capabilities you do not hold) and vendors
 (`PUT /api/vendors/{id}`, org label only) edit the same way. In the console,
@@ -1006,7 +1011,13 @@ a secret. It is **off** until you point `PAM_BROKER_POLICY_FILE` at a policy fil
 The audit-chain keys take care of themselves: left unset, each is generated once
 at startup and held under **shared custody** — sealed by the KEK into
 `key_material`, converged on by every replica, re-wrapped by `-rotate-kek` —
-exactly like the SSH host and CA keys. See the [config
+exactly like the SSH host and CA keys. An explicit env value is **written
+through** to that same custody, so a fleet where some replicas carry the
+variable and some don't, or a later boot after you unset it, still converges on
+one chain key instead of silently forking the chain; an explicit
+`PAM_BROKER_AUDIT_KEY` that *disagrees* with what custody already holds is a
+fatal startup error (unset it to adopt the cluster key), while a disagreeing
+sign seed is taken as a deliberate signer rotation. See the [config
 reference](#4-configuration-reference) for the full `PAM_BROKER_*` set.
 
 **Enable it:**
@@ -1075,9 +1086,10 @@ anchor. Rotate the checkpoint signer with an overlap: set the new
 `PAM_BROKER_AUDIT_SIGN_SEED` and list the old **public** key in
 `PAM_BROKER_AUDIT_SIGN_PREV`; both are published as a JWKS at `GET /v1/audit/jwks`
 for external verification. (If the seed has been under shared custody — i.e. you
-never set it — read the outgoing public key from that JWKS **before** rotating:
-an explicit env seed takes over from the custody-held one, which then stays
-sealed in `key_material` but is no longer used.) **OCSF export:** `GET /api/audit/ocsf` (add
+never set it — read the outgoing public key from that JWKS **before** rotating.
+The explicit env seed takes over **and shared custody converges to it**, so
+later unsetting the variable keeps the *rotated* signer rather than silently
+resurrecting the replaced one.) **OCSF export:** `GET /api/audit/ocsf` (add
 `?format=ndjson` for most collectors) delivers the trail as OCSF events (API
 Activity 6003 / Detection Finding 2004) for your SIEM. The full broker threat
 model is in [AGENT-THREAT-MODEL.md](AGENT-THREAT-MODEL.md).
@@ -1507,8 +1519,13 @@ curl -N https://pam.example/api/sessions/<id>/stream -H "X-API-Key: $PAM_API_KEY
 
 The stream **ends when the session does** — completed or killed — so the portal
 pane reports "session ended" rather than sitting silent; and watching an id
-that is unknown or already over is refused with 404 instead of subscribing you
-to a stream that will never speak.
+that is not live is refused with 404 instead of subscribing you to a stream
+that will never speak. The liveness check is **replica-local** (the 404 body
+says "not live on this replica"): in a multi-replica deployment behind a
+non-sticky load balancer, a session hosted on another replica is refused, not
+streamed — cross-replica live *monitoring* is a known gap even though the kill
+below does cross replicas. Refused watches are audited (`session.monitor` with
+a `refused:` detail), so probing session ids leaves a trace.
 
 It works for SSH, PostgreSQL and WinRM sessions — the proxy's interactive WinRM
 shell streams the same bytes its recording sees, and a REST or agent-broker
@@ -1831,6 +1848,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-07-29 | **Review fixes on #81–#84.** Broker audit keys: an explicit env value is now **written through to shared custody** (mixed fleets and later unsetting can no longer silently fork the chain; a disagreeing explicit HMAC key refuses to start, a disagreeing seed is the signer-rotation path and custody converges to it). WinRM: the recording size cap now **ends** a WinRM session with `session.record_limit` (parity with SSH) instead of letting it continue unrecorded with a frozen live stream; a REST/broker run's output reaches live watchers only **after** the durable `winrm.run` audit (the withheld-result contract now also binds the stream); refused runs (blocked / recording-required / decrypt-failed) publish an explanatory notice and blocked/errored runs leave a transcript (`session.record`). Broker `ssh_exec` now **streams live** like `winrm_exec` (echo + output, output withheld on audit failure). Per-target clipboard: an unrecognizable stored override now enforces as **deny** (fail closed) instead of silently ranking as allow, and the overrides ride the `target.create`/`target.update` audit details. Live watch: the 404 is replica-honest ("not live on this replica") and refused watches are audited. Portal: watch-pane lines no longer end in a literal `\r`. See §5, §9.4 and the broker section. |
 | 2026-07-29 | **The watch stream ends with the session.** A supervisor's live watch (`GET /api/sessions/{id}/stream`, portal option 5) now terminates the moment the watched session completes or is killed — the pane reports "session ended" instead of sitting silent forever — and watching an unknown or already-over session id is refused with 404. See §9.4. |
 | 2026-07-29 | **Per-target RDP clipboard override (Phase 33 follow-on).** A target's `rdp_clipboard` / `rdp_clipboard_audit` fields (portal *Add/Change Target*, create/update API) tighten the global `PAM_RDP_CLIPBOARD` / `_AUDIT` for that one target — the stricter policy always wins, so a high-sensitivity target can deny what the fleet allows and no target row can loosen a global deny. The effective mode is what `rdp.connect` audits. See §5 and the RDP section. |
 | 2026-07-29 | **WinRM sessions stream live (Phase 16 follow-on).** *Work with Active Sessions* option 5 (and `GET /api/sessions/{id}/stream`) now works for WinRM too: the proxy's interactive shell streams exactly what its recording sees, and a REST or agent-broker run streams a `winrm>` command echo plus the output. RDP remains recording-and-clipboard-audit only. See §9.4. |

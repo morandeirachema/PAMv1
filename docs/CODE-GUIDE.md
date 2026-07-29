@@ -577,8 +577,11 @@ has no TLS (the PAM key would travel cleartext).
   frames, never stalls the session). The stream **ends with the session**:
   `Registry.Remove` — the funnel every session-end path passes through — calls
   `Hub.EndSession`, which closes the subscriber channels (wired once via
-  `Registry.AttachHub` in `main`), and `streamSession` refuses an unknown or
-  already-over id with 404 rather than subscribing a watcher to silence.
+  `Registry.AttachHub` in `main`), and `streamSession` refuses a not-live id
+  with 404 rather than subscribing a watcher to silence (replica-local check,
+  audited `session.monitor refused:…`; the recording size cap likewise ends a
+  WinRM session via `capWriter` + `session.record_limit` instead of letting it
+  run unrecorded with a frozen stream).
 - **Command control** — a `CommandGuard` (`cmdguard.go`, regex denylist from
   `PAM_COMMAND_DENY_FILE`) blocks a dangerous command **before it reaches the
   target**: SSH `exec` (the request is vetoed in `pumpRequests`' `onExec`), each

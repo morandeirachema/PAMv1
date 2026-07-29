@@ -11,6 +11,20 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **Review fixes on the four changes below** — broker audit keys: an explicit
+  env value is written through to shared custody and checked against it, so a
+  mixed fleet or a later unset can no longer silently fork the audit chain (a
+  disagreeing HMAC key refuses to start; a disagreeing sign seed is the signer
+  rotation and custody converges to it). WinRM: the recording size cap now ends
+  the session with `session.record_limit` (parity with SSH) instead of running
+  it unrecorded with a frozen live stream; REST/broker run output reaches live
+  watchers only after the durable audit; refusals are visible on the stream and
+  leave transcripts. Broker `ssh_exec` streams live like `winrm_exec`. A
+  non-canonical per-target clipboard value now enforces as `deny` (fail closed)
+  and the overrides are audited on `target.create`/`target.update` (a PUT that
+  omits them resets them — now visibly). The live-watch 404 is replica-honest
+  and audited; the portal watch pane no longer renders a literal `\r` on every
+  line.
 - **The watch stream ends with the session** — a supervisor's live SSE watch
   now terminates when the watched session completes or is killed (the portal
   pane reports "session ended" instead of going silent forever), and watching

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -389,11 +390,21 @@ func rdpExtra(security string, ignoreCert bool, clipboard string) map[string]str
 //
 // It also always disables drive redirection (`enable-drive=false`) so no file can
 // be exfiltrated through a mounted client drive regardless of guacd's defaults.
-// rdpClipboardMode normalizes a clipboard policy, defaulting an empty value to
-// "allow" (config validation rejects anything other than allow/readonly/deny).
+// rdpClipboardMode normalizes a clipboard policy: "" inherits the default
+// ("allow" — for the global value, config validation already rejects anything
+// else), and an unknown non-empty value folds to "deny". Unknown values can
+// only arrive from outside the API — a direct SQL write, a restore, an importer
+// (the handlers 422 anything outside the enum) — and a row that says something
+// unrecognizable on a security gate must fail closed: ranking it as allow would
+// silently ignore an override the row visibly asks for, while the target list
+// displays it as if enforced.
 func rdpClipboardMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "" {
 		return "allow"
+	}
+	if _, ok := clipboardRank[mode]; !ok {
+		return "deny"
 	}
 	return mode
 }

@@ -16,13 +16,21 @@ var (
 	// "ssh_ca" is a Zero Standing Privilege credential (Phase 22): it stores no
 	// secret — the proxy mints a short-lived certificate just-in-time instead.
 	validSecret = map[string]bool{"password": true, "ssh_key": true, "ssh_ca": true}
-	// The per-target RDP clipboard overrides (Phase 33 follow-on): "" inherits
-	// the global policy; anything else must be a real mode, because a typo that
-	// silently inherited would read as "this target is locked down" while it
-	// wasn't.
-	validClipOverride      = map[string]bool{"": true, "allow": true, "readonly": true, "deny": true}
-	validClipAuditOverride = map[string]bool{"": true, "off": true, "meta": true, "full": true}
 )
+
+// validOverride reports whether v is "" (inherit) or a mode the rank map knows.
+// The per-target RDP clipboard overrides (Phase 33 follow-on) must be a real
+// mode when set — a typo that silently inherited would read as "this target is
+// locked down" while it wasn't — and validity is derived from the SAME rank
+// maps the strictest-merge uses, so a mode can never be accepted here yet rank
+// as zero (the weakest) there.
+func validOverride(rank map[string]int, v string) bool {
+	if v == "" {
+		return true
+	}
+	_, ok := rank[v]
+	return ok
+}
 
 // --- targets ---
 
@@ -39,6 +47,56 @@ type targetIn struct {
 	RDPClipboardAudit string `json:"rdp_clipboard_audit"`
 }
 
+// validateTargetIn applies the create/update validation rules to in — one
+// function shared by both handlers so they can never drift apart (a field
+// validated on create but not update would let PUT smuggle in what POST
+// refuses). It defaults the port to 22, writes the 422 itself on failure, and
+// reports whether the input passed.
+func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
+	if in.Port == 0 {
+		in.Port = 22
+	}
+	switch {
+	case in.Name == "" || in.Host == "":
+		writeError(w, http.StatusUnprocessableEntity, "name and host are required")
+	case in.Port < 1 || in.Port > 65535:
+		writeError(w, http.StatusUnprocessableEntity, "port must be 1-65535")
+	case !validOS[in.OSType]:
+		writeError(w, http.StatusUnprocessableEntity, `os_type must be "linux" or "windows"`)
+	case !validProtocol[in.Protocol]:
+		writeError(w, http.StatusUnprocessableEntity, `protocol must be "ssh", "winrm", "rdp" or "postgres"`)
+	case !s.protocolAllowed(in.Protocol):
+		writeError(w, http.StatusUnprocessableEntity, "protocol "+in.Protocol+" is not allowed by policy")
+	case !validOverride(clipboardRank, in.RDPClipboard):
+		writeError(w, http.StatusUnprocessableEntity, `rdp_clipboard must be "" (inherit), "allow", "readonly" or "deny"`)
+	case !validOverride(clipAuditRank, in.RDPClipboardAudit):
+		writeError(w, http.StatusUnprocessableEntity, `rdp_clipboard_audit must be "" (inherit), "off", "meta" or "full"`)
+	default:
+		return true
+	}
+	return false
+}
+
+// targetFromIn builds the store row both handlers persist.
+func targetFromIn(in targetIn) store.Target {
+	return store.Target{Name: in.Name, Host: in.Host, Port: in.Port, OSType: in.OSType, Protocol: in.Protocol,
+		RequireApproval: in.RequireApproval, RDPClipboard: in.RDPClipboard, RDPClipboardAudit: in.RDPClipboardAudit}
+}
+
+// clipDetail renders the per-target clipboard overrides for an audit detail,
+// "-" for inherit — the overrides are security policy, so setting, tightening
+// or clearing one must be visible in the trail (a PUT that omits the fields
+// clears them; without this, that reset would leave no forensic trace at all).
+func clipDetail(t store.Target) string {
+	orDash := func(v string) string {
+		if v == "" {
+			return "-"
+		}
+		return v
+	}
+	return fmt.Sprintf("clipboard:%s clip_audit:%s", orDash(t.RDPClipboard), orDash(t.RDPClipboardAudit))
+}
+
 // createTarget validates and persists a new target (defaulting the port to 22),
 // then audits the creation.
 func (s *Server) createTarget(w http.ResponseWriter, r *http.Request) {
@@ -46,39 +104,15 @@ func (s *Server) createTarget(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if in.Port == 0 {
-		in.Port = 22
-	}
-	switch {
-	case in.Name == "" || in.Host == "":
-		writeError(w, http.StatusUnprocessableEntity, "name and host are required")
-		return
-	case in.Port < 1 || in.Port > 65535:
-		writeError(w, http.StatusUnprocessableEntity, "port must be 1-65535")
-		return
-	case !validOS[in.OSType]:
-		writeError(w, http.StatusUnprocessableEntity, `os_type must be "linux" or "windows"`)
-		return
-	case !validProtocol[in.Protocol]:
-		writeError(w, http.StatusUnprocessableEntity, `protocol must be "ssh", "winrm", "rdp" or "postgres"`)
-		return
-	case !s.protocolAllowed(in.Protocol):
-		writeError(w, http.StatusUnprocessableEntity, "protocol "+in.Protocol+" is not allowed by policy")
-		return
-	case !validClipOverride[in.RDPClipboard]:
-		writeError(w, http.StatusUnprocessableEntity, `rdp_clipboard must be "" (inherit), "allow", "readonly" or "deny"`)
-		return
-	case !validClipAuditOverride[in.RDPClipboardAudit]:
-		writeError(w, http.StatusUnprocessableEntity, `rdp_clipboard_audit must be "" (inherit), "off", "meta" or "full"`)
+	if !s.validateTargetIn(w, &in) {
 		return
 	}
-	t := store.Target{Name: in.Name, Host: in.Host, Port: in.Port, OSType: in.OSType, Protocol: in.Protocol, RequireApproval: in.RequireApproval,
-		RDPClipboard: in.RDPClipboard, RDPClipboardAudit: in.RDPClipboardAudit}
+	t := targetFromIn(in)
 	if err := s.store.CreateTarget(r.Context(), &t); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "target.create", t.Name)
+	s.audit(r.Context(), "target.create", t.Name+" "+clipDetail(t))
 	writeJSON(w, http.StatusCreated, t)
 }
 
@@ -106,39 +140,16 @@ func (s *Server) updateTarget(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if in.Port == 0 {
-		in.Port = 22
-	}
-	switch {
-	case in.Name == "" || in.Host == "":
-		writeError(w, http.StatusUnprocessableEntity, "name and host are required")
-		return
-	case in.Port < 1 || in.Port > 65535:
-		writeError(w, http.StatusUnprocessableEntity, "port must be 1-65535")
-		return
-	case !validOS[in.OSType]:
-		writeError(w, http.StatusUnprocessableEntity, `os_type must be "linux" or "windows"`)
-		return
-	case !validProtocol[in.Protocol]:
-		writeError(w, http.StatusUnprocessableEntity, `protocol must be "ssh", "winrm", "rdp" or "postgres"`)
-		return
-	case !s.protocolAllowed(in.Protocol):
-		writeError(w, http.StatusUnprocessableEntity, "protocol "+in.Protocol+" is not allowed by policy")
-		return
-	case !validClipOverride[in.RDPClipboard]:
-		writeError(w, http.StatusUnprocessableEntity, `rdp_clipboard must be "" (inherit), "allow", "readonly" or "deny"`)
-		return
-	case !validClipAuditOverride[in.RDPClipboardAudit]:
-		writeError(w, http.StatusUnprocessableEntity, `rdp_clipboard_audit must be "" (inherit), "off", "meta" or "full"`)
+	if !s.validateTargetIn(w, &in) {
 		return
 	}
-	t := store.Target{ID: id, Name: in.Name, Host: in.Host, Port: in.Port, OSType: in.OSType, Protocol: in.Protocol, RequireApproval: in.RequireApproval,
-		RDPClipboard: in.RDPClipboard, RDPClipboardAudit: in.RDPClipboardAudit}
+	t := targetFromIn(in)
+	t.ID = id
 	if err := s.store.UpdateTarget(r.Context(), &t); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "target.update", fmt.Sprintf("target:%d name:%s host:%s:%d", t.ID, t.Name, t.Host, t.Port))
+	s.audit(r.Context(), "target.update", fmt.Sprintf("target:%d name:%s host:%s:%d %s", t.ID, t.Name, t.Host, t.Port, clipDetail(t)))
 	writeJSON(w, http.StatusOK, t)
 }
 

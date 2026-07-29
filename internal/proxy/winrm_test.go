@@ -119,6 +119,7 @@ func TestWinRMShellLiveMonitor(t *testing.T) {
 	}
 	reg := session.NewRegistry()
 	hub := session.NewHub()
+	reg.AttachHub(hub) // wired the way main wires production: session end closes watch streams
 	px, err := proxy.New(st, v, resolver, proxy.Config{
 		HostKey: mustSigner(t), RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second,
 		WinRMRunner: runner, Sessions: reg, Live: hub,
@@ -172,11 +173,16 @@ func TestWinRMShellLiveMonitor(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Collect frames until both the echoed command and its output have streamed.
+	// The ok check matters: with the hub attached, the session ending closes the
+	// channel, and a receive loop without it would busy-spin on zero values.
 	var acc string
 	deadline := time.After(3 * time.Second)
 	for !strings.Contains(acc, "whoami") || !strings.Contains(acc, "contoso\\Administrator") {
 		select {
-		case b := <-frames:
+		case b, open := <-frames:
+			if !open {
+				t.Fatalf("session ended before the expected frames; saw %q", acc)
+			}
 			acc += string(b)
 		case <-deadline:
 			t.Fatalf("live stream missing echo or output; saw %q", acc)
@@ -186,4 +192,83 @@ func TestWinRMShellLiveMonitor(t *testing.T) {
 	io.WriteString(stdin, "exit\r\n")
 	io.ReadAll(stdout)
 	_ = sess.Wait()
+}
+
+// TestWinRMRecordingCapEndsSession proves the recording size cap is a hard stop
+// on the WinRM path, as it already was for SSH: once a command's output trips
+// PAM_MAX_RECORDING_MB, the session ends (instead of continuing unrecorded with
+// its recording silently truncated), the operator sees the notice, and the cap
+// is audited as session.record_limit.
+func TestWinRMRecordingCapEndsSession(t *testing.T) {
+	st := memstore.New()
+	v := mustVault(t)
+	seedWinRMTarget(t, st, v)
+	// Output large enough to blow through the tiny cap on the first command.
+	runner := &fakeWinRMRunner{out: strings.Repeat("A", 4096) + "\r\n"}
+
+	resolver, err := auth.NewResolver(st, proxyAPIKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	px, err := proxy.New(st, v, resolver, proxy.Config{
+		HostKey: mustSigner(t), RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second,
+		WinRMRunner: runner, MaxRecordingBytes: 512,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := serveProxy(t, px)
+
+	client, err := dialProxy(t, addr, "win-01", proxyAPIKey)
+	if err != nil {
+		t.Fatalf("auth: %v", err)
+	}
+	defer client.Close()
+	sess, err := client.NewSession()
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	stdin, err := sess.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := sess.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Shell(); err != nil {
+		t.Fatalf("shell: %v", err)
+	}
+
+	// One command whose output exceeds the cap. No "exit" is ever sent: the
+	// session must end because the CAP ends it.
+	if _, err := io.WriteString(stdin, "whoami\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := io.ReadAll(stdout) // returns only because the proxy closes the channel
+	if !strings.Contains(string(data), "recording size limit reached") {
+		t.Fatalf("operator was not told why the session ended: %q", tail(string(data), 200))
+	}
+
+	events, err := st.ListAudit(context.Background(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Action == "session.record_limit" && strings.Contains(e.Detail, "reason:recording-size-cap") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("capped WinRM session did not audit session.record_limit")
+	}
+}
+
+// tail returns the last n bytes of s, for readable failure messages.
+func tail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
 }

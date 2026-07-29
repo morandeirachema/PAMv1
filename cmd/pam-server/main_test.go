@@ -443,6 +443,65 @@ func TestBuildBroker(t *testing.T) {
 			t.Fatal("custody seed did not produce a signer")
 		}
 	})
+	t.Run("env values seed custody so unsetting them cannot fork the chain", func(t *testing.T) {
+		st, v := memstore.New(), newVault(t)
+		cfg := &config.Config{
+			BrokerPolicyFile:    writeTemp(t, "policy.yaml", minimalPolicy),
+			BrokerAuditKey:      b64Bytes(t, 32),
+			BrokerAuditSignSeed: b64Bytes(t, 32),
+		}
+		_, key1, signer1, err := buildBroker(ctx, st, v, cfg, log)
+		if err != nil {
+			t.Fatalf("env boot failed: %v", err)
+		}
+		// The same store without the env values — the upgrade path that used to
+		// fork the chain — must resolve the identical key and signer from the
+		// custody rows the first boot wrote through.
+		bare := &config.Config{BrokerPolicyFile: cfg.BrokerPolicyFile}
+		_, key2, signer2, err := buildBroker(ctx, st, v, bare, log)
+		if err != nil {
+			t.Fatalf("custody boot after env boot failed: %v", err)
+		}
+		if string(key1) != string(key2) || !signer1.Equal(signer2) {
+			t.Fatal("unsetting the env keys resolved a different key: the chain would fork")
+		}
+	})
+	t.Run("explicit HMAC key that disagrees with custody is fatal", func(t *testing.T) {
+		st, v := memstore.New(), newVault(t)
+		cfg := &config.Config{BrokerPolicyFile: writeTemp(t, "policy.yaml", minimalPolicy)}
+		if _, _, _, err := buildBroker(ctx, st, v, cfg, log); err != nil { // custody generates both keys
+			t.Fatalf("custody boot failed: %v", err)
+		}
+		cfg.BrokerAuditKey = b64Bytes(t, 32) // different from what custody holds
+		_, _, _, err := buildBroker(ctx, st, v, cfg, log)
+		if err == nil || !strings.Contains(err.Error(), "refusing to fork") {
+			t.Fatalf("mismatched explicit HMAC key accepted: %v", err)
+		}
+	})
+	t.Run("explicit sign seed rotates custody instead of resurrecting later", func(t *testing.T) {
+		st, v := memstore.New(), newVault(t)
+		cfg := &config.Config{BrokerPolicyFile: writeTemp(t, "policy.yaml", minimalPolicy)}
+		_, _, signer0, err := buildBroker(ctx, st, v, cfg, log) // custody-held seed
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.BrokerAuditSignSeed = b64Bytes(t, 32)
+		_, _, signer1, err := buildBroker(ctx, st, v, cfg, log) // the documented rotation
+		if err != nil {
+			t.Fatalf("sign-seed rotation refused: %v", err)
+		}
+		if signer1.Equal(signer0) {
+			t.Fatal("rotation did not change the signer")
+		}
+		cfg.BrokerAuditSignSeed = "" // variable dropped after the rotation
+		_, _, signer2, err := buildBroker(ctx, st, v, cfg, log)
+		if err != nil {
+			t.Fatalf("custody boot after rotation failed: %v", err)
+		}
+		if !signer2.Equal(signer1) {
+			t.Fatal("custody resurrected the rotated-out signer")
+		}
+	})
 }
 
 // TestBuildAlerter checks the alert fan-out assembly, and above all the
