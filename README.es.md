@@ -38,7 +38,7 @@ de fósforo verde** sin concesiones, porque tocar un PAM debe *sentirse* serio.
 
 Construido fase a fase con una regla: **cada fase es funcional de principio a fin** — arranca,
 pasa los tests y se despliega como Infraestructura-como-Código. El **[roadmap](ROADMAP.md)**
-abarca de la 0 a la 52g, **se han entregado todas las fases**, y la
+abarca de la 0 a la 54, **se han entregado todas las fases**, y la
 **[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** — la primera
 release etiquetada y firmada con cosign — salió el 2026-07-28. Lo que eso suma:
 **intermediación de sesiones JIT** para SSH, PostgreSQL, WinRM y RDP en el portal;
@@ -150,7 +150,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–52g, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–54, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -164,6 +164,7 @@ Fases 0–52g, agrupadas por área. Cada capacidad está cubierta por tests y se
 - **Proxy de sesión con inyección JIT** — los operadores conectan por una pasarela SSH; el proxy los autentica, obtiene la credencial del vault, **la descifra solo al conectar** (y solo tras superar toda la autorización), la inyecta en la sesión con el objetivo y lo graba todo. Demostrado de extremo a extremo por un test de integración donde el upstream acepta *solo* la contraseña del vault que el cliente nunca tuvo. Las host keys upstream pueden fijarse (`PAM_SSH_KNOWN_HOSTS`); hay soporte de host de salto (bastión) y sesiones de **observador** de solo lectura.
 - **Objetivos Windows (WinRM + RDP)** — ejecuta comandos en hosts Windows con `POST /api/targets/{id}/winrm` (auth básica o NTLM) o un bucle WinRM interactivo por el proxy, o intermedia un escritorio **RDP** completo con [Apache Guacamole](https://guacamole.apache.org/) (túnel WebSocket `GET /api/targets/{id}/rdp`, con verificación de certificado por defecto). El **visor va integrado en el portal**: abre *Work with Targets* → opción 7 y el escritorio se dibuja en un canvas (el portal incluye el cliente JavaScript de Guacamole; el propio guacd viene en los despliegues). En ambos casos la credencial se inyecta just-in-time (funcionan las cuentas de dominio), las sesiones se auditan y el operador nunca ve el secreto. El **portapapeles de la sesión** se controla con `PAM_RDP_CLIPBOARD` (`allow`/`readonly`/`deny`, endurecible **por objetivo** — gana el más estricto) y la redirección de unidades está siempre deshabilitada — así una sesión RDP no puede usarse como canal de copia/pegado ni de archivos sin auditar. `PAM_RDP_CLIPBOARD_AUDIT` añade la otra mitad: `meta` registra dirección, tipo, tamaño y digest de cada transferencia del portapapeles, y `full` guarda además el contenido (opt-in, porque un escritorio privilegiado copia secretos).
 - **Proxy de sesión de base de datos (SQL Server)** — el hermano TDS del proxy de PostgreSQL (`PAM_MSSQL_ADDR`, p. ej. `:1433`): apunta `sqlcmd` a pamv1 con `-U '<credbd>@<objetivo>'` y tu clave PAM como contraseña. Las mismas comprobaciones de autorización, la credencial SQL del vault inyectada just-in-time en el propio LOGIN7 del cliente, **cada sentencia auditada** —incluidas las que los drivers envían por `sp_executesql`, que un analizador de solo-nombre-de-procedimiento no vería—, además de grabación, monitorización en vivo, elevación y corte en todo el clúster. El códec TDS es propio (sin dependencias nuevas) y sus tests se fijan contra bytes derivados de la especificación; la sesión va cifrada en ambos tramos. Demostrado de extremo a extremo por un upstream falso que acepta *solo* el secreto del vault — **la interoperabilidad con un SQL Server real aún no está verificada**.
+- **Escritorios VNC** — intermediados por la misma ruta de [Guacamole](https://guacamole.apache.org/) que RDP y dibujados en el portal (*Work with Targets* → opción 7): la contraseña VNC del vault se inyecta en el servidor, la sesión se audita y se graba, y el portapapeles obedece la misma política (`PAM_RDP_CLIPBOARD`, endurecible por objetivo) mientras el canal de ficheros SFTP de VNC queda forzado a off. Conviene saber qué es VNC en sí: RFB en claro, **sin autenticación del servidor** y con una contraseña truncada a 8 caracteres por DES — que es justamente el argumento para intermediarlo en vez de exponerlo (ver [PROTOCOLS-AND-CRYPTO §3.5](docs/PROTOCOLS-AND-CRYPTO.md)).
 - **Proxy de sesión de base de datos (PostgreSQL)** — apunta `psql` a pamv1 (`PAM_DB_ADDR`, p. ej. `:5433`) con `user=<credbd>@<objetivo>` y tu clave PAM como contraseña; el proxy aplica las mismas comprobaciones de autorización que el proxy SSH, inyecta la credencial de BD del vault just-in-time (auth upstream por cleartext / MD5 / **SCRAM-SHA-256**) e intermedia el protocolo — **auditando cada sentencia SQL** (`db.query`) y grabando la sesión. El operador nunca conoce la contraseña de la base de datos. Demostrado de extremo a extremo por un upstream falso que acepta *solo* el secreto del vault.
 - **Grabación de sesiones** — cada sesión (stdout **y** stderr, o cada sentencia SQL) capturada en [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/), encadenada por hash SHA-256 a prueba de manipulación, y el hash escrito en la auditoría. Los fallos de grabación se auditan y `PAM_REQUIRE_RECORDING` rechaza de plano una sesión no grabable — en los proxies SSH, WinRM y PostgreSQL **y**, desde la Fase 52c, en el visor RDP del portal y en el endpoint WinRM REST, comprobado *antes* de que nada llegue al objetivo.
 - **Sesiones supervisadas (monitorización en vivo + control de comandos)** — un supervisor puede **ver en vivo una sesión SSH, PostgreSQL o WinRM** — y las ejecuciones `ssh_exec`/`winrm_exec` del bróker de agentes — por `GET /api/sessions/{id}/stream` (Server-Sent Events, `CapReadAudit`); el stream **termina en el momento en que termina la sesión**, así que un panel en silencio es una sesión tranquila, no una muerta. Una lista de denegación por regex (`PAM_COMMAND_DENY_FILE`) **bloquea un comando peligroso antes de que llegue al objetivo** en las rutas de exec, WinRM y SQL — rechazado y auditado (`command.blocked`). Para las shells SSH interactivas se usa el modo observador de solo lectura. Un fichero de denegación que no produzca ningún patrón utilizable es un **error fatal en el arranque**, no un control silenciosamente desactivado.
@@ -271,7 +272,7 @@ ves la credencial. Las grabaciones van a `PAM_RECORDING_DIR`; desactiva el proxy
 
 ## Hoja de ruta
 
-Se han entregado todas las fases (0–52g) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
+Se han entregado todas las fases (0–54) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
 
 | Fase | Tema | Estado |
 |---|---|---|
@@ -335,6 +336,8 @@ Se han entregado todas las fases (0–52g) — detalle por fase en **[ROADMAP.md
 | 52e | Integridad del registro de auditoría, archivado y dos errores de concurrencia | ✅ entregada |
 | 52f | La marca de agua del archivado, hecha robusta — encontrada al revisar la 52e | ✅ entregada |
 | 52g | Seis más, encontradas al revisar todo lo anterior — incluido un test que no podía fallar | ✅ entregada |
+| 53 | Proxy de sesión SQL Server (TDS) — inyección JIT y auditoría por sentencia | ✅ entregada |
+| 54 | Conector VNC (intermediado por guacd, visor en el portal, mismas puertas que RDP) | ✅ entregada |
 
 Desde la 52g el trabajo ha sido **release y consolidación**: la v0.10.0 (la primera
 release firmada y con atestaciones — la imagen que fijan todos los manifiestos ya es

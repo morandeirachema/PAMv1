@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-07-29 · Reflects: Phases 0–53. **Phase 53 added the first new
+> Last updated: 2026-07-29 · Reflects: Phases 0–54. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; everything from
 > 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
@@ -66,6 +66,7 @@ add `5433 → 5433` and/or `1433 → 1433` when the database proxies are enabled
 | E3 | pam-server | Windows target | 5985 / **5986** | WinRM / WinRM-TLS | JIT command execution (`/api/targets/{id}/winrm`) | ✅ |
 | E4a | pam-server | guacd (control plane) | 4822 | Guacamole | RDP broker handshake (JIT credential) | ✅ |
 | E4b | guacd | Windows target | 3389 | RDP | Rendered RDP session | ✅ |
+| E4c | guacd | VNC target (any OS) | 5900 | RFB (VNC) | Rendered VNC session. **Plaintext with no server authentication** — the protocol offers neither; keep this hop inside a trusted segment (see [PROTOCOLS-AND-CRYPTO §3.5](PROTOCOLS-AND-CRYPTO.md)) | ✅ P54 |
 | E5 | pam-server | Active Directory / Entra / OIDC (identity zone) | **636** / 443 | **LDAPS** / HTTPS | Authn + group→role mapping (LDAPS, Entra ROPC, OIDC) | ✅ |
 | E6 | pam-server | Active Directory (identity zone) | 88 | Kerberos | Optional Kerberos auth | 🔷 P3b |
 | E7 | pam-server | AD / target | 636 / 22 / 5986 | LDAPS / SSH / WinRM | Credential rotation (password change), reconciliation | ✅ P7 |
@@ -102,6 +103,7 @@ flowchart LR
     subgraph TGT["Target zone (IT / OT)"]
         L["Linux<br/>:22"]
         W["Windows<br/>:5986 winrm"]
+        V["VNC desktop<br/>:5900"]
         PG[("PostgreSQL target<br/>:5432")]
         MS[("SQL Server target<br/>:1433")]
     end
@@ -118,6 +120,7 @@ flowchart LR
     S -->|"E3 5986 winrm"| W
     S -->|"E4a 4822 guacd"| G["guacd"]
     G -->|"E4b 3389 rdp"| W
+    G -->|"E4c 5900 vnc"| V
     S -->|"E10 5432"| PG
     S -->|"E13 1433"| MS
     S -->|"E5 636/443"| ID
@@ -144,7 +147,12 @@ allow  pam-server -> <target-cidr>:22          tcp   # linux targets (SSH)
 allow  pam-server -> <target-cidr>:5985,5986   tcp   # windows targets (WinRM)
 allow  pam-server -> <target-cidr>:5432        tcp   # postgres targets (db proxy)
 allow  pam-server -> <target-cidr>:1433        tcp   # sql server targets (mssql proxy)
-allow  pam-server -> guacd:4822                tcp   # rdp broker
+allow  pam-server -> guacd:4822                tcp   # rdp/vnc broker
+
+# Egress from guacd (it, not pam-server, reaches the graphical targets)
+allow  guacd      -> <target-cidr>:3389        tcp   # rdp targets
+allow  guacd      -> <target-cidr>:5900        tcp   # vnc targets
+deny   guacd      -> any                              # default deny
 allow  pam-server -> <idp-cidr>:636,443,88     tcp   # AD/Entra/OIDC (+ Conjur:443, if enabled)
 allow  pam-server -> <siem>:514                 udp   # audit forwarding (DEFAULT proto)
 allow  pam-server -> <siem>:514,6514           tcp   # audit forwarding over TCP/TLS; syslog alerts
@@ -190,6 +198,7 @@ specific target hosts and protocols, and default-deny everything else across the
 
 | Date | Change |
 |---|---|
+| 2026-07-29 | **Phase 54 — VNC connector.** No new listener: the in-portal VNC viewer rides the existing `:8080`/443 control plane (a WebSocket upgrade of `GET /api/targets/{id}/vnc`, preceded by `POST /api/vnc-token`), exactly as the RDP viewer does. New egress **E4c**: guacd → VNC target on **5900**, plaintext RFB with no server authentication, so that hop belongs inside a trusted segment. Diagram and firewall summary updated (guacd's own egress is now stated separately); discovery probes 5900 |
 | 2026-07-29 | **Phase 53 — SQL Server (TDS) session proxy.** New `:1433` listener (`PAM_MSSQL_ADDR`, off by default) — the first new listener since Phase 24 — with ingress I6 and egress E13 to SQL Server targets on `:1433`. Crypto made explicit for both DB proxies: TLS is negotiated **in-protocol** (Postgres `SSLRequest`, TDS PRELOGIN), so a generic ingress cannot terminate it — native `PAM_TLS_CERT/KEY` is required for encrypted operator legs, `Encrypt=Mandatory` clients refuse a plaintext proxy, TDS 8.0 "strict" is unsupported, `PAM_REQUIRE_DB_CLIENT_TLS` fail-closes both, and the upstream legs verify via the shared `PAM_DB_UPSTREAM_CA`/`_TLS_VERIFY`. Diagram, firewall summary and OT placement updated; the K8s Service/Helm map neither DB port by default |
 | 2026-07-23 | **Helm NetworkPolicy: pam→guacd egress.** When `guacd.enabled` + `networkPolicy.enabled`, the pam-server default-deny NetworkPolicy now includes the `pam-server → guacd:4822` egress rule (E4a) — it was only in the raw k8s manifest, so a Helm deploy with a narrowed `egressTargetCIDRs` blocked the bundled guacd. guacd resource limits raised (256Mi→512Mi) since a large RDP display is a ~64 MiB framebuffer; guacd resource names re-truncated to the 63-char limit |
 | 2026-07-23 | **In-portal RDP viewer** — the browser now renders RDP over the **existing** `:8080/443` control plane (a WebSocket upgrade of `GET /api/targets/{id}/rdp`, preceded by `POST /api/rdp-token`); no new listener. The guacd egress (E4a `:4822` → E4b `:3389`) is unchanged |

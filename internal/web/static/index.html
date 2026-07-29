@@ -52,7 +52,8 @@
   .watchpane { height: 55vh; overflow-y: auto; background: #020402;
     border: 1px solid #123c1f; padding: 4px 6px; white-space: pre-wrap;
     word-break: break-all; margin: 4px 0; }
-  /* In-portal RDP viewer overlay (Guacamole canvas). */
+  /* In-portal graphical viewer overlay, RDP and VNC alike (Guacamole canvas).
+     The rdp* class names predate VNC; both viewers share this one overlay. */
   .rdpwrap { position: fixed; inset: 0; z-index: 50; background: #050705;
     display: flex; flex-direction: column; }
   .rdpbar { flex: 0 0 auto; padding: 4px 12px; border-bottom: 1px solid #123c1f;
@@ -104,7 +105,7 @@
   // never loads for the sign-on screen, non-RDP roles, or guacd-disabled deploys.
   // GUAC_SRC is a content-addressed path (…?v=<hash>) so an upgrade busts the cache.
   const GUAC_SRC = "__GUAC_SRC__";
-  let rdpActive = false, guacPromise = null;
+  let rdpActive = false, guacPromise = null; // rdpActive: a graphical viewer (RDP or VNC) owns the keyboard
   function loadGuac() {
     // Memoize the resolved module, but reset on failure so a transient error retries.
     if (!guacPromise) {
@@ -508,28 +509,37 @@
     } catch (e) { say("CPF9999: " + e.message, true); render(); }
   }
 
-  // openRDP mints a short-lived token, then launches the in-portal RDP viewer for
-  // an rdp-protocol target. The credential is injected server-side at the guacd
-  // handshake; the browser only ever receives the rendered display.
-  async function openRDP(t) {
-    if (t.protocol !== "rdp") { say("CPF0002: TARGET " + String(t.name).toUpperCase() + " IS NOT RDP.", true); render(); return; }
+  // VIEWERS describes the graphical protocols the portal can render. Both go
+  // through guacd and differ only in the label, the default port and the two
+  // server paths — the tunnel enforces identical authorization for each.
+  const VIEWERS = {
+    rdp: { label: "RDP", port: 3389, tokenPath: "/api/rdp-token", tunnel: "/rdp" },
+    vnc: { label: "VNC", port: 5900, tokenPath: "/api/vnc-token", tunnel: "/vnc" },
+  };
+
+  // openViewer mints a short-lived token, then launches the in-portal viewer for
+  // an rdp- or vnc-protocol target. The credential is injected server-side at the
+  // guacd handshake; the browser only ever receives the rendered display.
+  async function openViewer(t) {
+    const v = VIEWERS[t.protocol];
+    if (!v) { say("CPF0002: TARGET " + String(t.name).toUpperCase() + " HAS NO IN-PORTAL VIEWER.", true); render(); return; }
     let Guac, tok;
     try {
       Guac = await loadGuac();
-      tok = (await api("POST", "/api/rdp-token")).token;
-    } catch (e) { say("CPF9999: " + String(e.message || "RDP VIEWER UNAVAILABLE").toUpperCase(), true); render(); return; }
-    startRDP(Guac, t, tok);
+      tok = (await api("POST", v.tokenPath)).token;
+    } catch (e) { say("CPF9999: " + String(e.message || (v.label + " VIEWER UNAVAILABLE")).toUpperCase(), true); render(); return; }
+    startViewer(Guac, t, tok, v);
   }
 
-  // startRDP builds the fullscreen viewer overlay, wires the Guacamole client to
+  // startViewer builds the fullscreen viewer overlay, wires the Guacamole client to
   // the WebSocket tunnel, and forwards keyboard/mouse. Keyboard/Mouse are bound to
   // the overlay element (not document), so removing the overlay on teardown drops
   // every listener — guacamole-common-js has no detach API. Ctrl+Alt+Q disconnects
   // and is swallowed inside onkeydown so the chord never reaches the remote host.
-  function startRDP(Guac, t, tok) {
+  function startViewer(Guac, t, tok, v) {
     const wrap = document.createElement("div"); wrap.className = "rdpwrap"; wrap.tabIndex = -1;
     const bar = document.createElement("div"); bar.className = "rdpbar";
-    bar.innerHTML = `<span><span class="white">RDP</span> ${esc(t.name)} <span class="cyan">${esc(t.host)}:${esc(t.port || 3389)}</span></span>` +
+    bar.innerHTML = `<span><span class="white">${esc(v.label)}</span> ${esc(t.name)} <span class="cyan">${esc(t.host)}:${esc(t.port || v.port)}</span></span>` +
       `<span class="amber">Ctrl+Alt+Q = disconnect</span>`;
     const view = document.createElement("div"); view.className = "rdpview";
     wrap.appendChild(bar); wrap.appendChild(view); document.body.appendChild(wrap);
@@ -538,7 +548,7 @@
 
     const w = Math.max(640, Math.min(view.clientWidth || 1024, 4096));
     const h = Math.max(480, Math.min((window.innerHeight - 30) || 768, 4096));
-    const tunnel = new Guac.WebSocketTunnel("/api/targets/" + t.id + "/rdp");
+    const tunnel = new Guac.WebSocketTunnel("/api/targets/" + t.id + v.tunnel);
     const client = new Guac.Client(tunnel);
     const display = client.getDisplay();
     view.appendChild(display.getElement());
@@ -548,7 +558,7 @@
       if (closed) return; closed = true; rdpActive = false;
       try { client.disconnect(); } catch (e) {}
       wrap.remove(); // drops the Keyboard/Mouse listeners bound to the overlay
-      say(msg || ("RDP SESSION TO " + String(t.name).toUpperCase() + " CLOSED."), !!isErr);
+      say(msg || (v.label + " SESSION TO " + String(t.name).toUpperCase() + " CLOSED."), !!isErr);
       render(); focusPrimary();
     };
 
@@ -557,7 +567,7 @@
     const keyboard = new Guac.Keyboard(wrap);
     keyboard.onkeydown = (sym) => {
       // Ctrl+Alt+Q (q = keysym 0x071 / Q = 0x051) disconnects; return without
-      // forwarding so the chord is never sent to the privileged Windows session.
+      // forwarding so the chord is never sent to the privileged remote session.
       if (keyboard.modifiers.ctrl && keyboard.modifiers.alt && (sym === 0x071 || sym === 0x051)) {
         teardown();
         return true;
@@ -567,8 +577,8 @@
     keyboard.onkeyup = (sym) => client.sendKeyEvent(0, sym);
 
     const errMsg = (st, what) => "CPF9999: " + what + " — " + String((st && st.message) || "error").toUpperCase();
-    client.onerror = (st) => teardown(errMsg(st, "RDP"), true);
-    tunnel.onerror = (st) => teardown(errMsg(st, "RDP TUNNEL"), true);
+    client.onerror = (st) => teardown(errMsg(st, v.label), true);
+    tunnel.onerror = (st) => teardown(errMsg(st, v.label + " TUNNEL"), true);
     client.onstatechange = (state) => { if (state === 5) teardown(); };       // 5 = client DISCONNECTED
     tunnel.onstatechange = (state) => { if (state === 2) teardown(); };        // 2 = tunnel CLOSED (e.g. admin kill / clean server close)
 
@@ -687,7 +697,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
         const canConnect = can("connect");
         term.innerHTML = `${head("PAMWRKTGT", "Work with Targets")}
 Type options, press Enter.
-  <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "7=Open RDP (rdp targets)" : "", canManage ? "8=Assign to safe" : "", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
+  <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "7=Open viewer (rdp/vnc targets)" : "", canManage ? "8=Assign to safe" : "", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Name</th><th>Host</th><th>Port</th><th>OS</th><th>Proto</th><th>Approval</th><th>Clip</th><th>Safe</th></tr>
@@ -703,7 +713,7 @@ ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add target" : ""}   F12=Cancel
               if (o === "2") { editTarget = t; return go("targetchange"); }
               else if (o === "4") { await api("DELETE", `/api/targets/${t.id}`); say(`TARGET ${String(t.name).toUpperCase()} DELETED.`); }
               else if (o === "5") { return openGrants(t.id); }
-              else if (o === "7") { return openRDP(t); }
+              else if (o === "7") { return openViewer(t); }
               else if (o === "8") { return openTargetSafe(t); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
@@ -722,7 +732,7 @@ Type choices, press Enter.
 <label>Host  . . . . . . . :  <input name="host" size="24" required></label>
 <label>Port  . . . . . . . :  <input name="port" type="number" value="22" min="1" max="65535" size="6" required></label>
 <label>OS type . . . . . . :  <select name="os_type"><option>linux</option><option>windows</option></select>   <span class="cyan">linux, windows</span></label>
-<label>Protocol  . . . . . :  <select name="protocol"><option>ssh</option><option>winrm</option><option>rdp</option><option>postgres</option><option>mssql</option></select>   <span class="cyan">ssh, winrm, rdp, postgres, mssql</span></label>
+<label>Protocol  . . . . . :  <select name="protocol"><option>ssh</option><option>winrm</option><option>rdp</option><option>vnc</option><option>postgres</option><option>mssql</option></select>   <span class="cyan">ssh, winrm, rdp, vnc, postgres, mssql</span></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox">   <span class="cyan">connections need an approved request (4-eyes)</span></label>
 <label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value="">(global)</option><option>allow</option><option>readonly</option><option>deny</option></select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
 <label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value="">(global)</option><option>off</option><option>meta</option><option>full</option></select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
@@ -754,7 +764,7 @@ Editing target <span class="white">${esc(t.name)}</span> (id ${esc(t.id)}). Type
 <label>Host  . . . . . . . :  <input name="host" size="24" required value="${esc(t.host)}"></label>
 <label>Port  . . . . . . . :  <input name="port" type="number" min="1" max="65535" size="6" required value="${esc(t.port)}"></label>
 <label>OS type . . . . . . :  <select name="os_type">${sel(["linux", "windows"], t.os_type)}</select></label>
-<label>Protocol  . . . . . :  <select name="protocol">${sel(["ssh", "winrm", "rdp", "postgres", "mssql"], t.protocol)}</select></label>
+<label>Protocol  . . . . . :  <select name="protocol">${sel(["ssh", "winrm", "rdp", "vnc", "postgres", "mssql"], t.protocol)}</select></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox"${t.require_approval ? " checked" : ""}>   <span class="cyan">connections need an approved request (4-eyes)</span></label>
 <label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value=""${t.rdp_clipboard ? "" : " selected"}>(global)</option>${sel(["allow", "readonly", "deny"], t.rdp_clipboard)}</select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
 <label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value=""${t.rdp_clipboard_audit ? "" : " selected"}>(global)</option>${sel(["off", "meta", "full"], t.rdp_clipboard_audit)}</select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
@@ -1838,7 +1848,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
       discovery() {
         back = "main";
         term.innerHTML = `${head("PAMDISC", "Discovery Scan")}
-Probe hosts for reachable SSH / WinRM / RDP ports (no credentials used).
+Probe hosts for reachable SSH / WinRM / RDP / VNC ports (no credentials used).
 
 <form id="f-scan" class="indent">
 <label>Hosts . . . . . . . :  <input name="hosts" size="40" required autofocus placeholder="10.0.0.5 10.0.0.6 host.example">   <span class="cyan">space/comma separated</span></label>

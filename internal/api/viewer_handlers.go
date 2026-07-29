@@ -18,50 +18,108 @@ import (
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
-// rdpTokenTTL bounds the lifetime of a browser RDP WebSocket token. It is short
-// because the token travels in the WS URL (browsers cannot set request headers on
-// a WebSocket handshake), where it can leak via proxy/access logs.
+// rdpTokenTTL bounds the lifetime of a browser viewer WebSocket token. It is
+// short because the token travels in the WS URL (browsers cannot set request
+// headers on a WebSocket handshake), where it can leak via proxy/access logs.
 const rdpTokenTTL = 60 * time.Second
 
-// rdpToken mints a short-lived session token for the in-portal RDP viewer. The
-// caller is already authenticated (X-API-Key) and holds CapConnect; the minted
-// token inherits their identity but expires within rdpTokenTTL, and rdpTunnel
-// re-checks every authorization when the WebSocket connects. This keeps the
-// operator's long-lived token out of the WS URL. Requires CapConnect.
+// viewerProto describes one guacd-brokered graphical protocol. RDP and VNC reach
+// a target through the same chokepoint and the same authorization gates, so they
+// share one tunnel implementation and differ only in these few values. Keeping
+// the gates in ONE function is deliberate: duplicating them is how two paths that
+// are supposed to be equivalent quietly stop being (Phase 52c was a whole pass
+// fixing gates that had drifted apart).
+type viewerProto struct {
+	name        string // target protocol, audit prefix and session-registry kind
+	label       string // human-facing name for error messages
+	defaultPort int
+	scope       string // session scope minted for this viewer's tunnel token
+	// extra builds the guacd parameters this protocol needs beyond the common
+	// ones, given the effective clipboard policy.
+	extra func(s *Server, clipboard string) map[string]string
+	// gateArgs are the guacd parameters this protocol enforces the clipboard
+	// policy through. If guacd does not advertise them, the policy cannot be
+	// applied and a non-permissive one must refuse rather than run ungated.
+	gateArgs []string
+}
+
+var (
+	protoRDP = viewerProto{
+		name: "rdp", label: "RDP", defaultPort: 3389, scope: auth.SessionScopeRDP,
+		extra: func(s *Server, clipboard string) map[string]string {
+			return rdpExtra(s.guacdRDPSecurity, s.guacdIgnoreCert, clipboard)
+		},
+		gateArgs: []string{"disable-copy", "disable-paste"},
+	}
+	protoVNC = viewerProto{
+		name: "vnc", label: "VNC", defaultPort: 5900, scope: auth.SessionScopeVNC,
+		extra: func(_ *Server, clipboard string) map[string]string {
+			return vncExtra(clipboard)
+		},
+		gateArgs: []string{"disable-copy", "disable-paste"},
+	}
+)
+
+// rdpToken mints a short-lived session token for the in-portal RDP viewer.
 func (s *Server) rdpToken(w http.ResponseWriter, r *http.Request) {
+	s.viewerToken(w, r, protoRDP)
+}
+
+// vncToken mints a short-lived session token for the in-portal VNC viewer.
+func (s *Server) vncToken(w http.ResponseWriter, r *http.Request) {
+	s.viewerToken(w, r, protoVNC)
+}
+
+// viewerToken mints a short-lived session token for an in-portal graphical
+// viewer. The caller is already authenticated (X-API-Key) and holds CapConnect;
+// the minted token inherits their identity but expires within rdpTokenTTL, and
+// the tunnel re-checks every authorization when the WebSocket connects. This
+// keeps the operator's long-lived token out of the WS URL. Requires CapConnect.
+func (s *Server) viewerToken(w http.ResponseWriter, r *http.Request, proto viewerProto) {
 	if s.guacdAddr == "" {
-		writeError(w, http.StatusNotFound, "RDP is not configured")
+		writeError(w, http.StatusNotFound, proto.label+" is not configured")
 		return
 	}
 	p := principalFrom(r.Context())
-	// Mint an RDP-tunnel-scoped token: it resolves to a TunnelOnly principal the API
+	// Mint a tunnel-scoped token: it resolves to a TunnelOnly principal the API
 	// middleware refuses, so a copy leaked from the WS URL is useless elsewhere and
 	// cannot re-mint. A break-glass caller keeps the break-glass scope so the tunnel
 	// still fires the loud audit and bypasses the approval gate as break-glass must
 	// (break-glass is already full-admin, so this adds no exposure).
-	scope := auth.SessionScopeRDP
+	scope := proto.scope
 	if p.BreakGlass {
 		scope = auth.SessionScopeBreakGlass
 	}
 	token, sess, err := s.issueSessionTTL(r.Context(), p, scope, rdpTokenTTL)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not mint RDP token")
+		writeError(w, http.StatusInternalServerError, "could not mint "+proto.label+" token")
 		return
 	}
-	s.audit(r.Context(), "rdp.token", "ttl:"+rdpTokenTTL.String())
+	s.audit(r.Context(), proto.name+".token", "ttl:"+rdpTokenTTL.String())
 	writeJSON(w, http.StatusOK, map[string]any{"token": token, "expires_at": sess.ExpiresAt})
 }
 
-// rdpTunnel bridges a browser WebSocket to a guacd RDP session for a Windows
-// target. The credential is decrypted just-in-time and injected into the guacd
-// handshake — it reaches guacd (which drives RDP) but never the browser, which
-// only receives the rendered display. Requires CapConnect.
+// rdpTunnel bridges a browser WebSocket to a guacd RDP session.
+func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
+	s.viewerTunnel(w, r, protoRDP)
+}
+
+// vncTunnel bridges a browser WebSocket to a guacd VNC session.
+func (s *Server) vncTunnel(w http.ResponseWriter, r *http.Request) {
+	s.viewerTunnel(w, r, protoVNC)
+}
+
+// viewerTunnel bridges a browser WebSocket to a guacd session for a graphical
+// target (RDP or VNC). The credential is decrypted just-in-time and injected into
+// the guacd handshake — it reaches guacd (which drives the remote protocol) but
+// never the browser, which only receives the rendered display. Requires
+// CapConnect.
 //
 // The token is read from the query string because browsers cannot set custom
 // headers on a WebSocket handshake; prefer a short-lived session token.
-func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
+func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto viewerProto) {
 	if s.guacdAddr == "" {
-		writeError(w, http.StatusNotFound, "RDP is not configured")
+		writeError(w, http.StatusNotFound, proto.label+" is not configured")
 		return
 	}
 	principal, err := s.resolver.Resolve(r.Context(), r.URL.Query().Get("token"))
@@ -72,7 +130,7 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 		// an api.auth_failed record — so guessing tunnel tokens here was
 		// unthrottled and invisible to the risk engine and the SIEM forwarder,
 		// while the same guessing against /api/* was both slowed and recorded.
-		s.authFailed(w, r, "rdp", "invalid or missing token")
+		s.authFailed(w, r, proto.name, "invalid or missing token")
 		return
 	}
 	// Resolving its own principal also means this handler must reproduce the rest
@@ -91,7 +149,7 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("authorization denied", "actor", principal.Name, "role", string(principal.Role),
 			"method", r.Method, "path", r.URL.Path)
 		s.audit(r.Context(), "authz.denied", r.Method+" "+r.URL.Path+" role:"+string(principal.Role))
-		writeError(w, http.StatusForbidden, "your role does not permit RDP access")
+		writeError(w, http.StatusForbidden, "your role does not permit "+proto.label+" access")
 		return
 	}
 	id, ok := idParam(w, r)
@@ -103,12 +161,12 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	if target.Protocol != "rdp" {
-		writeError(w, http.StatusUnprocessableEntity, "target protocol is not rdp")
+	if target.Protocol != proto.name {
+		writeError(w, http.StatusUnprocessableEntity, "target protocol is not "+proto.name)
 		return
 	}
-	if !s.protocolAllowed("rdp") {
-		writeError(w, http.StatusForbidden, "rdp is not allowed by policy")
+	if !s.protocolAllowed(proto.name) {
+		writeError(w, http.StatusForbidden, proto.name+" is not allowed by policy")
 		return
 	}
 	grants, err := s.store.EffectiveTargetGrants(r.Context(), target.ID)
@@ -167,7 +225,7 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 	secret, err := s.vault.Decrypt(r.Context(), cred.SecretEnc, store.CredentialAAD(target.ID, cred.ID))
 	if err != nil {
-		s.audit(withPrincipal(r.Context(), principal), "credential.decrypt_failed", fmt.Sprintf("credential:%d target:%s op:rdp", cred.ID, target.Name))
+		s.audit(withPrincipal(r.Context(), principal), "credential.decrypt_failed", fmt.Sprintf("credential:%d target:%s op:%s", cred.ID, target.Name, proto.name))
 		writeError(w, http.StatusInternalServerError, "decryption failed")
 		return
 	}
@@ -179,14 +237,14 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	port := target.Port
 	if port == 0 {
-		port = 3389
+		port = proto.defaultPort
 	}
 	// PAM_REQUIRE_RECORDING covers this path too now. guacd writes the recording,
 	// so "can we record?" here means "is a recording path configured?" — checked
 	// before the credential is used and before a desktop exists to watch.
 	if s.recordingRequired(s.guacdRecordingPath) {
-		s.audit(ctx, "rdp.refused", "target:"+target.Name+" reason:recording-required")
-		writeError(w, http.StatusServiceUnavailable, "recording is required but not configured for RDP")
+		s.audit(ctx, proto.name+".refused", "target:"+target.Name+" reason:recording-required")
+		writeError(w, http.StatusServiceUnavailable, "recording is required but not configured for "+proto.label)
 		return
 	}
 	var recName string
@@ -201,21 +259,41 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 	clipAudit := strictestClipAudit(s.rdpClipAudit, target.RDPClipboardAudit)
 
 	gconn, err := guacd.Connect(ctx, s.guacdAddr, guacd.Params{
-		Protocol: "rdp", Hostname: target.Host, Port: strconv.Itoa(port),
+		Protocol: proto.name, Hostname: target.Host, Port: strconv.Itoa(port),
 		Username: cred.Username, Password: secret,
 		Width:         clampDim(atoiOr(r.URL.Query().Get("width"), 1024)),
 		Height:        clampDim(atoiOr(r.URL.Query().Get("height"), 768)),
 		RecordingPath: s.guacdRecordingPath,
 		RecordingName: recName,
-		Extra:         rdpExtra(s.guacdRDPSecurity, s.guacdIgnoreCert, clipMode),
+		Extra:         proto.extra(s, clipMode),
 	})
 	if err != nil {
-		s.log.Error("rdp connect failed", "target", target.Name, "err", err)
-		s.audit(ctx, "rdp.error", "target:"+target.Name+" error:"+err.Error())
-		writeError(w, http.StatusBadGateway, "rdp connection failed")
+		s.log.Error("viewer connect failed", "protocol", proto.name, "target", target.Name, "err", err)
+		s.audit(ctx, proto.name+".error", "target:"+target.Name+" error:"+err.Error())
+		writeError(w, http.StatusBadGateway, proto.name+" connection failed")
 		return
 	}
 	defer gconn.Close()
+
+	// A clipboard policy is enforced by guacd, through parameters guacd only
+	// applies if it advertised them — an unadvertised parameter is dropped, not
+	// refused. So a guacd that cannot gate the clipboard would render an ungated
+	// desktop while the portal showed the policy as in force. Refuse instead: a
+	// control that silently does nothing is worse than one that is off.
+	if clipMode != "allow" {
+		for _, arg := range proto.gateArgs {
+			if gconn.Supports(arg) {
+				continue
+			}
+			s.log.Error("viewer session refused: guacd cannot enforce the clipboard policy",
+				"protocol", proto.name, "target", target.Name, "missing_param", arg, "policy", clipMode)
+			s.audit(ctx, proto.name+".refused",
+				"target:"+target.Name+" reason:clipboard-unenforceable clipboard:"+clipMode+" missing:"+arg)
+			writeError(w, http.StatusBadGateway,
+				"guacd cannot enforce the configured clipboard policy for "+proto.label)
+			return
+		}
+	}
 
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"guacamole"}})
 	if err != nil {
@@ -227,18 +305,18 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 	// privileged desktop that leaves no durable record of having been opened is
 	// exactly what this system exists to prevent. Best-effort was the odd one out
 	// here, not the norm.
-	if err := s.auditAs(ctx, actorFrom(ctx), "rdp.connect",
+	if err := s.auditAs(ctx, actorFrom(ctx), proto.name+".connect",
 		"target:"+target.Name+" cred_user:"+cred.Username+" recording:"+recName+" clipboard:"+clipMode); err != nil {
-		s.log.Error("rdp session refused: audit unavailable", "target", target.Name, "err", err)
+		s.log.Error("viewer session refused: audit unavailable", "protocol", proto.name, "target", target.Name, "err", err)
 		ws.Close(websocket.StatusInternalError, "audit log unavailable")
 		return
 	}
-	defer s.audit(ctx, "rdp.end", "target:"+target.Name)
-	s.log.Info("rdp session", "actor", principal.Name, "target", target.Name)
+	defer s.audit(ctx, proto.name+".end", "target:"+target.Name)
+	s.log.Info("viewer session", "protocol", proto.name, "actor", principal.Name, "target", target.Name)
 
 	if s.sessions != nil {
 		sid := s.sessions.Register(session.Info{
-			Actor: principal.Name, Target: target.Name, Protocol: "rdp", Remote: r.RemoteAddr, Started: time.Now(),
+			Actor: principal.Name, Target: target.Name, Protocol: proto.name, Remote: r.RemoteAddr, Started: time.Now(),
 		}, func() { cancel(); gconn.Close() })
 		defer s.sessions.Remove(sid)
 	}
@@ -264,7 +342,7 @@ func (s *Server) rdpTunnel(w http.ResponseWriter, r *http.Request) {
 	clip := newClipWatcher(clipAudit)
 	auditCtx := context.WithoutCancel(ctx)
 	bridgeGuacd(ctx, ws, gconn, clip, func(t clipTransfer) {
-		s.audit(auditCtx, "rdp.clipboard", "target:"+target.Name+" "+t.Detail())
+		s.audit(auditCtx, proto.name+".clipboard", "target:"+target.Name+" "+t.Detail())
 	})
 }
 
@@ -453,7 +531,16 @@ func strictestClipAudit(global, target string) string {
 // every mode — file transfer belongs on the audited SFTP path, not on a channel
 // that leaves no record.
 func rdpClipboardParams(mode string) map[string]string {
-	m := map[string]string{"enable-drive": "false"}
+	m := clipboardParams(mode)
+	m["enable-drive"] = "false"
+	return m
+}
+
+// clipboardParams translates the clipboard policy into the two guacd parameters
+// that enforce it. guacd accepts the same pair for RDP and VNC, so both viewers
+// gate the clipboard through this one mapping.
+func clipboardParams(mode string) map[string]string {
+	m := map[string]string{}
 	switch mode {
 	case "deny":
 		m["disable-copy"], m["disable-paste"] = "true", "true"
@@ -463,4 +550,20 @@ func rdpClipboardParams(mode string) map[string]string {
 		m["disable-copy"], m["disable-paste"] = "false", "false"
 	}
 	return m
+}
+
+// vncExtra builds the guacd VNC parameters. VNC has no transport security of its
+// own to configure (classic RFB is plaintext and its authentication is a DES
+// challenge over a password truncated to 8 characters), so unlike RDP there is no
+// security mode or certificate here — which is exactly why the credential stays
+// server-side and guacd belongs on a private network.
+//
+// enable-sftp is forced off: it is VNC's file-transfer channel and therefore the
+// analog of RDP's drive redirection, an unaudited way to move files that this
+// system exists to prevent. guacd defaults it off; sending it explicitly means a
+// changed default cannot open the channel behind us.
+func vncExtra(clipboard string) map[string]string {
+	extra := clipboardParams(clipboard)
+	extra["enable-sftp"] = "false"
+	return extra
 }

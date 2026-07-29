@@ -148,6 +148,25 @@ type Conn struct {
 	net.Conn
 	r  *bufio.Reader
 	ID string
+	// args is the parameter-name list guacd advertised for this protocol during
+	// the handshake. It is kept because a parameter guacd does not advertise is
+	// silently dropped (Params.value returns "" for it), so a caller enforcing a
+	// policy through a parameter must be able to ask whether that parameter
+	// exists rather than assume it landed.
+	args []string
+}
+
+// Supports reports whether guacd advertised the named connection parameter for
+// this protocol. A caller gating something through a parameter (the clipboard,
+// say) must check, because an unadvertised parameter is dropped, not refused —
+// which would leave the gate silently open.
+func (c *Conn) Supports(name string) bool {
+	for _, a := range c.args {
+		if a == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Read reads from the buffered reader, so any bytes buffered during the
@@ -242,6 +261,10 @@ func (c *Conn) handshake(p Params) (string, error) {
 	if argsInst.Opcode != "args" {
 		return "", fmt.Errorf("guacd: expected args, got %q", argsInst.Opcode)
 	}
+	// Remember what guacd said it accepts. A parameter it did not advertise is
+	// dropped below rather than refused, so a caller enforcing policy through one
+	// needs to be able to ask (see Conn.Supports).
+	c.args = append([]string(nil), argsInst.Args...)
 	// 3. client capabilities.
 	w, h, dpi := p.Width, p.Height, p.DPI
 	if w == 0 {

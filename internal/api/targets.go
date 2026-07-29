@@ -12,7 +12,7 @@ import (
 
 var (
 	validOS       = map[string]bool{"linux": true, "windows": true}
-	validProtocol = map[string]bool{"ssh": true, "winrm": true, "rdp": true, "postgres": true, "mssql": true}
+	validProtocol = map[string]bool{"ssh": true, "winrm": true, "rdp": true, "vnc": true, "postgres": true, "mssql": true}
 	// "ssh_ca" is a Zero Standing Privilege credential (Phase 22): it stores no
 	// secret — the proxy mints a short-lived certificate just-in-time instead.
 	validSecret = map[string]bool{"password": true, "ssh_key": true, "ssh_ca": true}
@@ -64,7 +64,7 @@ func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
 	case !validOS[in.OSType]:
 		writeError(w, http.StatusUnprocessableEntity, `os_type must be "linux" or "windows"`)
 	case !validProtocol[in.Protocol]:
-		writeError(w, http.StatusUnprocessableEntity, `protocol must be "ssh", "winrm", "rdp", "postgres" or "mssql"`)
+		writeError(w, http.StatusUnprocessableEntity, `protocol must be "ssh", "winrm", "rdp", "vnc", "postgres" or "mssql"`)
 	case !s.protocolAllowed(in.Protocol):
 		writeError(w, http.StatusUnprocessableEntity, "protocol "+in.Protocol+" is not allowed by policy")
 	case !validOverride(clipboardRank, in.RDPClipboard):

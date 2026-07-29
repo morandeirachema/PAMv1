@@ -11,6 +11,14 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **VNC connector** (Phase 54) — `vnc` is a first-class target protocol,
+  brokered through guacd and rendered in the portal by the same viewer as RDP
+  (`POST /api/vnc-token`, `GET /api/targets/{id}/vnc`). Both viewers now share
+  one tunnel implementation, so every authorization gate is executed once for
+  both. The clipboard gate covers VNC, VNC's SFTP file channel is forced off,
+  and a clipboard policy guacd cannot enforce now refuses the session instead of
+  running ungated (this also protects RDP).
+
 - **SQL Server session proxy** (Phase 53) — `PAM_MSSQL_ADDR` brokers `mssql`
   targets over TDS the way `PAM_DB_ADDR` brokers PostgreSQL: the same
   authorization gates, the vaulted SQL login injected just-in-time into the

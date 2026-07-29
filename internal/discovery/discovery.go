@@ -26,13 +26,14 @@ var portProtocol = map[int][2]string{
 	5985: {"winrm", "windows"},
 	5986: {"winrm", "windows"},
 	3389: {"rdp", "windows"},
+	5900: {"vnc", "linux"},
 	// SQL Server also runs on Linux; the OS guess is corrected by the operator,
 	// the same caveat that already applies to the winrm/rdp rows.
 	1433: {"mssql", "windows"},
 }
 
 // DefaultPorts is the set probed when none is given.
-func DefaultPorts() []int { return []int{22, 1433, 3389, 5985, 5986} }
+func DefaultPorts() []int { return []int{22, 1433, 3389, 5900, 5985, 5986} }
 
 // Scanner probes hosts for open management ports.
 type Scanner struct {

@@ -3,7 +3,7 @@
 > Every protocol pamv1 speaks or brokers, and every cryptographic mechanism it
 > relies on — with the file that implements each one.
 >
-> Last updated: 2026-07-29 · Reflects: Phases 0–53.
+> Last updated: 2026-07-29 · Reflects: Phases 0–54.
 
 > 🟢 **Living document** — updated in the same change as the code. Whenever a
 > protocol, cipher, key, TLS posture or transport-security env var changes, this
@@ -27,8 +27,11 @@ live in [SECURITY-GAPS.md](SECURITY-GAPS.md). This file is the *what and why*.
   a pluggable KEK (local key, HashiCorp Vault Transit, AWS KMS, or a PKCS#11
   HSM). The database only ever holds the envelope.
 - **In transit**, every credential-bearing leg *can* be TLS — with one exception:
-  the **pamv1 → guacd hop is always plain TCP** and carries the vaulted RDP
-  credential, so guacd belongs on a private network or in the same pod. The TDS
+  the **pamv1 → guacd hop is always plain TCP** and carries the vaulted RDP or
+  VNC credential, so guacd belongs on a private network or in the same pod.
+  Classic VNC adds a second exception of its own — it has no transport security
+  at all, and its authentication is DES over an 8-character password (§3.5). The
+  TDS
   **upstream** leg is the one place TLS cannot be opted out of; the
   operator-facing legs (portal/API, both database proxies) run plaintext until
   you configure a certificate. §4 is the honest table.
@@ -234,7 +237,7 @@ attacker which check failed.
 |---|---|---|---|
 | **HTTP/HTTPS** REST + 5250 portal | `PAM_LISTEN_ADDR`, `:8080` | HTTPS with `PAM_TLS_CERT/KEY`; `PAM_REQUIRE_HTTPS` fails closed | Auth: `X-API-Key`, or `Bearer` for broker/MCP and the app-secrets API |
 | **Server-Sent Events** | same port | follows the server | Live session monitoring (`/api/sessions/{id}/stream`) and the MCP stream |
-| **WebSocket** | same port | follows the server | In-portal RDP viewer; subprotocol `guacamole`. The token rides the URL because browsers cannot set headers on a WS handshake — so it is short-lived and **tunnel-scoped**: leaked from an access log it cannot call the API |
+| **WebSocket** | same port | follows the server | In-portal RDP **and VNC** viewers; subprotocol `guacamole`. The token rides the URL because browsers cannot set headers on a WS handshake — so it is short-lived and **tunnel-scoped**: leaked from an access log it cannot call the API |
 | **SSH** | `PAM_SSH_ADDR`, `:2222` | yes | Operators authenticate with their PAM key as the SSH password; only session channels are proxied; 120-second pre-auth deadline |
 | **PostgreSQL wire** | `PAM_DB_ADDR`, off (`:5433` by convention) | only with a cert | `SSLRequest` answered `S`/`N`; **GSSEnc always refused** |
 | **TDS (SQL Server)** | `PAM_MSSQL_ADDR`, off (`:1433` by convention) | `ENCRYPT_ON` with a cert, else `NOT_SUP` | See §3.4 |
@@ -248,7 +251,7 @@ attacker which check failed.
 | **PostgreSQL** to database targets | `internal/proxy/dbproxy.go` | TLS if the server accepts; **verified** only with `PAM_DB_UPSTREAM_CA`/`_TLS_VERIFY` |
 | **TDS** to SQL Server targets | `internal/proxy/mssqlproxy.go` | **TLS mandatory** — a plaintext upstream is refused outright |
 | **WinRM** (WS-Management SOAP) | `internal/winrm` | **HTTPS by default** (`PAM_WINRM_HTTPS=true`); Basic or **NTLM** |
-| **guacd** (Guacamole protocol) for RDP | `internal/guacd` | **Plain TCP on this hop** — keep guacd on a private network; guacd→RDP is cert-verified unless `PAM_GUACD_IGNORE_CERT` |
+| **guacd** (Guacamole protocol) for RDP **and VNC** | `internal/guacd` | **Plain TCP on this hop** — keep guacd on a private network; guacd→RDP is cert-verified unless `PAM_GUACD_IGNORE_CERT`; guacd→VNC has nothing to verify (§3.5) |
 | **LDAP/LDAPS** (Active Directory) | `internal/auth/ldap.go` | **`ldaps://` enforced** — the scheme is rejected otherwise, because bind passwords travel on it |
 | **Entra ID / OIDC** | `internal/auth/entra.go`, `internal/oidc` | Entra URLs are constructed `https://`. For a **generic OIDC provider the scheme is not enforced** — an `http://` issuer would be accepted, unlike Vault Transit, which rejects one. Configure HTTPS endpoints |
 | **Syslog RFC 5424 / CEF / LEEF** (SIEM) | `internal/auditfwd` | Only with `PAM_AUDIT_FORWARD_PROTO=tls` — and then certificate verification is **always on**, with no skip knob. RFC 5425 octet-counted framing applies to the `rfc5424` format; CEF and LEEF stay newline-delimited on every transport |
@@ -318,6 +321,42 @@ to specification-derived byte literals and the brokering is proven end to end
 against an in-process fake upstream, but no licensed instance exists in CI. See
 [EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md).
 
+### 3.5 VNC in detail, and why it is brokered rather than exposed
+
+VNC (Phase 54) is rendered in the portal through guacd exactly as RDP is, and it
+runs the same authorization gates in the same function. What differs is that VNC
+brings **no security of its own**:
+
+- **The wire is plaintext.** Classic RFB has no TLS. There is no certificate to
+  verify on the guacd→target hop and no `ignore-cert` decision to make — the
+  bytes, including the framebuffer of a privileged desktop, are in the clear.
+  Keep guacd and its targets on a private network.
+- **Authentication is DES with an 8-character key.** RFB security type 2 hands
+  the server a challenge, and the client replies with it encrypted under the
+  password — a 56-bit DES key. Every implementation therefore **truncates the
+  password to 8 characters**; a longer one is not stronger, its tail is
+  discarded. This is why the vaulted secret must never reach the operator: it is
+  short, offline-crackable from a captured handshake, and usually shared.
+- **There is no server authentication at all.** The client proves knowledge of
+  the password to the server; nothing proves the server is the right host. A
+  machine-in-the-middle on that hop is not detectable by the protocol.
+- **The file-transfer channel is forced off.** guacd can layer SFTP onto a VNC
+  session (`enable-sftp`); pamv1 always sends it disabled, the same stance it
+  takes on RDP drive redirection — file movement belongs on the audited SFTP
+  path, not on a channel that leaves no record.
+- **A clipboard policy that guacd cannot enforce refuses the session.** The gate
+  is applied through guacd's `disable-copy`/`disable-paste` parameters, and guacd
+  silently *drops* a parameter it did not advertise. So the tunnel checks the
+  handshake's advertised argument list and, if a non-permissive policy cannot be
+  applied, refuses with `vnc.refused … reason:clipboard-unenforceable` instead of
+  rendering an ungated desktop while the portal reports the policy as in force.
+  The same check protects RDP.
+
+**Not verified:** rendered pixels against every VNC server implementation. The
+brokering, credential injection and clipboard gating are proven end to end
+against an in-process fake guacd, and `deploy/docker/docker-compose.vnc-demo.yml`
+runs a real TigerVNC desktop for a by-hand check.
+
 ---
 
 ## 4. Where verification is opt-in (read this before deploying)
@@ -336,6 +375,7 @@ absence in the log is not evidence of safety. The LDAP row is strict by default:
 | Operator → DB proxies | plaintext unless a cert is configured | `PAM_TLS_CERT/KEY` + `PAM_REQUIRE_DB_CLIENT_TLS` |
 | Portal/API | plaintext HTTP | `PAM_TLS_CERT/KEY` + `PAM_REQUIRE_HTTPS` |
 | pamv1 → guacd | plain TCP, no TLS option | Keep it on a private network / same pod |
+| guacd → VNC target | plaintext, **no server authentication** (the protocol offers none) | Nothing to configure — isolate the segment; prefer RDP/SSH where you can choose |
 | LDAP | `ldaps://` enforced | (already strict; `PAM_LDAP_INSECURE_SKIP_VERIFY` is dev-only) |
 | SMTP alerts | opportunistic StartTLS | Use a webhook or TLS syslog for sensitive alerting |
 
@@ -372,6 +412,7 @@ For an auditor who wants the whole list on one screen.
 | SHA-256 | Key/token hashing, recording and export digests, recording hash chain, PKCE challenge |
 | HMAC-SHA-1 | TOTP only (RFC 6238 compatibility) |
 | MD5 | PostgreSQL MD5 auth (wire-protocol mandated) |
+| DES (56-bit, 8-char key) | Classic VNC authentication only — performed by **guacd**, not by pamv1, and mandated by RFB security type 2. Listed because it bounds how much a vaulted VNC password can protect (§3.5) |
 | NTLMv2 (MD4 NT hash, HMAC-MD5) | Optional WinRM auth (`PAM_WINRM_AUTH=ntlm`) — implemented by the `go-ntlmssp`/`bodgit` dependencies, not by pamv1. Legacy by nature; prefer HTTPS + Basic, or Kerberos at the target |
 | Ed25519 | SSH host key, SSH CA, rotated SSH keys, audit checkpoints, JWKS, and `EdDSA` SPIFFE-SVID token verification |
 | RSA (PKCS#1 v1.5 + SHA-256) | OIDC/Entra/SVID token verification |
@@ -404,4 +445,5 @@ For an auditor who wants the whole list on one screen.
 
 | Date | Change |
 |---|---|
+| 2026-07-29 | **Phase 54 — the VNC connector.** New §3.5: VNC is brokered through guacd like RDP but brings no security of its own — plaintext RFB, DES authentication over an 8-character-truncated password, and no server authentication — which is the whole argument for keeping the credential server-side and guacd private. `enable-sftp` is forced off (VNC's analog of RDP drive redirection), and a clipboard policy guacd does not advertise the parameters to enforce now **refuses the session** rather than running ungated (this check covers RDP too). Summary, inbound/outbound tables, the opt-in-verification table and the cryptographic inventory (DES) updated with it |
 | 2026-07-29 | First version, written from a file-by-file audit of the code: the vault envelope and its four KEK providers, recording sealing + hash chain, the two audit chains and their Ed25519 checkpoints, shared key custody, authentication-secret handling, SSH/ZSP/operator-certificate crypto, PostgreSQL SCRAM and TDS's keyless transform, the three token verifiers, supply-chain signing — plus the full inbound/outbound protocol matrix, the brokered (parsed) protocols, the TDS strictness rationale, and a single table of every place verification is opt-in. |
