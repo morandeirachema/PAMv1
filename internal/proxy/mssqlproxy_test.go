@@ -2,9 +2,15 @@ package proxy_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
 	"errors"
+	"math/big"
 	"net"
 	"os"
 	"path/filepath"
@@ -30,7 +36,8 @@ import (
 // SQL Server, so a passing test proves the proxy authenticated the upstream
 // with the vaulted secret — never the operator's PAM key.
 type fakeMSSQL struct {
-	addr string
+	addr    string
+	tlsConf *tls.Config
 
 	mu       sync.Mutex
 	user     string
@@ -48,7 +55,9 @@ func startFakeMSSQL(t *testing.T, wantPass string) *fakeMSSQL {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
-	f := &fakeMSSQL{addr: ln.Addr().String()}
+	f := &fakeMSSQL{addr: ln.Addr().String(), tlsConf: &tls.Config{
+		Certificates: []tls.Certificate{selfSignedCert(t)}, MinVersion: tls.VersionTLS12,
+	}}
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -65,7 +74,7 @@ func startFakeMSSQL(t *testing.T, wantPass string) *fakeMSSQL {
 // keeps the fixture free of certificate plumbing), LOGIN7 accepting only
 // wantPass, then a request loop answering each with DONE.
 func (f *fakeMSSQL) serve(conn net.Conn, wantPass string) {
-	defer conn.Close()
+	defer conn.Close() //nolint:staticcheck // the TLS wrapper below closes the same socket
 	c := tds.NewConn(conn)
 
 	typ, _, _, err := c.ReadMessage(1 << 20)
@@ -74,10 +83,19 @@ func (f *fakeMSSQL) serve(conn net.Conn, wantPass string) {
 	}
 	resp := tds.NewPreLogin()
 	resp.Set(tds.PreLoginVersion, []byte{16, 0, 0, 0, 0, 0})
-	resp.Set(tds.PreLoginEncryption, []byte{tds.EncryptNotSup})
+	resp.Set(tds.PreLoginEncryption, []byte{tds.EncryptOn})
 	if err := c.WriteMessage(tds.PacketPreLogin, 0, resp.Encode()); err != nil {
 		return
 	}
+	// Whole-session TLS, like every real SQL Server: the proxy refuses to send
+	// the vaulted credential over a plaintext link, so the fixture must speak
+	// it — which also exercises the TDS-framed handshake on the upstream leg.
+	tconn, err := tds.ServerHandshake(conn, f.tlsConf)
+	if err != nil {
+		return
+	}
+	conn = tconn
+	c = tds.NewConn(conn)
 
 	typ, _, payload, err := c.ReadMessage(1 << 20)
 	if err != nil || typ != tds.PacketLogin7 {
@@ -109,18 +127,22 @@ func (f *fakeMSSQL) serve(conn net.Conn, wantPass string) {
 		if err != nil {
 			return
 		}
-		var req tds.Request
 		switch typ {
 		case tds.PacketSQLBatch:
-			req, _ = tds.ParseSQLBatch(data)
+			req, _ := tds.ParseSQLBatch(data)
+			f.mu.Lock()
+			f.requests = append(f.requests, req.AuditText)
+			f.mu.Unlock()
 		case tds.PacketRPC:
-			req, _ = tds.ParseRPC(data)
+			reqs, _ := tds.ParseRPC(data)
+			f.mu.Lock()
+			for _, req := range reqs {
+				f.requests = append(f.requests, req.AuditText)
+			}
+			f.mu.Unlock()
 		default:
 			continue
 		}
-		f.mu.Lock()
-		f.requests = append(f.requests, req.AuditText)
-		f.mu.Unlock()
 		if err := c.WriteMessage(tds.PacketTabularResult, 0, tds.DoneToken{Token: tds.TokenDone}.Encode(true)); err != nil {
 			return
 		}
@@ -189,7 +211,11 @@ func dialMSSQLProxy(t *testing.T, addr, login, password, database string) (*mssq
 		UserName: login, Password: password, Database: database,
 		HostName: "workstation", AppName: "pamv1-test", CltIntName: "ODBC", Language: "us_english",
 	}
-	if err := c.WriteMessage(tds.PacketLogin7, 0, l.Encode()); err != nil {
+	loginBody, err := l.Encode()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := c.WriteMessage(tds.PacketLogin7, 0, loginBody); err != nil {
 		return nil, nil, err
 	}
 	_, _, resp, err := c.ReadMessage(1 << 20)
@@ -730,7 +756,11 @@ func TestMSSQLProxyIntegratedAuthRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := &tds.Login7{TDSVersion: tds.VersionTDS74, PacketSize: 4096, OptionFlags2: 0x80}
-	if err := c.WriteMessage(tds.PacketLogin7, 0, l.Encode()); err != nil {
+	body, err := l.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.WriteMessage(tds.PacketLogin7, 0, body); err != nil {
 		t.Fatal(err)
 	}
 	_, _, resp, err := c.ReadMessage(1 << 20)
@@ -798,5 +828,154 @@ func TestMSSQLProxyEnrollOnlyRejected(t *testing.T) {
 	}
 	if fake.password() != "" {
 		t.Fatal("the upstream was contacted for an enrollment-only principal")
+	}
+}
+
+// selfSignedCert mints a throwaway certificate for the fake upstream, so the
+// tests exercise the same TLS-on-both-legs path a deployment uses.
+func selfSignedCert(t *testing.T) tls.Certificate {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "fake-sqlserver"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		DNSNames:     []string{"localhost"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+}
+
+// rpcPrepExec builds an sp_prepexec call: handle INT OUTPUT, @params NVARCHAR,
+// @stmt NVARCHAR — the statement is the THIRD parameter, which is the shape the
+// Microsoft JDBC driver sends by default and the one a first-parameter-only
+// parser silently misses.
+func (m *mssqlClient) rpcPrepExec(sql string) ([]byte, error) {
+	body := allHeadersBlock()
+	body = append(body, 0xff, 0xff, byte(tds.ProcPrepExec), 0x00, 0x00, 0x00)
+	// @handle: INTN, 4-byte value, output.
+	body = append(body, 0x07)
+	body = append(body, ucs2("@handle")...)
+	body = append(body, 0x01, 0x26, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00)
+	// @params and @stmt: NVARCHAR.
+	body = append(body, nvarcharParamBytes("@params", "@p1 int")...)
+	body = append(body, nvarcharParamBytes("@stmt", sql)...)
+	if err := m.c.WriteMessage(tds.PacketRPC, 0, body); err != nil {
+		return nil, err
+	}
+	_, _, resp, err := m.c.ReadMessage(1 << 20)
+	return resp, err
+}
+
+// rpcTwoBatches builds ONE RPC message carrying two sp_executesql calls
+// separated by a batch flag — the shape a driver's executeBatch sends, and the
+// shape that hides statements from a parser reading only the first call.
+func (m *mssqlClient) rpcTwoBatches(first, second string) ([]byte, error) {
+	body := allHeadersBlock()
+	body = append(body, 0xff, 0xff, byte(tds.ProcExecuteSQL), 0x00, 0x00, 0x00)
+	body = append(body, nvarcharParamBytes("@stmt", first)...)
+	body = append(body, 0xFF) // batch separator
+	body = append(body, 0xff, 0xff, byte(tds.ProcExecuteSQL), 0x00, 0x00, 0x00)
+	body = append(body, nvarcharParamBytes("@stmt", second)...)
+	if err := m.c.WriteMessage(tds.PacketRPC, 0, body); err != nil {
+		return nil, err
+	}
+	_, _, resp, err := m.c.ReadMessage(1 << 20)
+	return resp, err
+}
+
+// nvarcharParamBytes builds one NVARCHAR parameter.
+func nvarcharParamBytes(name, value string) []byte {
+	b := []byte{byte(len(name))}
+	b = append(b, ucs2(name)...)
+	b = append(b, 0x00, 0xE7, 0x40, 0x1f, 0x09, 0x04, 0xd0, 0x00, 0x34)
+	v := ucs2(value)
+	b = append(b, byte(len(v)&0xff), byte(len(v)>>8))
+	return append(b, v...)
+}
+
+// TestMSSQLProxyBlockedPrepExec is the regression test for the review finding
+// that mattered most: sp_prepexec carries its statement as the THIRD parameter,
+// so a parser that only read the first one left every JDBC/ODBC prepared
+// statement unaudited and unfiltered — the default path for the flagship
+// enterprise driver. The guard must see it.
+func TestMSSQLProxyBlockedPrepExec(t *testing.T) {
+	st, v := memstore.New(), mustVault(t)
+	fake := startFakeMSSQL(t, upstreamSecret)
+	seedMSSQLTarget(t, st, v, fake.addr)
+	guard, err := cmdguard.New([]string{`(?i)drop\s+table`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := serveMSSQLProxy(t, newMSSQLProxy(t, st, v, proxy.MSSQLConfig{CommandGuard: guard}))
+
+	cli, _, err := dialMSSQLProxy(t, addr, "sql_svc@sql-01", proxyAPIKey, "orders")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	resp, err := cli.rpcPrepExec("DROP TABLE payroll")
+	if err != nil {
+		t.Fatalf("prepexec: %v", err)
+	}
+	if msg, isErr := respHasError(resp); !isErr || !strings.Contains(msg, "blocked by policy") {
+		t.Fatalf("sp_prepexec response = %q (error=%v) — the statement was not inspected", msg, isErr)
+	}
+	for _, r := range fake.gotRequests() {
+		if strings.Contains(r, "DROP TABLE") {
+			t.Fatal("a blocked statement reached the upstream through sp_prepexec")
+		}
+	}
+
+	// An allowed prepared statement still runs, and its SQL is audited.
+	if _, err := cli.rpcPrepExec("SELECT id FROM staff"); err != nil {
+		t.Fatalf("allowed prepexec: %v", err)
+	}
+	events, _ := st.ListAudit(context.Background(), 100)
+	sawSQL := false
+	for _, e := range events {
+		if e.Action == "db.query" && strings.Contains(e.Detail, "FROM staff") {
+			sawSQL = true
+		}
+	}
+	if !sawSQL {
+		t.Fatal("an sp_prepexec statement was not audited by its SQL text")
+	}
+}
+
+// TestMSSQLProxyBlockedSecondRPCInBatch proves every call in an RPC message is
+// inspected, not just the first: a benign leading call must not escort a denied
+// one past the guard, and a driver's batched statements must all be audited.
+func TestMSSQLProxyBlockedSecondRPCInBatch(t *testing.T) {
+	st, v := memstore.New(), mustVault(t)
+	fake := startFakeMSSQL(t, upstreamSecret)
+	seedMSSQLTarget(t, st, v, fake.addr)
+	guard, err := cmdguard.New([]string{`(?i)drop\s+table`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := serveMSSQLProxy(t, newMSSQLProxy(t, st, v, proxy.MSSQLConfig{CommandGuard: guard}))
+
+	cli, _, err := dialMSSQLProxy(t, addr, "sql_svc@sql-01", proxyAPIKey, "orders")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	resp, err := cli.rpcTwoBatches("SELECT 1", "DROP TABLE payroll")
+	if err != nil {
+		t.Fatalf("batched rpc: %v", err)
+	}
+	if msg, isErr := respHasError(resp); !isErr || !strings.Contains(msg, "blocked by policy") {
+		t.Fatalf("batched RPC response = %q (error=%v) — the second call escaped inspection", msg, isErr)
+	}
+	for _, r := range fake.gotRequests() {
+		if strings.Contains(r, "DROP TABLE") {
+			t.Fatal("a blocked statement reached the upstream as the second call in a batch")
+		}
 	}
 }

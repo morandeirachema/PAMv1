@@ -27,6 +27,12 @@ import (
 //     a packet whose end-of-message never arrives.
 //   - A server flight may span several packets, so a read continues within the
 //     current packet's payload before pulling another header.
+//
+// handshakePacketSize bounds each packet the handshake shim writes. 4096 is the
+// TDS default and the smallest buffer a client is likely to have during the
+// handshake, when nothing has been negotiated yet.
+const handshakePacketSize = 4096
+
 type handshakeConn struct {
 	conn net.Conn
 
@@ -55,21 +61,41 @@ func (h *handshakeConn) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
-// flush frames whatever is buffered as one PRELOGIN-typed packet with EOM set.
+// flush frames whatever is buffered as PRELOGIN-typed packets, EOM on the last.
+//
+// The flight MUST be split at the packet size, not written as one giant packet:
+// a TDS client sizes its read buffer from the negotiated packet size (4096 by
+// default) and rejects any packet larger than it — during the handshake, before
+// anything has been negotiated. A server flight with an ordinary RSA
+// certificate chain exceeds 4096, so an unsplit write is refused by real
+// clients while still passing a test whose peer is this same shim.
 func (h *handshakeConn) flush() error {
 	if len(h.out) == 0 {
 		return nil
 	}
 	body := h.out
 	h.out = nil
-	var hb [HeaderSize]byte
-	hb[0] = PacketPreLogin
-	hb[1] = StatusEOM
-	binary.BigEndian.PutUint16(hb[2:4], uint16(HeaderSize+len(body)))
-	hb[6] = h.outID
-	h.outID++
-	_, err := h.conn.Write(append(hb[:], body...))
-	return err
+	const chunk = handshakePacketSize - HeaderSize
+	for first := true; first || len(body) > 0; first = false {
+		n := len(body)
+		if n > chunk {
+			n = chunk
+		}
+		part := body[:n]
+		body = body[n:]
+		var hb [HeaderSize]byte
+		hb[0] = PacketPreLogin
+		if len(body) == 0 {
+			hb[1] = StatusEOM
+		}
+		binary.BigEndian.PutUint16(hb[2:4], uint16(HeaderSize+n))
+		hb[6] = h.outID
+		h.outID++
+		if _, err := h.conn.Write(append(hb[:], part...)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Read returns handshake bytes, unwrapping them from TDS packets: it first
@@ -78,6 +104,14 @@ func (h *handshakeConn) flush() error {
 func (h *handshakeConn) Read(b []byte) (int, error) {
 	h.mu.Lock()
 	if h.done {
+		// Serve anything left from the handshake's last packet before going to
+		// the raw connection, or a record split across that boundary is lost.
+		if len(h.in) > 0 {
+			n := copy(b, h.in)
+			h.in = h.in[n:]
+			h.mu.Unlock()
+			return n, nil
+		}
 		h.mu.Unlock()
 		return h.conn.Read(b)
 	}
@@ -114,7 +148,11 @@ func (h *handshakeConn) Read(b []byte) (int, error) {
 }
 
 // finish ends the framing phase: the last flight is flushed and subsequent
-// traffic passes through untouched.
+// traffic passes through untouched. Anything still buffered in the current
+// packet is KEPT and served first — with TLS 1.3 the server's session tickets
+// arrive in the same packet as Finished, and a peer's packet boundary can also
+// split a post-handshake record, so discarding the remainder would make the
+// next raw read start in the middle of a TLS record.
 func (h *handshakeConn) finish() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()

@@ -41,6 +41,12 @@ import (
 // ends its message cannot grow the heap without limit.
 const maxTDSMessage = 16 << 20
 
+// maxHandshakeMessage bounds the PRELOGIN and LOGIN7 reads, which happen before
+// anything is authenticated. MS-TDS caps a LOGIN7 stream at 128K-1 bytes, so a
+// larger one is malformed — and pre-auth connections are the cheapest thing for
+// an attacker to open.
+const maxHandshakeMessage = 128 << 10
+
 // SQL Server error numbers used for refusals. 18456 is the number every client
 // renders as "Login failed"; 50000 is the user-defined range, which is what an
 // in-session policy refusal is.
@@ -321,7 +327,7 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 
 	// --- PRELOGIN ---
 	c := tds.NewConn(conn)
-	typ, _, payload, err := c.ReadMessage(maxTDSMessage)
+	typ, _, payload, err := c.ReadMessage(maxHandshakeMessage)
 	if err != nil {
 		return
 	}
@@ -348,7 +354,7 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	}
 
 	// --- LOGIN7 ---
-	typ, _, payload, err = c.ReadMessage(maxTDSMessage)
+	typ, _, payload, err = c.ReadMessage(maxHandshakeMessage)
 	if err != nil || typ != tds.PacketLogin7 {
 		return
 	}
@@ -377,7 +383,7 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	}
 	principal, err := m.resolver.Resolve(ctx, login.Password)
 	if err != nil {
-		m.log.Warn("mssql authentication failed", "login", loginName, "remote", remote)
+		m.log.Warn("mssql authentication failed", "login", auditField(loginName, 64), "remote", remote)
 		m.audit(ctx, auditField(loginName, 64), "proxy.auth_failed", "proto:mssql remote:"+remote)
 		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: authentication failed", tds72)
 		return
@@ -390,7 +396,7 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 
 	// --- Authorization gates (identical order to dbproxy; decrypt only after all pass) ---
 	if principal.EnrollOnly {
-		m.audit(ctx, actor, "db.session.denied", "login:"+loginName+" reason:mfa-enrollment-incomplete")
+		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(loginName, 64)+" reason:mfa-enrollment-incomplete")
 		m.deny(ctx, c, actor, loginName, "complete MFA enrollment first", tds72)
 		return
 	}
@@ -486,6 +492,13 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	}
 	defer up.conn.Close()
 
+	// A server-imposed packet size (ENVCHANGE type 4) is relayed to the client
+	// below, so the CLIENT-facing framer has to adopt it as well — otherwise the
+	// proxy keeps writing packets larger than the size the client just accepted,
+	// and the client aborts mid-session.
+	if up.negotiated > 0 {
+		c.SetPacketSize(up.negotiated)
+	}
 	// Relay the upstream's login response verbatim, so LOGINACK, collation and
 	// the database ENVCHANGE all reach the client intact.
 	if err := c.WriteMessage(tds.PacketTabularResult, 0, loginResp); err != nil {
@@ -568,6 +581,8 @@ func (m *MSSQLProxy) serverPreLogin(c *tds.Conn, conn net.Conn, client *tds.PreL
 type upstreamMSSQL struct {
 	conn net.Conn
 	c    *tds.Conn
+	// negotiated is a server-imposed packet size (ENVCHANGE type 4), or 0.
+	negotiated int
 }
 
 // dialUpstream connects to the target, negotiates TLS, and completes the login
@@ -627,11 +642,14 @@ func (m *MSSQLProxy) dialUpstream(ctx context.Context, target *store.Target, use
 		}
 		conn = tconn
 		c = tds.NewConn(conn)
-	} else if m.upstreamTLS != nil {
-		// Verification was demanded and the server will not encrypt: refuse
-		// rather than send the vaulted credential over a plaintext link.
+	} else {
+		// The server declined encryption. Refuse: the next thing on this wire
+		// would be the vaulted credential under TDS's keyless nibble-swap
+		// "obfuscation", which protects nothing. Every supported SQL Server
+		// offers encryption (self-signed by default), so a refusal here is a
+		// misconfigured or impersonated server, not a normal deployment.
 		conn.Close()
-		return nil, nil, errors.New("upstream tls: server declined encryption but verification is required")
+		return nil, nil, errors.New("upstream declined TLS: refusing to send the vaulted credential over a plaintext link")
 	}
 	c.SetPacketSize(int(clientLogin.PacketSize))
 
@@ -641,7 +659,20 @@ func (m *MSSQLProxy) dialUpstream(ctx context.Context, target *store.Target, use
 	upLogin.Password = secret
 	upLogin.OptionFlags2 &^= 0x80 // SQL authentication, never SSPI
 	upLogin.SSPI = nil
-	if err := c.WriteMessage(tds.PacketLogin7, 0, upLogin.Encode()); err != nil {
+	// A federated-authentication token in the feature extension would make the
+	// server authenticate the OPERATOR's own identity while the session is
+	// audited as the vaulted account — and the spec forbids fIntSecurity
+	// alongside it, so the integrated-auth refusal can never catch it. Strip it
+	// the same way, keeping the client's other negotiated features.
+	if len(upLogin.FeatureExt) > 0 {
+		upLogin.FeatureExt = tds.StripFeatures(upLogin.FeatureExt, map[byte]bool{tds.FeatureFedAuth: true})
+	}
+	body, err := upLogin.Encode()
+	if err != nil {
+		conn.Close()
+		return nil, nil, err
+	}
+	if err := c.WriteMessage(tds.PacketLogin7, 0, body); err != nil {
 		conn.Close()
 		return nil, nil, err
 	}
@@ -661,10 +692,12 @@ func (m *MSSQLProxy) dialUpstream(ctx context.Context, target *store.Target, use
 		// verbatim to the operator, matching dialUpstream on the PostgreSQL leg.
 		return nil, nil, fmt.Errorf("upstream login failed: %s", msg)
 	}
+	up := &upstreamMSSQL{conn: conn, c: c}
 	if res.PacketSize > 0 {
 		c.SetPacketSize(res.PacketSize)
+		up.negotiated = res.PacketSize
 	}
-	return &upstreamMSSQL{conn: conn, c: c}, resp, nil
+	return up, resp, nil
 }
 
 // relay brokers messages both ways until either side closes. Client→upstream
@@ -702,21 +735,32 @@ func (m *MSSQLProxy) relay(ctx context.Context, client *tds.Conn, up *upstreamMS
 			}
 			switch typ {
 			case tds.PacketSQLBatch, tds.PacketRPC:
-				req, perr := parseTDSRequest(typ, data)
+				reqs, perr := parseTDSRequest(typ, data)
 				if perr != nil {
-					// Unparseable: audit it and forward. Refusing every request
-					// we cannot read would break clients over a parsing gap,
-					// and the trail still records that something ran.
+					// Unreadable. With a command guard configured this must be
+					// refused: forwarding a statement the guard could not be
+					// applied to is the bypass the guard exists to prevent.
+					// Without one, audit it and forward, as the PostgreSQL
+					// proxy does for a fast-path call it cannot filter.
+					if m.guard != nil {
+						m.audit(ctx, actor, "command.blocked",
+							fmt.Sprintf("target:%s via:mssql pattern:unparsed-request sql:[unparsed %s]", target.Name, tdsKind(typ)))
+						_ = sendClient(tds.PacketTabularResult, tds.Refusal(mssqlErrPolicy, 16,
+							"pamv1: request could not be parsed for policy inspection", typ, tds72))
+						continue
+					}
 					m.recordStatement(ctx, rec, actor, target, "[unparsed "+tdsKind(typ)+" request]", sid)
 					break
 				}
-				if m.blockedStatement(ctx, sendClient, actor, target, req.AuditText, typ, tds72) {
+				// Every call in the message is inspected, not just the first: an
+				// RPC message may carry several, and auditing only the leading
+				// one would let a benign call escort arbitrary statements.
+				if m.refuseRequests(ctx, relayCtx, sendClient, actor, target, reqs, sid, typ, tds72) {
 					continue // refused by policy; the session stays usable
 				}
-				if m.stepUpRefused(relayCtx, sendClient, actor, target, req.AuditText, sid, typ, tds72) {
-					continue // denied or timed out; the session stays usable
+				for _, req := range reqs {
+					m.recordStatement(ctx, rec, actor, target, req.AuditText, sid)
 				}
-				m.recordStatement(ctx, rec, actor, target, req.AuditText, sid)
 			}
 			// RESETCONNECTION and friends ride the first packet's status bits and
 			// must survive re-framing, or connection pooling breaks silently.
@@ -742,12 +786,49 @@ func (m *MSSQLProxy) relay(ctx context.Context, client *tds.Conn, up *upstreamMS
 	wg.Wait()
 }
 
-// parseTDSRequest decodes a client request into its auditable form.
-func parseTDSRequest(typ byte, data []byte) (tds.Request, error) {
+// parseTDSRequest decodes a client message into the calls it carries. A
+// SQLBatch is one; an RPC message may be several.
+func parseTDSRequest(typ byte, data []byte) ([]tds.Request, error) {
 	if typ == tds.PacketRPC {
 		return tds.ParseRPC(data)
 	}
-	return tds.ParseSQLBatch(data)
+	req, err := tds.ParseSQLBatch(data)
+	if err != nil {
+		return nil, err
+	}
+	return []tds.Request{req}, nil
+}
+
+// refuseRequests applies command control and step-up to every call in a message
+// and reports whether the message was refused. A call whose text could not be
+// recovered is refused when a guard is configured — an unreadable statement is
+// exactly the shape a bypass takes, so it fails closed rather than through.
+func (m *MSSQLProxy) refuseRequests(ctx, relayCtx context.Context, sendClient func(byte, []byte) error, actor string, target *store.Target, reqs []tds.Request, sid string, reqType byte, tds72 bool) bool {
+	for _, req := range reqs {
+		if !req.Recovered && m.guard != nil {
+			m.audit(ctx, actor, "command.blocked",
+				fmt.Sprintf("target:%s via:mssql pattern:unreadable-parameters sql:%s", target.Name, auditCmd(req.AuditText)))
+			_ = sendClient(tds.PacketTabularResult, tds.Refusal(mssqlErrPolicy, 16,
+				"pamv1: statement could not be read for policy inspection", reqType, tds72))
+			return true
+		}
+		// Guard EVERY recovered character parameter, not only the one believed
+		// to be the statement: which parameter carries SQL varies by procedure.
+		for _, text := range req.GuardTexts() {
+			if m.blockedStatement(ctx, sendClient, actor, target, text, reqType, tds72) {
+				return true
+			}
+			if m.stepUpRefused(relayCtx, sendClient, actor, target, text, sid, reqType, tds72) {
+				return true
+			}
+		}
+		if len(req.GuardTexts()) == 0 {
+			if m.blockedStatement(ctx, sendClient, actor, target, req.AuditText, reqType, tds72) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // tdsKind names a request type for an audit detail.
@@ -827,7 +908,7 @@ func (m *MSSQLProxy) fail(c *tds.Conn, number uint32, class byte, msg string, td
 
 // deny audits a refused session and reports it to the client.
 func (m *MSSQLProxy) deny(ctx context.Context, c *tds.Conn, actor, login, reason string, tds72 bool) {
-	m.log.Warn("db session denied", "actor", actor, "login", login, "reason", reason, "protocol", "mssql")
-	m.audit(ctx, actor, "db.session.denied", "login:"+login+" via:mssql reason:"+reason)
+	m.log.Warn("db session denied", "actor", actor, "login", auditField(login, 64), "reason", reason, "protocol", "mssql")
+	m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" via:mssql reason:"+reason)
 	m.fail(c, mssqlErrLoginFailed, 14, "pamv1: "+reason, tds72)
 }

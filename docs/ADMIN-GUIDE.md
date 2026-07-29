@@ -707,10 +707,18 @@ sqlcmd -S pam.example,1433 -U 'sql_svc@sql-01' -P "$PAM_TOKEN" -d orders -N -C
 - **Both legs are encrypted** when TLS is configured; `PAM_DB_UPSTREAM_CA` /
   `PAM_DB_UPSTREAM_TLS_VERIFY` make the target leg fail-closed, which matters
   more here than anywhere: TDS password "obfuscation" is a keyless nibble swap.
+- **A statement the proxy cannot read is refused** when `PAM_COMMAND_DENY_FILE`
+  is set (audited `command.blocked … pattern:unreadable-parameters`). Command
+  control that cannot see a statement is not command control, so it fails
+  closed; without a deny file configured the call is audited and forwarded.
 - **SQL authentication only.** Integrated/Windows auth is refused with a clear
   message — brokering means swapping the operator's PAM key for a vaulted SQL
-  login, which SSPI cannot express. TDS 8.0 *strict* encryption is also refused
-  (use `Encrypt=Mandatory`).
+  login, which SSPI cannot express; federated-auth tokens in the login's feature
+  extension are stripped for the same reason. TDS 8.0 *strict* encryption is
+  also refused (use `Encrypt=Mandatory`).
+- **The target leg must be encrypted.** If the SQL Server declines encryption the
+  session is refused rather than sending the vaulted credential under TDS's
+  keyless "obfuscation". Every supported SQL Server offers encryption.
 - **Interop caveat:** the proxy is proven against a hand-rolled fake upstream and
   a spec-pinned codec, but **has not been tested against a real SQL Server**.
   Treat the first deployment as a pilot — see

@@ -164,7 +164,7 @@ func TestLogin7RewritePreservesEverythingButCredentials(t *testing.T) {
 	l.UserName, l.Password = "sql_svc", "vaulted-secret-with-a-different-length"
 	l.OptionFlags2 &^= 0x80 // the proxy authenticates with SQL auth
 
-	out := l.Encode()
+	out := mustEncode(t, l)
 	if got := binary.LittleEndian.Uint32(out[l7Length:]); int(got) != len(out) {
 		t.Fatalf("encoded Length = %d, want %d", got, len(out))
 	}
@@ -203,7 +203,7 @@ func TestLogin7RewritePreservesEverythingButCredentials(t *testing.T) {
 // rejects the login).
 func TestLogin7EncodeClearsExtensionFlagWithoutBlock(t *testing.T) {
 	l := &Login7{TDSVersion: VersionTDS74, OptionFlags3: 0x10}
-	out := l.Encode()
+	out := mustEncode(t, l)
 	if out[l7OptionFlags3]&0x10 != 0 {
 		t.Fatal("fExtension stayed set with no feature block")
 	}
@@ -357,36 +357,114 @@ func TestParseRPCExecuteSQL(t *testing.T) {
 	byID := append(allHeaders(), 0xff, 0xff)
 	byID = append(byID, byte(ProcExecuteSQL), 0x00, 0x00, 0x00) // ProcID + OptionFlags
 	byID = append(byID, nvarcharParam("@stmt", sql)...)
-	req, err := ParseRPC(byID)
+	reqs, err := ParseRPC(byID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.SQL != sql {
-		t.Fatalf("by ProcID: SQL = %q, want %q", req.SQL, sql)
+	if len(reqs) != 1 || reqs[0].SQL != sql {
+		t.Fatalf("by ProcID: %+v, want SQL %q", reqs, sql)
+	}
+	if !reqs[0].Recovered {
+		t.Fatal("a fully parsed call reported Recovered=false")
 	}
 
 	byName := append(allHeaders(), 0x0d, 0x00) // name length in characters
 	byName = append(byName, stringToUCS2("sp_executesql")...)
 	byName = append(byName, 0x00, 0x00) // OptionFlags
 	byName = append(byName, plpParam("@stmt", sql)...)
-	req, err = ParseRPC(byName)
+	reqs, err = ParseRPC(byName)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.SQL != sql {
-		t.Fatalf("by name (PLP): SQL = %q, want %q", req.SQL, sql)
+	if len(reqs) != 1 || reqs[0].SQL != sql {
+		t.Fatalf("by name (PLP): %+v, want SQL %q", reqs, sql)
 	}
 
 	// An unknown proc yields a name and no SQL — audited, forwarded, not an error.
 	other := append(allHeaders(), 0x07, 0x00)
 	other = append(other, stringToUCS2("sp_who2")...)
 	other = append(other, 0x00, 0x00)
-	req, err = ParseRPC(other)
+	reqs, err = ParseRPC(other)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.SQL != "" || req.Proc != "sp_who2" || req.AuditText != "[rpc sp_who2]" {
-		t.Fatalf("unknown proc: %+v", req)
+	if len(reqs) != 1 || reqs[0].SQL != "" || reqs[0].Proc != "sp_who2" || reqs[0].AuditText != "[rpc sp_who2]" {
+		t.Fatalf("unknown proc: %+v", reqs)
+	}
+}
+
+// TestParseRPCPrepExecFindsThirdParameter is the regression test for the worst
+// bug this codec had: sp_prepexec carries its statement as the THIRD parameter
+// (handle INT OUTPUT, @params NVARCHAR, @stmt NVARCHAR), and sp_prepare the
+// same. A parser that read only the first parameter returned no SQL at all, so
+// command control and per-statement audit silently missed every prepared
+// statement from the Microsoft JDBC/ODBC drivers — their default path.
+func TestParseRPCPrepExecFindsThirdParameter(t *testing.T) {
+	sql := "DELETE FROM payroll WHERE id = @p1"
+
+	body := append(allHeaders(), 0xff, 0xff)
+	body = append(body, byte(ProcPrepExec), 0x00, 0x00, 0x00)
+	// @handle INTN(4), output — the parameter that used to stop the walk.
+	body = append(body, 0x07)
+	body = append(body, stringToUCS2("@handle")...)
+	body = append(body, 0x01, 0x26, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00)
+	body = append(body, nvarcharParam("@params", "@p1 int")...)
+	body = append(body, nvarcharParam("@stmt", sql)...)
+
+	reqs, err := ParseRPC(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reqs) != 1 {
+		t.Fatalf("want one call, got %d", len(reqs))
+	}
+	if reqs[0].SQL != sql {
+		t.Fatalf("SQL = %q, want %q — the statement is not the first parameter", reqs[0].SQL, sql)
+	}
+	// Both character parameters must be guardable, not only the statement.
+	if len(reqs[0].GuardTexts()) != 2 {
+		t.Fatalf("GuardTexts = %v, want both character parameters", reqs[0].GuardTexts())
+	}
+}
+
+// TestParseRPCMultipleBatches proves every call in one RPC message is returned.
+// Reading only the first would let a benign leading call escort arbitrary
+// statements past command control, and would miss most of a driver's batch.
+func TestParseRPCMultipleBatches(t *testing.T) {
+	body := append(allHeaders(), 0xff, 0xff)
+	body = append(body, byte(ProcExecuteSQL), 0x00, 0x00, 0x00)
+	body = append(body, nvarcharParam("@stmt", "SELECT 1")...)
+	body = append(body, 0xFF) // batch separator
+	body = append(body, 0xff, 0xff, byte(ProcExecuteSQL), 0x00, 0x00, 0x00)
+	body = append(body, nvarcharParam("@stmt", "DROP TABLE accounts")...)
+
+	reqs, err := ParseRPC(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reqs) != 2 {
+		t.Fatalf("want 2 calls, got %d (%+v)", len(reqs), reqs)
+	}
+	if reqs[0].SQL != "SELECT 1" || reqs[1].SQL != "DROP TABLE accounts" {
+		t.Fatalf("calls = %q / %q", reqs[0].SQL, reqs[1].SQL)
+	}
+}
+
+// TestParseRPCUnknownTypeStopsWalk proves an unreadable parameter type reports
+// Recovered=false instead of resynchronizing on a guess — the proxy turns that
+// into a refusal when a command guard is configured.
+func TestParseRPCUnknownTypeStopsWalk(t *testing.T) {
+	body := append(allHeaders(), 0xff, 0xff)
+	body = append(body, byte(ProcExecuteSQL), 0x00, 0x00, 0x00)
+	body = append(body, 0x03)
+	body = append(body, stringToUCS2("@x")[:4]...)
+	body = append(body, 0x00, 0xF3, 0x01, 0x02, 0x03) // TVP: a type we do not decode
+	reqs, err := ParseRPC(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reqs) != 1 || reqs[0].Recovered {
+		t.Fatalf("an undecodable parameter reported Recovered=true: %+v", reqs)
 	}
 }
 
@@ -410,13 +488,20 @@ func TestRefusalTokenBytes(t *testing.T) {
 	}
 
 	// 7.1 narrows LineNumber to 2 bytes and RowCount to 4, and an RPC refusal
-	// answers DONEPROC.
+	// answers DONEPROC. Pin the DONE token EXACTLY — an earlier version of this
+	// test accepted the token at either of two offsets, which passed for both
+	// the correct 9-byte DONE and a buggy 13-byte one.
 	old := Refusal(18456, 14, "no", PacketRPC, false)
-	if old[len(old)-13] != TokenDoneProc && old[len(old)-9] != TokenDoneProc {
-		t.Fatalf("an RPC refusal did not use DONEPROC: % x", old)
+	wantDone := []byte{TokenDoneProc, 0x02, 0x00, 0x00, 0x00, 0, 0, 0, 0} // status, curcmd, 4-byte rowcount
+	if got := old[len(old)-len(wantDone):]; !bytes.Equal(got, wantDone) {
+		t.Fatalf("7.1 DONEPROC = % x, want % x", got, wantDone)
 	}
-	if len(old) >= len(out) {
-		t.Fatalf("the 7.1 layout should be shorter: %d vs %d", len(old), len(out))
+	// And the ERROR half must carry a 2-byte LineNumber, so the whole token is
+	// exactly two bytes shorter than the 7.2+ form's 4-byte field.
+	newErrLen := len(out) - 13 // 7.2+ DONE is 13 bytes
+	oldErrLen := len(old) - len(wantDone)
+	if oldErrLen != newErrLen-2 {
+		t.Fatalf("7.1 ERROR token is %d bytes, want %d (a 2-byte LineNumber)", oldErrLen, newErrLen-2)
 	}
 }
 
@@ -546,4 +631,14 @@ func selfSigned(t *testing.T) tls.Certificate {
 		t.Fatal(err)
 	}
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+}
+
+// mustEncode encodes a login, failing the test on an error.
+func mustEncode(t *testing.T, l *Login7) []byte {
+	t.Helper()
+	b, err := l.Encode()
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	return b
 }

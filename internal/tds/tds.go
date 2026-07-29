@@ -379,6 +379,8 @@ type Login7 struct {
 	// carrying one: brokering means swapping the operator's PAM key for a
 	// vaulted SQL login, which Windows authentication cannot express.
 	SSPI []byte
+	// SSPILong reports a login whose SSPI blob used the cbSSPILong form.
+	SSPILong bool
 	// FeatureExt is the raw feature-extension block (UTF-8 support, column
 	// encryption, session recovery...), preserved verbatim so a client's
 	// negotiated features still reach the server.
@@ -388,7 +390,7 @@ type Login7 struct {
 // IntegratedSecurity reports whether the client asked for Windows/SSPI
 // authentication.
 func (l *Login7) IntegratedSecurity() bool {
-	return l.OptionFlags2&0x80 != 0 || len(l.SSPI) > 0
+	return l.OptionFlags2&0x80 != 0 || len(l.SSPI) > 0 || l.SSPILong
 }
 
 // TDS72OrLater reports whether the client speaks TDS 7.2+, which widens DONE's
@@ -487,8 +489,13 @@ func ParseLogin7(data []byte) (*Login7, error) {
 	if l.ChangePassword, err = str(l7ChangePassword); err != nil {
 		return nil, err
 	}
-	// SSPI's length field counts BYTES, not characters.
-	if l.SSPI, err = varBytes(data, l7SSPI, 1); err != nil {
+	// SSPI's length field counts BYTES, not characters. The 0xFFFF sentinel
+	// means the true length is in cbSSPILong — the login is still integrated
+	// authentication, which this proxy refuses, so record it rather than
+	// erroring out on the oversized blob and losing the clear refusal.
+	if binary.LittleEndian.Uint16(data[l7SSPI+2:]) == 0xFFFF {
+		l.SSPILong = true
+	} else if l.SSPI, err = varBytes(data, l7SSPI, 1); err != nil {
 		return nil, err
 	}
 	if l.OptionFlags3&0x10 != 0 {
@@ -554,11 +561,53 @@ func parseFeatureExt(data []byte) ([]byte, error) {
 	}
 }
 
+// FeatureFedAuth is the LOGIN7 feature-extension id carrying a federated
+// authentication token. The proxy strips it: the specification requires
+// fIntSecurity to be 0 when it is present, so the integrated-auth refusal can
+// never see it, and a token here would authenticate the operator's OWN identity
+// upstream while the session is audited as the vaulted account.
+const FeatureFedAuth byte = 0x02
+const featureTerminator byte = 0xFF
+
+// StripFeatures removes the named feature ids from a raw feature-extension
+// block, returning the remaining block (nil when nothing is left but the
+// terminator). Unparseable input yields nil — dropping an extension we cannot
+// read is safe, forwarding it blind is not.
+func StripFeatures(ext []byte, drop map[byte]bool) []byte {
+	var out []byte
+	for i := 0; i < len(ext); {
+		id := ext[i]
+		if id == featureTerminator {
+			if len(out) == 0 {
+				return nil
+			}
+			return append(out, featureTerminator)
+		}
+		if i+5 > len(ext) {
+			return nil
+		}
+		n := int(int32(binary.LittleEndian.Uint32(ext[i+1:])))
+		if n < 0 || i+5+n > len(ext) {
+			return nil
+		}
+		if !drop[id] {
+			out = append(out, ext[i:i+5+n]...)
+		}
+		i += 5 + n
+	}
+	return nil
+}
+
 // Encode renders the LOGIN7 message. It always re-encodes from the parsed
 // struct rather than patching bytes in place: replacing the username and
 // password shifts every following blob, and an in-place patch is how you get a
 // login that works for one credential length and corrupts for another.
-func (l *Login7) Encode() []byte {
+//
+// It errors rather than truncating when a blob would sit past the 16-bit offset
+// space: silently wrapping mod 65536 would point the credential descriptors
+// into other client-controlled bytes, so the login the upstream authenticates
+// would not be the one the proxy built.
+func (l *Login7) Encode() ([]byte, error) {
 	fixed := make([]byte, l7FixedSize)
 	binary.LittleEndian.PutUint32(fixed[l7TDSVersion:], l.TDSVersion)
 	binary.LittleEndian.PutUint32(fixed[l7PacketSize:], l.PacketSize)
@@ -625,9 +674,12 @@ func (l *Login7) Encode() []byte {
 		binary.LittleEndian.PutUint16(fixed[l7Extension+2:], 0)
 	}
 
+	if l7FixedSize+len(body) > 0xFFFF {
+		return nil, fmt.Errorf("tds: login7 is %d bytes, past the 16-bit offset space", l7FixedSize+len(body))
+	}
 	out := append(fixed, body...)
 	binary.LittleEndian.PutUint32(out[l7Length:], uint32(len(out)))
-	return out
+	return out, nil
 }
 
 // ObfuscatePassword applies TDS's password transform to UCS-2 bytes: swap the
@@ -688,6 +740,27 @@ type Request struct {
 	// one, else a bracketed description, so an unparseable call still leaves a
 	// per-statement trail instead of silently escaping it.
 	AuditText string
+	// Params holds every character parameter recovered from an RPC call. The
+	// command guard checks all of them, not just the one believed to be the
+	// statement: which parameter carries SQL varies by procedure, and a guard
+	// that inspected only the expected slot could be stepped around.
+	Params []string
+	// Recovered reports whether the call was fully understood. False means a
+	// parameter type stopped the walk, so the caller must decide between
+	// forwarding an unfiltered call and refusing it.
+	Recovered bool
+}
+
+// GuardTexts returns every string a command guard should be run against for
+// this request: the statement plus each recovered character parameter.
+func (r Request) GuardTexts() []string {
+	if len(r.Params) == 0 {
+		if r.SQL != "" {
+			return []string{r.SQL}
+		}
+		return nil
+	}
+	return r.Params
 }
 
 // ParseSQLBatch extracts the statement text from a SQLBatch payload: an
@@ -698,140 +771,345 @@ func ParseSQLBatch(data []byte) (Request, error) {
 		return Request{}, err
 	}
 	sql := ucs2ToString(body)
-	return Request{SQL: sql, AuditText: sql}, nil
+	return Request{SQL: sql, AuditText: sql, Recovered: true}, nil
 }
 
-// ParseRPC extracts what an RPC request is asking for: the procedure name (or
-// id) and, for the procedures that carry SQL as their first NVARCHAR parameter,
-// that statement text — the path every parameterised driver takes, so command
-// control and per-statement auditing must be able to see through it.
+// ParseRPC extracts what an RPC message is asking for. It returns ONE Request
+// per RPC batch in the message, because a single RPC message may carry several
+// calls separated by a batch flag — auditing only the first would let a caller
+// hide every statement behind one benign leading call, and would silently miss
+// most of a driver's batched prepared statements.
 //
-// A call whose text cannot be recovered is NOT an error: it is reported with an
-// AuditText description and forwarded, mirroring how the PostgreSQL proxy
-// audits a fast-path function call it cannot filter. Failing closed on every
-// unrecognised RPC would break ordinary clients.
-func ParseRPC(data []byte) (Request, error) {
+// For the procedures that carry SQL as a parameter it recovers that statement
+// text, which is the path every parameterised driver takes: command control and
+// per-statement auditing have to see through it or they are decorative. The
+// statement is NOT always the first parameter — sp_prepare and sp_prepexec put
+// it third, sp_cursoropen second — so every character parameter is recovered
+// and the SQL-bearing ones are identified per procedure.
+//
+// A call whose text cannot be recovered is reported with Recovered=false and an
+// AuditText description; the caller decides whether to forward it (no command
+// guard configured) or refuse it (a guard is configured and cannot be applied).
+func ParseRPC(data []byte) ([]Request, error) {
 	body, err := skipAllHeaders(data)
 	if err != nil {
-		return Request{}, err
+		return nil, err
 	}
-	if len(body) < 2 {
-		return Request{}, errors.New("tds: truncated rpc request")
+	var out []Request
+	for i := 0; i < len(body); {
+		req, next, perr := parseRPCBatch(body, i)
+		if perr != nil {
+			if len(out) > 0 {
+				// Some calls parsed: report them plus the fact that the rest of
+				// the message could not be read, so the caller can fail closed
+				// on the unreadable remainder rather than assume it was benign.
+				out = append(out, Request{Proc: "?", AuditText: "[rpc unparsed batch]"})
+				return out, nil
+			}
+			return nil, perr
+		}
+		out = append(out, req)
+		if next <= i {
+			break // no forward progress: stop rather than spin
+		}
+		i = next
+		// Exactly ONE batch flag (0x80 on TDS 7.1, 0xFF on 7.2+) separates RPC
+		// batches. Skipping more would eat the 0xFFFF marker that introduces the
+		// next call by ProcID, silently dropping it.
+		if i < len(body) && (body[i] == 0xFF || body[i] == 0x80) {
+			i++
+		}
 	}
-	nameLen := binary.LittleEndian.Uint16(body)
+	if len(out) == 0 {
+		return nil, errors.New("tds: rpc message carried no calls")
+	}
+	return out, nil
+}
+
+// parseRPCBatch parses one RPCReqBatch starting at i, returning the request and
+// the offset just past its parameters.
+func parseRPCBatch(body []byte, i int) (Request, int, error) {
+	if i+2 > len(body) {
+		return Request{}, i, errors.New("tds: truncated rpc request")
+	}
+	nameLen := binary.LittleEndian.Uint16(body[i:])
 	var (
 		proc     string
 		procID   uint16
 		byProcID bool
-		i        int
 	)
 	if nameLen == 0xFFFF {
-		if len(body) < 4 {
-			return Request{}, errors.New("tds: truncated rpc procid")
+		if i+4 > len(body) {
+			return Request{}, i, errors.New("tds: truncated rpc procid")
 		}
-		procID = binary.LittleEndian.Uint16(body[2:])
+		procID = binary.LittleEndian.Uint16(body[i+2:])
 		byProcID = true
 		proc = fmt.Sprintf("#%d", procID)
-		i = 4
+		i += 4
 	} else {
 		n := int(nameLen) * 2
-		if 2+n > len(body) {
-			return Request{}, errors.New("tds: rpc name runs past the message")
+		if i+2+n > len(body) {
+			return Request{}, i, errors.New("tds: rpc name runs past the message")
 		}
-		proc = ucs2ToString(body[2 : 2+n])
-		i = 2 + n
+		proc = ucs2ToString(body[i+2 : i+2+n])
+		i += 2 + n
 	}
 	req := Request{Proc: proc, AuditText: "[rpc " + proc + "]"}
 	if i+2 > len(body) {
-		return req, nil // no option flags: nothing more to read, still auditable
+		return req, len(body), nil // no option flags: nothing more to read
 	}
 	i += 2 // OptionFlags
 
+	texts, next, ok := walkParams(body, i)
+	req.Recovered = ok
+	if !ok {
+		return req, next, nil
+	}
+	// Which parameter holds the statement depends on the procedure: it is the
+	// first character parameter for sp_executesql, but the third for
+	// sp_prepare/sp_prepexec and the second for sp_cursoropen. Rather than
+	// encode a fragile per-proc index, every recovered character parameter is
+	// reported — the guard checks them all, so a statement can hide in none of
+	// them.
 	carriesSQL := (byProcID && sqlBearingProcIDs[procID]) || (!byProcID && sqlBearingProcs[upper(proc)])
-	if !carriesSQL {
-		return req, nil
+	if carriesSQL && len(texts) > 0 {
+		req.SQL = texts[len(texts)-1] // the statement is the last character parameter in every shape we know
+		req.Params = texts
+		req.AuditText = req.SQL
 	}
-	if sql, ok := firstNVarCharParam(body[i:]); ok && sql != "" {
-		req.SQL = sql
-		req.AuditText = sql
-	}
-	return req, nil
+	return req, next, nil
 }
 
-// firstNVarCharParam decodes the FIRST parameter of an RPC call and returns its
-// text when it is an NVARCHAR — which is where every SQL-bearing procedure
-// (sp_executesql and friends) carries its statement. Only that one type is
-// decoded; anything else reports "not recovered", which degrades the call to
-// proc-name-only auditing rather than breaking the session.
-//
-// Deliberately not a loop over parameters: the statement is always the first
-// one, and scanning further would mean decoding arbitrary TYPE_INFO shapes to
-// find parameter boundaries — much more surface for no more coverage.
-func firstNVarCharParam(b []byte) (string, bool) {
-	i := 0
-	if i >= len(b) {
-		return "", false
+// walkParams decodes a call's ParameterData list, returning every character
+// parameter's text, the offset just past the list, and whether the whole list
+// was understood. A type it cannot skip stops the walk with ok=false: guessing
+// past an unknown TYPE_INFO would resynchronize on arbitrary bytes, which is
+// worse than reporting that the call was not readable.
+func walkParams(b []byte, i int) (texts []string, next int, ok bool) {
+	for i < len(b) {
+		// At a parameter boundary these bytes are batch separators, not a name
+		// length — that is how the protocol delimits several calls in one message.
+		if b[i] == 0xFF || b[i] == 0x80 {
+			return texts, i, true
+		}
+		nameLen := int(b[i])
+		i++
+		if i+nameLen*2 > len(b) {
+			return texts, len(b), false
+		}
+		i += nameLen * 2
+		if i >= len(b) {
+			return texts, len(b), false
+		}
+		i++ // StatusFlags
+		if i >= len(b) {
+			return texts, len(b), false
+		}
+		text, isText, n, pok := parseParamValue(b, i)
+		if !pok {
+			return texts, len(b), false
+		}
+		if isText && text != "" {
+			texts = append(texts, text)
+		}
+		i = n
 	}
-	nameLen := int(b[i])
-	i++
-	i += nameLen * 2 // parameter name (UCS-2)
-	if i+1 >= len(b) {
-		return "", false
-	}
-	i++ // StatusFlags
+	return texts, i, true
+}
+
+// Fixed-length TDS type ids and their value widths.
+var fixedLenTypes = map[byte]int{
+	0x1F: 0, // NULLTYPE
+	0x30: 1, // INT1
+	0x32: 1, // BIT
+	0x34: 2, // INT2
+	0x38: 4, // INT4
+	0x3A: 4, // MONEY4
+	0x3B: 4, // FLT4
+	0x3C: 8, // MONEY
+	0x3D: 8, // DATETIME
+	0x3E: 8, // FLT8
+	0x7F: 8, // INT8
+}
+
+// Variable-length types whose TYPE_INFO is a single length byte and whose value
+// carries a one-byte length prefix.
+var byteLenTypes = map[byte]bool{
+	0x26: true, // INTN
+	0x24: true, // GUID
+	0x68: true, // BITN
+	0x6D: true, // FLTN
+	0x6E: true, // MONEYN
+	0x6F: true, // DATETIMN
+}
+
+// parseParamValue decodes one parameter's TYPE_INFO and value starting at the
+// type id, returning its text when it is a character type and the offset just
+// past the value.
+func parseParamValue(b []byte, i int) (text string, isText bool, next int, ok bool) {
 	typeID := b[i]
 	i++
-	if typeID != 0xE7 { // NVARCHARTYPE — the only type we decode
-		return "", false
+	if w, fixed := fixedLenTypes[typeID]; fixed {
+		if i+w > len(b) {
+			return "", false, 0, false
+		}
+		return "", false, i + w, true
 	}
-	if i+7 > len(b) {
-		return "", false
+	if byteLenTypes[typeID] {
+		if i+1 > len(b) {
+			return "", false, 0, false
+		}
+		i++ // TYPE_INFO length
+		n, sok := skipByteLenValue(b, i)
+		return "", false, n, sok
 	}
-	maxLen := binary.LittleEndian.Uint16(b[i:])
-	i += 2
-	i += 5 // collation
-	if maxLen == 0xFFFF {
-		return plpString(b[i:])
+	switch typeID {
+	case 0x6A, 0x6C, 0x37, 0x3F: // DECIMALN / NUMERICN / DECIMAL / NUMERIC
+		if i+3 > len(b) {
+			return "", false, 0, false
+		}
+		i += 3 // length, precision, scale
+		n, sok := skipByteLenValue(b, i)
+		return "", false, n, sok
+	case 0x28: // DATEN — no TYPE_INFO byte
+		n, sok := skipByteLenValue(b, i)
+		return "", false, n, sok
+	case 0x29, 0x2A, 0x2B: // TIMEN / DATETIME2N / DATETIMEOFFSETN
+		if i+1 > len(b) {
+			return "", false, 0, false
+		}
+		i++ // scale
+		n, sok := skipByteLenValue(b, i)
+		return "", false, n, sok
+	case 0xE7, 0xEF, 0xA7, 0xAF: // NVARCHAR / NCHAR / VARCHAR / CHAR
+		if i+7 > len(b) {
+			return "", false, 0, false
+		}
+		maxLen := binary.LittleEndian.Uint16(b[i:])
+		i += 2
+		i += 5 // collation
+		wide := typeID == 0xE7 || typeID == 0xEF
+		if maxLen == 0xFFFF {
+			s, n, pok := plpValue(b, i, wide)
+			return s, true, n, pok
+		}
+		if i+2 > len(b) {
+			return "", false, 0, false
+		}
+		n := int(binary.LittleEndian.Uint16(b[i:]))
+		i += 2
+		if n == 0xFFFF { // NULL
+			return "", true, i, true
+		}
+		if i+n > len(b) {
+			return "", false, 0, false
+		}
+		return decodeText(b[i:i+n], wide), true, i + n, true
+	case 0xA5, 0xAD: // VARBINARY / BINARY
+		if i+2 > len(b) {
+			return "", false, 0, false
+		}
+		maxLen := binary.LittleEndian.Uint16(b[i:])
+		i += 2
+		if maxLen == 0xFFFF {
+			_, n, pok := plpValue(b, i, false)
+			return "", false, n, pok
+		}
+		if i+2 > len(b) {
+			return "", false, 0, false
+		}
+		n := int(binary.LittleEndian.Uint16(b[i:]))
+		i += 2
+		if n == 0xFFFF {
+			return "", false, i, true
+		}
+		if i+n > len(b) {
+			return "", false, 0, false
+		}
+		return "", false, i + n, true
+	case 0x63, 0x23, 0x22: // NTEXT / TEXT / IMAGE
+		if i+4 > len(b) {
+			return "", false, 0, false
+		}
+		i += 4 // max length
+		if typeID != 0x22 {
+			if i+5 > len(b) {
+				return "", false, 0, false
+			}
+			i += 5 // collation
+		}
+		if i >= len(b) {
+			return "", false, 0, false
+		}
+		ptrLen := int(b[i])
+		i++
+		if ptrLen == 0 { // NULL
+			return "", typeID != 0x22, i, true
+		}
+		if i+ptrLen+8+4 > len(b) {
+			return "", false, 0, false
+		}
+		i += ptrLen + 8 // text pointer + timestamp
+		n := int(binary.LittleEndian.Uint32(b[i:]))
+		i += 4
+		if n < 0 || i+n > len(b) {
+			return "", false, 0, false
+		}
+		return decodeText(b[i:i+n], typeID == 0x63), typeID != 0x22, i + n, true
 	}
-	if i+2 > len(b) {
-		return "", false
-	}
-	n := int(binary.LittleEndian.Uint16(b[i:]))
-	i += 2
-	if n == 0xFFFF { // NULL
-		return "", false
-	}
-	if i+n > len(b) {
-		return "", false
-	}
-	return ucs2ToString(b[i : i+n]), true
+	// An unknown type: stop. Resynchronizing on a guess would make every
+	// following parameter fiction.
+	return "", false, 0, false
 }
 
-// plpString decodes a partially-length-prefixed value: an 8-byte total length
+// skipByteLenValue steps over a value carrying a one-byte length prefix.
+func skipByteLenValue(b []byte, i int) (int, bool) {
+	if i >= len(b) {
+		return 0, false
+	}
+	n := int(b[i])
+	i++
+	if i+n > len(b) {
+		return 0, false
+	}
+	return i + n, true
+}
+
+// plpValue decodes a partially-length-prefixed value: an 8-byte total length
 // (or the "unknown" sentinel), then 4-byte-prefixed chunks to a zero-length
 // terminator. This is how a statement longer than 8000 bytes — a big generated
 // query, exactly the kind worth auditing — arrives.
-func plpString(b []byte) (string, bool) {
-	if len(b) < 8 {
-		return "", false
+func plpValue(b []byte, i int, wide bool) (string, int, bool) {
+	if i+8 > len(b) {
+		return "", 0, false
 	}
-	i := 8 // total length (or 0xFFFFFFFFFFFFFFFE = unknown); chunks are authoritative
+	i += 8 // total length (or the unknown sentinel); the chunks are authoritative
 	var out []byte
 	for {
 		if i+4 > len(b) {
-			return "", false
+			return "", 0, false
 		}
-		n := int(binary.LittleEndian.Uint32(b[i:]))
+		n := int(int32(binary.LittleEndian.Uint32(b[i:])))
 		i += 4
 		if n == 0 {
-			return ucs2ToString(out), true
+			return decodeText(out, wide), i, true
 		}
-		if i+n > len(b) {
-			return "", false
+		if n < 0 || i+n > len(b) {
+			return "", 0, false
 		}
 		out = append(out, b[i:i+n]...)
 		i += n
 	}
+}
+
+// decodeText renders a character parameter: UCS-2 for the N-types, raw bytes
+// otherwise (the single-byte collations are close enough to ASCII for the
+// statement text a driver sends).
+func decodeText(b []byte, wide bool) string {
+	if wide {
+		return ucs2ToString(b)
+	}
+	return string(b)
 }
 
 // skipAllHeaders steps over the ALL_HEADERS block that precedes a SQLBatch or
