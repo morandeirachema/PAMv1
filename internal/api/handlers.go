@@ -37,12 +37,22 @@ func (s *Server) streamSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "live monitoring is not enabled")
 		return
 	}
+	frames, cancel := s.live.Subscribe(id)
+	defer cancel()
+	// Subscribe FIRST, then validate against the registry: if the session ends
+	// between the two, EndSession closes the just-created subscription and the
+	// loop below exits — checking first would leave that gap open. An id that
+	// is unknown (or already over) is refused outright; before this, watching a
+	// dead session subscribed the caller to eternal silence. With no registry
+	// wired the id cannot be validated and any id streams (test-only shape).
+	if s.sessions != nil && !s.sessions.Exists(id) {
+		writeError(w, http.StatusNotFound, "no such live session")
+		return
+	}
 	rc, ok := s.beginStream(w)
 	if !ok {
 		return
 	}
-	frames, cancel := s.live.Subscribe(id)
-	defer cancel()
 
 	s.audit(r.Context(), "session.monitor", "session:"+id)
 	w.WriteHeader(http.StatusOK)
@@ -52,7 +62,13 @@ func (s *Server) streamSession(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case b := <-frames:
+		case b, open := <-frames:
+			if !open {
+				// The session ended (completed or killed): end the stream, so
+				// the watcher's pane reports it instead of sitting silent on a
+				// channel that will never speak again.
+				return
+			}
 			// SSE frames are newline-delimited; encode as one data: field per
 			// output chunk (any embedded newlines are re-prefixed by the client).
 			if _, err := fmt.Fprintf(w, "data: %s\n\n", sseEscape(b)); err != nil {

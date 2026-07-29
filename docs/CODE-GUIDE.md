@@ -574,7 +574,11 @@ has no TLS (the PAM key would travel cleartext).
   DB proxy publishes each SQL line; the REST/broker WinRM chokepoint
   (`execWinRM`) publishes a `winrm>` command echo plus output under the session
   id `superviseSession` returns. Fan-out is non-blocking (a slow watcher drops
-  frames, never stalls the session).
+  frames, never stalls the session). The stream **ends with the session**:
+  `Registry.Remove` — the funnel every session-end path passes through — calls
+  `Hub.EndSession`, which closes the subscriber channels (wired once via
+  `Registry.AttachHub` in `main`), and `streamSession` refuses an unknown or
+  already-over id with 404 rather than subscribing a watcher to silence.
 - **Command control** — a `CommandGuard` (`cmdguard.go`, regex denylist from
   `PAM_COMMAND_DENY_FILE`) blocks a dangerous command **before it reaches the
   target**: SSH `exec` (the request is vetoed in `pumpRequests`' `onExec`), each
