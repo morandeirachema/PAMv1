@@ -2,7 +2,8 @@
 
 > **Living document.** Update whenever a listener, an upstream protocol, or a
 > deployment flow changes. This is the reference for firewall rules, security
-> groups, NetworkPolicies and OT segmentation.
+> groups, NetworkPolicies and OT segmentation. The *what and why* of each
+> protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
 > Last updated: 2026-07-29 · Reflects: Phases 0–53. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; everything from
