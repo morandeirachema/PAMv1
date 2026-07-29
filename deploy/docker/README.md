@@ -8,9 +8,11 @@ root) to keep the root uncluttered; the build context is still the **repo root**
 | `Dockerfile` | The default image — `CGO_ENABLED=0`, static, `distroless/static`, non-root. The read-only root filesystem is applied at *run* time by compose (`read_only: true`), not baked into the image |
 | `Dockerfile.pkcs11` | Optional image with the PKCS#11 **HSM KEK** provider (needs cgo + a glibc base) |
 | `docker-compose.yml` | Local full stack: hardened PostgreSQL 17 (scram-sha-256), a `pam-init` volume-ownership one-shot, an internal-only `guacd` (so **RDP brokering works here too**) and pam-server |
-| `.env.example` | Copy to `.env` and fill the keys before `docker compose up` |
+| `.env.example` | **The env example.** Copy to `.env` and fill the keys before `docker compose up`. Every `PAM_*` variable, grouped and commented; the Kubernetes twin is [`../k8s/configmap.example.yaml`](../k8s/configmap.example.yaml) + [`secret.example.yaml`](../k8s/secret.example.yaml) |
 | `docker-compose.rdp-demo.yml` | End-to-end **RDP viewer demo** — a real xrdp desktop + guacd + pam-server, target auto-seeded (see below) |
 | `rdp-target/` | The demo's throwaway RDP target image (XFCE over xrdp). Demo only — never deploy |
+| `docker-compose.vnc-demo.yml` | End-to-end **VNC viewer demo** — TigerVNC + XFCE behind guacd, target auto-seeded ([docs/VNC-TESTING.md](../../docs/VNC-TESTING.md)) |
+| `vnc-target/` | The demo's throwaway VNC target image. Demo only — never deploy |
 
 ## Run the full stack
 
