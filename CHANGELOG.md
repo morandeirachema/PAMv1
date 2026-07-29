@@ -11,6 +11,15 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **Cross-replica live monitoring** (Phase 55) — in a multi-replica deployment,
+  `GET /api/sessions` now lists every replica's sessions (each naming its host)
+  and the SSE watch streams a session hosted on any replica: the hosting pod
+  relays a watched session's output over the store's LISTEN/NOTIFY bus, only
+  while someone is actually watching. A crashed replica's sessions age out of
+  the listing and close their remote watch streams instead of hanging them.
+  New `live_sessions` table (migration 0025); no new configuration. Step-up
+  decisions remain with the hosting replica (documented).
+
 - **VNC connector** (Phase 54) — `vnc` is a first-class target protocol,
   brokered through guacd and rendered in the portal by the same viewer as RDP
   (`POST /api/vnc-token`, `GET /api/targets/{id}/vnc`). Both viewers now share

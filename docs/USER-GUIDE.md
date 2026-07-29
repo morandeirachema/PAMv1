@@ -8,7 +8,7 @@ review activity. If you deploy or administer pamv1, see the
 > user-facing behavior changes (portal, connecting, roles). Add a row to the
 > [change log](#8-change-log) with each update.
 >
-> Last updated: 2026-07-28 · Reflects: Phases 0–52g — the 5250 console (11, now keyboard-first and with full backend parity: safes, campaigns, risk analytics, live watch — Phase 25), custom permission profiles (12), the database session proxy you connect to with `psql` (15), supervised sessions (16: a supervisor may watch live, and a command can be blocked by policy), and Zero Standing Privilege on some targets (22: no stored password — pamv1 signs a short-lived certificate for your session). Since then, the things you are most likely to *notice*: a SQL statement can **pause mid-session** for a supervisor's decision (30) instead of the session dying; your session can be **refused outright** if recording is required but not configured (52c); certification and step-up decisions need the **approver** capability (39) and nobody may decide their own (46, 52c); and recovery codes are now four groups of six (52e). An admin revoking your access still ends your live sessions immediately. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-07-29 · Reflects: Phases 0–55 — the 5250 console (11, now keyboard-first and with full backend parity: safes, campaigns, risk analytics, live watch — Phase 25), custom permission profiles (12), the database session proxy you connect to with `psql` (15), supervised sessions (16: a supervisor may watch live, and a command can be blocked by policy), and Zero Standing Privilege on some targets (22: no stored password — pamv1 signs a short-lived certificate for your session). Since then, the things you are most likely to *notice*: a SQL statement can **pause mid-session** for a supervisor's decision (30) instead of the session dying; your session can be **refused outright** if recording is required but not configured (52c); certification and step-up decisions need the **approver** capability (39) and nobody may decide their own (46, 52c); and recovery codes are now four groups of six (52e). An admin revoking your access still ends your live sessions immediately. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ Educational / pre-production project — see the [README](../README.md).
 
@@ -298,12 +298,14 @@ You can also **watch an in-progress session live**: on **Work with Active
 Sessions**, type option **5** next to a session and its output streams into a
 view-only pane as it happens (F12 stops watching). When the session ends —
 finished or killed — the pane says **SESSION ENDED**; a quiet pane means a
-quiet session, not a dead one. A session that is not live *on the replica you
-reached* is refused (404) instead of showing an empty stream — in a
-multi-replica deployment that can also mean the session is hosted elsewhere,
-so ask your admin before concluding it ended. The same stream is available via
-the API — `GET /api/sessions/{id}/stream` (Server-Sent Events). The watch —
-and a refused watch — is audited (`session.monitor`).
+quiet session, not a dead one. In a multi-replica deployment the list shows
+**every** replica's sessions and the watch works wherever the session is
+hosted (Phase 55 — the hosting server relays the output through the
+database), so a 404 now honestly means the session is unknown or already
+over. The same stream is available via the API —
+`GET /api/sessions/{id}/stream` (Server-Sent Events). The watch — and a
+refused watch — is audited (`session.monitor`; a cross-replica watch is
+marked `via:relay`).
 
 Two more review screens (both need audit-read):
 
@@ -374,6 +376,7 @@ guard against connections that open and never authenticate, not a fault.
 |---|---|
 | 2026-07-29 | **Option 7 now opens VNC desktops too.** On *Work with Targets*, type **7** next to a `vnc` target and it renders in the portal exactly like an RDP one — same key, same `Ctrl+Alt+Q` to disconnect, same rule that the password is injected for you and never reaches your browser. If copy/paste does not work, the clipboard policy for that target says so. |
 | 2026-07-29 | **SQL Server databases can now be reached through pamv1** (Phase 53): `sqlcmd -S pam,1433 -U '<cred>@<target>' -P "$PAM_TOKEN"`, same rules as PostgreSQL — your token is the password, you never learn the database one, and every statement is audited. §"Connecting to a database (SQL Server)" |
+| 2026-07-29 | **Phase 55 — the session list and live watch now cover the whole cluster.** On a multi-replica deployment, *Work with Active Sessions* shows every replica's sessions and option 5 watches a session wherever it is hosted, so a 404 honestly means "unknown or already ended" — the "hosted elsewhere" caveat below is history. §"Watching a session" |
 | 2026-07-29 | **Watch-pane fixes**: lines no longer end in a stray `\r`; a refused command watched live now says *why* it was refused instead of looking like it ran silently; and the 404 for a non-live session is replica-honest — on a multi-replica deployment it can mean "hosted elsewhere", not "ended". §"Watching a session" |
 | 2026-07-29 | **The live watch pane now reports SESSION ENDED** the moment the watched session finishes or is killed — a quiet pane means a quiet session, not a dead one. Watching a session that is already over says so (404) instead of showing an empty stream. §"Watching a session" |
 | 2026-07-29 | **RDP clipboard can differ per target** (Phase 33 follow-on): if copy/paste is blocked on one machine while it works elsewhere, that target is deliberately locked down — the per-target policy is always at least as strict as the global one. Admins set it on *Add/Change Target*. §"Connecting to a Windows desktop" |

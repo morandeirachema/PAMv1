@@ -19,6 +19,9 @@ type Info struct {
 	Protocol string    `json:"protocol"` // ssh | rdp | vnc | winrm | postgres | mssql | ssh_exec
 	Remote   string    `json:"remote"`
 	Started  time.Time `json:"started"`
+	// Replica names the replica hosting the session. Stamped by the cluster
+	// inventory (Phase 55); empty in a single-replica deployment.
+	Replica string `json:"replica,omitempty"`
 }
 
 type entry struct {
@@ -30,10 +33,11 @@ type entry struct {
 type Registry struct {
 	mu          sync.Mutex
 	m           map[string]entry
-	maxPerActor int     // 0 = unlimited
-	maxTotal    int     // 0 = unlimited
-	bus         KillBus // cross-replica kill transport (nil = single-replica)
-	hub         *Hub    // live-output hub to end when a session is removed (nil = none)
+	maxPerActor int      // 0 = unlimited
+	maxTotal    int      // 0 = unlimited
+	bus         KillBus  // cross-replica kill transport (nil = single-replica)
+	hub         *Hub     // live-output hub to end when a session is removed (nil = none)
+	cluster     *Cluster // cross-replica inventory + live relay (nil = single-replica)
 }
 
 // NewRegistry returns an empty, ready-to-use session registry.
@@ -74,14 +78,29 @@ func (r *Registry) AllowNew(actor string) bool {
 }
 
 // Register records a session and returns its id; kill terminates it when called
-// (e.g. closes the underlying connection).
+// (e.g. closes the underlying connection). With a cluster attached, the session
+// is also upserted into the shared inventory so every replica's listing shows
+// it (best-effort; the heartbeat repairs a missed write).
 func (r *Registry) Register(info Info, kill func()) string {
 	id := randID()
 	info.ID = id
 	r.mu.Lock()
 	r.m[id] = entry{info: info, kill: kill}
+	c := r.cluster
 	r.mu.Unlock()
+	if c != nil {
+		c.sessionRegistered(info)
+	}
 	return id
+}
+
+// attachCluster links the cross-replica live-monitoring coordinator, so
+// Register and Remove keep the shared inventory in step with this replica's
+// sessions. Called once at wiring time by StartCluster.
+func (r *Registry) attachCluster(c *Cluster) {
+	r.mu.Lock()
+	r.cluster = c
+	r.mu.Unlock()
 }
 
 // AttachHub links the live-monitoring hub, so removing a session also ends its
@@ -107,15 +126,21 @@ func (r *Registry) Exists(id string) bool {
 
 // Remove drops a session (call when it ends) and, when a hub is attached,
 // closes the session's live watch streams so supervisors see the end rather
-// than an indefinitely silent pane.
+// than an indefinitely silent pane. With a cluster attached it also deletes
+// the session's shared-inventory row and publishes the cluster-wide end
+// marker, so remote listings drop it and remote watch streams close too.
 func (r *Registry) Remove(id string) {
 	r.mu.Lock()
 	delete(r.m, id)
 	hub := r.hub
+	c := r.cluster
 	r.mu.Unlock()
 	// Outside the registry lock: the hub has its own mutex, and holding both at
 	// once would create an ordering to get wrong later.
 	hub.EndSession(id)
+	if c != nil {
+		c.sessionRemoved(id)
+	}
 }
 
 // List returns the live sessions, oldest first.

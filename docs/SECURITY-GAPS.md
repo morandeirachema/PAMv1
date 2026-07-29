@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-07-29 · Reflects: Phases 0–53 + the 2026-07 hardening passes,
+> Last updated: 2026-07-29 · Reflects: Phases 0–55 + the 2026-07 hardening passes,
 > including the **post-beta sweep of 2026-07-27**, whose thirty findings are all
 > now closed (see the section below for what each fix actually was).
 
@@ -344,13 +344,16 @@ is a phase each, out of scope for a security *fix*:
   LEEF (QRadar) and the RFC 5425 TLS transport — with always-on, optionally
   CA-pinned certificate verification — shipped in Phase 47 on the same seam.
 - **HA correctness** — the periodic-job scheduler runs under a Postgres
-  advisory **leader lock** (one replica per tick), and the **kill-switch is now
+  advisory **leader lock** (one replica per tick), the **kill-switch is
   cluster-wide** (Phase 34: a kill is broadcast over Postgres LISTEN/NOTIFY and
   applied on whichever replica hosts the session — kill-switch, revoke cascade,
-  vendor offboard, analytics auto-response). What remains per-replica: **live
-  session *monitoring*** (the SSE watch stream is served from the hosting pod) and
-  the session **inventory listing**; fanning session *bytes* across replicas is a
-  heavier pub/sub than a kill signal and stays a documented follow-on.
+  vendor offboard, analytics auto-response), and since Phase 55 so are **live
+  session *monitoring* and the inventory listing** (a shared heartbeat-refreshed
+  inventory, plus an interest-gated relay that forwards a watched session's
+  output over the store bus only while a remote supervisor is watching). What
+  remains per-replica: **in-session step-up decisions** (the paused statement
+  blocks in the hosting replica's memory — the pending list and decide endpoint
+  are served there), a documented Phase 55 deferral.
 - **Roadmap-deferred**: Kerberos/GSSAPI, serial connectors, SPIRE workload
   attestation, automatic broker-chain checkpoint export. (The in-browser RDP viewer
   has since **shipped** — vendored Guacamole client + bundled guacd.)

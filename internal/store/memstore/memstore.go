@@ -50,6 +50,11 @@ type Memstore struct {
 
 	killMu   sync.Mutex
 	killSubs map[chan session.KillSelector]struct{} // cross-replica kill fan-out
+
+	liveMu       sync.Mutex
+	liveSessions map[string]liveRow                  // shared live-session inventory
+	frameSubs    map[chan session.LiveFrame]struct{} // live-output fan-out
+	interestSubs map[chan string]struct{}            // watch-interest fan-out
 }
 
 // New returns an empty in-memory store ready for use.
@@ -80,6 +85,9 @@ func New() *Memstore {
 		campaigns:     make(map[int64]store.Campaign),
 		campaignItems: make(map[int64]store.CampaignItem),
 		killSubs:      make(map[chan session.KillSelector]struct{}),
+		liveSessions:  make(map[string]liveRow),
+		frameSubs:     make(map[chan session.LiveFrame]struct{}),
+		interestSubs:  make(map[chan string]struct{}),
 	}
 }
 

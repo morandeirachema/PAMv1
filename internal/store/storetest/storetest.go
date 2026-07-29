@@ -1397,16 +1397,127 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.PublishSessionKill(ctx, want); err != nil {
 		t.Fatalf("PublishSessionKill: %v", err)
 	}
+killDelivered:
 	for {
 		select {
 		case got := <-kills:
 			if got.Actor == want.Actor && got.Target == want.Target {
-				return
+				break killDelivered
 			}
 		case <-tick.C:
 			_ = st.PublishSessionKill(ctx, want) // retry until the listener is ready
 		case <-deadline:
 			t.Fatal("kill bus: published selector was not delivered to the subscriber")
+		}
+	}
+
+	// --- cross-replica live monitoring (Phase 55) ---
+	// The shared live-session inventory: rows round-trip with their replica,
+	// list oldest-first, filter by freshness, and delete by id and by replica.
+	started := time.Now().Add(-time.Minute).Truncate(time.Millisecond)
+	rowA := session.Info{ID: "livesess-a", Actor: "alice", Target: "web-01",
+		Protocol: "ssh", Remote: "10.0.0.5:50412", Replica: "replica-a", Started: started}
+	rowB := session.Info{ID: "livesess-b", Actor: "bob", Target: "db-01",
+		Protocol: "postgres", Replica: "replica-b", Started: started.Add(30 * time.Second)}
+	if err := st.PutLiveSession(ctx, rowA); err != nil {
+		t.Fatalf("PutLiveSession(a): %v", err)
+	}
+	if err := st.PutLiveSession(ctx, rowB); err != nil {
+		t.Fatalf("PutLiveSession(b): %v", err)
+	}
+	// Upserting an existing id must update in place, not duplicate.
+	rowA.Actor = "alice2"
+	if err := st.PutLiveSession(ctx, rowA); err != nil {
+		t.Fatalf("PutLiveSession(a, upsert): %v", err)
+	}
+	live, err := st.ListLiveSessions(ctx, time.Hour)
+	if err != nil {
+		t.Fatalf("ListLiveSessions: %v", err)
+	}
+	if len(live) != 2 {
+		t.Fatalf("ListLiveSessions = %d rows, want 2 (upsert must not duplicate)", len(live))
+	}
+	if live[0].ID != rowA.ID || live[1].ID != rowB.ID {
+		t.Fatalf("ListLiveSessions order = [%s %s], want oldest started first [%s %s]",
+			live[0].ID, live[1].ID, rowA.ID, rowB.ID)
+	}
+	if got := live[0]; got.Actor != "alice2" || got.Target != rowA.Target || got.Protocol != rowA.Protocol ||
+		got.Remote != rowA.Remote || got.Replica != rowA.Replica || !got.Started.Equal(rowA.Started) {
+		t.Fatalf("live row round-trip = %+v, want %+v", got, rowA)
+	}
+	// Freshness filter: a negative window puts the cutoff in the future, so
+	// even a just-written row is "stale" — proving the filter without having
+	// to backdate seen-at stamps (which the API deliberately cannot do).
+	if stale, err := st.ListLiveSessions(ctx, -time.Second); err != nil || len(stale) != 0 {
+		t.Fatalf("ListLiveSessions(stale cutoff) = %d rows, %v; want 0, nil", len(stale), err)
+	}
+	if err := st.DeleteLiveSession(ctx, rowA.ID); err != nil {
+		t.Fatalf("DeleteLiveSession: %v", err)
+	}
+	if err := st.DeleteLiveSession(ctx, rowA.ID); err != nil {
+		t.Fatalf("DeleteLiveSession must be idempotent, got %v", err)
+	}
+	if err := st.DeleteReplicaLiveSessions(ctx, "replica-b"); err != nil {
+		t.Fatalf("DeleteReplicaLiveSessions: %v", err)
+	}
+	if left, err := st.ListLiveSessions(ctx, time.Hour); err != nil || len(left) != 0 {
+		t.Fatalf("after deletes ListLiveSessions = %d rows, %v; want 0, nil", len(left), err)
+	}
+
+	// The live bus: interest announcements and output frames are delivered to a
+	// subscriber; a frame larger than one transport payload (Postgres NOTIFY
+	// tops out near 8000 bytes) arrives as ordered chunks that reassemble to
+	// the same bytes. Establish listener liveness with the retried interest
+	// announcement FIRST, so the big frame can then be published exactly once —
+	// a retry loop would double its bytes.
+	frames, interest, err := st.SubscribeLive(subCtx)
+	if err != nil {
+		t.Fatalf("SubscribeLive: %v", err)
+	}
+	liveDeadline := time.After(5 * time.Second)
+	liveTick := time.NewTicker(100 * time.Millisecond)
+	defer liveTick.Stop()
+	if err := st.PublishLiveInterest(ctx, "livesess-a"); err != nil {
+		t.Fatalf("PublishLiveInterest: %v", err)
+	}
+interestDelivered:
+	for {
+		select {
+		case got := <-interest:
+			if got == "livesess-a" {
+				break interestDelivered
+			}
+		case <-liveTick.C:
+			_ = st.PublishLiveInterest(ctx, "livesess-a") // retry until the listener is ready
+		case <-liveDeadline:
+			t.Fatal("live bus: interest announcement was not delivered to the subscriber")
+		}
+	}
+	payload := bytes.Repeat([]byte("0123456789abcdef"), 640) // 10240 bytes: > one NOTIFY payload
+	if err := st.PublishLiveFrame(ctx, session.LiveFrame{ID: "livesess-a", Kind: session.LiveFrameData, Data: payload}); err != nil {
+		t.Fatalf("PublishLiveFrame(data): %v", err)
+	}
+	if err := st.PublishLiveFrame(ctx, session.LiveFrame{ID: "livesess-a", Kind: session.LiveFrameEnd}); err != nil {
+		t.Fatalf("PublishLiveFrame(end): %v", err)
+	}
+	var reassembled []byte
+	for {
+		select {
+		case f := <-frames:
+			if f.ID != "livesess-a" {
+				t.Fatalf("frame for session %q, want livesess-a", f.ID)
+			}
+			if f.Kind == session.LiveFrameEnd {
+				// The end marker was published after the data, so every chunk
+				// must have arrived — in order — by now.
+				if !bytes.Equal(reassembled, payload) {
+					t.Fatalf("reassembled %d bytes that do not match the %d published", len(reassembled), len(payload))
+				}
+				return
+			}
+			reassembled = append(reassembled, f.Data...)
+		case <-liveDeadline:
+			t.Fatalf("live bus: frames not delivered (have %d of %d bytes, no end marker)", len(reassembled), len(payload))
 		}
 	}
 }

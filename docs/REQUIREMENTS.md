@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-07-29 · Reflects: Phases 0–54.
+> Last updated: 2026-07-29 · Reflects: Phases 0–55.
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** These are the
 > specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate
@@ -118,17 +118,22 @@ land on any replica. Since Phase 42 the **SSH host key and the ZSP CA key** are
 held in shared custody in the database rather than generated per pod, so a scaled
 deployment no longer hands out a different host key and a different certificate
 authority per replica. Session **termination** is cluster-wide over Postgres
-`LISTEN/NOTIFY` (Phase 34), and the retention, SIEM-forwarding, analytics and
-lifecycle workers each run on exactly one replica behind a Postgres advisory
+`LISTEN/NOTIFY` (Phase 34), and since Phase 55 so are session **listing and live
+watching**: `GET /api/sessions` merges a shared, heartbeat-refreshed inventory
+(each row naming its hosting replica; a crashed replica's rows age out in ~45s),
+and `GET /api/sessions/{id}/stream` reaches a session hosted on any replica —
+the hosting pod relays a watched session's output over the store bus, and only
+while someone is actually watching. The retention, SIEM-forwarding, analytics
+and lifecycle workers each run on exactly one replica behind a Postgres advisory
 leader lock.
 
-Four things remain per-replica: the auth **rate-limiter**
+Three things remain per-replica: the auth **rate-limiter**
 (best-effort; slightly looser limits across N replicas, acceptable), the
 **break-glass quorum-unseal shares** (kept in memory *by design* — persisting key
-shares to the DB would weaken the offline-shares guarantee), live-session
-**listing and SSE streaming** (`GET /api/sessions` and `/stream` are served by
-the pod hosting the session — a documented limit; termination is not affected),
-and the `PAM_MAX_SESSIONS_PER_USER` / `_TOTAL` caps. For the unseal flow,
+shares to the DB would weaken the offline-shares guarantee), and the
+`PAM_MAX_SESSIONS_PER_USER` / `_TOTAL` caps (deliberately: a cluster cap derived
+from advisory inventory rows could refuse sessions on stale data). In-session
+**step-up decisions** are also decided on the replica hosting the session. For the unseal flow,
 submit all shares to one replica (a sticky session, or scale to 1 during an
 emergency). All other operations (proxy, WinRM, RDP, rotation, reveal, approval,
 checkout) are safe across replicas.

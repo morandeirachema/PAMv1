@@ -726,6 +726,16 @@ func run() error {
 	// Removing a session from the registry ends its live watch streams, so a
 	// supervisor's SSE pane reports the end instead of going silent forever.
 	sessions.AttachHub(liveHub)
+	// Cross-replica live monitoring (Phase 55): shared session inventory (so
+	// GET /api/sessions lists the whole cluster) and an interest-gated relay
+	// that forwards a watched session's output over the store bus to the
+	// replica whose supervisor is watching. Best-effort like the kill bus — a
+	// subscribe failure logs and leaves listing + watching replica-local.
+	replicaName, _ := os.Hostname()
+	cluster, cerr := session.StartCluster(ctx, st, sessions, liveHub, replicaName)
+	if cerr != nil {
+		log.Warn("session live bus unavailable; session listing and live watch are replica-local", "err", cerr)
+	}
 
 	// Command control (Phase 16): compile the deny file, if configured, into ONE
 	// guard shared by the SSH proxy, the database proxy and the API server — so the
@@ -916,6 +926,7 @@ func run() error {
 	handler, err := api.New(st, v, resolver, authn, api.Options{
 		Sessions:                sessions,
 		Live:                    liveHub,
+		Cluster:                 cluster,
 		StepUp:                  stepUp,
 		SSHHostKeyCallback:      upstreamHostKey,
 		MFARequired:             cfg.MFARequired,

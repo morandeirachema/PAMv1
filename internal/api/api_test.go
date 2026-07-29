@@ -47,6 +47,14 @@ func newTestServerAuthn(t *testing.T, authn auth.Authenticator) (*httptest.Serve
 // newTestServerOpts builds a server with a password authenticator and options.
 func newTestServerOpts(t *testing.T, authn auth.Authenticator, opts api.Options) (*httptest.Server, store.Store) {
 	t.Helper()
+	return newTestServerStoreOpts(t, authn, memstore.New(), opts)
+}
+
+// newTestServerStoreOpts builds a server on a CALLER-PROVIDED store, for tests
+// that must share the store with something outside the server — e.g. a second
+// simulated replica on the same cross-replica live bus (Phase 55).
+func newTestServerStoreOpts(t *testing.T, authn auth.Authenticator, st store.Store, opts api.Options) (*httptest.Server, store.Store) {
+	t.Helper()
 	masterKey, err := vault.GenerateMasterKey()
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +63,6 @@ func newTestServerOpts(t *testing.T, authn auth.Authenticator, opts api.Options)
 	if err != nil {
 		t.Fatal(err)
 	}
-	st := memstore.New()
 	bgHash := sha256.Sum256([]byte(breakGlassKey))
 	resolver, err := auth.NewResolver(st, testAPIKey, hex.EncodeToString(bgHash[:]))
 	if err != nil {

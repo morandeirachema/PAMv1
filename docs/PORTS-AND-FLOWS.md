@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-07-29 · Reflects: Phases 0–54. **Phase 53 added the first new
+> Last updated: 2026-07-29 · Reflects: Phases 0–55 (55 adds no port and no new flow — the live-monitor relay rides the existing server ↔ PostgreSQL store connection, flow E1). **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; everything from
 > 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
@@ -61,7 +61,7 @@ add `5433 → 5433` and/or `1433 → 1433` when the database proxies are enabled
 
 | # | Source | → Destination (zone) | Port | Proto | Purpose | Status |
 |---|--------|----------------------|-----:|-------|---------|--------|
-| E1 | pam-server | PostgreSQL (data zone) | 5432 | TCP/TLS | Inventory, vaulted secrets, audit, users | ✅ |
+| E1 | pam-server | PostgreSQL (data zone) | 5432 | TCP/TLS | Inventory, vaulted secrets, audit, users; the cross-replica kill + live-monitor buses (LISTEN/NOTIFY) | ✅ |
 | E2 | pam-server (proxy) | Linux target (target zone) | 22 | SSH | JIT-injected privileged session | ✅ |
 | E3 | pam-server | Windows target | 5985 / **5986** | WinRM / WinRM-TLS | JIT command execution (`/api/targets/{id}/winrm`) | ✅ |
 | E4a | pam-server | guacd (control plane) | 4822 | Guacamole | RDP broker handshake (JIT credential) | ✅ |
@@ -198,6 +198,7 @@ specific target hosts and protocols, and default-deny everything else across the
 
 | Date | Change |
 |---|---|
+| 2026-07-29 | **Phase 55 — cross-replica live monitoring.** No new port, listener or flow: the session-frame relay and watch-interest announcements ride the existing pam-server ↔ PostgreSQL store connection (flow E1) as `LISTEN/NOTIFY` channels beside the Phase 34 kill bus, and the shared session inventory is a table. In a multi-replica deployment the supervisor's `GET /api/sessions[/{id}/stream]` may land on any replica; the inter-replica hop is always through the store — replicas never talk to each other directly, so no pod-to-pod firewall rule exists to add |
 | 2026-07-29 | **Phase 54 — VNC connector.** No new listener: the in-portal VNC viewer rides the existing `:8080`/443 control plane (a WebSocket upgrade of `GET /api/targets/{id}/vnc`, preceded by `POST /api/vnc-token`), exactly as the RDP viewer does. New egress **E4c**: guacd → VNC target on **5900**, plaintext RFB with no server authentication, so that hop belongs inside a trusted segment. Diagram and firewall summary updated (guacd's own egress is now stated separately); discovery probes 5900 |
 | 2026-07-29 | **Phase 53 — SQL Server (TDS) session proxy.** New `:1433` listener (`PAM_MSSQL_ADDR`, off by default) — the first new listener since Phase 24 — with ingress I6 and egress E13 to SQL Server targets on `:1433`. Crypto made explicit for both DB proxies: TLS is negotiated **in-protocol** (Postgres `SSLRequest`, TDS PRELOGIN), so a generic ingress cannot terminate it — native `PAM_TLS_CERT/KEY` is required for encrypted operator legs, `Encrypt=Mandatory` clients refuse a plaintext proxy, TDS 8.0 "strict" is unsupported, `PAM_REQUIRE_DB_CLIENT_TLS` fail-closes both, and the upstream legs verify via the shared `PAM_DB_UPSTREAM_CA`/`_TLS_VERIFY`. Diagram, firewall summary and OT placement updated; the K8s Service/Helm map neither DB port by default |
 | 2026-07-23 | **Helm NetworkPolicy: pam→guacd egress.** When `guacd.enabled` + `networkPolicy.enabled`, the pam-server default-deny NetworkPolicy now includes the `pam-server → guacd:4822` egress rule (E4a) — it was only in the raw k8s manifest, so a Helm deploy with a narrowed `egressTargetCIDRs` blocked the bundled guacd. guacd resource limits raised (256Mi→512Mi) since a large RDP display is a ~64 MiB framebuffer; guacd resource names re-truncated to the 63-char limit |
