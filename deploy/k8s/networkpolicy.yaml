@@ -35,6 +35,8 @@ spec:
         # Uncomment if the PostgreSQL session proxy (PAM_DB_ADDR) is enabled:
         # - protocol: TCP
         #   port: 5433
+        # - protocol: TCP
+        #   port: 1433   # SQL Server session proxy (PAM_MSSQL_ADDR)
   egress:
     # DNS resolution.
     - to:
