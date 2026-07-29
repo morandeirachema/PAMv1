@@ -12,6 +12,7 @@
 > separate ask (the policy is in the [documentation hub](docs/README.md)).
 
 [![CI](https://github.com/morandeirachema/pamv1/actions/workflows/ci.yml/badge.svg)](https://github.com/morandeirachema/pamv1/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/morandeirachema/pamv1?color=2c6d5c)](https://github.com/morandeirachema/pamv1/releases/latest)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8.svg?logo=go&logoColor=white)](https://go.dev/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-hardened-336791.svg?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
@@ -35,21 +36,20 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 </p>
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
-runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)** runs
-0–52g and **every phase has shipped** — from the JIT SSH proxy and RBAC, through
-AD/Entra/OIDC login, Windows targets, break-glass quorum, OT/industrial adaptation, NIS2
-tooling, scale/HA and the full 5250 console, to a hot-swappable configuration subsystem with
-custom-profile RBAC, an **AI-agent access broker** (policy engine, JIT tool execution,
-verifiable audit, MCP transport and SPIFFE identity), **SOPS-encrypted Kubernetes secrets**,
-a **PostgreSQL database session proxy** (JIT injection + per-statement query audit),
-**supervised sessions** (live monitoring + command control), **safes + dependent-account
-propagation** — which closes all four Tier-1 gaps against the commercial leaders — optional
-**CyberArk Conjur** sourcing of pamv1's own bootstrap secrets (alongside SOPS),
-**access-governance** depth (certification campaigns, an ITSM/ticketing gate, and richer
-approval workflows — Tier-2), **Zero Standing Privilege** (ephemeral short-lived SSH
-certificates) and **privileged threat analytics** (behavioral risk scoring + automated
-response — Tier-3), and a **Conjur-style application-secrets API** for non-agent apps
-(Tier-4). It is a **beta, educational** codebase — feature-complete against its roadmap and
+runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
+runs 0–52g and **every phase has shipped**, then
+**[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** — the first
+tagged, cosign-signed release — went out on 2026-07-28. What that adds up to: **JIT session
+brokering** for SSH, PostgreSQL, WinRM and in-portal RDP; **RBAC + custom profiles** with
+AD/Entra/OIDC login and TOTP MFA; **break-glass** with M-of-N quorum unseal; **safes** and
+dependent-account propagation; **Zero Standing Privilege** via ephemeral SSH certificates;
+**supervised sessions** (live watch, command control, in-session step-up, a cluster-wide
+kill switch); an **AI-agent access broker** (policy over the tool *and its arguments*, JIT
+server-side execution, a verifiable audit chain, MCP transport, SPIFFE identity);
+**access governance** (certification campaigns, an ITSM gate, N-of-M approvals, vendor
+contract grants); **privileged threat analytics** and an **identity blast-radius / CIEM
+engine**; OT adaptation and NIS2 tooling; and the full **5250 console**, keyboard-first.
+It is a **beta, educational** codebase — feature-complete against its roadmap and
 self-audited, but unaudited by outsiders: read it, run it, learn from it, and don't trust it
 with real secrets.
 
@@ -66,6 +66,7 @@ audience (new / operator / admin / developer / auditor / OT). Start there, or ju
 - **Architecture & code** — **[high level](docs/ARCHITECTURE-HIGH-LEVEL.md)**, **[low level](docs/ARCHITECTURE-LOW-LEVEL.md)** (the fullest map), **[code-derived diagrams](docs/ARCHITECTURE-DIAGRAMS.md)** (CI-enforced current), and the **[Code Guide](docs/CODE-GUIDE.md)** (narrative walkthrough — for contributors).
 - **Security & ops** — **[Security Gaps](docs/SECURITY-GAPS.md)** (self-audit) · **[Requirements](docs/REQUIREMENTS.md)** · **[Ports & Flows](docs/PORTS-AND-FLOWS.md)** · **[Backup & Restore](docs/BACKUP-AND-RESTORE.md)** · **[External-Infra Gaps](docs/EXTERNAL-INFRA-GAPS.md)**.
 - **Compliance & landscape** — **[OT Deployment](docs/OT-DEPLOYMENT.md)** · **[NIS2 Compliance](docs/NIS2-COMPLIANCE.md)** · **[Related PAM projects](docs/RELATED-PROJECTS.md)** (open-source & commercial landscape).
+- **Project meta** — **[CHANGELOG.md](CHANGELOG.md)** (releases — the per-phase history stays in the roadmap) · **[CONTRIBUTING.md](CONTRIBUTING.md)** · **[SECURITY.md](SECURITY.md)** (private vulnerability reporting).
 
 ## Architecture
 
@@ -160,7 +161,7 @@ Phases 0–52g, grouped by area. Every capability is exercised by tests and depl
 - **Windows targets (WinRM + RDP)** — run commands on Windows hosts via `POST /api/targets/{id}/winrm` (basic or NTLM) or an interactive WinRM loop through the proxy, or broker a full **RDP** desktop through [Apache Guacamole](https://guacamole.apache.org/) (`GET /api/targets/{id}/rdp` WebSocket tunnel, cert-verified by default). The **in-portal viewer is built in** — open *Work with Targets* → option 7 and the desktop renders on a canvas (the portal vendors the Guacamole JS client; guacd itself ships in the deploys). Either way the credential is injected just-in-time (AD-joined accounts work), sessions are audited, and the operator never sees the secret. The **session clipboard is gated** by `PAM_RDP_CLIPBOARD` (`allow`/`readonly`/`deny`, tightenable **per target** — strictest wins) and drive redirection is always disabled — so an RDP session can't be used as an unaudited copy-out/paste-in or file channel — and `PAM_RDP_CLIPBOARD_AUDIT` **records what actually crossed it** (direction, type, size, SHA-256; content only under an explicit opt-in, since a privileged clipboard often holds a just-copied password).
 - **Database session proxy (PostgreSQL)** — point `psql` at pamv1 (`PAM_DB_ADDR`, e.g. `:5433`) with `user=<dbcred>@<target>` and your PAM key as the password; the proxy runs the same authorization gates as the SSH proxy, injects the vaulted DB credential just-in-time (upstream auth via cleartext / MD5 / **SCRAM-SHA-256**), and brokers the wire protocol — **auditing every SQL statement** (`db.query`) and recording the session. The operator never learns the database password. Proven end to end by a fake upstream that accepts *only* the vaulted secret.
 - **Session recording** — every session (stdout **and** stderr, or each SQL statement) captured in [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/), hashed with SHA-256 into a tamper-evident chain, and the hash written to the audit trail. Recording failures are audited, and `PAM_REQUIRE_RECORDING` refuses an unrecordable session outright — on the SSH, WinRM and PostgreSQL proxies **and**, since Phase 52c, on the in-portal RDP viewer and the REST WinRM endpoint, checked *before* anything reaches the target.
-- **Supervised sessions (live monitoring + command control)** — a supervisor can **watch an SSH, PostgreSQL or WinRM session live** over `GET /api/sessions/{id}/stream` (Server-Sent Events, `CapReadAudit`), and a regex denylist (`PAM_COMMAND_DENY_FILE`) **blocks a dangerous command before it reaches the target** on the exec, WinRM and SQL paths — refused and audited (`command.blocked`). A deny file that yields no usable patterns is **fatal at startup** rather than a silently disabled control, so an unmounted ConfigMap fails loudly. Interactive SSH shells use read-only observer mode instead.
+- **Supervised sessions (live monitoring + command control)** — a supervisor can **watch an SSH, PostgreSQL or WinRM session live** — and the agent broker's `ssh_exec`/`winrm_exec` runs — over `GET /api/sessions/{id}/stream` (Server-Sent Events, `CapReadAudit`); the stream **ends the moment the session does**, so a quiet pane means a quiet session, not a dead one. A regex denylist (`PAM_COMMAND_DENY_FILE`) **blocks a dangerous command before it reaches the target** on the exec, WinRM and SQL paths — refused and audited (`command.blocked`). A deny file that yields no usable patterns is **fatal at startup** rather than a silently disabled control, so an unmounted ConfigMap fails loudly. Interactive SSH shells use read-only observer mode instead.
 - **In-session step-up** — where command control is a hard block, `PAM_DB_STEPUP_FILE` marks statements that **pause for a live supervisor decision** instead of killing the session: the statement waits (audited, visible on the live monitor), an approver allows or refuses it from the console, and the session survives either way.
 - **Cluster-wide kill switch** — a kill issued on any replica terminates the session **wherever it is hosted** (published over Postgres LISTEN/NOTIFY), so the kill switch, the revoke cascade, the vendor sweeper and the analytics auto-response all work in HA. Every brokered execution — the REST WinRM endpoint and the agent broker's exec tools included — is a registered, killable, capped session, not just the interactive proxies.
 - **SFTP file-transfer control** — SFTP rides an SSH subsystem carrying a binary protocol that command control never saw. The proxy now **parses that stream** to audit every file operation (`sftp.open`/`sftp.modify`), and `PAM_SSH_SFTP` sets the policy: `allow` (forward + audit), `readonly` (**refuse uploads, deletes and renames** with a synthesized permission-denied — the target is never contacted; downloads still work), or `deny` (refuse the subsystem entirely). `PAM_SSH_SFTP_DENY_FILE` adds the other dimension — a **regex denylist over paths** (the same engine as command control), refused in *every* mode including downloads and on both sides of a rename, because a path you deny that can still be fetched is not denied at all. Closes an otherwise unaudited file-exfiltration path. Proven end to end by a real SFTP client + server exchanging genuine packets through the proxy.
@@ -201,7 +202,7 @@ PAM for AI agents — the same chokepoint, extended to autonomous tools. Opt-in 
 
 - **Policy over tool + arguments** — a sudoers-style [YAML](https://yaml.org/) engine decides `allow / deny / require-approval` on the tool **and its arguments** (first match wins, implicit deny); an approved call runs **server-side with a just-in-time credential** and the agent gets only the result. Tools: `winrm_exec`, `ssh_exec`, `list_targets`, `list_credentials`, `rotate_credential`, and `reveal_credential` (shipped **default-deny**). Agents obey the same target grants and four-eyes gate as humans.
 - **Human approval + single-use resume** — a `require_approval` call parks for a human decision (`/v1/approvals`); on approval it executes and the agent collects the result **exactly once** with a single-use token.
-- **Verifiable audit** — every step is a keyed-**HMAC hash-chained** event (`GET /v1/audit/verify`, plus an ed25519-signed head checkpoint for truncation detection) kept separate from the general trail.
+- **Verifiable audit** — every step is a keyed-**HMAC hash-chained** event (`GET /v1/audit/verify`, plus an ed25519-signed head checkpoint for truncation detection) kept separate from the general trail. The chain's own keys live under **shared custody** — generated once, KEK-sealed in the store, converged on by every replica, re-wrapped by `-rotate-kek` — unless you set them explicitly in the environment, which is also how a signer rotation is driven.
 - **MCP transport + SPIFFE identity** — the broker speaks **[MCP](https://modelcontextprotocol.io/)** (JSON-RPC 2.0 at `POST /mcp`) at parity with REST, and agents authenticate with a static key or a **[SPIFFE](https://spiffe.io/) JWT-SVID** (RS256/ES256/EdDSA, trust-domain JWKS) with [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) delegation chains bounded by a depth cap.
 
 ### OT / industrial & compliance
@@ -330,6 +331,15 @@ Every phase (0–52g) has shipped — full per-phase detail in **[ROADMAP.md](RO
 | 52f | The archive high-water mark, made robust — found by reviewing 52e | ✅ shipped |
 | 52g | Six more, found by reviewing all of the above — including a test that could not fail | ✅ shipped |
 
+Since 52g the work has been **release and consolidation**: v0.10.0 (the first signed,
+attested release — the image every manifest pins is now real and public), tests for the
+one package that had none (`cmd/pam-server`, the startup wiring), the broker audit keys
+moved into KEK-sealed shared custody, WinRM sessions joined the live monitor, the RDP
+clipboard became tightenable per target, watch streams now end with their session, and a
+max-effort review of that whole wave closed fifteen further findings. Releases are
+recorded in **[CHANGELOG.md](CHANGELOG.md)**; the honest remainder lives in
+**[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**.
+
 ## Coverage vs. commercial PAM (CyberArk, Wallix, …)
 
 pamv1 is an **educational, beta** project — not a drop-in replacement for
@@ -403,25 +413,25 @@ removing local admin rights and elevating sudo/apps via an **endpoint agent**
 (BeyondTrust / Delinea's core) — is a different product category that doesn't fit a
 vault + proxy chokepoint, and is **out of scope** by design.
 
-### Candidate next phases
+### Where it stands, and what's next
 
-Every phase through 52g has shipped, including the whole 2026-07 self-audit: each
-finding from the read-only security sweep is closed (see
-[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md)), and so are the smaller items
-those phases deferred — WORM archiving before pruning, LEEF + TLS syslog,
-opaque recording names, clipboard auditing, SFTP path policy, per-item
-four-eyes on certification.
+Every phase through 52g has shipped and both 2026-07 security self-audits are fully
+closed ([docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md)).
+**[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** — the
+first signed release — met the last of the four beta criteria on 2026-07-28, and the
+post-release wave (startup-wiring tests, broker-key custody, WinRM live streaming,
+per-target clipboard, watch-stream lifecycle, plus a fifteen-finding review of it all)
+has landed too.
 
 What is left is consolidated in
-**[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**. The short version:
-**[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0) shipped
-on 2026-07-28** — the last of the four beta criteria, so the Kubernetes, Helm and
-Terraform paths now pull a real, signed image; and a dozen in-process feature
-follow-ons remain, the largest being
-**cross-replica live monitoring** (fanning session *bytes* across replicas is a
-heavier pub/sub than the kill signal already broadcast) and **per-file SFTP
-content recording**. Anything needing external infrastructure stays in
-[EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
+**[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)** — in-process feature
+follow-ons, the largest being **cross-replica live monitoring** (fanning session
+*bytes* across replicas is a heavier pub/sub than the kill signal already broadcast)
+and **per-file SFTP content recording**, alongside safe-scoped policy, campaign /
+ticket-gate / config / analytics depth, the vendor console screens and richer deploy
+examples. Anything needing external infrastructure or a paid account stays honestly
+catalogued in [EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md) rather than
+being faked.
 
 **All four Tier-1 gaps and all three Tier-2 gaps are closed** (including one-time access, Phase 26), **three of the five Tier-3 gaps** (Zero Standing Privilege, privileged threat analytics, and the identity blast-radius / CIEM engine), and the **first Tier-4 gap** (the application-secrets API). The rest of Tier 3 (connector breadth, *live* cloud-CIEM ingestion, web proxying) and Tier 4 (Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, thick-app components) are the next frontier — each gated on external infrastructure or accounts, catalogued in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
 

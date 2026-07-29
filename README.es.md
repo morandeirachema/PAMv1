@@ -13,6 +13,7 @@
 > aparte (ver la política en el [centro de documentación](docs/README.md)).
 
 [![CI](https://github.com/morandeirachema/pamv1/actions/workflows/ci.yml/badge.svg)](https://github.com/morandeirachema/pamv1/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/morandeirachema/pamv1?color=2c6d5c)](https://github.com/morandeirachema/pamv1/releases/latest)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8.svg?logo=go&logoColor=white)](https://go.dev/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-endurecida-336791.svg?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
@@ -37,23 +38,22 @@ de fósforo verde** sin concesiones, porque tocar un PAM debe *sentirse* serio.
 
 Construido fase a fase con una regla: **cada fase es funcional de principio a fin** — arranca,
 pasa los tests y se despliega como Infraestructura-como-Código. El **[roadmap](ROADMAP.md)**
-abarca de la 0 a la 52g y **se han entregado todas las fases** — desde el proxy SSH JIT y el
-RBAC, pasando por el login AD/Entra/OIDC, los objetivos Windows, el quórum de break-glass, la
-adaptación OT/industrial, las herramientas NIS2, escala/HA y la consola 5250 completa, hasta un
-subsistema de configuración con hot-swap y RBAC de perfiles personalizados, un **bróker de
-acceso para agentes de IA** (motor de políticas, ejecución JIT de herramientas, auditoría
-verificable, transporte MCP e identidad SPIFFE), **secretos de Kubernetes cifrados con SOPS**,
-un **proxy de sesión de base de datos PostgreSQL** (inyección JIT + auditoría por sentencia SQL),
-**sesiones supervisadas** (monitorización en vivo + control de comandos), **safes + propagación
-a cuentas dependientes** — lo que cierra las cuatro brechas de Nivel 1 frente a los líderes
-comerciales — el aprovisionamiento opcional de los secretos de arranque de pamv1 desde
-**CyberArk Conjur** (junto a SOPS), la **profundidad de gobierno de accesos** (campañas de
-certificación, una pasarela ITSM/tickets y flujos de aprobación más ricos — Nivel 2), el
-**Privilegio Cero Permanente** (certificados SSH efímeros y de corta vida) y la **analítica de
-amenazas privilegiadas** (puntuación de riesgo conductual + respuesta automática — Nivel 3), y
-una **API de secretos para aplicaciones** estilo Conjur para apps que no son agentes (Nivel 4).
-Es un proyecto **beta y educativo** — completo frente a su hoja de ruta y autoauditado, pero
-sin auditoría externa: léelo, ejecútalo, aprende de él, pero no le confíes secretos reales.
+abarca de la 0 a la 52g, **se han entregado todas las fases**, y la
+**[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** — la primera
+release etiquetada y firmada con cosign — salió el 2026-07-28. Lo que eso suma:
+**intermediación de sesiones JIT** para SSH, PostgreSQL, WinRM y RDP en el portal;
+**RBAC + perfiles a medida** con login AD/Entra/OIDC y MFA TOTP; **break-glass** con quórum
+M de N; **safes** y propagación a cuentas dependientes; **Privilegio Cero Permanente** con
+certificados SSH efímeros; **sesiones supervisadas** (observación en vivo, control de
+comandos, elevación en sesión y un interruptor de corte para todo el clúster); un **bróker
+de acceso para agentes de IA** (política sobre la herramienta *y sus argumentos*, ejecución
+JIT en el servidor, cadena de auditoría verificable, transporte MCP, identidad SPIFFE);
+**gobierno de accesos** (campañas de certificación, pasarela ITSM, aprobaciones N de M,
+concesiones de contrato a proveedores); **analítica de amenazas privilegiadas** y un motor
+de **radio de impacto de identidad / CIEM**; adaptación OT y herramientas NIS2; y la
+consola **5250** completa, pensada para el teclado. Es un proyecto **beta y educativo** —
+completo frente a su hoja de ruta y autoauditado, pero sin auditoría externa: léelo,
+ejecútalo, aprende de él, pero no le confíes secretos reales.
 
 🔎 **Resumen interactivo:** [página del proyecto](https://claude.ai/code/artifact/b9f19443-5ad1-42d2-955f-e43ca17ac542) — qué funciona, arquitectura y hoja de ruta de un vistazo &nbsp;·&nbsp; 📖 **[Read it in English →](README.md)**
 
@@ -69,6 +69,7 @@ lectura por audiencia (nuevo / operador / administrador / desarrollador / audito
 - **Arquitectura y código** — **[alto nivel](docs/ARCHITECTURE-HIGH-LEVEL.md)**, **[bajo nivel](docs/ARCHITECTURE-LOW-LEVEL.md)** (el mapa más completo), **[diagramas derivados del código](docs/ARCHITECTURE-DIAGRAMS.md)** (generados desde el código y verificados por CI) y la **[guía del código](docs/CODE-GUIDE.md)** (recorrido narrativo para quien contribuye; abre con un manual de *leer Go si escribes Python*).
 - **Seguridad y operación** — **[brechas de seguridad](docs/SECURITY-GAPS.md)** (auto-auditoría) · **[requisitos](docs/REQUIREMENTS.md)** · **[puertos y flujos](docs/PORTS-AND-FLOWS.md)** · **[copia y restauración](docs/BACKUP-AND-RESTORE.md)** · **[brechas que dependen de infraestructura externa](docs/EXTERNAL-INFRA-GAPS.md)**.
 - **Cumplimiento y panorama** — **[despliegue OT](docs/OT-DEPLOYMENT.md)** · **[cumplimiento NIS2](docs/NIS2-COMPLIANCE.md)** · **[proyectos PAM relacionados](docs/RELATED-PROJECTS.md)** — cómo se sitúa pamv1 entre los proyectos de código abierto (JumpServer, Teleport, Warpgate, Vault/OpenBao, step-ca, Guacamole …) y los fabricantes comerciales (CyberArk, BeyondTrust, Delinea, Wallix …), incluyendo cuáles se construyen sobre núcleos de código abierto (documento en inglés).
+- **Meta del proyecto** — **[CHANGELOG.md](CHANGELOG.md)** (releases — la historia por fases vive en el roadmap) · **[CONTRIBUTING.md](CONTRIBUTING.md)** · **[SECURITY.md](SECURITY.md)** (aviso privado de vulnerabilidades).
 
 ## Arquitectura
 
@@ -164,7 +165,7 @@ Fases 0–52g, agrupadas por área. Cada capacidad está cubierta por tests y se
 - **Objetivos Windows (WinRM + RDP)** — ejecuta comandos en hosts Windows con `POST /api/targets/{id}/winrm` (auth básica o NTLM) o un bucle WinRM interactivo por el proxy, o intermedia un escritorio **RDP** completo con [Apache Guacamole](https://guacamole.apache.org/) (túnel WebSocket `GET /api/targets/{id}/rdp`, con verificación de certificado por defecto). El **visor va integrado en el portal**: abre *Work with Targets* → opción 7 y el escritorio se dibuja en un canvas (el portal incluye el cliente JavaScript de Guacamole; el propio guacd viene en los despliegues). En ambos casos la credencial se inyecta just-in-time (funcionan las cuentas de dominio), las sesiones se auditan y el operador nunca ve el secreto. El **portapapeles de la sesión** se controla con `PAM_RDP_CLIPBOARD` (`allow`/`readonly`/`deny`, endurecible **por objetivo** — gana el más estricto) y la redirección de unidades está siempre deshabilitada — así una sesión RDP no puede usarse como canal de copia/pegado ni de archivos sin auditar. `PAM_RDP_CLIPBOARD_AUDIT` añade la otra mitad: `meta` registra dirección, tipo, tamaño y digest de cada transferencia del portapapeles, y `full` guarda además el contenido (opt-in, porque un escritorio privilegiado copia secretos).
 - **Proxy de sesión de base de datos (PostgreSQL)** — apunta `psql` a pamv1 (`PAM_DB_ADDR`, p. ej. `:5433`) con `user=<credbd>@<objetivo>` y tu clave PAM como contraseña; el proxy aplica las mismas comprobaciones de autorización que el proxy SSH, inyecta la credencial de BD del vault just-in-time (auth upstream por cleartext / MD5 / **SCRAM-SHA-256**) e intermedia el protocolo — **auditando cada sentencia SQL** (`db.query`) y grabando la sesión. El operador nunca conoce la contraseña de la base de datos. Demostrado de extremo a extremo por un upstream falso que acepta *solo* el secreto del vault.
 - **Grabación de sesiones** — cada sesión (stdout **y** stderr, o cada sentencia SQL) capturada en [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/), encadenada por hash SHA-256 a prueba de manipulación, y el hash escrito en la auditoría. Los fallos de grabación se auditan y `PAM_REQUIRE_RECORDING` rechaza de plano una sesión no grabable — en los proxies SSH, WinRM y PostgreSQL **y**, desde la Fase 52c, en el visor RDP del portal y en el endpoint WinRM REST, comprobado *antes* de que nada llegue al objetivo.
-- **Sesiones supervisadas (monitorización en vivo + control de comandos)** — un supervisor puede **ver una sesión SSH, PostgreSQL o WinRM en vivo** por `GET /api/sessions/{id}/stream` (Server-Sent Events, `CapReadAudit`), y una lista de denegación por regex (`PAM_COMMAND_DENY_FILE`) **bloquea un comando peligroso antes de que llegue al objetivo** en las rutas de exec, WinRM y SQL — rechazado y auditado (`command.blocked`). Para las shells SSH interactivas se usa el modo observador de solo lectura. Un fichero de denegación que no produzca ningún patrón utilizable es un **error fatal en el arranque**, no un control silenciosamente desactivado.
+- **Sesiones supervisadas (monitorización en vivo + control de comandos)** — un supervisor puede **ver en vivo una sesión SSH, PostgreSQL o WinRM** — y las ejecuciones `ssh_exec`/`winrm_exec` del bróker de agentes — por `GET /api/sessions/{id}/stream` (Server-Sent Events, `CapReadAudit`); el stream **termina en el momento en que termina la sesión**, así que un panel en silencio es una sesión tranquila, no una muerta. Una lista de denegación por regex (`PAM_COMMAND_DENY_FILE`) **bloquea un comando peligroso antes de que llegue al objetivo** en las rutas de exec, WinRM y SQL — rechazado y auditado (`command.blocked`). Para las shells SSH interactivas se usa el modo observador de solo lectura. Un fichero de denegación que no produzca ningún patrón utilizable es un **error fatal en el arranque**, no un control silenciosamente desactivado.
 - **Elevación dentro de la sesión** — donde el control de comandos es un bloqueo duro, `PAM_DB_STEPUP_FILE` marca sentencias que **se pausan a la espera de una decisión humana en vivo** en lugar de matar la sesión: la sentencia espera (auditada, visible en el monitor en vivo), un aprobador la permite o la rechaza desde la consola, y la sesión sobrevive en cualquier caso. Nadie puede aprobar la elevación de su propia sesión.
 - **Interruptor de corte para todo el clúster** — una terminación emitida en cualquier réplica corta la sesión **allí donde esté alojada** (publicada por Postgres LISTEN/NOTIFY), de modo que el interruptor, la cascada de revocación, el barrido de proveedores y la respuesta automática de analítica funcionan en HA. Toda ejecución intermediada — el endpoint WinRM REST y las herramientas exec del bróker incluidas — es una sesión registrada, contable y terminable, no solo los proxies interactivos.
 - **Control de transferencia de ficheros SFTP** — SFTP viaja sobre un subsistema SSH con un protocolo binario que el control de comandos nunca veía. El proxy **analiza ese flujo** para auditar cada operación (`sftp.open`/`sftp.modify`), y `PAM_SSH_SFTP` fija la política: `allow` (reenviar + auditar), `readonly` (**rechazar subidas, borrados y renombrados** con un permiso denegado sintetizado — el objetivo nunca se contacta; las descargas siguen funcionando) o `deny` (rechazar el subsistema entero). `PAM_SSH_SFTP_DENY_FILE` añade la otra dimensión — una **lista de denegación por regex sobre rutas** (el mismo motor que el control de comandos), rechazada en *todos* los modos incluidas las descargas y en ambos lados de un renombrado, porque una ruta que deniegas y aun así se puede descargar no está denegada. Cierra una vía de exfiltración de ficheros que de otro modo no se auditaría.
@@ -205,7 +206,7 @@ Opcional vía `PAM_BROKER_POLICY_FILE`.
 
 - **Política sobre herramienta + argumentos** — un motor [YAML](https://yaml.org/) estilo sudoers decide `permitir / denegar / requerir-aprobación` sobre la herramienta **y sus argumentos** (gana la primera coincidencia, denegación implícita); una llamada aprobada se ejecuta **en el servidor con una credencial just-in-time** y el agente recibe solo el resultado. Herramientas: `winrm_exec`, `ssh_exec`, `list_targets`, `list_credentials`, `rotate_credential` y `reveal_credential` (entregado **denegado por defecto**). Los agentes obedecen las mismas concesiones por objetivo y la puerta de cuatro ojos que los humanos.
 - **Aprobación humana + reanudación de un solo uso** — una llamada `require_approval` queda en espera de una decisión humana (`/v1/approvals`); al aprobarse se ejecuta y el agente recoge el resultado **exactamente una vez** con un token de un solo uso.
-- **Auditoría verificable** — cada paso es un evento **encadenado por hash con HMAC con clave** (`GET /v1/audit/verify`, más un checkpoint de cabeza firmado con ed25519 para detectar truncamiento) separado del registro general.
+- **Auditoría verificable** — cada paso es un evento **encadenado por hash con HMAC con clave** (`GET /v1/audit/verify`, más un checkpoint de cabeza firmado con ed25519 para detectar truncamiento) separado del registro general. Las claves de esa cadena viven en **custodia compartida** — generadas una vez, selladas por la KEK en el almacén, convergidas por todas las réplicas y reenvueltas por `-rotate-kek` — salvo que las fijes explícitamente en el entorno, que es además cómo se rota el firmante.
 - **Transporte MCP + identidad SPIFFE** — el bróker habla **[MCP](https://modelcontextprotocol.io/)** (JSON-RPC 2.0 en `POST /mcp`) a la par con REST, y los agentes se autentican con una clave estática o un **JWT-SVID de [SPIFFE](https://spiffe.io/)** (RS256/ES256/EdDSA, JWKS del dominio de confianza) con cadenas de delegación [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) acotadas por un límite de profundidad.
 
 ### OT / industrial y cumplimiento
@@ -334,6 +335,16 @@ Se han entregado todas las fases (0–52g) — detalle por fase en **[ROADMAP.md
 | 52f | La marca de agua del archivado, hecha robusta — encontrada al revisar la 52e | ✅ entregada |
 | 52g | Seis más, encontradas al revisar todo lo anterior — incluido un test que no podía fallar | ✅ entregada |
 
+Desde la 52g el trabajo ha sido **release y consolidación**: la v0.10.0 (la primera
+release firmada y con atestaciones — la imagen que fijan todos los manifiestos ya es
+real y pública), tests para el único paquete que no tenía (`cmd/pam-server`, el cableado
+de arranque), las claves de auditoría del bróker pasaron a custodia compartida sellada
+por la KEK, las sesiones WinRM se unieron al monitor en vivo, el portapapeles RDP se
+volvió endurecible por objetivo, los streams de observación ahora terminan con su
+sesión, y una revisión a fondo de toda esa ola cerró quince hallazgos más. Las releases
+quedan registradas en **[CHANGELOG.md](CHANGELOG.md)**; el resto honesto vive en
+**[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**.
+
 ## Cobertura frente al PAM comercial (CyberArk, Wallix, …)
 
 pamv1 es un proyecto **educativo y beta** — no un reemplazo directo de
@@ -411,27 +422,28 @@ endpoint** (el núcleo de BeyondTrust / Delinea) — es una categoría de produc
 que no encaja en un punto de estrangulamiento vault + proxy, y queda **fuera de alcance**
 por diseño.
 
-### Fases candidatas siguientes
+### Dónde está, y qué viene después
 
-Todas las fases hasta la 52g están entregadas, incluida la auto-auditoría
-completa de 2026-07: cada hallazgo de los dos barridos de seguridad de solo
-lectura está cerrado (ver [docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md)), y
-también los elementos menores que aquellas fases aplazaron — archivado WORM antes
-de purgar, LEEF + syslog sobre TLS, nombres de grabación opacos, auditoría del
-portapapeles, política de rutas SFTP y cuatro ojos por elemento en la
-certificación.
+Todas las fases hasta la 52g están entregadas y las dos autoauditorías de seguridad
+de 2026-07 están completamente cerradas
+([docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md)). La
+**[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** — la
+primera release firmada — cumplió el 2026-07-28 el último de los cuatro criterios de
+beta, y la ola posterior a la release (tests del cableado de arranque, custodia de las
+claves del bróker, streaming en vivo de WinRM, portapapeles por objetivo, ciclo de vida
+del stream de observación, más una revisión de quince hallazgos sobre todo ello) ya
+está entregada también.
 
 Lo que queda está consolidado en
-**[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**. En resumen: la
-**[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0) se
-publicó el 2026-07-28** — el último de los cuatro criterios de beta, así que las
-rutas de Kubernetes, Helm y Terraform ya obtienen una imagen real y firmada; y
-quedan una docena de mejoras en curso, las
+**[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)** — mejoras en curso, las
 mayores la **monitorización en vivo entre réplicas** (repartir los *bytes* de una
-sesión entre réplicas es un pub/sub más pesado que la señal de terminación que ya
-se difunde) y la **grabación del contenido de cada fichero SFTP**. Todo lo
-que depende de infraestructura externa queda en
-[EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
+sesión entre réplicas es un pub/sub más pesado que la señal de terminación que ya se
+difunde) y la **grabación del contenido de cada fichero SFTP**, junto a política por
+caja fuerte, profundidad de campañas / pasarela de tickets / configuración /
+analítica, las pantallas de consola de proveedores y más ejemplos de despliegue. Todo
+lo que depende de infraestructura externa o de una cuenta de pago queda catalogado con
+honestidad en [EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md) en lugar de
+simularse.
 
 **Las cuatro brechas de Nivel 1 y las tres de Nivel 2 están cerradas** (incluido el acceso de un solo uso, Fase 26), **tres de las cinco de Nivel 3** (Privilegio Cero Permanente, analítica de amenazas y el motor de radio de impacto / CIEM) y la **primera de Nivel 4** (la API de secretos para aplicaciones). Las grabaciones de sesión ya se **reproducen en el portal, verificadas por hash contra el registro de auditoría** (Fase 26). El resto del Nivel 3 (amplitud de conectores, ingesta *en vivo* de CIEM en la nube, proxy web) y del Nivel 4 (provider de Terraform, sincronización Secrets-Hub, descubrimiento de claves SSH, componentes para apps de escritorio) son la siguiente frontera — cada uno condicionado a infraestructura externa o cuentas, catalogado en [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
 
