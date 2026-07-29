@@ -145,6 +145,7 @@ func TestWinRMRunStreamsLive(t *testing.T) {
 	fake := &blockingWinRM{started: make(chan struct{}), release: make(chan struct{})}
 	reg := session.NewRegistry()
 	hub := session.NewHub()
+	reg.AttachHub(hub) // wired the way main wires production: session end closes watch streams
 	srv, _ := newTestServerOpts(t, nil, api.Options{
 		WinRM: fake, RecordingDir: t.TempDir(), Sessions: reg, Live: hub,
 	})
@@ -192,7 +193,12 @@ func TestWinRMRunStreamsLive(t *testing.T) {
 	deadline := time.After(3 * time.Second)
 	for !strings.Contains(acc, "done") { // blockingWinRM's canned stdout
 		select {
-		case b := <-frames:
+		case b, open := <-frames:
+			if !open {
+				// With the hub attached, the session ending closes the channel;
+				// without this check the loop would busy-spin on zero values.
+				t.Fatalf("session ended before its output streamed; saw %q", acc)
+			}
 			acc += string(b)
 		case <-deadline:
 			t.Fatalf("live stream missing the run's output; saw %q", acc)

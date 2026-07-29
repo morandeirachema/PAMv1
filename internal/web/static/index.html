@@ -370,8 +370,12 @@
         while ((i = buf.indexOf("\n\n")) >= 0) {
           const ev = buf.slice(0, i); buf = buf.slice(i + 2);
           for (const line of ev.split("\n")) {
-            // The server escapes embedded newlines as a literal \n marker.
-            if (line.startsWith("data: ")) appendWatch(line.slice(6).replaceAll("\\n", "\n"));
+            // The server escapes BOTH line terminators (sseEscape: CR -> \r,
+            // LF -> \n — either would end the SSE data field). Undo both; the
+            // restored real CRs are then dropped by stripCtl, so terminal
+            // CRLF output renders as clean lines instead of trailing "\r"
+            // literals on every watched line.
+            if (line.startsWith("data: ")) appendWatch(line.slice(6).replaceAll("\\r", "\r").replaceAll("\\n", "\n"));
           }
         }
       }

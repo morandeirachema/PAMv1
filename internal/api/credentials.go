@@ -374,12 +374,20 @@ func (s *Server) execWinRM(ctx context.Context, target *store.Target, cred *stor
 	// sees the command as it is attempted — echoed the way the PostgreSQL proxy
 	// echoes `psql> ` lines — then whatever it produced. WinRM never echoes
 	// input, so without this the watch pane would show output with no cause.
+	// Every early-return below publishes a notice too: an echoed command whose
+	// stream then just closes reads as "ran silently", which is exactly wrong
+	// for a command that was refused.
 	s.live.Publish(sid, []byte("winrm> "+command+"\r\n"))
 	// Command control, before the credential is decrypted: this is the one
 	// chokepoint the REST WinRM endpoint and the broker's winrm_exec tool share,
 	// so the deny policy covers a human and an agent identically.
 	if err := s.guardCommand(ctx, actor, target.Name, "winrm", command); err != nil {
 		s.live.Publish(sid, []byte("pamv1: command blocked by policy\r\n"))
+		// The attempt is evidence: the proxy path tees this refusal into its
+		// .cast, so the REST/broker path writes a transcript too — otherwise a
+		// supervisor could watch a denied attempt live and later find no
+		// recording of it.
+		s.recordWinRMRefusal(ctx, target, cred, actor, command, "pamv1: command blocked by policy")
 		return winrm.Result{}, err
 	}
 	// PAM_REQUIRE_RECORDING covers this path too now. The check must come BEFORE
@@ -389,11 +397,13 @@ func (s *Server) execWinRM(ctx context.Context, target *store.Target, cred *stor
 	// way to run a privileged command on a machine.
 	if s.recordingRequired(s.recordingDir) {
 		s.auditAs(ctx, actor, "winrm.refused", "target:"+target.Name+" reason:recording-required") //nolint:errcheck // refusal already returned below
+		s.live.Publish(sid, []byte("pamv1: recording is required but unavailable; command refused\r\n"))
 		return winrm.Result{}, errRecordingRequired
 	}
 	secret, err := s.vault.Decrypt(ctx, cred.SecretEnc, store.CredentialAAD(target.ID, cred.ID))
 	if err != nil {
 		s.audit(ctx, "credential.decrypt_failed", fmt.Sprintf("credential:%d target:%s op:winrm", cred.ID, target.Name))
+		s.live.Publish(sid, []byte("pamv1: credential decryption failed; command refused\r\n"))
 		return winrm.Result{}, errDecryptFailed
 	}
 	res, err := s.winrm.Run(ctx, target.Host, target.Port, cred.Username, secret, command)
@@ -401,13 +411,8 @@ func (s *Server) execWinRM(ctx context.Context, target *store.Target, cred *stor
 		s.log.Error("winrm run failed", "target", target.Name, "err", err)
 		s.audit(ctx, "winrm.error", fmt.Sprintf("target:%s cred_user:%s error:%v", target.Name, cred.Username, err))
 		s.live.Publish(sid, []byte(fmt.Sprintf("pamv1: winrm error: %v\r\n", err)))
+		s.recordWinRMRefusal(ctx, target, cred, actor, command, fmt.Sprintf("pamv1: winrm error: %v", err))
 		return winrm.Result{}, err
-	}
-	if res.Stdout != "" {
-		s.live.Publish(sid, []byte(res.Stdout))
-	}
-	if res.Stderr != "" {
-		s.live.Publish(sid, []byte(res.Stderr))
 	}
 	file, sum := s.recordWinRM(target, cred.Username, actor, command, res)
 	// The command has already run on the target, so this audit cannot refuse it —
@@ -417,9 +422,40 @@ func (s *Server) execWinRM(ctx context.Context, target *store.Target, cred *stor
 	// missing instead of receiving output that was never accounted for.
 	if err := s.auditAs(ctx, actor, "winrm.run",
 		fmt.Sprintf("target:%s cred_user:%s exit:%d file:%s sha256:%s", target.Name, cred.Username, res.ExitCode, file, sum)); err != nil {
+		s.live.Publish(sid, []byte("pamv1: audit log unavailable; output withheld\r\n"))
 		return winrm.Result{}, errAuditUnavailable
 	}
+	// Output reaches live watchers only AFTER the durable audit above: the
+	// withheld-result contract would be defeated by a stream that had already
+	// delivered what the 503 withholds. Payloads are built only when someone is
+	// actually watching — a run's output is unbounded and a watcher is the
+	// exception, not the rule.
+	if s.live.HasSubscribers(sid) {
+		if res.Stdout != "" {
+			s.live.Publish(sid, []byte(res.Stdout))
+		}
+		if res.Stderr != "" {
+			s.live.Publish(sid, []byte(res.Stderr))
+		}
+	}
 	return res, nil
+}
+
+// recordWinRMRefusal writes a transcript for a run that was refused or failed —
+// the attempt is evidence even when nothing executed — and registers the
+// artifact's hash in the audit trail as session.record, the action playback
+// verification already checks. Best-effort, like recordWinRM itself: the
+// refusal was already audited by the caller, so a failure here costs the
+// transcript, not the record of the refusal.
+func (s *Server) recordWinRMRefusal(ctx context.Context, target *store.Target, cred *store.Credential, actor, command, notice string) {
+	file, sum := s.recordWinRM(target, cred.Username, actor, command, winrm.Result{Stderr: notice, ExitCode: 1})
+	if file == "" {
+		return
+	}
+	if err := s.auditAs(ctx, actor, "session.record",
+		fmt.Sprintf("target:%s cred_user:%s file:%s sha256:%s", target.Name, cred.Username, file, sum)); err != nil {
+		s.log.Error("refusal transcript not registered in the audit trail", "file", file, "err", err)
+	}
 }
 
 // recordWinRM writes a transcript of the command and its output, returning the

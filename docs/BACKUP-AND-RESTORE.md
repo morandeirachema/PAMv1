@@ -30,11 +30,13 @@ handling like the vault key):
   archived `GET /api/audit/head` ed25519 checkpoints are your only tail-truncation
   anchor;
 - the **broker audit keys** `PAM_BROKER_AUDIT_KEY` and
-  `PAM_BROKER_AUDIT_SIGN_SEED`, **if you set them explicitly** — they back a
-  second, independent HMAC + ed25519 chain, and losing them costs the agent trail
-  exactly what losing `PAM_AUDIT_HMAC_KEY` costs the main one. Left unset they
-  are custody-held (see the next bullet): a database backup plus the KEK already
-  restores them, and there is nothing separate to hold;
+  `PAM_BROKER_AUDIT_SIGN_SEED` back a second, independent HMAC + ed25519 chain,
+  and losing them costs the agent trail exactly what losing
+  `PAM_AUDIT_HMAC_KEY` costs the main one. Whether you set them explicitly or
+  not, they end up **custody-held** (an explicit value is written through to
+  `key_material` at startup), so a database backup plus the KEK already
+  restores them; keeping explicitly-set values out of band as well is the same
+  belt-and-braces as the host/CA PEMs — the only recovery from a lost KEK;
 - the **SSH proxy host key**, the **ZSP SSH-CA key**, and the custody-held
   **broker audit keys** — these live in the database (`key_material`) sealed
   under the KEK (host/CA since Phase 42; broker keys since the Phase 13

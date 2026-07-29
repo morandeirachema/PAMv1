@@ -36,6 +36,22 @@ func (h *Hub) Publish(id string, b []byte) {
 	}
 }
 
+// HasSubscribers reports whether anyone is currently watching session id. It
+// lets a publisher skip building a large payload — a WinRM run's entire output —
+// when nobody would receive it: Publish already drops frames with no
+// subscribers, but only after the caller has paid to build the frame. A
+// subscriber arriving between this check and the Publish misses that frame,
+// which is the hub's normal contract — a watcher only ever sees output from
+// the moment it subscribed.
+func (h *Hub) HasSubscribers(id string) bool {
+	if h == nil || id == "" {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.subs[id]) > 0
+}
+
 // EndSession closes every subscriber channel for session id and forgets the
 // id, so a watcher's read loop ends the moment the session does. Before this
 // existed, a supervisor's stream simply went silent when the watched session

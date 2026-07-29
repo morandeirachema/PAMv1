@@ -99,8 +99,11 @@ approver.
   they are never plaintext at rest, every replica converges on the same chain
   key and signer identity (a replica with its own key would make honest events
   read as tampering), and `-rotate-kek` re-wraps them with every other vaulted
-  secret. An explicit environment value always wins, which is what drives the
-  rotation above.
+  secret. An explicit environment value always wins **and is written through to
+  the same custody**, so a mixed fleet or a later unset cannot fork the chain:
+  an explicit HMAC key that disagrees with custody refuses to start, and an
+  explicit sign seed that disagrees is the signer rotation — custody converges
+  to it, so the replaced signer cannot silently return.
 - **SIEM forwarding** — the trail exports as **OCSF** (`/api/audit/ocsf`, API
   Activity 6003 + Detection Finding 2004) for detection engineering off-box.
 

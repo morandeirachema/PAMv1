@@ -848,7 +848,9 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		p.audit(ctx, actor, "session.record_failed",
 			fmt.Sprintf("target:%s cred_user:%s error:%v", target.Name, cred.Username, err))
 		if p.requireRec {
-			fmt.Fprintln(clientChan.Stderr(), "pamv1: session recording is unavailable; session refused")
+			// Through the live tee, not just stderr: a supervisor already watching
+			// this registered session must see why it ends, not an empty stream.
+			fmt.Fprintln(p.teeLive(clientChan.Stderr(), sid), "pamv1: session recording is unavailable; session refused")
 			return
 		}
 	}
@@ -1057,7 +1059,10 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 		p.audit(ctx, actor, "session.record_failed",
 			fmt.Sprintf("target:%s cred_user:%s protocol:winrm error:%v", target.Name, cred.Username, err))
 		if p.requireRec {
-			fmt.Fprintln(ch, "pamv1: session recording is unavailable; session refused")
+			// Through the live tee, not just the channel: a supervisor already
+			// subscribed to this registered session must see why it ends, not an
+			// empty stream.
+			fmt.Fprintln(p.teeLive(ch, sid), "pamv1: session recording is unavailable; session refused")
 			return
 		}
 	}
@@ -1070,6 +1075,15 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 		}
 	}()
 
+	// One writer chain for the whole session, built here so the shell loop and
+	// the per-command runner cannot drift apart: client channel + recording,
+	// wrapped by the cap latch, tee'd to the live hub. Order matters — the
+	// recording stays the byte-authority (the live tee never receives bytes the
+	// recording refused), and the cap latch is what lets the Fprintf-style
+	// writers below notice the recording cap at all.
+	cw := &capWriter{w: recWriter(ch, rec)}
+	out := p.teeLive(cw, sid)
+
 	for req := range reqs {
 		switch req.Type {
 		case "pty-req", "env", "window-change":
@@ -1080,7 +1094,7 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 			if req.WantReply {
 				req.Reply(true, nil)
 			}
-			p.winrmShellLoop(ctx, ch, target, cred, secret, actor, observe, rec, sid)
+			p.winrmShellLoop(ctx, ch, out, cw, target, cred, secret, actor, observe, sid)
 			ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{0}))
 			return
 		case "exec":
@@ -1089,7 +1103,8 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 			}
 			var m struct{ Command string }
 			_ = ssh.Unmarshal(req.Payload, &m)
-			code := p.winrmRun(ctx, ch, target, cred, secret, actor, observe, rec, m.Command, sid)
+			code := p.winrmRun(ctx, out, target, cred, secret, actor, observe, m.Command)
+			p.winrmCapStop(ctx, cw, ch, sid, actor, target, cred)
 			ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{uint32(code)}))
 			return
 		default:
@@ -1101,15 +1116,22 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 }
 
 // winrmShellLoop reads operator lines and runs each as a WinRM command, printing
-// a prompt and streaming output. "exit"/"quit"/"logout" or EOF ends the session.
-func (p *Proxy) winrmShellLoop(ctx context.Context, ch ssh.Channel, target *store.Target, cred *store.Credential, secret, actor string, observe bool, rec io.Writer, sid string) {
-	out := p.teeLive(recWriter(ch, rec), sid)
+// a prompt and streaming output through out (client + recording + live hub;
+// built once by handleWinRMSession). "exit"/"quit"/"logout" or EOF ends the
+// session — and so does the recording size cap, which cw latches: a session the
+// recording refuses does not keep running unrecorded.
+func (p *Proxy) winrmShellLoop(ctx context.Context, ch ssh.Channel, out io.Writer, cw *capWriter, target *store.Target, cred *store.Credential, secret, actor string, observe bool, sid string) {
 	fmt.Fprintf(out, "pamv1 WinRM shell for %s (each line is a separate command; type 'exit' to quit)\r\n", target.Name)
 	prompt := "pamv1 " + target.Name + "> "
 	scanner := bufio.NewScanner(ch)
 	scanner.Buffer(make([]byte, 0, 4096), 1<<20)
 	for {
 		fmt.Fprint(out, prompt)
+		// Checked once per loop turn, right after a write: catches a cap tripped
+		// by the banner, the prompt, or the previous command's output.
+		if p.winrmCapStop(ctx, cw, ch, sid, actor, target, cred) {
+			return
+		}
 		if !scanner.Scan() {
 			return
 		}
@@ -1123,15 +1145,14 @@ func (p *Proxy) winrmShellLoop(ctx context.Context, ch ssh.Channel, target *stor
 			return
 		}
 		// winrmRun echoes the command into the recording itself.
-		p.winrmRun(ctx, ch, target, cred, secret, actor, observe, rec, line, sid)
+		p.winrmRun(ctx, out, target, cred, secret, actor, observe, line)
 	}
 }
 
-// winrmRun executes one WinRM command, streams its output (tee'd to rec and to
-// the live-monitoring hub under sid) and audits it, returning the remote exit
-// code. In observer mode it refuses to run.
-func (p *Proxy) winrmRun(ctx context.Context, ch ssh.Channel, target *store.Target, cred *store.Credential, secret, actor string, observe bool, rec io.Writer, command string, sid string) int {
-	out := p.teeLive(recWriter(ch, rec), sid)
+// winrmRun executes one WinRM command, streams its output through out (client +
+// recording + live hub) and audits it, returning the remote exit code. In
+// observer mode it refuses to run.
+func (p *Proxy) winrmRun(ctx context.Context, out io.Writer, target *store.Target, cred *store.Credential, secret, actor string, observe bool, command string) int {
 	// Echo the command into the recording (WinRM output doesn't echo the input the
 	// way an interactive SSH shell does) so the .cast is a faithful record of what
 	// was run — the non-repudiation guarantee.
@@ -1215,6 +1236,46 @@ func recWriter(ch ssh.Channel, rec io.Writer) io.Writer {
 		return ch
 	}
 	return io.MultiWriter(ch, rec)
+}
+
+// capWriter forwards to w and latches an errRecordingLimit, so callers whose
+// individual writes discard errors — the WinRM loop writes through fmt.Fprintf —
+// still notice that the recording refused the bytes and can stop the session,
+// which is the contract Recording.Write's cap exists for. (The SSH path gets the
+// same signal for free: its io.Copy returns the error.)
+type capWriter struct {
+	w       io.Writer
+	capped  bool
+	audited bool
+}
+
+// Write forwards to the wrapped writer, remembering a recording-cap refusal.
+func (c *capWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	if errors.Is(err, errRecordingLimit) {
+		c.capped = true
+	}
+	return n, err
+}
+
+// winrmCapStop reports whether the WinRM session's recording cap has tripped.
+// The first time it has, the limit is audited (session.record_limit — the same
+// event the SSH path emits), the operator is told on the raw channel, and the
+// live watchers learn why their stream is about to end. The caller then ends
+// the session: continuing would run it unrecorded, and an unrecorded privileged
+// session is exactly what PAM_MAX_RECORDING_MB must never quietly allow.
+func (p *Proxy) winrmCapStop(ctx context.Context, cw *capWriter, ch io.Writer, sid, actor string, target *store.Target, cred *store.Credential) bool {
+	if cw == nil || !cw.capped {
+		return false
+	}
+	if !cw.audited {
+		cw.audited = true
+		p.audit(ctx, actor, "session.record_limit", "target:"+target.Name+" cred_user:"+cred.Username+" reason:recording-size-cap")
+		const notice = "pamv1: recording size limit reached; session closed\r\n"
+		io.WriteString(ch, notice)
+		p.live.Publish(sid, []byte(notice))
+	}
+	return true
 }
 
 // liveWriter publishes everything written to it to a live-session hub under a

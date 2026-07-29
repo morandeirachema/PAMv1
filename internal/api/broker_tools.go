@@ -235,21 +235,39 @@ func (t *sshExecTool) Execute(ctx context.Context, p *auth.Principal, args broke
 		return broker.Result{}, fmt.Errorf("ssh_exec does not support zero-standing-privilege (ssh_ca) credentials")
 	}
 	// Supervise BEFORE the just-in-time decrypt, so a run refused by the
-	// concurrent-session cap never causes a secret to exist (Phase 40).
-	sctx, release, _, err := t.s.superviseSession(ctx, p.Name, target.Name, "ssh_exec", "broker")
+	// concurrent-session cap never causes a secret to exist (Phase 40). The
+	// command guard stays ABOVE the supervision on purpose: a blocked command
+	// never registers a session, so it cannot consume a session slot.
+	sctx, release, sid, err := t.s.superviseSession(ctx, p.Name, target.Name, "ssh_exec", "broker")
 	if err != nil {
 		return broker.Result{}, err
 	}
 	defer release()
+	// Live monitoring: an agent's ssh_exec is watchable exactly like its
+	// winrm_exec — a registered session a supervisor can open and see nothing on
+	// is worse than no session at all. One-shot exec output never echoes its
+	// cause, so the command is echoed first, the way execWinRM does.
+	t.s.live.Publish(sid, []byte("ssh_exec> "+command+"\r\n"))
 	secret, err := t.s.vault.Decrypt(sctx, cred.SecretEnc, store.CredentialAAD(target.ID, cred.ID))
 	if err != nil {
+		t.s.live.Publish(sid, []byte("pamv1: credential decryption failed; command refused\r\n"))
 		return broker.Result{}, fmt.Errorf("credential decrypt failed")
 	}
 	res, err := t.s.sshConnector.Exec(sctx, *target, cred.Username, secret, command)
 	if err != nil {
+		t.s.live.Publish(sid, []byte(fmt.Sprintf("pamv1: ssh error: %v\r\n", err)))
 		return broker.Result{}, err
 	}
-	t.s.auditAs(ctx, p.Name, "ssh.exec", fmt.Sprintf("target:%s user:%s exit:%d", target.Name, cred.Username, res.ExitCode))
+	// Durable audit BEFORE the agent (or a live watcher) receives the output —
+	// the same withheld-result contract as execWinRM: nobody acts on output the
+	// system of record never accounted for.
+	if err := t.s.auditAs(ctx, p.Name, "ssh.exec", fmt.Sprintf("target:%s user:%s exit:%d", target.Name, cred.Username, res.ExitCode)); err != nil {
+		t.s.live.Publish(sid, []byte("pamv1: audit log unavailable; output withheld\r\n"))
+		return broker.Result{}, errAuditUnavailable
+	}
+	if res.Output != "" && t.s.live.HasSubscribers(sid) {
+		t.s.live.Publish(sid, []byte(res.Output))
+	}
 	return broker.Result{Data: map[string]any{
 		"target":    target.Name,
 		"exit_code": res.ExitCode,

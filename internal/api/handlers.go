@@ -45,8 +45,16 @@ func (s *Server) streamSession(w http.ResponseWriter, r *http.Request) {
 	// is unknown (or already over) is refused outright; before this, watching a
 	// dead session subscribed the caller to eternal silence. With no registry
 	// wired the id cannot be validated and any id streams (test-only shape).
+	//
+	// The registry is REPLICA-LOCAL while kills are cluster-wide, so in an HA
+	// deployment behind a non-sticky load balancer this request can land on a
+	// replica that does not host a perfectly live session. The 404 body says so
+	// honestly — an authoritative-sounding "no such session" would tell a
+	// supervisor a running session had ended. (Cross-replica live monitoring is
+	// a documented gap; the refusal is audited so probing leaves a trace.)
 	if s.sessions != nil && !s.sessions.Exists(id) {
-		writeError(w, http.StatusNotFound, "no such live session")
+		s.audit(r.Context(), "session.monitor", "session:"+auditField(id, 64)+" refused:not-live-on-this-replica")
+		writeError(w, http.StatusNotFound, "session is not live on this replica (unknown, already ended, or hosted on another replica)")
 		return
 	}
 	rc, ok := s.beginStream(w)

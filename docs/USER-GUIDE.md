@@ -273,9 +273,12 @@ You can also **watch an in-progress session live**: on **Work with Active
 Sessions**, type option **5** next to a session and its output streams into a
 view-only pane as it happens (F12 stops watching). When the session ends —
 finished or killed — the pane says **SESSION ENDED**; a quiet pane means a
-quiet session, not a dead one. The same stream is available via the API —
-`GET /api/sessions/{id}/stream` (Server-Sent Events). The watch itself is
-audited (`session.monitor`).
+quiet session, not a dead one. A session that is not live *on the replica you
+reached* is refused (404) instead of showing an empty stream — in a
+multi-replica deployment that can also mean the session is hosted elsewhere,
+so ask your admin before concluding it ended. The same stream is available via
+the API — `GET /api/sessions/{id}/stream` (Server-Sent Events). The watch —
+and a refused watch — is audited (`session.monitor`).
 
 Two more review screens (both need audit-read):
 
@@ -344,6 +347,7 @@ guard against connections that open and never authenticate, not a fault.
 
 | Date | Change |
 |---|---|
+| 2026-07-29 | **Watch-pane fixes**: lines no longer end in a stray `\r`; a refused command watched live now says *why* it was refused instead of looking like it ran silently; and the 404 for a non-live session is replica-honest — on a multi-replica deployment it can mean "hosted elsewhere", not "ended". §"Watching a session" |
 | 2026-07-29 | **The live watch pane now reports SESSION ENDED** the moment the watched session finishes or is killed — a quiet pane means a quiet session, not a dead one. Watching a session that is already over says so (404) instead of showing an empty stream. §"Watching a session" |
 | 2026-07-29 | **RDP clipboard can differ per target** (Phase 33 follow-on): if copy/paste is blocked on one machine while it works elsewhere, that target is deliberately locked down — the per-target policy is always at least as strict as the global one. Admins set it on *Add/Change Target*. §"Connecting to a Windows desktop" |
 | 2026-07-27 | Phase 45: **console parity restored** — menus **22–26** (vendors & contract grants, operator SSH certificates, identity blast radius, login sessions, AI-agent keys), option **9=Dependents** on a credential, and the audit screen's tamper-evidence keys (F6=Verify chain, F7=Signed head, F10=OCSF export). The menu table above now lists 20/21 too (shipped in Phase 43). §4 |

@@ -252,26 +252,58 @@ func buildBroker(ctx context.Context, st store.Store, v *vault.Vault, cfg *confi
 	return engine, key, ed25519.NewKeyFromSeed(seed), nil
 }
 
-// brokerKeyBytes resolves one broker audit key to its raw bytes: the explicit
-// environment value when given, else the shared-custody value under custodyName
-// (generated on first use, adopted by every other replica and restart). Both
-// sources carry standard-base64 text of exactly size bytes; anything else is a
-// fatal misconfig, because starting the broker with a garbled audit key would
-// fork the chain and make honest history unverifiable.
+// brokerKeyBytes resolves one broker audit key to its raw bytes and keeps the
+// environment and shared custody telling the same story.
+//
+// Env set: the value is decoded (fatal if malformed) and written through to
+// shared custody — seeding it on first sight, so a replica without the variable,
+// or a later boot after it is unset, converges on this same key instead of
+// silently generating a different one and forking the chain (the pre-write-through
+// failure mode: an upgraded deployment unsetting its previously mandatory keys
+// would have had its entire honest history read as tampering). If custody already
+// holds a DIFFERENT value the two sources disagree, and the response depends on
+// which key this is:
+//   - the HMAC chain key: fatal. Two chain keys is two histories; whichever wins,
+//     honest events under the other verify as tampered. The operator either unsets
+//     the variable (adopting the cluster key) or restores the matching value.
+//   - the signing seed: the env value wins and custody is CONVERGED to it — an
+//     explicit new seed is the documented signing-key-rotation path, and leaving
+//     the old seed in custody would silently resurrect the rotated-out signer on
+//     the first boot without the variable. The old public key stays verifiable
+//     via PAM_BROKER_AUDIT_SIGN_PREV.
+//
+// Env unset: the shared-custody value (generated on first use, adopted by every
+// other replica and restart). Both sources carry standard-base64 text of exactly
+// size bytes; anything else is a fatal misconfig, because starting the broker
+// with a garbled audit key would fork the chain.
 func brokerKeyBytes(ctx context.Context, st store.Store, v *vault.Vault, envValue, envName, custodyName string, size int, generate func() ([]byte, error), log *slog.Logger) ([]byte, error) {
+	// Trimmed once so decode, custody seeding and the mismatch comparison all see
+	// the same text (base64 decoding tolerates a trailing newline; a comparison
+	// that didn't would misread it as a different key).
+	envValue = strings.TrimSpace(envValue)
 	if envValue != "" {
 		raw, err := base64.StdEncoding.DecodeString(envValue)
 		if err != nil || len(raw) != size {
 			return nil, fmt.Errorf("%s must be base64 of %d bytes", envName, size)
+		}
+		stored, _, kerr := keycustody.Ensure(ctx, st, v, custodyName, "", func() ([]byte, error) { return []byte(envValue), nil })
+		if stored == nil {
+			return nil, fmt.Errorf("broker audit key custody (%s): %w", custodyName, kerr)
+		}
+		if strings.TrimSpace(string(stored)) != envValue {
+			if custodyName == keycustody.NameBrokerAuditKey {
+				return nil, fmt.Errorf("%s does not match the chain key this cluster already holds in shared custody: refusing to fork the broker audit chain — unset %s to adopt the cluster key, or restore the matching value", envName, envName)
+			}
+			if cerr := keycustody.Converge(ctx, st, v, custodyName, []byte(envValue)); cerr != nil {
+				return nil, fmt.Errorf("broker audit key custody (%s): converge to the explicit %s: %w", custodyName, envName, cerr)
+			}
+			log.Warn("signing-key rotation: shared custody converged to the explicit seed; the replaced signer verifies only via PAM_BROKER_AUDIT_SIGN_PREV", "name", custodyName, "env", envName)
 		}
 		return raw, nil
 	}
 	stored, adopted, kerr := keycustody.Ensure(ctx, st, v, custodyName, "", generate)
 	if stored == nil {
 		return nil, fmt.Errorf("broker audit key custody (%s): %w", custodyName, kerr)
-	}
-	if kerr != nil {
-		log.Warn("broker audit key custody", "name", custodyName, "err", kerr)
 	}
 	if adopted {
 		log.Info("adopted the cluster's broker audit key from shared custody", "name", custodyName)
