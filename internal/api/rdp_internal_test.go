@@ -99,6 +99,13 @@ func TestStrictestClipboard(t *testing.T) {
 		{"deny", "allow", "deny"},
 		{"deny", "", "deny"},
 		{"", "readonly", "readonly"}, // empty global normalizes to allow
+		// Unknown non-empty values fail CLOSED. They can only come from outside
+		// the API (direct SQL, a restore, an importer — the handlers 422 them),
+		// and a row that visibly asks for an unrecognizable mode must not rank
+		// as allow while the target list displays it as if enforced.
+		{"allow", "DENY", "deny"},    // case-insensitive: normalizes, then enforces
+		{"allow", "garbage", "deny"}, // unrecognizable target override → deny
+		{"garbage", "", "deny"},      // unrecognizable global (impossible via config) → deny
 	}
 	for _, c := range cases {
 		if got := strictestClipboard(c.global, c.target); got != c.want {

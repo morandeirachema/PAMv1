@@ -54,6 +54,9 @@ const (
 // Store is the slice of the store this package needs.
 type Store interface {
 	EnsureKeyMaterial(ctx context.Context, name, value string) (string, error)
+	// UpdateKeyMaterial replaces a named key's envelope; Converge uses it when an
+	// explicit environment override must become the custody-held value too.
+	UpdateKeyMaterial(ctx context.Context, name, value string) error
 }
 
 // Vault wraps and unwraps the key material with the deployment's KEK.
@@ -103,6 +106,25 @@ func Ensure(ctx context.Context, st Store, v Vault, name, path string, generate 
 		}
 	}
 	return authoritative, adopted, nil
+}
+
+// Converge replaces the custody-held value for name with value, sealing it under
+// the KEK first. It exists for the one legitimate way an operator changes a
+// custody-held key — an explicit environment override, i.e. a deliberate key
+// rotation — so custody keeps telling the same story as the environment instead
+// of resurrecting the replaced key on the first boot without the variable.
+func Converge(ctx context.Context, st Store, v Vault, name string, value []byte) error {
+	if st == nil || v == nil {
+		return errors.New("keycustody: a store and a vault are required")
+	}
+	sealed, err := v.Encrypt(ctx, string(value), store.KeyMaterialAAD(name))
+	if err != nil {
+		return fmt.Errorf("keycustody: seal %s: %w", name, err)
+	}
+	if err := st.UpdateKeyMaterial(ctx, name, sealed); err != nil {
+		return fmt.Errorf("keycustody: update %s: %w", name, err)
+	}
+	return nil
 }
 
 // candidateKey reads the key at path, or generates one when there is nothing to
