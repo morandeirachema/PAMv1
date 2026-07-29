@@ -256,9 +256,9 @@ Every statement is audited, including the ones your driver sends through
 `sp_executesql`. **Windows/integrated authentication is not brokered** — use
 SQL authentication.
 
-### Connecting to a Windows desktop (RDP)
+### Connecting to a remote desktop (RDP or VNC)
 
-For a `windows` target with the **RDP** protocol you don't need any client — the
+For a target with the **RDP** or **VNC** protocol you don't need any client — the
 desktop opens **inside the portal**. In *Work with Targets*, type option **`7`**
 next to the target and press Enter. The green title bar shows which host you're
 on; the Windows desktop renders in the browser. Press **`Ctrl+Alt+Q`** to
@@ -372,6 +372,7 @@ guard against connections that open and never authenticate, not a fault.
 
 | Date | Change |
 |---|---|
+| 2026-07-29 | **Option 7 now opens VNC desktops too.** On *Work with Targets*, type **7** next to a `vnc` target and it renders in the portal exactly like an RDP one — same key, same `Ctrl+Alt+Q` to disconnect, same rule that the password is injected for you and never reaches your browser. If copy/paste does not work, the clipboard policy for that target says so. |
 | 2026-07-29 | **SQL Server databases can now be reached through pamv1** (Phase 53): `sqlcmd -S pam,1433 -U '<cred>@<target>' -P "$PAM_TOKEN"`, same rules as PostgreSQL — your token is the password, you never learn the database one, and every statement is audited. §"Connecting to a database (SQL Server)" |
 | 2026-07-29 | **Watch-pane fixes**: lines no longer end in a stray `\r`; a refused command watched live now says *why* it was refused instead of looking like it ran silently; and the 404 for a non-live session is replica-honest — on a multi-replica deployment it can mean "hosted elsewhere", not "ended". §"Watching a session" |
 | 2026-07-29 | **The live watch pane now reports SESSION ENDED** the moment the watched session finishes or is killed — a quiet pane means a quiet session, not a dead one. Watching a session that is already over says so (404) instead of showing an empty stream. §"Watching a session" |

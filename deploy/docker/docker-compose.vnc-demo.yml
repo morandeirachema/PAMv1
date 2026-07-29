@@ -1,0 +1,80 @@
+# End-to-end demo of the in-portal VNC viewer: a real TigerVNC Linux desktop,
+# guacd, and pam-server, with a pamv1 VNC target auto-seeded. This proves the
+# rendered pixels — and that the operator never learns the VNC password.
+#
+#   cd deploy/docker
+#   docker compose -f docker-compose.vnc-demo.yml up --build
+#   # then open http://localhost:8080
+#   #   sign on: leave Password blank, enter the access token below
+#   #   Work with Targets → type 7 next to "demo-vnc" → Enter
+#   #   → an XFCE desktop renders in the portal. Ctrl+Alt+Q disconnects.
+#
+# DEMO ONLY — throwaway master key, a weak API key, and an unencrypted VNC
+# target with a well-known password. Never deploy this compose file.
+name: pamv1-vnc-demo
+
+services:
+  # A real VNC server (XFCE over TigerVNC). Only guacd reaches it — no published port.
+  vnc-target:
+    build: ./vnc-target
+    restart: unless-stopped
+
+  # The Guacamole proxy daemon that makes the actual VNC connection.
+  guacd:
+    image: guacamole/guacd:1.5.5
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  # pam-server: portal + API + the VNC tunnel. In-memory store (ephemeral).
+  pam:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      guacd:
+        condition: service_started
+      vnc-target:
+        condition: service_started
+    environment:
+      PAM_MASTER_KEY: ${PAM_MASTER_KEY:-jcYmzQm54gtAJE_-haa4ZiF9Mec94PSrWVRBM7ePDtg}
+      PAM_API_KEY: ${PAM_API_KEY:-demo-api-key-pamv1}
+      PAM_DATABASE_URL: memory
+      PAM_GUACD_ADDR: guacd:4822
+      # Classic VNC has no transport security at all, so there is no certificate
+      # to ignore here (unlike the RDP demo) — the guacd↔target hop is plaintext
+      # on a private network. That is exactly why the credential stays server-side.
+      PAM_SSH_ADDR: "off"
+      PAM_LOG_LEVEL: info
+      # Try PAM_RDP_CLIPBOARD=deny (it gates VNC too) to watch the clipboard
+      # refuse to cross, and PAM_RDP_CLIPBOARD_AUDIT=meta to see it audited.
+    ports:
+      - "8080:8080"
+
+  # One-shot: wait for pam, then create the VNC target + its credential.
+  seed:
+    image: curlimages/curl:8.11.1
+    depends_on:
+      pam:
+        condition: service_started
+    restart: "no"
+    environment:
+      KEY: ${PAM_API_KEY:-demo-api-key-pamv1}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until curl -sf http://pam:8080/readyz >/dev/null; do echo "waiting for pam-server..."; sleep 1; done
+        TID=$$(curl -s -X POST -H "X-API-Key: $$KEY" -H "Content-Type: application/json" \
+          -d '{"name":"demo-vnc","host":"vnc-target","port":5900,"os_type":"linux","protocol":"vnc"}' \
+          http://pam:8080/api/targets | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+        echo "created target id=$$TID"
+        curl -s -X POST -H "X-API-Key: $$KEY" -H "Content-Type: application/json" \
+          -d "{\"target_id\":$$TID,\"username\":\"vnc\",\"secret\":\"DemoVnc1\"}" \
+          http://pam:8080/api/credentials >/dev/null
+        echo "SEEDED. Open http://localhost:8080, sign on with the access token, then Work with Targets → option 7 on demo-vnc."

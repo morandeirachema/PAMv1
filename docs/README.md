@@ -1,6 +1,6 @@
 # pamv1 — documentation
 
-> Last updated: 2026-07-29 · Reflects: Phases 0–52g, release v0.10.0 and the post-release follow-ons (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-07-29 · Reflects: Phases 0–54, release v0.10.0 and the post-release follow-ons (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -53,6 +53,7 @@
 ### Deploy & operate
 - **[REQUIREMENTS.md](REQUIREMENTS.md)** — run specs: ports, resource requests/limits, versions, rough sizing.
 - **[PORTS-AND-FLOWS.md](PORTS-AND-FLOWS.md)** — the listener/egress matrix for firewalls, security groups, NetworkPolicies and OT segmentation.
+- **[VNC-TESTING.md](VNC-TESTING.md)** — run the in-portal VNC viewer end to end against a real TigerVNC desktop with the bundled demo stack.
 - **[PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md)** — every protocol pamv1 speaks or brokers and every cryptographic mechanism it relies on, with where each is implemented and where verification is opt-in.
 - **[BACKUP-AND-RESTORE.md](BACKUP-AND-RESTORE.md)** — runbook for backing up the database and the vault KEK *separately*.
 - **[EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md)** — what needs a real host/account to verify honestly before you rely on it.

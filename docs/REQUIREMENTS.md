@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-07-29 · Reflects: Phases 0–53.
+> Last updated: 2026-07-29 · Reflects: Phases 0–54.
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** These are the
 > specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate
@@ -28,6 +28,7 @@
 | 2222/tcp | SSH session proxy | Operators `ssh -p 2222 <cred>@<target>@host`. Set `PAM_SSH_ADDR=off` to disable. |
 | 5433/tcp | PostgreSQL session proxy | Operators `psql "host=... port=5433 user=<cred>@<target> dbname=..."`. Enable with `PAM_DB_ADDR` (off by default). |
 | 1433/tcp | SQL Server session proxy | Operators `sqlcmd -S host,1433 -U '<cred>@<target>' -P "$PAM_TOKEN"`. Enable with `PAM_MSSQL_ADDR` (off by default); set `PAM_TLS_CERT/KEY` — TDS clients require encryption. |
+| 5900/tcp | Outbound — guacd to VNC targets | **guacd**, not pam-server, makes this connection (plaintext RFB; see [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md) §3.5). |
 | 636/5986/4822/5432 | Outbound to targets/IdP | LDAPS to AD, WinRM-HTTPS, **guacd on 4822** (it is *guacd*, not pam-server, that then reaches RDP on 3389), PostgreSQL to `postgres` targets — **egress** from pamv1, not listeners. See [PORTS-AND-FLOWS.md](PORTS-AND-FLOWS.md). |
 
 ## Prerequisites (secrets)

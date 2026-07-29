@@ -410,7 +410,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 123 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 125 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -497,6 +497,7 @@ The 123 routes registered on the API mux, with the capability or guard each enfo
 | DELETE | `/api/targets/{id}/grants/{gid}` | CapManageTargets |
 | GET | `/api/targets/{id}/rdp` | token (query) |
 | PUT | `/api/targets/{id}/safe` | CapManageTargets |
+| GET | `/api/targets/{id}/vnc` | token (query) |
 | POST | `/api/targets/{id}/winrm` | CapConnect |
 | GET | `/api/users` | CapManageUsers |
 | POST | `/api/users` | CapManageUsers |
@@ -511,6 +512,7 @@ The 123 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/vendors/{id}/grants` | CapReadInventory |
 | POST | `/api/vendors/{id}/grants` | CapManageTargets |
 | POST | `/api/vendors/{id}/offboard` | CapManageUsers |
+| POST | `/api/vnc-token` | CapConnect |
 | GET | `/healthz` | public |
 | GET | `/mcp` | public |
 | POST | `/mcp` | public |

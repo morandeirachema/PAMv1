@@ -362,7 +362,7 @@ api -X POST $PAM/api/credentials \
   -d "{\"target_id\":$tid,\"username\":\"root\",\"secret\":\"S3cret-P@ss\",\"secret_type\":\"password\"}"
 ```
 
-`protocol` is `ssh | winrm | rdp | postgres`; `secret_type` is `password`,
+`protocol` is `ssh | winrm | rdp | vnc | postgres | mssql`; `secret_type` is `password`,
 `ssh_key` (paste a PEM), or `ssh_ca` (Zero Standing Privilege — no stored secret,
 see §7).
 
@@ -473,6 +473,7 @@ event, it refuses to hand out the secret.
 | **Session recording** | Full replay of every proxied session; hash in the audit trail. Optionally **sealed at rest** (`PAM_RECORDING_ENCRYPT`) and **opaque-named** (`PAM_RECORDING_OPAQUE_NAMES`) so the volume leaks no metadata | on by default; `PAM_REQUIRE_RECORDING=true` refuses an unrecordable session — and since Phase 52c that covers **all five** paths to a target, not just the proxies: SSH, PostgreSQL, WinRM-through-proxy, the in-portal **RDP viewer** (needs `PAM_GUACD_RECORDING_PATH`, else 503 + `rdp.refused`) and the **REST WinRM endpoint** (needs `PAM_RECORDING_DIR`, else `winrm.refused`). **If you set this flag, set both paths** |
 | **Command control** | Block dangerous commands by regex on **every** path where a discrete command is visible — SSH exec, the WinRM proxy loop, SQL, the REST WinRM endpoint, the agent broker's exec tools, and dependent-account propagation. **Fail-loud:** a deny file that is unreadable, or that yields no usable patterns, is **fatal at startup** — an unmounted ConfigMap now stops the server instead of silently disabling the control | `PAM_COMMAND_DENY_FILE` |
 | **SFTP file-transfer control** | The proxy parses the SFTP subsystem stream: audits every file operation, refuses writes/deletes in `readonly`, and denies paths by regex in *every* mode including downloads. `deny` refuses the subsystem outright. Same fail-loud rule on its deny file | `PAM_SSH_SFTP`, `PAM_SSH_SFTP_DENY_FILE` |
+| **VNC desktops** | Brokered through guacd like RDP and rendered in the portal; JIT password injection, audited, recorded, same clipboard gate | `protocol: vnc`, `PAM_GUACD_ADDR` |
 | **RDP clipboard control** | Gate the clipboard bridge (`allow`/`readonly`/`deny`) and audit what crosses it (`off`/`meta`/`full`); drive redirection is always off; a target's `rdp_clipboard[_audit]` fields tighten either per target (strictest wins) | `PAM_RDP_CLIPBOARD`, `PAM_RDP_CLIPBOARD_AUDIT` |
 | **In-session step-up** | A matched SQL statement pauses mid-session for a supervisor's live decision instead of killing the session; nobody may decide their own | `PAM_DB_STEPUP_FILE`, `PAM_DB_STEPUP_TTL_SEC` |
 | **Audit → SIEM forwarding** | Push every audit event from a durable cursor as RFC 5424 / CEF / LEEF over UDP, TCP or TLS | `PAM_AUDIT_FORWARD_ADDR` |

@@ -37,7 +37,7 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
-runs 0–52g and **every phase has shipped**, then
+runs 0–54 and **every phase has shipped**, then
 **[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** — the first
 tagged, cosign-signed release — went out on 2026-07-28. What that adds up to: **JIT session
 brokering** for SSH, PostgreSQL, WinRM and in-portal RDP; **RBAC + custom profiles** with
@@ -146,7 +146,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–52g, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–54, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 
@@ -160,6 +160,7 @@ Phases 0–52g, grouped by area. Every capability is exercised by tests and depl
 - **Session proxy with JIT injection** — operators connect through an SSH gateway; the proxy authenticates them, pulls the credential from the vault, **decrypts it only at connection time** (and only after every authorization gate passes), injects it into the upstream session and records everything. Proven end to end by an integration test where the upstream accepts *only* the vaulted password the client never possessed. Upstream host keys can be pinned (`PAM_SSH_KNOWN_HOSTS`); a jump-host/bastion path and read-only **observer** sessions are supported.
 - **Windows targets (WinRM + RDP)** — run commands on Windows hosts via `POST /api/targets/{id}/winrm` (basic or NTLM) or an interactive WinRM loop through the proxy, or broker a full **RDP** desktop through [Apache Guacamole](https://guacamole.apache.org/) (`GET /api/targets/{id}/rdp` WebSocket tunnel, cert-verified by default). The **in-portal viewer is built in** — open *Work with Targets* → option 7 and the desktop renders on a canvas (the portal vendors the Guacamole JS client; guacd itself ships in the deploys). Either way the credential is injected just-in-time (AD-joined accounts work), sessions are audited, and the operator never sees the secret. The **session clipboard is gated** by `PAM_RDP_CLIPBOARD` (`allow`/`readonly`/`deny`, tightenable **per target** — strictest wins) and drive redirection is always disabled — so an RDP session can't be used as an unaudited copy-out/paste-in or file channel — and `PAM_RDP_CLIPBOARD_AUDIT` **records what actually crossed it** (direction, type, size, SHA-256; content only under an explicit opt-in, since a privileged clipboard often holds a just-copied password).
 - **Database session proxy (SQL Server)** — the TDS sibling of the PostgreSQL broker (`PAM_MSSQL_ADDR`, e.g. `:1433`): point `sqlcmd` at pamv1 with `-U '<dbcred>@<target>'` and your PAM key as the password. Same authorization gates, the vaulted SQL login injected into the client's own LOGIN7 just-in-time, **every statement audited** — including the ones drivers send through `sp_executesql`, which a procedure-name-only parser would miss — plus recording, live monitoring, step-up and cluster-wide kill. The TDS codec is hand-rolled (no new dependency) and its tests are pinned to spec-derived byte literals; the whole session is TLS on both legs. Proven end to end by a fake upstream that accepts *only* the vaulted secret — **interop against a real SQL Server is not yet verified**.
+- **VNC desktops** — brokered through the same [Guacamole](https://guacamole.apache.org/) path as RDP and rendered in the portal (*Work with Targets* → option 7): the vaulted VNC password is injected server-side, the session is audited and recorded, and the clipboard obeys the same gate (`PAM_RDP_CLIPBOARD`, tightenable per target) while VNC's SFTP file channel is forced off. Worth knowing what VNC itself is: plaintext RFB, **no server authentication**, and a password DES-truncated to 8 characters — which is precisely the argument for brokering it rather than exposing it (see [PROTOCOLS-AND-CRYPTO §3.5](docs/PROTOCOLS-AND-CRYPTO.md)).
 - **Database session proxy (PostgreSQL)** — point `psql` at pamv1 (`PAM_DB_ADDR`, e.g. `:5433`) with `user=<dbcred>@<target>` and your PAM key as the password; the proxy runs the same authorization gates as the SSH proxy, injects the vaulted DB credential just-in-time (upstream auth via cleartext / MD5 / **SCRAM-SHA-256**), and brokers the wire protocol — **auditing every SQL statement** (`db.query`) and recording the session. The operator never learns the database password. Proven end to end by a fake upstream that accepts *only* the vaulted secret.
 - **Session recording** — every session (stdout **and** stderr, or each SQL statement) captured in [asciicast v2](https://docs.asciinema.org/manual/asciicast/v2/), hashed with SHA-256 into a tamper-evident chain, and the hash written to the audit trail. Recording failures are audited, and `PAM_REQUIRE_RECORDING` refuses an unrecordable session outright — on the SSH, WinRM and PostgreSQL proxies **and**, since Phase 52c, on the in-portal RDP viewer and the REST WinRM endpoint, checked *before* anything reaches the target.
 - **Supervised sessions (live monitoring + command control)** — a supervisor can **watch an SSH, PostgreSQL or WinRM session live** — and the agent broker's `ssh_exec`/`winrm_exec` runs — over `GET /api/sessions/{id}/stream` (Server-Sent Events, `CapReadAudit`); the stream **ends the moment the session does**, so a quiet pane means a quiet session, not a dead one. A regex denylist (`PAM_COMMAND_DENY_FILE`) **blocks a dangerous command before it reaches the target** on the exec, WinRM and SQL paths — refused and audited (`command.blocked`). A deny file that yields no usable patterns is **fatal at startup** rather than a silently disabled control, so an unmounted ConfigMap fails loudly. Interactive SSH shells use read-only observer mode instead.
@@ -267,7 +268,7 @@ disable the proxy with `PAM_SSH_ADDR=off`.
 
 ## Roadmap
 
-Every phase (0–52g) has shipped — full per-phase detail in **[ROADMAP.md](ROADMAP.md)**:
+Every phase (0–54) has shipped — full per-phase detail in **[ROADMAP.md](ROADMAP.md)**:
 
 | Phase | Theme | Status |
 |---|---|---|
@@ -331,6 +332,8 @@ Every phase (0–52g) has shipped — full per-phase detail in **[ROADMAP.md](RO
 | 52e | Audit-trail integrity, archiving, and two concurrency bugs | ✅ shipped |
 | 52f | The archive high-water mark, made robust — found by reviewing 52e | ✅ shipped |
 | 52g | Six more, found by reviewing all of the above — including a test that could not fail | ✅ shipped |
+| 53 | SQL Server (TDS) session proxy (JIT injection + per-statement audit) | ✅ shipped |
+| 54 | VNC connector (guacd-brokered, in-portal viewer, shared gates with RDP) | ✅ shipped |
 
 Since 52g the work has been **release and consolidation**: v0.10.0 (the first signed,
 attested release — the image every manifest pins is now real and public), tests for the

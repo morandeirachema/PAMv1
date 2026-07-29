@@ -422,7 +422,10 @@ func writeRouteMap(b *strings.Builder, root string) error {
 			guard = "authenticated"
 		} else if strings.Contains(m[3], "rateLimit(") {
 			guard = "public (rate-limited)"
-		} else if strings.Contains(m[3], "rdpTunnel") {
+		} else if strings.Contains(m[3], "rdpTunnel") || strings.Contains(m[3], "vncTunnel") {
+			// The graphical viewer tunnels authenticate from a query-string token
+			// (browsers cannot set headers on a WebSocket handshake), so they carry
+			// no middleware guard for the route table to read off.
 			guard = "token (query)"
 		}
 		routes = append(routes, route{m[1], m[2], guard})
