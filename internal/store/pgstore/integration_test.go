@@ -40,7 +40,7 @@ func TestPGStoreContract(t *testing.T) {
 		 audit_events, users, sessions, mfa_enrollments, mfa_recovery_codes, oidc_states,
 		 settings, profiles, agent_keys, broker_audit_events, broker_tokens, safes, safe_members,
 		 credential_dependencies, campaigns, campaign_items, app_keys, app_secret_grants,
-		 ssh_certificates, vendors, vendor_grants, key_material
+		 ssh_certificates, vendors, vendor_grants, key_material, live_sessions
 		 RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}

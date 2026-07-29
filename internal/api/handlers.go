@@ -15,13 +15,26 @@ import (
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
-// listSessions returns the sessions currently live on THIS replica, so a
-// supervisor can see who is connected to what and kill a session. In an HA
-// deployment each replica knows only its own; the kill path is what crosses
-// replicas, via the kill bus. Requires CapReadAudit.
+// listSessions returns the live sessions, so a supervisor can see who is
+// connected to what and kill or watch a session. With the cluster inventory
+// wired (Phase 55) the listing is CLUSTER-WIDE — the shared store rows merged
+// with this replica's own registry, each row naming its hosting replica; a
+// store failure is a 500, not a silently partial list presented as the whole
+// cluster. Without it (single replica, or the bus failed at startup), the
+// listing is this replica's registry, the pre-HA behavior. Requires
+// CapReadAudit.
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	if s.sessions == nil {
 		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	if s.cluster != nil {
+		infos, err := s.cluster.List(r.Context())
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, infos)
 		return
 	}
 	writeJSON(w, http.StatusOK, s.sessions.List())
@@ -29,8 +42,12 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 
 // streamSession streams a live session's output to a supervisor as Server-Sent
 // Events (Phase 16 live monitoring). Each output frame is one `data:` event; the
-// stream ends when the client disconnects or the session ends. Requires
-// CapReadAudit and audits the start of monitoring.
+// stream ends when the client disconnects or the session ends. With the cluster
+// relay wired (Phase 55) a session hosted on ANOTHER replica streams too: the
+// relay announces watch interest, the hosting replica forwards its output over
+// the store bus, and the bridge feeds this replica's hub — so the loop below is
+// identical either way. Requires CapReadAudit and audits the start of
+// monitoring (`via:relay` marks a cross-replica watch).
 func (s *Server) streamSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.live == nil {
@@ -39,30 +56,48 @@ func (s *Server) streamSession(w http.ResponseWriter, r *http.Request) {
 	}
 	frames, cancel := s.live.Subscribe(id)
 	defer cancel()
-	// Subscribe FIRST, then validate against the registry: if the session ends
-	// between the two, EndSession closes the just-created subscription and the
-	// loop below exits — checking first would leave that gap open. An id that
-	// is unknown (or already over) is refused outright; before this, watching a
-	// dead session subscribed the caller to eternal silence. With no registry
-	// wired the id cannot be validated and any id streams (test-only shape).
-	//
-	// The registry is REPLICA-LOCAL while kills are cluster-wide, so in an HA
-	// deployment behind a non-sticky load balancer this request can land on a
-	// replica that does not host a perfectly live session. The 404 body says so
-	// honestly — an authoritative-sounding "no such session" would tell a
-	// supervisor a running session had ended. (Cross-replica live monitoring is
-	// a documented gap; the refusal is audited so probing leaves a trace.)
+	// Subscribe FIRST, then validate: if the session ends between the two,
+	// EndSession closes the just-created subscription and the loop below exits —
+	// checking first would leave that gap open. An id that is unknown (or
+	// already over) is refused outright; before this, watching a dead session
+	// subscribed the caller to eternal silence. With no registry wired the id
+	// cannot be validated and any id streams (test-only shape). The same
+	// ordering protects the remote path: the announcer's staleness pass ends
+	// any watched id that has left the fresh inventory, so a session that dies
+	// in the subscribe/validate window still closes this stream.
+	detail := "session:" + id
 	if s.sessions != nil && !s.sessions.Exists(id) {
-		s.audit(r.Context(), "session.monitor", "session:"+auditField(id, 64)+" refused:not-live-on-this-replica")
-		writeError(w, http.StatusNotFound, "session is not live on this replica (unknown, already ended, or hosted on another replica)")
-		return
+		if s.cluster == nil {
+			// No cluster relay (single replica, or the bus failed at startup):
+			// the registry is replica-local, and the 404 body says so honestly —
+			// an authoritative-sounding "no such session" would tell a
+			// supervisor a running session had ended. The refusal is audited so
+			// probing leaves a trace.
+			s.audit(r.Context(), "session.monitor", "session:"+auditField(id, 64)+" refused:not-live-on-this-replica")
+			writeError(w, http.StatusNotFound, "session is not live on this replica (unknown, already ended, or hosted on another replica)")
+			return
+		}
+		ok, err := s.cluster.WatchRemote(r.Context(), id)
+		if err != nil {
+			// A store failure is neither "live" nor "not live"; a 404 here
+			// would report a running session as over.
+			storeError(w, err)
+			return
+		}
+		if !ok {
+			s.audit(r.Context(), "session.monitor", "session:"+auditField(id, 64)+" refused:not-live")
+			writeError(w, http.StatusNotFound, "session is not live (unknown or already ended)")
+			return
+		}
+		defer s.cluster.UnwatchRemote(id)
+		detail += " via:relay"
 	}
 	rc, ok := s.beginStream(w)
 	if !ok {
 		return
 	}
 
-	s.audit(r.Context(), "session.monitor", "session:"+id)
+	s.audit(r.Context(), "session.monitor", detail)
 	w.WriteHeader(http.StatusOK)
 	_ = rc.Flush()
 

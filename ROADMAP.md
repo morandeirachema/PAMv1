@@ -502,7 +502,7 @@ Closes an HA **correctness** gap. The live-session registry is per-replica — e
 - [x] **Store transport**: Postgres **`LISTEN`/`NOTIFY`** (`pgstore/killbus.go` — a hijacked dedicated connection that reconnects on failure) and an **in-process fan-out hub** for the memory store (`memstore/killbus.go`), so the demo and unit tests drive the same registry code the HA path does. New store methods `PublishSessionKill`/`SubscribeSessionKills`
 - [x] **API**: `DELETE /api/sessions/{id}` returns **202 Accepted** when the kill is broadcast to the cluster (the session is not on this replica) vs **204** when killed locally; `main` calls `Registry.StartKillBus(ctx, store)` at startup
 - [x] **Tests**: two registries sharing one store prove a kill on "replica B" terminates a session on "replica A" (by id, by actor, by actor+target); a store-contract round-trip exercises pgstore's real `NOTIFY` in CI
-- Deferred (documented): **cross-replica live monitoring** — the SSE watch stream is still served from the pod hosting the session (fanning session *bytes* across replicas is a heavier pub/sub than a kill signal). Session **inventory** listing also stays per-replica. The security-critical action — termination — is now cluster-wide
+- Deferred (documented): **cross-replica live monitoring** — the SSE watch stream is still served from the pod hosting the session (fanning session *bytes* across replicas is a heavier pub/sub than a kill signal). Session **inventory** listing also stays per-replica. The security-critical action — termination — is now cluster-wide. *Both since shipped in Phase 55: an interest-gated frame relay and a shared session inventory over the same store transport*
 
 ## Phase 35 — Audit→SIEM push forwarding ✅
 
@@ -741,7 +741,8 @@ its own keys, so:
 - Still open (recorded, not closed by this): **recordings remain per-pod**, so
   `GET /api/recordings` lists what the serving replica holds — shared recording
   storage is an operator decision (RWX volume or object storage) rather than a code
-  fix, and cross-replica live monitoring stays the Phase 34 follow-on
+  fix. Cross-replica live monitoring, then the Phase 34 follow-on, has since
+  shipped (Phase 55)
 
 ## Phase 43 — Console: the two human decision points ✅
 
@@ -1409,6 +1410,72 @@ it — without growing a second copy of them.
 - [x] **A real desktop to look at**: `deploy/docker/docker-compose.vnc-demo.yml` + `vnc-target/` run TigerVNC + XFCE behind guacd, seeded as a `vnc` target — the VNC sibling of the RDP demo
 - Deferred (documented): VNC has **no transport security and no server authentication**, and its password is DES-truncated to 8 characters — stated in [PROTOCOLS-AND-CRYPTO.md §3.5](docs/PROTOCOLS-AND-CRYPTO.md) rather than papered over; prefer RDP or SSH where the choice exists. Rendered pixels against every VNC server implementation remain unverified beyond the demo stack
 
+## Phase 55 — Cross-replica live monitoring ✅
+
+Closes the deferral Phase 34 recorded when it made the kill-switch cluster-wide:
+in an HA deployment, `GET /api/sessions` listed only whichever pod the load
+balancer picked, and a supervisor's SSE watch 404ed unless it happened to land
+on the pod hosting the session. Now a supervisor can **see it, watch it, kill it
+and see it end — all from the wrong replica.**
+
+- [x] **One more store bus, same pattern as the kill bus** (`internal/session/livebus.go`,
+  `session.LiveStore` in the `store.Store` contract): pgstore rides Postgres
+  `LISTEN`/`NOTIFY` — frames + interest multiplexed on **one** dedicated,
+  reconnecting listener connection (`pgstore/livebus.go`) — and memstore fans out
+  in-process, so the demo and the tests drive exactly the code the HA path runs.
+  No new environment variables: it activates with the store, best-effort like the
+  kill bus (a failed subscribe logs and stays replica-local)
+- [x] **Interest-gated forwarding**, because session *bytes* are a heavier cargo
+  than a kill signal: a replica forwards a session's output onto the bus **only
+  while some replica has announced a live watcher** for it (announcements repeat
+  every 10s and expire by silence after 30s, so a crashed watcher stops the flow
+  without a goodbye). An unwatched session never touches the bus. The `Hub` is
+  the single tee point, so every protocol that live-streams — SSH, PostgreSQL,
+  SQL Server, WinRM (interactive, REST and broker) — crossed replicas in one
+  change, and `HasSubscribers` counts remote interest so the WinRM
+  skip-build-if-unwatched optimization stays honest
+- [x] **Cluster-wide inventory** (migration `0025`, **UNLOGGED** `live_sessions`):
+  each replica upserts its sessions (heartbeat-refreshed every 15s), listings
+  filter rows fresher than 45s — so a crashed replica's sessions age out of every
+  listing with no distributed GC — and a restarting replica purges its own
+  leftover rows. Freshness is judged by the clock that wrote the stamp (Postgres
+  `now()`), so replica clock skew never decides it. Each row names its hosting
+  replica (`Info.Replica`, the pod's hostname)
+- [x] **API**: `GET /api/sessions` returns the merged cluster listing (a store
+  failure is a 500, not a silently partial list presented as the whole cluster);
+  `GET /api/sessions/{id}/stream` watches a remote session through the relay —
+  same handler loop, subscribe-first ordering preserved, with the announcer's
+  staleness pass as the backstop that closes a remote watch whose hosting
+  replica died without an end marker. The watch audit gains `via:relay`; the
+  cluster-checked refusal audits `refused:not-live` (the replica-local wording
+  stays for deployments without the bus). The portal needed **no change** —
+  option 4's list and watch just became cluster-wide
+- [x] **Loop prevention, in the kill bus's mold**: the bus delivers to everyone
+  including the publisher, so inbound frames for a session in the local registry
+  are dropped (they are this replica's own forwards echoed back), and the bridge
+  injects via the hub's local-only publish — a watching replica, whose own
+  interest announcement also echoes back to itself, can never re-forward what it
+  received
+- [x] **Tests**: a two-replica memstore suite (the flagship end-to-end watch;
+  interest gating proven in both directions — an unwatched session's output
+  never reaches the bus, and the gate closes again after the last watcher
+  leaves; the crash backstop; heartbeat repair of a lost row; and kill bus +
+  live bus chained: kill on B, session on A, B's own watch stream closes); the
+  store contract grows the inventory round-trip (freshness filter, idempotent
+  deletes, upsert-not-duplicate) and a **chunked 10 KiB frame reassembled
+  byte-identical** — on live PostgreSQL in CI, where NOTIFY's ~8000-byte payload
+  limit makes the chunking real; and an API test whose SSE request lands on
+  "replica B" for a session registered on "replica A", asserting the listing,
+  the frames, the end, and the `via:relay` audit
+- Deferred (documented): **cross-replica step-up decisions** — the pending list
+  and `POST /api/sessions/{id}/stepup` stay replica-local (the paused statement
+  blocks in the hosting replica's memory; a remote supervisor sees the pause in
+  the relayed stream but must decide it on the hosting replica). Also
+  deliberately unchanged: the concurrent-session caps and the Prometheus
+  active-sessions gauge stay per-replica — a cluster cap derived from advisory,
+  possibly-stale inventory rows could refuse sessions on ghost data, and
+  per-pod gauges are what Prometheus expects
+
 ## What is left ⬜
 
 The canonical backlog. Both read-only security sweeps are closed — the
@@ -1462,10 +1529,18 @@ last to hold, and now does:
 
 Buildable without external infrastructure, each deferred by the phase named.
 
-- **Cross-replica live monitoring** (34) — the SSE watch stream and session
-  *listing* are still served by the pod hosting the session. Termination is
-  already cluster-wide; fanning session bytes is a heavier pub/sub than a kill
-  signal.
+- ~~**Cross-replica live monitoring** (34)~~ — ✅ closed 2026-07-29 (Phase 55).
+  `GET /api/sessions` now lists the whole cluster from any replica (a shared,
+  heartbeat-refreshed inventory whose stale rows age out) and the SSE watch
+  streams a session hosted anywhere: an **interest-gated** relay over the store
+  bus forwards a watched session's output only while a remote supervisor is
+  actually watching, so an unwatched session costs the bus nothing.
+- **Cross-replica step-up decisions** (30/55) — a paused sensitive statement
+  still awaits its supervisor on the replica hosting the session (the pause
+  blocks in that replica's memory): the pending list and
+  `POST /api/sessions/{id}/stepup` are replica-local. A remote supervisor now
+  *sees* the pause in the relayed stream; deciding it still needs the hosting
+  replica — a decision bus in the kill-bus mold, deferred by Phase 55.
 - **Per-file SFTP content recording** (32) — operations are audited and paths are
   gatable; the file *bytes* are not captured.
 - ~~**WinRM live streaming** (16)~~ — ✅ closed 2026-07-29. Every WinRM path now

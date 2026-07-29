@@ -7,8 +7,8 @@ package session
 // is delivered to every replica's subscriber, which applies it to its own local
 // registry. So the kill-switch (DELETE /api/sessions/{id}), the revoke cascade,
 // vendor offboarding and analytics auto-response all terminate a session wherever
-// it is hosted. Inventory listing (List) stays per-replica — a documented
-// limitation; the security-critical action (termination) is cluster-wide.
+// it is hosted. Listing and live watching crossed replicas later, in Phase 55
+// (livebus.go); Registry.List itself remains the local-only view.
 
 import (
 	"context"
