@@ -2,10 +2,12 @@
 
 > **Living document.** Update whenever a listener, an upstream protocol, or a
 > deployment flow changes. This is the reference for firewall rules, security
-> groups, NetworkPolicies and OT segmentation.
+> groups, NetworkPolicies and OT segmentation. The *what and why* of each
+> protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-07-28 · Reflects: Phases 0–52g. No new listener has been added
-> since Phase 24 — everything from 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
+> Last updated: 2026-07-29 · Reflects: Phases 0–53. **Phase 53 added the first new
+> listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; everything from
+> 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
 > **no new listeners**: certification/ticketing/approvals (19–21), threat analytics
 > (23) and the application-secrets API (24) all ride the existing HTTP control plane
@@ -22,19 +24,27 @@ SSH proxy; `db` is PostgreSQL.
 |-----:|-------|---------|---------|---------------|--------|
 | 8080 | HTTP¹ | Portal + REST API | `PAM_LISTEN_ADDR` | Behind TLS in prod; expose to operators only | ✅ |
 | 2222 | SSH | Session proxy (JIT injection) | `PAM_SSH_ADDR` (`off` disables) | Expose to operators/users only | ✅ |
-| 5433 | PostgreSQL | Database session proxy (JIT injection) | `PAM_DB_ADDR` (`off` by default) | Expose to operators only; TLS via `PAM_TLS_CERT/KEY` or ingress | ✅ P15 |
+| 5433 | PostgreSQL | Database session proxy (JIT injection) | `PAM_DB_ADDR` (`off` by default) | Expose to operators only; TLS via `PAM_TLS_CERT/KEY` (negotiated in-protocol — see ¹) | ✅ P15 |
 | 1433 | TDS (SQL Server) | Database session proxy (JIT injection) | `PAM_MSSQL_ADDR` (`off` by default) | Expose to operators only; **set `PAM_TLS_CERT/KEY`** — modern TDS clients require encryption | ✅ P53 |
 
 ¹ **Secure protocols only.** Operators must reach the portal/API over **HTTPS** —
 either native (`PAM_TLS_CERT`/`PAM_TLS_KEY`, Phase 5) or terminated at an
 ingress/load balancer; the container otherwise listens on plain HTTP internally,
-so never expose 8080 directly off-host. The database proxy's operator leg is
-likewise TLS when `PAM_TLS_CERT/KEY` are set (else it warns and runs plaintext —
-terminate TLS at the ingress). Prefer **LDAPS (636)** over LDAP and **TLS** to
-PostgreSQL. Plain-text variants are for isolated local dev only.
+so never expose 8080 directly off-host. The **database proxies' operator legs**
+(`:5433` PostgreSQL, `:1433` TDS) negotiate TLS **in-protocol** (Postgres
+`SSLRequest`, the TDS PRELOGIN encryption handshake), so a generic ingress cannot
+terminate them — set native `PAM_TLS_CERT/KEY`. Without it each proxy warns and
+runs plaintext, and modern SQL Server clients (`Encrypt=Mandatory`, the default)
+**refuse to connect**; TDS 8.0 "strict" (TLS-first) is not supported — have
+clients use `Encrypt=Mandatory`. `PAM_REQUIRE_DB_CLIENT_TLS` refuses to start
+either DB proxy without TLS. On the **credential-bearing upstream legs**, pin the
+target's certificate with `PAM_DB_UPSTREAM_CA` or verify against system roots
+with `PAM_DB_UPSTREAM_TLS_VERIFY` (shared by both DB proxies; unset =
+trust-any-with-warning). Prefer **LDAPS (636)** over LDAP and **TLS** to
+PostgreSQL and SQL Server. Plain-text variants are for isolated local dev only.
 
 Kubernetes Service (`deploy/k8s/service.yaml`) maps `8080 → 8080` and `2222 → 2222` (Helm uses `service.httpPort` / `service.sshPort`, same defaults);
-add `5433 → 5433` when the database proxy is enabled.
+add `5433 → 5433` and/or `1433 → 1433` when the database proxies are enabled (neither is mapped by default).
 
 ## 2. Ingress — who connects **to** pamv1
 
@@ -45,6 +55,7 @@ add `5433 → 5433` when the database proxy is enabled.
 | I3 | Auditor / Approver | pam-server | 8080/443 | HTTPS | Read audit trail, live session stream (SSE), approve requests | ✅ |
 | I4 | Prometheus (mgmt) | pam-server | 8080 | HTTP | Scrape `/metrics` | ✅ P10 |
 | I5 | User (operator zone) | pam-server | 5433 | PostgreSQL | Brokered `psql` session to a `postgres` target | ✅ P15 |
+| I6 | User (operator zone) | pam-server | 1433 | TDS | Brokered SQL Server session to a `mssql` target (`sqlcmd`, SSMS, drivers) | ✅ P53 |
 
 ## 3. Egress — what pamv1 connects **to**
 
@@ -62,6 +73,7 @@ add `5433 → 5433` when the database proxy is enabled.
 | E8b | pam-server | syslog (mgmt zone) | 514 | Syslog | **Event-driven alerts** only (`PAM_ALERT_SYSLOG`) — a different feature from E8 | ✅ P9 |
 | E9 | pam-server | SMTP / webhook (mgmt zone) | 587 / 443 | SMTP / HTTPS | Break-glass & approval alerts | ✅ P6 |
 | E10 | pam-server (DB proxy) | PostgreSQL target (target zone) | 5432 | PostgreSQL/TLS | JIT-injected brokered database session (`:5433` ingress) | ✅ P15 |
+| E13 | pam-server (mssql proxy) | SQL Server target (target zone) | 1433 | TDS/TLS | JIT-injected brokered database session (`:1433` ingress); upstream certificate verified via `PAM_DB_UPSTREAM_CA` / `_TLS_VERIFY` | ✅ P53 |
 | E11 | pam-server | CyberArk Conjur (identity/secrets zone) | 443 | HTTPS | Source bootstrap secrets at startup (optional) | ✅ P18 |
 | E12 | pam-server | KMS / HSM (Vault-Transit / AWS-KMS / PKCS#11) | 443 / — | HTTPS / PKCS#11 | Envelope-encryption KEK (wrap/unwrap), when not `local` | ✅ P5 |
 
@@ -82,7 +94,7 @@ flowchart LR
         R["Auditor / Approver"]
     end
     subgraph PAM["pamv1 control plane"]
-        S["pam-server<br/>:8080 portal/API<br/>:2222 ssh proxy<br/>:5433 db proxy"]
+        S["pam-server<br/>:8080 portal/API<br/>:2222 ssh proxy<br/>:5433 db proxy<br/>:1433 mssql proxy"]
     end
     subgraph DATA["Data zone"]
         DB[("PostgreSQL store<br/>:5432")]
@@ -91,6 +103,7 @@ flowchart LR
         L["Linux<br/>:22"]
         W["Windows<br/>:5986 winrm"]
         PG[("PostgreSQL target<br/>:5432")]
+        MS[("SQL Server target<br/>:1433")]
     end
     ID["AD / Entra / OIDC<br/>:636 / :443 / :88"]
     CJ["CyberArk Conjur<br/>:443 (optional)"]
@@ -98,6 +111,7 @@ flowchart LR
     A -->|"I1 443"| S
     U -->|"I2 2222 ssh"| S
     U -->|"I5 5433 psql"| S
+    U -->|"I6 1433 tds"| S
     R -->|"I3 443"| S
     S -->|"E1 5432"| DB
     S -->|"E2 22"| L
@@ -105,6 +119,7 @@ flowchart LR
     S -->|"E4a 4822 guacd"| G["guacd"]
     G -->|"E4b 3389 rdp"| W
     S -->|"E10 5432"| PG
+    S -->|"E13 1433"| MS
     S -->|"E5 636/443"| ID
     S -->|"E11 443"| CJ
 ```
@@ -120,6 +135,7 @@ Least-privilege intent (replace `<cidr>` with real ranges):
 allow  <operator-cidr>      -> pam-server:8080   (or :443 at ingress)   # portal/API
 allow  <operator-cidr>      -> pam-server:2222   tcp                    # ssh proxy
 allow  <operator-cidr>      -> pam-server:5433   tcp                    # db proxy (if enabled)
+allow  <operator-cidr>      -> pam-server:1433   tcp                    # mssql proxy (if enabled)
 deny   any                  -> pam-server:*                             # default deny
 
 # Egress from pam-server
@@ -127,6 +143,7 @@ allow  pam-server -> db:5432                   tcp   # own store
 allow  pam-server -> <target-cidr>:22          tcp   # linux targets (SSH)
 allow  pam-server -> <target-cidr>:5985,5986   tcp   # windows targets (WinRM)
 allow  pam-server -> <target-cidr>:5432        tcp   # postgres targets (db proxy)
+allow  pam-server -> <target-cidr>:1433        tcp   # sql server targets (mssql proxy)
 allow  pam-server -> guacd:4822                tcp   # rdp broker
 allow  pam-server -> <idp-cidr>:636,443,88     tcp   # AD/Entra/OIDC (+ Conjur:443, if enabled)
 allow  pam-server -> <siem>:514                 udp   # audit forwarding (DEFAULT proto)
@@ -150,8 +167,8 @@ RFC-1918 egress blocks for your topology and CNI before relying on it.
 
 In an [IEC 62443](https://www.isa.org/standards-and-publications/isa-standards/isa-iec-62443-series-of-standards) / Purdue deployment, `pam-server` (the proxy)
 sits in the **industrial DMZ, level 3.5**, and is the **only** node permitted to
-open E2–E4 into the OT cell (levels 2–3). Operators never reach targets directly through the brokered paths; those are
-operator → proxy (`:2222` SSH/WinRM, `:5433` SQL, or `:8080` for the RDP viewer
+open E2–E4, E10 and E13 into the OT cell (levels 2–3). Operators never reach targets directly through the brokered paths; those are
+operator → proxy (`:2222` SSH/WinRM, `:5433`/`:1433` SQL, or `:8080` for the RDP viewer
 and the REST WinRM endpoint) → target. Keep egress to the OT zone pinned to the
 specific target hosts and protocols, and default-deny everything else across the
 3.5 boundary.
@@ -173,6 +190,7 @@ specific target hosts and protocols, and default-deny everything else across the
 
 | Date | Change |
 |---|---|
+| 2026-07-29 | **Phase 53 — SQL Server (TDS) session proxy.** New `:1433` listener (`PAM_MSSQL_ADDR`, off by default) — the first new listener since Phase 24 — with ingress I6 and egress E13 to SQL Server targets on `:1433`. Crypto made explicit for both DB proxies: TLS is negotiated **in-protocol** (Postgres `SSLRequest`, TDS PRELOGIN), so a generic ingress cannot terminate it — native `PAM_TLS_CERT/KEY` is required for encrypted operator legs, `Encrypt=Mandatory` clients refuse a plaintext proxy, TDS 8.0 "strict" is unsupported, `PAM_REQUIRE_DB_CLIENT_TLS` fail-closes both, and the upstream legs verify via the shared `PAM_DB_UPSTREAM_CA`/`_TLS_VERIFY`. Diagram, firewall summary and OT placement updated; the K8s Service/Helm map neither DB port by default |
 | 2026-07-23 | **Helm NetworkPolicy: pam→guacd egress.** When `guacd.enabled` + `networkPolicy.enabled`, the pam-server default-deny NetworkPolicy now includes the `pam-server → guacd:4822` egress rule (E4a) — it was only in the raw k8s manifest, so a Helm deploy with a narrowed `egressTargetCIDRs` blocked the bundled guacd. guacd resource limits raised (256Mi→512Mi) since a large RDP display is a ~64 MiB framebuffer; guacd resource names re-truncated to the 63-char limit |
 | 2026-07-23 | **In-portal RDP viewer** — the browser now renders RDP over the **existing** `:8080/443` control plane (a WebSocket upgrade of `GET /api/targets/{id}/rdp`, preceded by `POST /api/rdp-token`); no new listener. The guacd egress (E4a `:4822` → E4b `:3389`) is unchanged |
 | 2026-07-23 | **guacd** (RDP broker) now ships as a co-deployed **internal** service (docker-compose + `deploy/k8s/guacd.yaml` + gated Helm), reached on `:4822`; `PAM_GUACD_ADDR` is wired for you and its NetworkPolicy admits only pam-server. No new *external* listeners |

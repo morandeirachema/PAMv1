@@ -34,7 +34,7 @@
 | **Day-to-day operator** (connect, approve, audit) | [User Guide](USER-GUIDE.md) → [Sysadmin Guide (runbook)](SYSADMIN-GUIDE.md#6-day-to-day-operations-the-runbook) |
 | **Administrator / deployer** | [Admin Guide](ADMIN-GUIDE.md) → [Requirements](REQUIREMENTS.md) → [Ports & Flows](PORTS-AND-FLOWS.md) → [Backup & Restore](BACKUP-AND-RESTORE.md) → [External-Infra Gaps](EXTERNAL-INFRA-GAPS.md) |
 | **Developer / contributor** | [Low-Level Architecture](ARCHITECTURE-LOW-LEVEL.md) → [Code Guide](CODE-GUIDE.md) → [Architecture Diagrams](ARCHITECTURE-DIAGRAMS.md) → [ROADMAP](../ROADMAP.md) → [Security Gaps](SECURITY-GAPS.md) |
-| **Auditor / compliance** | [NIS2 Compliance](NIS2-COMPLIANCE.md) → [Security Gaps](SECURITY-GAPS.md) → [User Guide (auditor)](USER-GUIDE.md) → [Admin Guide (audit)](ADMIN-GUIDE.md#92-audit-trail-database) |
+| **Auditor / compliance** | [NIS2 Compliance](NIS2-COMPLIANCE.md) → [Protocols & Crypto](PROTOCOLS-AND-CRYPTO.md) → [Security Gaps](SECURITY-GAPS.md) → [User Guide (auditor)](USER-GUIDE.md) → [Admin Guide (audit)](ADMIN-GUIDE.md#92-audit-trail-database) |
 | **OT / industrial operator** | [OT Deployment](OT-DEPLOYMENT.md) → [NIS2 Compliance](NIS2-COMPLIANCE.md) → [Ports & Flows](PORTS-AND-FLOWS.md) → [Admin Guide](ADMIN-GUIDE.md) |
 
 ## Every document
@@ -53,6 +53,7 @@
 ### Deploy & operate
 - **[REQUIREMENTS.md](REQUIREMENTS.md)** — run specs: ports, resource requests/limits, versions, rough sizing.
 - **[PORTS-AND-FLOWS.md](PORTS-AND-FLOWS.md)** — the listener/egress matrix for firewalls, security groups, NetworkPolicies and OT segmentation.
+- **[PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md)** — every protocol pamv1 speaks or brokers and every cryptographic mechanism it relies on, with where each is implemented and where verification is opt-in.
 - **[BACKUP-AND-RESTORE.md](BACKUP-AND-RESTORE.md)** — runbook for backing up the database and the vault KEK *separately*.
 - **[EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md)** — what needs a real host/account to verify honestly before you rely on it.
 - **[RDP-TESTING.md](RDP-TESTING.md)** — the procedure to verify the RDP path end to end: automated tests, a local runbook, and troubleshooting.
