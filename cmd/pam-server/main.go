@@ -691,6 +691,9 @@ func run() error {
 	}
 	maxRecBytes := int64(cfg.MaxRecordingMB) * 1024 * 1024
 	liveHub := session.NewHub()
+	// Removing a session from the registry ends its live watch streams, so a
+	// supervisor's SSE pane reports the end instead of going silent forever.
+	sessions.AttachHub(liveHub)
 
 	// Command control (Phase 16): compile the deny file, if configured, into ONE
 	// guard shared by the SSH proxy, the database proxy and the API server — so the

@@ -36,10 +36,31 @@ func (h *Hub) Publish(id string, b []byte) {
 	}
 }
 
+// EndSession closes every subscriber channel for session id and forgets the
+// id, so a watcher's read loop ends the moment the session does. Before this
+// existed, a supervisor's stream simply went silent when the watched session
+// was killed or completed — indistinguishable from a session that had nothing
+// to say. Closing here cannot race Publish: both hold the same mutex, and the
+// closed channels leave the map inside the same critical section, so nothing
+// ever writes to them afterwards. A subscriber's own cancel only deletes map
+// entries, so calling it after EndSession is safe too.
+func (h *Hub) EndSession(id string) {
+	if h == nil || id == "" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for ch := range h.subs[id] {
+		close(ch)
+	}
+	delete(h.subs, id)
+}
+
 // Subscribe registers a watcher for session id, returning a channel of output
-// frames and a cancel func that unsubscribes it. The channel is never closed
-// (so a concurrent Publish can never panic); the caller stops reading when its
-// own context ends and calls cancel to release the subscription.
+// frames and a cancel func that unsubscribes it. The channel is closed only by
+// EndSession — i.e. when the session itself ends; a watcher who leaves early
+// calls cancel, which just releases the subscription. A concurrent Publish can
+// never write a closed channel (both operations hold the hub mutex).
 func (h *Hub) Subscribe(id string) (<-chan []byte, func()) {
 	ch := make(chan []byte, 256)
 	h.mu.Lock()

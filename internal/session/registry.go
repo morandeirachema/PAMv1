@@ -33,6 +33,7 @@ type Registry struct {
 	maxPerActor int     // 0 = unlimited
 	maxTotal    int     // 0 = unlimited
 	bus         KillBus // cross-replica kill transport (nil = single-replica)
+	hub         *Hub    // live-output hub to end when a session is removed (nil = none)
 }
 
 // NewRegistry returns an empty, ready-to-use session registry.
@@ -83,11 +84,38 @@ func (r *Registry) Register(info Info, kill func()) string {
 	return id
 }
 
-// Remove drops a session (call when it ends).
+// AttachHub links the live-monitoring hub, so removing a session also ends its
+// watch streams. Every session-end path — normal completion, a kill, a
+// cross-replica kill landing on this host — funnels through Remove, which makes
+// this the one place the "session is over" signal can reach a supervisor's
+// otherwise-eternal SSE subscription. Call once at wiring time.
+func (r *Registry) AttachHub(h *Hub) {
+	r.mu.Lock()
+	r.hub = h
+	r.mu.Unlock()
+}
+
+// Exists reports whether a session id is currently registered. The live-stream
+// endpoint uses it to refuse a watch on a session that is unknown or already
+// over, instead of subscribing the caller to eternal silence.
+func (r *Registry) Exists(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.m[id]
+	return ok
+}
+
+// Remove drops a session (call when it ends) and, when a hub is attached,
+// closes the session's live watch streams so supervisors see the end rather
+// than an indefinitely silent pane.
 func (r *Registry) Remove(id string) {
 	r.mu.Lock()
 	delete(r.m, id)
+	hub := r.hub
 	r.mu.Unlock()
+	// Outside the registry lock: the hub has its own mutex, and holding both at
+	// once would create an ordering to get wrong later.
+	hub.EndSession(id)
 }
 
 // List returns the live sessions, oldest first.

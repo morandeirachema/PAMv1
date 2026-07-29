@@ -68,3 +68,40 @@ func TestHubSlowWatcherDropsFrames(t *testing.T) {
 		t.Fatal("Publish blocked on a slow watcher")
 	}
 }
+
+// TestEndSessionClosesWatchers proves the end-of-session signal: EndSession
+// closes every subscriber channel for that id (and only that id), a Publish
+// after the end is a safe no-op, and a subscriber's own cancel after the end
+// does not panic. Without this signal a watcher could not tell "session over"
+// from "session quiet".
+func TestEndSessionClosesWatchers(t *testing.T) {
+	h := NewHub()
+	a1, cancel1 := h.Subscribe("s-1")
+	a2, _ := h.Subscribe("s-1")
+	other, cancelOther := h.Subscribe("s-2")
+	defer cancelOther()
+
+	h.EndSession("s-1")
+	if _, open := <-a1; open {
+		t.Fatal("first watcher channel still open after EndSession")
+	}
+	if _, open := <-a2; open {
+		t.Fatal("second watcher channel still open after EndSession")
+	}
+	select {
+	case _, open := <-other:
+		if !open {
+			t.Fatal("EndSession closed a different session's watcher")
+		}
+		t.Fatal("unexpected frame on the other session")
+	default: // still open, nothing delivered — correct
+	}
+
+	h.Publish("s-1", []byte("late")) // must not panic or deliver
+	cancel1()                        // cancel after end must be safe
+
+	// A nil hub and an unknown id are no-ops.
+	var nilHub *Hub
+	nilHub.EndSession("s-1")
+	h.EndSession("never-registered")
+}

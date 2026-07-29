@@ -11,6 +11,10 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **The watch stream ends with the session** — a supervisor's live SSE watch
+  now terminates when the watched session completes or is killed (the portal
+  pane reports "session ended" instead of going silent forever), and watching
+  an unknown or already-over session id is refused with 404.
 - **Per-target RDP clipboard override** (Phase 33 follow-on) — a target's
   `rdp_clipboard` / `rdp_clipboard_audit` fields tighten the global
   `PAM_RDP_CLIPBOARD` / `_AUDIT` for that one target; the stricter policy

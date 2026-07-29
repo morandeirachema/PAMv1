@@ -154,3 +154,91 @@ func TestSessionStreamOutlivesWriteTimeout(t *testing.T) {
 			got, frames, sc.Err(), writeTimeout)
 	}
 }
+
+// TestSessionStreamEndsWithSession proves the fix for the eternally-silent
+// watch pane: when the watched session is removed from the registry — the path
+// every session end funnels through, kills included — the SSE response ends,
+// so the portal can say "session ended" instead of showing a quiet stream
+// forever. Especially visible on short WinRM runs, which stream and finish in
+// under a second.
+func TestSessionStreamEndsWithSession(t *testing.T) {
+	hub := session.NewHub()
+	reg := session.NewRegistry()
+	reg.AttachHub(hub)
+	srv, _ := newTestServerOpts(t, nil, api.Options{Live: hub, Sessions: reg})
+
+	sid := reg.Register(session.Info{Actor: "op", Target: "web-01", Protocol: "winrm"}, func() {})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/sessions/"+sid+"/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-API-Key", testAPIKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// A frame flows while the session lives...
+	stop := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				hub.Publish(sid, []byte("winrm-output"))
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	}()
+	br := bufio.NewReader(resp.Body)
+	got := false
+	for !got {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatalf("reading SSE stream before the end: %v", err)
+		}
+		got = strings.Contains(line, "winrm-output")
+	}
+	close(stop)
+
+	// ...and the response ENDS when the session does.
+	reg.Remove(sid)
+	deadline := time.After(5 * time.Second)
+	done := make(chan error, 1)
+	go func() {
+		for {
+			if _, err := br.ReadString('\n'); err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
+	select {
+	case <-done: // EOF (or connection close) — the stream ended with the session
+	case <-deadline:
+		t.Fatal("SSE stream still open after the session ended")
+	}
+}
+
+// TestSessionStreamUnknownSessionRefused proves that, with a registry wired, a
+// watch on an unknown (or already-over) session id is refused with 404 rather
+// than subscribing the supervisor to eternal silence.
+func TestSessionStreamUnknownSessionRefused(t *testing.T) {
+	hub := session.NewHub()
+	reg := session.NewRegistry()
+	reg.AttachHub(hub)
+	srv, _ := newTestServerOpts(t, nil, api.Options{Live: hub, Sessions: reg})
+
+	code, body := do(t, srv, http.MethodGet, "/api/sessions/no-such-session/stream", testAPIKey, nil)
+	if code != http.StatusNotFound {
+		t.Fatalf("watching an unknown session: %d %s, want 404", code, body)
+	}
+}
