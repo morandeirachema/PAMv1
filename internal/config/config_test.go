@@ -201,12 +201,20 @@ func TestLoadBreakGlassThreshold(t *testing.T) {
 func TestLoadOffCaseInsensitive(t *testing.T) {
 	setRequired(t)
 	t.Setenv("PAM_SSH_ADDR", "OFF")
+	t.Setenv("PAM_DB_ADDR", "Off")
+	t.Setenv("PAM_MSSQL_ADDR", "OFF")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.SSHAddr != "off" {
 		t.Errorf("SSHAddr = %q, want normalized \"off\"", cfg.SSHAddr)
+	}
+	if cfg.DBAddr != "off" {
+		t.Errorf("DBAddr = %q, want normalized \"off\"", cfg.DBAddr)
+	}
+	if cfg.MSSQLAddr != "off" {
+		t.Errorf("MSSQLAddr = %q, want normalized \"off\"", cfg.MSSQLAddr)
 	}
 }
 

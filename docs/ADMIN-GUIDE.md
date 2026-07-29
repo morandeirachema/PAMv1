@@ -218,6 +218,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_MAX_SESSIONS_PER_USER` / `PAM_MAX_SESSIONS_TOTAL` | | `0` (∞) | Cap concurrent live proxied sessions per user and overall, checked before any secret is decrypted — bounds resource use from one (or a compromised) identity. Per-replica in HA. |
 | `PAM_MAX_RECORDING_MB` | | `0` (∞) | Cap a single session recording's output (MB); a session that exceeds it is terminated (`session.record_limit`) rather than run unrecorded, so one runaway session can't fill the recording disk. |
 | `PAM_DB_ADDR` | | `off` | PostgreSQL session-proxy bind (Phase 15), e.g. `:5433`; `off` disables it. |
+| `PAM_MSSQL_ADDR` | | `off` | **SQL Server (TDS) session-proxy bind** (Phase 53), e.g. `:1433`; `off` disables it. Shares every database knob below — `PAM_REQUIRE_DB_CLIENT_TLS`, `PAM_DB_UPSTREAM_CA`/`_TLS_VERIFY`, command control, step-up, recording. |
 | `PAM_DB_UPSTREAM_CA` | | (trust-any + warn) | PEM CA bundle to VERIFY the upstream PostgreSQL server certificate (fail-closed upstream TLS on the credential-bearing leg). |
 | `PAM_DB_UPSTREAM_TLS_VERIFY` | | `false` | Verify the upstream PostgreSQL certificate against the system roots (alternative to `PAM_DB_UPSTREAM_CA`). |
 | `PAM_REQUIRE_DB_CLIENT_TLS` | | `false` | Refuse to start the DB proxy without operator-leg TLS (so the PAM key is never sent to it in cleartext). |
@@ -679,6 +680,41 @@ authenticates upstream with the vaulted secret — supporting **SCRAM-SHA-256**
 Sessions appear in *Work with active sessions* (protocol `postgres`) and can be
 killed like any other. MySQL/MSSQL/Oracle are follow-on connectors on the same
 pattern.
+
+### Database targets (SQL Server)
+
+Phase 53 adds the TDS sibling of the PostgreSQL proxy. Same gates, same guards,
+same recording and live monitoring — a different wire protocol.
+
+```bash
+PAM_MSSQL_ADDR=:1433   # off by default
+PAM_TLS_CERT=/etc/pamv1/tls.crt   # strongly recommended: modern TDS clients
+PAM_TLS_KEY=/etc/pamv1/tls.key    # REQUIRE encryption and refuse a plaintext proxy
+```
+
+Create the target with `protocol: "mssql"` (port 1433) and a password credential
+holding the SQL login. Operators then connect:
+
+```bash
+sqlcmd -S pam.example,1433 -U 'sql_svc@sql-01' -P "$PAM_TOKEN" -d orders -N -C
+# URL-style clients must percent-encode the '@':
+#   sqlserver://sql_svc%40sql-01:$PAM_TOKEN@pam.example:1433?database=orders
+```
+
+- **Every statement is audited** as `db.query … via:mssql`, including statements
+  drivers send through `sp_executesql` — command control and step-up see through
+  that wrapper, so a denylist is not bypassed by using a parameterised client.
+- **Both legs are encrypted** when TLS is configured; `PAM_DB_UPSTREAM_CA` /
+  `PAM_DB_UPSTREAM_TLS_VERIFY` make the target leg fail-closed, which matters
+  more here than anywhere: TDS password "obfuscation" is a keyless nibble swap.
+- **SQL authentication only.** Integrated/Windows auth is refused with a clear
+  message — brokering means swapping the operator's PAM key for a vaulted SQL
+  login, which SSPI cannot express. TDS 8.0 *strict* encryption is also refused
+  (use `Encrypt=Mandatory`).
+- **Interop caveat:** the proxy is proven against a hand-rolled fake upstream and
+  a spec-pinned codec, but **has not been tested against a real SQL Server**.
+  Treat the first deployment as a pilot — see
+  [EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md).
 
 ## 7. Managing users & roles
 
@@ -1848,6 +1884,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-07-29 | **Phase 53 — SQL Server session proxy.** `PAM_MSSQL_ADDR` (default `off`) brokers `mssql` targets over TDS exactly as `PAM_DB_ADDR` brokers PostgreSQL: same authorization gates, JIT credential injection into the client's own LOGIN7, per-statement `db.query` audit (`via:mssql`), command control that **sees through `sp_executesql`**, in-session step-up, recording, live monitoring and cluster-wide kill. Connect with `sqlcmd -S pam.example,1433 -U '<dbcred>@<target>' -P "$PAM_TOKEN"`. Set `PAM_TLS_CERT/KEY` — modern TDS clients require encryption and will refuse a plaintext proxy. Integrated/Windows auth is not brokered (SQL authentication only). See §5 → *Database targets (SQL Server)*. |
 | 2026-07-29 | **Review fixes on #81–#84.** Broker audit keys: an explicit env value is now **written through to shared custody** (mixed fleets and later unsetting can no longer silently fork the chain; a disagreeing explicit HMAC key refuses to start, a disagreeing seed is the signer-rotation path and custody converges to it). WinRM: the recording size cap now **ends** a WinRM session with `session.record_limit` (parity with SSH) instead of letting it continue unrecorded with a frozen live stream; a REST/broker run's output reaches live watchers only **after** the durable `winrm.run` audit (the withheld-result contract now also binds the stream); refused runs (blocked / recording-required / decrypt-failed) publish an explanatory notice and blocked/errored runs leave a transcript (`session.record`). Broker `ssh_exec` now **streams live** like `winrm_exec` (echo + output, output withheld on audit failure). Per-target clipboard: an unrecognizable stored override now enforces as **deny** (fail closed) instead of silently ranking as allow, and the overrides ride the `target.create`/`target.update` audit details. Live watch: the 404 is replica-honest ("not live on this replica") and refused watches are audited. Portal: watch-pane lines no longer end in a literal `\r`. See §5, §9.4 and the broker section. |
 | 2026-07-29 | **The watch stream ends with the session.** A supervisor's live watch (`GET /api/sessions/{id}/stream`, portal option 5) now terminates the moment the watched session completes or is killed — the pane reports "session ended" instead of sitting silent forever — and watching an unknown or already-over session id is refused with 404. See §9.4. |
 | 2026-07-29 | **Per-target RDP clipboard override (Phase 33 follow-on).** A target's `rdp_clipboard` / `rdp_clipboard_audit` fields (portal *Add/Change Target*, create/update API) tighten the global `PAM_RDP_CLIPBOARD` / `_AUDIT` for that one target — the stricter policy always wins, so a high-sensitivity target can deny what the fleet allows and no target row can loosen a global deny. The effective mode is what `rdp.connect` audits. See §5 and the RDP section. |

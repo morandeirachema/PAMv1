@@ -16,7 +16,7 @@ type Info struct {
 	ID       string    `json:"id"`
 	Actor    string    `json:"actor"`
 	Target   string    `json:"target"`
-	Protocol string    `json:"protocol"` // ssh | rdp | winrm | postgres | ssh_exec
+	Protocol string    `json:"protocol"` // ssh | rdp | winrm | postgres | mssql | ssh_exec
 	Remote   string    `json:"remote"`
 	Started  time.Time `json:"started"`
 }
