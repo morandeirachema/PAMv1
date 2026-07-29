@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pamv1 appliance — OVF 1.0 descriptor. Generated from this template by
+     build.sh; @PLACEHOLDERS@ are substituted with the built disk's real sizes.
+     Kept deliberately plain (no vbox: extensions beyond the machine hints) so it
+     imports into VirtualBox, VMware Workstation/Fusion and ESXi alike. -->
+<Envelope ovf:version="1.0" xml:lang="en-US"
+    xmlns="http://schemas.dmtf.org/ovf/envelope/1"
+    xmlns:ovf="http://schemas.dmtf.org/ovf/envelope/1"
+    xmlns:rasd="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_ResourceAllocationSettingData"
+    xmlns:vssd="http://schemas.dmtf.org/wbem/wscim/1/cim-schema/2/CIM_VirtualSystemSettingData">
+  <References>
+    <File ovf:href="@DISK_FILE@" ovf:id="file1" ovf:size="@DISK_FILE_SIZE@"/>
+  </References>
+  <DiskSection>
+    <Info>Virtual disk information</Info>
+    <Disk ovf:capacity="@DISK_CAPACITY@" ovf:capacityAllocationUnits="byte"
+          ovf:diskId="vmdisk1" ovf:fileRef="file1"
+          ovf:format="http://www.vmware.com/interfaces/specifications/vmdk.html#streamOptimized"
+          ovf:populatedSize="@DISK_POPULATED@"/>
+  </DiskSection>
+  <NetworkSection>
+    <Info>The list of logical networks</Info>
+    <Network ovf:name="NAT">
+      <Description>Imported as NAT. The portal is reachable via a host-only
+      adapter or a forwarded port; see deploy/ova/README.md.</Description>
+    </Network>
+  </NetworkSection>
+  <VirtualSystem ovf:id="pamv1-appliance">
+    <Info>pamv1 — open-source Privileged Access Management on Debian 13</Info>
+    <Name>pamv1-appliance</Name>
+    <OperatingSystemSection ovf:id="96" ovf:version="13" vmw:osType="debian12_64Guest"
+        xmlns:vmw="http://www.vmware.com/schema/ovf">
+      <Info>The kind of installed guest operating system</Info>
+      <Description>Debian GNU/Linux 13 (trixie) 64-bit</Description>
+    </OperatingSystemSection>
+    <VirtualHardwareSection>
+      <Info>Virtual hardware requirements</Info>
+      <System>
+        <vssd:ElementName>Virtual Hardware Family</vssd:ElementName>
+        <vssd:InstanceID>0</vssd:InstanceID>
+        <vssd:VirtualSystemIdentifier>pamv1-appliance</vssd:VirtualSystemIdentifier>
+        <vssd:VirtualSystemType>virtualbox-2.2</vssd:VirtualSystemType>
+      </System>
+      <Item>
+        <rasd:Caption>2 virtual CPUs</rasd:Caption>
+        <rasd:Description>Number of virtual CPUs</rasd:Description>
+        <rasd:ElementName>2 virtual CPUs</rasd:ElementName>
+        <rasd:InstanceID>1</rasd:InstanceID>
+        <rasd:ResourceType>3</rasd:ResourceType>
+        <rasd:VirtualQuantity>2</rasd:VirtualQuantity>
+      </Item>
+      <Item>
+        <rasd:AllocationUnits>byte * 2^20</rasd:AllocationUnits>
+        <rasd:Caption>2048 MB of memory</rasd:Caption>
+        <rasd:Description>Memory Size</rasd:Description>
+        <rasd:ElementName>2048 MB of memory</rasd:ElementName>
+        <rasd:InstanceID>2</rasd:InstanceID>
+        <rasd:ResourceType>4</rasd:ResourceType>
+        <rasd:VirtualQuantity>2048</rasd:VirtualQuantity>
+      </Item>
+      <Item>
+        <rasd:Address>0</rasd:Address>
+        <rasd:Caption>SATA Controller</rasd:Caption>
+        <rasd:Description>SATA Controller</rasd:Description>
+        <rasd:ElementName>sataController0</rasd:ElementName>
+        <rasd:InstanceID>3</rasd:InstanceID>
+        <rasd:ResourceSubType>AHCI</rasd:ResourceSubType>
+        <rasd:ResourceType>20</rasd:ResourceType>
+      </Item>
+      <Item>
+        <rasd:AddressOnParent>0</rasd:AddressOnParent>
+        <rasd:Caption>disk1</rasd:Caption>
+        <rasd:Description>Disk Image</rasd:Description>
+        <rasd:ElementName>disk1</rasd:ElementName>
+        <rasd:HostResource>ovf:/disk/vmdisk1</rasd:HostResource>
+        <rasd:InstanceID>4</rasd:InstanceID>
+        <rasd:Parent>3</rasd:Parent>
+        <rasd:ResourceType>17</rasd:ResourceType>
+      </Item>
+      <Item>
+        <rasd:AutomaticAllocation>true</rasd:AutomaticAllocation>
+        <rasd:Caption>Ethernet adapter on 'NAT'</rasd:Caption>
+        <rasd:Connection>NAT</rasd:Connection>
+        <rasd:ElementName>Ethernet adapter on 'NAT'</rasd:ElementName>
+        <rasd:InstanceID>5</rasd:InstanceID>
+        <rasd:ResourceSubType>E1000</rasd:ResourceSubType>
+        <rasd:ResourceType>10</rasd:ResourceType>
+      </Item>
+    </VirtualHardwareSection>
+    <AnnotationSection>
+      <Info>A human-readable annotation</Info>
+      <Annotation>pamv1 @BUILD_VERSION@ — open-source Privileged Access Management
+in Go + PostgreSQL, on Debian 13 (trixie).
+
+FIRST BOOT generates this appliance's own vault master key, admin API key,
+database password and SSH host keys; the admin key is printed to the console and
+written to /root/pamv1-credentials.txt. Log in as `pam` (you will be forced to
+change the placeholder password).
+
+  Portal / REST API : port 8080      SSH session proxy : port 2222
+  Full source       : /opt/pamv1/src
+  Service           : systemctl status pamv1
+
+Educational build. Not production-hardened and not externally audited — do not
+put real production credentials in it.</Annotation>
+    </AnnotationSection>
+  </VirtualSystem>
+</Envelope>

@@ -91,6 +91,12 @@ linked to them until now:
 
 - **[../deploy/docker/README.md](../deploy/docker/README.md)** — the local full
   stack (hardened PostgreSQL, guacd, pam-server) and the throwaway RDP demo.
+- **[../deploy/ova/README.md](../deploy/ova/README.md)** — the **virtual
+  appliance**: one importable VM (Debian 13 + PostgreSQL + the binary + the full
+  source), built with QEMU and no root, generating its own keys on first boot.
+- **[../deploy/k8s/README.md](../deploy/k8s/README.md)** — the raw Kubernetes
+  manifests, and the ConfigMap/Secret pair that is the Kubernetes twin of
+  `.env.example`.
 - **[../deploy/k8s/sops/README.md](../deploy/k8s/sops/README.md)** — SOPS + age
   encrypted secrets, and the CI check that proves the committed example really is
   encrypted.

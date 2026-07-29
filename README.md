@@ -445,6 +445,26 @@ being faked.
 
 > **Run specs** (ports, resource requests/limits, Docker/Kubernetes versions, PostgreSQL, storage, sizing) live in **[docs/REQUIREMENTS.md](docs/REQUIREMENTS.md)**.
 
+### Virtual appliance (VirtualBox / VMware)
+
+The whole thing as one importable VM — Debian 13, PostgreSQL, the binary and the
+full source tree. Built by [`deploy/ova/build.sh`](deploy/ova/) with QEMU and no
+root, VirtualBox or Packer required:
+
+```bash
+cd deploy/ova && ./build.sh          # ~15 min; → ~/.cache/pamv1-ova/*.ova
+VBoxManage import ~/.cache/pamv1-ova/pamv1-appliance-13.6.0.ova
+VBoxManage modifyvm pamv1-appliance --natpf1 "portal,tcp,127.0.0.1,8080,,8080"
+VBoxManage startvm pamv1-appliance --type headless
+# → http://127.0.0.1:8080 — the admin key is generated on first boot and
+#   printed to the VM console (also /root/pamv1-credentials.txt)
+```
+
+No secret is baked into the image: the vault master key, admin key, database
+password and SSH host keys are all generated on **first boot**, so two imports of
+the same OVA never share a root of trust. See
+[deploy/ova/README.md](deploy/ova/README.md).
+
 ### Local demo (no database)
 
 ```bash
