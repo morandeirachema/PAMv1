@@ -24,6 +24,13 @@ type Config struct {
 	// DBAddr is the PostgreSQL session-proxy listen address; "off" disables it
 	// (Phase 15). Operators reach postgres targets with psql through this port.
 	DBAddr string
+	// MSSQLAddr is the SQL Server (TDS) session-proxy listen address; "off"
+	// disables it (Phase 53). Operators reach mssql targets with sqlcmd or any
+	// TDS client through this port. Both database proxies share every policy
+	// knob — TLS, upstream verification, command control, step-up, recording —
+	// so an operator never has to reason about one being configured differently
+	// from the other.
+	MSSQLAddr string
 	// SSHHostKeyPath persists the proxy host key; empty = ephemeral key.
 	SSHHostKeyPath string
 	// SSHCAKeyPath persists the Zero Standing Privilege SSH certificate-authority
@@ -398,6 +405,7 @@ func Load() (*Config, error) {
 		BreakGlassKeyHash:       os.Getenv("PAM_BREAK_GLASS_KEY_HASH"),
 		SSHAddr:                 getenv("PAM_SSH_ADDR", ":2222"),
 		DBAddr:                  getenv("PAM_DB_ADDR", "off"),
+		MSSQLAddr:               getenv("PAM_MSSQL_ADDR", "off"),
 		SSHHostKeyPath:          os.Getenv("PAM_SSH_HOST_KEY"),
 		SSHCAKeyPath:            os.Getenv("PAM_SSH_CA_KEY"),
 		SSHCertTTL:              time.Duration(integer("PAM_SSH_CERT_TTL_MIN", 2)) * time.Minute,
@@ -551,6 +559,9 @@ func Load() (*Config, error) {
 	}
 	if strings.EqualFold(cfg.DBAddr, "off") {
 		cfg.DBAddr = "off"
+	}
+	if strings.EqualFold(cfg.MSSQLAddr, "off") {
+		cfg.MSSQLAddr = "off"
 	}
 
 	// MasterKey is required only for the local KEK provider; a KMS-backed

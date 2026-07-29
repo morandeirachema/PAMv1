@@ -1031,6 +1031,11 @@ func run() error {
 	if cfg.SSHAddr == "off" {
 		close(proxyDone)
 	}
+	// mssqlProxyDone mirrors dbProxyDone for the SQL Server proxy (Phase 53).
+	mssqlProxyDone := make(chan struct{})
+	if cfg.MSSQLAddr == "off" {
+		close(mssqlProxyDone)
+	}
 	// dbProxyDone mirrors proxyDone for the PostgreSQL session proxy (Phase 15).
 	dbProxyDone := make(chan struct{})
 	if cfg.DBAddr == "off" {
@@ -1111,14 +1116,12 @@ func run() error {
 		}()
 	}
 
-	// PostgreSQL session proxy (Phase 15): brokers postgres targets with JIT
-	// credential injection and per-statement query audit, on its own listener.
-	if cfg.DBAddr != "off" {
-		var dbOnSessionEnd func(int64)
-		if cfg.RotateAfterSession {
-			dbOnSessionEnd = func(credID int64) { handler.RotateCredentialByID(context.Background(), credID) }
-		}
-		var dbClientTLS *tls.Config
+	// Database session proxies (Phase 15 PostgreSQL, Phase 53 SQL Server). Both
+	// legs' TLS is built ONCE here and shared: two independent parses of the same
+	// certificate and CA bundle could disagree, and an operator reasonably
+	// expects one database TLS posture, not one per protocol.
+	var dbClientTLS, dbUpstreamTLS *tls.Config
+	if cfg.DBAddr != "off" || cfg.MSSQLAddr != "off" {
 		if cfg.TLSCert != "" && cfg.TLSKey != "" {
 			cert, cerr := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
 			if cerr != nil {
@@ -1129,10 +1132,9 @@ func run() error {
 		if cfg.RequireDBClientTLS && dbClientTLS == nil {
 			return errors.New("PAM_REQUIRE_DB_CLIENT_TLS is set but no TLS is configured for the database proxy operator leg; set PAM_TLS_CERT and PAM_TLS_KEY")
 		}
-		// Upstream (target) TLS verification for the DB proxy's credential-bearing
-		// leg: a pinned CA bundle or verification against the system roots. Unset
-		// leaves the legacy trust-any-with-warning behavior.
-		var dbUpstreamTLS *tls.Config
+		// Upstream (target) TLS verification for the credential-bearing leg: a
+		// pinned CA bundle or verification against the system roots. Unset leaves
+		// the legacy trust-any-with-warning behavior.
 		if cfg.DBUpstreamCA != "" {
 			pem, rerr := os.ReadFile(cfg.DBUpstreamCA)
 			if rerr != nil {
@@ -1145,6 +1147,15 @@ func run() error {
 			dbUpstreamTLS = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}
 		} else if cfg.DBUpstreamTLSVerify {
 			dbUpstreamTLS = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+	}
+
+	// PostgreSQL session proxy (Phase 15): brokers postgres targets with JIT
+	// credential injection and per-statement query audit, on its own listener.
+	if cfg.DBAddr != "off" {
+		var dbOnSessionEnd func(int64)
+		if cfg.RotateAfterSession {
+			dbOnSessionEnd = func(credID int64) { handler.RotateCredentialByID(context.Background(), credID) }
 		}
 		dbx, err := proxy.NewDB(st, v, resolver, proxy.DBConfig{
 			RecordingDir:         cfg.RecordingDir,
@@ -1174,6 +1185,48 @@ func run() error {
 				log.Error("database proxy stopped", "err", err)
 				select {
 				case errc <- fmt.Errorf("database proxy: %w", err):
+				default:
+				}
+			}
+		}()
+	}
+
+	// SQL Server session proxy (Phase 53): the TDS sibling of the PostgreSQL
+	// listener above — same gates, same guards, same recording and live hub, a
+	// different wire protocol.
+	if cfg.MSSQLAddr != "off" {
+		var msOnSessionEnd func(int64)
+		if cfg.RotateAfterSession {
+			msOnSessionEnd = func(credID int64) { handler.RotateCredentialByID(context.Background(), credID) }
+		}
+		mx, err := proxy.NewMSSQL(st, v, resolver, proxy.MSSQLConfig{
+			RecordingDir:         cfg.RecordingDir,
+			Sessions:             sessions,
+			RequireApproval:      cfg.RequireApproval,
+			AllowedProtocols:     splitAndTrim(cfg.AllowedProtocols),
+			RequireRecording:     cfg.RequireRecording,
+			ClientTLS:            dbClientTLS,
+			OnSessionEnd:         msOnSessionEnd,
+			CommandGuard:         cmdGuard,
+			Live:                 liveHub,
+			AuthRatePerMin:       cfg.ProxyAuthRatePerMin,
+			MaxRecordingBytes:    maxRecBytes,
+			EncryptRecordings:    cfg.EncryptRecordings,
+			OpaqueRecordingNames: cfg.OpaqueRecordingNames,
+			UpstreamTLS:          dbUpstreamTLS,
+			StepUpGuard:          stepupGuard,
+			StepUp:               stepUp,
+			StepUpTTL:            cfg.DBStepUpTTL,
+		})
+		if err != nil {
+			return err
+		}
+		go func() {
+			defer close(mssqlProxyDone)
+			if err := mx.ListenAndServe(ctx, cfg.MSSQLAddr); err != nil && ctx.Err() == nil {
+				log.Error("sql server proxy stopped", "err", err)
+				select {
+				case errc <- fmt.Errorf("sql server proxy: %w", err):
 				default:
 				}
 			}
@@ -1225,6 +1278,11 @@ func run() error {
 		case <-dbProxyDone:
 		case <-time.After(10 * time.Second):
 			log.Warn("database proxy drain timed out")
+		}
+		select {
+		case <-mssqlProxyDone:
+		case <-time.After(10 * time.Second):
+			log.Warn("sql server proxy drain timed out")
 		}
 	}
 

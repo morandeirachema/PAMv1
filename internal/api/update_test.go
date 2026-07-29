@@ -300,3 +300,26 @@ func TestTargetClipboardOverrideCRUD(t *testing.T) {
 		t.Fatalf("invalid rdp_clipboard_audit on update: %d, want 422", code)
 	}
 }
+
+// TestCreateMSSQLTarget proves the target inventory accepts the SQL Server
+// protocol (Phase 53) — the enum, the portal selects and the proxy's own
+// target check all have to agree, and this is the API half of that agreement.
+func TestCreateMSSQLTarget(t *testing.T) {
+	srv := newTestServer(t)
+
+	code, data := do(t, srv, http.MethodPost, "/api/targets", testAPIKey, map[string]any{
+		"name": "sql-01", "host": "10.0.0.60", "port": 1433, "os_type": "windows", "protocol": "mssql",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("create mssql target: %d %s", code, data)
+	}
+	if got := jsonMap(t, data)["protocol"]; got != "mssql" {
+		t.Fatalf("protocol round-trip = %v", got)
+	}
+
+	if code, _ := do(t, srv, http.MethodPost, "/api/targets", testAPIKey, map[string]any{
+		"name": "bad-proto", "host": "10.0.0.61", "port": 1433, "os_type": "windows", "protocol": "sqlserver",
+	}); code != http.StatusUnprocessableEntity {
+		t.Fatalf("an unknown protocol was accepted: %d", code)
+	}
+}

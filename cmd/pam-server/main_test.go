@@ -88,6 +88,7 @@ func setMinimalEnv(t *testing.T) {
 	t.Setenv("PAM_RECORDING_DIR", t.TempDir())
 	t.Setenv("PAM_SSH_ADDR", "off")
 	t.Setenv("PAM_DB_ADDR", "off")
+	t.Setenv("PAM_MSSQL_ADDR", "off")
 }
 
 // captureStdout runs f with os.Stdout redirected into a pipe and returns what
@@ -1231,6 +1232,16 @@ func TestRunErrors(t *testing.T) {
 			want: "PAM_REQUIRE_DB_CLIENT_TLS is set but no TLS is configured",
 		},
 		{
+			// The shared database TLS requirement must bind the SQL Server
+			// listener too, not just PostgreSQL's.
+			name: "db client tls required but absent (mssql listener alone)",
+			env:  map[string]string{"PAM_REQUIRE_DB_CLIENT_TLS": "true"},
+			setup: func(t *testing.T) map[string]string {
+				return map[string]string{"PAM_MSSQL_ADDR": freeAddr(t)}
+			},
+			want: "PAM_REQUIRE_DB_CLIENT_TLS is set but no TLS is configured",
+		},
+		{
 			name: "db upstream ca missing",
 			env:  map[string]string{"PAM_DB_UPSTREAM_CA": "/nonexistent/ca.pem"},
 			setup: func(t *testing.T) map[string]string {
@@ -1393,6 +1404,7 @@ func TestRunServesAndShutsDownGracefully(t *testing.T) {
 	t.Setenv("PAM_SSH_ADDR", freeAddr(t))
 	t.Setenv("PAM_SSH_HOST_KEY", filepath.Join(t.TempDir(), "host.pem"))
 	t.Setenv("PAM_DB_ADDR", freeAddr(t))
+	t.Setenv("PAM_MSSQL_ADDR", freeAddr(t))
 	t.Setenv("PAM_SSH_CA_KEY", filepath.Join(t.TempDir(), "ca.pem"))
 	t.Setenv("PAM_AUDIT_HMAC_KEY", b64Bytes(t, 32))
 	t.Setenv("PAM_AUDIT_SIGN_SEED", b64Bytes(t, 32))

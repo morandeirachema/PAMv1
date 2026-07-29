@@ -231,6 +231,31 @@ You run SQL as the vaulted database account without ever learning its password;
 **every statement you run is audited**. `5433` is the database-proxy port (ask
 your admin; it's off unless enabled).
 
+### Connecting to a database (SQL Server)
+
+`mssql` targets work the same way with **`sqlcmd`** (or any TDS client): the
+username selects the credential and target, and your PAM token is the password.
+
+```bash
+# credential "sql_svc" on target "sql-01", database "orders"
+sqlcmd -S PAM_HOST,1433 -U 'sql_svc@sql-01' -P "$PAM_TOKEN" -d orders -N -C
+```
+
+`-N` asks for an encrypted connection and `-C` trusts the proxy's certificate
+(drop `-C` when it is signed by a CA your machine trusts). If your admin has
+not configured TLS on the proxy, modern clients refuse to connect at all — that
+is the client protecting your token, not a pamv1 fault; ask them to set it up.
+
+A URL-style client needs the `@` percent-encoded as `%40`:
+
+```
+sqlserver://sql_svc%40sql-01:$PAM_TOKEN@PAM_HOST:1433?database=orders
+```
+
+Every statement is audited, including the ones your driver sends through
+`sp_executesql`. **Windows/integrated authentication is not brokered** — use
+SQL authentication.
+
 ### Connecting to a Windows desktop (RDP)
 
 For a `windows` target with the **RDP** protocol you don't need any client — the
@@ -347,6 +372,7 @@ guard against connections that open and never authenticate, not a fault.
 
 | Date | Change |
 |---|---|
+| 2026-07-29 | **SQL Server databases can now be reached through pamv1** (Phase 53): `sqlcmd -S pam,1433 -U '<cred>@<target>' -P "$PAM_TOKEN"`, same rules as PostgreSQL — your token is the password, you never learn the database one, and every statement is audited. §"Connecting to a database (SQL Server)" |
 | 2026-07-29 | **Watch-pane fixes**: lines no longer end in a stray `\r`; a refused command watched live now says *why* it was refused instead of looking like it ran silently; and the 404 for a non-live session is replica-honest — on a multi-replica deployment it can mean "hosted elsewhere", not "ended". §"Watching a session" |
 | 2026-07-29 | **The live watch pane now reports SESSION ENDED** the moment the watched session finishes or is killed — a quiet pane means a quiet session, not a dead one. Watching a session that is already over says so (404) instead of showing an empty stream. §"Watching a session" |
 | 2026-07-29 | **RDP clipboard can differ per target** (Phase 33 follow-on): if copy/paste is blocked on one machine while it works elsewhere, that target is deliberately locked down — the per-target policy is always at least as strict as the global one. Admins set it on *Add/Change Target*. §"Connecting to a Windows desktop" |

@@ -120,7 +120,7 @@ var pkgLayer = []struct {
 	{"Identity & authz", []string{"auth", "oidc", "mfa"}},
 	{"Secrets", []string{"vault", "shamir"}},
 	{"Persistence", []string{"store", "memstore", "pgstore", "storetest"}},
-	{"Connectors", []string{"winrm", "guacd", "rotate", "discovery"}},
+	{"Connectors", []string{"winrm", "guacd", "tds", "rotate", "discovery"}},
 	{"Agent broker", []string{"broker", "policy", "agentid", "auditchain", "mcp"}},
 	{"Platform", []string{"config", "logging", "metrics", "alert", "session", "maint"}},
 }

@@ -23,6 +23,7 @@ SSH proxy; `db` is PostgreSQL.
 | 8080 | HTTP¹ | Portal + REST API | `PAM_LISTEN_ADDR` | Behind TLS in prod; expose to operators only | ✅ |
 | 2222 | SSH | Session proxy (JIT injection) | `PAM_SSH_ADDR` (`off` disables) | Expose to operators/users only | ✅ |
 | 5433 | PostgreSQL | Database session proxy (JIT injection) | `PAM_DB_ADDR` (`off` by default) | Expose to operators only; TLS via `PAM_TLS_CERT/KEY` or ingress | ✅ P15 |
+| 1433 | TDS (SQL Server) | Database session proxy (JIT injection) | `PAM_MSSQL_ADDR` (`off` by default) | Expose to operators only; **set `PAM_TLS_CERT/KEY`** — modern TDS clients require encryption | ✅ P53 |
 
 ¹ **Secure protocols only.** Operators must reach the portal/API over **HTTPS** —
 either native (`PAM_TLS_CERT`/`PAM_TLS_KEY`, Phase 5) or terminated at an

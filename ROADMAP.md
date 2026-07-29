@@ -274,7 +274,7 @@ Extend the JIT chokepoint to **databases** — the first of the [Tier-1 competit
 - [x] **Upstream authentication with the vaulted secret**: trust, cleartext, MD5, and **SCRAM-SHA-256** (RFC 5802, stdlib `crypto/hmac`·`sha256` + `x/crypto/pbkdf2`), plus best-effort upstream TLS (`sslmode=prefer` style) — so it reaches self-hosted **and** managed/SCRAM Postgres. Optional operator-leg TLS when `PAM_TLS_CERT/KEY` are set
 - [x] **Per-statement query audit + recording**: every `Query`/`Parse` becomes a `db.query` audit event and a line in the session recording (asciicast, SHA-256 hash-chained like SSH/WinRM); live in the session registry (list + kill) as protocol `postgres`; post-session rotation honored
 - [x] **End-to-end JIT proof**: an in-process fake PostgreSQL upstream that accepts **only** the vaulted secret — a passing test proves the operator's PAM key was swapped for the vault secret and the SQL was audited; a bad-key operator is refused before any upstream contact
-- Deferred (documented): MySQL/MSSQL/Oracle connectors (same pattern, new wire protocols) and result-row redaction policies. **CA-pinned upstream TLS has since shipped** (`PAM_DB_UPSTREAM_CA` / `PAM_DB_UPSTREAM_TLS_VERIFY`, in the 2026-07-22 hardening pass)
+- Deferred (documented): MySQL/Oracle connectors (same pattern, new wire protocols) and result-row redaction policies. **MSSQL has since shipped (Phase 53).** **CA-pinned upstream TLS has since shipped** (`PAM_DB_UPSTREAM_CA` / `PAM_DB_UPSTREAM_TLS_VERIFY`, in the 2026-07-22 hardening pass)
 
 ## Phase 16 — Live session monitoring + command control ✅
 
@@ -1374,7 +1374,25 @@ Three things worth carrying forward:
   both directions showed hijacked WebSockets do not inherit the server deadline,
   so the RDP viewer correctly got no change
 
-### What is left ⬜
+## Phase 53 — SQL Server (TDS) session proxy ✅
+
+The second database wire protocol, and the first new one since Phase 15. An
+operator points `sqlcmd` (or any TDS client) at pamv1 with
+`-U '<dbcred>@<target>'` and their PAM key as the password; the proxy runs the
+same authorization gates as every other listener, injects the vaulted SQL login
+just-in-time, and brokers the protocol with per-statement audit.
+
+- [x] **`internal/tds`** — the protocol slice a broker needs, hand-rolled with **no new dependency**: packet framing (bounded reassembly; `RESETCONNECTION` preserved through re-framing, or connection pooling breaks silently), PRELOGIN, LOGIN7 parse + re-encode, the keyless password obfuscation, SQLBatch/RPC text extraction, ERROR/DONE refusal tokens, a login-response walker, and a **TLS-inside-TDS-packets handshake shim** (the flush-on-read handoff is where hand-rolled versions hang)
+- [x] **`internal/proxy/mssqlproxy.go`** — a line-for-line sibling of `dbproxy.go`, so the two diff cleanly: anything that differs is the transport, never the policy. Same gate order (rate limit → resolve → MFA-enrollment → `CapConnect` → target/protocol → grants → approval consume → vendor window → session cap → **fail-closed audit** → JIT decrypt → dial), same recording, live hub, registry, step-up and post-session rotation
+- [x] **JIT injection into the client's own LOGIN7**: username and password replaced, `fIntSecurity` cleared, everything else (hostname, appname, database, language, feature extensions, negotiated version and packet size) forwarded byte-identical — by **re-encoding**, since a credential of a different length shifts every offset and an in-place patch would corrupt the login
+- [x] **Command control and audit see through `sp_executesql`** (by name and ProcID, plain and PLP): a procedure-name-only parser would leave every parameterised driver — which is to say every application — unaudited and unfiltered. An unrecoverable RPC degrades to an audited `[rpc <name>]` and is forwarded, the same call the PostgreSQL proxy makes for a fast-path function call
+- [x] **Encryption stance**: whole-session TLS on both legs (`ENCRYPT_ON` when `PAM_TLS_CERT/KEY` are set, always requested upstream), `PAM_DB_UPSTREAM_CA`/`_TLS_VERIFY` fail-closed as on the PostgreSQL leg, and TDS's **login-packet-only mode is never selected** — it reverts to plaintext mid-stream, which is where silent-downgrade bugs live. MARS is disabled so requests stay parseable; integrated/Windows auth and TDS 8.0 strict encryption are refused with a clear message instead of a hang
+- [x] **No new audit vocabulary**: `db.session.*`, `db.query`, `command.blocked` and `db.stepup_*` disambiguated by `via:mssql`, so OCSF export and threat analytics cover SQL Server sessions without a change
+- [x] **Config + surface**: `PAM_MSSQL_ADDR` (default `off`, `off` sentinel case-insensitive like its siblings); protocol `mssql` in the API enum, the 5250 target screens, the session registry and discovery (port 1433); shared database TLS built once in `main` for both listeners
+- [x] **Tests**: 15 codec tests pinned to **spec-derived byte literals** — not round-trips, because the fake upstream uses the same codec and a symmetric bug would round-trip happily through every end-to-end test — plus a real TLS-over-TDS handshake; and 13 proxy tests: the JIT proof against an upstream accepting **only** the vaulted secret, wrong-key refused before the upstream is touched, client login fields preserved, a blocked batch **and** a blocked `sp_executesql` (neither reaches the target, session survives), multi-packet reassembly, recording + require-recording, live monitoring, kill, wrong-protocol and enrollment-only refusals
+- Deferred (documented): **interop against a real SQL Server is not verified** — no licensed instance in CI, catalogued in [EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md) with the `mcr.microsoft.com/mssql/server` job that would close it. Also deferred: MySQL/Oracle (same pattern, new protocols), result-row redaction, and mid-session packet-size renegotiation
+
+## What is left ⬜
 
 The canonical backlog. Both read-only security sweeps are closed — the
 2026-07-26 one by phases 37–46, the 2026-07-27 post-beta one by phases 52–52g —
@@ -1490,7 +1508,7 @@ Anything needing external infrastructure or a paid account to build and verify
 honestly stays in
 **[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)** rather than being
 faked: Kerberos bind and Kerberos WinRM (a KDC), serial connectors (RS-232
-hardware), MySQL/MSSQL/Oracle and network-device connectors, live cloud-CIEM
+hardware), MySQL/Oracle and network-device connectors (SQL Server shipped in Phase 53, though its interop with a real server is unverified), live cloud-CIEM
 ingestion and short-lived cloud-credential brokering, web/SaaS session proxying,
 SPIRE workload attestation and RFC 8693 token exchange, ephemeral local accounts,
 and the Tier-4 ecosystem items (a Terraform provider, Secrets-Hub sync-out,

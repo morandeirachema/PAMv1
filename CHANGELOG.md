@@ -11,6 +11,15 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **SQL Server session proxy** (Phase 53) — `PAM_MSSQL_ADDR` brokers `mssql`
+  targets over TDS the way `PAM_DB_ADDR` brokers PostgreSQL: the same
+  authorization gates, the vaulted SQL login injected just-in-time into the
+  client's own LOGIN7, per-statement `db.query` audit (`via:mssql`) that sees
+  through `sp_executesql`, command control, step-up, recording, live monitoring
+  and cluster-wide kill. New hand-rolled `internal/tds` codec (no new
+  dependency) with TLS on both legs. Interop with a real SQL Server is not yet
+  verified.
+
 - **Review fixes on the four changes below** — broker audit keys: an explicit
   env value is written through to shared custody and checked against it, so a
   mixed fleet or a later unset can no longer silently fork the audit chain (a

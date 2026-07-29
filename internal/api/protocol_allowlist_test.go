@@ -25,7 +25,7 @@ func TestProtocolAllowlist(t *testing.T) {
 	}); status != http.StatusCreated {
 		t.Fatalf("create ssh: want 201, got %d", status)
 	}
-	for _, proto := range []string{"winrm", "rdp"} {
+	for _, proto := range []string{"winrm", "rdp", "mssql"} {
 		if status, _ := do(t, srv, http.MethodPost, "/api/targets", testAPIKey, map[string]any{
 			"name": "t-" + proto, "host": "10.0.0.6", "port": 5986, "os_type": "windows", "protocol": proto,
 		}); status != http.StatusUnprocessableEntity {
