@@ -1,0 +1,252 @@
+# pamv1 — non-secret configuration for Kubernetes.
+#
+# This is the Kubernetes twin of deploy/docker/.env.example: same knobs, same
+# grouping, expressed as a ConfigMap. Secret-valued variables do NOT belong here
+# (a ConfigMap is stored and displayed in plaintext) — they go in
+# secret.example.yaml, which lists every one of them.
+#
+#   cp configmap.example.yaml configmap.yaml   # then edit and apply
+#   kubectl apply -f configmap.yaml
+#
+# deployment.yaml already reads this via `envFrom: configMapRef: pam-config`
+# with `optional: true`, so the cluster still comes up if you never create it —
+# every value below has a working default.
+#
+# THREE THINGS THAT BITE IN KUBERNETES AND NOT IN DOCKER:
+#
+# 1. ConfigMap values are strings. Quote everything, including numbers and
+#    booleans ("0", "false") — an unquoted `true` is a YAML bool and the apply
+#    is rejected.
+# 2. The three variables deployment.yaml sets inline — PAM_SSH_HOST_KEY,
+#    PAM_RECORDING_DIR and PAM_GUACD_ADDR — CANNOT be overridden here. A
+#    container's `env` beats `envFrom`; change them in the Deployment.
+# 3. Anything whose value is a PATH needs the file mounted into the pod. The
+#    root filesystem is read-only and only /data is writable, so a deny file, a
+#    CA bundle or a JWKS has to arrive as its own ConfigMap/Secret volume:
+#
+#      # in the Deployment
+#      volumes:
+#        - name: policy
+#          configMap: { name: pam-policy }     # keys: deny.txt, stepup.txt
+#      volumeMounts:
+#        - name: policy
+#          mountPath: /etc/pamv1
+#          readOnly: true
+#      # then here:
+#      PAM_COMMAND_DENY_FILE: "/etc/pamv1/deny.txt"
+#
+# Every variable pamv1 reads is documented in
+# docs/ARCHITECTURE-LOW-LEVEL.md §"Configuration"; defaults shown in brackets.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pam-config
+  namespace: pamv1
+data:
+  # --- Logging -------------------------------------------------------------
+  PAM_LOG_LEVEL: "info"            # debug | info | warn | error
+  PAM_LOG_FORMAT: "json"           # json | text
+
+  # --- Listeners -----------------------------------------------------------
+  # The HTTP port is also declared in the Deployment's containerPort and the
+  # Service; change all three together.
+  # PAM_LISTEN_ADDR: ":8080"
+  # PAM_SSH_ADDR: ":2222"          # "off" disables the SSH session proxy
+  # PAM_DB_ADDR: ":5433"           # PostgreSQL session proxy   [off]
+  # PAM_MSSQL_ADDR: ":1433"        # SQL Server (TDS) proxy     [off]
+  # Neither database port is in service.yaml by default — add a port there (and
+  # to the NetworkPolicy) if operators reach them from outside the cluster.
+
+  # --- Transport hardening -------------------------------------------------
+  # Terminate TLS at the Ingress, or serve it natively by mounting a cert and
+  # pointing these at it (then set PAM_REQUIRE_HTTPS so a missing cert is fatal
+  # rather than a silent plaintext downgrade).
+  # PAM_TLS_CERT: "/etc/pamv1/tls/tls.crt"
+  # PAM_TLS_KEY: "/etc/pamv1/tls/tls.key"
+  # PAM_REQUIRE_HTTPS: "false"
+  # Behind an Ingress, tell pamv1 how many proxy hops to trust so per-IP rate
+  # limiting sees the real client instead of the ingress controller's address.
+  # PAM_TRUSTED_PROXY_HOPS: "1"
+  # PAM_AUTH_RATE_LIMIT: "20"        # auth attempts / client IP / minute
+  # PAM_PROXY_AUTH_RATE_LIMIT: "10"  # failed auths / source IP / minute (proxies)
+
+  # --- Database proxies (PostgreSQL + SQL Server) --------------------------
+  # Both DB proxies negotiate TLS in-protocol, so an Ingress cannot terminate it
+  # — native PAM_TLS_CERT/KEY is the only way to encrypt the operator leg.
+  # PAM_REQUIRE_DB_CLIENT_TLS: "false"   # refuse to start without it
+  # PAM_DB_UPSTREAM_CA: "/etc/pamv1/db-ca.pem"   # verify the target's cert
+  # PAM_DB_UPSTREAM_TLS_VERIFY: "false"          # verify against system roots
+  # PAM_DB_STEPUP_FILE: "/etc/pamv1/stepup.txt"  # statements that pause for a supervisor
+  # PAM_DB_STEPUP_TTL_SEC: "120"
+
+  # --- Session recording ---------------------------------------------------
+  # PAM_RECORDING_DIR is set in the Deployment (/data). Recordings are written
+  # per-pod: with replicas > 1, GET /api/recordings lists what THIS pod holds.
+  # Use a ReadWriteMany volume if you need one view across replicas.
+  # PAM_REQUIRE_RECORDING: "false"       # refuse a session that cannot be recorded
+  # PAM_MAX_RECORDING_MB: "0"            # 0 = unlimited
+  # PAM_RECORDING_ENCRYPT: "false"       # seal recordings at rest under the KEK
+  # PAM_RECORDING_OPAQUE_NAMES: "false"  # hide target/actor in the file name
+
+  # --- Session limits and protocol allowlist -------------------------------
+  # The caps are per-replica: with N replicas the effective ceiling is N×.
+  # PAM_MAX_SESSIONS_PER_USER: "0"
+  # PAM_MAX_SESSIONS_TOTAL: "0"
+  # PAM_ALLOWED_PROTOCOLS: "ssh,winrm"   # empty = all (ssh,winrm,rdp,vnc,postgres,mssql)
+
+  # --- Command control and SFTP policy (mounted files) ---------------------
+  # A deny file that yields no usable patterns is FATAL at startup — an
+  # unmounted ConfigMap fails loudly instead of disabling the control silently.
+  # PAM_COMMAND_DENY_FILE: "/etc/pamv1/deny.txt"
+  # PAM_SSH_SFTP: "allow"                    # allow | readonly | deny
+  # PAM_SSH_SFTP_DENY_FILE: "/etc/pamv1/sftp-deny.txt"
+
+  # --- Approvals, tickets, checkout ----------------------------------------
+  # PAM_REQUIRE_APPROVAL: "false"        # gate every target behind 4-eyes
+  # PAM_APPROVALS_REQUIRED: "1"          # distinct approvers per request
+  # PAM_REQUIRE_REASON: "false"
+  # PAM_ACCESS_ONE_TIME: "false"         # first use consumes the approval
+  # PAM_APPROVAL_WINDOW_MIN: "60"
+  # PAM_CHECKOUT_TTL_MIN: "30"
+  # PAM_REQUIRE_TICKET: "false"
+  # PAM_TICKET_PATTERN: "^(CHG|INC)[0-9]{6,}$"
+  # PAM_TICKET_VALIDATE_URL: "https://itsm.internal/api/validate"
+
+  # --- Graphical viewers (RDP + VNC through guacd) -------------------------
+  # PAM_GUACD_ADDR is set in the Deployment (guacd:4822 — the bundled guacd).
+  # The pam-server → guacd hop is plain TCP, so keep guacd cluster-internal.
+  # PAM_RDP_CLIPBOARD: "allow"           # allow | readonly | deny (covers VNC too)
+  # PAM_RDP_CLIPBOARD_AUDIT: "off"       # off | meta | full
+  # PAM_GUACD_RDP_SECURITY: "nla"        # nla | tls | rdp; empty = let guacd negotiate
+  # PAM_GUACD_IGNORE_CERT: "false"
+  # PAM_GUACD_RECORDING_PATH: "/data/guacd"   # needs the volume mounted in guacd too
+
+  # --- WinRM ---------------------------------------------------------------
+  # PAM_WINRM_HTTPS: "true"
+  # PAM_WINRM_AUTH: "basic"              # basic | ntlm
+  # PAM_WINRM_INSECURE_SKIP_VERIFY: "false"
+  # PAM_PROXY_WINRM: "false"             # interactive WinRM loop over the SSH proxy
+
+  # --- SSH upstream: host pinning, jump host, Zero Standing Privilege ------
+  # PAM_SSH_KNOWN_HOSTS: "/etc/pamv1/known_hosts"   # unset = trust-any + warn
+  # PAM_SSH_JUMP_HOST: "bastion.internal:22"
+  # PAM_SSH_JUMP_USER: "jump"
+  # PAM_SSH_JUMP_KEY: "/etc/pamv1/jump_key"
+  # PAM_SSH_CA_KEY: "/data/ssh_ca_key"   # presence enables ssh_ca credentials
+  # PAM_SSH_CERT_TTL_MIN: "2"
+  # PAM_SSH_OPERATOR_CERT_TTL_MIN: "10"
+
+  # --- Identity: LDAP / Entra / OIDC (non-secret halves) -------------------
+  # Bind passwords and client secrets belong in the Secret, not here.
+  # PAM_LDAP_URL: "ldaps://dc1.corp.example:636"
+  # PAM_LDAP_BIND_DN: "CN=svc-pam,OU=Service,DC=corp,DC=example"
+  # PAM_LDAP_BASE_DN: "DC=corp,DC=example"
+  # PAM_LDAP_USER_FILTER: "(sAMAccountName=%s)"
+  # PAM_LDAP_GROUP_ADMIN: "CN=PAM-Admins,OU=Groups,DC=corp,DC=example"
+  # PAM_LDAP_GROUP_USER: "CN=PAM-Users,OU=Groups,DC=corp,DC=example"
+  # PAM_LDAP_GROUP_AUDITOR: "CN=PAM-Auditors,OU=Groups,DC=corp,DC=example"
+  # PAM_LDAP_GROUP_APPROVER: "CN=PAM-Approvers,OU=Groups,DC=corp,DC=example"
+  # PAM_ENTRA_TENANT_ID: ""
+  # PAM_ENTRA_CLIENT_ID: ""
+  # PAM_OIDC_ISSUER: "https://idp.example/realms/main"
+  # PAM_OIDC_CLIENT_ID: "pamv1"
+  # PAM_OIDC_REDIRECT_URL: "https://pam.example.com/api/auth/oidc/callback"
+  # PAM_OIDC_ROLE_ADMIN: "pam-admins"
+  # PAM_PORTAL_URL: "https://pam.example.com"
+  # PAM_MFA_REQUIRED: "false"
+
+  # --- Credential lifecycle ------------------------------------------------
+  # Leader-locked: one replica runs each pass, so these are cluster-wide.
+  # PAM_ROTATE_INTERVAL_MIN: "0"         # 0 = worker off
+  # PAM_ROTATE_MAX_AGE_HOURS: "0"        # 0 = report only, never auto-rotate
+  # PAM_ROTATE_AFTER_SESSION: "false"
+  # PAM_REVEAL_DISABLED: "false"         # make reveal break-glass-only
+
+  # --- Threat analytics ----------------------------------------------------
+  # PAM_ANALYTICS_INTERVAL_MIN: "0"      # 0 = worker off (endpoint stays up)
+  # PAM_ANALYTICS_WINDOW_MIN: "60"
+  # PAM_ANALYTICS_AUTO_KILL: "false"     # cut a critical-risk actor's sessions
+  # PAM_ANALYTICS_BUSINESS_START: "7"
+  # PAM_ANALYTICS_BUSINESS_END: "20"
+  # PAM_ANALYTICS_TIMEZONE: "Europe/Madrid"
+
+  # --- Third-party vendor access -------------------------------------------
+  # PAM_VENDOR_ATTEST_URL: "https://vms.internal/attest"
+  # PAM_VENDOR_SWEEP_INTERVAL_MIN: "0"   # cut sessions when a contract closes
+
+  # --- Retention and WORM archive ------------------------------------------
+  # PAM_RETENTION_ARCHIVE_DIR needs its OWN volume, separate from /data, and
+  # genuinely write-once for the archive to mean anything. A backup scoped only
+  # to /data loses it. With the audit HMAC chain on, audit rows are archived but
+  # never pruned (deleting the chain head would break verification).
+  # PAM_RECORDING_RETENTION_DAYS: "0"    # 0 = keep forever
+  # PAM_AUDIT_RETENTION_DAYS: "0"
+  # PAM_RETENTION_INTERVAL_HOURS: "24"
+  # PAM_RETENTION_ARCHIVE_DIR: "/archive"
+
+  # --- Audit → SIEM forwarding ---------------------------------------------
+  # Leader-locked, so N replicas do not emit duplicate records.
+  # PAM_AUDIT_FORWARD_ADDR: "siem.internal:6514"
+  # PAM_AUDIT_FORWARD_PROTO: "tls"       # udp | tcp | tls
+  # PAM_AUDIT_FORWARD_FORMAT: "rfc5424"  # rfc5424 | cef | leef
+  # PAM_AUDIT_FORWARD_CA: "/etc/pamv1/siem-ca.pem"
+  # PAM_AUDIT_FORWARD_INTERVAL_SEC: "30"
+
+  # --- Alerting (non-secret halves; SMTP password goes in the Secret) ------
+  # PAM_ALERT_WEBHOOK: "https://alerts.internal/pamv1"
+  # PAM_ALERT_SYSLOG: "udp://syslog.internal:514"
+  # PAM_ALERT_EMAIL_SMTP: "smtp.internal:587"
+  # PAM_ALERT_EMAIL_FROM: "pamv1@example.com"
+  # PAM_ALERT_EMAIL_TO: "soc@example.com,oncall@example.com"
+  # PAM_ALERT_EMAIL_USER: "pamv1"
+
+  # --- Break-glass (the key HASH and shares live in the Secret) ------------
+  # PAM_BREAK_GLASS_THRESHOLD: "0"       # M ≥ 2 enables M-of-N quorum unseal
+  # PAM_BREAK_GLASS_SHARES: "5"          # N
+  # PAM_BREAK_GLASS_TTL_MIN: "15"
+  # Quorum shares are held in memory by the pod that receives them, by design.
+  # Submit all shares to ONE replica — a sticky session, or scale to 1 during
+  # the emergency.
+
+  # --- AI-agent broker -----------------------------------------------------
+  # PAM_BROKER_POLICY_FILE: "/etc/pamv1/broker-policy.yaml"   # presence enables it
+  # PAM_BROKER_TOKEN_TTL_MIN: "15"
+  # PAM_BROKER_MAX_ARG_BYTES: "16384"
+  # PAM_BROKER_RATE_PER_MIN: "0"
+  # PAM_BROKER_AUDIT_CHECKPOINT_EVERY: "0"
+  # PAM_BROKER_MAX_DELEGATION_DEPTH: "1"
+  # SPIFFE/SVID identity for agents:
+  # PAM_BROKER_TRUST_DOMAIN_JWKS: "/etc/pamv1/spiffe-jwks.json"
+  # PAM_BROKER_TRUST_DOMAIN: "example.org"
+  # PAM_BROKER_AUDIENCE: "pamv1"
+
+  # --- Application-secrets API ---------------------------------------------
+  # PAM_APP_SECRETS_ENABLED: "false"     # vends plaintext to machines; front with TLS
+
+  # --- KEK provider (the local key and provider tokens go in the Secret) ---
+  # PAM_KEK_PROVIDER: "local"            # local | vault-transit | aws-kms | pkcs11
+  # PAM_KEK_TRANSIT_ADDR: "https://vault.internal:8200"
+  # PAM_KEK_TRANSIT_KEY: "pamv1"
+  # PAM_KEK_AWS_KEY_ID: "arn:aws:kms:eu-west-1:123456789012:key/abcd-..."
+  # PAM_KEK_AWS_REGION: "eu-west-1"
+  # pkcs11 needs the pkcs11-tagged image (Dockerfile.pkcs11), not the default one:
+  # PAM_KEK_PKCS11_MODULE: "/usr/lib/softhsm/libsofthsm2.so"
+  # PAM_KEK_PKCS11_KEY_LABEL: "pamv1-kek"
+  # PAM_KEK_PKCS11_TOKEN_LABEL: "pamv1"
+
+  # --- Conjur bootstrap-secret sourcing ------------------------------------
+  # An alternative to a Kubernetes Secret: pamv1 fetches any EMPTY bootstrap
+  # variable from Conjur at startup. See deploy/k8s/conjur/.
+  # PAM_SECRETS_PROVIDER: "conjur"       # makes PAM_CONJUR_URL required (fail-loud)
+  # PAM_CONJUR_URL: "https://conjur.example"
+  # PAM_CONJUR_ACCOUNT: "default"
+  # PAM_CONJUR_POLICY_PREFIX: "pamv1"
+  # PAM_CONJUR_AUTHN_JWT_SERVICE_ID: "kubernetes"
+  # PAM_CONJUR_JWT_FILE: "/var/run/secrets/conjur/token"
+  # PAM_CONJUR_CACERT: "/etc/conjur/ca.pem"
+
+  # --- OT / air-gapped sites -----------------------------------------------
+  # Air-gap forces the no-op alerter and REFUSES TO START alongside any
+  # integration that would call out of the enclave.
+  # PAM_OT_AIRGAP: "false"
+  # PAM_OT_AIRGAP_ALLOW: "PAM_LDAP_URL"  # names you certify resolve inside it
