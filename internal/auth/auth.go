@@ -256,12 +256,26 @@ const SessionScopeEnroll = "enroll"
 // successful M-of-N quorum unseal; it grants admin and is audited loudly.
 const SessionScopeBreakGlass = "breakglass"
 
-// SessionScopeRDP marks a short-lived token minted for the in-portal RDP viewer.
-// Because it travels in the WebSocket URL (browsers cannot set headers on a WS
-// handshake), it is deliberately usable ONLY at the RDP tunnel: it resolves to a
-// TunnelOnly principal that the API authz/authenticated middleware refuse, so a
-// copy leaked from a proxy/access log cannot call any other endpoint or re-mint.
-const SessionScopeRDP = "rdp"
+// SessionScopeRDP and SessionScopeVNC mark short-lived tokens minted for the
+// in-portal graphical viewers. Because such a token travels in the WebSocket URL
+// (browsers cannot set headers on a WS handshake), it is deliberately usable ONLY
+// at a viewer tunnel: it resolves to a TunnelOnly principal that the API
+// authz/authenticated middleware refuse, so a copy leaked from a proxy/access log
+// cannot call any other endpoint or re-mint.
+//
+// Both scopes are equivalent in power — each names the viewer it was minted for so
+// the audit trail says which one, and IsViewerScope is what confers TunnelOnly.
+// Adding a scope without adding it there would hand out a full API token in a URL.
+const (
+	SessionScopeRDP = "rdp"
+	SessionScopeVNC = "vnc"
+)
+
+// IsViewerScope reports whether a session scope belongs to an in-portal graphical
+// viewer, and therefore must resolve to a TunnelOnly principal.
+func IsViewerScope(scope string) bool {
+	return scope == SessionScopeRDP || scope == SessionScopeVNC
+}
 
 // CapSet is a resolved set of capabilities (used for custom profiles).
 type CapSet map[Capability]bool
@@ -453,7 +467,7 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (*Principal, error) 
 			p, perr := r.principalFor(ctx, s.Username, s.Role, s.Scope == SessionScopeEnroll)
 			if perr == nil {
 				p.Roles = SplitRoles(s.Roles) // restore the multi-group union
-				p.TunnelOnly = s.Scope == SessionScopeRDP
+				p.TunnelOnly = IsViewerScope(s.Scope)
 			}
 			return p, perr
 		}

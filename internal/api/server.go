@@ -692,7 +692,9 @@ func (s *Server) routes() {
 
 	s.mux.Handle("POST /api/targets/{id}/winrm", s.authz(auth.CapConnect, s.runWinRM))
 	s.mux.Handle("POST /api/rdp-token", s.authz(auth.CapConnect, s.rdpToken)) // mint a short-lived WS token for the viewer
+	s.mux.Handle("POST /api/vnc-token", s.authz(auth.CapConnect, s.vncToken)) // same, for the VNC viewer
 	s.mux.HandleFunc("GET /api/targets/{id}/rdp", s.rdpTunnel)                // WebSocket; auths via query token
+	s.mux.HandleFunc("GET /api/targets/{id}/vnc", s.vncTunnel)                // WebSocket; auths via query token
 
 	// Zero Standing Privilege (Phase 22): publish the SSH CA public key so an
 	// operator can install it in a target's TrustedUserCAKeys. 404 when ZSP is off.
