@@ -622,6 +622,9 @@ events are also written to the separate tamper-evident `broker_audit_events` cha
 
 ## 6. Security-relevant invariants (do not regress)
 
+> The algorithms and per-protocol TLS posture these invariants rest on are
+> catalogued in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
+
 1. `Credential.SecretEnc` must never be serialized to any client (`json:"-"`).
 2. All key/secret comparisons use `crypto/subtle.ConstantTimeCompare`.
 3. Vault AAD on decrypt must equal AAD on encrypt (`store.CredentialAAD`).

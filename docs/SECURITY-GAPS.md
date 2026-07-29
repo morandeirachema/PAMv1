@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-07-28 · Reflects: Phases 0–52g + the 2026-07 hardening passes,
+> Last updated: 2026-07-29 · Reflects: Phases 0–53 + the 2026-07 hardening passes,
 > including the **post-beta sweep of 2026-07-27**, whose thirty findings are all
 > now closed (see the section below for what each fix actually was).
 
@@ -112,6 +112,18 @@ what the same sweep found and did **not** fix is listed under
   still download is not denied at all. (File transfer initiated as `scp` over an interactive shell, or shell
   redirection, still rides the unparsed PTY and is out of scope — use `readonly`
   plus shell restriction for containment.) The **RDP** viewer got the same treatment in Phase 33: `PAM_RDP_CLIPBOARD` gates the Guacamole clipboard bridge (copy-out / paste-in) and drive redirection is always disabled, so the graphical session's side-channels are audited/gatable too. **Phase 50** added the observation half: `PAM_RDP_CLIPBOARD_AUDIT` records each transfer's direction, mimetype, size and SHA-256 as `rdp.clipboard` (content only under an explicit `full` opt-in — a privileged clipboard routinely carries a just-copied password, and the trail is auditor-readable).
+- **SFTP inspection is fail-open; TDS statement inspection is fail-closed** — a
+  deliberate asymmetry, recorded here because the two now sit side by side. The
+  SFTP inspector (`internal/proxy/sftpguard.go`) parses the subsystem stream to
+  audit and gate file operations, but a stream it cannot frame is audited once
+  (`sftp.parse_error`) and then forwarded **un-inspected** for the rest of the
+  session — after that neither the audit, the path denylist nor the `readonly`
+  refusals apply. The SQL Server proxy took the opposite choice in Phase 53: a
+  statement it cannot parse is **refused** when a command guard is configured,
+  because forwarding an unfilterable statement is the bypass the guard exists to
+  prevent. For fail-closed file transfer today, use `PAM_SSH_SFTP=deny`. Making
+  the SFTP path refuse-on-unparseable (under the same "only when a policy is
+  configured" rule) is the obvious follow-on.
 - **Session recording is fail-open unless `PAM_REQUIRE_RECORDING`** — the opt-in
   fail-closed control exists **for the SSH, WinRM-over-proxy and PostgreSQL
   paths**; the default is kept permissive for demos. The 2026-07-27 sweep found

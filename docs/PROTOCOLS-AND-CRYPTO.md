@@ -26,13 +26,17 @@ live in [SECURITY-GAPS.md](SECURITY-GAPS.md). This file is the *what and why*.
 - **At rest**, every secret is AES-256-GCM with a per-secret data key, wrapped by
   a pluggable KEK (local key, HashiCorp Vault Transit, AWS KMS, or a PKCS#11
   HSM). The database only ever holds the envelope.
-- **In transit**, every leg that can carry a credential is TLS — and the two
-  places where the protocol itself offers no protection (TDS's keyless password
-  transform, PostgreSQL's cleartext operator auth) are exactly where TLS is
-  hardest to opt out of.
-- **The audit trail** is hash-chained with HMAC-SHA-256 and periodically signed
-  with Ed25519, so tampering is detectable and truncation is detectable
-  separately.
+- **In transit**, every credential-bearing leg *can* be TLS — with one exception:
+  the **pamv1 → guacd hop is always plain TCP** and carries the vaulted RDP
+  credential, so guacd belongs on a private network or in the same pod. The TDS
+  **upstream** leg is the one place TLS cannot be opted out of; the
+  operator-facing legs (portal/API, both database proxies) run plaintext until
+  you configure a certificate. §4 is the honest table.
+- **The audit trail** can be hash-chained with HMAC-SHA-256 and its head signed
+  with Ed25519 — tamper-evidence and truncation-evidence respectively. For the
+  **primary** trail both are **opt-in and off by default**
+  (`PAM_AUDIT_HMAC_KEY`, `PAM_AUDIT_SIGN_SEED`); the AI-agent broker's separate
+  chain provisions its own keys and is always on when the broker is.
 - **Nothing is trusted because it is on the inside.** Every brokered session
   re-runs authorization, and the durable audit write happens *before* the secret
   is decrypted.
@@ -85,9 +89,14 @@ Recordings are evidence, so they get both confidentiality and integrity.
   chunk's AAD binds the recording name **and its chunk index** — so chunks cannot
   be reordered, duplicated or spliced between files (`internal/recording/recording.go`).
 - **Hashed**: the SHA-256 of the bytes *as they land on disk* (sealed or not) is
-  written into the `session.record` audit event, and recordings are **hash-chained**
-  (`chain = SHA-256(prev ‖ fileHash)`, head in `<dir>/.chain`) so removing one
-  recording breaks the chain (`internal/proxy/record.go`).
+  written into the audit trail — `session.record` for proxied sessions,
+  `winrm.run` for WinRM transcripts. The **proxy** recordings (SSH, PostgreSQL,
+  SQL Server `.cast` files) are additionally **hash-chained**
+  (`chain = SHA-256(prev ‖ fileHash)`, head in `<dir>/.chain`), so removing one
+  breaks the chain (`internal/proxy/record.go`). Two artifacts are **not** in
+  that chain: WinRM run transcripts (hashed and audited, but unchained) and
+  guacd's server-side RDP recordings (`PAM_GUACD_RECORDING_PATH`), which guacd
+  writes itself — neither hashed, chained, nor sealed by pamv1.
 - **Verified on replay**: the portal re-hashes the stored file and reports whether
   that hash appears in the audit trail (`internal/api/recordings_handlers.go`).
 - **Opaque names** (`PAM_RECORDING_OPAQUE_NAMES`): `<unixnano>_<8 random hex>`,
@@ -97,10 +106,15 @@ Recordings are evidence, so they get both confidentiality and integrity.
 
 ### 2.3 The audit trail
 
+The primary chain is **opt-in**: with no `PAM_AUDIT_HMAC_KEY` the trail is an
+ordinary append-only table, and `GET /api/audit/head` answers `501` until
+`PAM_AUDIT_SIGN_SEED` is set too. The broker chain is different — it generates
+and holds its own keys under custody, so it is always on when the broker is.
+
 | Mechanism | Algorithm | Protects against | Where |
 |---|---|---|---|
-| Primary audit chain | **HMAC-SHA-256** over `prev ‖ canonical(actor, action, detail)` | Editing or deleting a row (`PAM_AUDIT_HMAC_KEY`) | `internal/store/store.go`, `pgstore`, `memstore` |
-| Signed head | **Ed25519** over the running head | **Truncating the tail** — which a hash chain alone cannot detect (`PAM_AUDIT_SIGN_SEED`) | `internal/auditchain`, `internal/api/handlers.go` |
+| Primary audit chain (opt-in) | **HMAC-SHA-256** over `prev ‖ canonical(actor, action, detail)` | Editing or deleting a row — **only when `PAM_AUDIT_HMAC_KEY` is set** | `internal/store/store.go`, `pgstore`, `memstore` |
+| Signed head (opt-in) | **Ed25519** over the running head | **Truncating the tail** — which a hash chain alone cannot detect. Needs `PAM_AUDIT_SIGN_SEED` **and** the HMAC key | `internal/auditchain`, `internal/api/handlers.go` |
 | Broker chain (agents) | HMAC-SHA-256 + **in-chain Ed25519 checkpoints** every N events | Same, for the separate AI-agent trail; forging a checkpoint needs the signing key too | `internal/auditchain/auditchain.go` |
 | Truncation floor | `?min_entries=N` against an archived checkpoint's count | Truncation with no out-of-band anchor | `internal/auditchain` (`VerifyFloor`) |
 | Signer publication | **JWKS** (`OKP`/Ed25519, `EdDSA`) at `GET /v1/audit/jwks` | Lets an external verifier check checkpoints, including across a signer rotation | `internal/api/broker_handlers.go` |
@@ -236,8 +250,8 @@ attacker which check failed.
 | **WinRM** (WS-Management SOAP) | `internal/winrm` | **HTTPS by default** (`PAM_WINRM_HTTPS=true`); Basic or **NTLM** |
 | **guacd** (Guacamole protocol) for RDP | `internal/guacd` | **Plain TCP on this hop** — keep guacd on a private network; guacd→RDP is cert-verified unless `PAM_GUACD_IGNORE_CERT` |
 | **LDAP/LDAPS** (Active Directory) | `internal/auth/ldap.go` | **`ldaps://` enforced** — the scheme is rejected otherwise, because bind passwords travel on it |
-| **Entra ID / OIDC** | `internal/auth/entra.go`, `internal/oidc` | Yes (HTTPS endpoints) |
-| **Syslog RFC 5424 / CEF / LEEF** (SIEM) | `internal/auditfwd` | Only with `PAM_AUDIT_FORWARD_PROTO=tls` — and then certificate verification is **always on**, with no skip knob. RFC 5425 octet framing over TLS |
+| **Entra ID / OIDC** | `internal/auth/entra.go`, `internal/oidc` | Entra URLs are constructed `https://`. For a **generic OIDC provider the scheme is not enforced** — an `http://` issuer would be accepted, unlike Vault Transit, which rejects one. Configure HTTPS endpoints |
+| **Syslog RFC 5424 / CEF / LEEF** (SIEM) | `internal/auditfwd` | Only with `PAM_AUDIT_FORWARD_PROTO=tls` — and then certificate verification is **always on**, with no skip knob. RFC 5425 octet-counted framing applies to the `rfc5424` format; CEF and LEEF stay newline-delimited on every transport |
 | **Alerts**: webhook, syslog, SMTP | `internal/alert` | Webhook per URL scheme; syslog no; SMTP **opportunistic** StartTLS |
 | **CyberArk Conjur** | `internal/conjur` | TLS 1.2, optional pinned CA. Sources `PAM_MASTER_KEY`/`PAM_API_KEY` at boot, fail-loud |
 | **AWS KMS** | `internal/vault/awskms.go` | Yes (SDK) |
@@ -258,6 +272,12 @@ per-statement audit and command control possible.
   synthesized `SSH_FX_PERMISSION_DENIED` (the target is never contacted), and a
   regex **path** denylist applies in **every** mode including downloads. A path you
   deny that can still be fetched is not denied.
+  **This inspector is fail-open**, and deliberately differs from the TDS proxy: a
+  stream it cannot frame is audited once (`sftp.parse_error`) and then forwarded
+  **un-inspected** — after that point neither the audit, the path denylist nor the
+  read-only refusals apply. The TDS path takes the opposite choice (refuses what
+  it cannot parse). If you need fail-closed file transfer, use
+  `PAM_SSH_SFTP=deny` and move transfers to an audited channel.
 - **PostgreSQL** — each `Query`/`Parse` is audited and recorded. The deprecated
   fast-path `FunctionCall` carries no SQL text, so it cannot be filtered; it is
   audited instead of being allowed to escape the trail silently.
@@ -302,8 +322,11 @@ against an in-process fake upstream, but no licensed instance exists in CI. See
 
 ## 4. Where verification is opt-in (read this before deploying)
 
-Being explicit is better than being reassuring. Each of these defaults to the
-permissive setting, warns at startup, and is annotated in the source:
+Being explicit is better than being reassuring. Most of these default to the
+permissive setting and are annotated in the source. **Startup warnings exist for
+the SSH host-key, both database upstream legs, both database operator legs and
+the plaintext portal — but not for the guacd hop or SMTP StartTLS**, so their
+absence in the log is not evidence of safety. The LDAP row is strict by default:
 
 | Leg | Default | Make it strict |
 |---|---|---|
@@ -316,15 +339,25 @@ permissive setting, warns at startup, and is annotated in the source:
 | LDAP | `ldaps://` enforced | (already strict; `PAM_LDAP_INSECURE_SKIP_VERIFY` is dev-only) |
 | SMTP alerts | opportunistic StartTLS | Use a webhook or TLS syslog for sensitive alerting |
 
-Every `InsecureSkipVerify` in the non-test code is one of: the loopback
-healthcheck probe, the LDAP dev toggle, or the two documented database
-trust-any fallbacks above. Every one carries a `#nosec` annotation with its
-reason — that is the convention, so an unexplained one is a review finding.
+There are **four** verification-skip knobs. Three appear as a literal
+`InsecureSkipVerify` in this repo — the loopback healthcheck probe, the LDAP dev
+toggle, and the two documented database trust-any fallbacks above — each carrying
+a `#nosec G402` or `//nolint:gosec` annotation with its reason. The fourth,
+`PAM_WINRM_INSECURE_SKIP_VERIFY`, will **not** show up in such a grep: the skip
+happens inside the `masterzen/winrm` dependency, which pamv1 hands the flag to.
+An unexplained skip in pamv1's own code is a review finding; this list is the
+whole set.
 
-**Air-gapped deployments** (`PAM_OT_AIRGAP`) default-deny every egressing
-integration, including the AWS-KMS KEK and Entra. Name a variable in
-`PAM_OT_AIRGAP_ALLOW` to assert it resolves inside the enclave. See
-[OT-DEPLOYMENT.md](OT-DEPLOYMENT.md).
+**Air-gapped deployments** (`PAM_OT_AIRGAP`) refuse to start alongside the
+egressing integrations they gate — the ITSM webhook, the vendor-attestation
+webhook, the SIEM forwarder, Conjur and the webhook alerter — and **hard-refuse**
+the AWS-KMS KEK and Entra outright. Name a variable in `PAM_OT_AIRGAP_ALLOW` to
+assert it resolves inside the enclave. Three caveats an auditor should know:
+**alerting is disabled entirely** under air-gap regardless of the allow-list (the
+alerter is replaced with a no-op, so allow-listing the webhook does not bring it
+back); the syslog and SMTP alert channels are not in the gate list at all; and
+`PAM_LDAP_URL` and `PAM_KEK_TRANSIT_ADDR` are **assumed in-enclave** — they are
+neither denied nor allow-listable. See [OT-DEPLOYMENT.md](OT-DEPLOYMENT.md).
 
 ---
 
@@ -335,18 +368,19 @@ For an auditor who wants the whole list on one screen.
 | Primitive | Used for |
 |---|---|
 | AES-256-GCM | Secrets at rest, recording chunks, local/PKCS#11 KEK wrap |
-| HMAC-SHA-256 | Audit chains, SCRAM, operator-cert challenge, SSH-CA challenge key derivation |
+| HMAC-SHA-256 | Audit chains, SCRAM, the operator-certificate challenge MAC (its key is derived by plain SHA-256 over a CA signature) |
 | SHA-256 | Key/token hashing, recording and export digests, recording hash chain, PKCE challenge |
 | HMAC-SHA-1 | TOTP only (RFC 6238 compatibility) |
-| MD5 | PostgreSQL MD5 auth only (wire-protocol mandated) |
-| Ed25519 | SSH host key, SSH CA, rotated SSH keys, audit checkpoints, JWKS |
+| MD5 | PostgreSQL MD5 auth (wire-protocol mandated) |
+| NTLMv2 (MD4 NT hash, HMAC-MD5) | Optional WinRM auth (`PAM_WINRM_AUTH=ntlm`) — implemented by the `go-ntlmssp`/`bodgit` dependencies, not by pamv1. Legacy by nature; prefer HTTPS + Basic, or Kerberos at the target |
+| Ed25519 | SSH host key, SSH CA, rotated SSH keys, audit checkpoints, JWKS, and `EdDSA` SPIFFE-SVID token verification |
 | RSA (PKCS#1 v1.5 + SHA-256) | OIDC/Entra/SVID token verification |
 | ECDSA P-256 | SVID `ES256` verification |
 | PBKDF2-HMAC-SHA-256 | SCRAM salted password |
 | Shamir over GF(2^8) | Break-glass M-of-N quorum |
-| TLS 1.2+ | Every configured TLS surface (explicit `MinVersion`) |
+| TLS 1.2+ | Every configured TLS surface sets an explicit `MinVersion`, except two client-side fallbacks that inherit Go's own 1.2 floor: the PostgreSQL upstream trust-any config and the SMTP StartTLS config |
 | `crypto/rand` | Every key, nonce, token, session id and CSP nonce |
-| `crypto/subtle` | Every secret comparison |
+| `crypto/subtle` | Every **direct** comparison of a secret-derived value (API/break-glass keys, TOTP, SSH-CA challenge, break-glass unseal). Per-user tokens, agent keys and app keys are verified by **hashed-index lookup** instead — the digest is the database key, so there is no value to compare in constant time |
 
 ---
 
