@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-07-28 · Reflects: Phases 0–52g + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35) and retention (36) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-07-29 · Reflects: Phases 0–55 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -761,9 +761,10 @@ Revocation now also **terminates in-flight target sessions**, not just login
 tokens: revoking a user's login (or disabling them in the directory) kills their
 live SSH/DB/RDP sessions, and deleting a *user* grant to a target kills that
 user's session to that target (sessions to still-authorized targets keep running).
-Deleting a *role* grant only affects new connections. Note the session registry is
-per-replica, so in a multi-replica deployment this cuts sessions on the replica
-that handled the request (see the HA notes in [SECURITY-GAPS.md](SECURITY-GAPS.md)).
+Deleting a *role* grant only affects new connections. In a multi-replica
+deployment the kill is broadcast over the store's kill bus (Phase 34), so it cuts
+the session on whichever replica hosts it (see the HA notes in
+[SECURITY-GAPS.md](SECURITY-GAPS.md)).
 
 ### Roles at a glance
 
@@ -1564,12 +1565,20 @@ curl -N https://pam.example/api/sessions/<id>/stream -H "X-API-Key: $PAM_API_KEY
 The stream **ends when the session does** — completed or killed — so the portal
 pane reports "session ended" rather than sitting silent; and watching an id
 that is not live is refused with 404 instead of subscribing you to a stream
-that will never speak. The liveness check is **replica-local** (the 404 body
-says "not live on this replica"): in a multi-replica deployment behind a
-non-sticky load balancer, a session hosted on another replica is refused, not
-streamed — cross-replica live *monitoring* is a known gap even though the kill
-below does cross replicas. Refused watches are audited (`session.monitor` with
-a `refused:` detail), so probing session ids leaves a trace.
+that will never speak. In a multi-replica deployment both calls are
+**cluster-wide** (Phase 55): the listing merges a shared inventory in which each
+session names its hosting replica (`"replica"` in the JSON), and a watch request
+landing on the "wrong" replica still streams — the hosting pod relays the
+session's output over the store bus, only while someone is watching, and the
+watch is audited with a `via:relay` marker. If the hosting replica crashes
+mid-watch, the stream closes within ~45 seconds (its inventory rows age out)
+rather than hanging. A session unknown anywhere is refused 404 (with the bus
+down, the refusal wording falls back to "not live on this replica"); refused
+watches are audited (`session.monitor` with a `refused:` detail), so probing
+session ids leaves a trace. One thing stays with the hosting replica: deciding
+a **paused step-up** — a remote supervisor sees the pause in the relayed
+stream, but `POST /api/sessions/{id}/stepup` must reach the replica hosting
+the session.
 
 It works for SSH, PostgreSQL and WinRM sessions — the proxy's interactive WinRM
 shell streams the same bytes its recording sees, and a REST or agent-broker
@@ -1894,6 +1903,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 |---|---|
 | 2026-07-29 | **Phase 54 — VNC connector.** `vnc` is a target protocol: create it like any other (default port 5900) and open it from *Work with Targets* → option **7**, the same key as RDP — the portal picks the viewer from the target's protocol. It reuses your guacd deployment and `PAM_GUACD_RECORDING_PATH`, and the clipboard policy (`PAM_RDP_CLIPBOARD` plus any per-target override) applies unchanged; VNC's SFTP file channel is always off. Two things to know: VNC is **plaintext with no server authentication** and its password is DES-truncated to 8 characters, so keep guacd and the targets on a trusted segment (see [PROTOCOLS-AND-CRYPTO §3.5](PROTOCOLS-AND-CRYPTO.md)); and if guacd cannot enforce a non-permissive clipboard policy the session is **refused** (`vnc.refused reason:clipboard-unenforceable`) rather than run ungated. |
 | 2026-07-29 | **Phase 53 — SQL Server session proxy.** `PAM_MSSQL_ADDR` (default `off`) brokers `mssql` targets over TDS exactly as `PAM_DB_ADDR` brokers PostgreSQL: same authorization gates, JIT credential injection into the client's own LOGIN7, per-statement `db.query` audit (`via:mssql`), command control that **sees through `sp_executesql`**, in-session step-up, recording, live monitoring and cluster-wide kill. Connect with `sqlcmd -S pam.example,1433 -U '<dbcred>@<target>' -P "$PAM_TOKEN"`. Set `PAM_TLS_CERT/KEY` — modern TDS clients require encryption and will refuse a plaintext proxy. Integrated/Windows auth is not brokered (SQL authentication only). See §5 → *Database targets (SQL Server)*. |
+| 2026-07-29 | **Phase 55 — cross-replica live monitoring.** In a multi-replica deployment, `GET /api/sessions` now lists every replica's sessions (each naming its host in a new `"replica"` field) and `GET /api/sessions/{id}/stream` watches a session hosted on any replica — the hosting pod relays the output over the database, only while someone is watching, and the watch is audited `session.monitor … via:relay`. A crashed hosting replica closes the remote stream within ~45s instead of hanging it. Nothing to configure: it activates with the store (Postgres in HA; the demo store behaves as before), and a failed bus subscription falls back to replica-local with a startup warning. Still replica-local by design: deciding a paused step-up (`POST /api/sessions/{id}/stepup` must reach the hosting replica) and the `PAM_MAX_SESSIONS_*` caps. See §5 (monitoring) and the HA notes in REQUIREMENTS.md |
 | 2026-07-29 | **Review fixes on #81–#84.** Broker audit keys: an explicit env value is now **written through to shared custody** (mixed fleets and later unsetting can no longer silently fork the chain; a disagreeing explicit HMAC key refuses to start, a disagreeing seed is the signer-rotation path and custody converges to it). WinRM: the recording size cap now **ends** a WinRM session with `session.record_limit` (parity with SSH) instead of letting it continue unrecorded with a frozen live stream; a REST/broker run's output reaches live watchers only **after** the durable `winrm.run` audit (the withheld-result contract now also binds the stream); refused runs (blocked / recording-required / decrypt-failed) publish an explanatory notice and blocked/errored runs leave a transcript (`session.record`). Broker `ssh_exec` now **streams live** like `winrm_exec` (echo + output, output withheld on audit failure). Per-target clipboard: an unrecognizable stored override now enforces as **deny** (fail closed) instead of silently ranking as allow, and the overrides ride the `target.create`/`target.update` audit details. Live watch: the 404 is replica-honest ("not live on this replica") and refused watches are audited. Portal: watch-pane lines no longer end in a literal `\r`. See §5, §9.4 and the broker section. |
 | 2026-07-29 | **The watch stream ends with the session.** A supervisor's live watch (`GET /api/sessions/{id}/stream`, portal option 5) now terminates the moment the watched session completes or is killed — the pane reports "session ended" instead of sitting silent forever — and watching an unknown or already-over session id is refused with 404. See §9.4. |
 | 2026-07-29 | **Per-target RDP clipboard override (Phase 33 follow-on).** A target's `rdp_clipboard` / `rdp_clipboard_audit` fields (portal *Add/Change Target*, create/update API) tighten the global `PAM_RDP_CLIPBOARD` / `_AUDIT` for that one target — the stricter policy always wins, so a high-sensitivity target can deny what the fleet allows and no target row can loosen a global deny. The effective mode is what `rdp.connect` audits. See §5 and the RDP section. |

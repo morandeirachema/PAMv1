@@ -3,7 +3,7 @@
 > Every protocol pamv1 speaks or brokers, and every cryptographic mechanism it
 > relies on — with the file that implements each one.
 >
-> Last updated: 2026-07-29 · Reflects: Phases 0–54.
+> Last updated: 2026-07-29 · Reflects: Phases 0–55.
 
 > 🟢 **Living document** — updated in the same change as the code. Whenever a
 > protocol, cipher, key, TLS posture or transport-security env var changes, this
@@ -258,7 +258,7 @@ attacker which check failed.
 | **Alerts**: webhook, syslog, SMTP | `internal/alert` | Webhook per URL scheme; syslog no; SMTP **opportunistic** StartTLS |
 | **CyberArk Conjur** | `internal/conjur` | TLS 1.2, optional pinned CA. Sources `PAM_MASTER_KEY`/`PAM_API_KEY` at boot, fail-loud |
 | **AWS KMS** | `internal/vault/awskms.go` | Yes (SDK) |
-| **PostgreSQL LISTEN/NOTIFY** | `internal/store/pgstore/killbus.go` | Per connection string — the cross-replica kill bus |
+| **PostgreSQL LISTEN/NOTIFY** | `internal/store/pgstore/killbus.go`, `livebus.go` | Per connection string — the cross-replica kill bus and the interest-gated live-monitor relay (Phase 55: watched-session output frames, base64 in JSON, chunked under NOTIFY's ~8000-byte payload limit) |
 | **TCP reachability probes** | `internal/discovery` | n/a — connect-only, ports 22/1433/3389/5985/5986 |
 
 The **identity blast-radius engine** (`internal/blast`) is worth calling out for
@@ -445,5 +445,6 @@ For an auditor who wants the whole list on one screen.
 
 | Date | Change |
 |---|---|
+| 2026-07-29 | **Phase 55 — cross-replica live monitoring.** No new protocol on the wire and no new cryptography: the live-monitor relay is two more `LISTEN/NOTIFY` channels beside the Phase 34 kill bus, riding the store connection and therefore its TLS (`sslmode` in `PAM_DATABASE_URL`) — which is now also what protects **watched-session output in transit between replicas**, a fact worth knowing when choosing `sslmode`. Frames are JSON with base64 data, chunked under NOTIFY's ~8000-byte limit; NOTIFY payloads are not persisted, and the new `live_sessions` inventory table holds session *metadata* only (actor, target, protocol, replica, timestamps — never output bytes or credentials). Outbound table updated |
 | 2026-07-29 | **Phase 54 — the VNC connector.** New §3.5: VNC is brokered through guacd like RDP but brings no security of its own — plaintext RFB, DES authentication over an 8-character-truncated password, and no server authentication — which is the whole argument for keeping the credential server-side and guacd private. `enable-sftp` is forced off (VNC's analog of RDP drive redirection), and a clipboard policy guacd does not advertise the parameters to enforce now **refuses the session** rather than running ungated (this check covers RDP too). Summary, inbound/outbound tables, the opt-in-verification table and the cryptographic inventory (DES) updated with it |
 | 2026-07-29 | First version, written from a file-by-file audit of the code: the vault envelope and its four KEK providers, recording sealing + hash chain, the two audit chains and their Ed25519 checkpoints, shared key custody, authentication-secret handling, SSH/ZSP/operator-certificate crypto, PostgreSQL SCRAM and TDS's keyless transform, the three token verifiers, supply-chain signing — plus the full inbound/outbound protocol matrix, the brokered (parsed) protocols, the TDS strictness rationale, and a single table of every place verification is opt-in. |

@@ -151,6 +151,11 @@ type Options struct {
 	// Live is the live-session output hub (shared with the proxy) that backs the
 	// GET /api/sessions/{id}/stream monitoring endpoint (Phase 16).
 	Live *session.Hub
+	// Cluster (optional) is the cross-replica live-monitoring coordinator
+	// (Phase 55): GET /api/sessions lists cluster-wide and the stream endpoint
+	// can watch a session hosted on another replica. nil = replica-local, the
+	// pre-HA behavior.
+	Cluster *session.Cluster
 	// StepUp coordinates in-session step-up approvals with the DB proxy (Phase 30):
 	// a supervisor decides a paused statement via POST /api/sessions/{id}/stepup.
 	StepUp *session.StepUp
@@ -286,6 +291,7 @@ type Server struct {
 	trustedProxyHops   int
 	sessions           *session.Registry
 	live               *session.Hub
+	cluster            *session.Cluster
 	stepup             *session.StepUp
 	breakGlassHash     []byte
 	bgThreshold        int
@@ -488,6 +494,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		trustedProxyHops:   opts.TrustedProxyHops,
 		sessions:           opts.Sessions,
 		live:               opts.Live,
+		cluster:            opts.Cluster,
 		stepup:             opts.StepUp,
 		breakGlassHash:     bgHash,
 		bgThreshold:        opts.BreakGlassThreshold,

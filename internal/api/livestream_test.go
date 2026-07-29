@@ -11,6 +11,7 @@ import (
 
 	"github.com/morandeirachema/pamv1/internal/api"
 	"github.com/morandeirachema/pamv1/internal/session"
+	"github.com/morandeirachema/pamv1/internal/store/memstore"
 )
 
 // TestSessionStreamSSE proves an authorized supervisor can watch a live session
@@ -240,5 +241,159 @@ func TestSessionStreamUnknownSessionRefused(t *testing.T) {
 	code, body := do(t, srv, http.MethodGet, "/api/sessions/no-such-session/stream", testAPIKey, nil)
 	if code != http.StatusNotFound {
 		t.Fatalf("watching an unknown session: %d %s, want 404", code, body)
+	}
+}
+
+// TestSessionStreamRemoteReplica proves the Phase 55 story end to end at the
+// API: a supervisor's SSE request lands on replica B for a session hosted on
+// replica A, and still streams the session's output — B announces interest
+// over the shared store bus, A's hub forwards each published chunk, B's
+// bridge feeds its local hub, and the same handler serves the frames. Killing
+// the story's tail too: when A removes the session, B's stream ends. Also
+// asserts GET /api/sessions on B lists A's session (cluster-wide inventory)
+// and that the cross-replica watch is audited with via:relay.
+func TestSessionStreamRemoteReplica(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := memstore.New()
+
+	// Replica A: hosts the session. Only its registry/hub/cluster exist here —
+	// no HTTP server; it stands in for the pod the LB did NOT pick.
+	regA := session.NewRegistry()
+	hubA := session.NewHub()
+	regA.AttachHub(hubA)
+	if _, err := session.StartCluster(ctx, st, regA, hubA, "replica-a"); err != nil {
+		t.Fatalf("StartCluster(a): %v", err)
+	}
+	id := regA.Register(session.Info{Actor: "alice", Target: "web-01", Protocol: "ssh"}, func() {})
+
+	// Replica B: the API server the supervisor reached.
+	regB := session.NewRegistry()
+	hubB := session.NewHub()
+	regB.AttachHub(hubB)
+	clusterB, err := session.StartCluster(ctx, st, regB, hubB, "replica-b")
+	if err != nil {
+		t.Fatalf("StartCluster(b): %v", err)
+	}
+	srv, _ := newTestServerStoreOpts(t, nil, st, api.Options{Sessions: regB, Live: hubB, Cluster: clusterB})
+
+	// The cluster-wide listing shows A's session from B, naming its replica.
+	code, body := do(t, srv, http.MethodGet, "/api/sessions", testAPIKey, nil)
+	if code != http.StatusOK || !strings.Contains(string(body), id) || !strings.Contains(string(body), "replica-a") {
+		t.Fatalf("GET /api/sessions on B = %d %s, want 200 listing %s on replica-a", code, body, id)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/sessions/"+id+"/stream", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-API-Key", testAPIKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("remote stream status = %d, want 200", resp.StatusCode)
+	}
+
+	// Interest propagates asynchronously; publish on A until a frame arrives.
+	stop := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				hubA.Publish(id, []byte("remote-live-output-55"))
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+	}()
+	br := bufio.NewReader(resp.Body)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			close(stop)
+			t.Fatal("did not receive the remote session's frame over SSE")
+		}
+		line, err := br.ReadString('\n')
+		if err != nil {
+			close(stop)
+			t.Fatalf("reading SSE stream: %v", err)
+		}
+		if strings.Contains(line, "remote-live-output-55") {
+			break
+		}
+	}
+	close(stop)
+
+	// Ending the session on A ends the supervisor's stream on B.
+	regA.Remove(id)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			if _, err := br.ReadString('\n'); err != nil {
+				return
+			}
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("SSE stream still open after the remote session ended")
+	}
+
+	// The cross-replica watch is audited, marked via:relay.
+	events, err := st.ListAudit(context.Background(), 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Action == "session.monitor" && strings.Contains(e.Detail, "session:"+id) &&
+			strings.Contains(e.Detail, "via:relay") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no session.monitor via:relay audit event; got %+v", events)
+	}
+}
+
+// TestSessionStreamClusterUnknownRefused proves that with the cluster wired, a
+// watch on an id unknown ANYWHERE is refused 404 with the cluster-checked
+// wording and audited — the pre-Phase-55 refusal blamed the replica; this one
+// can honestly say the session is not live at all.
+func TestSessionStreamClusterUnknownRefused(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := memstore.New()
+	reg := session.NewRegistry()
+	hub := session.NewHub()
+	reg.AttachHub(hub)
+	cluster, err := session.StartCluster(ctx, st, reg, hub, "replica-solo")
+	if err != nil {
+		t.Fatalf("StartCluster: %v", err)
+	}
+	srv, _ := newTestServerStoreOpts(t, nil, st, api.Options{Sessions: reg, Live: hub, Cluster: cluster})
+
+	code, body := do(t, srv, http.MethodGet, "/api/sessions/no-such-session/stream", testAPIKey, nil)
+	if code != http.StatusNotFound || !strings.Contains(string(body), "not live (unknown or already ended)") {
+		t.Fatalf("cluster-checked unknown watch = %d %s, want 404 with the cluster wording", code, body)
+	}
+	events, err := st.ListAudit(context.Background(), 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Action == "session.monitor" && strings.Contains(e.Detail, "refused:not-live") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("refused cluster watch left no session.monitor audit event")
 	}
 }

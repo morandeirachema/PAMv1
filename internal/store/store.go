@@ -880,6 +880,14 @@ type Store interface {
 	PublishSessionKill(ctx context.Context, sel session.KillSelector) error
 	SubscribeSessionKills(ctx context.Context) (<-chan session.KillSelector, error)
 
+	// session.LiveStore is the cross-replica live-monitoring surface (Phase 55):
+	// the frame + interest bus that fans a watched session's output to the
+	// replica whose supervisor is watching it, and the shared live-session
+	// inventory behind cluster-wide GET /api/sessions. pgstore rides
+	// LISTEN/NOTIFY plus an UNLOGGED table; memstore fans out in-process, so
+	// the demo and tests drive the same session.Cluster code the HA path does.
+	session.LiveStore
+
 	// UpsertMFAEnrollment creates or replaces a user's TOTP enrollment.
 	UpsertMFAEnrollment(ctx context.Context, e *MFAEnrollment) error
 	// GetMFAEnrollment returns a user's TOTP enrollment, or ErrNotFound.
