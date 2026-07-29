@@ -40,6 +40,13 @@ spec:
           envFrom:
             - secretRef:
                 name: pam-secrets
+            # Non-secret PAM_* knobs (configmap.example.yaml). optional: true, so
+            # the pod still starts when you have not created it — every value in
+            # it has a working default. The `env:` entries below are set on the
+            # container and therefore WIN over anything with the same name here.
+            - configMapRef:
+                name: pam-config
+                optional: true
           env:
             - name: PAM_SSH_HOST_KEY
               value: /data/ssh_host_key

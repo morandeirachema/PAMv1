@@ -82,8 +82,14 @@ Requires **1.25+** for the restricted [Pod Security Standard](https://kubernetes
 the manifests/chart assume. Two paths:
 
 ```bash
-# Raw manifests
-kubectl apply -f deploy/k8s/
+# Raw manifests — copy the two *.example.yaml files first and edit them; do NOT
+# `kubectl apply -f deploy/k8s/` wholesale, or you apply the CHANGE_ME examples.
+cd deploy/k8s
+cp secret.example.yaml    secret.yaml       # keys and credentials
+cp configmap.example.yaml configmap.yaml    # non-secret PAM_* knobs (optional)
+kubectl apply -f namespace.yaml -f postgres-cnpg.yaml
+kubectl apply -f secret.yaml -f configmap.yaml
+kubectl apply -f deployment.yaml -f service.yaml
 
 # Or Helm (deploy/helm/pamv1)
 helm install pamv1 deploy/helm/pamv1 \
@@ -91,6 +97,11 @@ helm install pamv1 deploy/helm/pamv1 \
   --set secret.data.PAM_API_KEY=... \
   --set secret.data.PAM_DATABASE_URL='postgres://...?sslmode=verify-full'
 ```
+
+The two example files are the Kubernetes twin of `deploy/docker/.env.example` —
+the same variables, split by whether the value is a secret. See
+[deploy/k8s/README.md](../deploy/k8s/README.md) for the full file map and the
+three ways Kubernetes configuration differs from the Docker path.
 
 Pod spec (defaults in `deploy/k8s/deployment.yaml` and the chart):
 

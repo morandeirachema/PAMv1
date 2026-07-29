@@ -61,11 +61,42 @@ networkPolicy:
     cnpg.io/cluster: pamv1-pg
 
 # Non-secret configuration passed as environment variables (PAM_*).
+#
+# Every key here is rendered verbatim into the Deployment, so quote values —
+# including numbers and booleans ("0", "false"). The commented entries below are
+# the knobs most deployments touch; the EXHAUSTIVE, grouped reference is
+# deploy/k8s/configmap.example.yaml (and its Docker twin, deploy/docker/.env.example).
+# Anything whose value is a path needs the file mounted into the pod — see the
+# volume example in that file.
 config:
   PAM_LOG_FORMAT: "json"
   PAM_LOG_LEVEL: "info"
   PAM_SSH_HOST_KEY: "/data/ssh_host_key"
   PAM_RECORDING_DIR: "/data/recordings"
+
+  # Listeners (the HTTP port must match service.httpPort)
+  # PAM_DB_ADDR: ":5433"                 # PostgreSQL session proxy   [off]
+  # PAM_MSSQL_ADDR: ":1433"              # SQL Server (TDS) proxy     [off]
+
+  # Behind an Ingress, count the proxy hops so rate limiting sees the real client
+  # PAM_TRUSTED_PROXY_HOPS: "1"
+
+  # Session evidence and limits (caps are per-replica)
+  # PAM_REQUIRE_RECORDING: "false"
+  # PAM_RECORDING_ENCRYPT: "false"
+  # PAM_MAX_SESSIONS_PER_USER: "0"
+  # PAM_ALLOWED_PROTOCOLS: "ssh,winrm"
+
+  # Clipboard policy for the in-portal RDP and VNC viewers
+  # PAM_RDP_CLIPBOARD: "allow"           # allow | readonly | deny
+  # PAM_RDP_CLIPBOARD_AUDIT: "off"       # off | meta | full
+
+  # Retention and SIEM forwarding (both leader-locked: one replica per pass)
+  # PAM_RECORDING_RETENTION_DAYS: "0"
+  # PAM_AUDIT_RETENTION_DAYS: "0"
+  # PAM_AUDIT_FORWARD_ADDR: "siem.internal:6514"
+  # PAM_AUDIT_FORWARD_PROTO: "tls"
+
   # OT / compliance toggles (see docs/OT-DEPLOYMENT.md, docs/NIS2-COMPLIANCE.md)
   # PAM_REQUIRE_APPROVAL: "true"
   # PAM_OT_AIRGAP: "true"
@@ -78,11 +109,15 @@ config:
 secret:
   create: false
   existingSecret: ""
+  # The full set of secret-valued variables — audit-chain keys, KEK provider
+  # credentials, LDAP/OIDC secrets — is listed in deploy/k8s/secret.example.yaml.
   data:
     PAM_MASTER_KEY: ""      # ./pam-server -genkey
     PAM_API_KEY: ""
     PAM_DATABASE_URL: ""    # postgres://... (use sslmode=verify-full)
     # PAM_BREAK_GLASS_KEY_HASH: ""
+    # PAM_AUDIT_HMAC_KEY: ""      # openssl rand -base64 32; enables the audit chain
+    # PAM_AUDIT_SIGN_SEED: ""     # openssl rand -base64 32; signs head checkpoints
 
 # Writable state for the read-only root FS (SSH host key + recordings).
 persistence:
