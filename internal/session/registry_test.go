@@ -45,3 +45,48 @@ func TestRegistryOrdering(t *testing.T) {
 		t.Fatalf("expected oldest first, got %+v", list)
 	}
 }
+
+// TestRemoveEndsWatchStreams proves the registry→hub link: with a hub attached,
+// removing a session (the path every session end funnels through — normal
+// completion and kills alike) closes its live watch streams; without the
+// attachment, removal leaves the hub alone.
+func TestRemoveEndsWatchStreams(t *testing.T) {
+	reg := NewRegistry()
+	hub := NewHub()
+	reg.AttachHub(hub)
+
+	sid := reg.Register(Info{Actor: "op", Target: "web-01", Protocol: "ssh"}, func() {})
+	if !reg.Exists(sid) {
+		t.Fatal("registered session not reported by Exists")
+	}
+	frames, cancel := hub.Subscribe(sid)
+	defer cancel()
+
+	reg.Remove(sid)
+	if reg.Exists(sid) {
+		t.Fatal("removed session still reported by Exists")
+	}
+	select {
+	case _, open := <-frames:
+		if open {
+			t.Fatal("got a frame instead of a close after Remove")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("watch stream not closed by Remove")
+	}
+
+	// Without an attached hub, Remove must leave subscriptions alone.
+	lone := NewRegistry()
+	sid2 := lone.Register(Info{Actor: "op", Target: "web-02", Protocol: "ssh"}, func() {})
+	frames2, cancel2 := hub.Subscribe(sid2)
+	defer cancel2()
+	lone.Remove(sid2)
+	select {
+	case _, open := <-frames2:
+		if !open {
+			t.Fatal("Remove closed a stream with no hub attached")
+		}
+		t.Fatal("unexpected frame")
+	default: // still open — correct
+	}
+}
