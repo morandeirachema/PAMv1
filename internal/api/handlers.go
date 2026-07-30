@@ -148,18 +148,42 @@ func (s *Server) killSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
+	// The id is attacker-chosen and percent-decoded out of the path, so it is
+	// quoted and bounded before it can become part of an audit detail — it could
+	// otherwise carry newlines or forged `key:value` pairs into a column the
+	// retention worker refuses to prune when the HMAC chain is on.
+	qid := auditField(id, 64)
+
+	// Refuse an id that no replica is hosting. Without this the 404 branch below
+	// was DEAD CODE — `main` wires the kill bus unconditionally, so KillDistributed
+	// always found a bus and every unknown id came back 202 Accepted plus a
+	// `session.kill … scope:cluster` audit row: the trail asserted kills that never
+	// happened, for sessions that may never have existed. The cluster inventory is
+	// the authority here; without it (no relay) we genuinely cannot tell, and
+	// dispatching remains the honest answer.
+	if s.cluster != nil && !s.sessions.Exists(id) {
+		known, err := s.cluster.Exists(r.Context(), id)
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		if !known {
+			writeError(w, http.StatusNotFound, "session not found")
+			return
+		}
+	}
 	switch s.sessions.KillDistributed(id) {
 	case session.KillLocal:
-		s.audit(r.Context(), "session.kill", "session:"+id)
+		s.audit(r.Context(), "session.kill", "session:"+qid)
 		w.WriteHeader(http.StatusNoContent)
 	case session.KillDispatched:
-		s.audit(r.Context(), "session.kill", "session:"+id+" scope:cluster")
+		s.audit(r.Context(), "session.kill", "session:"+qid+" scope:cluster")
 		w.WriteHeader(http.StatusAccepted)
 	case session.KillDispatchFailed:
 		// The session is on another replica and the broadcast did not get there.
 		// Say so: reporting 202 would tell an operator the privileged session was
 		// cut off while it kept running.
-		s.audit(r.Context(), "session.kill_failed", "session:"+id+" scope:cluster reason:broadcast-failed")
+		s.audit(r.Context(), "session.kill_failed", "session:"+qid+" scope:cluster reason:broadcast-failed")
 		writeError(w, http.StatusServiceUnavailable, "the session is on another replica and the kill could not be broadcast; retry")
 	default:
 		writeError(w, http.StatusNotFound, "session not found")

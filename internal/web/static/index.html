@@ -129,6 +129,12 @@
       body: body ? JSON.stringify(body) : undefined,
     });
     if (res.status === 204) return null;
+    // 202 means ACCEPTED, not done: the kill was broadcast to the cluster because
+    // the session is hosted on another replica, and nothing here has confirmed it
+    // died. Reporting it as success is how the portal used to say "SESSION ENDED"
+    // for a kill it could not vouch for — including, before the API was fixed, for
+    // ids that never existed.
+    if (res.status === 202) return { __accepted: true };
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const err = new Error((data.error || res.statusText).toUpperCase());
@@ -935,8 +941,8 @@ Live proxied sessions (auto-refresh 5s). Type options, press Enter.
   <span class="cyan">${[canKill ? "4=End session (kill)" : "", "5=Watch (live monitor)"].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Actor</th><th>Target</th><th>Proto</th><th>Remote</th><th>Started</th></tr>
-${sessions.map((s) => `<tr><td>${opt(s.id)}</td><td>${pad(String(s.id).slice(0, 8), 9)}</td><td>${pad(s.actor, 14)}</td><td>${pad(s.target, 14)}</td><td>${pad(s.protocol, 5)}</td><td>${pad(s.remote, 20)}</td><td class="cyan">${fmtTime(s.started)}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Actor</th><th>Target</th><th>Proto</th><th>Remote</th><th>Replica</th><th>Started</th></tr>
+${sessions.map((s) => `<tr><td>${opt(s.id)}</td><td>${pad(String(s.id).slice(0, 8), 9)}</td><td>${pad(s.actor, 14)}</td><td>${pad(s.target, 14)}</td><td>${pad(s.protocol, 5)}</td><td>${pad(s.remote, 20)}</td><td>${pad(s.replica || "this pod", 12)}</td><td class="cyan">${fmtTime(s.started)}</td></tr>`).join("")}
 </table>${sessions.length ? "" : `<div class="cyan indent">(No active sessions.)</div>`}
 <input type="submit" hidden></form>
 ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
@@ -945,7 +951,16 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
           try {
             for (const s of sessions) {
               const o = optVal(ev.target, s.id);
-              if (o === "4") { await api("DELETE", `/api/sessions/${s.id}`); say(`SESSION ${String(s.id).slice(0, 8)} ENDED.`); }
+              if (o === "4") {
+                const res = await api("DELETE", `/api/sessions/${s.id}`);
+                // 202: the session lives on another replica, so the kill was
+                // broadcast and not yet confirmed. Saying "ENDED" here would tell
+                // an operator a privileged session was cut off when nothing has
+                // confirmed that — the very distinction the API's 503 path exists
+                // to preserve.
+                if (res && res.__accepted) say(`KILL DISPATCHED FOR ${String(s.id).slice(0, 8)} (HOSTED ON ${(s.replica || "ANOTHER REPLICA").toUpperCase()}); VERIFY WITH F5.`);
+                else say(`SESSION ${String(s.id).slice(0, 8)} ENDED.`);
+              }
               else if (o === "5") { return watchSession(s); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
@@ -1016,7 +1031,7 @@ Statements paused mid-session, waiting for a supervisor. ${canDecide ? `Type opt
 <form id="f-list"><table>
 <tr><th>Opt</th><th>Session</th><th>Actor</th><th>Statement</th><th>Paused at</th></tr>
 ${stepUps.map((p) => `<tr><td>${canDecide ? opt(p.session_id) : ""}</td><td>${pad(String(p.session_id).slice(0, 8), 9)}</td><td class="white">${pad(p.actor, 12)}</td><td class="amber">${pad(p.statement, 46)}</td><td class="cyan">${fmtTime(p.requested_at)}</td></tr>`).join("")}
-</table>${stepUps.length ? "" : `<div class="cyan indent">(Nothing is waiting. Paused statements appear here the moment they match PAM_DB_STEPUP_FILE.)</div>`}
+</table>${stepUps.length ? "" : `<div class="cyan indent">(Nothing is waiting on THIS pod. Paused statements appear here the moment they match PAM_DB_STEPUP_FILE — but a pause is held by the replica running the session, so in a multi-replica deployment decide it there.)</div>`}
 <input type="submit" hidden></form>
 <span class="cyan">These expire: a statement left undecided is refused when its TTL runs out. The session stays open either way.</span>
 ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
