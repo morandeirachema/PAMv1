@@ -18,18 +18,20 @@ import (
 // kill notification is degraded reach, not a stall, and the caller has already
 // applied the kill to its own replica.
 func (m *Memstore) PublishSessionKill(_ context.Context, sel session.KillSelector) error {
+	// Under the lock, and SubscribeSessionKills closes under the same lock: a
+	// snapshot-then-send-after-unlock version can send on a channel the ctx-cancel
+	// goroutine has already closed, which panics (`select`/`default` does not
+	// protect a send on a closed channel). Same defect as the live bus, which was
+	// modelled on this file; every send here is non-blocking, so holding the lock
+	// costs nothing.
 	m.killMu.Lock()
-	subs := make([]chan session.KillSelector, 0, len(m.killSubs))
 	for ch := range m.killSubs {
-		subs = append(subs, ch)
-	}
-	m.killMu.Unlock()
-	for _, ch := range subs {
 		select {
 		case ch <- sel:
 		default:
 		}
 	}
+	m.killMu.Unlock()
 	return nil
 }
 
@@ -45,8 +47,8 @@ func (m *Memstore) SubscribeSessionKills(ctx context.Context) (<-chan session.Ki
 		<-ctx.Done()
 		m.killMu.Lock()
 		delete(m.killSubs, ch)
-		m.killMu.Unlock()
 		close(ch)
+		m.killMu.Unlock()
 	}()
 	return ch, nil
 }

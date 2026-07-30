@@ -118,6 +118,10 @@ const (
 	// live view is lossy by design, exactly like a slow local watcher; the
 	// recording remains the faithful copy.
 	forwardQueueSize = 1024
+	// endMarkerEnqueueWait bounds how long a session teardown waits to hand its
+	// end marker to the publisher queue. Short on purpose: teardown is on the
+	// session's own path, and the staleness backstop covers a dropped marker.
+	endMarkerEnqueueWait = 500 * time.Millisecond
 	// busOpTimeout bounds every store call the cluster machinery makes, so a
 	// hung store can never wedge a session's registration or teardown path.
 	busOpTimeout = 5 * time.Second
@@ -144,6 +148,15 @@ type Cluster struct {
 	// or Registry while holding imu.
 	imu      sync.Mutex
 	interest map[string]time.Time
+
+	// rmu guards removed — a short-lived tombstone set of session ids whose
+	// inventory rows have been deleted. Without it the heartbeat can RESURRECT a
+	// dead session: it snapshots the registry, a session ends (deleting its row),
+	// and the pending upsert re-inserts it with a fresh seen-at stamp. Nothing
+	// deletes it again, so it stays listed and 200-watchable for inventoryMaxAge
+	// while its watchers get silence. A leaf lock like the two below.
+	rmu     sync.Mutex
+	removed map[string]time.Time
 
 	// wmu guards watched — this replica's remote watches, refcounted per
 	// session id so N supervisors watching the same remote session share one
@@ -191,6 +204,7 @@ func StartCluster(ctx context.Context, st LiveStore, reg *Registry, hub *Hub, re
 		announceEvery: interestEvery,
 		ttl:           interestTTL,
 		interest:      make(map[string]time.Time),
+		removed:       make(map[string]time.Time),
 		watched:       make(map[string]int),
 		frames:        make(chan LiveFrame, forwardQueueSize),
 	}
@@ -327,13 +341,30 @@ func (c *Cluster) sessionRegistered(info Info) {
 // kill). Uses a background context: teardown must still reach the store when
 // the server context is already winding down, bounded by busOpTimeout.
 func (c *Cluster) sessionRemoved(id string) {
+	// Tombstone first: from here on the heartbeat must not re-upsert this id, even
+	// if it snapshotted the registry a moment ago.
+	c.rmu.Lock()
+	c.removed[id] = time.Now()
+	c.rmu.Unlock()
+
 	ctx, cancel := context.WithTimeout(context.Background(), busOpTimeout)
 	defer cancel()
 	if err := c.st.DeleteLiveSession(ctx, id); err != nil {
 		slog.Warn("live inventory: session delete failed; the row will age out", "session", id, "err", err)
 	}
-	if err := c.st.PublishLiveFrame(ctx, LiveFrame{ID: id, Kind: LiveFrameEnd}); err != nil {
-		slog.Warn("live relay: end marker publish failed; remote watchers will close on staleness", "session", id, "err", err)
+	// The end marker goes through the SAME queue as the data frames, not straight
+	// to the bus. Publishing it directly raced the queue: an exec-shaped run
+	// (broker ssh_exec, REST WinRM) publishes its whole output and then releases
+	// the session microseconds later, so the end could reach the bus first and a
+	// remote watcher would see the command echo, then stream-end, and never the
+	// output — the same "ran silently" failure the local path was fixed for.
+	// A short wait rather than a drop: this frame closes watchers' panes, and the
+	// only thing that makes the queue full is a bus that is already failing.
+	select {
+	case c.frames <- LiveFrame{ID: id, Kind: LiveFrameEnd}:
+	case <-time.After(endMarkerEnqueueWait):
+		slog.Warn("live relay: end marker could not be queued; remote watchers will close on staleness",
+			"session", id)
 	}
 }
 
@@ -464,10 +495,28 @@ func (c *Cluster) runAnnouncer(ctx context.Context) {
 			}
 		}
 		c.imu.Unlock()
+		// Tombstones only need to outlive an in-flight heartbeat pass; keeping them
+		// for twice the freshness window is generous and bounds the map.
+		c.rmu.Lock()
+		for id, at := range c.removed {
+			if now.Sub(at) > 2*c.maxAge {
+				delete(c.removed, id)
+			}
+		}
+		c.rmu.Unlock()
 		if n := c.dropped.Swap(0); n > 0 {
 			slog.Warn("live relay: forward queue overflowed; remote watchers missed output frames", "dropped", n)
 		}
 	}
+}
+
+// wasRemoved reports whether a session has been torn down recently enough that
+// the heartbeat must not re-upsert its inventory row.
+func (c *Cluster) wasRemoved(id string) bool {
+	c.rmu.Lock()
+	_, ok := c.removed[id]
+	c.rmu.Unlock()
+	return ok
 }
 
 // runHeartbeat re-upserts this replica's live sessions so their inventory rows
@@ -483,16 +532,26 @@ func (c *Cluster) runHeartbeat(ctx context.Context) {
 			return
 		case <-tick.C:
 		}
-		hctx, cancel := context.WithTimeout(ctx, busOpTimeout)
-		for _, info := range c.reg.List() {
-			info.Replica = c.replica
-			if err := c.st.PutLiveSession(hctx, info); err != nil {
-				if ctx.Err() == nil {
-					slog.Warn("live inventory: heartbeat upsert failed", "err", err)
-				}
-				break // one failure means the store is down; retry next beat
-			}
+		c.heartbeatOnce(ctx)
+	}
+}
+
+// heartbeatOnce refreshes this replica's inventory rows once. Split out from the
+// loop so a test can drive exactly one pass and pin the resurrection bug the
+// tombstone set exists to prevent.
+func (c *Cluster) heartbeatOnce(ctx context.Context) {
+	hctx, cancel := context.WithTimeout(ctx, busOpTimeout)
+	defer cancel()
+	for _, info := range c.reg.List() {
+		if c.wasRemoved(info.ID) {
+			continue // ended between the snapshot and now; do not resurrect it
 		}
-		cancel()
+		info.Replica = c.replica
+		if err := c.st.PutLiveSession(hctx, info); err != nil {
+			if ctx.Err() == nil {
+				slog.Warn("live inventory: heartbeat upsert failed", "err", err)
+			}
+			return // one failure means the store is down; retry next beat
+		}
 	}
 }

@@ -38,18 +38,23 @@ type liveRow struct {
 // than blocking the publisher — the live view is lossy by design; the
 // recording is the faithful copy.
 func (m *Memstore) PublishLiveFrame(_ context.Context, f session.LiveFrame) error {
+	// The sends happen UNDER the lock, and SubscribeLive closes under the same
+	// lock after removing the channel from the map. Snapshotting the subscribers
+	// and sending after unlocking is the obvious-looking version and it panics:
+	// the ctx-cancel goroutine can close a channel that a publisher still holds in
+	// its snapshot, and `select`/`default` does not protect a send on a closed
+	// channel. Reproduced as `send on closed channel` at shutdown, where every
+	// ending session publishes an end marker on a background context while the
+	// subscriber contexts are being cancelled. Holding the lock is cheap because
+	// every send here is already non-blocking.
 	m.liveMu.Lock()
-	subs := make([]chan session.LiveFrame, 0, len(m.frameSubs))
 	for ch := range m.frameSubs {
-		subs = append(subs, ch)
-	}
-	m.liveMu.Unlock()
-	for _, ch := range subs {
 		select {
 		case ch <- f:
 		default:
 		}
 	}
+	m.liveMu.Unlock()
 	return nil
 }
 
@@ -57,18 +62,15 @@ func (m *Memstore) PublishLiveFrame(_ context.Context, f session.LiveFrame) erro
 // every current subscriber, non-blocking like the frame bus — a lost
 // announcement is re-sent by the announcer within seconds.
 func (m *Memstore) PublishLiveInterest(_ context.Context, sessionID string) error {
+	// Under the lock, for the reason spelled out in PublishLiveFrame.
 	m.liveMu.Lock()
-	subs := make([]chan string, 0, len(m.interestSubs))
 	for ch := range m.interestSubs {
-		subs = append(subs, ch)
-	}
-	m.liveMu.Unlock()
-	for _, ch := range subs {
 		select {
 		case ch <- sessionID:
 		default:
 		}
 	}
+	m.liveMu.Unlock()
 	return nil
 }
 
@@ -84,12 +86,14 @@ func (m *Memstore) SubscribeLive(ctx context.Context) (<-chan session.LiveFrame,
 	m.liveMu.Unlock()
 	go func() {
 		<-ctx.Done()
+		// Delete AND close under the lock, so a concurrent publisher can never be
+		// mid-send on a channel this is closing.
 		m.liveMu.Lock()
 		delete(m.frameSubs, frames)
 		delete(m.interestSubs, interest)
-		m.liveMu.Unlock()
 		close(frames)
 		close(interest)
+		m.liveMu.Unlock()
 	}()
 	return frames, interest, nil
 }
