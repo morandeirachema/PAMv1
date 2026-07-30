@@ -1,0 +1,53 @@
+[Unit]
+Description=pamv1 Privileged Access Management
+Documentation=https://github.com/morandeirachema/pamv1
+# The env file is written by pamv1-firstboot. Requiring it means a failed first
+# boot leaves this service DOWN and visible, rather than up with no vault key.
+After=network-online.target postgresql.service pamv1-firstboot.service
+Wants=network-online.target
+Requires=postgresql.service pamv1-firstboot.service
+AssertPathExists=/etc/pamv1/pamv1.env
+
+[Service]
+Type=simple
+User=pamv1
+Group=pamv1
+EnvironmentFile=/etc/pamv1/pamv1.env
+ExecStart=/usr/local/bin/pam-server
+# The container HEALTHCHECK equivalent: -healthcheck probes the local /healthz.
+ExecStartPost=/bin/sh -c 'for i in $(seq 1 30); do /usr/local/bin/pam-server -healthcheck && exit 0; sleep 1; done; exit 1'
+Restart=on-failure
+RestartSec=5s
+
+# --- Sandboxing --------------------------------------------------------------
+# pamv1 needs: its state dir, the loopback network, and outbound access to
+# targets. It never needs root, devices, kernel tunables or anything under /home.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+AmbientCapabilities=
+# The only writable paths.
+ReadWritePaths=/var/lib/pamv1
+StateDirectory=pamv1
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

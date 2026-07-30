@@ -1,0 +1,21 @@
+[Unit]
+Description=pamv1 first-boot initialisation (per-appliance keys)
+Documentation=https://github.com/morandeirachema/pamv1
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+# Idempotent by its own check, but this keeps it out of the way on every
+# subsequent boot.
+ConditionPathExists=!/etc/pamv1/pamv1.env
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/pamv1-firstboot
+# The generated admin key is echoed here so it reaches the VirtualBox console and
+# the journal — an appliance nobody can log into is not much of an appliance.
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

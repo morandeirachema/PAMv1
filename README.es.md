@@ -458,6 +458,28 @@ simularse.
 
 > Las **especificaciones de ejecución** (puertos, recursos, versiones de Docker/Kubernetes, PostgreSQL, almacenamiento, dimensionado) están en **[docs/REQUIREMENTS.md](docs/REQUIREMENTS.md)**.
 
+### Aparato virtual (VirtualBox / VMware)
+
+Todo el sistema en una sola máquina virtual importable: Debian 13, PostgreSQL, el
+binario y el código fuente completo. Lo construye
+[`deploy/ova/build.sh`](deploy/ova/) con QEMU, sin necesidad de root, de
+VirtualBox ni de Packer:
+
+```bash
+cd deploy/ova && ./build.sh          # ~15 min; → ~/.cache/pamv1-ova/*.ova
+VBoxManage import ~/.cache/pamv1-ova/pamv1-appliance-13.6.0.ova
+VBoxManage modifyvm pamv1-appliance --natpf1 "portal,tcp,127.0.0.1,8080,,8080"
+VBoxManage startvm pamv1-appliance --type headless
+# → http://127.0.0.1:8080 — la clave de administración se genera en el primer
+#   arranque y se imprime en la consola de la VM (y en /root/pamv1-credentials.txt)
+```
+
+En la imagen no va grabado ningún secreto: la clave maestra del vault, la clave de
+administración, la contraseña de la base de datos y las claves de host SSH se
+generan en el **primer arranque**, así que dos importaciones de la misma OVA nunca
+comparten una raíz de confianza. Véase
+[deploy/ova/README.md](deploy/ova/README.md).
+
 ### Demo local (sin base de datos)
 
 ```bash
