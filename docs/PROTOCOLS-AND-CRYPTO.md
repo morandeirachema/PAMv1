@@ -258,7 +258,7 @@ attacker which check failed.
 | **Alerts**: webhook, syslog, SMTP | `internal/alert` | Webhook per URL scheme; syslog no; SMTP **opportunistic** StartTLS |
 | **CyberArk Conjur** | `internal/conjur` | TLS 1.2, optional pinned CA. Sources `PAM_MASTER_KEY`/`PAM_API_KEY` at boot, fail-loud |
 | **AWS KMS** | `internal/vault/awskms.go` | Yes (SDK) |
-| **PostgreSQL LISTEN/NOTIFY** | `internal/store/pgstore/killbus.go`, `livebus.go` | Per connection string — the cross-replica kill bus and the interest-gated live-monitor relay (Phase 55: watched-session output frames, base64 in JSON, chunked under NOTIFY's ~8000-byte payload limit) |
+| **PostgreSQL LISTEN/NOTIFY** | `internal/store/pgstore/killbus.go`, `livebus.go` | Per connection string. The live-monitor relay's payloads are additionally **sealed with AES-256-GCM** under a shared-custody key (`internal/session/livecrypto.go`) — necessary because NOTIFY channels have no privilege model, so `sslmode` protects the hop but not the *readers* of the channel. The kill bus is not yet sealed (see [SECURITY-GAPS](SECURITY-GAPS.md)) |
 | **TCP reachability probes** | `internal/discovery` | n/a — connect-only, ports 22/1433/3389/5985/5986 |
 
 The **identity blast-radius engine** (`internal/blast`) is worth calling out for

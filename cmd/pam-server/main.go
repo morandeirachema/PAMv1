@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -732,9 +733,42 @@ func run() error {
 	// replica whose supervisor is watching. Best-effort like the kill bus — a
 	// subscribe failure logs and leaves listing + watching replica-local.
 	replicaName, _ := os.Hostname()
-	cluster, cerr := session.StartCluster(ctx, st, sessions, liveHub, replicaName)
-	if cerr != nil {
-		log.Warn("session live bus unavailable; session listing and live watch are replica-local", "err", cerr)
+	// The bus key lives in shared custody (KEK-sealed in the store, converged on by
+	// every replica, re-wrapped by -rotate-kek) like the SSH host key and the
+	// broker's audit keys. It is not configurable: the transport has no access
+	// control, so relaying session content without it would put live privileged
+	// output on a channel any database session can read.
+	var cluster *session.Cluster
+	busKey, _, bkerr := keycustody.Ensure(ctx, st, v, keycustody.NameLiveBusKey, "", func() ([]byte, error) {
+		k := make([]byte, session.LiveBusKeySize)
+		if _, rerr := rand.Read(k); rerr != nil {
+			return nil, rerr
+		}
+		return []byte(base64.StdEncoding.EncodeToString(k)), nil
+	})
+	if bkerr != nil {
+		log.Warn("live-bus key custody failed; session listing and live watch stay replica-local", "err", bkerr)
+	} else {
+		rawBusKey, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(string(busKey)))
+		if derr != nil || len(rawBusKey) != session.LiveBusKeySize {
+			log.Warn("live-bus key in custody is malformed; session listing and live watch stay replica-local")
+		} else {
+			c, cerr := session.StartCluster(ctx, session.ClusterConfig{
+				Store: st, Registry: sessions, Hub: liveHub, Replica: replicaName, BusKey: rawBusKey,
+				Audit: func(actx context.Context, action, detail string) {
+					if aerr := st.AppendAudit(actx, &store.AuditEvent{
+						Actor: "relay", Action: action, Detail: detail, TS: time.Now().UTC(),
+					}); aerr != nil {
+						log.Error("relay audit append failed", "action", action, "err", aerr)
+					}
+				},
+			})
+			if cerr != nil {
+				log.Warn("session live bus unavailable; session listing and live watch are replica-local", "err", cerr)
+			} else {
+				cluster = c
+			}
+		}
 	}
 
 	// Command control (Phase 16): compile the deny file, if configured, into ONE
