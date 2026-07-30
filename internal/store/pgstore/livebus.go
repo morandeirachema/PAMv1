@@ -71,6 +71,13 @@ func (s *PGStore) SubscribeLive(ctx context.Context) (<-chan session.LiveFrame, 
 		defer close(interest)
 		for ctx.Err() == nil {
 			if err := s.listenLive(ctx, frames, interest); err != nil && ctx.Err() == nil {
+				// Log it. The LISTEN happens here, in a goroutine, so this error was
+				// the ONLY evidence that the live bus is dead — and it was discarded,
+				// making SubscribeLive's unconditional `nil` return a promise it could
+				// not keep and main's "best-effort, we warn" fallback unreachable.
+				// Behind a transaction-pooling pgbouncer, or with a wedged pool, every
+				// re-LISTEN failed silently forever while pg_notify still succeeded.
+				s.log.Warn("cross-replica live bus listener failed; retrying", "err", err)
 				// Lost the listener connection: back off briefly, then re-LISTEN.
 				select {
 				case <-ctx.Done():
