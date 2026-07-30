@@ -198,7 +198,6 @@ Still open from that sweep, in the order they are being worked:
 - **No upstream proxy leg has a deadline after the TCP connect**, so a target that accepts and goes silent parks a goroutine forever holding a just-decrypted credential — between the session cap and registration, so uncounted, unlisted and unkillable. LDAP likewise has no request timeout.
 - **Secret-delivering paths that audit best-effort**: MFA enrollment and recovery-code generation, the broker's `reveal_credential`/`rotate_credential` tools, break-glass quorum unseal (whose *failures* are not audited at all), the step-up decision (applied before it is audited), and the WORM archive digest (best-effort while the prune proceeds).
 - **Unbounded work**: WinRM output is buffered with no cap and copied several times; every proxy connection reads the entire target inventory; the discovery scan has no time bound.
-- **Twelve documented claims the code no longer supports**, including the README's "the whole session is TLS on both legs" for SQL Server (the operator leg carrying the PAM key is cleartext unless `PAM_TLS_CERT/KEY` is set) and `ROADMAP.md`'s own "Phases 0–52g are shipped".
 
 The rest of that sweep's findings — including three Phase 55 defects (a
 reproduced `send on closed channel` panic in the memstore live bus, an end marker

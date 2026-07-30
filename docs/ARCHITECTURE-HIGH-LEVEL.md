@@ -179,7 +179,7 @@ flowchart LR
     OP["  Operators  "] -->|"HTTPS / SSH"| POD
 ```
 
-`*` HA Postgres is Phase 10; single instance today.
+`*` HA Postgres ships: `deploy/k8s/postgres-cnpg.yaml` is a CloudNativePG `Cluster` with three instances, and `pamv1-pg-rw` follows the primary across a failover.
 
 ## 7. Change log
 

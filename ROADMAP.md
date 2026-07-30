@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–52g are shipped.** The narrative that follows traces the arc through
+**Phases 0–55 are shipped.** The narrative that follows traces the arc through
 Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -203,7 +203,7 @@ Mapping to [Directive (EU) 2022/2555](https://eur-lex.europa.eu/eli/dir/2022/255
 - [x] **HA — OIDC login state shared** via the store (migration `0004`, `store.PutOIDCState`/`TakeOIDCState`), so the auth-code callback can land on any replica. The auth rate-limiter stays best-effort per-replica; break-glass quorum-unseal keeps its shares in memory **by design** (persisting key shares to the DB would weaken the offline-shares guarantee — use a sticky session or a single replica for the unseal flow)
 - [x] **Postgres HA** via [CloudNativePG](https://cloudnative-pg.io/): a 3-instance `Cluster` manifest (`deploy/k8s/postgres-cnpg.yaml`, automatic failover, scram-sha-256, optional PITR)
 - [x] **Terraform module for cloud-managed Postgres** (`deploy/terraform/cloud-postgres/` — AWS RDS example: multi-AZ, encrypted, `force_ssl`)
-- [x] **SLSA build provenance** attested by the release pipeline (not yet exercised — no tags exist) (`actions/attest-build-provenance` in `release.yml`, pushed to the registry alongside the cosign signature + SBOM)
+- [x] **SLSA build provenance** attested by the release pipeline (exercised for the first time by the v0.10.0 tag on 2026-07-28) (`actions/attest-build-provenance` in `release.yml`, pushed to the registry alongside the cosign signature + SBOM)
 
 ## Phase 11 — Management console ✅
 

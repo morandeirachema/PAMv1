@@ -111,7 +111,7 @@ Schema is applied by an embedded **migration runner** (`pgstore/migrate.go`):
 ordered `migrations/*.sql` files run once each in a transaction, tracked in a
 `schema_migrations` table. `0001_init.sql` is the idempotent baseline (safe on a
 pre-migrations database); later changes are new numbered files (through the latest
-numbered migration — `0024_target_rdp_clipboard.sql` at time of writing), applied under a
+numbered migration — `0025_live_sessions.sql` at time of writing), applied under a
 `pg_advisory_lock` so concurrent replicas don't race. Tables: `targets`,
 `credentials` (FK `ON DELETE CASCADE`), `target_grants`, `audit_events` (with the
 optional `prev_hash`/`hmac` chain columns from `0018`), `users`, `sessions`,
@@ -217,7 +217,7 @@ endpoints arrive with the OT/approval phase).
   endpoints accept — `authz` and the proxy reject it (403 / `session.denied`)
   until enrollment is confirmed and the user re-logs in with a full session.
 - Handlers validate input (os_type ∈ {linux,windows}, protocol ∈
-  {ssh,winrm,rdp,postgres}), translate store errors to HTTP codes, and append
+  {ssh,winrm,rdp,vnc,postgres,mssql}), translate store errors to HTTP codes, and append
   audit events.
 - **Edit-in-place + bounded lists** (Phase 44): `PUT /api/targets/{id}`,
   `/api/safes/{id}` (both `CapManageTargets`), `/api/users/{id}` and
@@ -295,7 +295,7 @@ endpoints arrive with the OT/approval phase).
     is dead. `GET /api/checkouts` lists them. Honors `PAM_REVEAL_DISABLED`.
   - **Discovery** (`internal/discovery`, `POST /api/discovery/scan`, needs
     `CapManageTargets`): TCP-probes hosts for known management ports
-    (22→ssh, 5985/5986→winrm, 3389→rdp) and, with `create:true`, onboards new
+    (22→ssh, 1433→mssql, 3389→rdp, 5900→vnc, 5985/5986→winrm) and, with `create:true`, onboards new
     targets. Reachability only — no credentials are used.
 
 - **Access-request approval** (`approval_handlers.go`, Phase 8 — OT 4-eyes):
@@ -550,6 +550,8 @@ cancelled shutdown context so they are not dropped mid-drain.
 | `PAM_MAX_SESSIONS_PER_USER` | `0` (∞) | cap concurrent live proxied sessions per actor (checked before decrypt; per-replica) |
 | `PAM_MAX_SESSIONS_TOTAL` | `0` (∞) | cap concurrent live proxied sessions across all actors (per-replica) |
 | `PAM_MAX_RECORDING_MB` | `0` (∞) | cap a single session recording's output (MB); a session that exceeds it is terminated (`session.record_limit`) rather than run unrecorded |
+| `PAM_RECORDING_ENCRYPT` | `false` | seal session recordings at rest: a per-recording data key wrapped by the KEK (Phase 41). The audited SHA-256 is taken over the bytes on disk, so the tamper-evidence still describes the stored artifact |
+| `PAM_SECRETS_PROVIDER` | "" (env/SOPS) | selects the bootstrap-secret source explicitly; `conjur` makes `PAM_CONJUR_URL` required so a misconfigured deploy fails loudly instead of silently falling back to env vars |
 | `PAM_RECORDING_OPAQUE_NAMES` | `false` | name recording files `<unixnano>_<random hex>` instead of `<unixnano>_<target>_<actor>` (Phase 48), so the volume/backup leaks no access metadata; the mapping lives in the audited `session.record`/`winrm.run` event and `GET /api/recordings` resolves it back (read_audit) |
 | `PAM_APPROVAL_WINDOW_MIN` | `60` | how long an approved access request stays valid |
 | `PAM_CHECKOUT_TTL_MIN` | `30` | credential checkout lease lifetime (minutes) |

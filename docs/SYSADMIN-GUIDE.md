@@ -416,8 +416,9 @@ api -X POST $PAM/api/credentials/1/rotate
 
 # Does the vaulted secret still authenticate? (drift detection)
 api -X POST $PAM/api/credentials/1/reconcile
-# Reconcile the whole estate on a schedule (safe, read-only unless you add ?remediate=true)
-api -X POST $PAM/api/reconcile
+# Reconcile the whole estate on a schedule (read-only: this endpoint never
+# remediates -- ?remediate=true is honoured only by the per-credential route above)
+api $PAM/api/reconcile
 ```
 
 Turn on the background worker to age-rotate automatically:
@@ -470,7 +471,7 @@ event, it refuses to hand out the secret.
 |---|---|---|
 | **Tamper-evident audit** | HMAC-chain the whole audit trail + ed25519 signed checkpoints, so edits, reorders, deletions, and tail-truncation are all detectable (`GET /api/audit/verify` and `/head`) | `PAM_AUDIT_HMAC_KEY`, `PAM_AUDIT_SIGN_SEED` (see ADMIN §9.2) |
 | **Kill-on-revoke** | Revoking a login, disabling a directory user, or deleting a user's grant terminates their matching live sessions — **cluster-wide**: a kill issued on any replica reaches the replica hosting the session, over Postgres `LISTEN/NOTIFY`. If the bus cannot subscribe (a connection pooler in transaction mode will stop it), the server **warns at startup** and the kill switch degrades to replica-local — grep the logs for that warning, because it is a security control failing quietly (not just future ones) | on by default when the session registry is wired (see §6.7) |
-| **Session recording** | Full replay of every proxied session; hash in the audit trail. Optionally **sealed at rest** (`PAM_RECORDING_ENCRYPT`) and **opaque-named** (`PAM_RECORDING_OPAQUE_NAMES`) so the volume leaks no metadata | on by default; `PAM_REQUIRE_RECORDING=true` refuses an unrecordable session — and since Phase 52c that covers **all five** paths to a target, not just the proxies: SSH, PostgreSQL, WinRM-through-proxy, the in-portal **RDP viewer** (needs `PAM_GUACD_RECORDING_PATH`, else 503 + `rdp.refused`) and the **REST WinRM endpoint** (needs `PAM_RECORDING_DIR`, else `winrm.refused`). **If you set this flag, set both paths** |
+| **Session recording** | Full replay of every proxied session; hash in the audit trail. Optionally **sealed at rest** (`PAM_RECORDING_ENCRYPT`) and **opaque-named** (`PAM_RECORDING_OPAQUE_NAMES`) so the volume leaks no metadata | on by default; `PAM_REQUIRE_RECORDING=true` refuses an unrecordable session — and since Phase 52c that covers **every** path to a target, not just the proxies: SSH, PostgreSQL, **SQL Server**, WinRM-through-proxy, the in-portal **RDP** and **VNC** viewers (both need `PAM_GUACD_RECORDING_PATH`, else 503 + `rdp.refused`/`vnc.refused`) and the **REST WinRM endpoint** (needs `PAM_RECORDING_DIR`, else `winrm.refused`). **If you set this flag, set both paths** |
 | **Command control** | Block dangerous commands by regex on **every** path where a discrete command is visible — SSH exec, the WinRM proxy loop, SQL, the REST WinRM endpoint, the agent broker's exec tools, and dependent-account propagation. **Fail-loud:** a deny file that is unreadable, or that yields no usable patterns, is **fatal at startup** — an unmounted ConfigMap now stops the server instead of silently disabling the control | `PAM_COMMAND_DENY_FILE` |
 | **SFTP file-transfer control** | The proxy parses the SFTP subsystem stream: audits every file operation, refuses writes/deletes in `readonly`, and denies paths by regex in *every* mode including downloads. `deny` refuses the subsystem outright. Same fail-loud rule on its deny file | `PAM_SSH_SFTP`, `PAM_SSH_SFTP_DENY_FILE` |
 | **VNC desktops** | Brokered through guacd like RDP and rendered in the portal; JIT password injection, audited, recorded, same clipboard gate | `protocol: vnc`, `PAM_GUACD_ADDR` |
