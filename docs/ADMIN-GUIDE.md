@@ -259,7 +259,8 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_CHECKOUT_TTL_MIN` | | `30` | Credential checkout lease lifetime (minutes). |
 | `PAM_VENDOR_ATTEST_URL` | | (off) | Employment-attestation webhook consulted when a vendor contract grant is approved (Phase 29): pamv1 `POST`s `{"vendor":…,"org":…}` and the vendor-management system answers `2xx` for a currently-employed technician, so access is refused the moment their own employer offboards them. See §7. |
 | `PAM_VENDOR_SWEEP_INTERVAL_MIN` | | `0` (off) | How often the sweeper cuts a vendor's **live** session once its contract grant's window closes (`vendor.session_expired`), so access ends with the contract rather than at the next connect. |
-| `PAM_OT_AIRGAP` | | `false` | Disable all outbound calls (alert webhooks) for air-gapped sites. |
+| `PAM_OT_AIRGAP` | | `false` | Air-gapped sites. Forces the no-op alerter **and refuses to start** alongside anything that would call out of the enclave — the ITSM webhook, vendor attestation, the SIEM forwarder, Conjur, the alert webhook and `PAM_OIDC_ISSUER` — and rejects `PAM_KEK_PROVIDER=aws-kms` and `PAM_ENTRA_TENANT_ID` outright. It is a fail-closed startup gate, not a mute switch. |
+| `PAM_OT_AIRGAP_ALLOW` | | — | Comma-separated variable names you certify resolve **inside** the enclave, re-permitting them under air-gap. Without this the gate has no escape hatch, which is why an air-gapped site with an internal SIEM could not start. |
 | `PAM_ALERT_WEBHOOK` | | (off) | HTTP endpoint POSTed a JSON alert on break-glass access/unseal and newly flagged risk (Slack/PagerDuty/…). Use HTTPS — a plaintext or non-loopback `http://` URL is warned about at startup. |
 | `PAM_ALERT_SYSLOG` | | (off) | Syslog collector for the same alerts — `udp://host:port` or `tcp://host:port` (a bare `host:port` is treated as UDP). This is per-*alert*; to stream the whole trail use `PAM_AUDIT_FORWARD_ADDR`. |
 | `PAM_ALERT_EMAIL_SMTP` / `_FROM` / `_TO` | | (off) | SMTP server (`host:port`), envelope sender, and comma-separated recipients for email alerts — **all three or none** (validated fail-loud). `PAM_ALERT_EMAIL_USER` / `_PASS` add SMTP auth. |
@@ -1077,7 +1078,7 @@ export PAM_BROKER_POLICY_FILE=/etc/pam/broker-policy.yaml
 ```
 
 **Policy** is ordered, **first-match-wins**, and **implicit-deny** (no match =
-denied). Conditions match an argument's value exactly (no regex/numeric/OR):
+denied). Conditions match an argument's value exactly, and since Phase 30 also support `not`, `in`, `not_in` and the numeric comparators `gt`, `gte`, `lt`, `lte` (`in`/`not_in` are a set membership, i.e. an OR). No regex:
 
 ```yaml
 rules:
@@ -1295,7 +1296,7 @@ is skipped, so an interrupted run can simply be run again rather than leaving a
 half-rotated store.
 
 > ⚠️ **Keep the old KEK for as long as you keep sealed recordings.** A sealed
-> session recording (`PAM_RECORDING_KEY_*`) carries its own data key wrapped
+> session recording (`PAM_RECORDING_ENCRYPT*`) carries its own data key wrapped
 > **inside the file** by whichever KEK was current when it was written, so a KEK
 > rotation does not re-wrap it — and `-rotate-kek` deliberately does not try.
 > Rewriting a recording would change its bytes, and the SHA-256 of those exact
@@ -1594,8 +1595,9 @@ replicas** (Postgres `LISTEN`/`NOTIFY`), so it terminates the session wherever i
 is hosted — and the same cluster-wide broadcast backs the revoke cascade, vendor
 offboarding and the analytics auto-kill. The response is **204** when the session
 was on the replica you hit and **202 Accepted** when the kill was dispatched to
-the cluster. (Live *monitoring* is still served from the pod hosting the session;
-only the kill is cluster-wide.)
+the cluster. (Since Phase 55 live *monitoring* and session *listing* cross
+replicas too, over an interest-gated, sealed relay. Deciding a paused step-up is
+the one thing still handled by the replica hosting the session.)
 
 **Command control.** Point `PAM_COMMAND_DENY_FILE` at a file of regular
 expressions (one per line, `#` comments). A command matching any pattern is

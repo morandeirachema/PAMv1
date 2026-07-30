@@ -4,7 +4,7 @@
 > whenever the VNC path (the guacd handshake, the tunnel prelude, the token
 > endpoint, or the in-portal viewer) changes.
 >
-> Last updated: 2026-07-29 · Reflects: Phases 0–54 (VNC shipped in 54).
+> Last updated: 2026-07-29 · Reflects: Phases 0–55 (VNC shipped in 54).
 
 This is the procedure to verify pamv1's **VNC function** end to end: an operator
 opens a VNC target from the 5250 portal, the credential is injected server-side
