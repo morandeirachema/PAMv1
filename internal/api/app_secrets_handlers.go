@@ -175,6 +175,21 @@ func (s *Server) grantAppSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "credential_id is required")
 		return
 	}
+	// Enforce the rule this handler's own doc comment states: you may only delegate
+	// a secret you could reveal yourself. Without it the grant laundered a secret
+	// past every gate reveal obeys — per-target grants, safe membership, the
+	// approval window and the vendor contract — because GET /v1/app-secrets/{id}
+	// then vends the plaintext on the app's grant alone. With PAM_REQUIRE_APPROVAL
+	// set, POST /api/credentials/42/reveal was refused without an approved request
+	// while POST /v1/apps/3/grants {"credential_id":42} handed over the same
+	// secret with no approval at all.
+	cred, target, ok := s.loadCredentialTarget(w, r, in.CredentialID)
+	if !ok {
+		return
+	}
+	if !s.gateCredentialAccess(w, r, target, cred.Username, "app.grant") {
+		return
+	}
 	g := store.AppSecretGrant{AppID: appID, CredentialID: in.CredentialID}
 	if err := s.store.GrantAppSecret(r.Context(), &g); err != nil {
 		storeError(w, err)

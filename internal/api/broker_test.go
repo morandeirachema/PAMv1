@@ -179,7 +179,7 @@ func TestBrokerLookupAndAuditRoutes(t *testing.T) {
 	fake := &fakeWinRM{result: winrm.Result{Stdout: "ok", ExitCode: 0}}
 	srv, _ := newTestServerOpts(t, nil, brokerOpts(t, fake, brokerRules))
 	seedWinRMTarget(t, srv, "win-l", "pw")
-	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-l"})
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-l", "owner": "alice"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
 	_, data := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok, map[string]any{"tool": "winrm_exec", "args": map[string]any{"target": "win-l", "command": "x"}})
 	callID, _ := jsonMap(t, data)["call_id"].(string)
@@ -206,7 +206,7 @@ func TestBrokerRequireApproval(t *testing.T) {
 	fake := &fakeWinRM{}
 	srv, _ := newTestServerOpts(t, nil, brokerOpts(t, fake, rules))
 	seedWinRMTarget(t, srv, "win-appr", "pw")
-	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-appr"})
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-appr", "owner": "alice"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
 	_, data := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok, map[string]any{"tool": "winrm_exec", "args": map[string]any{"target": "win-appr", "command": "x"}})
 	m := jsonMap(t, data)
@@ -256,7 +256,7 @@ func TestAgentRoleGrant(t *testing.T) {
 
 	// A user grant (not agent) means the agent is NOT authorized...
 	do(t, srv, http.MethodPost, fmt.Sprintf("/api/targets/%d/grants", tid), testAPIKey, map[string]any{"subject_type": "role", "subject": "user"})
-	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot"})
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot", "owner": "alice"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
 	if _, d := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok, map[string]any{"tool": "winrm_exec", "args": map[string]any{"target": "granted-win", "command": "x"}}); jsonMap(t, d)["status"] == "executed" {
 		t.Fatal("agent executed on a target granted only to role:user")
