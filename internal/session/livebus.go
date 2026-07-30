@@ -290,6 +290,23 @@ func (c *Cluster) List(ctx context.Context) ([]Info, error) {
 	return out, nil
 }
 
+// Exists reports whether a session id appears in the fresh cluster inventory —
+// i.e. whether any replica is currently hosting it. It is what lets the API refuse
+// an operation on an id nothing in the cluster knows about, instead of reporting
+// that the request was dispatched somewhere.
+func (c *Cluster) Exists(ctx context.Context, id string) (bool, error) {
+	rows, err := c.st.ListLiveSessions(ctx, c.maxAge)
+	if err != nil {
+		return false, err
+	}
+	for _, in := range rows {
+		if in.ID == id {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // WatchRemote begins a remote watch of session id: it verifies the id against
 // the fresh cluster inventory (false means unknown or already ended — the
 // caller refuses the watch) and announces interest so the hosting replica

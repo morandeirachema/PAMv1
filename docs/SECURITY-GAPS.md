@@ -194,8 +194,6 @@ does:
 
 Still open from that sweep, in the order they are being worked:
 
-- **`DELETE /api/sessions/{anything}` answers 202 and writes a `session.kill` audit row for a session that never existed**, with the raw path value unquoted in the detail; the 404 branch is unreachable because the kill bus is always wired. The portal then renders that 202 as `SESSION ENDED.`
-- **The step-up 404 is not replica-honest** ("no step-up is pending" when one is pending elsewhere), the pending list is silently empty for remote sessions, and the portal shows no `replica` column even though the API now returns one.
 - **Kill cascades audit only when the local count is non-zero**, so in HA a cluster-wide termination (revoke, vendor offboard, analytics auto-kill, certification revoke) can leave no evidence.
 - **No upstream proxy leg has a deadline after the TCP connect**, so a target that accepts and goes silent parks a goroutine forever holding a just-decrypted credential — between the session cap and registration, so uncounted, unlisted and unkillable. LDAP likewise has no request timeout.
 - **Secret-delivering paths that audit best-effort**: MFA enrollment and recovery-code generation, the broker's `reveal_credential`/`rotate_credential` tools, break-glass quorum unseal (whose *failures* are not audited at all), the step-up decision (applied before it is audited), and the WORM archive digest (best-effort while the prune proceeds).
