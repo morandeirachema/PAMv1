@@ -406,3 +406,51 @@ func TestSessionStreamClusterUnknownRefused(t *testing.T) {
 		t.Fatal("refused cluster watch left no session.monitor audit event")
 	}
 }
+
+// TestKillUnknownSessionIsRefused proves the kill endpoint no longer claims to
+// have dispatched a kill for a session no replica is hosting.
+//
+// `main` wires the kill bus unconditionally, so KillDistributed always found a bus
+// and the handler's 404 branch was DEAD CODE: every id — including one that never
+// existed — came back 202 Accepted plus a `session.kill … scope:cluster` audit row.
+// The trail asserted kills that never happened, and the portal rendered that 202
+// as "SESSION ENDED". With the cluster inventory as the authority, an unknown id is
+// a 404 and writes no audit row.
+func TestKillUnknownSessionIsRefused(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := memstore.New()
+	reg := session.NewRegistry()
+	hub := session.NewHub()
+	reg.AttachHub(hub)
+	cluster, err := session.StartCluster(ctx, session.ClusterConfig{
+		Store: st, Registry: reg, Hub: hub, Replica: "replica-a", BusKey: apiTestBusKey(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kerr := reg.StartKillBus(ctx, st, session.KillBusConfig{BusKey: apiTestBusKey()}); kerr != nil {
+		t.Fatal(kerr)
+	}
+	srv, _ := newTestServerStoreOpts(t, nil, st, api.Options{Sessions: reg, Live: hub, Cluster: cluster})
+
+	code, body := do(t, srv, http.MethodDelete, "/api/sessions/deadbeefdeadbeef", testAPIKey, nil)
+	if code != http.StatusNotFound {
+		t.Fatalf("killing a session no replica hosts: %d %s, want 404", code, body)
+	}
+	events, err := st.ListAudit(context.Background(), 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.Action == "session.kill" {
+			t.Fatalf("a kill was audited for a session that never existed: %s", e.Detail)
+		}
+	}
+
+	// A real session still kills locally, with a 204 that means "confirmed".
+	id := reg.Register(session.Info{Actor: "alice", Target: "web-01", Protocol: "ssh"}, func() {})
+	if code, body := do(t, srv, http.MethodDelete, "/api/sessions/"+id, testAPIKey, nil); code != http.StatusNoContent {
+		t.Fatalf("killing a live local session: %d %s, want 204", code, body)
+	}
+}

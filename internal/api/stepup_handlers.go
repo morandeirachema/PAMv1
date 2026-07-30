@@ -8,6 +8,12 @@ import (
 // listStepUps returns the sessions currently paused awaiting an in-session
 // step-up decision (Phase 30), so a supervisor can see what needs approval.
 // Requires CapReadAudit.
+//
+// REPLICA-LOCAL, deliberately: a paused statement blocks in the memory of the
+// replica hosting its session, so only that replica can list or release it. Since
+// Phase 55 made session listing and live watching cluster-wide, this is the one
+// session view that is still local — which is why decideStepUp answers 409 with an
+// explanation rather than a misleading 404 for a session hosted elsewhere.
 func (s *Server) listStepUps(w http.ResponseWriter, r *http.Request) {
 	if s.stepup == nil {
 		writeJSON(w, http.StatusOK, []any{})
@@ -48,6 +54,19 @@ func (s *Server) decideStepUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
+		// Be replica-honest. A paused statement blocks in the memory of the replica
+		// hosting the session, so "no step-up is pending" is false when one is
+		// pending elsewhere — and Phase 55 made that the visible case: a supervisor
+		// can now watch the pause arrive over the relay from another replica, so
+		// this endpoint was contradicting what they could see on screen. The watch
+		// endpoint was given exactly this treatment; its sibling was missed.
+		if s.cluster != nil && s.sessions != nil && !s.sessions.Exists(id) {
+			if known, kerr := s.cluster.Exists(r.Context(), id); kerr == nil && known {
+				writeError(w, http.StatusConflict,
+					"this session is hosted on another replica: a paused step-up is decided on the replica running the session")
+				return
+			}
+		}
 		writeError(w, http.StatusNotFound, "no step-up is pending for this session")
 		return
 	}
