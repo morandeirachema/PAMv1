@@ -52,6 +52,15 @@ type Config struct {
 	// UpstreamHostKey verifies the target's SSH host key (e.g. a known_hosts
 	// callback). nil trusts any upstream key — insecure, and logged loudly.
 	UpstreamHostKey ssh.HostKeyCallback
+	// OnBreakGlass, if set, is called when a session is opened with the emergency
+	// key. The proxies resolve their own principal outside the HTTP authz
+	// middleware, so — like every such entry point — they must raise the
+	// break-glass signal themselves; `main` points this at the alerter and the
+	// Prometheus counter. Without it an emergency-key SSH/DB session bypassed the
+	// approval gate leaving only a session.start row: no breakglass.access event,
+	// no alert, no metric.
+	OnBreakGlass func(ctx context.Context, actor, detail string)
+
 	// OnSessionEnd, if set, is called with the credential ID when a proxied
 	// session ends — used to force credential rotation after use. It runs in a
 	// goroutine and must not block.
@@ -130,6 +139,7 @@ type Proxy struct {
 	requireApprv bool
 	upstreamHKCB ssh.HostKeyCallback
 	onSessionEnd func(credentialID int64)
+	onBreakGlass func(ctx context.Context, actor, detail string)
 	allowedProto map[string]bool
 	winrm        winrm.Runner
 	upstreamDial func(addr string) (net.Conn, error)
@@ -183,6 +193,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		requireApprv: cfg.RequireApproval,
 		upstreamHKCB: cfg.UpstreamHostKey,
 		onSessionEnd: cfg.OnSessionEnd,
+		onBreakGlass: cfg.OnBreakGlass,
 		allowedProto: protocolSet(cfg.AllowedProtocols),
 		winrm:        cfg.WinRMRunner,
 		chain:        newRecordChain(cfg.RecordingDir),
@@ -260,6 +271,22 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 		p.audit(context.Background(), auditField(c.User(), 64), "proxy.auth_failed", "remote:"+remote)
 		return nil, fmt.Errorf("pamv1: authentication failed")
 	}
+	// A tunnel-scoped token (the in-portal RDP/VNC viewer) authenticates ONLY at
+	// its viewer tunnel. It travels in a WebSocket URL — browsers cannot set
+	// headers on a WS handshake — so a copy lifted from a reverse-proxy or access
+	// log must not open a shell. The HTTP middleware refuses it; this is the same
+	// refusal for the proxy, which resolves its own principal and would otherwise
+	// accept it as a password for ANY target the owner may reach, for an
+	// unbounded session, from a 60-second token.
+	if principal.TunnelOnly {
+		remote := c.RemoteAddr().String()
+		p.log.Warn("tunnel-scoped token presented to the SSH proxy", "actor", principal.Name, "remote", remote)
+		p.audit(context.Background(), principal.Name, "session.denied",
+			"login:"+auditField(c.User(), 64)+" remote:"+remote+" reason:tunnel-only-token")
+		return nil, fmt.Errorf("pamv1: authentication failed")
+	}
+	p.noteBreakGlass(context.Background(), principal, "ssh login:"+auditField(c.User(), 64)+" remote:"+c.RemoteAddr().String())
+
 	// A "+observe" suffix requests a read-only (view-only) session: the operator
 	// sees output but their keystrokes and exec requests are dropped.
 	login := c.User()
@@ -1422,6 +1449,53 @@ func (p *Proxy) audit(ctx context.Context, actor, action, detail string) {
 		actor = "proxy"
 	}
 	appendAudit(ctx, p.store, p.log, actor, action, detail)
+}
+
+// noteBreakGlass raises the emergency-access signal for a principal resolved by a
+// proxy. It is the proxies' twin of the API's Server.noteBreakGlass, and exists
+// for the same stated reason: every entry point that resolves its own principal
+// outside the HTTP authz middleware must raise this itself, or an emergency-key
+// privileged session goes unnoticed.
+//
+// Before this, break-glass through the SSH, PostgreSQL or SQL Server proxy was
+// used ONLY to skip the four-eyes approval gate. The single trace was a
+// session.start row whose actor happened to read `break-glass` — no
+// breakglass.access event, no webhook/syslog/email alert, and no
+// pam_breakglass_access_total increment, even though the same key against
+// GET /api/me produced all three.
+//
+// A nil principal or a non-break-glass one is a no-op, so callers can invoke it
+// unconditionally right after Resolve.
+func (p *Proxy) noteBreakGlass(ctx context.Context, principal *auth.Principal, detail string) {
+	noteBreakGlass(ctx, p.store, p.log, p.onBreakGlass, principal, detail)
+}
+
+// noteBreakGlass raises the emergency-access signal for a principal resolved by a
+// session proxy. It is the proxies' twin of the API's Server.noteBreakGlass and
+// exists for the same stated reason: every entry point that resolves its own
+// principal outside the HTTP authz middleware must raise this itself, or an
+// emergency-key privileged session goes unnoticed.
+//
+// Before this, break-glass through the SSH, PostgreSQL or SQL Server proxy was
+// consulted ONLY to skip the four-eyes approval gate. The single trace was a
+// session.start row whose actor happened to read `break-glass` — no
+// breakglass.access event, no webhook/syslog/email alert and no
+// pam_breakglass_access_total increment, even though the same key presented to
+// GET /api/me produced all three.
+//
+// A nil or non-break-glass principal is a no-op, so callers can invoke it
+// unconditionally right after Resolve. Shared by all three proxies so the three
+// cannot drift apart.
+func noteBreakGlass(ctx context.Context, st store.Store, log *slog.Logger,
+	hook func(ctx context.Context, actor, detail string), principal *auth.Principal, detail string) {
+	if principal == nil || !principal.BreakGlass {
+		return
+	}
+	log.Warn("BREAK-GLASS access via a session proxy", "actor", principal.Name, "detail", detail)
+	appendAudit(ctx, st, log, principal.Name, "breakglass.access", detail)
+	if hook != nil {
+		hook(ctx, principal.Name, detail)
+	}
 }
 
 // auditClosing writes a session-teardown audit event that must survive graceful
