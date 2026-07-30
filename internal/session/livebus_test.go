@@ -18,6 +18,16 @@ import (
 	"github.com/morandeirachema/pamv1/internal/store/memstore"
 )
 
+// testBusKey is a fixed live-bus key. Real deployments derive one into shared
+// custody; a test only needs every simulated replica to share the same bytes.
+func testBusKey() []byte {
+	k := make([]byte, session.LiveBusKeySize)
+	for i := range k {
+		k[i] = byte(i + 7)
+	}
+	return k
+}
+
 // replica builds one simulated replica: a registry and hub wired to the shared
 // store under the given name, with the cluster machinery started.
 func replica(t *testing.T, ctx context.Context, st *memstore.Memstore, name string) (*session.Registry, *session.Hub, *session.Cluster) {
@@ -25,7 +35,9 @@ func replica(t *testing.T, ctx context.Context, st *memstore.Memstore, name stri
 	reg := session.NewRegistry()
 	hub := session.NewHub()
 	reg.AttachHub(hub)
-	c, err := session.StartCluster(ctx, st, reg, hub, name)
+	c, err := session.StartCluster(ctx, session.ClusterConfig{
+		Store: st, Registry: reg, Hub: hub, Replica: name, BusKey: testBusKey(),
+	})
 	if err != nil {
 		t.Fatalf("StartCluster(%s): %v", name, err)
 	}
@@ -182,11 +194,22 @@ func TestClusterInterestGatesTheBus(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	hubA.Publish(id, []byte("watched output"))
+	const secret = "watched output"
+	hubA.Publish(id, []byte(secret))
 	select {
 	case f := <-busFrames:
-		if string(f.Data) != "watched output" {
-			t.Fatalf("bus frame = %q, want the watched output", f.Data)
+		// A frame DID cross the bus — and it is SEALED. A raw observer of the
+		// transport (which for Postgres is anything that can LISTEN, since
+		// notification channels have no privilege model) must not be able to read
+		// session content out of it.
+		if f.ID != id {
+			t.Fatalf("bus frame is for session %q, want %q", f.ID, id)
+		}
+		if bytes.Contains(f.Data, []byte(secret)) {
+			t.Fatalf("session output crossed the bus in the CLEAR: %q", f.Data)
+		}
+		if len(f.Data) == 0 {
+			t.Fatal("bus frame carried no payload at all")
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("watched session's output never reached the bus")

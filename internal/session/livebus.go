@@ -36,6 +36,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sort"
 	"sync"
@@ -136,6 +137,11 @@ type Cluster struct {
 	reg     *Registry
 	hub     *Hub
 	replica string
+	// sealer authenticates and encrypts every payload on the bus. The transport
+	// (Postgres LISTEN/NOTIFY) has no privilege model, so without this anything
+	// holding a database session could start a tap on a live privileged session or
+	// inject fabricated output into a supervisor's pane. See livecrypto.go.
+	sealer *liveSealer
 
 	// The timing knobs, copied from the package variables ONCE in StartCluster
 	// so the background loops never read shared mutable state (the variables
@@ -166,6 +172,26 @@ type Cluster struct {
 
 	frames  chan LiveFrame // async forward queue drained by runPublisher
 	dropped atomic.Int64   // frames dropped on a full queue since the last report
+	// Rejected payloads: something on the bus is not speaking with the cluster's
+	// key. Counted rather than logged per message, so a flood cannot turn the log
+	// into the amplifier, and reported once per announcer tick.
+	rejFrames   atomic.Int64
+	rejInterest atomic.Int64
+	// audit records relay-visible security events. Optional: nil disables it, which
+	// is what the in-process tests use.
+	audit func(ctx context.Context, action, detail string)
+}
+
+// ClusterConfig is what StartCluster needs. BusKey is mandatory: it is the
+// AES-256 key, held in shared custody, that authenticates and encrypts every
+// payload on the bus (livecrypto.go). Audit is optional.
+type ClusterConfig struct {
+	Store    LiveStore
+	Registry *Registry
+	Hub      *Hub
+	Replica  string // this replica's name in the inventory; empty = a random id
+	BusKey   []byte
+	Audit    func(ctx context.Context, action, detail string)
 }
 
 // StartCluster wires cross-replica live monitoring over the store and returns
@@ -177,7 +203,20 @@ type Cluster struct {
 // which run until ctx is cancelled. An error means the bus subscription
 // failed and live monitoring stays replica-local — the caller logs and
 // continues, exactly like the kill bus.
-func StartCluster(ctx context.Context, st LiveStore, reg *Registry, hub *Hub, replica string) (*Cluster, error) {
+func StartCluster(ctx context.Context, cfg ClusterConfig) (*Cluster, error) {
+	// Fail closed: no key, no relay. Running the relay unauthenticated would put
+	// live session content on a channel with no access control (livecrypto.go), so
+	// the caller is expected to log this and leave monitoring replica-local rather
+	// than accept that trade silently.
+	sealer, err := newLiveSealer(cfg.BusKey)
+	if err != nil {
+		return nil, err
+	}
+	st, reg, hub := cfg.Store, cfg.Registry, cfg.Hub
+	if st == nil || reg == nil || hub == nil {
+		return nil, errors.New("session: StartCluster needs a store, a registry and a hub")
+	}
+	replica := cfg.Replica
 	if replica == "" {
 		replica = randID()
 	}
@@ -190,15 +229,17 @@ func StartCluster(ctx context.Context, st LiveStore, reg *Registry, hub *Hub, re
 	}
 	cancel()
 
-	inFrames, inInterest, err := st.SubscribeLive(ctx)
-	if err != nil {
-		return nil, err
+	inFrames, inInterest, serr := st.SubscribeLive(ctx)
+	if serr != nil {
+		return nil, serr
 	}
 	c := &Cluster{
 		st:            st,
 		reg:           reg,
 		hub:           hub,
 		replica:       replica,
+		sealer:        sealer,
+		audit:         cfg.Audit,
 		heartbeat:     inventoryHeartbeat,
 		maxAge:        inventoryMaxAge,
 		announceEvery: interestEvery,
@@ -277,10 +318,19 @@ func (c *Cluster) WatchRemote(ctx context.Context, id string) (bool, error) {
 	// failure is retried by the announcer, so it is logged, not fatal.
 	actx, cancel := context.WithTimeout(ctx, busOpTimeout)
 	defer cancel()
-	if err := c.st.PublishLiveInterest(actx, id); err != nil {
+	if err := c.announceInterest(actx, id); err != nil {
 		slog.Warn("live watch: interest announcement failed; retrying on the next tick", "session", id, "err", err)
 	}
 	return true, nil
+}
+
+// announceInterest publishes an authenticated interest announcement for a session.
+func (c *Cluster) announceInterest(ctx context.Context, id string) error {
+	payload, err := c.sealer.sealInterest(id, time.Now())
+	if err != nil {
+		return err
+	}
+	return c.st.PublishLiveInterest(ctx, payload)
 }
 
 // UnwatchRemote ends one remote watch begun by WatchRemote. When the last
@@ -297,6 +347,24 @@ func (c *Cluster) UnwatchRemote(id string) {
 }
 
 // --- hosting side: the Hub's relay ---
+
+// rejectFrame and rejectInterest count a payload that failed authentication.
+func (c *Cluster) rejectFrame()    { c.rejFrames.Add(1) }
+func (c *Cluster) rejectInterest() { c.rejInterest.Add(1) }
+
+// noteRelayStart audits the first time a session's output starts crossing the
+// bus. This is the event the original design was missing: relaying is the only
+// read path to live session content, and before this nothing recorded that it had
+// opened — so a tap left no trace even in the audit trail the whole system is
+// built around.
+func (c *Cluster) noteRelayStart(id string) {
+	if c.audit == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), busOpTimeout)
+	defer cancel()
+	c.audit(ctx, "session.relay_start", "session:"+id+" replica:"+c.replica)
+}
 
 // wants reports whether any replica currently holds a live watcher for session
 // id (an unexpired interest announcement). The Hub calls it under its own
@@ -380,8 +448,13 @@ func (c *Cluster) runPublisher(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case f := <-c.frames:
+			sealed, serr := c.sealer.sealFrame(f)
+			if serr != nil {
+				slog.Error("live relay: sealing a frame failed; dropping it", "session", f.ID, "err", serr)
+				continue
+			}
 			pctx, cancel := context.WithTimeout(ctx, busOpTimeout)
-			err := c.st.PublishLiveFrame(pctx, f)
+			err := c.st.PublishLiveFrame(pctx, sealed)
 			cancel()
 			if err != nil {
 				if !warned && ctx.Err() == nil {
@@ -414,6 +487,15 @@ func (c *Cluster) runBridge(ctx context.Context, in <-chan LiveFrame) {
 			if c.reg.Exists(f.ID) {
 				continue // our own forward, echoed back by the bus
 			}
+			// Verify and decrypt. Without this a database observer could write
+			// fabricated output into a supervisor's live pane, or an end marker that
+			// closes their watch while the session keeps running.
+			plain, verr := c.sealer.openFrame(f)
+			if verr != nil {
+				c.rejectFrame()
+				continue
+			}
+			f = plain
 			switch f.Kind {
 			case LiveFrameEnd:
 				c.hub.EndSession(f.ID)
@@ -433,13 +515,30 @@ func (c *Cluster) runInterest(ctx context.Context, in <-chan string) {
 		select {
 		case <-ctx.Done():
 			return
-		case id, ok := <-in:
+		case payload, ok := <-in:
 			if !ok {
 				return
 			}
+			// Verify BEFORE recording it. An unauthenticated announcement is how a
+			// database observer would start a tap on a live session, so a payload
+			// that does not open under the cluster's key is dropped, loudly enough
+			// to notice but without a per-message flood.
+			id, verr := c.sealer.openInterest(payload, time.Now())
+			if verr != nil {
+				c.rejectInterest()
+				continue
+			}
+			now := time.Now()
 			c.imu.Lock()
-			c.interest[id] = time.Now().Add(c.ttl)
+			prev, had := c.interest[id]
+			c.interest[id] = now.Add(c.ttl)
 			c.imu.Unlock()
+			// Audit only the transition into "being relayed", and only on the replica
+			// that actually hosts the session — the announcements repeat every few
+			// seconds, and the watching replica hears its own.
+			if (!had || now.After(prev)) && c.reg.Exists(id) {
+				c.noteRelayStart(id)
+			}
 		}
 	}
 }
@@ -480,7 +579,7 @@ func (c *Cluster) runAnnouncer(ctx context.Context) {
 					c.hub.EndSession(id)
 					continue
 				}
-				if perr := c.st.PublishLiveInterest(actx, id); perr != nil {
+				if perr := c.announceInterest(actx, id); perr != nil {
 					slog.Warn("live watch: interest re-announcement failed", "session", id, "err", perr)
 					break // one failure means the bus is down; do not warn per id
 				}
@@ -506,6 +605,13 @@ func (c *Cluster) runAnnouncer(ctx context.Context) {
 		c.rmu.Unlock()
 		if n := c.dropped.Swap(0); n > 0 {
 			slog.Warn("live relay: forward queue overflowed; remote watchers missed output frames", "dropped", n)
+		}
+		if nf, ni := c.rejFrames.Swap(0), c.rejInterest.Swap(0); nf > 0 || ni > 0 {
+			// Someone is putting payloads on the bus that this cluster's key does not
+			// vouch for. Benign causes exist (a replica still holding an old key
+			// during a rotation), but so does the one this seal was added for.
+			slog.Warn("live relay: REJECTED unauthenticated bus payloads",
+				"frames", nf, "interest", ni, "replica", c.replica)
 		}
 	}
 }

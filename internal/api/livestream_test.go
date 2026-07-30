@@ -244,6 +244,15 @@ func TestSessionStreamUnknownSessionRefused(t *testing.T) {
 	}
 }
 
+// apiTestBusKey is a fixed live-bus key shared by the simulated replicas.
+func apiTestBusKey() []byte {
+	k := make([]byte, session.LiveBusKeySize)
+	for i := range k {
+		k[i] = byte(i + 11)
+	}
+	return k
+}
+
 // TestSessionStreamRemoteReplica proves the Phase 55 story end to end at the
 // API: a supervisor's SSE request lands on replica B for a session hosted on
 // replica A, and still streams the session's output — B announces interest
@@ -262,7 +271,7 @@ func TestSessionStreamRemoteReplica(t *testing.T) {
 	regA := session.NewRegistry()
 	hubA := session.NewHub()
 	regA.AttachHub(hubA)
-	if _, err := session.StartCluster(ctx, st, regA, hubA, "replica-a"); err != nil {
+	if _, err := session.StartCluster(ctx, session.ClusterConfig{Store: st, Registry: regA, Hub: hubA, Replica: "replica-a", BusKey: apiTestBusKey()}); err != nil {
 		t.Fatalf("StartCluster(a): %v", err)
 	}
 	id := regA.Register(session.Info{Actor: "alice", Target: "web-01", Protocol: "ssh"}, func() {})
@@ -271,7 +280,7 @@ func TestSessionStreamRemoteReplica(t *testing.T) {
 	regB := session.NewRegistry()
 	hubB := session.NewHub()
 	regB.AttachHub(hubB)
-	clusterB, err := session.StartCluster(ctx, st, regB, hubB, "replica-b")
+	clusterB, err := session.StartCluster(ctx, session.ClusterConfig{Store: st, Registry: regB, Hub: hubB, Replica: "replica-b", BusKey: apiTestBusKey()})
 	if err != nil {
 		t.Fatalf("StartCluster(b): %v", err)
 	}
@@ -373,7 +382,7 @@ func TestSessionStreamClusterUnknownRefused(t *testing.T) {
 	reg := session.NewRegistry()
 	hub := session.NewHub()
 	reg.AttachHub(hub)
-	cluster, err := session.StartCluster(ctx, st, reg, hub, "replica-solo")
+	cluster, err := session.StartCluster(ctx, session.ClusterConfig{Store: st, Registry: reg, Hub: hub, Replica: "replica-solo", BusKey: apiTestBusKey()})
 	if err != nil {
 		t.Fatalf("StartCluster: %v", err)
 	}
