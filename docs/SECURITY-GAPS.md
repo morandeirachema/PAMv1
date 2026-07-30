@@ -171,6 +171,32 @@ roadmap is the plan.
 | ~~G~~ | ~~**Console parity has drifted since Phase 25.**~~ | Was: nine capabilities had no screen. Two of them — a parked agent tool call and a paused SQL statement — are human decisions **with a deadline**, which is what made curl-only actually cost something. | **Fixed across Phases 43 + 45** — Phase 43 shipped the two time-critical screens (*Approve AI-agent tool calls*, menu 20, showing the arguments the policy matched on; *In-session step-up decisions*, menu 21). Phase 45 shipped the other seven: vendors & contract grants (22), operator SSH certificates (23), identity blast radius (24), login-session revocation (25), agent keys (26), credential dependencies (option 9 on a credential), and the audit chain verify / signed head / OCSF export on the audit screen. One deliberate new route: `GET /api/ca/ssh/certs` (CapReadInventory) — the issued-cert serials a revocation needs were listable in the store but invisible over HTTP. All verified against a running server; the console is back at **full parity**. |
 | ~~H~~ | ~~**No update endpoints and no pagination.**~~ | Was: the `Store` interface had create/delete but no update for targets, safes, users or vendors — fixing a target's port meant delete + recreate, cascading away its credentials, grants, dependencies and safe assignment — and no list method except the audit reads was bounded (an authenticated memory-exhaustion vector). | **Fixed in Phase 44** — `UpdateTarget`/`UpdateSafe`/`UpdateUserRole`/`UpdateVendorOrg` + `PUT` routes with create-equivalent validation and authorization (the user edit re-runs the privilege-escalation guard; tokens survive a role change), audited `*.update`; the seven top-level list reads take an id-ascending `(limit, afterID)` window and every list endpoint clamps `?limit=&after=` to 1..500 (default 100) the way `listAudit` already did. Grants and safe members deliberately stay create + delete (no dependents to lose; two audited events beat one mutated row), and usernames stay immutable (they are the subject key in grants/sessions/vendor rows). Console: cursor-draining fetches + 2=Change screens. Tests: the store contract (both stores, live PostgreSQL in CI) + `api/update_test.go`. |
 
+## The 2026-07-30 sweep — six parallel dimensions
+
+A third read-only sweep, run over the tree as it stood after Phase 55, across six
+dimensions in parallel: the authorization surface, the newest code's correctness
+(Phase 55 itself), its trust boundaries, audit completeness and secret hygiene,
+resource limits and fail-open defaults, and documented-claim-versus-code drift.
+Every finding was confirmed by reading the code before being recorded, and the
+highest-severity ones were re-verified independently — two of them by
+reproduction (a panic, and a viewer token that provably opened a session).
+
+**Closed so far** — the two that let an entry point skip what the HTTP middleware
+does:
+
+| id | Finding | Status | What was done |
+|---|---|---|---|
+| ~~AD~~ | **A tunnel-scoped viewer token authenticated at all three session proxies.** `Principal.TunnelOnly` was enforced only in `api`'s middleware; the SSH, PostgreSQL and SQL Server proxies resolved the same token through the same resolver and never checked it. A viewer token rides a WebSocket **URL** (so it reaches access logs) and carries **no target binding**, and expiry is checked only at the handshake — so a 60-second copy opened a full JIT session on any target its owner could reach, for as long as that session lived. | **Fixed** | All three listeners refuse it and audit `reason:tunnel-only-token`. Both regression tests provably fail without the fix: the SSH proxy *opened a session*, the DB proxy answered `AuthenticationOk`. |
+| ~~AE~~ | **Break-glass through a session proxy raised no signal.** The proxies read `principal.BreakGlass` only to skip the four-eyes approval gate — no `breakglass.access` event, no alert, no `pam_breakglass_access_total` — so the one path that deliberately bypasses approval was the quietest in the system, while the same key against `GET /api/me` produced all three. Finding #7 fixed this class for the HTTP middleware and Phase 52c for the RDP tunnel; the proxies were never covered. | **Fixed** | Shared `proxy.noteBreakGlass` (one implementation, three wrappers) audits it; new `OnBreakGlass` hooks are wired in `main` to `api.Server.NoteBreakGlassSignal`, which owns the alerter and the metric. |
+
+The rest of that sweep's findings — including three Phase 55 defects (a
+reproduced `send on closed channel` panic in the memstore live bus, an end marker
+that can overtake queued output so a remote watcher loses a run's final bytes, and
+a heartbeat that can resurrect an ended session's inventory row for ~45s), the
+unauthenticated LISTEN/NOTIFY buses, `PAM_MAX_RECORDING_MB` being a silent no-op
+on both database proxies, and a dozen documented claims the code no longer
+supports — are being worked through in severity order.
+
 ## The 2026-07-27 post-beta sweep — all 30 findings, now closed
 
 A second full read-only sweep, run immediately after the beta milestone, over
