@@ -144,9 +144,24 @@ func (s *Server) decideBrokerApproval(w http.ResponseWriter, r *http.Request) {
 	approver := actorFrom(r.Context())
 	// Four-eyes: the human who owns the agent may not approve their own agent's
 	// call (mirrors the human access-request self-approval refusal).
-	if owner, ok := s.broker.ApprovalOwner(r.PathValue("id")); ok && owner != "" && strings.EqualFold(owner, approver) {
-		writeError(w, http.StatusForbidden, "cannot approve a call for an agent you own (four-eyes)")
-		return
+	if owner, ok := s.broker.ApprovalOwner(r.PathValue("id")); ok {
+		// Fail closed on an UNKNOWN owner as well as a matching one. Agent creation
+		// now requires an owner, but rows created before that could have none — and
+		// for those the old `owner != ""` guard silently disabled four-eyes
+		// entirely, letting one principal both request and approve. An unattributed
+		// agent is exactly the case where a second pair of eyes cannot be proven,
+		// so the decision is refused rather than waved through.
+		if owner == "" {
+			s.audit(r.Context(), "broker.approval.refused",
+				fmt.Sprintf("call:%s reason:agent-has-no-owner", auditField(r.PathValue("id"), 64)))
+			writeError(w, http.StatusForbidden,
+				"this call's agent has no recorded owner, so four-eyes cannot be established; set an owner on the agent")
+			return
+		}
+		if strings.EqualFold(owner, approver) {
+			writeError(w, http.StatusForbidden, "cannot approve a call for an agent you own (four-eyes)")
+			return
+		}
 	}
 	out, ok, err := s.broker.Decide(r.Context(), r.PathValue("id"),
 		broker.Approver{Name: approver, Groups: p.ApproverGroups(), IsAdmin: p.IsAdmin()}, in.Approve)
@@ -178,6 +193,17 @@ func (s *Server) createAgentKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Name == "" {
 		writeError(w, http.StatusUnprocessableEntity, "name is required")
+		return
+	}
+	// An owner is REQUIRED, because the broker's four-eyes refusal is
+	// `owner != "" && EqualFold(owner, approver)`: an ownerless agent silently
+	// disabled it, so one approver could create an agent, have it request a
+	// privileged tool call, and then approve that call themselves — satisfying
+	// both sides of the gate alone. The owner is the human the agent acts for, so
+	// there is always one to name.
+	if strings.TrimSpace(in.Owner) == "" {
+		writeError(w, http.StatusUnprocessableEntity,
+			"owner is required: it is the human this agent acts for, and the four-eyes approval refusal is keyed on it")
 		return
 	}
 	token, err := generateToken()

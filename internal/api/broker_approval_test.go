@@ -87,7 +87,7 @@ func TestBrokerResumeNotBurnedBeforeApproval(t *testing.T) {
 	fake := &fakeWinRM{result: winrm.Result{Stdout: "ok", ExitCode: 0}}
 	srv, _ := newTestServerOpts(t, nil, brokerOpts(t, fake, approvalRules))
 	seedWinRMTarget(t, srv, "win-early", "pw")
-	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-early"})
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-early", "owner": "alice"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
 	_, data := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok, map[string]any{"tool": "winrm_exec", "args": map[string]any{"target": "win-early", "command": "x"}})
 	m := jsonMap(t, data)
@@ -115,7 +115,7 @@ func TestBrokerResumeTokenBoundToCall(t *testing.T) {
 	fake := &fakeWinRM{result: winrm.Result{Stdout: "ok", ExitCode: 0}}
 	srv, _ := newTestServerOpts(t, nil, brokerOpts(t, fake, approvalRules))
 	seedWinRMTarget(t, srv, "win-bind", "pw")
-	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-bind"})
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-bind", "owner": "alice"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
 	_, data := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok, map[string]any{"tool": "winrm_exec", "args": map[string]any{"target": "win-bind", "command": "x"}})
 	m := jsonMap(t, data)
@@ -141,7 +141,7 @@ func TestBrokerApprovalReject(t *testing.T) {
 	fake := &fakeWinRM{result: winrm.Result{Stdout: "ok"}}
 	srv, _ := newTestServerOpts(t, nil, brokerOpts(t, fake, approvalRules))
 	seedWinRMTarget(t, srv, "win-rj", "pw")
-	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-rj"})
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-rj", "owner": "alice"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
 	_, data := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok, map[string]any{"tool": "winrm_exec", "args": map[string]any{"target": "win-rj", "command": "x"}})
 	callID, _ := jsonMap(t, data)["call_id"].(string)
@@ -166,7 +166,7 @@ func TestBrokerArgCap(t *testing.T) {
 	opts.BrokerMaxArgBytes = 32
 	srv, _ := newTestServerOpts(t, nil, opts)
 	seedWinRMTarget(t, srv, "win-cap", "pw")
-	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-cap"})
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-cap", "owner": "alice"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
 	big := strings.Repeat("A", 200)
 	_, data := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok, map[string]any{"tool": "winrm_exec", "args": map[string]any{"target": "win-cap", "command": big}})
@@ -186,7 +186,7 @@ func TestBrokerRateLimit(t *testing.T) {
 	opts.BrokerRatePerMin = 1
 	srv, _ := newTestServerOpts(t, nil, opts)
 	seedWinRMTarget(t, srv, "win-rl", "pw")
-	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-rl"})
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-rl", "owner": "alice"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
 	call := func() int {
 		st, _ := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok, map[string]any{"tool": "winrm_exec", "args": map[string]any{"target": "win-rl", "command": "x"}})
