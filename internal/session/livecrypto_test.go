@@ -12,6 +12,7 @@ package session_test
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,5 +100,79 @@ func TestForgedFrameNeverReachesAWatcher(t *testing.T) {
 		t.Fatalf("an unauthenticated frame reached the watcher: %q", b)
 	case <-time.After(500 * time.Millisecond):
 		// Nothing arrived and the stream stayed open: both forgeries were dropped.
+	}
+}
+
+// TestForgedKillIsRejectedAndRealKillIsAudited proves the cross-replica kill bus
+// authenticates its instructions, and that an applied one leaves a trace.
+//
+// `NOTIFY pam_session_kill, '{"actor":"alice"}'` used to terminate every one of an
+// actor's live privileged sessions on every replica — an availability attack on
+// privileged access available to anything holding a database session — and the
+// applying replica audited nothing, so the only evidence was the abrupt end.
+func TestForgedKillIsRejectedAndRealKillIsAudited(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := memstore.New()
+
+	audited := make(chan string, 4)
+	regA := session.NewRegistry()
+	hubA := session.NewHub()
+	regA.AttachHub(hubA)
+	if err := regA.StartKillBus(ctx, st, session.KillBusConfig{
+		BusKey: testBusKey(),
+		Audit: func(_ context.Context, action, detail string) {
+			select {
+			case audited <- action + " " + detail:
+			default:
+			}
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	killed := make(chan struct{}, 1)
+	id := regA.Register(session.Info{Actor: "alice", Target: "web-01", Protocol: "ssh"},
+		func() {
+			select {
+			case killed <- struct{}{}:
+			default:
+			}
+		})
+
+	// The forgery: a selector with no seal, exactly what a hand-written NOTIFY
+	// would carry.
+	for i := 0; i < 5; i++ {
+		if err := st.PublishSessionKill(ctx, session.KillSelector{ID: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case <-killed:
+		t.Fatal("a forged cross-replica kill terminated a live session")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// A genuine kill from a second replica sharing the key still works, and the
+	// applying replica audits it.
+	regB := session.NewRegistry()
+	if err := regB.StartKillBus(ctx, st, session.KillBusConfig{BusKey: testBusKey()}); err != nil {
+		t.Fatal(err)
+	}
+	if out := regB.KillDistributed(id); out != session.KillDispatched {
+		t.Fatalf("KillDistributed = %v, want KillDispatched", out)
+	}
+	select {
+	case <-killed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a legitimately sealed cross-replica kill did not terminate the session")
+	}
+	select {
+	case got := <-audited:
+		if !strings.Contains(got, "session.kill") || !strings.Contains(got, "via:bus") {
+			t.Fatalf("audit = %q, want a session.kill … via:bus event", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("an applied cross-replica kill was not audited")
 	}
 }

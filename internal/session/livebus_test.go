@@ -309,10 +309,10 @@ func TestClusterRemoteKillClosesWatch(t *testing.T) {
 	st := memstore.New()
 	regA, _, _ := replica(t, ctx, st, "replica-a")
 	regB, hubB, cB := replica(t, ctx, st, "replica-b")
-	if err := regA.StartKillBus(ctx, st); err != nil {
+	if err := regA.StartKillBus(ctx, st, session.KillBusConfig{BusKey: testBusKey()}); err != nil {
 		t.Fatalf("StartKillBus(A): %v", err)
 	}
-	if err := regB.StartKillBus(ctx, st); err != nil {
+	if err := regB.StartKillBus(ctx, st, session.KillBusConfig{BusKey: testBusKey()}); err != nil {
 		t.Fatalf("StartKillBus(B): %v", err)
 	}
 

@@ -4,6 +4,7 @@
 package session
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"sort"
@@ -33,11 +34,13 @@ type entry struct {
 type Registry struct {
 	mu          sync.Mutex
 	m           map[string]entry
-	maxPerActor int      // 0 = unlimited
-	maxTotal    int      // 0 = unlimited
-	bus         KillBus  // cross-replica kill transport (nil = single-replica)
-	hub         *Hub     // live-output hub to end when a session is removed (nil = none)
-	cluster     *Cluster // cross-replica inventory + live relay (nil = single-replica)
+	maxPerActor int         // 0 = unlimited
+	maxTotal    int         // 0 = unlimited
+	bus         KillBus     // cross-replica kill transport (nil = single-replica)
+	hub         *Hub        // live-output hub to end when a session is removed (nil = none)
+	cluster     *Cluster    // cross-replica inventory + live relay (nil = single-replica)
+	sealer      *liveSealer // authenticates cross-replica kills (nil = bus disabled)
+	killAudit   func(ctx context.Context, action, detail string)
 }
 
 // NewRegistry returns an empty, ready-to-use session registry.

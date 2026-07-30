@@ -168,3 +168,51 @@ func (s *liveSealer) openInterest(payload string, now time.Time) (string, error)
 	}
 	return id, nil
 }
+
+// killAAD binds a sealed kill selector to the fields it targets, so a captured
+// seal cannot be re-pointed at a different session, actor or target.
+func killAAD(sel KillSelector) string {
+	return "pamv1-kill|" + sel.ID + "|" + sel.Actor + "|" + sel.Target
+}
+
+// sealKill returns sel with its Seal set: a timestamp sealed under the bus key and
+// bound to the selector's fields. Authenticity and freshness are what matter here,
+// not confidentiality — a kill selector names a session, and the fields have to
+// stay readable for the transport and the audit record.
+func (s *liveSealer) sealKill(sel KillSelector, now time.Time) (KillSelector, error) {
+	sel.Seal = ""
+	blob, err := s.seal(killAAD(sel), []byte(strconv.FormatInt(now.Unix(), 10)))
+	if err != nil {
+		return KillSelector{}, err
+	}
+	sel.Seal = base64.RawURLEncoding.EncodeToString(blob)
+	return sel, nil
+}
+
+// openKill verifies a selector's seal and its freshness. A selector whose seal is
+// missing, forged, re-pointed at other fields, or older than interestSkew is
+// refused — so a database observer can neither invent a kill nor replay one it
+// captured earlier.
+func (s *liveSealer) openKill(sel KillSelector, now time.Time) error {
+	if sel.Seal == "" {
+		return errLiveAuth
+	}
+	blob, err := base64.RawURLEncoding.DecodeString(sel.Seal)
+	if err != nil {
+		return errLiveAuth
+	}
+	bare := sel
+	bare.Seal = ""
+	plain, err := s.open(killAAD(bare), blob)
+	if err != nil {
+		return err
+	}
+	secs, err := strconv.ParseInt(string(plain), 10, 64)
+	if err != nil {
+		return errLiveAuth
+	}
+	if d := now.Sub(time.Unix(secs, 0)); d > interestSkew || d < -interestSkew {
+		return errLiveAuth
+	}
+	return nil
+}

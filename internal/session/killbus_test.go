@@ -36,10 +36,10 @@ func TestKillBusCrossReplica(t *testing.T) {
 
 	// Two replicas, each its own registry, both on the shared bus.
 	repA, repB := session.NewRegistry(), session.NewRegistry()
-	if err := repA.StartKillBus(ctx, st); err != nil {
+	if err := repA.StartKillBus(ctx, st, session.KillBusConfig{BusKey: testBusKey()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repB.StartKillBus(ctx, st); err != nil {
+	if err := repB.StartKillBus(ctx, st, session.KillBusConfig{BusKey: testBusKey()}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -719,8 +719,11 @@ func run() error {
 	// the kill-switch terminates a session on whichever replica hosts it. Postgres
 	// uses LISTEN/NOTIFY; the memory store fans out in-process. Best-effort — a
 	// subscribe failure logs and leaves the kill-switch replica-local.
-	if err := sessions.StartKillBus(ctx, st); err != nil {
-		log.Warn("session kill bus unavailable; kill-switch is replica-local", "err", err)
+	// Wired after the live-bus key is derived, since both buses share it.
+	startKillBus := func(busKey []byte, audit func(context.Context, string, string)) {
+		if err := sessions.StartKillBus(ctx, st, session.KillBusConfig{BusKey: busKey, Audit: audit}); err != nil {
+			log.Warn("session kill bus unavailable; kill-switch is replica-local", "err", err)
+		}
 	}
 	maxRecBytes := int64(cfg.MaxRecordingMB) * 1024 * 1024
 	liveHub := session.NewHub()
@@ -747,27 +750,31 @@ func run() error {
 		return []byte(base64.StdEncoding.EncodeToString(k)), nil
 	})
 	if bkerr != nil {
-		log.Warn("live-bus key custody failed; session listing and live watch stay replica-local", "err", bkerr)
+		log.Warn("live-bus key custody failed; the kill-switch, session listing and live watch all stay replica-local", "err", bkerr)
 	} else {
+		relayAudit := func(actx context.Context, action, detail string) {
+			if aerr := st.AppendAudit(actx, &store.AuditEvent{
+				Actor: "relay", Action: action, Detail: detail, TS: time.Now().UTC(),
+			}); aerr != nil {
+				log.Error("relay audit append failed", "action", action, "err", aerr)
+			}
+		}
 		rawBusKey, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(string(busKey)))
 		if derr != nil || len(rawBusKey) != session.LiveBusKeySize {
 			log.Warn("live-bus key in custody is malformed; session listing and live watch stay replica-local")
 		} else {
 			c, cerr := session.StartCluster(ctx, session.ClusterConfig{
 				Store: st, Registry: sessions, Hub: liveHub, Replica: replicaName, BusKey: rawBusKey,
-				Audit: func(actx context.Context, action, detail string) {
-					if aerr := st.AppendAudit(actx, &store.AuditEvent{
-						Actor: "relay", Action: action, Detail: detail, TS: time.Now().UTC(),
-					}); aerr != nil {
-						log.Error("relay audit append failed", "action", action, "err", aerr)
-					}
-				},
+				Audit: relayAudit,
 			})
 			if cerr != nil {
 				log.Warn("session live bus unavailable; session listing and live watch are replica-local", "err", cerr)
 			} else {
 				cluster = c
 			}
+			// The kill bus shares the key: an unsealed one is a remote
+			// session-termination primitive with nothing authenticating it.
+			startKillBus(rawBusKey, relayAudit)
 		}
 	}
 
