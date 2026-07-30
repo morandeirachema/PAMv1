@@ -47,6 +47,13 @@ const (
 	// plain environment values) when the operator does not set them explicitly, so
 	// every replica converges on ONE chain key and ONE signer identity — a replica
 	// with a different key would make honest events read as tampering.
+	// NameLiveBusKey is the AES-256 key that authenticates and encrypts the
+	// cross-replica live-monitoring bus (Phase 55). It is held in custody rather
+	// than configured because the bus transport — Postgres LISTEN/NOTIFY — has no
+	// access control of its own, so every replica must share one key and the
+	// database must hold it only as ciphertext.
+	NameLiveBusKey = "live_bus_key"
+
 	NameBrokerAuditKey      = "broker_audit_key"
 	NameBrokerAuditSignSeed = "broker_audit_sign_seed"
 )
