@@ -11,6 +11,20 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **Virtual appliance** (`deploy/ova/`) — `build.sh` produces an importable `.ova`
+  carrying Debian 13 (trixie), PostgreSQL, `pam-server` and the full source tree.
+  It runs an unattended `debian-installer` under QEMU and assembles the OVA by
+  hand, so it needs no root, no VirtualBox and no Packer; the build verifies
+  itself by booting the finished image on a throwaway overlay and asking pamv1 for
+  `/healthz`. No secret is baked into the image — the vault master key, admin API
+  key, database password, SSH host keys and machine-id are all generated on first
+  boot, so cloning the appliance never clones a root of trust.
+
+- **Kubernetes configuration examples** — `deploy/k8s/configmap.example.yaml`
+  (every non-secret `PAM_*` knob) and a `secret.example.yaml` grown to all
+  secret-valued variables, giving the Kubernetes path the reference
+  `deploy/docker/.env.example` already gave Docker.
+
 - **Cross-replica live monitoring** (Phase 55) — in a multi-replica deployment,
   `GET /api/sessions` now lists every replica's sessions (each naming its host)
   and the SSE watch streams a session hosted on any replica: the hosting pod

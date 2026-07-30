@@ -40,6 +40,23 @@ Generate before first run (see the [Admin Guide](ADMIN-GUIDE.md#31-generate-the-
 - `PAM_DATABASE_URL` — `postgres://…?sslmode=verify-full` (or `memory` for the demo).
 - Optional: `PAM_BREAK_GLASS_KEY_HASH` (`-hashkey`), TLS cert/key, the audit-chain keys `PAM_AUDIT_HMAC_KEY` + `PAM_AUDIT_SIGN_SEED` (base64 32 bytes each, `openssl rand -base64 32`), OIDC/LDAP/Entra config.
 
+## Virtual appliance (OVA)
+
+A single importable VM — Debian 13 (trixie), PostgreSQL, `pam-server` and the full
+source tree — built by `deploy/ova/build.sh`. See
+[deploy/ova/README.md](../deploy/ova/README.md).
+
+| | Requirement |
+|---|---|
+| To **build** it | QEMU (`qemu-system-x86_64`, `qemu-img`), `xorriso`, `curl`, `tar`, Go 1.26+. No root, no VirtualBox, no Packer. KVM optional but ~5× faster |
+| To **run** it | VirtualBox 7.x, VMware Workstation/Fusion, or ESXi. 2 vCPU, 2048 MiB, ~4 GiB disk (20 GiB sparse) |
+| Ports in the guest | 8080 portal/API · 2222 SSH session proxy · 22 appliance administration |
+| Not included | guacd (so the RDP/VNC viewers are inactive), a Go toolchain, TLS certificates |
+
+Secrets are **not** baked in: the vault master key, admin API key, PostgreSQL
+password, SSH host keys and machine-id are generated on first boot, so cloning the
+OVA never clones a root of trust.
+
 ## Docker / docker-compose
 
 Minimums: Docker Engine 24+, Compose v2. The bundled `deploy/docker/docker-compose.yml`
