@@ -635,7 +635,9 @@ func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgpr
 				if d.stepUpRefused(relayCtx, sendClient, actor, target, m.String, sid, false) {
 					continue // paused for a supervisor and denied/timed out; session stays usable
 				}
-				d.recordQuery(ctx, rec, actor, target, m.String, sid)
+				if d.recordQuery(ctx, rec, actor, target, m.String, sid) {
+					return // recording cap reached: end the session rather than run it unrecorded
+				}
 			case *pgproto3.Parse:
 				if d.blockedStatement(ctx, sendClient, actor, target, m.Query, true) {
 					return // fail-closed: end the extended-protocol session
@@ -645,12 +647,16 @@ func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgpr
 				if d.stepUpRefused(relayCtx, sendClient, actor, target, m.Query, sid, true) {
 					return // denied/timed out: fail-closed, end the extended-protocol session
 				}
-				d.recordQuery(ctx, rec, actor, target, m.Query, sid)
+				if d.recordQuery(ctx, rec, actor, target, m.Query, sid) {
+					return
+				}
 			case *pgproto3.FunctionCall:
 				// The deprecated fast-path call carries no SQL text, so it can't be
 				// command-filtered — but audit it so it can't silently evade the
 				// per-statement trail the Query/Parse paths provide.
-				d.recordQuery(ctx, rec, actor, target, fmt.Sprintf("[fastpath function_call oid=%d]", m.Function), sid)
+				if d.recordQuery(ctx, rec, actor, target, fmt.Sprintf("[fastpath function_call oid=%d]", m.Function), sid) {
+					return
+				}
 			case *pgproto3.Terminate:
 				fe.Send(msg)
 				_ = fe.Flush()
@@ -680,18 +686,36 @@ func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgpr
 }
 
 // recordQuery audits and records a single SQL statement, and publishes it to the
-// live hub so a supervisor can watch the session.
-func (d *DBProxy) recordQuery(ctx context.Context, rec *Recording, actor string, target *store.Target, sql, sid string) {
+// live hub so a supervisor can watch the session. It reports whether the
+// recording size cap was reached, in which case the caller must END the session.
+//
+// The write error used to be discarded. Recording.Write LATCHES errRecordingLimit,
+// so past PAM_MAX_RECORDING_MB every subsequent statement was silently dropped and
+// the session carried on UNRECORDED, indefinitely, with no session.record_limit
+// audit — while the SSH path tore the session down. SECURITY-GAPS finding 23 says
+// the flag "terminates a session that exceeds the recording cap … rather than run
+// it unrecorded"; that was true only of SSH. Discarding this error also swallowed
+// a mid-session disk-full or IO failure.
+func (d *DBProxy) recordQuery(ctx context.Context, rec *Recording, actor string, target *store.Target, sql, sid string) (limitReached bool) {
 	trimmed := strings.TrimSpace(sql)
 	if trimmed == "" {
-		return
+		return false
 	}
 	d.audit(ctx, actor, "db.query", "target:"+target.Name+" sql:"+auditCmd(trimmed))
 	line := []byte("psql> " + trimmed + "\r\n")
 	if rec != nil {
-		_, _ = rec.Write(line)
+		if _, werr := rec.Write(line); werr != nil {
+			if errors.Is(werr, errRecordingLimit) {
+				d.audit(ctx, actor, "session.record_limit",
+					"target:"+target.Name+" via:postgres reason:recording-size-cap")
+				d.log.Warn("ending session: recording size cap reached", "target", target.Name, "actor", actor)
+				return true
+			}
+			d.log.Error("session recording write failed", "target", target.Name, "err", werr)
+		}
 	}
 	d.live.Publish(sid, line)
+	return false
 }
 
 // stepUpRefused reports whether a statement matched the step-up guard and its
