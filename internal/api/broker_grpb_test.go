@@ -16,7 +16,7 @@ func TestBrokerApprovalRevokedAgentRefused(t *testing.T) {
 	fake := &fakeWinRM{result: winrm.Result{Stdout: "ok"}}
 	srv, _ := newTestServerOpts(t, nil, brokerOpts(t, fake, approvalRules))
 	seedWinRMTarget(t, srv, "win-rev", "pw")
-	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-rev"})
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-rev", "owner": "alice"})
 	m := jsonMap(t, ad)
 	tok, _ := m["token"].(string)
 	keyID := int64(m["id"].(float64))

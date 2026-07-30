@@ -33,7 +33,7 @@ func TestBrokerReadTools(t *testing.T) {
 	fake := &fakeWinRM{result: winrm.Result{Stdout: "ok"}}
 	srv, _ := newTestServerOpts(t, nil, brokerOpts(t, fake, toolsetRules))
 	seedWinRMTarget(t, srv, "win-meta", "top-secret-pw")
-	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-meta"})
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-meta", "owner": "alice"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
 
 	_, td := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok, map[string]any{"tool": "list_targets"})
@@ -65,7 +65,7 @@ func TestBrokerRotateTool(t *testing.T) {
 		t.Fatalf("seed creds: %v %d", err, len(creds))
 	}
 	before := creds[0].SecretEnc
-	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-rot"})
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-rot", "owner": "alice"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
 
 	_, rd := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok, map[string]any{"tool": "rotate_credential", "args": map[string]any{"credential_id": creds[0].ID}})
@@ -87,7 +87,7 @@ func TestBrokerRevealDefaultDeny(t *testing.T) {
 	seedWinRMTarget(t, srv, "win-rev", "reveal-me-pw")
 	creds, _ := st.ListCredentials(context.Background(), 0, 0, 0)
 	credID := creds[0].ID
-	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-rev"})
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-rev", "owner": "alice"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
 
 	// Default-deny: no rule for reveal_credential.
@@ -107,7 +107,7 @@ func TestBrokerRevealWhenAllowed(t *testing.T) {
 	seedWinRMTarget(t, srv, "win-rev2", "reveal-me-pw")
 	creds, _ := st.ListCredentials(context.Background(), 0, 0, 0)
 	credID := creds[0].ID
-	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-rev2"})
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-rev2", "owner": "alice"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
 
 	_, rd := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok, map[string]any{"tool": "reveal_credential", "args": map[string]any{"credential_id": credID}})
@@ -139,7 +139,7 @@ func TestBrokerSSHExecGating(t *testing.T) {
 	fake := &fakeWinRM{result: winrm.Result{Stdout: "ok"}}
 	srv, _ := newTestServerOpts(t, nil, brokerOpts(t, fake, toolsetRules))
 	seedWinRMTarget(t, srv, "win-only", "pw")
-	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-ssh"})
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-ssh", "owner": "alice"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
 
 	_, sd := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok, map[string]any{"tool": "ssh_exec", "args": map[string]any{"target": "win-only", "command": "id"}})

@@ -30,6 +30,16 @@ func (s *Server) rotateCredentialHandler(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	// Rotation is a credential-touching path, so it obeys the same per-target
+	// grants, approval window and vendor-contract gate as reveal, checkout and
+	// connect. Without this, `manage_credentials` alone changed a production
+	// password on a target the holder could neither connect to nor reveal —
+	// outside any approval window, and for a vendor account after its contract
+	// closed. The agent-facing rotate_credential tool was gated for exactly this
+	// in Phase 52c (SECURITY-GAPS finding M); the human endpoint was not.
+	if !s.gateCredentialAccess(w, r, target, cred.Username, "credential.rotate") {
+		return
+	}
 	rotatedAt, err := s.rotateCredential(r.Context(), cred, target)
 	if errors.Is(err, ErrUnsupported) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
@@ -388,6 +398,12 @@ func (s *Server) reconcileCredentialHandler(w http.ResponseWriter, r *http.Reque
 	}
 	cred, target, ok := s.loadCredentialTarget(w, r, id)
 	if !ok {
+		return
+	}
+	// Same gate as rotation: with ?remediate=true this path resets the target's
+	// secret, so it must not be reachable for a target the caller is not
+	// authorized for.
+	if !s.gateCredentialAccess(w, r, target, cred.Username, "credential.reconcile") {
 		return
 	}
 	remediate := r.URL.Query().Get("remediate") == "true"

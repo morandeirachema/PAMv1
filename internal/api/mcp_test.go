@@ -17,7 +17,7 @@ func TestMCPEndpoint(t *testing.T) {
 	fake := &fakeWinRM{result: winrm.Result{Stdout: "contoso\\svc\r\n", ExitCode: 0}}
 	srv, _ := newTestServerOpts(t, nil, brokerOpts(t, fake, brokerRules))
 	seedWinRMTarget(t, srv, "win-mcp", "vault-pw")
-	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-mcp"})
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-mcp", "owner": "alice"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
 
 	rpc := func(id int, method string, params map[string]any) []byte {
@@ -79,7 +79,7 @@ func TestMCPResume(t *testing.T) {
 	fake := &fakeWinRM{result: winrm.Result{Stdout: "ok", ExitCode: 0}}
 	srv, _ := newTestServerOpts(t, nil, brokerOpts(t, fake, approvalRules))
 	seedWinRMTarget(t, srv, "win-mcpr", "pw")
-	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-mcpr"})
+	_, ad := do(t, srv, http.MethodPost, "/v1/agents", testAPIKey, map[string]any{"name": "bot-mcpr", "owner": "alice"})
 	tok, _ := jsonMap(t, ad)["token"].(string)
 
 	// tools/call parks for approval; read call_id + resume_token from structured content.
