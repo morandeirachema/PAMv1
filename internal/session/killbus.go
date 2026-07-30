@@ -23,6 +23,14 @@ type KillSelector struct {
 	ID     string `json:"id,omitempty"`
 	Actor  string `json:"actor,omitempty"`
 	Target string `json:"target,omitempty"`
+	// Seal authenticates the selector under the cluster's shared-custody bus key
+	// (livecrypto.go). Without it, anything able to `NOTIFY pam_session_kill` —
+	// which on PostgreSQL is anything holding a database session, since
+	// notification channels have no privilege model — could terminate live
+	// privileged sessions at will, and the only trace was the abrupt end. It is
+	// base64 of a sealed timestamp bound to the selector's fields as AAD, so it
+	// can be neither forged nor replayed beyond a short window.
+	Seal string `json:"seal,omitempty"`
 }
 
 // KillBus is the cross-replica transport for session kills, implemented by the
@@ -55,17 +63,32 @@ const (
 	KillDispatched
 )
 
+// KillBusConfig is what StartKillBus needs. BusKey is mandatory — it is the same
+// shared-custody key that seals the live-monitoring relay — and Audit is optional.
+type KillBusConfig struct {
+	BusKey []byte
+	Audit  func(ctx context.Context, action, detail string)
+}
+
 // StartKillBus wires the registry to a cross-replica kill bus: outbound kills are
 // broadcast, and a background subscriber applies inbound kills to the local
 // registry. It returns an error only if the initial subscribe fails; the
 // subscriber then runs until ctx is cancelled. Call once at startup.
-func (r *Registry) StartKillBus(ctx context.Context, bus KillBus) error {
+func (r *Registry) StartKillBus(ctx context.Context, bus KillBus, cfg KillBusConfig) error {
+	// Fail closed, like the live relay: an unsealed kill bus is a remote
+	// session-termination primitive with no authentication in front of it.
+	sealer, serr := newLiveSealer(cfg.BusKey)
+	if serr != nil {
+		return serr
+	}
 	ch, err := bus.SubscribeSessionKills(ctx)
 	if err != nil {
 		return err
 	}
 	r.mu.Lock()
 	r.bus = bus
+	r.sealer = sealer
+	r.killAudit = cfg.Audit
 	r.mu.Unlock()
 	go func() {
 		for {
@@ -86,6 +109,39 @@ func (r *Registry) StartKillBus(ctx context.Context, bus KillBus) error {
 // applyKill terminates the sessions a bus selector targets, on THIS replica only
 // (the local variants never re-publish, so an inbound kill cannot loop).
 func (r *Registry) applyKill(sel KillSelector) {
+	// Verify before acting. An inbound kill is an unauthenticated instruction to
+	// terminate privileged sessions until proven otherwise.
+	r.mu.Lock()
+	sealer := r.sealer
+	audit := r.killAudit
+	r.mu.Unlock()
+	if sealer == nil {
+		return
+	}
+	if err := sealer.openKill(sel, time.Now()); err != nil {
+		slog.Warn("REJECTED an unauthenticated cross-replica session kill",
+			"selector_id", sel.ID, "selector_actor", sel.Actor, "selector_target", sel.Target)
+		return
+	}
+	// Audit the arrival, not just the API-side issue. The kill-switch, revoke
+	// cascade, vendor offboard and analytics auto-response all publish here, and
+	// before this the applying replica recorded nothing — so a session terminated
+	// by the bus left no trace in the trail but its own abrupt end.
+	if audit != nil {
+		actx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		detail := "via:bus"
+		if sel.ID != "" {
+			detail += " session:" + sel.ID
+		}
+		if sel.Actor != "" {
+			detail += " actor:" + sel.Actor
+		}
+		if sel.Target != "" {
+			detail += " target:" + sel.Target
+		}
+		audit(actx, "session.kill", detail)
+		cancel()
+	}
 	switch {
 	case sel.ID != "":
 		r.killLocalByID(sel.ID)
@@ -108,10 +164,21 @@ func (r *Registry) applyKill(sel KillSelector) {
 func (r *Registry) publish(sel KillSelector) (hasBus, published bool) {
 	r.mu.Lock()
 	bus := r.bus
+	sealer := r.sealer
 	r.mu.Unlock()
 	if bus == nil {
 		return false, false
 	}
+	if sealer == nil {
+		slog.Error("session kill not broadcast: the kill bus has no key")
+		return true, false
+	}
+	sealed, serr := sealer.sealKill(sel, time.Now())
+	if serr != nil {
+		slog.Error("session kill not broadcast: sealing the selector failed", "err", serr)
+		return true, false
+	}
+	sel = sealed
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := bus.PublishSessionKill(ctx, sel); err != nil {
