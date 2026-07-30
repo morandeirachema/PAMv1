@@ -45,7 +45,7 @@ The two facts that make this "the RDP function" and not just a proxy:
    pam-server's handshake consumes guacd's own `ready` (to learn the connection
    id), so the tunnel handler re-emits both before piping the render stream. If
    this prelude is wrong, the browser viewer hangs silently. See
-   `internal/api/rdp_handlers.go` (`guacamolePrelude`).
+   `internal/api/viewer_handlers.go` (`guacamolePrelude`).
 
 ## 2. Automated tests (no external host needed)
 
