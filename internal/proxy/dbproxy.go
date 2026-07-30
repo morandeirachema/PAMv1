@@ -58,6 +58,10 @@ type DBConfig struct {
 	ClientTLS *tls.Config
 	// OnSessionEnd forces post-session credential rotation, like the SSH proxy.
 	OnSessionEnd func(credentialID int64)
+
+	// OnBreakGlass mirrors proxy.Config.OnBreakGlass: the emergency-access signal
+	// this listener must raise itself, since it resolves its own principal.
+	OnBreakGlass func(ctx context.Context, actor, detail string)
 	// EncryptRecordings seals recordings at rest (PAM_RECORDING_ENCRYPT).
 	EncryptRecordings bool
 	// OpaqueRecordingNames names recording files by timestamp + random hex
@@ -97,6 +101,7 @@ type DBProxy struct {
 	recordingDir string
 	sessions     *session.Registry
 	requireApprv bool
+	onBreakGlass func(ctx context.Context, actor, detail string)
 	allowedProto map[string]bool
 	requireRec   bool
 	dialTimeout  time.Duration
@@ -142,6 +147,7 @@ func NewDB(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg DBConfig
 		recordingDir: cfg.RecordingDir,
 		sessions:     cfg.Sessions,
 		requireApprv: cfg.RequireApproval,
+		onBreakGlass: cfg.OnBreakGlass,
 		allowedProto: protocolSet(cfg.AllowedProtocols),
 		requireRec:   cfg.RequireRecording,
 		dialTimeout:  cfg.DialTimeout,
@@ -400,6 +406,16 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	// An enrollment-only session (MFA setup pending under PAM_MFA_REQUIRED) may not
 	// open sessions — mirror the SSH proxy and the HTTP authz middleware, so the
 	// mandatory-MFA policy is not bypassable via the database proxy.
+	// A tunnel-scoped token (the in-portal RDP/VNC viewer) authenticates ONLY at
+	// its viewer tunnel: it rides a WebSocket URL, so a copy from an access log
+	// must not open a database session. The HTTP middleware refuses it; so must a
+	// listener that resolves its own principal.
+	if principal.TunnelOnly {
+		d.audit(ctx, actor, "db.session.denied", "login:"+login+" reason:tunnel-only-token")
+		d.deny(ctx, backend, actor, login, "this token may only be used by the in-portal viewer")
+		return
+	}
+	d.noteBreakGlass(ctx, principal, "postgres login:"+login)
 	if principal.EnrollOnly {
 		d.audit(ctx, actor, "db.session.denied", "login:"+login+" reason:mfa-enrollment-incomplete")
 		d.deny(ctx, backend, actor, login, "complete MFA enrollment first")
@@ -1017,4 +1033,10 @@ func recoverPanicLog(log *slog.Logger, where string) {
 	if r := recover(); r != nil {
 		log.Error("proxy: recovered from panic", "where", where, "panic", r, "stack", string(debug.Stack()))
 	}
+}
+
+// noteBreakGlass raises the emergency-access signal for this listener; see the
+// shared implementation in proxy.go.
+func (d *DBProxy) noteBreakGlass(ctx context.Context, principal *auth.Principal, detail string) {
+	noteBreakGlass(ctx, d.store, d.log, d.onBreakGlass, principal, detail)
 }

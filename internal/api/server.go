@@ -886,6 +886,23 @@ func (s *Server) authz(cap auth.Capability, next http.HandlerFunc) http.Handler 
 // invariant: break-glass use is always audited + alerted). Every entry point that
 // resolves its own principal outside the authz middleware — e.g. the RDP tunnel —
 // must call this, or an emergency-key privileged action would go unnoticed.
+// NoteBreakGlassSignal raises the out-of-band half of the break-glass signal —
+// the Prometheus counter and the alert — for an emergency-key session opened
+// somewhere other than the HTTP surface.
+//
+// The session proxies resolve their own principal, so they must raise this
+// themselves (see proxy.noteBreakGlass, which writes the audit event and calls
+// this through proxy.Config.OnBreakGlass). The split is deliberate: the proxy owns
+// the audit record, because it owns the actor-quoting and detail conventions for
+// its own listener, while the alerter and the metrics registry live here.
+func (s *Server) NoteBreakGlassSignal(ctx context.Context, actor, detail string) {
+	s.metrics.BreakGlass()
+	s.log.Warn("BREAK-GLASS access", "actor", actor, "detail", detail)
+	s.alerter.Notify(ctx, alert.Event{
+		Type: "breakglass.access", Actor: actor, Detail: detail, Time: time.Now(),
+	})
+}
+
 func (s *Server) noteBreakGlass(ctx context.Context, p *auth.Principal, r *http.Request) {
 	if !p.BreakGlass {
 		return

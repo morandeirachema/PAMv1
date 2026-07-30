@@ -75,6 +75,10 @@ type MSSQLConfig struct {
 	ClientTLS *tls.Config
 	// OnSessionEnd forces post-session credential rotation, like the SSH proxy.
 	OnSessionEnd func(credentialID int64)
+
+	// OnBreakGlass mirrors proxy.Config.OnBreakGlass: the emergency-access signal
+	// this listener must raise itself, since it resolves its own principal.
+	OnBreakGlass func(ctx context.Context, actor, detail string)
 	// EncryptRecordings seals recordings at rest (PAM_RECORDING_ENCRYPT).
 	EncryptRecordings bool
 	// OpaqueRecordingNames names recording files by timestamp + random hex.
@@ -108,6 +112,7 @@ type MSSQLProxy struct {
 	recordingDir string
 	sessions     *session.Registry
 	requireApprv bool
+	onBreakGlass func(ctx context.Context, actor, detail string)
 	allowedProto map[string]bool
 	requireRec   bool
 	dialTimeout  time.Duration
@@ -152,6 +157,7 @@ func NewMSSQL(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg MSSQL
 		recordingDir: cfg.RecordingDir,
 		sessions:     cfg.Sessions,
 		requireApprv: cfg.RequireApproval,
+		onBreakGlass: cfg.OnBreakGlass,
 		allowedProto: protocolSet(cfg.AllowedProtocols),
 		requireRec:   cfg.RequireRecording,
 		dialTimeout:  cfg.DialTimeout,
@@ -395,6 +401,12 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	_ = nConn.SetDeadline(time.Time{})
 
 	// --- Authorization gates (identical order to dbproxy; decrypt only after all pass) ---
+	if principal.TunnelOnly {
+		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(loginName, 64)+" reason:tunnel-only-token")
+		m.deny(ctx, c, actor, loginName, "this token may only be used by the in-portal viewer", tds72)
+		return
+	}
+	m.noteBreakGlass(ctx, principal, "mssql login:"+auditField(loginName, 64))
 	if principal.EnrollOnly {
 		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(loginName, 64)+" reason:mfa-enrollment-incomplete")
 		m.deny(ctx, c, actor, loginName, "complete MFA enrollment first", tds72)
@@ -911,4 +923,10 @@ func (m *MSSQLProxy) deny(ctx context.Context, c *tds.Conn, actor, login, reason
 	m.log.Warn("db session denied", "actor", actor, "login", auditField(login, 64), "reason", reason, "protocol", "mssql")
 	m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" via:mssql reason:"+reason)
 	m.fail(c, mssqlErrLoginFailed, 14, "pamv1: "+reason, tds72)
+}
+
+// noteBreakGlass raises the emergency-access signal for this listener; see the
+// shared implementation in proxy.go.
+func (m *MSSQLProxy) noteBreakGlass(ctx context.Context, principal *auth.Principal, detail string) {
+	noteBreakGlass(ctx, m.store, m.log, m.onBreakGlass, principal, detail)
 }
