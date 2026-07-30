@@ -37,6 +37,9 @@ func (s *PGStore) SubscribeSessionKills(ctx context.Context) (<-chan session.Kil
 		defer close(out)
 		for ctx.Err() == nil {
 			if err := s.listenKills(ctx, out); err != nil && ctx.Err() == nil {
+				// Log it: this error was the only evidence the kill bus is dead, and
+				// discarding it made the startup fallback in main unreachable.
+				s.log.Warn("cross-replica kill bus listener failed; retrying", "err", err)
 				// Lost the listener connection: back off briefly, then re-LISTEN.
 				select {
 				case <-ctx.Done():

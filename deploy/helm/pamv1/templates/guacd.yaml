@@ -116,5 +116,10 @@ spec:
       ports:
         - protocol: TCP
           port: 3389
+        # VNC targets (Phase 54). guacd — not pam-server — makes this connection,
+        # and without this rule the shipped default-deny policy blocks every VNC
+        # session while PORTS-AND-FLOWS documents the flow as allowed.
+        - protocol: TCP
+          port: 5900
 {{- end }}
 {{- end }}

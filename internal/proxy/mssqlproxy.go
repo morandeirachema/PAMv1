@@ -761,7 +761,9 @@ func (m *MSSQLProxy) relay(ctx context.Context, client *tds.Conn, up *upstreamMS
 							"pamv1: request could not be parsed for policy inspection", typ, tds72))
 						continue
 					}
-					m.recordStatement(ctx, rec, actor, target, "[unparsed "+tdsKind(typ)+" request]", sid)
+					if m.recordStatement(ctx, rec, actor, target, "[unparsed "+tdsKind(typ)+" request]", sid) {
+						return // recording cap reached: end the session, do not run it unrecorded
+					}
 					break
 				}
 				// Every call in the message is inspected, not just the first: an
@@ -770,8 +772,15 @@ func (m *MSSQLProxy) relay(ctx context.Context, client *tds.Conn, up *upstreamMS
 				if m.refuseRequests(ctx, relayCtx, sendClient, actor, target, reqs, sid, typ, tds72) {
 					continue // refused by policy; the session stays usable
 				}
+				capped := false
 				for _, req := range reqs {
-					m.recordStatement(ctx, rec, actor, target, req.AuditText, sid)
+					if m.recordStatement(ctx, rec, actor, target, req.AuditText, sid) {
+						capped = true
+						break
+					}
+				}
+				if capped {
+					return
 				}
 			}
 			// RESETCONNECTION and friends ride the first packet's status bits and
@@ -857,17 +866,31 @@ func tdsKind(typ byte) string {
 // because the OCSF exporter and the analytics engine key off that vocabulary,
 // and a fresh one would silently exclude every SQL Server session from SIEM
 // export and risk scoring.
-func (m *MSSQLProxy) recordStatement(ctx context.Context, rec *Recording, actor string, target *store.Target, sql, sid string) {
+// It reports whether the recording size cap was reached, in which case the caller
+// must END the session: Recording.Write latches errRecordingLimit, so a discarded
+// error meant every statement past PAM_MAX_RECORDING_MB was dropped and the
+// session continued UNRECORDED with no session.record_limit audit — the same
+// defect as the PostgreSQL proxy, fixed with it.
+func (m *MSSQLProxy) recordStatement(ctx context.Context, rec *Recording, actor string, target *store.Target, sql, sid string) (limitReached bool) {
 	trimmed := strings.TrimSpace(sql)
 	if trimmed == "" {
-		return
+		return false
 	}
 	m.audit(ctx, actor, "db.query", "target:"+target.Name+" via:mssql sql:"+auditCmd(trimmed))
 	line := []byte("mssql> " + trimmed + "\r\n")
 	if rec != nil {
-		_, _ = rec.Write(line)
+		if _, werr := rec.Write(line); werr != nil {
+			if errors.Is(werr, errRecordingLimit) {
+				m.audit(ctx, actor, "session.record_limit",
+					"target:"+target.Name+" via:mssql reason:recording-size-cap")
+				m.log.Warn("ending session: recording size cap reached", "target", target.Name, "actor", actor)
+				return true
+			}
+			m.log.Error("session recording write failed", "target", target.Name, "err", werr)
+		}
 	}
 	m.live.Publish(sid, line)
+	return false
 }
 
 // stepUpRefused reports whether a statement matched the step-up guard and its

@@ -1,7 +1,7 @@
 # Apache Guacamole proxy daemon (guacd) for RDP brokering. pam-server speaks the
 # guacd protocol to it (PAM_GUACD_ADDR=guacd:4822), JIT-injecting the target
 # credential into the handshake — the credential never reaches the operator's
-# browser. guacd itself connects out to the RDP targets (:3389).
+# browser. guacd itself connects out to the RDP (:3389) and VNC (:5900) targets.
 #
 # This is an INTERNAL service: it is a ClusterIP (no external exposure), and the
 # NetworkPolicy below admits only pam-server on :4822.
@@ -126,7 +126,7 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # RDP targets. Scope these to your actual Windows/RDP networks.
+    # RDP and VNC targets. Scope these to your actual target networks.
     - to:
         - ipBlock:
             cidr: 10.0.0.0/8
@@ -137,3 +137,8 @@ spec:
       ports:
         - protocol: TCP
           port: 3389
+        # VNC targets (Phase 54). guacd — not pam-server — makes this connection,
+        # and without this rule the shipped default-deny policy blocks every VNC
+        # session while PORTS-AND-FLOWS documents the flow as allowed.
+        - protocol: TCP
+          port: 5900

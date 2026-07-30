@@ -278,7 +278,22 @@ func (s *Server) vendorEvidence(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	events, err := s.store.ExportAudit(r.Context(), time.Time{}, time.Now())
+	// Bounded, like the two compliance exports. A zero `since` meant the WHOLE
+	// audit table was read into memory and only then filtered down to this vendor,
+	// so one request from any CapReadAudit holder could OOM the process — and with
+	// the HMAC chain on, the retention worker deliberately never prunes that table,
+	// so it grows without bound by design. `?since=` widens the window explicitly.
+	until := time.Now()
+	since := until.Add(-defaultExportWindow)
+	if q := r.URL.Query().Get("since"); q != "" {
+		if t, perr := time.Parse(time.RFC3339, q); perr == nil {
+			since = t
+		} else {
+			writeError(w, http.StatusUnprocessableEntity, "since must be RFC3339")
+			return
+		}
+	}
+	events, err := s.store.ExportAudit(r.Context(), since, until)
 	if err != nil {
 		storeError(w, err)
 		return
