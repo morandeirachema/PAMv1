@@ -1576,10 +1576,13 @@ mid-watch, the stream closes within ~45 seconds (its inventory rows age out)
 rather than hanging. A session unknown anywhere is refused 404 (with the bus
 down, the refusal wording falls back to "not live on this replica"); refused
 watches are audited (`session.monitor` with a `refused:` detail), so probing
-session ids leaves a trace. One thing stays with the hosting replica: deciding
-a **paused step-up** — a remote supervisor sees the pause in the relayed
-stream, but `POST /api/sessions/{id}/stepup` must reach the replica hosting
-the session.
+session ids leaves a trace. Deciding a **paused step-up** crosses replicas too
+(Phase 56): `GET /api/sessions/stepups` lists every replica's pauses (each row
+naming its hosting `replica`), and a decision posted to the "wrong" replica is
+dispatched — sealed, like everything on the bus — to the one whose memory holds
+the pause. That path answers **202 Accepted** (dispatched, in the kill-switch's
+mold) rather than claiming the statement moved; refresh the pending list to
+verify. Nobody may decide their own session's step-up from any replica.
 
 It works for SSH, PostgreSQL and WinRM sessions — the proxy's interactive WinRM
 shell streams the same bytes its recording sees, and a REST or agent-broker
@@ -1596,8 +1599,8 @@ is hosted — and the same cluster-wide broadcast backs the revoke cascade, vend
 offboarding and the analytics auto-kill. The response is **204** when the session
 was on the replica you hit and **202 Accepted** when the kill was dispatched to
 the cluster. (Since Phase 55 live *monitoring* and session *listing* cross
-replicas too, over an interest-gated, sealed relay. Deciding a paused step-up is
-the one thing still handled by the replica hosting the session.)
+replicas too, over an interest-gated, sealed relay — and since Phase 56 so does
+deciding a paused step-up, over a sealed decision bus in the same mold.)
 
 **Command control.** Point `PAM_COMMAND_DENY_FILE` at a file of regular
 expressions (one per line, `#` comments). A command matching any pattern is
@@ -1903,6 +1906,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-07-31 | **Phase 56 — cross-replica step-up decisions.** In a multi-replica deployment, `GET /api/sessions/stepups` now lists every replica's paused statements (each row naming its hosting `replica` and its `expires_at`) and `POST /api/sessions/{id}/stepup` decides a pause held on any replica — a decision landing on the "wrong" pod is dispatched, sealed, over the store bus and answers **202 Accepted** (dispatched, not proven applied; refresh the list to verify), exactly the kill-switch's honesty. The statement itself rests **encrypted** in the shared inventory (a database observer reads ciphertext; a fabricated row is never shown to a supervisor), decisions cannot be forged or replayed, and nobody may decide their own session's step-up from any replica. Nothing to configure: it activates with the store, best-effort like the kill and live buses, and a failed bus subscription falls back to replica-local with a startup warning. Console screen 21 gained a Replica column and the `DECISION DISPATCHED … VERIFY WITH F5` report |
 | 2026-07-29 | **Phase 54 — VNC connector.** `vnc` is a target protocol: create it like any other (default port 5900) and open it from *Work with Targets* → option **7**, the same key as RDP — the portal picks the viewer from the target's protocol. It reuses your guacd deployment and `PAM_GUACD_RECORDING_PATH`, and the clipboard policy (`PAM_RDP_CLIPBOARD` plus any per-target override) applies unchanged; VNC's SFTP file channel is always off. Two things to know: VNC is **plaintext with no server authentication** and its password is DES-truncated to 8 characters, so keep guacd and the targets on a trusted segment (see [PROTOCOLS-AND-CRYPTO §3.5](PROTOCOLS-AND-CRYPTO.md)); and if guacd cannot enforce a non-permissive clipboard policy the session is **refused** (`vnc.refused reason:clipboard-unenforceable`) rather than run ungated. |
 | 2026-07-29 | **Phase 53 — SQL Server session proxy.** `PAM_MSSQL_ADDR` (default `off`) brokers `mssql` targets over TDS exactly as `PAM_DB_ADDR` brokers PostgreSQL: same authorization gates, JIT credential injection into the client's own LOGIN7, per-statement `db.query` audit (`via:mssql`), command control that **sees through `sp_executesql`**, in-session step-up, recording, live monitoring and cluster-wide kill. Connect with `sqlcmd -S pam.example,1433 -U '<dbcred>@<target>' -P "$PAM_TOKEN"`. Set `PAM_TLS_CERT/KEY` — modern TDS clients require encryption and will refuse a plaintext proxy. Integrated/Windows auth is not brokered (SQL authentication only). See §5 → *Database targets (SQL Server)*. |
 | 2026-07-29 | **Phase 55 — cross-replica live monitoring.** In a multi-replica deployment, `GET /api/sessions` now lists every replica's sessions (each naming its host in a new `"replica"` field) and `GET /api/sessions/{id}/stream` watches a session hosted on any replica — the hosting pod relays the output over the database, only while someone is watching, and the watch is audited `session.monitor … via:relay`. A crashed hosting replica closes the remote stream within ~45s instead of hanging it. Nothing to configure: it activates with the store (Postgres in HA; the demo store behaves as before), and a failed bus subscription falls back to replica-local with a startup warning. Still replica-local by design: deciding a paused step-up (`POST /api/sessions/{id}/stepup` must reach the hosting replica) and the `PAM_MAX_SESSIONS_*` caps. See §5 (monitoring) and the HA notes in REQUIREMENTS.md |

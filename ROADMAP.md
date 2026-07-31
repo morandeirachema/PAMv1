@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–55 are shipped.** The narrative that follows traces the arc through
+**Phases 0–56 are shipped.** The narrative that follows traces the arc through
 Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -1470,11 +1470,73 @@ and see it end — all from the wrong replica.**
 - Deferred (documented): **cross-replica step-up decisions** — the pending list
   and `POST /api/sessions/{id}/stepup` stay replica-local (the paused statement
   blocks in the hosting replica's memory; a remote supervisor sees the pause in
-  the relayed stream but must decide it on the hosting replica). Also
+  the relayed stream but must decide it on the hosting replica). *Since shipped
+  in Phase 56.* Also
   deliberately unchanged: the concurrent-session caps and the Prometheus
   active-sessions gauge stay per-replica — a cluster cap derived from advisory,
   possibly-stale inventory rows could refuse sessions on ghost data, and
   per-pod gauges are what Prometheus expects
+
+## Phase 56 — Cross-replica step-up decisions ✅
+
+Closes the deferral Phase 55 recorded when it made watching cluster-wide: a
+paused statement blocks in the memory of the replica hosting its session, so
+the pending list and `POST /api/sessions/{id}/stepup` were the last session
+views still replica-local — a remote supervisor could *watch* the pause arrive
+over the relay but had to decide it on the hosting replica. Now the Phase 55
+sentence finishes: a supervisor can **see it, watch it, kill it — and decide
+it — all from the wrong replica.**
+
+- [x] **A decision bus in the kill bus's mold, with the live bus's inventory
+  alongside** (`internal/session/stepupbus.go`, `session.StepUpStore` in the
+  `store.Store` contract): every `Await` mirrors its pause into a shared,
+  TTL-bounded inventory row (migration `0026`, **UNLOGGED** `stepups`; deleted
+  at the claim, expired by the store's own clock otherwise — a crashed
+  replica's leftovers fall out exactly when the pause they mirrored would have
+  timed out), and a decision published on any replica is applied by the one
+  holding the pause through the same `DecideBy` claim point. pgstore rides
+  LISTEN/NOTIFY on its own dedicated reconnecting listener; memstore fans out
+  in-process, so the demo and tests drive exactly the code the HA path runs.
+  No new environment variables: it activates with the store, best-effort like
+  its two siblings, under the same shared-custody bus key
+- [x] **Sealed, both at rest and in flight**, because the table and the NOTIFY
+  channel have no privilege model: the inventory row's *statement* — session
+  content, what the supervisor reads to decide — is AES-256-GCM-sealed under
+  the cluster bus key, bound to the row's session/actor/replica as AAD, so a
+  database observer reads ciphertext and a **fabricated row fails to open and
+  is never shown to a supervisor**; a *decision* carries a freshness-bound seal
+  over its session/verdict/decider (±2 min, like a kill), so a release can be
+  neither forged, re-pointed, flipped, nor replayed — and inside the window a
+  replay finds the entry already claimed
+- [x] **Self-approval refused across replicas**: the dispatching replica
+  pre-checks the row's actor (courtesy 403 before anything is published) and
+  the hosting replica's `DecideBy` re-checks under the claim lock either way —
+  the authoritative gate never moved
+- [x] **API**: `GET /api/sessions/stepups` returns the merged cluster listing,
+  each row naming its hosting `replica` and `expires_at` (a store failure is a
+  500, not a silently partial list — the `GET /api/sessions` honesty); the
+  decide endpoint answers **200** applied locally, **202 dispatched** for a
+  pause held elsewhere (the kill-switch's mold: dispatched is not proven
+  applied — the now-cluster-wide list is the verification), an honest **404**
+  when no replica mirrors a pause, and **503** when the store cannot say. The
+  fail-closed `session.stepup_decided` audit is written *before* the publish;
+  the applying replica audits the arrival `… via:bus`, like a bus kill. The
+  no-bus fallback keeps the Phase 55-era 409
+- [x] **Console**: screen 21 lists cluster-wide with a **Replica** column, and
+  a dispatched decision reports `DECISION DISPATCHED … VERIFY WITH F5` instead
+  of claiming the statement moved
+- [x] **Tests**: a two-replica memstore suite (list-and-approve from the
+  non-hosting replica end to end; deny; cross-replica self-approval refused
+  then decided by a second person; an **unsealed decision provably does not
+  move the pause** and a **fabricated row provably never reaches a listing**;
+  the timeout claim cleans the shared row); the store contract grows the
+  inventory round-trip (order, upsert-in-place, store-clock expiry, idempotent
+  delete) and the decision pub/sub — on live PostgreSQL in CI — and an API test
+  whose decide lands on "replica B" for a statement paused on "replica A",
+  asserting the listing, the 403 self-check, the 202 dispatch, the released
+  `Await` and the cluster-truthful 404 after
+- Deferred (unchanged from Phase 55, deliberately): the concurrent-session
+  caps and the Prometheus active-sessions gauge stay per-replica
 
 ## What is left ⬜
 
@@ -1535,12 +1597,12 @@ Buildable without external infrastructure, each deferred by the phase named.
   streams a session hosted anywhere: an **interest-gated** relay over the store
   bus forwards a watched session's output only while a remote supervisor is
   actually watching, so an unwatched session costs the bus nothing.
-- **Cross-replica step-up decisions** (30/55) — a paused sensitive statement
-  still awaits its supervisor on the replica hosting the session (the pause
-  blocks in that replica's memory): the pending list and
-  `POST /api/sessions/{id}/stepup` are replica-local. A remote supervisor now
-  *sees* the pause in the relayed stream; deciding it still needs the hosting
-  replica — a decision bus in the kill-bus mold, deferred by Phase 55.
+- ~~**Cross-replica step-up decisions** (30/55)~~ — ✅ closed 2026-07-31
+  (Phase 56). The pending list is cluster-wide (a shared, TTL-bounded inventory
+  whose statements rest sealed under the bus key) and a supervisor's decision
+  on any replica is dispatched — sealed and freshness-bound — to the replica
+  whose memory holds the pause, through the same claim point and with the same
+  self-approval refusal.
 - **Per-file SFTP content recording** (32) — operations are audited and paths are
   gatable; the file *bytes* are not captured.
 - ~~**WinRM live streaming** (16)~~ — ✅ closed 2026-07-29. Every WinRM path now

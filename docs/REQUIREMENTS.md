@@ -161,7 +161,9 @@ Three things remain per-replica: the auth **rate-limiter**
 shares to the DB would weaken the offline-shares guarantee), and the
 `PAM_MAX_SESSIONS_PER_USER` / `_TOTAL` caps (deliberately: a cluster cap derived
 from advisory inventory rows could refuse sessions on stale data). In-session
-**step-up decisions** are also decided on the replica hosting the session. For the unseal flow,
+**step-up decisions** cross replicas since Phase 56 (the pending list is
+cluster-wide and a decision posted anywhere is dispatched, sealed, to the
+replica holding the pause). For the unseal flow,
 submit all shares to one replica (a sticky session, or scale to 1 during an
 emergency). All other operations (proxy, WinRM, RDP, rotation, reveal, approval,
 checkout) are safe across replicas.
