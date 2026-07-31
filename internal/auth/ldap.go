@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf16"
 
 	"github.com/go-ldap/ldap/v3"
@@ -82,7 +83,12 @@ func NewLDAPAuthenticator(cfg LDAPConfig) (*LDAPAuthenticator, error) {
 
 // realDial opens the real LDAP connection, using TLS (with the configured verify
 // policy) for ldaps:// URLs.
-func (a *LDAPAuthenticator) realDial(_ context.Context) (ldapConn, error) {
+// ldapRequestTimeout bounds a single LDAP request (bind or search). Generous
+// enough for a slow directory over a WAN, short enough that a stalled one cannot
+// accumulate goroutines from an unauthenticated endpoint.
+const ldapRequestTimeout = 15 * time.Second
+
+func (a *LDAPAuthenticator) realDial(ctx context.Context) (ldapConn, error) {
 	var opts []ldap.DialOpt
 	if strings.HasPrefix(strings.ToLower(a.cfg.URL), "ldaps://") {
 		opts = append(opts, ldap.DialWithTLSConfig(&tls.Config{
@@ -93,6 +99,18 @@ func (a *LDAPAuthenticator) realDial(_ context.Context) (ldapConn, error) {
 	c, err := ldap.DialURL(a.cfg.URL, opts...)
 	if err != nil {
 		return nil, err
+	}
+	// Bound every request on this connection. go-ldap defaults requestTimeout to
+	// zero, i.e. Bind and Search block until the socket dies — so a directory that
+	// accepted the TCP connection and then stalled (a failover, a firewall drop,
+	// packet loss) parked a goroutine and an LDAP socket permanently. That matters
+	// most on POST /api/login, which is UNAUTHENTICATED, and on the identity
+	// reconcile, which opens one connection per user in a single request.
+	c.SetTimeout(ldapRequestTimeout)
+	// The caller's context still cannot cancel a blocked syscall, so close the
+	// connection when it ends: that unblocks whatever is in flight.
+	if ctx != nil {
+		context.AfterFunc(ctx, func() { _ = c.Close() })
 	}
 	return realConn{c}, nil
 }

@@ -786,14 +786,29 @@ func (p *Proxy) dialUpstream(ctx context.Context, target *store.Target, cred *st
 	addr := fmt.Sprintf("%s:%d", target.Host, target.Port)
 	// Route the raw TCP connection through the jump-host dialer when configured
 	// (targets reachable only via a bastion); otherwise dial directly.
-	if p.upstreamDial == nil {
-		return ssh.Dial("tcp", addr, cfg)
+	//
+	// The connection is dialled by hand even in the direct case, so a DEADLINE can
+	// be set across the SSH handshake. ssh.ClientConfig.Timeout bounds only the TCP
+	// connect (x/crypto documents it as such), so a target that completed the
+	// three-way handshake and then went silent parked this goroutine forever —
+	// holding the just-decrypted plaintext credential in memory, in the window
+	// between the session cap check and Register, where it was counted by no cap,
+	// listed by no GET /api/sessions and killable by nothing.
+	dial := p.upstreamDial
+	if dial == nil {
+		dial = func(a string) (net.Conn, error) { return net.DialTimeout("tcp", a, p.dialTimeout) }
 	}
-	conn, err := p.upstreamDial(addr)
+	conn, err := dial(addr)
 	if err != nil {
 		return nil, err
 	}
+	// A watchdog rather than SetDeadline: through a jump host this conn is an SSH
+	// channel, which answers "deadline not supported". Closing the connection makes
+	// the handshake fail, which works for both kinds. Stopped as soon as the
+	// handshake returns, so it never cuts a healthy long-lived session.
+	watchdog := time.AfterFunc(p.dialTimeout, func() { _ = conn.Close() })
 	c, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
+	watchdog.Stop()
 	if err != nil {
 		conn.Close()
 		return nil, err
