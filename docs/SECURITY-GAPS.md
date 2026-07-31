@@ -195,7 +195,6 @@ does:
 Still open from that sweep, in the order they are being worked:
 
 - **Kill cascades audit only when the local count is non-zero**, so in HA a cluster-wide termination (revoke, vendor offboard, analytics auto-kill, certification revoke) can leave no evidence.
-- **No upstream proxy leg has a deadline after the TCP connect**, so a target that accepts and goes silent parks a goroutine forever holding a just-decrypted credential — between the session cap and registration, so uncounted, unlisted and unkillable. LDAP likewise has no request timeout.
 - **Unbounded work**: WinRM output is buffered with no cap and copied several times; every proxy connection reads the entire target inventory; the discovery scan has no time bound.
 
 The rest of that sweep's findings — including three Phase 55 defects (a
