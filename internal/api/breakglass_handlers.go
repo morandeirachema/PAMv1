@@ -125,7 +125,14 @@ func (s *Server) breakGlassUnseal(w http.ResponseWriter, r *http.Request) {
 			}
 			s.log.Warn("BREAK-GLASS quorum unsealed", "remote", r.RemoteAddr, "expires", sess.ExpiresAt)
 			setActor(r.Context(), "break-glass")
-			s.audit(withPrincipal(r.Context(), principal), "breakglass.unseal", "quorum met; session issued")
+			// Fail closed before handing out a full-admin emergency token: minting
+			// one under a store outage with no durable record is the single worst
+			// combination in this system. A credential.reveal under the same outage
+			// is already refused 503 by mustAudit; emergency admin access should not
+			// be held to a lower standard.
+			if !s.mustAudit(w, withPrincipal(r.Context(), principal), "breakglass.unseal", "quorum met; session issued") {
+				return
+			}
 			s.alerter.Notify(r.Context(), alert.Event{
 				Type: "breakglass.unseal", Actor: "break-glass",
 				Detail: "quorum met; session issued", Remote: r.RemoteAddr, Time: time.Now(),
@@ -139,5 +146,15 @@ func (s *Server) breakGlassUnseal(w http.ResponseWriter, r *http.Request) {
 	// Wrong / insufficient shares combined — make the operators start over.
 	s.unseal.reset()
 	s.log.Warn("break-glass unseal failed", "remote", r.RemoteAddr)
+	// Audit the FAILURE too. This endpoint is public and unauthenticated, so
+	// guessing at it was the one authentication surface that reached neither the
+	// audit trail, the risk engine nor the SIEM forwarder — while /api/login
+	// writes login.failed and the bearer surfaces write api.auth_failed. Probing
+	// the emergency door should be at least as visible as probing the front one.
+	s.audit(r.Context(), "breakglass.unseal_failed", "remote:"+auditField(s.clientIP(r), 64))
+	s.alerter.Notify(r.Context(), alert.Event{
+		Type: "breakglass.unseal_failed", Actor: "unknown",
+		Detail: "shares did not reconstruct the key", Remote: r.RemoteAddr, Time: time.Now(),
+	})
 	writeError(w, http.StatusUnauthorized, "shares did not reconstruct the key; start over")
 }

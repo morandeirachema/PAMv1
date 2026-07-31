@@ -107,9 +107,18 @@ func (s *Server) archiveAuditBefore(ctx context.Context, dir string, cutoff time
 		return 0, err
 	}
 	// The digest in the trail is what makes the archive verifiable later: an
-	// auditor re-hashes the file and compares it against this event.
-	s.audit(ctx, "audit.archived", fmt.Sprintf("file:%s count:%d sha256:%s older_than:%s",
-		filepath.Base(path), len(events), digest, cutoff.UTC().Format(time.RFC3339)))
+	// auditor re-hashes the file and compares it against this event — and
+	// lastArchivedThrough reads its high-water mark from the same event.
+	//
+	// So the error is RETURNED, not discarded. The caller's contract is
+	// "archive failed => do not prune", and a dropped digest is an archive failure
+	// in every way that matters: the rows would be deleted behind a file nothing
+	// in the system attests to, which could then be swapped or truncated
+	// undetectably, and the lost marker would silently widen the next window.
+	if aerr := s.auditAs(ctx, actorFrom(ctx), "audit.archived", fmt.Sprintf("file:%s count:%d sha256:%s older_than:%s",
+		filepath.Base(path), len(events), digest, cutoff.UTC().Format(time.RFC3339))); aerr != nil {
+		return 0, fmt.Errorf("archive written to %s but its digest could not be audited, so the rows must not be pruned: %w", path, aerr)
+	}
 	return len(events), nil
 }
 

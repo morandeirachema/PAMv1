@@ -381,7 +381,11 @@ func (t *rotateCredentialTool) Execute(ctx context.Context, p *auth.Principal, a
 	if err != nil {
 		return broker.Result{}, err
 	}
-	t.s.auditAs(ctx, p.Name, "credential.rotate", fmt.Sprintf("credential:%d target:%s reason:agent-broker", cred.ID, target.Name))
+	// A rotation is a production change; if the trail cannot record who caused it,
+	// report that rather than swallow it.
+	if aerr := t.s.auditAs(ctx, p.Name, "credential.rotate", fmt.Sprintf("credential:%d target:%s reason:agent-broker", cred.ID, target.Name)); aerr != nil {
+		return broker.Result{}, errAuditUnavailable
+	}
 	return broker.Result{Data: map[string]any{"credential_id": cred.ID, "rotated": true, "rotated_at": rotatedAt}}, nil
 }
 
@@ -430,7 +434,14 @@ func (t *revealCredentialTool) Execute(ctx context.Context, p *auth.Principal, a
 	if err != nil {
 		return broker.Result{}, fmt.Errorf("credential decrypt failed")
 	}
-	t.s.auditAs(ctx, p.Name, "credential.reveal", fmt.Sprintf("credential:%d target:%s user:%s via:agent-broker", cred.ID, target.Name, cred.Username))
+	// Fail closed, as sshExecTool already does and as the human reveal path does
+	// with mustAudit. The broker chain records the tool call itself, but the
+	// PRIMARY trail's credential.reveal is the row an auditor queries, the SIEM
+	// forwards and the risk engine scores — losing it silently is not acceptable
+	// for a path that returns a plaintext credential.
+	if aerr := t.s.auditAs(ctx, p.Name, "credential.reveal", fmt.Sprintf("credential:%d target:%s user:%s via:agent-broker", cred.ID, target.Name, cred.Username)); aerr != nil {
+		return broker.Result{}, errAuditUnavailable
+	}
 	return broker.Result{Sensitive: true, Data: map[string]any{
 		"credential_id": cred.ID,
 		"target":        target.Name,

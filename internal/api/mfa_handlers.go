@@ -51,7 +51,13 @@ func (s *Server) mfaEnroll(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "mfa.enroll", "user:"+p.Name)
+	// Fail closed, like every other path that hands the caller a live secret. This
+	// one returns a TOTP secret that becomes the account's second factor, so if the
+	// durable record is lost an attacker holding a stolen session token can
+	// re-enrol MFA onto their own device with nothing in the trail to show it.
+	if !s.mustAudit(w, r.Context(), "mfa.enroll", "user:"+p.Name) {
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"secret":       secret,
 		"otpauth_uri":  mfa.ProvisioningURI(secret, p.Name, "pamv1"),
@@ -168,7 +174,11 @@ func (s *Server) mfaRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "mfa.recovery_generated", "user:"+p.Name)
+	// Same reasoning as enrolment, and arguably stronger: each of these codes
+	// substitutes for the second factor at login, so they are a live credential.
+	if !s.mustAudit(w, r.Context(), "mfa.recovery_generated", "user:"+p.Name) {
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"recovery_codes": codes,
 		"note":           "Store these now — each works once in place of your MFA code. This is the only time they are shown.",
