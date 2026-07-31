@@ -609,6 +609,17 @@ func (m *MSSQLProxy) dialUpstream(ctx context.Context, target *store.Target, use
 	if err != nil {
 		return nil, nil, err
 	}
+	// Bound everything up to a completed upstream login. net.Dialer.Timeout covers
+	// only the TCP connect, so a target that accepted the connection and then went
+	// silent — mid-TLS, or mid-authentication — parked this goroutine forever
+	// holding the just-decrypted plaintext credential, in the window between the
+	// session cap and Register where nothing counts, lists or kills it. The
+	// deadline is cleared once the session is established, so a healthy long-lived
+	// session is never cut.
+	if derr := conn.SetDeadline(time.Now().Add(m.dialTimeout)); derr != nil {
+		conn.Close()
+		return nil, nil, derr
+	}
 	c := tds.NewConn(conn)
 
 	// PRELOGIN: ask for whole-session encryption. The vaulted credential is
@@ -703,6 +714,12 @@ func (m *MSSQLProxy) dialUpstream(ctx context.Context, target *store.Target, use
 		// The upstream's own text is logged and audited but never relayed
 		// verbatim to the operator, matching dialUpstream on the PostgreSQL leg.
 		return nil, nil, fmt.Errorf("upstream login failed: %s", msg)
+	}
+	// Logged in: clear the handshake deadline so the session itself is not bounded
+	// by it.
+	if derr := conn.SetDeadline(time.Time{}); derr != nil {
+		conn.Close()
+		return nil, nil, derr
 	}
 	up := &upstreamMSSQL{conn: conn, c: c}
 	if res.PacketSize > 0 {
