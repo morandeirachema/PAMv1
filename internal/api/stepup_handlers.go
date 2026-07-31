@@ -47,6 +47,16 @@ func (s *Server) decideStepUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	// Audit BEFORE applying. DecideBy releases the paused statement, so auditing
+	// afterwards meant a failed append left the statement running on the production
+	// database with the four-eyes evidence — WHO released it — gone, while the
+	// proxy's own db.stepup_approved (attributed to the session's actor, not the
+	// decider) still read like an approved review. The broker chains its
+	// requested-event before every side effect for the same reason.
+	if !s.mustAudit(w, r.Context(), "session.stepup_decided",
+		fmt.Sprintf("session:%s approve:%t", auditField(id, 64), in.Approve)) {
+		return
+	}
 	ok, selfApproval := s.stepup.DecideBy(id, in.Approve, actorFrom(r.Context()))
 	if selfApproval {
 		s.audit(r.Context(), "session.self_stepup_denied", "session:"+id)
@@ -70,6 +80,5 @@ func (s *Server) decideStepUp(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no step-up is pending for this session")
 		return
 	}
-	s.audit(r.Context(), "session.stepup_decided", fmt.Sprintf("session:%s approve:%t", id, in.Approve))
 	writeJSON(w, http.StatusOK, map[string]any{"session": id, "approved": in.Approve})
 }
