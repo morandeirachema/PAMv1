@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -64,6 +65,16 @@ func (s *Server) createAccessRequest(w http.ResponseWriter, r *http.Request) {
 	required := s.approvalsRequired
 	if in.Approvals > required {
 		required = in.Approvals
+	}
+	// The safe's dual-control floor (Phase 58) raises the bar for every target
+	// in it, so a requester cannot ask for fewer approvers than the safe demands.
+	floor, ferr := s.approvalFloorForTarget(r.Context(), in.TargetID)
+	if ferr != nil {
+		storeError(w, ferr)
+		return
+	}
+	if floor > required {
+		required = floor
 	}
 	if required < 1 {
 		required = 1
@@ -170,6 +181,18 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, dec
 	if required < 1 {
 		required = 1
 	}
+	// The safe's dual-control floor is re-read HERE, not just trusted from the
+	// number stamped on the request at creation (Phase 58). A floor that only
+	// applied at request time would be trivially bypassable: file the request
+	// while the target sits outside the safe (or while the floor is lower), and
+	// collect the old number of approvals afterwards. Re-reading means raising a
+	// safe's floor immediately binds every request still in flight.
+	if floor, ferr := s.approvalFloorForTarget(r.Context(), ar.TargetID); ferr != nil {
+		storeError(w, ferr)
+		return
+	} else if floor > required {
+		required = floor
+	}
 	joined := strings.Join(approvers, ",")
 	if len(approvers) >= required {
 		now := time.Now()
@@ -219,10 +242,42 @@ func (s *Server) notifyDecision(r *http.Request, action, approver string, ar *st
 
 // --- enforcement ---
 
+// approvalFloorForTarget returns the minimum distinct approvers the target's
+// safe demands (0 = none). It loads the target, so a caller holding only an id
+// — the approval-decision path — can apply the same policy the connect gates
+// do. A missing target is not an error here: the request outlives its target,
+// and refusing to decide a request whose target was deleted would leave it
+// stuck pending forever; the connect gate is what enforces access anyway.
+func (s *Server) approvalFloorForTarget(ctx context.Context, targetID int64) (int, error) {
+	t, err := s.store.GetTarget(ctx, targetID)
+	if errors.Is(err, store.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	p, err := s.approvalPolicyFor(ctx, t)
+	if err != nil {
+		return 0, err
+	}
+	return p.MinApprovers, nil
+}
+
+// approvalPolicyFor returns the approval requirement binding a target: the
+// global OT policy, the target's own flag, and — since Phase 58 — the policy of
+// the safe it belongs to, whichever is strictest. The error is a store failure
+// reading that safe; the returned policy is fail-closed (Required) so a caller
+// that mishandles the error still denies.
+func (s *Server) approvalPolicyFor(ctx context.Context, t *store.Target) (store.ApprovalPolicy, error) {
+	return store.EffectiveApprovalPolicy(ctx, s.store, t, s.rt().approvalRequired)
+}
+
 // requireApprovalFor reports whether connecting to target needs an approved
-// access request (per-target flag or the global OT policy).
-func (s *Server) requireApprovalFor(t *store.Target) bool {
-	return s.rt().approvalRequired || t.RequireApproval
+// access request. An error reading the safe policy is reported as "required" —
+// unknown policy is never treated as no policy.
+func (s *Server) requireApprovalFor(ctx context.Context, t *store.Target) (bool, error) {
+	p, err := s.approvalPolicyFor(ctx, t)
+	return p.Required, err
 }
 
 // enforceApproval reports whether the caller may perform a privileged use of
@@ -232,7 +287,11 @@ func (s *Server) requireApprovalFor(t *store.Target) bool {
 // caller is consumed here (audited access.consumed) and admits nothing further
 // — status-only checks must call HasActiveApproval instead.
 func (s *Server) enforceApproval(ctx context.Context, t *store.Target) (bool, error) {
-	if !s.requireApprovalFor(t) {
+	required, err := s.requireApprovalFor(ctx, t)
+	if err != nil {
+		return false, err
+	}
+	if !required {
 		return true, nil
 	}
 	if principalFrom(ctx).BreakGlass {

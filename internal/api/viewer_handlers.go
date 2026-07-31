@@ -178,7 +178,12 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 		writeError(w, http.StatusForbidden, "not authorized for this target")
 		return
 	}
-	if s.requireApprovalFor(target) && !principal.BreakGlass {
+	needsApproval, aperr := s.requireApprovalFor(r.Context(), target)
+	if aperr != nil {
+		storeError(w, aperr)
+		return
+	}
+	if needsApproval && !principal.BreakGlass {
 		// Connect-time approval gate: a single-use approval is consumed by this
 		// very connection (Phase 26), so it cannot admit a second RDP session.
 		approved, consumedID, aerr := s.store.ConsumeApproval(r.Context(), principal.Name, target.ID, time.Now())

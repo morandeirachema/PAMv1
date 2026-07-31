@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–57 are shipped.** The narrative that follows traces the arc through
+**Phases 0–58 are shipped.** The narrative that follows traces the arc through
 Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -1615,6 +1615,56 @@ and the API surface (202-shaped RFC 6749 errors, 401 for an unauthenticated
 caller, JWKS authorization, 404 when disabled); plus the Terraform renderer's
 determinism, per-kind coverage and the injection test above.
 
+## Phase 58 — Safe-scoped policy ✅
+
+Closes the older half of the Phase 17 deferral. A safe grouped targets and
+delegated *who* could reach them, but carried no policy of its own: whether a
+connection needed approval was decided per target, one flag at a time. That is
+the setting a newly onboarded target quietly misses — the production safe is
+governed, and the machine added to it last Tuesday is not.
+
+- [x] **A safe carries its own access policy** (migration `0027`):
+  `require_approval` and `min_approvers`, binding **every target in the safe**.
+  Both are **strictest-wins** with the global and per-target settings — a safe
+  may tighten what they allow and can never loosen it, the same direction the
+  per-target RDP clipboard override takes. A dual-control floor implies the
+  approval requirement, because two approvers on a target nothing gates would
+  be a setting with no effect, which reads as a control and is not one
+- [x] **One fold, five enforcement sites** (`store.EffectiveApprovalPolicy`).
+  The predicate `global || target.RequireApproval` had been written out
+  separately in the API, the SSH proxy, the PostgreSQL proxy, the SQL Server
+  proxy and the in-portal viewer. Survivable with two inputs; with a third it is
+  the Phase 38 lesson waiting to happen, so the fold moved into `internal/store`
+  where both `api` and `proxy` already reach. **Fail-closed contract**: when the
+  safe cannot be read it returns `Required: true` *together with* the error, so
+  a caller that mishandles the error still denies — a store hiccup must never
+  quietly downgrade a governed target to ungoverned
+- [x] **The dual-control floor is re-read when each approval is cast**, not
+  merely stamped on the request when it is filed. A floor that applied only at
+  request time would be bypassable by filing early: raising a safe's floor now
+  binds every request still in flight. It applies at request time too, so a
+  requester cannot ask for fewer approvers than the safe demands
+- [x] **API + console**: `POST`/`PUT /api/safes` take and return both fields
+  (a floor outside 0–10 is 422 — a safe nobody can satisfy is a denial of
+  service written as a setting), the audit detail carries the policy on create
+  and update because changing it changes who may reach everything inside, and
+  the 5250 safe screens gained an **Approval** column plus both fields on the
+  add/change forms, with the re-read behaviour stated on screen
+- [x] **Tests**: the fold itself (strictest-wins in every combination, a
+  permissive safe unable to undo the global or per-target flag, and the
+  fail-closed path proving a store error yields `Required`); end to end through
+  the API (a target in an approval-required safe is refused, the *same* target
+  outside it is allowed — which is what proves the refusal came from the safe;
+  the floor raised mid-flight leaves one approval pending and grants on the
+  second distinct approver; the request-time floor; the 422); and **through the
+  SSH proxy**, where neither the global nor the per-target flag is set and the
+  safe alone refuses the session — the path where a missed control would have
+  mattered most
+- Deferred (documented): a **per-consumer management credential** for
+  dependent-account propagation (it still connects as the rotated account) —
+  the other half of the Phase 17 bullet, unrelated to policy and left as its own
+  item
+
 ## What is left ⬜
 
 The canonical backlog. Both read-only security sweeps are closed — the
@@ -1695,16 +1745,21 @@ Buildable without external infrastructure, each deferred by the phase named.
   deny what the fleet allows and no target row can loosen a global deny. Proven
   end to end: a target `deny` under a global `allow` reaches guacd as
   `disable-copy`/`disable-paste=true`.
-- **Safe-scoped policy** (17) — per-safe approval and dual control, plus a
-  per-consumer management credential for dependent-account propagation (which
-  currently connects as the rotated account).
+- ~~**Safe-scoped policy** (17)~~ — ✅ closed 2026-07-31 (Phase 58): a safe now
+  carries `require_approval` and a dual-control `min_approvers` floor binding
+  every target in it, strictest-wins with the global and per-target settings and
+  enforced through one shared fold at all five gates. **Still open, the other
+  half of that bullet**: a **per-consumer management credential** for
+  dependent-account propagation, which currently connects as the rotated
+  account.
 - **Campaign depth** (19) — scheduled/recurring campaigns, safe- or owner-scoped
   campaigns, reviewer assignment and reminders.
 - **Ticket gate depth** (20) — a first-class ServiceNow/Jira connector (the
   generic webhook ships) and gating the *connect* path on a live ticket lookup
   rather than validating at request time.
-- **Vendor console screen** (29) — the API is complete; the 5250 screens are a
-  follow-on, as they were for earlier phases.
+- ~~**Vendor console screen** (29)~~ — already shipped in **Phase 45** (menu 22,
+  *Work with Vendors*, plus contract grants); this line was stale and is struck
+  here rather than left inviting someone to build it twice.
 - **Config depth** (12) — runtime secret refresh without a restart (sourcing is
   one-shot at boot) and a per-variable override map.
 - ~~**KEK-wrap the broker audit keys** (13)~~ — ✅ closed 2026-07-28. The two

@@ -441,8 +441,16 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		return
 	}
 	// Consume-on-connect (Phase 26): a single-use approval is burned by the
-	// connection it admits and cannot authorize a second session.
-	if (m.requireApprv || target.RequireApproval) && !principal.BreakGlass {
+	// connection it admits and cannot authorize a second session. The policy
+	// itself is the strictest of global, per-target and the target's safe
+	// (Phase 58), folded in one place so this path cannot drift from the others.
+	approvalPolicy, aperr := store.EffectiveApprovalPolicy(ctx, m.store, target, m.requireApprv)
+	if aperr != nil {
+		m.log.Error("approval policy lookup failed", "target", target.Name, "err", aperr)
+		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: approval check failed", tds72)
+		return
+	}
+	if approvalPolicy.Required && !principal.BreakGlass {
 		approved, consumedID, aerr := m.store.ConsumeApproval(ctx, actor, target.ID, time.Now())
 		if aerr != nil {
 			m.log.Error("approval check failed", "target", target.Name, "err", aerr)

@@ -199,6 +199,19 @@
     catch (e) { if (e.status === 404) say("AI-AGENT BROKER IS DISABLED (set PAM_BROKER_POLICY_FILE)."); }
     go("brokerapprovals");
   }
+  // Safe policy (Phase 58): a safe can require approval for every target it holds
+  // and set a dual-control floor. Rendered short for the 5250 list column.
+  function safePolicy(s) {
+    if (s.min_approvers > 0) return `required (${s.min_approvers} approvers)`;
+    return s.require_approval ? "required" : "-";
+  }
+  // safeBody coerces the safe form into the API's types: a checkbox is a bool,
+  // a number input is still a string in FormData.
+  function safeBody(f, form) {
+    return { name: f.name, description: f.description,
+             require_approval: form.require_approval.checked,
+             min_approvers: Number(f.min_approvers || 0) };
+  }
   // Step-ups (Phase 43): a paused statement is waiting on a supervisor and will
   // be refused when its TTL expires, so this screen is time-critical.
   async function openStepUps() {
@@ -1954,11 +1967,12 @@ connect to every target in the safe. Type options, press Enter.
   <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", "5=Work with members"].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Name</th><th>Description</th><th>Targets</th><th>Created</th></tr>
-${safes.map((s) => `<tr><td>${opt(s.id)}</td><td>${esc(s.id)}</td><td>${pad(s.name, 16)}</td><td class="detail">${pad(s.description || "-", 24)}</td><td>${tCount(s.id)}</td><td class="cyan">${fmtTime(s.created_at)}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Name</th><th>Description</th><th>Targets</th><th>Approval</th><th>Created</th></tr>
+${safes.map((s) => `<tr><td>${opt(s.id)}</td><td>${esc(s.id)}</td><td>${pad(s.name, 16)}</td><td class="detail">${pad(s.description || "-", 20)}</td><td>${tCount(s.id)}</td><td class="amber">${pad(safePolicy(s), 16)}</td><td class="cyan">${fmtTime(s.created_at)}</td></tr>`).join("")}
 </table>${safes.length ? "" : `<div class="cyan indent">(No safes.${canManage ? " Press F6 to add one, then assign targets from Work with Targets, option 8." : ""})</div>`}
 <input type="submit" hidden></form>
 <div class="cyan">Assign targets from Work with Targets (menu 1), option 8. Deleting a safe unassigns its targets.</div>
+<div class="cyan">A safe's approval policy binds EVERY target in it and is strictest-wins: it can tighten the global and per-target settings, never loosen them.</div>
 ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add safe" : ""}   F12=Cancel`)}`;
         document.getElementById("f-list").onsubmit = async (ev) => {
           ev.preventDefault();
@@ -1983,13 +1997,15 @@ Create a container to group targets and delegate who may access them.
 <form id="f-add" class="indent">
 <label>Name  . . . . . . . :  <input name="name" size="20" required autofocus></label>
 <label>Description . . . . :  <input name="description" size="40"></label>
+<label>Require approval  . :  <input name="require_approval" type="checkbox">   <span class="cyan">every target in this safe needs an approved request</span></label>
+<label>Min approvers . . . :  <input name="min_approvers" type="number" min="0" max="10" value="0" size="3">   <span class="cyan">dual control: distinct approvers required (0 = use the global default)</span></label>
 <input type="submit" hidden>
 </form>
 ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-add").onsubmit = async (ev) => {
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
-          try { await api("POST", "/api/safes", f); say(`SAFE ${String(f.name).toUpperCase()} CREATED.`); await openSafes(); }
+          try { await api("POST", "/api/safes", safeBody(f, ev.target)); say(`SAFE ${String(f.name).toUpperCase()} CREATED.`); await openSafes(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
       },
@@ -2005,13 +2021,16 @@ Editing safe <span class="white">${esc(s.name)}</span> (id ${esc(s.id)}). Member
 <form id="f-chg" class="indent">
 <label>Name  . . . . . . . :  <input name="name" size="20" required autofocus value="${esc(s.name)}"></label>
 <label>Description . . . . :  <input name="description" size="40" value="${esc(s.description || "")}"></label>
+<label>Require approval  . :  <input name="require_approval" type="checkbox"${s.require_approval ? " checked" : ""}>   <span class="cyan">every target in this safe needs an approved request</span></label>
+<label>Min approvers . . . :  <input name="min_approvers" type="number" min="0" max="10" size="3" value="${esc(s.min_approvers || 0)}">   <span class="cyan">dual control: distinct approvers required (0 = use the global default)</span></label>
 <input type="submit" hidden>
 </form>
+<span class="cyan">Raising the floor binds requests that are ALREADY waiting: it is re-read when each approval is cast, not fixed when the request was filed.</span>
 ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-chg").onsubmit = async (ev) => {
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
-          try { await api("PUT", `/api/safes/${s.id}`, f); say(`SAFE ${String(f.name).toUpperCase()} CHANGED.`); await openSafes(); }
+          try { await api("PUT", `/api/safes/${s.id}`, safeBody(f, ev.target)); say(`SAFE ${String(f.name).toUpperCase()} CHANGED.`); await openSafes(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
       },
