@@ -450,8 +450,16 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		return
 	}
 	// Consume-on-connect (Phase 26): a single-use approval is burned by the
-	// connection it admits and cannot authorize a second session.
-	if (d.requireApprv || target.RequireApproval) && !principal.BreakGlass {
+	// connection it admits and cannot authorize a second session. The policy
+	// itself is the strictest of global, per-target and the target's safe
+	// (Phase 58), folded in one place so this path cannot drift from the others.
+	approvalPolicy, aperr := store.EffectiveApprovalPolicy(ctx, d.store, target, d.requireApprv)
+	if aperr != nil {
+		d.log.Error("approval policy lookup failed", "target", target.Name, "err", aperr)
+		d.fail(backend, "58000", "pamv1: approval check failed")
+		return
+	}
+	if approvalPolicy.Required && !principal.BreakGlass {
 		approved, consumedID, aerr := d.store.ConsumeApproval(ctx, actor, target.ID, time.Now())
 		if aerr != nil {
 			d.log.Error("approval check failed", "target", target.Name, "err", aerr)

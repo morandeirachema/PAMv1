@@ -263,9 +263,17 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 
 	// --- safes (Phase 17): container membership as an effective grant ---
-	sf := &store.Safe{Name: "prod-db", Description: "production databases"}
+	// The safe carries its own access policy since Phase 58 (require_approval +
+	// a dual-control floor), so it must round-trip through create, get, list and
+	// update — a policy field that silently reverts to zero on one of those paths
+	// would read as "no policy" at every enforcement site.
+	sf := &store.Safe{Name: "prod-db", Description: "production databases",
+		RequireApproval: true, MinApprovers: 2}
 	if err := st.CreateSafe(ctx, sf); err != nil {
 		t.Fatalf("CreateSafe: %v", err)
+	}
+	if got, err := st.GetSafe(ctx, sf.ID); err != nil || !got.RequireApproval || got.MinApprovers != 2 {
+		t.Fatalf("safe policy round-trip = %+v, %v; want require_approval + 2 approvers", got, err)
 	}
 	if err := st.CreateSafe(ctx, &store.Safe{Name: "prod-db"}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("duplicate safe: want ErrConflict, got %v", err)
@@ -316,11 +324,18 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 	// UpdateSafe renames in place; members and assignment are untouched.
 	sf.Name, sf.Description = "prod-db-renamed", "renamed"
+	sf.MinApprovers = 3 // raising the dual-control floor must persist
 	if err := st.UpdateSafe(ctx, sf); err != nil {
 		t.Fatalf("UpdateSafe: %v", err)
 	}
 	if got, err := st.GetSafe(ctx, sf.ID); err != nil || got.Name != "prod-db-renamed" || got.Description != "renamed" {
 		t.Fatalf("after UpdateSafe: %+v err %v", got, err)
+	}
+	if got, err := st.GetSafe(ctx, sf.ID); err != nil || !got.RequireApproval || got.MinApprovers != 3 {
+		t.Fatalf("UpdateSafe dropped the policy: %+v, %v", got, err)
+	}
+	if listed, err := st.ListSafes(ctx, 10, 0); err != nil || len(listed) == 0 || listed[0].MinApprovers != 3 {
+		t.Fatalf("ListSafes does not carry the policy: %+v, %v", listed, err)
 	}
 	otherSafe := &store.Safe{Name: "dmz"}
 	if err := st.CreateSafe(ctx, otherSafe); err != nil {

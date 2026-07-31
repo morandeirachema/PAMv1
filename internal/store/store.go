@@ -160,6 +160,18 @@ type Safe struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
+	// RequireApproval and MinApprovers are the safe's own access policy
+	// (Phase 58). They bind every target placed in the safe, so a whole class of
+	// systems — the production safe, the OT safe — is governed in one place
+	// instead of target by target, which is how a newly onboarded target ends up
+	// less protected than its neighbours.
+	//
+	// The policy is STRICTEST-WINS with the global and per-target settings: a
+	// safe can tighten what they allow, never loosen it. MinApprovers is a floor
+	// on DISTINCT approvers (dual control); 0 means the safe sets no floor and
+	// the global/request value stands.
+	RequireApproval bool `json:"require_approval,omitempty"`
+	MinApprovers    int  `json:"min_approvers,omitempty"`
 }
 
 // SafeMember authorizes a subject (a user or a role) on a safe. CanManage marks

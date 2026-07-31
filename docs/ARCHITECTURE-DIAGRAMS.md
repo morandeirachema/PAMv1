@@ -324,6 +324,8 @@ erDiagram
     string Name
     string Description
     time_Time CreatedAt
+    bool RequireApproval
+    int MinApprovers
   }
   SafeMember {
     int64 ID

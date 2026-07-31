@@ -575,7 +575,16 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	// This is the consume-on-connect hook (Phase 26): a single-use approval is
 	// burned by the connection it admits — even one that later fails upstream —
 	// so it can never authorize a second session.
-	if (p.requireApprv || target.RequireApproval) && ext["break_glass"] != "true" {
+	// The policy is the strictest of the global flag, the target's own flag and
+	// the safe the target belongs to (Phase 58) — folded in ONE place
+	// (store.EffectiveApprovalPolicy) so the proxies and the API cannot drift.
+	approvalPolicy, aperr := store.EffectiveApprovalPolicy(ctx, p.store, target, p.requireApprv)
+	if aperr != nil {
+		p.log.Error("approval policy lookup failed", "target", target.Name, "err", aperr)
+		rejectAll(chans, ssh.Prohibited, "pamv1: approval check failed")
+		return
+	}
+	if approvalPolicy.Required && ext["break_glass"] != "true" {
 		approved, consumedID, aerr := p.store.ConsumeApproval(ctx, actor, target.ID, time.Now())
 		if aerr != nil {
 			p.log.Error("approval check failed", "target", target.Name, "err", aerr)
