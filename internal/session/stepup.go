@@ -11,9 +11,23 @@ import (
 // decision — the session stays open, unlike a kill. A supervisor (watching the
 // session) resolves it with Decide. It is shared between the proxy (which Awaits)
 // and the API (which Decides), like the live Hub.
+//
+// The paused statement blocks in THIS replica's memory, so the coordinator alone
+// is replica-local. Phase 56 closes that: StartBus (stepupbus.go) attaches the
+// store, after which every pause is mirrored into a shared, TTL-bounded
+// inventory (so PendingCluster lists the whole cluster) and a sealed decision
+// published on any replica is applied by the one hosting the pause.
 type StepUp struct {
 	mu      sync.Mutex
 	pending map[string]*pendingStepUp // keyed by session id: at most one at a time
+
+	// Cross-replica machinery (Phase 56), attached once by StartBus and nil in a
+	// deployment (or test) that never wires it — every path below degrades to the
+	// replica-local behavior when st is nil.
+	st      StepUpStore
+	sealer  *liveSealer
+	replica string
+	audit   func(ctx context.Context, action, detail string)
 }
 
 // pendingStepUp is one paused action awaiting a decision.
@@ -22,15 +36,30 @@ type pendingStepUp struct {
 	actor     string
 	statement string
 	requested time.Time
+	expires   time.Time
 	decided   chan bool
 }
 
-// PendingStepUp is a supervisor-facing view of a paused action.
+// PendingStepUp is a supervisor-facing view of a paused action. It is also the
+// row shape of the shared cluster inventory (StepUpStore) — with one twist: on
+// the store surface Statement carries the SEALED form (base64 of an AES-GCM
+// envelope under the cluster bus key, livecrypto.go), never the SQL itself. The
+// session layer seals before Put and opens after List, so a database observer
+// sees ciphertext and a fabricated row fails to open and is never shown to a
+// supervisor. Everywhere else — the API response, local Pending — Statement is
+// the plaintext statement the supervisor must read to decide.
 type PendingStepUp struct {
 	SessionID string    `json:"session_id"`
 	Actor     string    `json:"actor"`
 	Statement string    `json:"statement"`
 	Requested time.Time `json:"requested_at"`
+	// Expires is when the pause times out and the statement is refused. In the
+	// shared inventory it is stamped by the store's own clock (the single-clock
+	// rule of LiveStore), which is also what filters expired rows out of listings.
+	Expires time.Time `json:"expires_at"`
+	// Replica names the replica hosting the paused session — the one whose memory
+	// holds the blocked statement, and the one that will apply a decision.
+	Replica string `json:"replica,omitempty"`
 }
 
 // NewStepUp returns an empty step-up coordinator.
@@ -44,7 +73,9 @@ func (s *StepUp) Await(ctx context.Context, sessionID, actor, statement string, 
 	if s == nil {
 		return false
 	}
-	entry := &pendingStepUp{sessionID: sessionID, actor: actor, statement: statement, requested: time.Now().UTC(), decided: make(chan bool, 1)}
+	now := time.Now().UTC()
+	entry := &pendingStepUp{sessionID: sessionID, actor: actor, statement: statement,
+		requested: now, expires: now.Add(timeout), decided: make(chan bool, 1)}
 	s.mu.Lock()
 	if _, exists := s.pending[sessionID]; exists {
 		s.mu.Unlock()
@@ -52,6 +83,19 @@ func (s *StepUp) Await(ctx context.Context, sessionID, actor, statement string, 
 	}
 	s.pending[sessionID] = entry
 	s.mu.Unlock()
+
+	// Mirror the pause into the shared cluster inventory (best-effort: the pause
+	// itself lives in this replica's memory and works without the row; a failed
+	// write only keeps remote supervisors from seeing it). If a decision claimed
+	// the entry while the row was being written, the row is already a ghost —
+	// delete it rather than leave it listed until its TTL.
+	s.putRow(entry, timeout)
+	s.mu.Lock()
+	claimed := s.pending[sessionID] != entry
+	s.mu.Unlock()
+	if claimed {
+		s.deleteRow(sessionID)
+	}
 
 	t := time.NewTimer(timeout)
 	defer t.Stop()
@@ -68,6 +112,7 @@ func (s *StepUp) Await(ctx context.Context, sessionID, actor, statement string, 
 	if s.pending[sessionID] == entry {
 		delete(s.pending, sessionID)
 		s.mu.Unlock()
+		s.deleteRow(sessionID)
 		return false // we claimed the timeout; a later Decide finds nothing and fails
 	}
 	s.mu.Unlock()
@@ -120,11 +165,13 @@ func (s *StepUp) DecideBy(sessionID string, approve bool, decider string) (ok, s
 	if !found {
 		return false, false
 	}
-	p.decided <- approve // buffered (cap 1); the waiting Await receives it
+	s.deleteRow(sessionID) // the claim is done; drop the shared-inventory mirror
+	p.decided <- approve   // buffered (cap 1); the waiting Await receives it
 	return true, false
 }
 
-// Pending lists the sessions awaiting a step-up decision (for a supervisor).
+// Pending lists the sessions awaiting a step-up decision on THIS replica (for a
+// supervisor). PendingCluster (stepupbus.go) is the cluster-wide view.
 func (s *StepUp) Pending() []PendingStepUp {
 	if s == nil {
 		return nil
@@ -133,7 +180,8 @@ func (s *StepUp) Pending() []PendingStepUp {
 	defer s.mu.Unlock()
 	out := make([]PendingStepUp, 0, len(s.pending))
 	for _, p := range s.pending {
-		out = append(out, PendingStepUp{SessionID: p.sessionID, Actor: p.actor, Statement: p.statement, Requested: p.requested})
+		out = append(out, PendingStepUp{SessionID: p.sessionID, Actor: p.actor, Statement: p.statement,
+			Requested: p.requested, Expires: p.expires, Replica: s.replica})
 	}
 	return out
 }

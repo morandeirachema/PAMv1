@@ -1021,6 +1021,9 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
       // In-session step-up (Phase 43). Unlike every other list in this console
       // these entries EXPIRE: a paused statement is refused when PAM_DB_STEPUP_TTL_SEC
       // runs out, so the screen states that plainly and the session survives either way.
+      // Since Phase 56 the list is CLUSTER-WIDE and a decision for a pause held by
+      // another replica is dispatched over the store bus — a 202 means dispatched,
+      // not proven applied, so it is reported like a dispatched kill: verify with F5.
       stepups() {
         back = "main";
         const canDecide = can("approve");
@@ -1029,11 +1032,11 @@ Statements paused mid-session, waiting for a supervisor. ${canDecide ? `Type opt
   <span class="cyan">5=Allow the statement   6=Refuse it</span>` : `<span class="cyan">You may watch; deciding needs the approve capability.</span>`}
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>Session</th><th>Actor</th><th>Statement</th><th>Paused at</th></tr>
-${stepUps.map((p) => `<tr><td>${canDecide ? opt(p.session_id) : ""}</td><td>${pad(String(p.session_id).slice(0, 8), 9)}</td><td class="white">${pad(p.actor, 12)}</td><td class="amber">${pad(p.statement, 46)}</td><td class="cyan">${fmtTime(p.requested_at)}</td></tr>`).join("")}
-</table>${stepUps.length ? "" : `<div class="cyan indent">(Nothing is waiting on THIS pod. Paused statements appear here the moment they match PAM_DB_STEPUP_FILE — but a pause is held by the replica running the session, so in a multi-replica deployment decide it there.)</div>`}
+<tr><th>Opt</th><th>Session</th><th>Actor</th><th>Statement</th><th>Replica</th><th>Paused at</th></tr>
+${stepUps.map((p) => `<tr><td>${canDecide ? opt(p.session_id) : ""}</td><td>${pad(String(p.session_id).slice(0, 8), 9)}</td><td class="white">${pad(p.actor, 12)}</td><td class="amber">${pad(p.statement, 36)}</td><td>${pad(p.replica || "-", 10)}</td><td class="cyan">${fmtTime(p.requested_at)}</td></tr>`).join("")}
+</table>${stepUps.length ? "" : `<div class="cyan indent">(Nothing is waiting anywhere in the cluster. Paused statements appear here — from every replica — the moment they match PAM_DB_STEPUP_FILE.)</div>`}
 <input type="submit" hidden></form>
-<span class="cyan">These expire: a statement left undecided is refused when its TTL runs out. The session stays open either way.</span>
+<span class="cyan">These expire: a statement left undecided is refused when its TTL runs out. The session stays open either way. A pause held by another replica is decided over the bus.</span>
 ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         document.getElementById("f-list").onsubmit = async (ev) => {
           ev.preventDefault();
@@ -1041,8 +1044,11 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
           try {
             for (const p of stepUps) {
               const o = optVal(ev.target, p.session_id);
-              if (o === "5") { await api("POST", `/api/sessions/${p.session_id}/stepup`, { approve: true }); say("STATEMENT ALLOWED."); }
-              else if (o === "6") { await api("POST", `/api/sessions/${p.session_id}/stepup`, { approve: false }); say("STATEMENT REFUSED."); }
+              if (o === "5" || o === "6") {
+                const res = await api("POST", `/api/sessions/${p.session_id}/stepup`, { approve: o === "5" });
+                if (res && res.__accepted) say(`DECISION DISPATCHED FOR ${String(p.session_id).slice(0, 8)} (PAUSED ON ${(p.replica || "ANOTHER REPLICA").toUpperCase()}); VERIFY WITH F5.`);
+                else say(o === "5" ? "STATEMENT ALLOWED." : "STATEMENT REFUSED.");
+              }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
             await openStepUps();

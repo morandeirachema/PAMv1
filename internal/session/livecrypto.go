@@ -169,6 +169,89 @@ func (s *liveSealer) openInterest(payload string, now time.Time) (string, error)
 	return id, nil
 }
 
+// stepUpStmtAAD binds a sealed pending-pause statement to the row's identity
+// fields, so a database writer can neither read the statement, forge a row that
+// a supervisor would see, nor re-label a captured one with a different session,
+// operator or replica — any tamper makes the open fail and the row is skipped.
+func stepUpStmtAAD(id, actor, replica string) string {
+	return "pamv1-stepup-stmt|" + id + "|" + actor + "|" + replica
+}
+
+// sealStepUpStatement encrypts a paused statement for the shared step-up
+// inventory, returning the base64 form the row stores.
+func (s *liveSealer) sealStepUpStatement(id, actor, replica, statement string) (string, error) {
+	blob, err := s.seal(stepUpStmtAAD(id, actor, replica), []byte(statement))
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(blob), nil
+}
+
+// openStepUpStatement reverses sealStepUpStatement. errLiveAuth means the row
+// is not vouched for by the cluster's key — fabricated or tampered — and must
+// not be shown to a supervisor.
+func (s *liveSealer) openStepUpStatement(id, actor, replica, sealed string) (string, error) {
+	blob, err := base64.RawURLEncoding.DecodeString(sealed)
+	if err != nil {
+		return "", errLiveAuth
+	}
+	plain, err := s.open(stepUpStmtAAD(id, actor, replica), blob)
+	if err != nil {
+		return "", err
+	}
+	return string(plain), nil
+}
+
+// stepUpDecisionAAD binds a sealed decision to the session it releases, the
+// verdict and the decider, so a captured seal cannot be re-pointed at another
+// pause, flipped from deny to approve, or re-attributed.
+func stepUpDecisionAAD(d StepUpDecision) string {
+	return "pamv1-stepup-decision|" + d.SessionID + "|" + strconv.FormatBool(d.Approve) + "|" + d.Decider
+}
+
+// sealStepUpDecision returns d with its Seal set: a timestamp sealed under the
+// bus key and bound to the decision's fields. Authenticity and freshness are
+// what matter, as with a kill — the fields have to stay readable for the
+// transport and the audit record.
+func (s *liveSealer) sealStepUpDecision(d StepUpDecision, now time.Time) (StepUpDecision, error) {
+	d.Seal = ""
+	blob, err := s.seal(stepUpDecisionAAD(d), []byte(strconv.FormatInt(now.Unix(), 10)))
+	if err != nil {
+		return StepUpDecision{}, err
+	}
+	d.Seal = base64.RawURLEncoding.EncodeToString(blob)
+	return d, nil
+}
+
+// openStepUpDecision verifies a decision's seal and freshness. A decision whose
+// seal is missing, forged, re-pointed at other fields, or older than
+// interestSkew is refused — so a database observer can neither invent a release
+// nor replay one beyond the window (and inside it, the entry is already
+// claimed, so a replay finds nothing).
+func (s *liveSealer) openStepUpDecision(d StepUpDecision, now time.Time) error {
+	if d.Seal == "" {
+		return errLiveAuth
+	}
+	blob, err := base64.RawURLEncoding.DecodeString(d.Seal)
+	if err != nil {
+		return errLiveAuth
+	}
+	bare := d
+	bare.Seal = ""
+	plain, err := s.open(stepUpDecisionAAD(bare), blob)
+	if err != nil {
+		return err
+	}
+	secs, err := strconv.ParseInt(string(plain), 10, 64)
+	if err != nil {
+		return errLiveAuth
+	}
+	if delta := now.Sub(time.Unix(secs, 0)); delta > interestSkew || delta < -interestSkew {
+		return errLiveAuth
+	}
+	return nil
+}
+
 // killAAD binds a sealed kill selector to the fields it targets, so a captured
 // seal cannot be re-pointed at a different session, actor or target.
 func killAAD(sel KillSelector) string {
