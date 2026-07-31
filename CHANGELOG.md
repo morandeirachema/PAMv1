@@ -11,6 +11,15 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **Safe-scoped approval policy** (Phase 58) — a safe now carries
+  `require_approval` and a dual-control `min_approvers` floor that bind **every
+  target in it**, strictest-wins with the global and per-target settings (a safe
+  can tighten them, never loosen). The floor is re-read as each approval is cast,
+  so raising it binds requests already in flight. The predicate deciding all of
+  this moved into one shared fold (`store.EffectiveApprovalPolicy`) consulted by
+  the API, all three session proxies and the RDP viewer. Migration `0027`; no new
+  environment variable.
+
 - **RFC 8693 token-exchange minting + Terraform remediation** (Phase 57) — the
   agent broker now **issues** the delegated identities it had only ever verified:
   `POST /v1/token` (opt-in, `PAM_BROKER_TOKEN_EXCHANGE`) lets an SVID-authenticated

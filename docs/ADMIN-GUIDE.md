@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-07-29 · Reflects: Phases 0–55 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-07-31 · Reflects: Phases 0–58 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -831,6 +831,37 @@ direct grants) — an empty safe leaves its targets open. Clear a target's safe
 with `{"safe_id":null}`. Delegate ownership by adding a `can_manage` member; they
 can then manage that safe's membership (`POST`/`DELETE /api/safes/{id}/members`)
 even as a non-admin.
+
+**Safe-scoped approval policy (Phase 58).** A safe also carries its own access
+policy, binding **every target in it** — so "everything in the production safe
+needs two approvers" is one setting rather than a flag on each target that the
+next onboarding forgets:
+
+```bash
+curl -H "X-API-Key: $PAM_API_KEY" -X PUT http://localhost:8080/api/safes/1 \
+  -d '{"name":"prod-linux","require_approval":true,"min_approvers":2}'
+```
+
+- `require_approval` — every target in the safe needs an approved access
+  request, whatever the target's own flag says.
+- `min_approvers` — **dual control**: that many *distinct* approvers must sign
+  a request before it is granted (0 = no safe floor; the maximum is 10).
+  Setting a floor implies `require_approval`.
+
+Two properties worth knowing:
+
+- **Strictest wins.** A safe can only *tighten* the global `PAM_REQUIRE_APPROVAL`
+  and the per-target flag. There is deliberately no way for a safe to exempt a
+  target the global policy gates.
+- **The floor is re-read as each approval is cast**, not fixed when the request
+  was filed. Raising a safe's floor therefore binds requests that are already
+  waiting — otherwise anyone could file early and collect the old number of
+  approvals afterwards. The floor also applies at request time, so a requester
+  cannot ask for fewer approvers than the safe demands.
+
+Both fields are on the console's **Work with Safes** add and change screens, and
+the list shows an **Approval** column. Changing them is audited (`safe.update`
+records the policy), because it changes who may reach everything inside.
 
 ### Dependent accounts: safe service-account rotation (Phase 17)
 
@@ -1941,6 +1972,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-07-31 | **Phase 58 — a safe can now carry its own approval policy.** `require_approval` and `min_approvers` (dual control) on a safe bind **every target in it**, so a whole class of systems is governed in one place instead of per target. Strictest-wins: a safe tightens the global and per-target settings and can never loosen them. The dual-control floor is re-read as each approval is cast, so raising it binds requests already waiting, and it applies when a request is filed too. Both fields are on the console's safe screens (new **Approval** column) and in `POST`/`PUT /api/safes`; a floor outside 0–10 is refused. See §"Safes" |
 | 2026-07-31 | **Phase 57 — the broker can now issue delegated agent identities.** With `PAM_BROKER_TOKEN_EXCHANGE=true`, `POST /v1/token` (RFC 8693) lets an SVID-authenticated agent delegate **its own** authority to a sub-agent it spawns and receive a short-lived, broker-signed JWT-SVID; the sub-agent's calls carry an `act` chain naming the delegator and the accountable human, so the audit reads the same for a spawned agent as for a direct one. It says who may act, never what they may do — `scope` is refused and policy still decides every call over its arguments — impersonation is unsupported, and the TTL (default 5 min, capped by the delegator's own expiry) is the containment, since a minted token has no revocation list. `GET /v1/token/jwks` publishes the signing key. Also: `POST /api/blast/analyze` with `"terraform": true` returns each finding's remediation as reviewable HCL. See §"AI-agent access broker" |
 | 2026-07-31 | **Phase 56 — cross-replica step-up decisions.** In a multi-replica deployment, `GET /api/sessions/stepups` now lists every replica's paused statements (each row naming its hosting `replica` and its `expires_at`) and `POST /api/sessions/{id}/stepup` decides a pause held on any replica — a decision landing on the "wrong" pod is dispatched, sealed, over the store bus and answers **202 Accepted** (dispatched, not proven applied; refresh the list to verify), exactly the kill-switch's honesty. The statement itself rests **encrypted** in the shared inventory (a database observer reads ciphertext; a fabricated row is never shown to a supervisor), decisions cannot be forged or replayed, and nobody may decide their own session's step-up from any replica. Nothing to configure: it activates with the store, best-effort like the kill and live buses, and a failed bus subscription falls back to replica-local with a startup warning. Console screen 21 gained a Replica column and the `DECISION DISPATCHED … VERIFY WITH F5` report |
 | 2026-07-29 | **Phase 54 — VNC connector.** `vnc` is a target protocol: create it like any other (default port 5900) and open it from *Work with Targets* → option **7**, the same key as RDP — the portal picks the viewer from the target's protocol. It reuses your guacd deployment and `PAM_GUACD_RECORDING_PATH`, and the clipboard policy (`PAM_RDP_CLIPBOARD` plus any per-target override) applies unchanged; VNC's SFTP file channel is always off. Two things to know: VNC is **plaintext with no server authentication** and its password is DES-truncated to 8 characters, so keep guacd and the targets on a trusted segment (see [PROTOCOLS-AND-CRYPTO §3.5](PROTOCOLS-AND-CRYPTO.md)); and if guacd cannot enforce a non-permissive clipboard policy the session is **refused** (`vnc.refused reason:clipboard-unenforceable`) rather than run ungated. |

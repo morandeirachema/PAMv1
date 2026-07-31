@@ -18,6 +18,25 @@ import (
 type safeIn struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// Safe-scoped access policy (Phase 58). Both are strictest-wins with the
+	// global and per-target settings: a safe can tighten them, never loosen them.
+	RequireApproval bool `json:"require_approval,omitempty"`
+	MinApprovers    int  `json:"min_approvers,omitempty"`
+}
+
+// maxSafeApprovers bounds the dual-control floor. A floor larger than any
+// plausible approver pool is not stricter policy, it is a target nobody can
+// ever reach — a denial of service written as a setting.
+const maxSafeApprovers = 10
+
+// validSafePolicy checks the policy fields, writing the error response itself.
+func validSafePolicy(w http.ResponseWriter, in safeIn) bool {
+	if in.MinApprovers < 0 || in.MinApprovers > maxSafeApprovers {
+		writeError(w, http.StatusUnprocessableEntity,
+			fmt.Sprintf("min_approvers must be between 0 and %d", maxSafeApprovers))
+		return false
+	}
+	return true
 }
 
 // createSafe creates a safe (CapManageTargets) and audits it.
@@ -30,12 +49,17 @@ func (s *Server) createSafe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "name is required")
 		return
 	}
-	sf := store.Safe{Name: in.Name, Description: in.Description}
+	if !validSafePolicy(w, in) {
+		return
+	}
+	sf := store.Safe{Name: in.Name, Description: in.Description,
+		RequireApproval: in.RequireApproval, MinApprovers: in.MinApprovers}
 	if err := s.store.CreateSafe(r.Context(), &sf); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "safe.create", "safe:"+in.Name)
+	s.audit(r.Context(), "safe.create", fmt.Sprintf("safe:%s require_approval:%t min_approvers:%d",
+		in.Name, sf.RequireApproval, sf.MinApprovers))
 	writeJSON(w, http.StatusCreated, sf)
 }
 
@@ -65,12 +89,20 @@ func (s *Server) updateSafe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "name is required")
 		return
 	}
-	sf := store.Safe{ID: id, Name: in.Name, Description: in.Description}
+	if !validSafePolicy(w, in) {
+		return
+	}
+	sf := store.Safe{ID: id, Name: in.Name, Description: in.Description,
+		RequireApproval: in.RequireApproval, MinApprovers: in.MinApprovers}
 	if err := s.store.UpdateSafe(r.Context(), &sf); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "safe.update", fmt.Sprintf("safe:%d name:%s", sf.ID, sf.Name))
+	// The policy is in the audit detail because raising or LOWERING it changes
+	// who may reach every target in the safe — a change a reviewer must be able
+	// to see without diffing two API reads.
+	s.audit(r.Context(), "safe.update", fmt.Sprintf("safe:%d name:%s require_approval:%t min_approvers:%d",
+		sf.ID, sf.Name, sf.RequireApproval, sf.MinApprovers))
 	writeJSON(w, http.StatusOK, sf)
 }
 

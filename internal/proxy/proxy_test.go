@@ -492,6 +492,86 @@ func TestApprovalGateProxy(t *testing.T) {
 	}
 }
 
+// TestSafeScopedApprovalProxy proves the safe's policy binds the PROXY, not
+// only the REST API (Phase 58). The proxy is where the control matters most and
+// where it would most easily have been missed: for five phases each enforcement
+// site computed `global || target.RequireApproval` for itself, so a third input
+// added in only one of them would have left `ssh` the way in.
+//
+// Here NEITHER the global flag nor the target's own flag is set — the safe
+// alone demands approval — and the session must still be refused.
+func TestSafeScopedApprovalProxy(t *testing.T) {
+	host, port := startUpstream(t, upstreamUser, upstreamSecret, targetOutput)
+	st := memstore.New()
+	v := mustVault(t)
+	target := seedTarget(t, st, v, host, port)
+
+	// A safe that requires approval, with the target placed in it. The target's
+	// own RequireApproval stays false.
+	sf := &store.Safe{Name: "prod", RequireApproval: true}
+	if err := st.CreateSafe(context.Background(), sf); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AssignTargetSafe(context.Background(), target.ID, &sf.ID); err != nil {
+		t.Fatal(err)
+	}
+	// A safe with members is default-deny, so grant the proxy actor membership;
+	// otherwise the connection would be refused by AUTHORIZATION and the test
+	// would pass without proving anything about approval.
+	if err := st.AddSafeMember(context.Background(), &store.SafeMember{
+		SafeID: sf.ID, SubjectType: "user", Subject: "bootstrap-admin",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := auth.NewResolver(st, proxyAPIKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	px, err := proxy.New(st, v, resolver, proxy.Config{
+		HostKey: mustSigner(t), RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second,
+		// Deliberately NOT set: the safe is the only thing asking for approval.
+		RequireApproval: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := serveProxy(t, px)
+
+	client, err := dialProxy(t, addr, "web-01", proxyAPIKey)
+	if err != nil {
+		t.Fatalf("auth should pass: %v", err)
+	}
+	if sess, err := client.NewSession(); err == nil {
+		sess.Close()
+		client.Close()
+		t.Fatal("the safe requires approval, but the proxy admitted the session")
+	}
+	client.Close()
+
+	// With an approved request the same connection succeeds, proving the refusal
+	// was the approval gate and not the safe's membership check.
+	if err := st.CreateAccessRequest(context.Background(), &store.AccessRequest{
+		Requester: "bootstrap-admin", TargetID: target.ID, Status: "approved",
+		ExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	client2, err := dialProxy(t, addr, "web-01", proxyAPIKey)
+	if err != nil {
+		t.Fatalf("auth should pass: %v", err)
+	}
+	defer client2.Close()
+	sess, err := client2.NewSession()
+	if err != nil {
+		t.Fatalf("session must be allowed after approval: %v", err)
+	}
+	defer sess.Close()
+	if out, err := sess.Output("run"); err != nil || string(out) != targetOutput {
+		t.Fatalf("exec after approval: %q, %v", out, err)
+	}
+}
+
 // TestOneTimeApprovalProxy proves consume-on-connect (Phase 26): a single-use
 // approval admits exactly one proxied connection — the first connect runs end
 // to end against the upstream and burns the approval (audited
