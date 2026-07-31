@@ -11,6 +11,14 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **Cross-replica step-up decisions** (Phase 56) — the pending-pause list is
+  cluster-wide (`GET /api/sessions/stepups` merges a shared, TTL-bounded
+  inventory whose statements rest sealed under the shared-custody bus key) and
+  `POST /api/sessions/{id}/stepup` decides a statement paused on any replica: a
+  decision landing on the "wrong" pod is dispatched, sealed and freshness-bound,
+  over the store bus and answers `202 Accepted`. Self-approval is refused across
+  replicas. Migration `0026` (UNLOGGED `stepups`); no new environment variable.
+
 - **Virtual appliance** (`deploy/ova/`) — `build.sh` produces an importable `.ova`
   carrying Debian 13 (trixie), PostgreSQL, `pam-server` and the full source tree.
   It runs an unattended `debian-installer` under QEMU and assembles the OVA by

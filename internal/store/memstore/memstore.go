@@ -55,6 +55,10 @@ type Memstore struct {
 	liveSessions map[string]liveRow                  // shared live-session inventory
 	frameSubs    map[chan session.LiveFrame]struct{} // live-output fan-out
 	interestSubs map[chan string]struct{}            // watch-interest fan-out
+
+	stepupMu   sync.Mutex
+	stepups    map[string]stepUpRow                     // shared pending step-up inventory
+	stepupSubs map[chan session.StepUpDecision]struct{} // decision fan-out
 }
 
 // New returns an empty in-memory store ready for use.
@@ -88,6 +92,8 @@ func New() *Memstore {
 		liveSessions:  make(map[string]liveRow),
 		frameSubs:     make(map[chan session.LiveFrame]struct{}),
 		interestSubs:  make(map[chan string]struct{}),
+		stepups:       make(map[string]stepUpRow),
+		stepupSubs:    make(map[chan session.StepUpDecision]struct{}),
 	}
 }
 

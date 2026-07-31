@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/morandeirachema/pamv1/internal/api"
 	"github.com/morandeirachema/pamv1/internal/session"
+	"github.com/morandeirachema/pamv1/internal/store/memstore"
 )
 
 // TestStepUpEndpoints proves the in-session step-up API (Phase 30): a paused
@@ -60,5 +62,80 @@ func TestStepUpEndpoints(t *testing.T) {
 	// Deciding a session with no pending step-up is 404.
 	if code, _ := do(t, srv, http.MethodPost, "/api/sessions/sess-1/stepup", approver, map[string]any{"approve": true}); code != http.StatusNotFound {
 		t.Fatalf("decide with nothing pending: want 404, got %d", code)
+	}
+}
+
+// TestStepUpCrossReplica proves Phase 56 through the API: the request lands on
+// "replica B" (the test server) while the statement is paused on "replica A" (a
+// second coordinator sharing the store). The supervisor must see the pause in
+// B's listing — statement in the clear, naming A — and their decision must be
+// dispatched (202, not a claimed 200) over the bus and release A's Await. The
+// self-approval refusal must hold across replicas too, before anything is
+// dispatched.
+func TestStepUpCrossReplica(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := memstore.New()
+	busKey := make([]byte, session.LiveBusKeySize)
+	for i := range busKey {
+		busKey[i] = byte(i + 3)
+	}
+	suA := session.NewStepUp()
+	if err := suA.StartBus(ctx, st, session.StepUpBusConfig{BusKey: busKey, Replica: "rep-a"}); err != nil {
+		t.Fatalf("StartBus(rep-a): %v", err)
+	}
+	suB := session.NewStepUp()
+	if err := suB.StartBus(ctx, st, session.StepUpBusConfig{BusKey: busKey, Replica: "rep-b"}); err != nil {
+		t.Fatalf("StartBus(rep-b): %v", err)
+	}
+	srv, _ := newTestServerStoreOpts(t, nil, st, api.Options{StepUp: suB})
+
+	result := make(chan bool, 1)
+	go func() {
+		result <- suA.Await(ctx, "sess-far", "alice", "DROP TABLE prod", 10*time.Second)
+	}()
+
+	// B's listing shows A's pause: cluster-wide since Phase 56.
+	deadline := time.After(5 * time.Second)
+	for {
+		_, ld := do(t, srv, http.MethodGet, "/api/sessions/stepups", testAPIKey, nil)
+		if strings.Contains(string(ld), "sess-far") {
+			if !strings.Contains(string(ld), "DROP TABLE prod") || !strings.Contains(string(ld), "rep-a") {
+				t.Fatalf("cluster listing lacks the opened statement or hosting replica: %s", ld)
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("the remote pause never appeared in the listing: %s", ld)
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+
+	// The paused operator, holding CapApprove on another replica, still may not
+	// decide their own statement — refused before any dispatch.
+	alice := seedUser(t, srv, "alice", "approver")
+	if code, body := do(t, srv, http.MethodPost, "/api/sessions/sess-far/stepup", alice, map[string]any{"approve": true}); code != http.StatusForbidden {
+		t.Fatalf("cross-replica self-approval: want 403, got %d %s", code, body)
+	}
+
+	// A second person's decision is DISPATCHED (202) and releases A's pause.
+	boss := seedUser(t, srv, "boss", "approver")
+	code, body := do(t, srv, http.MethodPost, "/api/sessions/sess-far/stepup", boss, map[string]any{"approve": true})
+	if code != http.StatusAccepted || !strings.Contains(string(body), `"dispatched":true`) {
+		t.Fatalf("cross-replica decide: want 202 with dispatched:true, got %d %s", code, body)
+	}
+	select {
+	case ok := <-result:
+		if !ok {
+			t.Fatal("the dispatched approval arrived as a refusal")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Await on replica A never saw the dispatched approval")
+	}
+
+	// With the bus attached, "nothing pending" is now a cluster-wide truth.
+	if code, _ := do(t, srv, http.MethodPost, "/api/sessions/sess-far/stepup", boss, map[string]any{"approve": true}); code != http.StatusNotFound {
+		t.Fatalf("decide with nothing pending anywhere: want 404, got %d", code)
 	}
 }

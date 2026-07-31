@@ -404,10 +404,11 @@ is a phase each, out of scope for a security *fix*:
   vendor offboard, analytics auto-response), and since Phase 55 so are **live
   session *monitoring* and the inventory listing** (a shared heartbeat-refreshed
   inventory, plus an interest-gated relay that forwards a watched session's
-  output over the store bus only while a remote supervisor is watching). What
-  remains per-replica: **in-session step-up decisions** (the paused statement
-  blocks in the hosting replica's memory — the pending list and decide endpoint
-  are served there), a documented Phase 55 deferral.
+  output over the store bus only while a remote supervisor is watching), and
+  since Phase 56 so are **in-session step-up decisions** (the pending list is
+  cluster-wide over a shared TTL-bounded inventory whose statements rest sealed
+  under the bus key, and a decision posted anywhere is dispatched, sealed and
+  freshness-bound, to the replica whose memory holds the pause).
 - **Roadmap-deferred**: Kerberos/GSSAPI, serial connectors, SPIRE workload
   attestation, automatic broker-chain checkpoint export. (The in-browser RDP viewer
   has since **shipped** — vendored Guacamole client + bundled guacd.)

@@ -1464,6 +1464,95 @@ killDelivered:
 		t.Fatalf("after deletes ListLiveSessions = %d rows, %v; want 0, nil", len(left), err)
 	}
 
+	// --- cross-replica step-up decisions (Phase 56) ---
+	// The shared pending-pause inventory: rows round-trip (the statement is an
+	// opaque string here — the session layer stores it sealed), list oldest
+	// requested first, upsert in place, expire by the store's own clock, and
+	// delete idempotently.
+	requested := time.Now().Add(-30 * time.Second).Truncate(time.Millisecond)
+	suA := session.PendingStepUp{SessionID: "stepup-a", Actor: "alice",
+		Statement: "sealed-blob-a", Replica: "replica-a", Requested: requested}
+	suB := session.PendingStepUp{SessionID: "stepup-b", Actor: "bob",
+		Statement: "sealed-blob-b", Replica: "replica-b", Requested: requested.Add(10 * time.Second)}
+	if err := st.PutStepUp(ctx, suA, time.Hour); err != nil {
+		t.Fatalf("PutStepUp(a): %v", err)
+	}
+	if err := st.PutStepUp(ctx, suB, time.Hour); err != nil {
+		t.Fatalf("PutStepUp(b): %v", err)
+	}
+	suA.Statement = "sealed-blob-a2"
+	if err := st.PutStepUp(ctx, suA, time.Hour); err != nil {
+		t.Fatalf("PutStepUp(a, upsert): %v", err)
+	}
+	sus, err := st.ListStepUps(ctx)
+	if err != nil {
+		t.Fatalf("ListStepUps: %v", err)
+	}
+	if len(sus) != 2 {
+		t.Fatalf("ListStepUps = %d rows, want 2 (upsert must not duplicate)", len(sus))
+	}
+	if sus[0].SessionID != suA.SessionID || sus[1].SessionID != suB.SessionID {
+		t.Fatalf("ListStepUps order = [%s %s], want oldest requested first [%s %s]",
+			sus[0].SessionID, sus[1].SessionID, suA.SessionID, suB.SessionID)
+	}
+	if got := sus[0]; got.Actor != suA.Actor || got.Statement != "sealed-blob-a2" ||
+		got.Replica != suA.Replica || !got.Requested.Equal(suA.Requested) {
+		t.Fatalf("step-up row round-trip = %+v, want %+v", got, suA)
+	}
+	if sus[0].Expires.IsZero() || !sus[0].Expires.After(sus[0].Requested) {
+		t.Fatalf("listed expiry %v not after requested %v (the store must stamp it)", sus[0].Expires, sus[0].Requested)
+	}
+	// Expiry filter: a non-positive TTL puts the cutoff at/before now, so even a
+	// just-written row is expired — proving the filter runs on the store's own
+	// clock without having to wait a real TTL out.
+	if err := st.PutStepUp(ctx, session.PendingStepUp{SessionID: "stepup-expired", Actor: "carol",
+		Statement: "sealed-blob-c", Replica: "replica-a", Requested: requested}, -time.Second); err != nil {
+		t.Fatalf("PutStepUp(expired): %v", err)
+	}
+	if sus, err = st.ListStepUps(ctx); err != nil || len(sus) != 2 {
+		t.Fatalf("ListStepUps with an expired row = %d rows, %v; want the 2 live ones", len(sus), err)
+	}
+	if err := st.DeleteStepUp(ctx, suA.SessionID); err != nil {
+		t.Fatalf("DeleteStepUp: %v", err)
+	}
+	if err := st.DeleteStepUp(ctx, suA.SessionID); err != nil {
+		t.Fatalf("DeleteStepUp must be idempotent, got %v", err)
+	}
+	if err := st.DeleteStepUp(ctx, suB.SessionID); err != nil {
+		t.Fatalf("DeleteStepUp(b): %v", err)
+	}
+	if left, err := st.ListStepUps(ctx); err != nil || len(left) != 0 {
+		t.Fatalf("after deletes ListStepUps = %d rows, %v; want 0, nil", len(left), err)
+	}
+
+	// The decision bus: a decision published on any replica reaches a
+	// subscriber, fields intact (pgstore's LISTEN registers asynchronously, so
+	// publish is retried until delivery, as with the kill bus).
+	decisions, err := st.SubscribeStepUpDecisions(subCtx)
+	if err != nil {
+		t.Fatalf("SubscribeStepUpDecisions: %v", err)
+	}
+	wantDec := session.StepUpDecision{SessionID: "stepup-a", Approve: true, Decider: "boss", Seal: "opaque-seal"}
+	decDeadline := time.After(5 * time.Second)
+	decTick := time.NewTicker(100 * time.Millisecond)
+	defer decTick.Stop()
+	if err := st.PublishStepUpDecision(ctx, wantDec); err != nil {
+		t.Fatalf("PublishStepUpDecision: %v", err)
+	}
+decisionDelivered:
+	for {
+		select {
+		case got := <-decisions:
+			if got == wantDec {
+				break decisionDelivered
+			}
+		case <-decTick.C:
+			_ = st.PublishStepUpDecision(ctx, wantDec) // retry until the listener is ready
+		case <-decDeadline:
+			t.Fatal("step-up bus: published decision was not delivered to the subscriber")
+		}
+	}
+
 	// The live bus: interest announcements and output frames are delivered to a
 	// subscriber; a frame larger than one transport payload (Postgres NOTIFY
 	// tops out near 8000 bytes) arrives as ordered chunks that reassemble to

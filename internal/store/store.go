@@ -888,6 +888,16 @@ type Store interface {
 	// the demo and tests drive the same session.Cluster code the HA path does.
 	session.LiveStore
 
+	// session.StepUpStore is the cross-replica step-up surface (Phase 56): the
+	// shared pending-pause inventory behind cluster-wide GET
+	// /api/sessions/stepups (statements sealed under the cluster bus key —
+	// this store carries them opaque), and the sealed-decision bus that lets a
+	// supervisor on any replica release or refuse a statement paused on
+	// another. pgstore rides an UNLOGGED table plus LISTEN/NOTIFY; memstore is
+	// in-process, so the demo and tests drive the same session.StepUp code the
+	// HA path does.
+	session.StepUpStore
+
 	// UpsertMFAEnrollment creates or replaces a user's TOTP enrollment.
 	UpsertMFAEnrollment(ctx context.Context, e *MFAEnrollment) error
 	// GetMFAEnrollment returns a user's TOTP enrollment, or ErrNotFound.

@@ -741,6 +741,9 @@ func run() error {
 	// broker's audit keys. It is not configurable: the transport has no access
 	// control, so relaying session content without it would put live privileged
 	// output on a channel any database session can read.
+	// The step-up coordinator exists early because the decision bus below shares
+	// the custody key; its guard file is compiled further down with the others.
+	stepUp := session.NewStepUp()
 	var cluster *session.Cluster
 	busKey, _, bkerr := keycustody.Ensure(ctx, st, v, keycustody.NameLiveBusKey, "", func() ([]byte, error) {
 		k := make([]byte, session.LiveBusKeySize)
@@ -775,6 +778,15 @@ func run() error {
 			// The kill bus shares the key: an unsealed one is a remote
 			// session-termination primitive with nothing authenticating it.
 			startKillBus(rawBusKey, relayAudit)
+			// Cross-replica step-up decisions (Phase 56): pauses are mirrored
+			// into a shared inventory and a sealed decision published on any
+			// replica is applied by the one hosting the pause. Best-effort like
+			// its two siblings.
+			if serr := stepUp.StartBus(ctx, st, session.StepUpBusConfig{
+				BusKey: rawBusKey, Replica: replicaName, Audit: relayAudit,
+			}); serr != nil {
+				log.Warn("step-up decision bus unavailable; step-up listing and decisions are replica-local", "err", serr)
+			}
 		}
 	}
 
@@ -826,9 +838,9 @@ func run() error {
 	}
 
 	// In-session step-up (Phase 30): SQL statements matching the step-up file pause
-	// for a supervisor's live decision. The coordinator is shared by the DB proxy
-	// (which awaits) and the API (which decides).
-	stepUp := session.NewStepUp()
+	// for a supervisor's live decision. The coordinator (created above, where the
+	// decision bus attaches) is shared by the DB proxy (which awaits) and the API
+	// (which decides).
 	var stepupGuard *cmdguard.Guard
 	if cfg.DBStepUpFile != "" {
 		suBytes, derr := os.ReadFile(cfg.DBStepUpFile)
