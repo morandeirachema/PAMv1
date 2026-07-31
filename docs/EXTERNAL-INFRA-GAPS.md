@@ -10,14 +10,16 @@
 > live. This is the operator's checklist of what you must stand up (and what to
 > re-verify) before relying on each capability in production.
 >
-> Last updated: 2026-07-28 · Reflects: Phases 0–52g.
+> Last updated: 2026-07-31 · Reflects: Phases 0–57.
 > (Phases 25–28, 30 and 31 — console parity, recording playback + one-time
 > access, broker completion, operator SSH certificates, in-session step-up and the
 > CIEM blast-radius engine — are fully in-process and add no
 > external-infrastructure requirements; the operator-cert KRL is even verified
 > against a real `ssh-keygen` in CI. **Phase 29 is the exception**: the vendor
 > access gate calls an external employment-attestation webhook, catalogued
-> below.)
+> below. **Phase 57 removed an entry from this catalogue** rather than adding
+> one: RFC 8693 token-exchange minting was listed as needing an external STS,
+> and did not — see §6.)
 
 ## Legend
 
@@ -127,7 +129,7 @@ there is no in-enclave version of somebody else's cloud.
 |---|---|---|---|---|
 | **SPIFFE JWT-SVID verification** | `PAM_BROKER_TRUST_DOMAIN_JWKS`, `internal/agentid/svid.go` | file JWKS + signed SVIDs | A trust-domain JWKS (from SPIRE or another issuer) | SVIDs validate (subject/audience/exp); RFC 8693 `act` delegation depth is capped |
 | **Live SPIRE workload attestation** — *deferred* | Phase 13 | — none | A SPIRE deployment | Workloads receive SVIDs via the SPIRE agent, attested by the node/workload |
-| **RFC 8693 token-exchange minting** — *deferred* | Phase 13 | — none | An STS / token-exchange endpoint | pamv1 mints delegated tokens rather than only verifying them |
+| **RFC 8693 token-exchange minting** — **shipped** (Phase 57) | `PAM_BROKER_TOKEN_EXCHANGE`, `internal/agentid/exchange.go`, `POST /v1/token` | in-process: a minted token is verified at the ingress that minted it, re-delegated, depth-capped, `may_act`-pinned and expiry-capped | **Nothing external.** This entry previously read "needs an STS / token-exchange endpoint" — that was wrong, and a research-parity audit caught it: the broker already holds an accountable identity for the delegator and already decides every call, so it is the only party that can honestly issue "X may act for Y here". No third-party STS is involved | A delegated token authenticates a real tool call; its `act` chain names the delegator and the original accountable party; `GET /v1/token/jwks` publishes the signing key |
 
 ---
 
@@ -145,7 +147,9 @@ external systems, so they are scoped here rather than stubbed:
 | **SQL Server interop verification** (Phase 53) — the TDS proxy is proven end to end against a hand-rolled fake upstream and its codec is pinned to spec-derived byte literals, but it has never spoken to a real Microsoft SQL Server | A licensed SQL Server instance (a `mcr.microsoft.com/mssql/server` container in CI would close it) | A `PAM_TEST_MSSQL_URL`-gated interop test brokering a real batch, on the live-Postgres job pattern |
 | **Connector / plugin breadth** — network devices (Cisco/Juniper/F5/Palo Alto), MySQL/Oracle, VMware/SAP/mainframe | The real devices/databases (network gear speaks SSH and already rides the existing proxy; new DB wire protocols each need a real server to prove interop) | New `Rotator`/`Verifier` connectors and new DB wire-protocol proxies on the Phase 15 pattern |
 | **Cloud CIEM — live ingestion + credential brokering** (the analytical **engine shipped** in Phase 31) | A cloud account + API clients (boto3 `GetAccountAuthorizationDetails`, Okta, GitHub, Workspace) to **ingest** the identity graph the engine consumes, and AWS STS `AssumeRole` (or Azure/GCP) to **mint** short-lived cloud creds | An ingester that produces `blast.Graph`, and a broker tool that mints short-lived cloud creds JIT (mirrors ZSP for cloud IAM) |
-| **Web / SaaS session proxying** — record + inject into web admin consoles | A headless browser + a real SaaS console to drive and record | The heaviest lift; a reverse-proxy/browser-isolation layer alongside SSH/RDP |
+| **Third-party credential backends for the broker** — dynamic database credentials (Vault's database secrets engine), **GitHub App** installation tokens, **AWS STS** session credentials | Each needs the real service and an account to verify honestly: a Vault server with a configured database role, a GitHub App installation, an AWS account + role. The [pam-research](https://github.com/morandeirachema/pam-research) prototype implements all three behind one seam, which is the shape to follow | New backends behind the broker's existing credential seam, each minting a short-lived credential server-side that the agent never sees — the invariant `reveal_credential` and the ZSP certificate path already hold |
+| **Vault SSH secrets engine as the certificate authority** | A Vault server with the SSH engine enabled and its CA key generated *inside* Vault, so the pamv1 process never holds the CA private key at all (today it holds it under shared custody, KEK-sealed — strong, but the key does exist in the process). Mockable in CI the way the Transit KEK already is | A `PAM_SSH_CA_PROVIDER=vault-ssh` alternative in `internal/sshca` that signs certificates over the Vault API instead of locally |
+| **Web / SaaS session proxying** — record + inject into web admin consoles | A headless browser + a real SaaS console to drive and record | The heaviest lift; a reverse-proxy/browser-isolation layer alongside SSH/RDP. The [pam-research](https://github.com/morandeirachema/pam-research) `saas-session-broker` prototype covers the *policy* half — per-action re-evaluation over arguments and in-session step-up — both of which pamv1 already has (Phases 16, 30, 38); what stays out of reach is driving and recording a real browser session |
 
 ---
 
@@ -164,6 +168,43 @@ account, or a separate module/registry:
 | **Thick-app connection components** (SSMS / Toad / vSphere via RDP RemoteApp) | Windows RemoteApp hosts + the thick clients |
 
 ---
+
+## 9. Parity with the research prototypes (`pam-research`)
+
+pamv1's sibling repository, **[pam-research](https://github.com/morandeirachema/pam-research)**,
+is the market investigation that preceded this codebase plus five runnable
+proof-of-concept prototypes (Python/FastAPI) for its five candidate products.
+pamv1 is the production-shaped answer to the same questions in Go, and the two
+repos are audited against each other so a mechanism proven there does not
+quietly go missing here. This is that audit, re-run on **2026-07-31**.
+
+**Applied** — every control-plane mechanism the five prototypes demonstrate now
+exists in pamv1, in most cases more completely:
+
+| Research prototype | The mechanism it proves | Where it lives in pamv1 |
+|---|---|---|
+| **01 · agent-access-broker** | policy decided over a tool call's **arguments**, human-in-the-loop approval, server-side execution the agent never sees, MCP transport (+ SSE, elicitation), SPIFFE agent identity, keyed-HMAC hash-chained audit with ed25519 checkpoints, OCSF export | `internal/policy`, `internal/broker`, `internal/mcp` + `api/mcp_sse.go`, `internal/agentid`, `internal/auditchain`, `internal/ocsf` (Phases 13, 27) |
+| | RFC 8693 **token-exchange minting** | `internal/agentid/exchange.go`, `POST /v1/token` (**Phase 57** — the gap this audit found) |
+| **02 · jit-smb-access** | zero standing privilege: a CA signs a short-lived OpenSSH certificate after approval; hosts trust only the CA | `internal/sshca` (Phases 22, 28) — plus proof-of-possession operator certs and a real KRL, which the prototype does not have |
+| **03 · saas-session-broker** | policy re-evaluated on **every action**, **in-session step-up** that pauses without ending the session, per-session recording as its own tamper-evident hash chain | `internal/cmdguard` + `session.StepUp` (Phases 16, 30, 38, 56), `internal/recording` (Phases 2, 41) |
+| **04 · identity-blast-radius** | real AWS IAM effective-permission evaluation (an edge only where the permission actually holds), escalation-path traversal, toxic-combination findings, **remediation as Terraform** | `internal/blast` (Phase 31); the Terraform rendering is **Phase 57** |
+| **05 · vendor-access-gate** | customer-approved, time-boxed contract grants; credential injected per action; **instant offboard** that revokes everything and survives a restart | `internal/vendor` (Phase 29) — plus a window-close session sweeper and evidence export |
+| *engineering spine* | fail-closed startup preflight, structured JSON logs with correlation ids, security headers, graceful shutdown, SBOM + signed releases, dependency vulnerability gating | `cmd/pam-server`, `internal/logging`, `.github/workflows/{ci,release}.yml` |
+
+**Not applied, with the reason** — each is catalogued above rather than
+half-built: the three third-party **credential backends** (Vault dynamic-DB,
+GitHub App, AWS STS) and the **Vault SSH engine CA** need the real service to
+verify honestly (§7); **live IAM ingestion** needs cloud accounts (§7);
+**browser/SaaS session proxying** needs a headless browser and a real SaaS
+console (§7). The prototypes' **Ansible multi-PoC stack** and **aggregate
+console** have no pamv1 equivalent by design — pamv1 is one binary with one
+5250 console, so there is nothing to aggregate.
+
+**Deliberately not carried over**: the prototypes' documented shortcuts — HMAC
+where production wants real STS/OAuth, fixture data instead of live cloud
+clients, single-writer stores, no HA. pamv1 took the opposite trade on each
+(real Postgres, shared custody, cross-replica buses), which is the point of
+having two repos.
 
 ## Deliberate non-goal
 

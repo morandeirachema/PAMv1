@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–56 are shipped.** The narrative that follows traces the arc through
+**Phases 0–57 are shipped.** The narrative that follows traces the arc through
 Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -250,7 +250,7 @@ PAM for AI agents (ports [`morandeirachema/pam-research`](https://github.com/mor
 - [x] **MCP server** (`internal/mcp`): hand-rolled JSON-RPC 2.0 at `POST /mcp` (`initialize`, `tools/list`, `tools/call`, `ping`, `broker/resume`) behind the same agent auth and sharing the one `broker.ProcessCall`/`Resume` loop — proven at parity with REST (same policy, JIT injection, single-use resume, audit)
 - [x] **SPIFFE JWT-SVID + RFC 8693 delegation**: `agentid.SVIDVerifier` validates JWT-SVIDs against a file trust-domain JWKS (RS256/ES256/EdDSA), enforcing SPIFFE subject + audience + expiry (fail-closed), with nested `act` claims capped by `PAM_BROKER_MAX_DELEGATION_DEPTH`; a `MultiVerifier` accepts SVIDs alongside static keys (reuses the `internal/oidc` JWT/JWKS approach, no new dependency)
 - [x] **Post-review hardening**: a parked `require_approval` call is **re-validated at decision time** (`broker.WithRevalidator`) — an agent key revoked/disabled, or an SVID expired, since parking is refused rather than executed on approval; broker-audit append is serialized across processes under a **Postgres advisory lock** (`AppendBrokerAuditLinked`, the migration-lock idiom) so a rolling-deploy pod overlap or an HA replica can't fork the keyed-HMAC chain; numeric policy arguments match in plain decimal (no `1e+07` mismatch)
-- Deferred (documented): SPIRE workload attestation, RFC 8693 token-**exchange** minting, MCP SSE/elicitation, KEK-wrapping the audit keys
+- Deferred (documented): SPIRE workload attestation, RFC 8693 token-**exchange** minting *(shipped in Phase 57 — it needed no external STS)*, MCP SSE/elicitation, KEK-wrapping the audit keys
 
 ## Phase 14 — SOPS-encrypted secrets ✅
 
@@ -428,7 +428,7 @@ The AI-agent access broker (Phase 13) ported the [pam-research](https://github.c
 - [x] **MCP SSE transport + elicitation**: `GET /mcp` implements the MCP 2024-11-05 HTTP+SSE transport (session registry, `endpoint` event, heartbeats); `initialize` advertises `elicitation`/`logging`. An approval-gated `tools/call` from an elicitation-capable client prompts the running user over the stream (`elicitation/create`) — a **decline withdraws the requester's own** parked call (`broker.tool_call.withdrawn`; you may always cancel what you asked for, no approver needed), an **accept** only records intent (`broker.elicit.accepted`) and does **not** satisfy the human approver gate (four-eyes preserved)
 - [x] **Threat model doc**: [docs/AGENT-THREAT-MODEL.md](docs/AGENT-THREAT-MODEL.md) maps the OWASP LLM Top 10 (2025) and MITRE ATLAS techniques to the broker's controls, and states the boundaries (admin bypass, in-band truncation limit) honestly
 - [x] **Tests**: auditchain (checkpoints emitted + verified, key-compromise edit caught by the signature, rotation overlap, truncation floor), `ocsf` (classification + envelope), and API end-to-end (SoD refuses an out-of-group approver and admits a member; JWKS shape; verify floor; OCSF JSON + NDJSON; a full MCP SSE + elicitation round-trip where a decline withdraws the call and injects no credential)
-- Deferred (documented, infra-bound): SPIRE workload attestation and RFC 8693 token-**exchange** minting (need an STS/SPIRE), a real OAuth 2.1 AS behind RFC 9728, and Vault-custodied signing keys — see [EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)
+- Deferred (documented, infra-bound): SPIRE workload attestation (needs SPIRE), a real OAuth 2.1 AS behind RFC 9728, and Vault-custodied signing keys. **RFC 8693 token-exchange minting was on this list and should not have been** — the broker is its own STS; it shipped in Phase 57 — see [EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)
 
 ## Phase 28 — Operator-issued SSH certificates (JIT certs for humans) ✅
 
@@ -1538,6 +1538,83 @@ it — all from the wrong replica.**
 - Deferred (unchanged from Phase 55, deliberately): the concurrent-session
   caps and the Prometheus active-sessions gauge stay per-replica
 
+## Phase 57 — Delegation you can issue, remediation you can review ✅
+
+A **parity audit against the [pam-research](https://github.com/morandeirachema/pam-research)
+prototypes** — the market investigation and five PoCs this codebase grew out of
+— re-run mechanism by mechanism against pamv1's code. Almost everything was
+already here, usually more completely (the full matrix is
+[EXTERNAL-INFRA-GAPS §9](docs/EXTERNAL-INFRA-GAPS.md)). Two things were not, and
+neither needed anything external — which is the finding that made this a phase:
+one of them had been **catalogued as blocked on infrastructure that turned out
+not to be required.**
+
+**RFC 8693 token exchange — the minting half of delegation** (`internal/agentid/exchange.go`):
+
+- [x] **`POST /v1/token`**: an SVID-authenticated agent delegates *its own*
+  authority to a sub-agent and receives a broker-signed, short-lived delegated
+  JWT-SVID. Phase 13 shipped only the verifying half — pamv1 could read an
+  `act` chain but never write one — and the catalogue said issuing needed "an
+  STS / token-exchange endpoint". It does not: the broker already holds an
+  accountable identity for the delegator and already decides every call, so it
+  is the only party that can honestly issue *"X may act for Y here"*
+- [x] **The chain grows by exactly one link**, and the minted token is
+  **verifiable at the ingress that minted it** — the broker's own issuer key is
+  added to the same kid→key map the trust bundle uses (`SVIDVerifier.TrustIssuer`,
+  refusing a kid that collides with a trust-domain key), so there is one
+  verification path, not a privileged second one. A delegated token can be
+  re-delegated one more link, up to `PAM_BROKER_MAX_DELEGATION_DEPTH`
+- [x] **What it refuses, each for a stated reason**: **impersonation** (an
+  actor-less exchange — erasing the intermediary is the opposite of the
+  accountability chain the broker exists to keep); **delegating someone else's
+  authority** (the delegator is the authenticated caller, so holding two
+  captured tokens mints nothing); **`scope`** (what a delegated agent may *do*
+  is decided per call by policy over the arguments, never baked into an
+  identity token where the policy engine cannot see it); a chain **past the
+  cap**, enforced at mint so a runaway spawn stops there; an actor the
+  subject's **`may_act`** (§4.4) does not name; and any **audience** but this
+  broker. Expiry is capped by the delegator's own — delegated authority never
+  outlives its source
+- [x] **Fail-closed audit before the token is handed over** (`broker.token.exchanged`,
+  naming both ends and the chain) and a best-effort `broker.token.refused`,
+  because a stream of refusals is what a probing agent looks like. Signing key
+  in **shared custody** like its siblings (a per-pod key would make a token
+  minted on one replica unverifiable on the next); `GET /v1/token/jwks`
+  publishes it. Off by default: `PAM_BROKER_TOKEN_EXCHANGE`, fail-loud if
+  enabled without a trust domain or without the broker
+- [x] **Divergence stated, not hidden**: RFC 8693 §4.1's example keeps the
+  original subject in `sub`; a SPIFFE JWT-SVID requires `sub` to be the
+  presenter, so pamv1 keeps SPIFFE semantics and carries the trail in the
+  nested `act` — the same convention the verifier has always read
+
+**Remediation as reviewable Terraform** (`internal/blast/terraform.go`):
+
+- [x] Phase 31 computed the right cut and returned it as a *sentence*.
+  `POST /api/blast/analyze` with `"terraform": true` now also renders it as
+  **HCL**, one stanza per distinct cut edge (deduped — several findings share a
+  cut), deterministically ordered so two runs diff cleanly. A generator per
+  pivot kind: narrow the assumed role's **trust policy**, delete the **group
+  membership**, cap an escalation with a **permissions boundary**, deny the
+  **secret read** (and rotate, in that order — the note says why)
+- [x] **Escaping is a security control here**, not formatting: the graph is
+  caller-submitted and the output is meant to be `terraform apply`-d, so ids
+  become HCL-safe labels, values escape the quote/backslash **and** Terraform's
+  `${…}`/`%{…}` interpolation markers, and comments strip newlines (and the
+  markers too, belt-and-braces, so the invariant is checkable in one line). The
+  test feeds a principal id containing `resource "null_resource" "pwn" {}` and
+  `${file("/etc/passwd")}` and proves neither reaches the output live
+- [x] **Honest about what it is**: a starting point, not an applyable plan —
+  pamv1's normalized graph knows the grant that enables an edge, not your ARNs
+  or conditions, and a cross-provider principal receiving AWS-shaped output is
+  told so. The header says a cut breaks the *reported* path only
+
+Tests: the minted-token round trip end to end (exchange → the delegated token
+makes a real tool call), chain growth and the mint-time cap, every refusal,
+`may_act` in both single and list form, expiry capping, kid-collision refusal,
+and the API surface (202-shaped RFC 6749 errors, 401 for an unauthenticated
+caller, JWKS authorization, 404 when disabled); plus the Terraform renderer's
+determinism, per-kind coverage and the injection test above.
+
 ## What is left ⬜
 
 The canonical backlog. Both read-only security sweeps are closed — the
@@ -1637,6 +1714,10 @@ Buildable without external infrastructure, each deferred by the phase named.
   env value still wins — that remains the signer-rotation path.
 - **Analytics depth** (23) — peer-baseline and new-target novelty scoring (needs
   a longer history model), and step-up-MFA as an automated response.
+- **Console screen for token exchange** (57) — `POST /v1/token` and
+  `GET /v1/token/jwks` are curl-only, like the vendor gate's API was; a 5250
+  screen showing live delegation chains and the signing key's `kid` is the
+  follow-on.
 - **Deploy examples** (14) — cloud-KMS recipients wired into the Helm chart, a
   Flux `Kustomization` example, and sealing the CloudNativePG app-secret. The
   SOPS README advertises a `helm secrets` flow with no example behind it.

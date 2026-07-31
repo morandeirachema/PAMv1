@@ -24,6 +24,10 @@ type blastAnalyzeIn struct {
 	// Target asks who can reach it. Both empty → the full toxic-combination scan.
 	Source string `json:"source,omitempty"`
 	Target string `json:"target,omitempty"`
+	// Terraform adds the findings' remediations rendered as reviewable HCL
+	// (Phase 57), so a fix goes through the same review-and-apply path as every
+	// other infrastructure change here instead of being clicked into a console.
+	Terraform bool `json:"terraform,omitempty"`
 }
 
 // analyzeBlast runs the identity blast-radius / CIEM engine (Phase 31) over a
@@ -73,6 +77,9 @@ func (s *Server) analyzeBlast(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"summary":  in.Graph.Summary(),
 		"findings": findings,
+	}
+	if in.Terraform {
+		resp["remediation_terraform"] = blast.Terraform(findings, &in.Graph)
 	}
 	if in.Source != "" {
 		reach, err := in.Graph.BlastRadius(in.Source)

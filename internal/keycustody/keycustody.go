@@ -54,6 +54,13 @@ const (
 	// database must hold it only as ciphertext.
 	NameLiveBusKey = "live_bus_key"
 
+	// NameBrokerTokenSignSeed is the ed25519 seed the broker signs delegated
+	// JWT-SVIDs with (Phase 57, RFC 8693 token exchange). In shared custody like
+	// its siblings so every replica issues — and therefore accepts — tokens under
+	// one key: a per-pod key would make a token minted on one replica
+	// unverifiable on the next.
+	NameBrokerTokenSignSeed = "broker_token_sign_seed"
+
 	NameBrokerAuditKey      = "broker_audit_key"
 	NameBrokerAuditSignSeed = "broker_audit_sign_seed"
 )

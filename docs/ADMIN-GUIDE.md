@@ -279,7 +279,10 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_BROKER_AUDIT_CHECKPOINT_EVERY` | | `0` (off) | Emit a signed **in-chain** audit checkpoint every N broker events (Phase 27) — defense-in-depth over the HMAC (catches an edit even under HMAC-key compromise). |
 | `PAM_BROKER_AUDIT_SIGN_PREV` | | — | Comma-separated base64 ed25519 **public** keys still trusted after a signing-key rotation (overlap window); published alongside the current key at `GET /v1/audit/jwks`. |
 | `PAM_BROKER_TRUST_DOMAIN` / `_TRUST_DOMAIN_JWKS` / `_AUDIENCE` | SVID only | — | SPIFFE JWT-SVID verification: trust-domain host, file JWKS, and required audience. |
-| `PAM_BROKER_MAX_DELEGATION_DEPTH` | | `1` | RFC 8693 `act`-chain delegation depth cap. |
+| `PAM_BROKER_MAX_DELEGATION_DEPTH` | | `1` | RFC 8693 `act`-chain delegation depth cap — enforced when a chain is presented **and** when a new link is minted. |
+| `PAM_BROKER_TOKEN_EXCHANGE` | | `false` | Enable `POST /v1/token`, the RFC 8693 endpoint where an agent delegates its own authority to a sub-agent (Phase 57). Requires the broker and the SVID settings above. |
+| `PAM_BROKER_EXCHANGE_TTL_MIN` | | `5` | Lifetime of a minted delegated token, further capped by the delegator's own expiry. |
+| `PAM_BROKER_TOKEN_SIGN_SEED` | | *(shared custody)* | Base64 32-byte ed25519 seed for signing delegated SVIDs. Unset is the norm: generated once into KEK-sealed shared custody so every replica issues and accepts under one key. Setting it explicitly is the rotation path. |
 
 The examples below use `-H "X-API-Key: $PAM_API_KEY"`; in production call the
 HTTPS endpoint of your ingress instead of `http://localhost:8080`.
@@ -1151,6 +1154,38 @@ For SPIFFE JWT-SVID agents and RFC 8693 delegation, set `PAM_BROKER_TRUST_DOMAIN
 `PAM_BROKER_TRUST_DOMAIN_JWKS`, and `PAM_BROKER_AUDIENCE`; delegation depth is
 capped by `PAM_BROKER_MAX_DELEGATION_DEPTH`.
 
+**Issuing delegation (Phase 57).** With `PAM_BROKER_TOKEN_EXCHANGE=true`, an
+SVID-authenticated agent can delegate **its own** authority to a sub-agent it
+spawns:
+
+```bash
+curl -s -X POST https://pam.example.com/v1/token \
+  -H "Authorization: Bearer $PLANNER_SVID" \
+  -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+  -d actor_token="$WORKER_SVID"
+# → {"access_token":"…","issued_token_type":"urn:ietf:params:oauth:token-type:jwt",
+#    "token_type":"N_A","expires_in":300}
+```
+
+The sub-agent then calls the broker with that token; its `act` chain names the
+planner and, at the end, the accountable human — so the audit trail reads the
+same whether a call came from an agent or from something an agent spawned. Three
+things worth knowing before you turn it on:
+
+- **The token says who may act, never what they may do.** `scope` is refused;
+  every delegated call is still decided by policy over its arguments, so a
+  delegated agent is not more privileged than the policy allows it to be.
+- **There is no revocation list for a minted token** — the TTL is the
+  containment (default 5 minutes, and never longer than the delegator's own
+  expiry). Keep `PAM_BROKER_EXCHANGE_TTL_MIN` small.
+- **Impersonation is unsupported by design**: an exchange without an
+  `actor_token` is refused, because erasing the intermediary defeats the chain
+  the audit exists to keep. So is delegating a credential you merely hold — the
+  delegator is always the caller you authenticated as.
+
+`GET /v1/token/jwks` (needs `read_audit`) publishes the signing key, so an
+auditor holding a delegated token from the trail can confirm which key signed it.
+
 ### Application-secrets API (Phase 24, Tier-4)
 
 For a **non-agent application** (a CI job, a legacy service) that just needs to
@@ -1906,6 +1941,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-07-31 | **Phase 57 — the broker can now issue delegated agent identities.** With `PAM_BROKER_TOKEN_EXCHANGE=true`, `POST /v1/token` (RFC 8693) lets an SVID-authenticated agent delegate **its own** authority to a sub-agent it spawns and receive a short-lived, broker-signed JWT-SVID; the sub-agent's calls carry an `act` chain naming the delegator and the accountable human, so the audit reads the same for a spawned agent as for a direct one. It says who may act, never what they may do — `scope` is refused and policy still decides every call over its arguments — impersonation is unsupported, and the TTL (default 5 min, capped by the delegator's own expiry) is the containment, since a minted token has no revocation list. `GET /v1/token/jwks` publishes the signing key. Also: `POST /api/blast/analyze` with `"terraform": true` returns each finding's remediation as reviewable HCL. See §"AI-agent access broker" |
 | 2026-07-31 | **Phase 56 — cross-replica step-up decisions.** In a multi-replica deployment, `GET /api/sessions/stepups` now lists every replica's paused statements (each row naming its hosting `replica` and its `expires_at`) and `POST /api/sessions/{id}/stepup` decides a pause held on any replica — a decision landing on the "wrong" pod is dispatched, sealed, over the store bus and answers **202 Accepted** (dispatched, not proven applied; refresh the list to verify), exactly the kill-switch's honesty. The statement itself rests **encrypted** in the shared inventory (a database observer reads ciphertext; a fabricated row is never shown to a supervisor), decisions cannot be forged or replayed, and nobody may decide their own session's step-up from any replica. Nothing to configure: it activates with the store, best-effort like the kill and live buses, and a failed bus subscription falls back to replica-local with a startup warning. Console screen 21 gained a Replica column and the `DECISION DISPATCHED … VERIFY WITH F5` report |
 | 2026-07-29 | **Phase 54 — VNC connector.** `vnc` is a target protocol: create it like any other (default port 5900) and open it from *Work with Targets* → option **7**, the same key as RDP — the portal picks the viewer from the target's protocol. It reuses your guacd deployment and `PAM_GUACD_RECORDING_PATH`, and the clipboard policy (`PAM_RDP_CLIPBOARD` plus any per-target override) applies unchanged; VNC's SFTP file channel is always off. Two things to know: VNC is **plaintext with no server authentication** and its password is DES-truncated to 8 characters, so keep guacd and the targets on a trusted segment (see [PROTOCOLS-AND-CRYPTO §3.5](PROTOCOLS-AND-CRYPTO.md)); and if guacd cannot enforce a non-permissive clipboard policy the session is **refused** (`vnc.refused reason:clipboard-unenforceable`) rather than run ungated. |
 | 2026-07-29 | **Phase 53 — SQL Server session proxy.** `PAM_MSSQL_ADDR` (default `off`) brokers `mssql` targets over TDS exactly as `PAM_DB_ADDR` brokers PostgreSQL: same authorization gates, JIT credential injection into the client's own LOGIN7, per-statement `db.query` audit (`via:mssql`), command control that **sees through `sp_executesql`**, in-session step-up, recording, live monitoring and cluster-wide kill. Connect with `sqlcmd -S pam.example,1433 -U '<dbcred>@<target>' -P "$PAM_TOKEN"`. Set `PAM_TLS_CERT/KEY` — modern TDS clients require encryption and will refuse a plaintext proxy. Integrated/Windows auth is not brokered (SQL authentication only). See §5 → *Database targets (SQL Server)*. |

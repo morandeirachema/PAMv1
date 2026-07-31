@@ -2,7 +2,7 @@
 
 > 🟢 **Living document** — updated in the same change as the broker code (see the [docs hub](README.md)).
 >
-> Last updated: 2026-07-28 · Reflects: Phases 0–52g.
+> Last updated: 2026-07-31 · Reflects: Phases 0–57.
 >
 > Scope: the **AI-agent access broker** (Phases 13, 27, 30, 38, 39, 40, 43, 52c, 52d) — `internal/broker`,
 > `internal/policy`, `internal/agentid`, `internal/auditchain`, `internal/mcp`,
@@ -132,6 +132,17 @@ merely to pass with it present.
 - **In-band truncation floor** — deleting the tail *and* every checkpoint after a
   point removes the in-chain evidence; the out-of-band signed head (archived by an
   auditor) is the backstop, as with any in-band scheme.
-- **Deferred (infra-bound)** — SPIRE workload attestation and RFC 8693 token
-  *exchange* (minting) need an STS/SPIRE deployment; see
-  [EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md).
+- **Deferred (infra-bound)** — SPIRE workload attestation needs a SPIRE
+  deployment; see [EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md). RFC 8693
+  token *exchange* (minting) was on this list and should not have been — no
+  external STS is involved when the broker is the issuer; it **shipped in
+  Phase 57** (`POST /v1/token`).
+- **What a minted delegation is, and is not** — an exchanged token proves *who
+  is acting for whom*, not *what they may do*: `scope` is refused, so every
+  delegated call is still decided per call by policy over its arguments. The
+  chain is bounded (`PAM_BROKER_MAX_DELEGATION_DEPTH`, enforced at mint as well
+  as at ingress) and an exchange cannot erase the intermediary — impersonation
+  is unsupported by design, because the accountable human at the end of the
+  chain is the whole point of the audit record. A delegated token is a bearer
+  credential for this broker for its (short, delegator-capped) lifetime: there
+  is no revocation list for one, so the TTL is the containment.

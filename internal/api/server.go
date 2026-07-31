@@ -242,6 +242,19 @@ type Options struct {
 	// BrokerSVIDVerifier (optional) accepts SPIFFE JWT-SVIDs in addition to static
 	// agent keys (Phase 13d); nil = static keys only.
 	BrokerSVIDVerifier agentid.Verifier
+	// BrokerTokenSignKey (optional) enables the RFC 8693 token-exchange endpoint
+	// (Phase 57): the ed25519 key the broker signs delegated JWT-SVIDs with. Nil
+	// leaves POST /v1/token unmounted — pamv1 then verifies delegation without
+	// issuing it, which is what Phases 13–56 did. BrokerExchangeTTL bounds an
+	// issued token (it is additionally capped by the delegator's own expiry).
+	BrokerTokenSignKey ed25519.PrivateKey
+	BrokerExchangeTTL  time.Duration
+	// BrokerAudience and BrokerMaxDelegation mirror what the SVID verifier was
+	// built with, so a minted token carries the audience the ingress requires and
+	// the same delegation-depth cap is applied at mint time, not only on the next
+	// presentation.
+	BrokerAudience      string
+	BrokerMaxDelegation int
 	// CA (optional) is the Zero Standing Privilege SSH certificate authority
 	// (Phase 22). When set, GET /api/ca/ssh publishes its public key so operators
 	// can install it in a target's TrustedUserCAKeys; nil disables ZSP. It also
@@ -334,6 +347,9 @@ type Server struct {
 	// AI-agent access broker (Phase 13); nil unless a policy file is configured.
 	broker        *broker.Broker
 	agentVerifier agentid.Verifier
+	// exchanger mints delegated JWT-SVIDs (Phase 57, RFC 8693); nil unless
+	// PAM_BROKER_TOKEN_EXCHANGE is on, which also gates POST /v1/token.
+	exchanger     *agentid.Exchanger
 	auditChain    *auditchain.Chain
 	brokerLimiter *ratelimit.Limiter  // per-agent tool-call rate limit (Phase 13)
 	mcpSessions   *mcpSessionRegistry // open MCP SSE streams for elicitation (Phase 27)
@@ -842,6 +858,10 @@ func (s *Server) routes() {
 		s.mux.Handle("GET /v1/audit/verify", s.authz(auth.CapReadAudit, s.verifyBrokerAudit))
 		s.mux.Handle("GET /v1/audit/head", s.authz(auth.CapReadAudit, s.brokerAuditHead))
 		s.mux.Handle("GET /v1/audit/jwks", s.authz(auth.CapReadAudit, s.brokerAuditJWKS))
+		// RFC 8693 token exchange (Phase 57). Mounted with the broker but 404s
+		// unless a signing key was configured, like the app-secrets surface.
+		s.mux.HandleFunc("POST /v1/token", s.agentAuth(s.exchangeToken))
+		s.mux.Handle("GET /v1/token/jwks", s.authz(auth.CapReadAudit, s.tokenJWKS))
 	}
 }
 
