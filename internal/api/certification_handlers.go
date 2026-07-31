@@ -249,10 +249,10 @@ func (s *Server) revokeAccess(ctx context.Context, item *store.CampaignItem) err
 		return nil
 	}
 	for _, name := range affected {
-		if killed := s.sessions.KillByActorTarget(item.Subject, name); killed > 0 {
-			s.audit(ctx, "session.killed",
-				fmt.Sprintf("user:%s target:%s count:%d reason:certification-revoked", item.Subject, name, killed))
-		}
+		killed := s.sessions.KillByActorTarget(item.Subject, name)
+		// Unconditional: killed == 0 in HA usually means "hosted elsewhere".
+		s.audit(ctx, "session.killed",
+			fmt.Sprintf("user:%s target:%s killed_here:%d reason:certification-revoked", item.Subject, name, killed))
 	}
 	return nil
 }

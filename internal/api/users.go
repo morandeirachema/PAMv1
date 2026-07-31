@@ -171,9 +171,13 @@ func (s *Server) killUserSessions(ctx context.Context, username, reason string) 
 		return 0
 	}
 	killed := s.sessions.KillByActor(username)
-	if killed > 0 {
-		s.audit(ctx, "session.killed", fmt.Sprintf("user:%s count:%d reason:%s", username, killed, reason))
-	}
+	// Audited unconditionally. The count is what THIS replica killed, but the kill
+	// is broadcast cluster-wide, so killed == 0 routinely means "the sessions are on
+	// another replica" rather than "there was nothing to cut" — and recording only
+	// the non-zero case left the most consequential HA outcome, a termination that
+	// took effect elsewhere, with no evidence on the deciding side. The applying
+	// replica records session.kill via:bus; this is the intent half.
+	s.audit(ctx, "session.killed", fmt.Sprintf("user:%s killed_here:%d reason:%s", username, killed, reason))
 	return killed
 }
 

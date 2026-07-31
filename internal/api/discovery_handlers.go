@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/morandeirachema/pamv1/internal/discovery"
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -18,6 +20,9 @@ type discoveryIn struct {
 // WinRM, RDP) and returns candidates. With create=true it onboards new ones as
 // targets (skipping hosts already inventoried for that protocol). It only checks
 // reachability — no credentials are used.
+// maxDiscoveryScan bounds a single discovery request end to end.
+const maxDiscoveryScan = 2 * time.Minute
+
 func (s *Server) discoveryScan(w http.ResponseWriter, r *http.Request) {
 	var in discoveryIn
 	if !readJSON(w, r, &in) {
@@ -31,7 +36,14 @@ func (s *Server) discoveryScan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "too many hosts (max 1024)")
 		return
 	}
-	candidates := discovery.Scanner{Dial: s.discoveryDial}.Scan(r.Context(), in.Hosts, in.Ports)
+	// Bound the whole scan. Hosts are capped at 1024 but the host x port PRODUCT was
+	// not, and the scanner dials sequentially with a per-connect timeout: 1024
+	// unreachable hosts across the six default ports is ~100 minutes of a wedged
+	// handler, long past the server's write timeout, so the caller sees nothing and
+	// retries — stacking more. The deadline turns that into a partial result.
+	scanCtx, cancelScan := context.WithTimeout(r.Context(), maxDiscoveryScan)
+	defer cancelScan()
+	candidates := discovery.Scanner{Dial: s.discoveryDial}.Scan(scanCtx, in.Hosts, in.Ports)
 	s.audit(r.Context(), "discovery.scan", fmt.Sprintf("hosts:%d candidates:%d create:%t", len(in.Hosts), len(candidates), in.Create))
 
 	created := []store.Target{}

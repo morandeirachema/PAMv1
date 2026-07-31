@@ -280,9 +280,9 @@ func (s *Server) deleteTargetGrant(w http.ResponseWriter, r *http.Request) {
 	// session actor's role set, so role-grant sessions aren't matched here.
 	if revoked.SubjectType == "user" && s.sessions != nil {
 		if t, terr := s.store.GetTarget(r.Context(), tid); terr == nil {
-			if killed := s.sessions.KillByActorTarget(revoked.Subject, t.Name); killed > 0 {
-				s.audit(r.Context(), "session.killed", fmt.Sprintf("user:%s target:%s count:%d reason:grant-revoked", revoked.Subject, t.Name, killed))
-			}
+			killed := s.sessions.KillByActorTarget(revoked.Subject, t.Name)
+			// Unconditional: killed == 0 in HA usually means "hosted elsewhere".
+			s.audit(r.Context(), "session.killed", fmt.Sprintf("user:%s target:%s killed_here:%d reason:grant-revoked", revoked.Subject, t.Name, killed))
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)

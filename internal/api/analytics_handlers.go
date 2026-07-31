@@ -152,8 +152,12 @@ func (s *Server) analyticsPass(ctx context.Context, now time.Time) {
 
 		// Automated response: cut off a critical-risk actor's live sessions.
 		if s.analyticsAutoKill && f.Level == analytics.LevelCritical && s.sessions != nil {
-			if killed := s.sessions.KillByActor(f.Actor); killed > 0 {
-				resp := fmt.Sprintf("actor:%s action:kill-sessions killed:%d score:%d", f.Actor, killed, f.Score)
+			// See the note in revokeUserSessions: the local count is not the cluster
+			// outcome, so the response is audited whether or not this replica hosted
+			// any of the actor's sessions.
+			{
+				killed := s.sessions.KillByActor(f.Actor)
+				resp := fmt.Sprintf("actor:%s action:kill-sessions killed_here:%d score:%d", f.Actor, killed, f.Score)
 				s.auditAs(ctx, "system-analytics", "analytics.auto_response", resp)
 				s.log.Warn("threat analytics killed sessions", "actor", f.Actor, "killed", killed)
 				s.alerter.Notify(ctx, alert.Event{
