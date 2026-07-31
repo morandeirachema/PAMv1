@@ -181,8 +181,20 @@ Every finding was confirmed by reading the code before being recorded, and the
 highest-severity ones were re-verified independently — two of them by
 reproduction (a panic, and a viewer token that provably opened a session).
 
-**Closed so far** — the two that let an entry point skip what the HTTP middleware
-does:
+**All of it is now closed**, across ten changes landed on 2026-07-30/31 — the
+detail of each is in the [low-level change log](ARCHITECTURE-LOW-LEVEL.md#8-change-log).
+Two things are worth keeping from how it went:
+
+1. **Every regression test was run against the original code first.** That is how
+   we know the viewer token *opened a session* rather than merely being accepted,
+   that the end-marker race was deterministic in the exec-shaped case rather than
+   rare, that a forged `NOTIFY` really did terminate a live session, and that the
+   recording-cap test was not quietly passing on a read timeout. Three tests
+   written this way failed to prove anything on the first attempt and had to be
+   rewritten — which is the argument for the practice.
+2. **Four of the findings were in code that had shipped the day before**, and one
+   of the sweep's own dimensions was aimed at exactly that. New code is where the
+   defects are, and reviewing it before it ages is cheaper than finding it later.
 
 | id | Finding | Status | What was done |
 |---|---|---|---|
@@ -192,10 +204,18 @@ does:
 | ~~AG~~ | **The kill bus was unauthenticated and bus-applied kills were unaudited** (Phase 34): `NOTIFY pam_session_kill` terminated every one of an actor's live privileged sessions cluster-wide, and the applying replica recorded nothing. | **Fixed** | `KillSelector.Seal` (AES-256-GCM over a timestamp, bound to the selector's fields, same shared-custody key as the relay); `StartKillBus` fails closed without a key; the applying replica audits `session.kill … via:bus`. A sealless selector provably kills against the old code. |
 | ~~AF~~ | **The cross-replica live bus was unauthenticated**, and Postgres `LISTEN`/`NOTIFY` has no privilege model — notifications are visible to every user of the database and `LISTEN` needs no grant. So anything able to open a database session could announce interest and make a hosting replica stream a live privileged session's output to the bus, then read it (full terminal, verbatim SQL, WinRM output), with **no audit event on that path at all**; or inject frames to write fabricated output into a supervisor's pane, or an end marker closing their watch while the session ran on. It narrowed a boundary the project built on purpose: the KEK is outside the database, so database-only access had yielded ciphertext. | **Fixed** | Payloads are **sealed with AES-256-GCM** under a shared-custody key (`internal/session/livecrypto.go`); interest carries a timestamp so it cannot be forged or replayed; `StartCluster` fails closed without a key; the first relay of a session is audited `session.relay_start`; rejected payloads are counted and reported. Both forgeries provably succeed against the old code. |
 
-Still open from that sweep, in the order they are being worked:
+Also closed in the same pass:
 
-- **Kill cascades audit only when the local count is non-zero**, so in HA a cluster-wide termination (revoke, vendor offboard, analytics auto-kill, certification revoke) can leave no evidence.
-- **Unbounded work**: WinRM output is buffered with no cap and copied several times; every proxy connection reads the entire target inventory; the discovery scan has no time bound.
+- **Kill cascades now audit unconditionally.** The count is what the LOCAL replica killed, but the kill is broadcast cluster-wide, so `killed == 0` routinely meant "hosted on another replica" rather than "nothing to cut" — and auditing only the non-zero case left the most consequential HA outcome with no evidence on the deciding side. The detail now reads `killed_here:N`, which is what it always meant.
+- **WinRM output is capped** at 4 MiB per stream, with a truncation marker, instead of unbounded buffers copied several times into the transcript, the hash and the response — `type C:\big.iso` from a connect-capable operator or a broker agent could take the process to an OOM.
+- **The discovery scan is bounded** end to end at two minutes. Hosts were capped at 1024 but the host x port PRODUCT was not, and the scanner dials sequentially: 1024 unreachable hosts across the six default ports is roughly 100 minutes of a wedged handler, long past the write timeout, so the caller saw nothing and retried.
+
+Deliberately left, with reasons:
+
+- **Every proxy connection reads the whole target inventory** (`lookupTargetCred` calls `ListTargets(ctx, 0, 0)` and linear-scans). Cheap to trigger, and the right fix is a `GetTargetByName` store method — a `store.Store` interface change with two implementations and a contract test, which is a phase-sized change rather than a hardening patch.
+- **`PAM_MAX_SESSIONS_*` counts SSH connections, not channels**, so one connection can multiplex N shells under a single registry entry. A real OpenSSH upstream's `MaxSessions` caps it in practice, and the per-replica cap semantics are already documented; the channel dimension is not.
+- **A recording's digest is audited on a `Close()` that never `fsync`s**, so an unclean host stop can leave the chain attesting to bytes not on disk. Ordinary process exit is safe.
+- **Broker `Resume` is not bound to the requesting agent** (`Withdraw` is, via `sameAgent`). Exploitable only by a holder of both another valid agent key and the captured single-use token.
 
 The rest of that sweep's findings — including three Phase 55 defects (a
 reproduced `send on closed channel` panic in the memstore live bus, an end marker
