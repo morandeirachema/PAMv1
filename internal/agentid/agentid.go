@@ -29,6 +29,11 @@ type Identity struct {
 	ActorChain []string  // delegation chain, innermost..outermost
 	KeyID      int64     // static agent-key row id (0 for an SVID); for revocation re-checks
 	ExpiresAt  time.Time // SVID expiry (zero for a static key); for post-park re-checks
+	// MayAct is the RFC 8693 §4.4 allow-list this token carried: the actors its
+	// holder permits to act for it. Empty means unpinned. Only the token-exchange
+	// minter reads it (exchange.go) — it restricts who may be delegated TO, never
+	// what the holder itself may do.
+	MayAct []string
 }
 
 // Principal is the auth.Principal the broker authorizes the call under.

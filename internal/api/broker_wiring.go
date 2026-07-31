@@ -39,6 +39,24 @@ func (s *Server) setupBroker(opts Options) error {
 		verifier = append(verifier, opts.BrokerSVIDVerifier)
 	}
 	s.agentVerifier = verifier
+	// Token exchange (Phase 57): the minter takes the SAME composed verifier the
+	// ingress uses, so an actor may present a trust-domain SVID or a token this
+	// broker minted earlier — which is what makes a second delegation link
+	// possible without a privileged second verification path.
+	if len(opts.BrokerTokenSignKey) > 0 {
+		x, xerr := agentid.NewExchanger(agentid.ExchangerConfig{
+			SignKey:  opts.BrokerTokenSignKey,
+			Audience: opts.BrokerAudience,
+			TTL:      opts.BrokerExchangeTTL,
+			MaxDepth: opts.BrokerMaxDelegation,
+			Verifier: verifier,
+		})
+		if xerr != nil {
+			return fmt.Errorf("api: broker token exchange: %w", xerr)
+		}
+		s.exchanger = x
+		s.log.Info("agent broker mints delegated SVIDs (RFC 8693)", "kid", x.KeyID(), "ttl", opts.BrokerExchangeTTL)
+	}
 	s.log.Info("agent access broker enabled", "tools", len(reg.List()), "policy_rules", opts.BrokerPolicy.Rules())
 	return nil
 }
