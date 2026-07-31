@@ -889,10 +889,29 @@ func run() error {
 	// SPIFFE JWT-SVID agent identity (Phase 13d): accepted alongside static agent
 	// keys when a trust-domain JWKS is configured. Load-time failure is fatal.
 	var svidVerifier agentid.Verifier
+	var brokerTokenKey ed25519.PrivateKey
 	if cfg.BrokerTrustDomainJWKS != "" {
 		sv, err := agentid.NewSVIDVerifier(cfg.BrokerTrustDomainJWKS, cfg.BrokerTrustDomain, cfg.BrokerAudience, cfg.BrokerMaxDelegation)
 		if err != nil {
 			return fmt.Errorf("broker SVID verifier: %w", err)
+		}
+		// Token exchange (Phase 57): the broker signs delegated SVIDs with a
+		// shared-custody ed25519 key and must therefore TRUST that key at ingress —
+		// otherwise it would mint tokens it could not itself accept. Wired here,
+		// where the concrete verifier exists; the API only ever sees the interface.
+		if cfg.BrokerTokenExchange {
+			seed, serr := brokerKeyBytes(ctx, st, v, cfg.BrokerTokenSignSeed, "PAM_BROKER_TOKEN_SIGN_SEED",
+				keycustody.NameBrokerTokenSignSeed, ed25519.SeedSize, auditchain.GenerateSignSeedText, log)
+			if serr != nil {
+				return serr
+			}
+			brokerTokenKey = ed25519.NewKeyFromSeed(seed)
+			pub := brokerTokenKey.Public().(ed25519.PublicKey)
+			if terr := sv.TrustIssuer(agentid.KeyID(pub), pub); terr != nil {
+				return fmt.Errorf("broker token exchange: %w", terr)
+			}
+			log.Info("agent broker issues delegated SVIDs (RFC 8693 token exchange)",
+				"kid", agentid.KeyID(pub), "ttl", cfg.BrokerExchangeTTL)
 		}
 		svidVerifier = sv
 		log.Info("agent broker accepts SPIFFE SVIDs", "trust_domain", cfg.BrokerTrustDomain, "max_delegation", cfg.BrokerMaxDelegation)
@@ -1029,6 +1048,10 @@ func run() error {
 		BrokerCheckpointEvery:   cfg.BrokerCheckpointEvery,
 		BrokerAuditSignPrevKeys: brokerSignPrevKeys,
 		BrokerSVIDVerifier:      svidVerifier,
+		BrokerTokenSignKey:      brokerTokenKey,
+		BrokerExchangeTTL:       cfg.BrokerExchangeTTL,
+		BrokerAudience:          cfg.BrokerAudience,
+		BrokerMaxDelegation:     cfg.BrokerMaxDelegation,
 		CA:                      sshCA,
 		SSHOperatorCertTTL:      cfg.SSHOperatorCertTTL,
 		VendorAttestor:          vendor.NewAttestor(cfg.VendorAttestURL),

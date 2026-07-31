@@ -280,6 +280,13 @@ type Config struct {
 	BrokerAudience        string // PAM_BROKER_AUDIENCE — required SVID audience
 	BrokerMaxDelegation   int    // PAM_BROKER_MAX_DELEGATION_DEPTH — RFC 8693 act-chain cap (default 1)
 
+	// Token exchange (Phase 57): the MINTING half of delegation. Off by default —
+	// issuing delegated identities is a privilege an operator opts into, separate
+	// from merely verifying SVIDs.
+	BrokerTokenExchange bool          // PAM_BROKER_TOKEN_EXCHANGE — enable POST /v1/token (RFC 8693)
+	BrokerExchangeTTL   time.Duration // PAM_BROKER_EXCHANGE_TTL_MIN — delegated-token lifetime (default 5m)
+	BrokerTokenSignSeed string        // PAM_BROKER_TOKEN_SIGN_SEED — base64 32-byte ed25519 seed (unset = shared custody)
+
 	// WinRMHTTPS uses HTTPS (5986) for WinRM; WinRMInsecure skips TLS verify (dev).
 	WinRMHTTPS    bool
 	WinRMInsecure bool
@@ -498,6 +505,9 @@ func Load() (*Config, error) {
 		BrokerTrustDomain:     os.Getenv("PAM_BROKER_TRUST_DOMAIN"),
 		BrokerAudience:        os.Getenv("PAM_BROKER_AUDIENCE"),
 		BrokerMaxDelegation:   integer("PAM_BROKER_MAX_DELEGATION_DEPTH", 1),
+		BrokerTokenExchange:   boolean("PAM_BROKER_TOKEN_EXCHANGE", false),
+		BrokerExchangeTTL:     time.Duration(integer("PAM_BROKER_EXCHANGE_TTL_MIN", 5)) * time.Minute,
+		BrokerTokenSignSeed:   os.Getenv("PAM_BROKER_TOKEN_SIGN_SEED"),
 		WinRMHTTPS:            boolean("PAM_WINRM_HTTPS", true), // default HTTPS
 		WinRMInsecure:         boolean("PAM_WINRM_INSECURE_SKIP_VERIFY", false),
 		WinRMNTLM:             os.Getenv("PAM_WINRM_AUTH") == "ntlm",
@@ -603,6 +613,17 @@ func Load() (*Config, error) {
 	// SPIFFE SVID identity needs its trust domain and audience to verify a subject
 	// and reject cross-audience token replay; a JWKS file with neither would accept
 	// any well-formed token in any trust domain.
+	// Token exchange mints delegated identities, which only exist inside the SVID
+	// world: the delegator must be SVID-authenticated and the minted token's actor
+	// chain is verified against the trust domain. Enabling it without that is a
+	// configuration that could never issue anything — fail loud rather than serve
+	// an endpoint that refuses every request.
+	if cfg.BrokerTokenExchange && cfg.BrokerTrustDomainJWKS == "" {
+		errs = append(errs, "PAM_BROKER_TOKEN_EXCHANGE needs PAM_BROKER_TRUST_DOMAIN_JWKS: only an SVID-authenticated agent can delegate")
+	}
+	if cfg.BrokerTokenExchange && cfg.BrokerPolicyFile == "" {
+		errs = append(errs, "PAM_BROKER_TOKEN_EXCHANGE needs the agent broker enabled (PAM_BROKER_POLICY_FILE)")
+	}
 	if cfg.BrokerTrustDomainJWKS != "" && (cfg.BrokerTrustDomain == "" || cfg.BrokerAudience == "") {
 		errs = append(errs, "PAM_BROKER_TRUST_DOMAIN and PAM_BROKER_AUDIENCE are required when PAM_BROKER_TRUST_DOMAIN_JWKS is set")
 	}

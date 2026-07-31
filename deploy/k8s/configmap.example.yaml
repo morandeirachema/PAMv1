@@ -219,6 +219,11 @@ data:
   # PAM_BROKER_TRUST_DOMAIN_JWKS: "/etc/pamv1/spiffe-jwks.json"
   # PAM_BROKER_TRUST_DOMAIN: "example.org"
   # PAM_BROKER_AUDIENCE: "pamv1"
+  # RFC 8693 token exchange (Phase 57) — the broker MINTS delegated SVIDs.
+  # Needs the broker and the SVID settings above; the signing key is held in
+  # shared custody unless PAM_BROKER_TOKEN_SIGN_SEED is set (a Secret, not here).
+  # PAM_BROKER_TOKEN_EXCHANGE: "false"
+  # PAM_BROKER_EXCHANGE_TTL_MIN: "5"
 
   # --- Application-secrets API ---------------------------------------------
   # PAM_APP_SECRETS_ENABLED: "false"     # vends plaintext to machines; front with TLS

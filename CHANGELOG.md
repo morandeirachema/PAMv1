@@ -11,6 +11,17 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **RFC 8693 token-exchange minting + Terraform remediation** (Phase 57) — the
+  agent broker now **issues** the delegated identities it had only ever verified:
+  `POST /v1/token` (opt-in, `PAM_BROKER_TOKEN_EXCHANGE`) lets an SVID-authenticated
+  agent delegate its own authority to a sub-agent and returns a broker-signed,
+  short-lived JWT-SVID whose actor chain grows by exactly one link, capped by the
+  delegator's own expiry and the existing delegation-depth limit. Impersonation,
+  `scope`, a foreign audience and an actor outside the delegator's `may_act` are
+  all refused. `GET /v1/token/jwks` publishes the signing key (shared custody).
+  Separately, `POST /api/blast/analyze` with `"terraform": true` renders each
+  finding's remediation as reviewable HCL. No schema change.
+
 - **Cross-replica step-up decisions** (Phase 56) — the pending-pause list is
   cluster-wide (`GET /api/sessions/stepups` merges a shared, TTL-bounded
   inventory whose statements rest sealed under the shared-custody bus key) and

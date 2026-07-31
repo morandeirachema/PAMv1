@@ -1194,6 +1194,27 @@ func TestRunErrors(t *testing.T) {
 			want: "broker SVID verifier",
 		},
 		{
+			// Token exchange mints identities that only exist inside the SVID
+			// world, so enabling it without a trust domain could never issue
+			// anything. Fail loud rather than serve an endpoint that refuses
+			// every request (Phase 57).
+			name: "token exchange without a trust domain",
+			env:  map[string]string{"PAM_BROKER_TOKEN_EXCHANGE": "true"},
+			want: "PAM_BROKER_TOKEN_EXCHANGE",
+		},
+		{
+			name: "token exchange without the broker",
+			setup: func(t *testing.T) map[string]string {
+				return map[string]string{
+					"PAM_BROKER_TOKEN_EXCHANGE":    "true",
+					"PAM_BROKER_TRUST_DOMAIN_JWKS": writeTemp(t, "jwks.json", `{"keys":[]}`),
+					"PAM_BROKER_TRUST_DOMAIN":      "example.org",
+					"PAM_BROKER_AUDIENCE":          "pamv1",
+				}
+			},
+			want: "PAM_BROKER_TOKEN_EXCHANGE",
+		},
+		{
 			name: "ticket pattern invalid",
 			env:  map[string]string{"PAM_TICKET_PATTERN": "["},
 			want: "PAM_TICKET_PATTERN",

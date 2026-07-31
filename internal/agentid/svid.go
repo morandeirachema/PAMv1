@@ -37,6 +37,44 @@ type actClaim struct {
 	Act *actClaim `json:"act"`
 }
 
+// mayActClaim is an RFC 8693 §4.4 "may_act" claim: which party (or parties) the
+// token's holder permits to act for it. The RFC's example carries a single
+// `sub`; a list is the natural generalization and both are accepted.
+type mayActClaim struct {
+	Sub json.RawMessage `json:"sub"`
+}
+
+// subjects flattens a may_act claim into the subjects it names. A malformed or
+// absent claim yields nil — "unpinned" — which the minter treats as no
+// restriction, so a broken claim can never widen anything: it can only fail to
+// narrow, and every other gate (trust domain, depth cap, policy) still applies.
+func (m *mayActClaim) subjects() []string {
+	if m == nil || len(m.Sub) == 0 {
+		return nil
+	}
+	var one string
+	if json.Unmarshal(m.Sub, &one) == nil {
+		if one == "" {
+			return nil
+		}
+		return []string{one}
+	}
+	var many []string
+	if json.Unmarshal(m.Sub, &many) != nil {
+		return nil
+	}
+	out := make([]string, 0, len(many))
+	for _, s := range many {
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // SVIDVerifier verifies SPIFFE JWT-SVIDs against a trust-domain JWKS loaded from
 // a file (SPIRE publishes the bundle; we verify SVIDs against it, we do not run a
 // SPIRE agent). It requires the subject to be a SPIFFE ID in the configured trust
@@ -83,6 +121,29 @@ func NewSVIDVerifier(jwksPath, trustDomain, audience string, maxDepth int) (*SVI
 	return &SVIDVerifier{trustDomain: trustDomain, audience: audience, maxDepth: maxDepth, keys: keys}, nil
 }
 
+// TrustIssuer adds the broker's OWN token-exchange signing key to the verifier,
+// so a delegated SVID this broker minted (exchange.go) is accepted on the next
+// call — which is what makes a minted token usable at all, and what lets a
+// sub-agent re-delegate one more link.
+//
+// Nothing else about verification changes: a self-issued token still has to name
+// a subject in the trust domain, match the audience, be unexpired, and keep its
+// act chain inside the depth cap. The key rides the same kid→key map the
+// trust-domain bundle uses, so there is exactly one verification path rather
+// than a privileged second one — and a kid that collides with a bundle key is a
+// startup error, because silently shadowing a trust-domain key with the
+// broker's own would be a trust substitution nobody could see.
+func (v *SVIDVerifier) TrustIssuer(kid string, pub ed25519.PublicKey) error {
+	if kid == "" || len(pub) != ed25519.PublicKeySize {
+		return errors.New("agentid: issuer key must have a kid and be an ed25519 public key")
+	}
+	if _, clash := v.keys[kid]; clash {
+		return fmt.Errorf("agentid: issuer kid %q collides with a trust-domain key", kid)
+	}
+	v.keys[kid] = pub
+	return nil
+}
+
 // Verify validates a JWT-SVID and returns the delegated Identity, or
 // ErrUnauthenticated. Every failure path is fail-closed and indistinguishable
 // (no oracle about why a token was rejected).
@@ -116,6 +177,10 @@ func (v *SVIDVerifier) Verify(_ context.Context, bearer string) (*Identity, erro
 		Exp int64           `json:"exp"`
 		Aud json.RawMessage `json:"aud"`
 		Act *actClaim       `json:"act"`
+		// RFC 8693 §4.4: who this token's holder allows to act for it. Carried
+		// through to Identity so the token-exchange minter can enforce it
+		// (exchange.go); absent means unpinned, never "anyone is named".
+		MayAct *mayActClaim `json:"may_act"`
 	}
 	if err := decodeSegment(parts[1], &claims); err != nil {
 		return nil, ErrUnauthenticated
@@ -135,7 +200,8 @@ func (v *SVIDVerifier) Verify(_ context.Context, bearer string) (*Identity, erro
 	if !ok {
 		return nil, ErrUnauthenticated // delegation too deep, or a delegate outside the trust domain
 	}
-	id := &Identity{AgentName: claims.Sub, SPIFFEID: claims.Sub, ActorChain: chain, ExpiresAt: time.Unix(claims.Exp, 0)}
+	id := &Identity{AgentName: claims.Sub, SPIFFEID: claims.Sub, ActorChain: chain,
+		ExpiresAt: time.Unix(claims.Exp, 0), MayAct: claims.MayAct.subjects()}
 	// The accountable party is the outermost actor (the human/service the chain
 	// bottoms out at), else the subject itself.
 	id.OnBehalfOf = chain[len(chain)-1]
