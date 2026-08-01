@@ -8,7 +8,7 @@ review activity. If you deploy or administer pamv1, see the
 > user-facing behavior changes (portal, connecting, roles). Add a row to the
 > [change log](#8-change-log) with each update.
 >
-> Last updated: 2026-07-31 · Reflects: Phases 0–58 — the 5250 console (11, now keyboard-first and with full backend parity: safes, campaigns, risk analytics, live watch — Phase 25), custom permission profiles (12), the database session proxy you connect to with `psql` (15), supervised sessions (16: a supervisor may watch live, and a command can be blocked by policy), and Zero Standing Privilege on some targets (22: no stored password — pamv1 signs a short-lived certificate for your session). Since then, the things you are most likely to *notice*: a SQL statement can **pause mid-session** for a supervisor's decision (30) instead of the session dying; your session can be **refused outright** if recording is required but not configured (52c); certification and step-up decisions need the **approver** capability (39) and nobody may decide their own (46, 52c); and recovery codes are now four groups of six (52e). An admin revoking your access still ends your live sessions immediately. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-01 · Reflects: Phases 0–59 — the 5250 console (11, now keyboard-first and with full backend parity: safes, campaigns, risk analytics, live watch — Phase 25), custom permission profiles (12), the database session proxy you connect to with `psql` (15), supervised sessions (16: a supervisor may watch live, and a command can be blocked by policy), and Zero Standing Privilege on some targets (22: no stored password — pamv1 signs a short-lived certificate for your session). Since then, the things you are most likely to *notice*: a SQL statement can **pause mid-session** for a supervisor's decision (30) instead of the session dying; your session can be **refused outright** if recording is required but not configured (52c); certification and step-up decisions need the **approver** capability (39) and nobody may decide their own (46, 52c); recovery codes are now four groups of six (52e); and the **content of SFTP transfers may be recorded**, with a per-file size cap that refuses what crosses it (59). An admin revoking your access still ends your live sessions immediately. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ Educational / pre-production project — see the [README](../README.md).
 
@@ -212,8 +212,12 @@ you.
 > proxy as normal, but each file operation is logged. Depending on policy your
 > access may be **read-only** (uploads, deletes and renames are refused with
 > "permission denied" — downloads still work) or SFTP may be **disabled** (the
-> subsystem is refused; you still get a shell). Ask your admin if you need to
-> upload and can't.
+> subsystem is refused; you still get a shell). Your site may also **record the
+> content** of transferred files (Phase 59) — the bytes you move are kept as
+> evidence, encrypted, exactly like your session recording — and may enforce a
+> **per-file size limit**: a transfer that hits it fails mid-file with
+> "permission denied". Ask your admin if you need to upload and can't, or if a
+> large transfer keeps failing at the same point.
 
 ### Connecting to a database (PostgreSQL)
 
@@ -324,7 +328,9 @@ Two more review screens (both need audit-read):
   (1x→2x→4x→8x→MAX; long silences are compressed to 2s). The header shows
   whether the recording's SHA-256 **matches the value in the audit trail** — a
   file tampered on disk is flagged in amber. Every replay is itself audited
-  (`session.playback`).
+  (`session.playback`). A row of kind **`file`** is captured SFTP content
+  (Phase 59): option `5` **downloads the transferred bytes** instead of
+  replaying — reconstructed from the capture, with the same hash verdict.
 
 When you **file an access request** (menu 5, F6) you can now also provide a
 change **ticket** (if your organization gates access on ITSM tickets), ask for a
@@ -363,6 +369,7 @@ working as configured. If you hit one, quote it to your administrator.
 |---|---|
 | `pamv1: session recording is unavailable; session refused` (SSH), `pamv1: session recording unavailable` (psql), or **503 recording is required but not configured** in the portal | Your site requires every session to be recorded and recording is not configured for that path. Nothing to do at your end |
 | `pamv1: statement requires supervisor approval (denied or timed out)` | Your statement matched the step-up policy and paused for a second person. Nobody decided in time, or they refused. **A simple query leaves the session open**; one sent over the extended protocol ends it |
+| An SFTP transfer fails with "permission denied" **partway through a large file** | Your site records transfer content with a per-file size cap, and the file crossed it. The bytes up to the cap moved; the rest were refused. Split the file or ask your admin about the limit |
 | `session limit reached` (or HTTP 429) | You are at your concurrent-session cap. Close one and retry |
 | `vendor access requires an approved, in-window contract grant for this account` | You are a third-party user and your contract grant has not been approved, or its window has closed |
 
@@ -374,6 +381,7 @@ guard against connections that open and never authenticate, not a fault.
 
 | Date | Change |
 |---|---|
+| 2026-08-01 | **Phase 59 — file transfers may be recorded in full, and may hit a size limit.** If your site enables content capture, the bytes of every file you move over SFTP are kept as encrypted evidence alongside your session recording, and auditors can download them from menu 19 (kind `file`). A per-file cap, when set, makes a transfer fail with "permission denied" partway — see §7. §3, §4 |
 | 2026-07-31 | **Some targets now need more than one approver.** If a target belongs to a safe with dual control, your access request stays *pending* until the required number of **different** people have approved it — the screen shows the progress (`n/m`). Nothing changes in how you file the request. |
 | 2026-07-31 | **Phase 56 — a paused statement can be decided from any replica.** Nothing changes in what you see: your statement pauses, then runs or is refused. What changed is behind the curtain — the supervisor no longer has to reach the exact replica running your session to decide it, so decisions should land faster on multi-replica deployments. Nobody may approve their own paused statement, from anywhere. |
 | 2026-07-29 | **Option 7 now opens VNC desktops too.** On *Work with Targets*, type **7** next to a `vnc` target and it renders in the portal exactly like an RDP one — same key, same `Ctrl+Alt+Q` to disconnect, same rule that the password is injected for you and never reaches your browser. If copy/paste does not work, the clipboard policy for that target says so. |

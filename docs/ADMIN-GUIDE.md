@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-07-31 · Reflects: Phases 0–58 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-01 · Reflects: Phases 0–59 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -225,6 +225,8 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_COMMAND_DENY_FILE` | | (off) | Regex denylist file for command control (Phases 16, 38). One policy blocks matching commands on **every** path where a discrete command is visible: SSH `exec`, the WinRM command loop, PostgreSQL statements, `POST /api/targets/{id}/winrm`, and the agent broker's `ssh_exec`/`winrm_exec` tools. See §9.4. |
 | `PAM_SSH_SFTP` | | `allow` | SFTP file-transfer policy (Phase 32): `allow` (forward + audit every op), `readonly` (refuse writes/deletes/renames), `deny` (refuse the subsystem). See §9.4. |
 | `PAM_SSH_SFTP_DENY_FILE` | | (off) | **Path denylist for SFTP** (Phase 51): regexes, one per line (same format as `PAM_COMMAND_DENY_FILE`). A matching path is refused in **every** mode — downloads too — and on both sides of a rename; audited `sftp.blocked reason:path-denied` with the matched pattern. See §5. |
+| `PAM_SSH_SFTP_CAPTURE` | | `off` | **Record the content of SFTP transfers** (Phase 59): `uploads`, `downloads`, or `all`. Every transferred file leaves a `.sftp` chunk-log artifact beside the session recordings — sealed under `PAM_RECORDING_ENCRYPT`, hash-chained, audited `sftp.file_recorded`, replayable from menu 19. While on, an SFTP stream the proxy cannot parse is **refused** (fail closed). See §5. |
+| `PAM_SSH_SFTP_CAPTURE_MAX_MB` | | `0` (unlimited) | Per-file cap on captured bytes. Past the cap the transfer is **refused** (permission-denied, audited `sftp.blocked reason:capture-limit`), not merely left unrecorded — so with capture on this doubles as a per-file transfer size limit. |
 | `PAM_RDP_CLIPBOARD` | | `allow` | RDP clipboard policy (Phase 33): `allow`, `readonly` (block paste into the target), `deny` (clipboard off both ways); drive redirection always off. A target's `rdp_clipboard` field can tighten this per target — the **stricter** of the two wins. |
 | `PAM_RDP_CLIPBOARD_AUDIT` | | `off` | **Audit clipboard transfers** (Phase 50): `meta` records direction, mimetype, size and SHA-256; `full` also records the content (truncated). Content is opt-in because a privileged desktop's clipboard often holds a password the operator just copied. Emits `rdp.clipboard`. A target's `rdp_clipboard_audit` field can raise this per target (whichever records more wins). See §9.4. |
 | `PAM_DB_STEPUP_FILE` | | (off) | Regex file marking PostgreSQL statements that **pause for a supervisor's live approval** — in-session step-up (Phase 30). See §9.4. |
@@ -1739,6 +1741,34 @@ to gate by path:
 
 Patterns are regular expressions, not shell globs: write `\.pem$`, not `*.pem`.
 
+**Content capture (Phase 59).** Operation audit tells you a file moved; capture
+keeps **what** moved. With `PAM_SSH_SFTP_CAPTURE` set to `uploads`, `downloads`
+or `all`, every file transferred through the SFTP subsystem produces a `.sftp`
+artifact in the recording directory — a chunk log of the actual bytes with
+their offsets — that behaves exactly like a session recording: sealed at rest
+under `PAM_RECORDING_ENCRYPT`, SHA-256 linked into the recording hash chain,
+named opaquely under `PAM_RECORDING_OPAQUE_NAMES`, swept by retention, archived
+to WORM, and replayable from **menu 19** (a `file` entry downloads the
+reconstructed content, hash-verified) or
+`GET /api/recordings/<name>` (`?raw=1` for the raw chunk log). The closing
+audit event `sftp.file_recorded` ties path, artifact, byte counts, hash and
+chain position together.
+
+Three behaviors to know before enabling it:
+
+- **Capture is containment.** While it is on, an SFTP stream the proxy cannot
+  parse is **refused** (`sftp.parse_error … fails closed`) instead of passing
+  through opaque — otherwise any client could evade capture by being
+  unparsable. With `PAM_REQUIRE_RECORDING` also set, a file whose artifact
+  cannot be written (disk full, KEK unreachable) has its transfer refused too.
+- **The cap refuses, it does not truncate.** `PAM_SSH_SFTP_CAPTURE_MAX_MB`
+  (0 = unlimited) refuses data past the cap with a permission-denied — the
+  operator's transfer fails there — so it doubles as a per-file size limit.
+  Size it for your legitimate transfers before enabling.
+- **Disk.** Captured content is roughly ⅓ larger than the files themselves
+  (base64 + framing, plus the seal). Budget the recording volume and set
+  `PAM_RECORDING_RETENTION_DAYS`/`PAM_RETENTION_ARCHIVE_DIR` accordingly.
+
 **In-session step-up (Phase 30).** Where command control is a hard block, step-up
 is a **pause for a live human decision** — the session stays open. Point
 `PAM_DB_STEPUP_FILE` at a regex file (same format as the deny file); a matching
@@ -1972,6 +2002,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-01 | **Phase 59 — SFTP transfers can now be recorded in full.** `PAM_SSH_SFTP_CAPTURE` (`uploads`/`downloads`/`all`) makes every file moved through the SSH proxy leave a sealed, hash-chained artifact beside the session recordings, attributed in the audit trail (`sftp.file_recorded`) and downloadable hash-verified from menu 19. `PAM_SSH_SFTP_CAPTURE_MAX_MB` caps a file by **refusing** data past the cap (a size limit, not a silent gap), and while capture is on an unparsable SFTP stream is refused rather than forwarded opaque. Also fixed: OpenSSH's `posix-rename`/`hardlink` extension requests now obey readonly mode and the path denylist — a modern client renames via the extension, which previously slid past both. See §5 |
 | 2026-07-31 | **Phase 58 — a safe can now carry its own approval policy.** `require_approval` and `min_approvers` (dual control) on a safe bind **every target in it**, so a whole class of systems is governed in one place instead of per target. Strictest-wins: a safe tightens the global and per-target settings and can never loosen them. The dual-control floor is re-read as each approval is cast, so raising it binds requests already waiting, and it applies when a request is filed too. Both fields are on the console's safe screens (new **Approval** column) and in `POST`/`PUT /api/safes`; a floor outside 0–10 is refused. See §"Safes" |
 | 2026-07-31 | **Phase 57 — the broker can now issue delegated agent identities.** With `PAM_BROKER_TOKEN_EXCHANGE=true`, `POST /v1/token` (RFC 8693) lets an SVID-authenticated agent delegate **its own** authority to a sub-agent it spawns and receive a short-lived, broker-signed JWT-SVID; the sub-agent's calls carry an `act` chain naming the delegator and the accountable human, so the audit reads the same for a spawned agent as for a direct one. It says who may act, never what they may do — `scope` is refused and policy still decides every call over its arguments — impersonation is unsupported, and the TTL (default 5 min, capped by the delegator's own expiry) is the containment, since a minted token has no revocation list. `GET /v1/token/jwks` publishes the signing key. Also: `POST /api/blast/analyze` with `"terraform": true` returns each finding's remediation as reviewable HCL. See §"AI-agent access broker" |
 | 2026-07-31 | **Phase 56 — cross-replica step-up decisions.** In a multi-replica deployment, `GET /api/sessions/stepups` now lists every replica's paused statements (each row naming its hosting `replica` and its `expires_at`) and `POST /api/sessions/{id}/stepup` decides a pause held on any replica — a decision landing on the "wrong" pod is dispatched, sealed, over the store bus and answers **202 Accepted** (dispatched, not proven applied; refresh the list to verify), exactly the kill-switch's honesty. The statement itself rests **encrypted** in the shared inventory (a database observer reads ciphertext; a fabricated row is never shown to a supervisor), decisions cannot be forged or replayed, and nobody may decide their own session's step-up from any replica. Nothing to configure: it activates with the store, best-effort like the kill and live buses, and a failed bus subscription falls back to replica-local with a startup warning. Console screen 21 gained a Replica column and the `DECISION DISPATCHED … VERIFY WITH F5` report |

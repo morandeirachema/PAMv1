@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–58 are shipped.** The narrative that follows traces the arc through
+**Phases 0–59 are shipped.** The narrative that follows traces the arc through
 Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -1665,6 +1665,79 @@ governed, and the machine added to it last Tuesday is not.
   the other half of the Phase 17 bullet, unrelated to policy and left as its own
   item
 
+## Phase 59 — SFTP per-file content recording ✅
+
+Closes the last deferral of Phase 32. File *operations* got an audit trail
+(32) and paths got a policy (51), but the transferred bytes themselves crossed
+the proxy unrecorded — an investigator could prove `/srv/report.csv` left the
+building, never *what* left. Commercial PSM records the file; now the flagship
+proxy does too. Opt-in via `PAM_SSH_SFTP_CAPTURE` ∈
+{`off`, `uploads`, `downloads`, `all`}.
+
+- [x] **Per-file capture artifacts**
+  (`internal/proxy/sftpcapture.go` + `internal/recording/sftpfile.go`): every
+  remote file a session opens produces a **chunk log** beside the session
+  recordings — a JSON header naming the remote path and open mode, then one
+  line per data movement (direction, offset, base64 bytes) in arrival order.
+  A log rather than a reassembled file, for two reasons that are really one:
+  SFTP's random-access writes cannot stream through the at-rest Sealer
+  (plaintext would have to touch disk first), and reassembly would silently
+  merge overlapping rewrites the wire actually carried. The artifact is sealed
+  under the vault KEK when `PAM_RECORDING_ENCRYPT` is on, its SHA-256 (over
+  the bytes as stored) joins the recording hash chain, and
+  `sftp.file_recorded` binds path, artifact name, byte counts, hash and chain
+  position — the same attestation a session recording gets
+- [x] **Both legs are parsed.** A WRITE or READ names only a server-issued
+  handle; the path is in the OPEN (request leg), the handle in the HANDLE
+  (response leg), and download bytes arrive as DATA (response leg). So capture
+  watches the target→operator stream too — forwarding it byte-identical — and
+  ties every data packet back to its file. The close-with-reads-in-flight
+  evasion is closed: finalization defers until the outstanding read resolves,
+  so DATA arriving after CLOSE still lands in the sealed evidence
+- [x] **Capture is containment, not best-effort visibility.** Phase 32's
+  fail-open-on-forwarding posture deliberately inverts while capture is on: an
+  unframable stream on either leg, an unparsable OPEN/READ/WRITE/CLOSE, or an
+  overflowing tracking bound fails the transfer **closed** (audited
+  `sftp.parse_error` / `sftp.blocked`) rather than let bytes move unobserved —
+  otherwise any client could evade the control by declining to be parseable.
+  Under `PAM_REQUIRE_RECORDING`, a file whose artifact cannot be written has
+  its data refused, exactly as an unrecordable session is refused. The
+  per-file cap (`PAM_SSH_SFTP_CAPTURE_MAX_MB`, 0 = unlimited) **refuses**
+  data past the cap — the session-recording cap's reasoning — so it doubles
+  as a transfer size limit
+- [x] **The OpenSSH extension gap, found and closed.** A modern sftp client
+  renames via `posix-rename@openssh.com` — an `SSH_FXP_EXTENDED` request —
+  whenever the server advertises it, so an ordinary `rename` slid past both
+  the read-only refusal and the Phase 51 path denylist, which parsed only the
+  classic packet. `posix-rename` and `hardlink@openssh.com` (a hard link gives
+  a denied path a second, undenied name) now obey the same policy as
+  `SSH_FXP_RENAME`; ungoverned extensions (statvfs, fsync, copy-data — whose
+  source handle an already-checked OPEN produced) forward as before
+- [x] **Replay closes the loop** (the Phase 26 pattern): `.sftp` artifacts
+  list with the session recordings (kind `file`, target/actor attributed from
+  the audit trail), and `GET /api/recordings/{name}` serves the
+  **reconstructed transferred bytes** — unsealed, replayed in log order,
+  holes and torn tails labeled in headers, memory-bounded (413 past 32 MiB) —
+  or the raw chunk log with `?raw=1`; the hash verdict rides the same
+  tamper-evidence headers, and the 5250 recordings screen downloads a `file`
+  entry's content. Retention pruning and WORM archiving treat the artifacts
+  as recordings
+- [x] **Tests**: the format (round-trip, torn tail, reconstruction order /
+  overlap-last-wins / sparse / size bound); end to end through the real SFTP
+  harness — an out-of-order upload reconstructs exactly and its audited hash
+  matches the artifact as stored, a download's DATA is captured, a sealed
+  artifact holds no plaintext yet reconstructs through the vault, the cap
+  refuses the crossing WRITE (which never reaches the target) and marks the
+  artifact `capped:true`, uploads-only mode leaves no download artifact, the
+  deferred-close evasion is caught deterministically, garbage tears the
+  session down, and the extension renames are refused in readonly and
+  path-denied on both sides; the API replay path (listing + attribution,
+  reconstruction, raw, the 413 bound, RBAC); retention prunes `.sftp`
+- Deferred (documented): richer `SSH_FXP_EXTENDED` coverage beyond the two
+  governed renames (nothing else OpenSSH ships moves content across the
+  wire), and scp/shell-redirection capture, which stays inherent to the
+  interactive-PTY boundary (§6 deliberate limits)
+
 ## What is left ⬜
 
 The canonical backlog. Both read-only security sweeps are closed — the
@@ -1730,8 +1803,11 @@ Buildable without external infrastructure, each deferred by the phase named.
   on any replica is dispatched — sealed and freshness-bound — to the replica
   whose memory holds the pause, through the same claim point and with the same
   self-approval refusal.
-- **Per-file SFTP content recording** (32) — operations are audited and paths are
-  gatable; the file *bytes* are not captured.
+- ~~**Per-file SFTP content recording** (32)~~ — ✅ closed 2026-08-01
+  (Phase 59): every file moved over SFTP leaves a sealed, hash-chained chunk-log
+  artifact beside the session recordings, replayable from the console; the
+  per-file cap doubles as a transfer size limit, and an unparsable stream now
+  fails closed while capture is on.
 - ~~**WinRM live streaming** (16)~~ — ✅ closed 2026-07-29. Every WinRM path now
   tees to the live-monitoring hub under its session id: the proxy's interactive
   shell (banner, prompt, command echo, output, refusals — the same bytes the

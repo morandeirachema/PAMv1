@@ -837,6 +837,18 @@ func run() error {
 		log.Info("sftp path control enabled", "patterns", sftpPathGuard.Size())
 	}
 
+	// SFTP content capture (Phase 59): record the bytes of every file moved over
+	// SFTP into per-file artifacts beside the session recordings. The enum was
+	// already validated fail-loud by config.Load; parsing again here converts it
+	// to the proxy's type and keeps a second line of defense.
+	sftpCapture, err := proxy.ParseSFTPCaptureMode(cfg.SSHSFTPCapture)
+	if err != nil {
+		return fmt.Errorf("PAM_SSH_SFTP_CAPTURE: %w", err)
+	}
+	if sftpCapture != proxy.SFTPCaptureOff {
+		log.Info("sftp content capture enabled", "mode", string(sftpCapture), "max_mb", cfg.SSHSFTPCaptureMaxMB)
+	}
+
 	// In-session step-up (Phase 30): SQL statements matching the step-up file pause
 	// for a supervisor's live decision. The coordinator (created above, where the
 	// decision bus attaches) is shared by the DB proxy (which awaits) and the API
@@ -1186,6 +1198,8 @@ func run() error {
 			OpaqueRecordingNames: cfg.OpaqueRecordingNames,
 			SFTPMode:             proxy.SFTPMode(cfg.SSHSFTPMode),
 			SFTPPathGuard:        sftpPathGuard,
+			SFTPCapture:          sftpCapture,
+			SFTPCaptureMaxBytes:  int64(cfg.SSHSFTPCaptureMaxMB) * 1024 * 1024,
 		})
 		if err != nil {
 			return err

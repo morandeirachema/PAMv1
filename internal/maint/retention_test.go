@@ -32,7 +32,9 @@ func TestPruneRecordings(t *testing.T) {
 
 	oldCast := write(t, dir, "111_web-01_alice.cast", old)
 	oldWinRM := write(t, dir, "222_win_bob.winrm.log", old)
+	oldSFTP := write(t, dir, "111_web-01_alice_f0.sftp", old) // captured SFTP content (Phase 59)
 	newCast := write(t, dir, "333_web-01_carol.cast", recent)
+	newSFTP := write(t, dir, "333_web-01_carol_f0.sftp", recent)
 	chain := write(t, dir, ".chain", old)        // the hash-chain head — a dotfile
 	other := write(t, dir, "notes.txt", old)     // a non-recording file
 	dotOld := write(t, dir, ".hidden.cast", old) // dotfile masquerading as a recording
@@ -41,15 +43,15 @@ func TestPruneRecordings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if removed != 2 {
-		t.Fatalf("removed %d, want 2 (the two old recordings)", removed)
+	if removed != 3 {
+		t.Fatalf("removed %d, want 3 (the three old recordings)", removed)
 	}
-	for _, p := range []string{oldCast, oldWinRM} {
+	for _, p := range []string{oldCast, oldWinRM, oldSFTP} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Fatalf("expected %s to be pruned", filepath.Base(p))
 		}
 	}
-	for _, p := range []string{newCast, chain, other, dotOld} {
+	for _, p := range []string{newCast, newSFTP, chain, other, dotOld} {
 		if _, err := os.Stat(p); err != nil {
 			t.Fatalf("expected %s to be preserved: %v", filepath.Base(p), err)
 		}

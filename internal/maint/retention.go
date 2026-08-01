@@ -1,11 +1,13 @@
 package maint
 
 // retention.go bounds the on-disk growth of session recordings. A recording is a
-// file per session (an asciicast `.cast` or a WinRM `.winrm.log`); left alone the
-// directory grows without limit. PruneRecordings deletes those older than a
-// cutoff, deliberately preserving dotfiles — notably the `.chain` head that
-// anchors the recordings' tamper-evident hash chain — and any non-recording file,
-// so a retention sweep can never corrupt the chain or touch an unrelated file.
+// file per session (an asciicast `.cast` or a WinRM `.winrm.log`) or per
+// transferred file (an SFTP content-capture `.sftp` chunk log, Phase 59); left
+// alone the directory grows without limit. PruneRecordings deletes those older
+// than a cutoff, deliberately preserving dotfiles — notably the `.chain` head
+// that anchors the recordings' tamper-evident hash chain — and any
+// non-recording file, so a retention sweep can never corrupt the chain or touch
+// an unrelated file.
 
 import (
 	"os"
@@ -16,7 +18,7 @@ import (
 
 // recordingExts are the file extensions PruneRecordings will delete. Anything
 // else in the directory (dotfiles like `.chain`, stray files) is left untouched.
-var recordingExts = []string{".cast", ".winrm.log"}
+var recordingExts = []string{".cast", ".winrm.log", ".sftp"}
 
 // isRecording reports whether name is a prunable recording file: a non-dotfile
 // whose name ends in a known recording extension.

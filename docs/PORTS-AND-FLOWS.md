@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-07-31 · Reflects: Phases 0–56 (55 and 56 add no port and no new flow — the live-monitor relay and the step-up decision bus ride the existing server ↔ PostgreSQL store connection, flow E1). **Phase 53 added the first new
+> Last updated: 2026-08-01 · Reflects: Phases 0–59 (55–59 add no port and no new flow — the live-monitor relay and the step-up decision bus ride the existing server ↔ PostgreSQL store connection, flow E1; token exchange (57), safe policy (58) and SFTP content capture (59) live inside existing listeners and flows). **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; everything from
 > 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add

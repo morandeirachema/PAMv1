@@ -108,7 +108,7 @@ func TestSyncWriterKeepsPayloadsWhole(t *testing.T) {
 // shared, synchronized view of the operator's channel.
 func TestSFTPRefusalGoesToTheReplyWriter(t *testing.T) {
 	var reply bytes.Buffer
-	insp := newSFTPInspector(SFTPReadOnly, nil, func(action, detail string) {})
+	insp := newSFTPInspector(SFTPReadOnly, nil, nil, func(action, detail string) {})
 	insp.deny(&reply, 42)
 
 	pkt := reply.Bytes()

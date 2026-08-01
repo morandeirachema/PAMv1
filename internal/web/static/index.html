@@ -414,7 +414,13 @@
   // openReplay fetches one recording (raw asciicast or transcript — api() JSON
   // helper does not fit) plus the server's tamper-evidence headers: the
   // recomputed SHA-256 and whether that hash appears in the audit trail.
+  // A captured SFTP file (kind "file", Phase 59) has nothing to replay in a
+  // terminal pane: the server reconstructs the transferred bytes and they are
+  // downloaded instead — audited (session.playback) and hash-checked the same.
   async function openReplay(rec) {
+    if (rec.kind === "file") {
+      return download(`/api/recordings/${encodeURIComponent(rec.name)}`, rec.name.replace(/\.sftp$/, ".bin"), "FILE CONTENT");
+    }
     const res = await fetch(`/api/recordings/${encodeURIComponent(rec.name)}`, { headers: { "X-API-Key": apiKey } });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error((d.error || res.statusText).toUpperCase()); }
     const body = await res.text();
@@ -2225,7 +2231,8 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         const kb = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + "M" : n >= 1024 ? Math.round(n / 1024) + "K" : n + "B";
         term.innerHTML = `${head("PAMWRKREC", "Session Recordings (replay)")}
 Stored recordings, newest first. Type options, press Enter.
-  <span class="cyan">5=Replay</span>   <span class="cyan">Every replay is audited (session.playback) and hash-checked against the audit trail.</span>
+  <span class="cyan">5=Replay (a "file" entry is captured SFTP content: 5 downloads the transferred bytes)</span>
+  <span class="cyan">Every replay is audited (session.playback) and hash-checked against the audit trail.</span>
   <span class="cyan">Target and actor come from the audit trail, so they show even when file names are opaque.</span>
 
 <form id="f-list"><table>
