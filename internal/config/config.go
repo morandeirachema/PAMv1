@@ -56,6 +56,18 @@ type Config struct {
 	// EVERY mode, reads included — denying a path an operator can still download
 	// protects nothing (Phase 51). Empty disables the path policy.
 	SSHSFTPDenyFile string
+	// SSHSFTPCapture records the CONTENT of files moved over SFTP (Phase 59):
+	// "off" (default), "uploads", "downloads", or "all". Each transferred file
+	// becomes a chunk-log artifact stored with the session recordings, sealed
+	// when PAM_RECORDING_ENCRYPT is on and hash-chained like a recording. While
+	// enabled, an SFTP stream that cannot be parsed is refused (fail closed) —
+	// capture is a containment control, not best-effort visibility.
+	SSHSFTPCapture string
+	// SSHSFTPCaptureMaxMB caps the captured bytes per transferred file
+	// (0 = unlimited). Beyond the cap the transfer is REFUSED, not merely
+	// unrecorded, mirroring the session-recording cap's posture — which makes
+	// it double as a transfer size limit when capture is on.
+	SSHSFTPCaptureMaxMB int
 	// SSHJump* route SSH targets through an SSH bastion (for legacy equipment only
 	// reachable via a jump host). Empty SSHJumpHost disables it.
 	SSHJumpHost string
@@ -419,6 +431,8 @@ func Load() (*Config, error) {
 		SSHOperatorCertTTL:      time.Duration(integer("PAM_SSH_OPERATOR_CERT_TTL_MIN", 10)) * time.Minute,
 		SSHKnownHosts:           os.Getenv("PAM_SSH_KNOWN_HOSTS"),
 		SSHSFTPMode:             strings.ToLower(getenv("PAM_SSH_SFTP", "allow")),
+		SSHSFTPCapture:          strings.ToLower(getenv("PAM_SSH_SFTP_CAPTURE", "off")),
+		SSHSFTPCaptureMaxMB:     integer("PAM_SSH_SFTP_CAPTURE_MAX_MB", 0),
 		SSHJumpHost:             os.Getenv("PAM_SSH_JUMP_HOST"),
 		SSHJumpUser:             os.Getenv("PAM_SSH_JUMP_USER"),
 		SSHJumpKey:              os.Getenv("PAM_SSH_JUMP_KEY"),
@@ -655,6 +669,16 @@ func Load() (*Config, error) {
 	case "allow", "readonly", "deny":
 	default:
 		errs = append(errs, fmt.Sprintf("PAM_SSH_SFTP must be one of allow, readonly, deny (got %q)", cfg.SSHSFTPMode))
+	}
+	// SFTP content capture is a fixed enum too: a typo must not silently record
+	// nothing while the operator believes every transfer leaves evidence.
+	switch cfg.SSHSFTPCapture {
+	case "off", "uploads", "downloads", "all":
+	default:
+		errs = append(errs, fmt.Sprintf("PAM_SSH_SFTP_CAPTURE must be one of off, uploads, downloads, all (got %q)", cfg.SSHSFTPCapture))
+	}
+	if cfg.SSHSFTPCaptureMaxMB < 0 {
+		errs = append(errs, "PAM_SSH_SFTP_CAPTURE_MAX_MB must be >= 0 (0 = unlimited)")
 	}
 	// RDP clipboard policy is the same fixed enum.
 	switch cfg.RDPClipboard {
