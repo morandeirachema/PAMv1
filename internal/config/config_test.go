@@ -53,6 +53,21 @@ func TestLoadValidation(t *testing.T) {
 			t.Fatalf("Load() = %v, want PAM_ANALYTICS_TIMEZONE error", err)
 		}
 	})
+	t.Run("invalid sftp capture mode", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_SSH_SFTP_CAPTURE", "everything")
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PAM_SSH_SFTP_CAPTURE") {
+			t.Fatalf("Load() = %v, want PAM_SSH_SFTP_CAPTURE error", err)
+		}
+	})
+	t.Run("negative sftp capture cap", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_SSH_SFTP_CAPTURE", "all")
+		t.Setenv("PAM_SSH_SFTP_CAPTURE_MAX_MB", "-5")
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PAM_SSH_SFTP_CAPTURE_MAX_MB") {
+			t.Fatalf("Load() = %v, want PAM_SSH_SFTP_CAPTURE_MAX_MB error", err)
+		}
+	})
 }
 
 // TestLoadRequiredVars checks each required variable is reported when missing and

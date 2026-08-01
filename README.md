@@ -166,7 +166,7 @@ Phases 0–55, grouped by area. Every capability is exercised by tests and deplo
 - **Supervised sessions (live monitoring + command control)** — a supervisor can **watch an SSH, PostgreSQL or WinRM session live** — and the agent broker's `ssh_exec`/`winrm_exec` runs — over `GET /api/sessions/{id}/stream` (Server-Sent Events, `CapReadAudit`); the stream **ends the moment the session does**, so a quiet pane means a quiet session, not a dead one. In an HA deployment both the session **listing and the watch are cluster-wide** (Phase 55): the request can land on any replica, and the hosting replica relays a watched session's output over the store — only while someone is actually watching. A regex denylist (`PAM_COMMAND_DENY_FILE`) **blocks a dangerous command before it reaches the target** on the exec, WinRM and SQL paths — refused and audited (`command.blocked`). A deny file that yields no usable patterns is **fatal at startup** rather than a silently disabled control, so an unmounted ConfigMap fails loudly. Interactive SSH shells use read-only observer mode instead.
 - **In-session step-up** — where command control is a hard block, `PAM_DB_STEPUP_FILE` marks statements that **pause for a live supervisor decision** instead of killing the session: the statement waits (audited, visible on the live monitor), an approver allows or refuses it from the console, and the session survives either way.
 - **Cluster-wide kill switch** — a kill issued on any replica terminates the session **wherever it is hosted** (published over Postgres LISTEN/NOTIFY), so the kill switch, the revoke cascade, the vendor sweeper and the analytics auto-response all work in HA. Every brokered execution — the REST WinRM endpoint and the agent broker's exec tools included — is a registered, killable, capped session, not just the interactive proxies.
-- **SFTP file-transfer control** — SFTP rides an SSH subsystem carrying a binary protocol that command control never saw. The proxy now **parses that stream** to audit every file operation (`sftp.open`/`sftp.modify`), and `PAM_SSH_SFTP` sets the policy: `allow` (forward + audit), `readonly` (**refuse uploads, deletes and renames** with a synthesized permission-denied — the target is never contacted; downloads still work), or `deny` (refuse the subsystem entirely). `PAM_SSH_SFTP_DENY_FILE` adds the other dimension — a **regex denylist over paths** (the same engine as command control), refused in *every* mode including downloads and on both sides of a rename, because a path you deny that can still be fetched is not denied at all. Closes an otherwise unaudited file-exfiltration path. Proven end to end by a real SFTP client + server exchanging genuine packets through the proxy.
+- **SFTP file-transfer control** — SFTP rides an SSH subsystem carrying a binary protocol that command control never saw. The proxy now **parses that stream** to audit every file operation (`sftp.open`/`sftp.modify`), and `PAM_SSH_SFTP` sets the policy: `allow` (forward + audit), `readonly` (**refuse uploads, deletes and renames** with a synthesized permission-denied — the target is never contacted; downloads still work), or `deny` (refuse the subsystem entirely). `PAM_SSH_SFTP_DENY_FILE` adds the other dimension — a **regex denylist over paths** (the same engine as command control), refused in *every* mode including downloads and on both sides of a rename (the classic packet *and* OpenSSH's `posix-rename`/`hardlink` extensions), because a path you deny that can still be fetched is not denied at all. And with `PAM_SSH_SFTP_CAPTURE`, the **content itself is recorded** (Phase 59): every transferred file leaves a chunk-log artifact beside the session recordings — sealed under the vault KEK, SHA-256 hash-chained, attributed in the audit trail, and replayable from the console as the reconstructed bytes; a per-file cap refuses (not merely stops recording) anything larger, and an unparsable stream fails closed while capture is on. Closes an otherwise unaudited file-exfiltration path. Proven end to end by a real SFTP client + server exchanging genuine packets through the proxy.
 
 ### Vault & credential lifecycle
 
@@ -335,6 +335,10 @@ Every phase (0–55) has shipped — full per-phase detail in **[ROADMAP.md](ROA
 | 53 | SQL Server (TDS) session proxy (JIT injection + per-statement audit) | ✅ shipped |
 | 54 | VNC connector (guacd-brokered, in-portal viewer, shared gates with RDP) | ✅ shipped |
 | 55 | Cross-replica live monitoring (cluster-wide session listing + SSE watch over an interest-gated store relay) | ✅ shipped |
+| 56 | Cross-replica step-up decisions (cluster-wide pending list, sealed at rest; the decision dispatched to the hosting replica) | ✅ shipped |
+| 57 | RFC 8693 token-exchange minting + remediation as Terraform (the broker issues delegated SVIDs; the CIEM cut renders as HCL) | ✅ shipped |
+| 58 | Safe-scoped policy (a safe carries `require_approval` + a dual-control floor, strictest-wins at all five gates) | ✅ shipped |
+| 59 | SFTP per-file content recording (sealed, hash-chained chunk-log artifacts; replayable; cap doubles as a size limit) | ✅ shipped |
 
 Since 52g the work has been **release and consolidation**: v0.10.0 (the first signed,
 attested release — the image every manifest pins is now real and public), tests for the
@@ -430,14 +434,14 @@ has landed too.
 
 What is left is consolidated in
 **[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)** — in-process feature
-follow-ons, the largest being **per-file SFTP content recording**, alongside
-safe-scoped policy, campaign / ticket-gate / config / analytics depth, the vendor
-console screens, richer deploy examples and **cross-replica step-up decisions**
-(cross-replica live *monitoring* shipped in Phase 55: cluster-wide session listing
-and SSE watching over an interest-gated store relay; a paused step-up is still
-decided on the replica hosting the session). Anything needing external infrastructure or a paid account stays honestly
-catalogued in [EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md) rather than
-being faked.
+follow-ons: campaign / ticket-gate / config / analytics depth, a per-consumer
+management credential for dependent-account propagation, a console screen for
+the Phase 57 token exchange, and richer deploy examples. The larger items that
+sat there — cross-replica live monitoring (55) and step-up decisions (56),
+safe-scoped policy (58), and per-file SFTP content recording (59) — have each
+since shipped as their own phase. Anything needing external infrastructure or
+a paid account stays honestly catalogued in
+[EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md) rather than being faked.
 
 **All four Tier-1 gaps and all three Tier-2 gaps are closed** (including one-time access, Phase 26), **three of the five Tier-3 gaps** (Zero Standing Privilege, privileged threat analytics, and the identity blast-radius / CIEM engine), and the **first Tier-4 gap** (the application-secrets API). The rest of Tier 3 (connector breadth, *live* cloud-CIEM ingestion, web proxying) and Tier 4 (Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, thick-app components) are the next frontier — each gated on external infrastructure or accounts, catalogued in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
 

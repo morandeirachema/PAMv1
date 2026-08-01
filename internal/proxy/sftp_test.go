@@ -14,6 +14,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,17 +28,18 @@ import (
 
 // SFTP v3 packet types used by the test client/server.
 const (
-	tInit    = 1
-	tVersion = 2
-	tOpen    = 3
-	tClose   = 4
-	tRead    = 5
-	tWrite   = 6
-	tRemove  = 13
-	tRename  = 18
-	tStatus  = 101
-	tHandle  = 102
-	tData    = 103
+	tInit     = 1
+	tVersion  = 2
+	tOpen     = 3
+	tClose    = 4
+	tRead     = 5
+	tWrite    = 6
+	tRemove   = 13
+	tRename   = 18
+	tStatus   = 101
+	tHandle   = 102
+	tData     = 103
+	tExtended = 200
 )
 
 // pflag bits.
@@ -107,10 +109,14 @@ func subsystemName(payload []byte) string {
 // sftpUpstream records what actually reached the target: file names opened, bytes
 // written via SSH_FXP_WRITE, and removes — so a test can assert whether a
 // mutating op passed the proxy. It serves a fixed file on read for downloads.
+// With deferData set, a READ is answered only after the CLOSE for its handle
+// arrives (DATA first, then the close's STATUS) — the response ordering that
+// exercises capture's deferred-finalize path deterministically.
 type sftpUpstream struct {
-	host string
-	port int
-	got  chan string // "open:<name>", "write:<data>", "remove:<path>"
+	host      string
+	port      int
+	got       chan string // "open:<name>", "write:<data>", "remove:<path>"
+	deferData atomic.Bool
 }
 
 // startUpstreamSFTP launches an sshd that accepts (upstreamUser/upstreamSecret)
@@ -182,6 +188,8 @@ func (up *sftpUpstream) serve(conn net.Conn, cfg *ssh.ServerConfig) {
 // the operations it actually received.
 func (up *sftpUpstream) serveSFTP(ch ssh.Channel) {
 	served := false
+	pendingRead := uint32(0) // a READ withheld under deferData, released by CLOSE
+	havePending := false
 	for {
 		typ, body, err := readPacket(ch)
 		if err != nil {
@@ -203,6 +211,10 @@ func (up *sftpUpstream) serveSFTP(ch ssh.Channel) {
 			ch.Write(sftpPacket(tStatus, be32(id), be32(0), sftpStr("ok"), sftpStr("")))
 		case tRead:
 			id := binary.BigEndian.Uint32(body[:4])
+			if up.deferData.Load() {
+				pendingRead, havePending = id, true // answered when CLOSE arrives
+				continue
+			}
 			if !served {
 				served = true
 				ch.Write(sftpPacket(tData, be32(id), sftpStr("file-contents")))
@@ -216,6 +228,12 @@ func (up *sftpUpstream) serveSFTP(ch ssh.Channel) {
 			ch.Write(sftpPacket(tStatus, be32(id), be32(0), sftpStr("ok"), sftpStr("")))
 		case tClose:
 			id := binary.BigEndian.Uint32(body[:4])
+			if havePending {
+				// Responses may legally be reordered: the withheld READ's DATA
+				// goes out first, then this close's STATUS.
+				ch.Write(sftpPacket(tData, be32(pendingRead), sftpStr("late-data")))
+				havePending = false
+			}
 			ch.Write(sftpPacket(tStatus, be32(id), be32(0), sftpStr("ok"), sftpStr("")))
 		default:
 			if len(body) >= 4 {
@@ -533,4 +551,74 @@ func TestSFTPPathDenyCoversBothRenameSides(t *testing.T) {
 		break
 	}
 	assertAuditContains(t, st, "sftp.blocked", `op:rename path:"/etc/shadow" reason:path-denied`)
+}
+
+// TestSFTPExtendedRenameGoverned proves the OpenSSH `posix-rename@openssh.com`
+// extension — which a modern sftp client uses INSTEAD of SSH_FXP_RENAME
+// whenever the server advertises it — obeys the same policy as the classic
+// packet, and that `hardlink@openssh.com` cannot give a denied path a second,
+// undenied name. Before Phase 59 both slid past the read-only refusal and the
+// path denylist, which only parsed the classic packet types.
+func TestSFTPExtendedRenameGoverned(t *testing.T) {
+	// Read-only mode: a posix-rename is a mutation and must be refused.
+	st, addr, up := startProxySFTP(t, proxy.SFTPReadOnly)
+	client, ch, ok := openSFTPChannel(t, addr)
+	if !ok {
+		t.Fatal("sftp subsystem refused")
+	}
+	defer client.Close()
+	initSFTP(t, ch)
+	ch.Write(sftpPacket(tExtended, be32(1), sftpStr("posix-rename@openssh.com"), sftpStr("/srv/a"), sftpStr("/srv/b")))
+	typ, body, err := readPacket(ch)
+	if err != nil || typ != tStatus {
+		t.Fatalf("readonly posix-rename reply: type=%d err=%v, want STATUS", typ, err)
+	}
+	if code := binary.BigEndian.Uint32(body[4:8]); code != 3 {
+		t.Fatalf("readonly posix-rename status = %d, want 3 (permission denied)", code)
+	}
+	client.Close()
+	select {
+	case got := <-up.got:
+		t.Fatalf("a readonly posix-rename reached the target: %q", got)
+	default:
+	}
+	assertAuditContains(t, st, "sftp.blocked", "op:posix-rename")
+
+	// Allow mode + path denylist: both extension renames are checked on both
+	// sides, exactly like the classic packet.
+	st2, addr2, up2 := startProxySFTPPaths(t, proxy.SFTPAllow, []string{`^/etc/shadow$`})
+	client2, ch2, ok2 := openSFTPChannel(t, addr2)
+	if !ok2 {
+		t.Fatal("sftp subsystem refused")
+	}
+	defer client2.Close()
+	initSFTP(t, ch2)
+	ch2.Write(sftpPacket(tExtended, be32(1), sftpStr("posix-rename@openssh.com"), sftpStr("/etc/shadow"), sftpStr("/tmp/laundered")))
+	if typ, _, _ := readPacket(ch2); typ != tStatus {
+		t.Fatalf("denied-path posix-rename reply type = %d, want STATUS(denied)", typ)
+	}
+	ch2.Write(sftpPacket(tExtended, be32(2), sftpStr("hardlink@openssh.com"), sftpStr("/etc/shadow"), sftpStr("/tmp/alias")))
+	if typ, _, _ := readPacket(ch2); typ != tStatus {
+		t.Fatalf("denied-path hardlink reply type = %d, want STATUS(denied)", typ)
+	}
+	// An extension pamv1 does not govern still flows (audited nothing, refused
+	// nothing): statvfs reaches the target as before.
+	ch2.Write(sftpPacket(tExtended, be32(3), sftpStr("statvfs@openssh.com"), sftpStr("/srv")))
+	if typ, _, _ := readPacket(ch2); typ != tStatus { // the fake upstream acks unknowns with ok
+		t.Fatalf("ungoverned extension should be forwarded, got type=%d", typ)
+	}
+	client2.Close()
+	for {
+		select {
+		case got := <-up2.got:
+			if strings.Contains(got, "shadow") {
+				t.Fatalf("a denied extension rename reached the target: %q", got)
+			}
+			continue
+		default:
+		}
+		break
+	}
+	assertAuditContains(t, st2, "sftp.blocked", `op:posix-rename path:"/etc/shadow" reason:path-denied`)
+	assertAuditContains(t, st2, "sftp.blocked", `op:hardlink path:"/etc/shadow" reason:path-denied`)
 }

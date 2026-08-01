@@ -114,6 +114,15 @@ type Config struct {
 	// Phase 51). It reuses the cmdguard engine so one regex-denylist semantic
 	// covers commands and paths alike.
 	SFTPPathGuard *cmdguard.Guard
+	// SFTPCapture records the CONTENT of files moved over SFTP (Phase 59):
+	// uploads, downloads, or all. Each transferred file becomes a chunk-log
+	// artifact in the recording directory, sealed and hash-chained like a
+	// session recording (PAM_SSH_SFTP_CAPTURE; off by default).
+	SFTPCapture SFTPCaptureMode
+	// SFTPCaptureMaxBytes caps the captured bytes per file (0 = unlimited).
+	// Beyond the cap the transfer is REFUSED, not merely unrecorded — the same
+	// posture as the session-recording cap (PAM_SSH_SFTP_CAPTURE_MAX_MB).
+	SFTPCaptureMaxBytes int64
 }
 
 // JumpConfig configures reaching SSH targets through an SSH bastion.
@@ -153,6 +162,8 @@ type Proxy struct {
 	maxRecBytes  int64
 	sftpMode     SFTPMode
 	sftpPaths    *cmdguard.Guard
+	sftpCapture  SFTPCaptureMode
+	sftpCapMax   int64
 
 	bg sync.WaitGroup // background tasks (post-session rotation) to drain on shutdown
 
@@ -206,6 +217,8 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		maxRecBytes:  cfg.MaxRecordingBytes,
 		sftpMode:     cfg.SFTPMode,
 		sftpPaths:    cfg.SFTPPathGuard,
+		sftpCapture:  cfg.SFTPCapture,
+		sftpCapMax:   cfg.SFTPCaptureMaxBytes,
 		conns:        make(map[net.Conn]struct{}),
 	}
 	if p.certTTL <= 0 {
@@ -213,6 +226,9 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 	}
 	if p.sftpMode == "" {
 		p.sftpMode = SFTPAllow
+	}
+	if p.sftpCapture == "" {
+		p.sftpCapture = SFTPCaptureOff
 	}
 	if p.upstreamHKCB == nil {
 		p.log.Warn("upstream SSH host keys are NOT verified (set PAM_SSH_KNOWN_HOSTS to pin them)")
@@ -936,9 +952,19 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	// inspector parses that binary stream to audit each file operation and, in
 	// read-only mode, refuse writes; onSubsystem gates the subsystem request itself
 	// (deny mode refuses it, otherwise it activates the inspector for sftp).
-	insp := newSFTPInspector(p.sftpMode, p.sftpPaths, func(action, detail string) {
+	// Content capture (Phase 59), when enabled, additionally records the bytes of
+	// every transferred file into per-file artifacts named after this session's
+	// recording — created here so they share the title, the seal and the chain.
+	sftpAudit := func(action, detail string) {
 		p.audit(ctx, actor, action, fmt.Sprintf("target:%s cred_user:%s %s", target.Name, cred.Username, detail))
-	})
+	}
+	var capState *sftpCapture
+	var respWatch *sftpRespWatcher
+	if p.sftpCapture != SFTPCaptureOff && p.sftpMode != SFTPDeny && !observe {
+		capState = newSFTPCapture(p.recordingDir, title, p.recKey, p.chain, p.sftpCapture, p.sftpCapMax, p.requireRec, sftpAudit)
+		respWatch = &sftpRespWatcher{cap: capState}
+	}
+	insp := newSFTPInspector(p.sftpMode, p.sftpPaths, capState, sftpAudit)
 	onSubsystem := func(payload []byte) bool {
 		var m struct{ Name string }
 		_ = ssh.Unmarshal(payload, &m)
@@ -1009,7 +1035,13 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 			// Operator keystrokes -> target. For an SFTP session the inspector parses
 			// this leg to audit + gate file operations; for a shell/exec session it is
 			// a transparent pass-through (the inspector stays inactive).
-			insp.pump(upChan, clientChan, clientOut)
+			if err := insp.pump(upChan, clientChan, clientOut); errors.Is(err, errSFTPCaptureAbort) {
+				// Content capture failed the stream closed: tear the upstream
+				// channel down fully so the session unwinds now, rather than
+				// leave both sides waiting on packets that will never flow.
+				upChan.Close()
+				return
+			}
 			// Propagate a client stdin half-close (CHANNEL_EOF) upstream, but keep
 			// the channel open so the command's remaining output and exit-status
 			// still flow back. Full upstream teardown happens in handleConn when the
@@ -1019,14 +1051,26 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	}
 
 	// Target output -> operator, tee'd into the recording and the live hub. This
-	// writes through clientOut so it cannot overlap an SFTP refusal.
+	// writes through clientOut so it cannot overlap an SFTP refusal. With content
+	// capture on, the same bytes are also framed as SFTP responses so HANDLE and
+	// DATA packets can be attributed to files (the stream itself is forwarded
+	// unchanged either way).
 	var out io.Writer = clientOut
 	if rec != nil {
 		out = io.MultiWriter(clientOut, rec)
 	}
 	out = p.teeLive(out, sid)
-	if _, cerr := io.Copy(out, upChan); errors.Is(cerr, errRecordingLimit) {
+	var cerr error
+	if respWatch != nil {
+		cerr = copyObserved(out, upChan, insp.enabled, respWatch)
+	} else {
+		_, cerr = io.Copy(out, upChan)
+	}
+	if errors.Is(cerr, errRecordingLimit) {
 		p.audit(ctx, actor, "session.record_limit", "target:"+target.Name+" cred_user:"+cred.Username+" reason:recording-size-cap")
+	}
+	if errors.Is(cerr, errSFTPCaptureAbort) {
+		upChan.Close() // fail closed: unwind the whole session (audited by the watcher)
 	}
 	upReqDone.Wait() // make sure exit-status reached the client
 
@@ -1039,6 +1083,13 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	// Flush upstream stderr into the recording before hashing and closing it, so
 	// the audited sha256 covers every stderr byte the session produced.
 	errCopyDone.Wait()
+
+	// Close out any capture artifacts the client never closed (or whose close
+	// was deferred behind reads that will now never resolve): each is hashed,
+	// chained and audited exactly like a cleanly closed one.
+	if capState != nil {
+		capState.finalizeAll()
+	}
 
 	if rec != nil {
 		path, sum, n := rec.Close()

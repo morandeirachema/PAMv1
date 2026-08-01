@@ -65,6 +65,8 @@ const (
 	fxpInit     = 1
 	fxpVersion  = 2
 	fxpOpen     = 3
+	fxpClose    = 4
+	fxpRead     = 5
 	fxpWrite    = 6
 	fxpSetstat  = 9
 	fxpFsetstat = 10
@@ -73,11 +75,14 @@ const (
 	fxpRmdir    = 15
 	fxpRename   = 18
 	fxpSymlink  = 20
+	fxpExtended = 200
 	fxpStatus   = 101
 )
 
-// SSH_FXF_* file-open flags: a set bit among these marks write intent.
+// SSH_FXF_* file-open flags: a set bit among the write family marks write
+// intent; the read bit marks download intent (content capture cares which).
 const (
+	fxfRead      = 0x00000001
 	fxfWrite     = 0x00000002
 	fxfAppend    = 0x00000004
 	fxfCreat     = 0x00000008
@@ -100,12 +105,14 @@ const sftpMaxPacket = 1 << 20 // 1 MiB
 // beyond the atomic activation flag that the request pump sets from another
 // goroutine when it accepts the sftp subsystem.
 type sftpInspector struct {
-	mode   SFTPMode
-	paths  *cmdguard.Guard             // path denylist; nil = no path policy
-	audit  func(action, detail string) // bound to this session's actor + target
-	active atomic.Bool                 // set once the sftp subsystem is accepted
-	buf    bytes.Buffer                // accumulates bytes until a full packet is framed
-	giveUp bool                        // set on a parse error: forward the rest opaquely
+	mode    SFTPMode
+	paths   *cmdguard.Guard             // path denylist; nil = no path policy
+	capture *sftpCapture                // content capture (Phase 59); nil = off
+	audit   func(action, detail string) // bound to this session's actor + target
+	active  atomic.Bool                 // set once the sftp subsystem is accepted
+	buf     bytes.Buffer                // accumulates bytes until a full packet is framed
+	giveUp  bool                        // set on a parse error: forward the rest opaquely
+	fatal   error                       // set when capture demands the session fail closed
 }
 
 // auditPath makes a client-supplied SFTP path safe for an audit detail. These
@@ -117,11 +124,12 @@ type sftpInspector struct {
 // raw.
 func auditPath(path string) string { return auditField(path, 400) }
 
-// newSFTPInspector builds an inspector for mode, with an optional path denylist,
-// auditing through audit. audit is invoked from the data path, so it must not
-// block for long (it records a file operation, not a byte).
-func newSFTPInspector(mode SFTPMode, paths *cmdguard.Guard, audit func(action, detail string)) *sftpInspector {
-	return &sftpInspector{mode: mode, paths: paths, audit: audit}
+// newSFTPInspector builds an inspector for mode, with an optional path denylist
+// and optional content capture (Phase 59), auditing through audit. audit is
+// invoked from the data path, so it must not block for long (it records a file
+// operation, not a byte).
+func newSFTPInspector(mode SFTPMode, paths *cmdguard.Guard, capture *sftpCapture, audit func(action, detail string)) *sftpInspector {
+	return &sftpInspector{mode: mode, paths: paths, capture: capture, audit: audit}
 }
 
 // pathDenied reports whether path matches the denylist, and the pattern that
@@ -155,7 +163,9 @@ func (s *sftpInspector) enabled() bool { return s != nil && s.active.Load() }
 // activated. Forwarded packets go to dst (the upstream channel); a refusal is
 // answered on reply (the operator's channel) so the client gets a proper SFTP
 // status instead of hanging. It returns when src reaches EOF or errors,
-// mirroring io.Copy's termination.
+// mirroring io.Copy's termination — except errSFTPCaptureAbort, which it
+// returns so the caller can tear the whole session down (content capture found
+// the stream unparsable and must fail closed, not merely stop copying).
 //
 // reply is an io.Writer rather than the channel itself, and that is the whole
 // point: this runs on its own goroutine while the session's main goroutine is
@@ -165,21 +175,21 @@ func (s *sftpInspector) enabled() bool { return s != nil && s.active.Load() }
 // 51 a refusal only fired in readonly mode; path denials fire in allow mode too,
 // which makes an ordinary mget over a mixed allowed/denied set a realistic
 // trigger for a status packet interleaved into a split read response.
-func (s *sftpInspector) pump(dst ssh.Channel, src io.Reader, reply io.Writer) {
+func (s *sftpInspector) pump(dst ssh.Channel, src io.Reader, reply io.Writer) error {
 	rbuf := make([]byte, 32*1024)
 	for {
 		n, err := src.Read(rbuf)
 		if n > 0 {
 			if s.enabled() && !s.giveUp {
 				if perr := s.process(rbuf[:n], dst, reply); perr != nil {
-					return
+					return perr
 				}
 			} else if _, werr := dst.Write(rbuf[:n]); werr != nil {
-				return
+				return werr
 			}
 		}
 		if err != nil {
-			return
+			return nil
 		}
 	}
 }
@@ -214,12 +224,24 @@ func (s *sftpInspector) process(chunk []byte, dst ssh.Channel, reply io.Writer) 
 				return err
 			}
 		}
+		if s.fatal != nil {
+			return s.fatal
+		}
 	}
 }
 
-// abandon flushes whatever is buffered to the upstream and switches to opaque
-// pass-through for the remainder of the stream (fail-open on forwarding).
+// abandon handles a stream the inspector cannot frame. Without content capture
+// it flushes whatever is buffered to the upstream and switches to opaque
+// pass-through for the remainder of the stream (fail-open on forwarding, loud
+// on auditing — the Phase 32 posture for an audit-only control). With capture
+// enabled that posture inverts: letting an unframable stream through would let
+// any client move files uncaptured just by declining to be parseable, so the
+// session fails closed instead.
 func (s *sftpInspector) abandon(dst ssh.Channel) error {
+	if s.capture != nil {
+		s.audit("sftp.parse_error", "detail:unframable SFTP stream; content capture is enforced, so the session fails closed")
+		return errSFTPCaptureAbort
+	}
 	s.giveUp = true
 	s.audit("sftp.parse_error", "detail:unframed SFTP stream; inspection abandoned, transfer continues unaudited")
 	rest := s.buf.Bytes()
@@ -230,6 +252,16 @@ func (s *sftpInspector) abandon(dst ssh.Channel) error {
 	}
 	s.buf.Reset()
 	return nil
+}
+
+// captureUnparsable handles a framed packet whose body capture needed but could
+// not parse: with capture enforced the session fails closed (an unparseable
+// WRITE would otherwise be unrecorded content), audited once. It reports false
+// so the caller does not forward the packet.
+func (s *sftpInspector) captureUnparsable(op string) bool {
+	s.audit("sftp.parse_error", "detail:unparsable "+op+" packet; content capture is enforced, so the session fails closed")
+	s.fatal = errSFTPCaptureAbort
+	return false
 }
 
 // handlePacket audits and applies policy to one SFTP packet (body = type byte +
@@ -250,7 +282,11 @@ func (s *sftpInspector) handlePacket(body []byte, reply io.Writer) (forward bool
 		if s.mode == SFTPReadOnly {
 			return !s.refuse(reply, body[1:], "write", "")
 		}
-		return true
+		return s.handleWrite(body[1:], reply)
+	case fxpRead:
+		return s.handleRead(body[1:], reply)
+	case fxpClose:
+		return s.handleClose(body[1:])
 	case fxpRemove:
 		return s.handleMutating(body[1:], reply, "remove")
 	case fxpRmdir:
@@ -270,9 +306,68 @@ func (s *sftpInspector) handlePacket(body []byte, reply io.Writer) (forward bool
 		return s.handleRename(body[1:], reply)
 	case fxpSymlink:
 		return s.handleMutating(body[1:], reply, "symlink")
+	case fxpExtended:
+		return s.handleExtended(body[1:], reply)
 	default:
-		return true // read-family op (close/read/opendir/readdir/stat/realpath/…)
+		return true // read-family op (opendir/readdir/stat/realpath/…)
 	}
+}
+
+// handleWrite feeds a WRITE's data to content capture, which may refuse it
+// (per-file cap reached, or an unwritable artifact under required-recording
+// mode). Without capture the packet forwards untouched, as before Phase 59.
+// rest: uint32 id, string handle, uint64 offset, string data.
+func (s *sftpInspector) handleWrite(rest []byte, reply io.Writer) (forward bool) {
+	if s.capture == nil {
+		return true
+	}
+	id, r, ok := readU32(rest)
+	handle, r2, ok2 := readString(r)
+	offset, r3, ok3 := readU64(r2)
+	data, _, ok4 := readBytesView(r3)
+	if !(ok && ok2 && ok3 && ok4) {
+		return s.captureUnparsable("write")
+	}
+	if s.capture.gateWrite(handle, offset, data) {
+		s.deny(reply, id)
+		return false
+	}
+	return true
+}
+
+// handleRead registers a READ with content capture so its DATA response can be
+// attributed to the right file and offset — or refuses it when the per-file cap
+// is already reached. rest: uint32 id, string handle, uint64 offset, uint32 len.
+func (s *sftpInspector) handleRead(rest []byte, reply io.Writer) (forward bool) {
+	if s.capture == nil {
+		return true
+	}
+	id, r, ok := readU32(rest)
+	handle, r2, ok2 := readString(r)
+	offset, _, ok3 := readU64(r2)
+	if !(ok && ok2 && ok3) {
+		return s.captureUnparsable("read")
+	}
+	if s.capture.gateRead(id, handle, offset) {
+		s.deny(reply, id)
+		return false
+	}
+	return true
+}
+
+// handleClose tells content capture a handle is done so its artifact can be
+// finalized (hashed, chained, audited). rest: uint32 id, string handle.
+func (s *sftpInspector) handleClose(rest []byte) (forward bool) {
+	if s.capture == nil {
+		return true
+	}
+	_, r, ok := readU32(rest)
+	handle, _, ok2 := readString(r)
+	if !(ok && ok2) {
+		return s.captureUnparsable("close")
+	}
+	s.capture.noteClose(handle)
+	return true
 }
 
 // handleOpen audits a file open and, in read-only mode, refuses one that carries
@@ -283,6 +378,11 @@ func (s *sftpInspector) handleOpen(rest []byte, reply io.Writer) (forward bool) 
 	name, r2, ok2 := readString(r)
 	pflags, _, ok3 := readU32(r2)
 	if !(ok && ok2 && ok3) {
+		if s.capture != nil {
+			// An open capture cannot parse would leave its handle untracked —
+			// every later WRITE/READ on it invisible — so it cannot be let through.
+			return s.captureUnparsable("open")
+		}
 		return true // can't parse the open; forward rather than guess
 	}
 	// A denied path is refused in every mode and in both directions: allowing
@@ -297,6 +397,10 @@ func (s *sftpInspector) handleOpen(rest []byte, reply io.Writer) (forward bool) 
 	}
 	if write && s.mode == SFTPReadOnly {
 		s.audit("sftp.blocked", fmt.Sprintf("op:open path:%s reason:readonly", auditPath(name)))
+		s.deny(reply, id)
+		return false
+	}
+	if s.capture != nil && s.capture.trackOpen(id, name, pflags&fxfRead != 0, write) {
 		s.deny(reply, id)
 		return false
 	}
@@ -348,6 +452,52 @@ func (s *sftpInspector) handleRename(rest []byte, reply io.Writer) (forward bool
 	}
 	s.audit("sftp.modify", fmt.Sprintf("op:rename path:%s to:%s", auditPath(oldp), auditPath(newp)))
 	return true
+}
+
+// handleExtended applies policy to SSH_FXP_EXTENDED requests whose OpenSSH
+// extensions are path-mutating. This matters because a modern OpenSSH client
+// renames via `posix-rename@openssh.com` (not SSH_FXP_RENAME) whenever the
+// server advertises it — so before this, an ordinary `rename` in `sftp` slid
+// past both the read-only refusal and the path denylist, which only saw the
+// classic packet. `hardlink@openssh.com` gets the same treatment: a hard link
+// gives a denied path a second, undenied name. Other extensions (statvfs,
+// fsync, limits, copy-data — whose source is a handle an already-checked OPEN
+// produced) are forwarded as before. rest: uint32 id, string extended-request,
+// then the extension's own payload.
+func (s *sftpInspector) handleExtended(rest []byte, reply io.Writer) (forward bool) {
+	id, r, ok := readU32(rest)
+	extName, r2, ok2 := readString(r)
+	if !(ok && ok2) {
+		return true // unparsable extension header: forward, as before Phase 59
+	}
+	switch extName {
+	case "posix-rename@openssh.com", "hardlink@openssh.com":
+		op := "posix-rename"
+		if extName == "hardlink@openssh.com" {
+			op = "hardlink"
+		}
+		oldp, r3, ok3 := readString(r2)
+		newp, _, ok4 := readString(r3)
+		if !(ok3 && ok4) {
+			return true
+		}
+		// Both sides are checked, exactly as handleRename: either direction can
+		// launder a denied path.
+		for _, p := range []string{oldp, newp} {
+			if pattern, denied := s.pathDenied(p); denied {
+				return s.denyPath(reply, id, op, p, pattern)
+			}
+		}
+		if s.mode == SFTPReadOnly {
+			s.audit("sftp.blocked", fmt.Sprintf("op:%s path:%s reason:readonly", op, auditPath(oldp)))
+			s.deny(reply, id)
+			return false
+		}
+		s.audit("sftp.modify", fmt.Sprintf("op:%s path:%s to:%s", op, auditPath(oldp), auditPath(newp)))
+		return true
+	default:
+		return true
+	}
 }
 
 // refuse audits a read-only block for op (reading the request id from rest, whose
