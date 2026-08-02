@@ -3,7 +3,7 @@
 > Every protocol pamv1 speaks or brokers, and every cryptographic mechanism it
 > relies on — with the file that implements each one.
 >
-> Last updated: 2026-08-01 · Reflects: Phases 0–59.
+> Last updated: 2026-08-02 · Reflects: Phases 0–59a.
 
 > 🟢 **Living document** — updated in the same change as the code. Whenever a
 > protocol, cipher, key, TLS posture or transport-security env var changes, this
@@ -274,10 +274,16 @@ per-statement audit and command control possible.
   every file operation is audited, `readonly` refuses writes/deletes/renames with a
   synthesized `SSH_FX_PERMISSION_DENIED` (the target is never contacted), and a
   regex **path** denylist applies in **every** mode including downloads. A path you
-  deny that can still be fetched is not denied. Rename policy covers the classic
-  `SSH_FXP_RENAME` **and** the `SSH_FXP_EXTENDED` renames OpenSSH actually sends
-  (`posix-rename@openssh.com`, plus `hardlink@openssh.com`, which would otherwise
-  give a denied path a second name).
+  deny that can still be fetched is not denied. The `SSH_FXP_EXTENDED` family is
+  governed from an **explicit list** rather than by familiarity, because a modern
+  client's ordinary operations live there: `posix-rename@openssh.com` (what
+  `rename` actually sends), `hardlink@openssh.com` (a second name for a denied
+  path) and `lsetstat@openssh.com` (attribute mutation *by path*) obey the same
+  policy as their classic packets; `copy-data@openssh.com` is refused under
+  capture, since it copies inside the server where no `WRITE` or `DATA` crosses
+  the proxy; the benign ones (statvfs, fsync, limits, path lookups) pass; and
+  anything unrecognized is refused under read-only or capture rather than
+  forwarded because it is unfamiliar.
   **Without content capture this inspector is fail-open**, and deliberately
   differs from the TDS proxy: a stream it cannot frame is audited once
   (`sftp.parse_error`) and then forwarded **un-inspected** — after that point
@@ -466,6 +472,7 @@ For an auditor who wants the whole list on one screen.
 
 | Date | Change |
 |---|---|
+| 2026-08-02 | **Phase 59a — the review of the capture.** No cryptography changed; what changed is where it is applied and what it attests. An artifact's name is now `sanitize`d before it reaches `filepath.Join` (an unsanitized target name escaped the recording directory with `O_CREATE|O_TRUNC`), and `sanitize` also refuses to produce a leading `.`, since a dotfile artifact is one the archiver skips and the pruner preserves. The **audited path is colon-escaped**: `strconv.Quote` keeps colons inside the quotes, and a detail is matched as text, so a path named `evade sha256:<hash>` planted the exact substring playback's tamper check looks for — an operator could vouch for a recording they had altered. Each artifact's attestation is written through the session-teardown auditor, so a drained session cannot leave sealed files whose hash appears nowhere. The per-artifact KEK wrap is bounded and cancellable (`artifactWrapTimeout`), and it no longer runs the audit store under the mutex both SFTP legs share. Wire-level: whole packets only are forwarded on the response leg (a synthesized refusal could otherwise land inside a half-written `DATA`), request ids are single-use while outstanding, `pflags=0` counts as a read, and the `SSH_FXP_EXTENDED` family is governed from an explicit list — see §3.3 |
 | 2026-08-01 | **Phase 59 — SFTP content capture, and the inspector's posture split.** No new primitive: a captured file artifact (`internal/recording/sftpfile.go`, a JSON chunk log of every data movement) is sealed by the **same** `#pamrec1` scheme as a session recording — per-artifact data key wrapped by the vault KEK, chunked AES-256-GCM with the artifact name + chunk index as AAD — hashed as stored, and linked into the recordings' SHA-256 chain. Wire-protocol coverage grew on both legs: the request inspector now parses `SSH_FXP_CLOSE`/`READ`/`WRITE` bodies and a response watcher frames `HANDLE`/`DATA`/`STATUS` (forwarded byte-identical) to bind server handles to paths and downloads to offsets. **Posture**: the inspector stays fail-open *without* capture (§3.3), but with `PAM_SSH_SFTP_CAPTURE` on it is fail-closed — an unframable stream on either leg refuses the transfer, because a containment control that can be evaded by being unparsable is not one. Also closed while parsing the wire: OpenSSH's `posix-rename@openssh.com`/`hardlink@openssh.com` EXTENDED requests now obey rename policy (they previously bypassed the readonly refusal and the path denylist, which parsed only the classic packet) |
 | 2026-07-31 | **Phase 57 — the broker signs delegated identities.** A third ed25519 signing key joins the primary-audit and broker-checkpoint signers: `PAM_BROKER_TOKEN_SIGN_SEED` (shared custody by default, KEK-sealed, one per cluster) signs the delegated JWT-SVIDs minted at `POST /v1/token`. **EdDSA over the JWS signing input**, `kid` derived from SHA-256 of the public key so a rotation cannot be mistaken for the key it replaced, published as a JWK at `GET /v1/token/jwks`. The minted token is a bearer credential for THIS broker only (`aud` fixed, refused otherwise) and its lifetime is `min(PAM_BROKER_EXCHANGE_TTL_MIN, the delegator's own exp)`. Verification reuses the existing SVID path — the broker's public key is added to the same kid→key map as the trust-domain bundle, refusing a colliding kid — so there is no second, more-trusted verification path. No new dependency and no new primitive: the same `crypto/ed25519` and JWT machinery `internal/oidc` and `internal/auditchain` already use |
 | 2026-07-31 | **Phase 56 — cross-replica step-up decisions.** Two new payload kinds under the existing shared-custody live-bus key (`internal/session/livecrypto.go`), no new key and no new transport: (1) a **decision** (`pam_stepup_decision` NOTIFY channel, `pgstore/stepupbus.go`) carries an AES-256-GCM seal over a timestamp, AAD-bound to session id + verdict + decider, refused outside a ±2 min window — so a release can be neither forged, flipped, re-attributed nor replayed (a replay inside the window finds the pause already claimed); (2) a pending pause's **statement** rests in the shared UNLOGGED `stepups` table as an AES-256-GCM envelope, AAD-bound to session id + actor + replica — session content never touches the database in the clear, and a fabricated or tampered row fails authentication and is skipped from every listing, making the seal double as row authentication. Store TLS (`sslmode`) still protects the hop; the seals protect against the channel's and table's *readers and writers* |

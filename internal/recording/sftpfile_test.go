@@ -69,6 +69,49 @@ func TestSFTPFileTornTail(t *testing.T) {
 	}
 }
 
+// TestSFTPFileCorruptionIsNotATornTail proves a malformed line in the MIDDLE of
+// an artifact is reported as corruption, not as the clean truncation a killed
+// session leaves. The distinction is the whole point: a torn tail means
+// "partial evidence, all of it genuine", which is how a caller renders it.
+func TestSFTPFileCorruptionIsNotATornTail(t *testing.T) {
+	var buf bytes.Buffer
+	hdr, _ := EncodeSFTPHeader(SFTPFileHeader{Path: "/f", OpenMode: "write", Time: 1})
+	buf.Write(hdr)
+	line, _ := EncodeSFTPChunk(SFTPChunk{Dir: "w", Offset: 0, Data: []byte("first")})
+	buf.Write(line)
+	buf.WriteString("{not a chunk at all}\n") // damaged, and NOT last
+	line, _ = EncodeSFTPChunk(SFTPChunk{Dir: "w", Offset: 5, Data: []byte("third")})
+	buf.Write(line)
+
+	_, chunks, err := DecodeSFTPFile(&buf)
+	if err == nil || errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("mid-file corruption must not read as a torn tail, got %v", err)
+	}
+	if len(chunks) != 1 {
+		t.Fatalf("the chunks before the damage should survive, got %d", len(chunks))
+	}
+}
+
+// TestReconstructSFTPEmptyChunk proves a zero-length chunk past the end of the
+// reconstructed content is skipped rather than panicking. The proxy records an
+// empty WRITE verbatim, so an operator could otherwise crash every attempt to
+// read back the evidence of their own transfer.
+func TestReconstructSFTPEmptyChunk(t *testing.T) {
+	got, sparse, err := ReconstructSFTP([]SFTPChunk{
+		{Dir: "w", Offset: 1 << 20, Data: nil},
+		{Dir: "w", Offset: 0, Data: []byte("real")},
+	}, "w", 1<<21)
+	if err != nil {
+		t.Fatalf("an empty chunk must not error: %v", err)
+	}
+	if string(got) != "real" {
+		t.Fatalf("reconstructed = %q, want %q", got, "real")
+	}
+	if sparse {
+		t.Fatal("an empty chunk contributes no hole")
+	}
+}
+
 // TestSFTPFileDecodeRejectsWrongKind proves the decoder refuses a header that
 // is not a v1 sftp-file artifact.
 func TestSFTPFileDecodeRejectsWrongKind(t *testing.T) {

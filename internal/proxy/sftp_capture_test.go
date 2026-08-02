@@ -450,18 +450,259 @@ func TestSFTPCaptureFailsClosedOnGarbage(t *testing.T) {
 	// A length prefix far beyond the 1 MiB packet bound: unframable.
 	ch.Write(be32(0xFFFFFF00))
 	// The proxy must fail the session closed: the channel ends rather than the
-	// garbage being forwarded.
-	deadline := time.Now().Add(3 * time.Second)
-	buf := make([]byte, 256)
-	for {
-		if _, err := ch.Read(buf); err != nil {
-			break // torn down
+	// garbage being forwarded. The read runs on its own goroutine because the
+	// failure mode under test is a session that DOESN'T end — a bare loop would
+	// block there and take the whole suite to its timeout instead of failing.
+	torn := make(chan struct{})
+	go func() {
+		defer close(torn)
+		buf := make([]byte, 256)
+		for {
+			if _, err := ch.Read(buf); err != nil {
+				return
+			}
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("session was not torn down after an unframable stream under capture")
-		}
+	}()
+	select {
+	case <-torn:
+	case <-time.After(5 * time.Second):
+		t.Fatal("session was not torn down after an unframable stream under capture")
 	}
 	assertAuditContains(t, st, "sftp.parse_error", "fails closed")
+}
+
+// TestSFTPCaptureNoAccessFlagsIsStillCaptured proves an SSH_FXP_OPEN carrying
+// NO access flag is captured as the download it is. OpenSSH's sftp-server maps
+// pflags 0 through flags_from_portable() to a plain O_RDONLY descriptor and
+// hands back a working handle, so reading the read bit literally made a
+// one-packet bypass: the file came back with no artifact, no cap and no
+// attestation, while the trail still said `sftp.open … mode:read`.
+func TestSFTPCaptureNoAccessFlagsIsStillCaptured(t *testing.T) {
+	st, addr, _, recDir, v := startProxySFTPCapture(t, proxy.SFTPCaptureAll, 0, false)
+	client, ch, ok := openSFTPChannel(t, addr)
+	if !ok {
+		t.Fatal("sftp subsystem refused")
+	}
+	defer client.Close()
+	initSFTP(t, ch)
+
+	ch.Write(sftpPacket(tOpen, be32(1), sftpStr("/srv/quiet.key"), be32(0), be32(0))) // pflags = 0
+	if typ, _, _ := readPacket(ch); typ != tHandle {
+		t.Fatalf("open(pflags=0) should be forwarded → HANDLE, got type=%d", typ)
+	}
+	ch.Write(sftpPacket(tRead, be32(2), sftpStr("h"), make([]byte, 8), be32(1024)))
+	if typ, _, _ := readPacket(ch); typ != tData {
+		t.Fatal("the download must still flow")
+	}
+	ch.Write(sftpPacket(tClose, be32(3), sftpStr("h")))
+	readPacket(ch)
+	client.Close()
+
+	awaitAudit(t, st, "sftp.file_recorded", `path:"/srv/quiet.key"`)
+	arts := awaitArtifacts(t, recDir, v, 1)
+	content, _, err := recording.ReconstructSFTP(arts[0].chunks, "r", 1<<20)
+	if err != nil || string(content) != "file-contents" {
+		t.Fatalf("a flagless open must be captured as a read: %q err=%v", content, err)
+	}
+}
+
+// TestSFTPCaptureRefusesReusedRequestID proves a client cannot orphan a pending
+// OPEN by reusing its request id. Sending an id-bearing request and then an
+// OPEN under the SAME id used to have the first request's status discard the
+// pending open, after which every WRITE on that handle was untracked and its
+// content moved uncaptured — silently, which is the one outcome the fail-closed
+// posture forbids.
+func TestSFTPCaptureRefusesReusedRequestID(t *testing.T) {
+	st, addr, up, recDir, _ := startProxySFTPCapture(t, proxy.SFTPCaptureAll, 0, false)
+	client, ch, ok := openSFTPChannel(t, addr)
+	if !ok {
+		t.Fatal("sftp subsystem refused")
+	}
+	defer client.Close()
+	initSFTP(t, ch)
+
+	// An extended request the upstream will answer with a STATUS, deliberately
+	// left in flight, then an OPEN reusing its id.
+	ch.Write(sftpPacket(tExtended, be32(7), sftpStr("statvfs@openssh.com"), sftpStr("/srv")))
+	ch.Write(sftpPacket(tOpen, be32(7), sftpStr("/srv/exfil.tar"), be32(pWrite|pCreat), be32(0)))
+
+	// One of the two replies is the proxy's refusal of the reused id; neither
+	// may be a HANDLE, because a handle the capture cannot track is exactly
+	// what must not exist.
+	for i := 0; i < 2; i++ {
+		typ, _, err := readPacket(ch)
+		if err != nil {
+			t.Fatalf("reply %d: %v", i, err)
+		}
+		if typ == tHandle {
+			t.Fatal("an OPEN reusing an in-flight request id must not yield a handle")
+		}
+	}
+	client.Close()
+
+	// Nothing was opened for writing on the target, so nothing could be written.
+	for {
+		select {
+		case got := <-up.got:
+			if strings.Contains(got, "exfil.tar") {
+				t.Fatalf("the untrackable open reached the target: %q", got)
+			}
+			continue
+		default:
+		}
+		break
+	}
+	assertAuditContains(t, st, "sftp.blocked", "reason:capture-backlog")
+	if names, _ := filepath.Glob(filepath.Join(recDir, "*.sftp")); len(names) != 0 {
+		t.Fatalf("no artifact should exist for a refused open, found %v", names)
+	}
+}
+
+// TestSFTPCaptureOffsetOverflowRefused proves a WRITE whose offset+length wraps
+// a uint64 is refused rather than admitted. The bound was written as a sum, so
+// 0xFFFF…FFFF + 1 wrapped to 0 and sailed past it; the artifact then broke from
+// inside the encoder, and because `broken` is sticky every later byte of that
+// file was forwarded with capture silently stopped. One crafted packet turned
+// the control off for a file.
+func TestSFTPCaptureOffsetOverflowRefused(t *testing.T) {
+	st, addr, up, recDir, v := startProxySFTPCapture(t, proxy.SFTPCaptureAll, 0, false)
+	client, ch, ok := openSFTPChannel(t, addr)
+	if !ok {
+		t.Fatal("sftp subsystem refused")
+	}
+	defer client.Close()
+	initSFTP(t, ch)
+
+	ch.Write(sftpPacket(tOpen, be32(1), sftpStr("/srv/report.csv"), be32(pWrite|pCreat), be32(0)))
+	if typ, _, _ := readPacket(ch); typ != tHandle {
+		t.Fatal("open should be forwarded")
+	}
+	up.await(t) // the open
+
+	maxOff := make([]byte, 8)
+	for i := range maxOff {
+		maxOff[i] = 0xFF
+	}
+	ch.Write(sftpPacket(tWrite, be32(2), sftpStr("h"), maxOff, sftpStr("A")))
+	if typ, body, _ := readPacket(ch); typ != tStatus || binary.BigEndian.Uint32(body[4:8]) != 3 {
+		t.Fatalf("overflowing write: type=%d, want STATUS(permission denied)", typ)
+	}
+	// Capture still works for this file: the following honest write is recorded.
+	ch.Write(sftpPacket(tWrite, be32(3), sftpStr("h"), make([]byte, 8), sftpStr("legitimate-payload")))
+	if typ, _, _ := readPacket(ch); typ != tStatus {
+		t.Fatal("the honest write should be accepted")
+	}
+	ch.Write(sftpPacket(tClose, be32(4), sftpStr("h")))
+	readPacket(ch)
+	client.Close()
+
+	select {
+	case got := <-up.got:
+		if strings.Contains(got, "write:A") {
+			t.Fatalf("the overflowing write reached the target: %q", got)
+		}
+	default:
+	}
+	detail := awaitAudit(t, st, "sftp.file_recorded", `path:"/srv/report.csv"`)
+	if strings.Contains(detail, "incomplete:true") {
+		t.Fatalf("one refused packet must not break the artifact: %s", detail)
+	}
+	arts := awaitArtifacts(t, recDir, v, 1)
+	content, _, _ := recording.ReconstructSFTP(arts[0].chunks, "w", 1<<20)
+	if string(content) != "legitimate-payload" {
+		t.Fatalf("capture must survive a refused packet, got %q", content)
+	}
+}
+
+// TestSFTPCapturePathCannotForgeAuditFields proves a client-chosen remote path
+// cannot inject `key:value` tokens into the audit detail. The playback tamper
+// check is a substring match for `sha256:<hash>` over sftp.file_recorded, so a
+// file uploaded to a path named after another recording's hash would otherwise
+// vouch for a recording the operator had altered on disk.
+func TestSFTPCapturePathCannotForgeAuditFields(t *testing.T) {
+	const forged = "sha256:00ff00ff00ff"
+	st, addr, _, _, _ := startProxySFTPCapture(t, proxy.SFTPCaptureAll, 0, false)
+	client, ch, ok := openSFTPChannel(t, addr)
+	if !ok {
+		t.Fatal("sftp subsystem refused")
+	}
+	defer client.Close()
+	initSFTP(t, ch)
+
+	ch.Write(sftpPacket(tOpen, be32(1), sftpStr("/srv/evade "+forged+" target:prod-db"), be32(pWrite|pCreat), be32(0)))
+	if typ, _, _ := readPacket(ch); typ != tHandle {
+		t.Fatal("open should be forwarded")
+	}
+	ch.Write(sftpPacket(tWrite, be32(2), sftpStr("h"), make([]byte, 8), sftpStr("x")))
+	readPacket(ch)
+	ch.Write(sftpPacket(tClose, be32(3), sftpStr("h")))
+	readPacket(ch)
+	client.Close()
+
+	detail := awaitAudit(t, st, "sftp.file_recorded", "bytes_up:1")
+	if strings.Contains(detail, forged) {
+		t.Fatalf("a client-chosen path forged a sha256 field: %s", detail)
+	}
+	if strings.Contains(detail, "target:prod-db") {
+		t.Fatalf("a client-chosen path forged a target field: %s", detail)
+	}
+	// The path is still recoverable by a reader — escaped, not dropped.
+	if !strings.Contains(detail, `\x3a`) {
+		t.Fatalf("the path's colons should be escaped, not stripped: %s", detail)
+	}
+}
+
+// TestSFTPCaptureDownloadCapCountsInFlight proves the per-file cap bounds a
+// PIPELINED download, which is how every real client fetches a file. Counting
+// only delivered bytes made the documented hard limit upload-only.
+func TestSFTPCaptureDownloadCapCountsInFlight(t *testing.T) {
+	const capBytes = 20
+	st, addr, _, recDir, v := startProxySFTPCapture(t, proxy.SFTPCaptureAll, capBytes, false)
+	client, ch, ok := openSFTPChannel(t, addr)
+	if !ok {
+		t.Fatal("sftp subsystem refused")
+	}
+	defer client.Close()
+	initSFTP(t, ch)
+
+	ch.Write(sftpPacket(tOpen, be32(1), sftpStr("/srv/big.bin"), be32(pRead), be32(0)))
+	if typ, _, _ := readPacket(ch); typ != tHandle {
+		t.Fatal("open should be forwarded")
+	}
+	// Four pipelined reads of 16 bytes each: 64 bytes claimed against a 20-byte
+	// cap. Sent before reading any reply, so the refusal cannot depend on data
+	// having come back.
+	for i := 0; i < 4; i++ {
+		off := make([]byte, 8)
+		binary.BigEndian.PutUint64(off, uint64(i*16))
+		ch.Write(sftpPacket(tRead, be32(uint32(10+i)), sftpStr("h"), off, be32(16)))
+	}
+	refused := 0
+	for i := 0; i < 4; i++ {
+		typ, body, err := readPacket(ch)
+		if err != nil {
+			t.Fatalf("reply %d: %v", i, err)
+		}
+		if typ == tStatus && len(body) >= 8 && binary.BigEndian.Uint32(body[4:8]) == 3 {
+			refused++
+		}
+	}
+	if refused == 0 {
+		t.Fatal("a pipelined download must be refused once its reads claim more than the cap")
+	}
+	ch.Write(sftpPacket(tClose, be32(20), sftpStr("h")))
+	readPacket(ch)
+	client.Close()
+
+	assertAuditContains(t, st, "sftp.blocked", "reason:capture-limit")
+	arts := awaitArtifacts(t, recDir, v, 1)
+	var got int64
+	for _, c := range arts[0].chunks {
+		got += int64(len(c.Data))
+	}
+	if got > capBytes {
+		t.Fatalf("captured %d bytes past a %d-byte cap", got, capBytes)
+	}
 }
 
 // TestParseSFTPCaptureMode covers the config enum mapping, including the
