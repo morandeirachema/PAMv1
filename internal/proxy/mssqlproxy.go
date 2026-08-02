@@ -60,12 +60,15 @@ const (
 // never has to reason about one database proxy being configured differently
 // from the other.
 type MSSQLConfig struct {
-	Addr             string            // listen address, e.g. ":1433"; "off" disables it
-	RecordingDir     string            // where session recordings are written
-	Sessions         *session.Registry // live-session registry (optional)
-	RequireApproval  bool              // global 4-eyes/OT gate (per-target also applies)
-	AllowedProtocols []string          // protocol allowlist (must include "mssql")
-	RequireRecording bool              // refuse a session that cannot be recorded
+	Addr            string            // listen address, e.g. ":1433"; "off" disables it
+	RecordingDir    string            // where session recordings are written
+	Sessions        *session.Registry // live-session registry (optional)
+	RequireApproval bool              // global 4-eyes/OT gate (per-target also applies)
+	// TicketCheck re-validates the admitting request's ITSM ticket at connect
+	// time rather than at request time (PAM_TICKET_REVALIDATE, Phase 60).
+	TicketCheck      store.TicketChecker
+	AllowedProtocols []string // protocol allowlist (must include "mssql")
+	RequireRecording bool     // refuse a session that cannot be recorded
 	DialTimeout      time.Duration
 	// ClientTLS, when set, offers TLS on the operator-facing leg. TDS carries
 	// the handshake inside its own packets (see internal/tds). When nil the
@@ -112,6 +115,7 @@ type MSSQLProxy struct {
 	recordingDir string
 	sessions     *session.Registry
 	requireApprv bool
+	ticketCheck  store.TicketChecker
 	onBreakGlass func(ctx context.Context, actor, detail string)
 	allowedProto map[string]bool
 	requireRec   bool
@@ -157,6 +161,7 @@ func NewMSSQL(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg MSSQL
 		recordingDir: cfg.RecordingDir,
 		sessions:     cfg.Sessions,
 		requireApprv: cfg.RequireApproval,
+		ticketCheck:  cfg.TicketCheck,
 		onBreakGlass: cfg.OnBreakGlass,
 		allowedProto: protocolSet(cfg.AllowedProtocols),
 		requireRec:   cfg.RequireRecording,
@@ -451,19 +456,17 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		return
 	}
 	if approvalPolicy.Required && !principal.BreakGlass {
-		approved, consumedID, aerr := m.store.ConsumeApproval(ctx, actor, target.ID, time.Now())
+		ok, reason, aerr := claimApproval(ctx, m.store, m.ticketCheck, actor, target,
+			func(action, detail string) { m.audit(ctx, actor, action, detail) })
 		if aerr != nil {
 			m.log.Error("approval check failed", "target", target.Name, "err", aerr)
 			m.fail(c, mssqlErrLoginFailed, 14, "pamv1: approval check failed", tds72)
 			return
 		}
-		if !approved {
-			m.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:approval-required")
+		if !ok {
+			m.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:"+reason)
 			m.fail(c, mssqlErrLoginFailed, 14, "pamv1: connection requires an approved access request", tds72)
 			return
-		}
-		if consumedID != 0 {
-			m.audit(ctx, actor, "access.consumed", fmt.Sprintf("request:%d target:%s", consumedID, target.Name))
 		}
 	}
 

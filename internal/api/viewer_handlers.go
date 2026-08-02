@@ -185,19 +185,23 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	}
 	if needsApproval && !principal.BreakGlass {
 		// Connect-time approval gate: a single-use approval is consumed by this
-		// very connection (Phase 26), so it cannot admit a second RDP session.
-		approved, consumedID, aerr := s.store.ConsumeApproval(r.Context(), principal.Name, target.ID, time.Now())
+		// very connection (Phase 26), so it cannot admit a second viewer
+		// session, and the admitting request's ITSM ticket is re-checked here
+		// rather than trusted from when the request was filed (Phase 60).
+		actx := withPrincipal(r.Context(), principal)
+		claim, aerr := s.claimApproval(actx, principal.Name, target)
 		if aerr != nil {
 			storeError(w, aerr)
 			return
 		}
-		if !approved {
-			s.audit(withPrincipal(r.Context(), principal), "access.denied", "target:"+target.Name+" reason:approval-required")
+		if !claim.OK {
+			reason := "approval-required"
+			if claim.TicketErr != nil {
+				reason = "ticket-not-valid"
+			}
+			s.audit(actx, "access.denied", "target:"+target.Name+" reason:"+reason)
 			writeError(w, http.StatusForbidden, "connection requires an approved access request")
 			return
-		}
-		if consumedID != 0 {
-			s.audit(withPrincipal(r.Context(), principal), "access.consumed", fmt.Sprintf("request:%d target:%s", consumedID, target.Name))
 		}
 	}
 	creds, err := s.store.ListCredentials(r.Context(), target.ID, 0, 0)

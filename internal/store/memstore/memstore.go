@@ -676,6 +676,37 @@ func approvalActiveAt(ar store.AccessRequest, requester string, targetID int64, 
 		(!ar.OneTime || ar.ConsumedAt == nil)
 }
 
+// ActiveApproval returns the approval that would admit requester to targetID as
+// of now, without consuming it. The selection mirrors ConsumeApproval exactly —
+// a standing approval wins (the lowest-id one, so the answer is stable), else
+// the oldest unconsumed single-use approval — because a caller inspects this
+// request and then consumes, and the two must agree on which one that is.
+func (m *Memstore) ActiveApproval(_ context.Context, requester string, targetID int64, now time.Time) (*store.AccessRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var standing, oneTime *store.AccessRequest
+	for _, ar := range m.accessReq {
+		if !approvalActiveAt(ar, requester, targetID, now) {
+			continue
+		}
+		cur := ar
+		switch {
+		case !ar.OneTime:
+			if standing == nil || cur.ID < standing.ID {
+				standing = &cur
+			}
+		default:
+			if oneTime == nil || cur.ID < oneTime.ID {
+				oneTime = &cur
+			}
+		}
+	}
+	if standing != nil {
+		return standing, nil
+	}
+	return oneTime, nil
+}
+
 // ConsumeApproval reports whether requester holds an active approval for
 // targetID and, when the only active approval is single-use, burns it by
 // stamping ConsumedAt (under the store lock, so of two racing consumers exactly

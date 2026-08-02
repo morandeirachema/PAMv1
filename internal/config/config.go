@@ -217,7 +217,13 @@ type Config struct {
 	// ITSM / ticketing gate (Phase 20). RequireTicket makes an access request
 	// carry a change/incident ticket; TicketPattern is a regex it must match and
 	// TicketValidateURL is a webhook the ITSM system answers 2xx for a valid ticket.
-	RequireTicket     bool
+	RequireTicket bool
+	// RevalidateTicket re-checks the admitting access request's ITSM ticket at
+	// the moment access is USED (connect, reveal, checkout, WinRM run, broker
+	// tool), not only when the request was filed (Phase 60). Off by default: it
+	// puts an ITSM call on the connect path, and it REFUSES when the ticket
+	// cannot be confirmed — including when the ITSM is unreachable.
+	RevalidateTicket  bool
 	TicketPattern     string
 	TicketValidateURL string
 	// Approval workflow (Phase 21). ApprovalsRequired is the default number of
@@ -484,6 +490,7 @@ func Load() (*Config, error) {
 		RequireApproval:         boolean("PAM_REQUIRE_APPROVAL", false),
 		ApprovalWindow:          time.Duration(integer("PAM_APPROVAL_WINDOW_MIN", 60)) * time.Minute,
 		RequireTicket:           boolean("PAM_REQUIRE_TICKET", false),
+		RevalidateTicket:        boolean("PAM_TICKET_REVALIDATE", false),
 		TicketPattern:           os.Getenv("PAM_TICKET_PATTERN"),
 		TicketValidateURL:       os.Getenv("PAM_TICKET_VALIDATE_URL"),
 		ApprovalsRequired:       integer("PAM_APPROVALS_REQUIRED", 1),

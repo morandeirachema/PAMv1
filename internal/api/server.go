@@ -185,6 +185,11 @@ type Options struct {
 	// mandatory on every access request.
 	TicketValidator *ticket.Validator
 	RequireTicket   bool
+	// RevalidateTicket re-checks the admitting request's ticket at the moment
+	// access is USED, not only when it was requested (Phase 60). Off by
+	// default: it puts an ITSM call on the connect path and refuses when the
+	// ITSM cannot confirm the ticket.
+	RevalidateTicket bool
 	// ApprovalsRequired is the default number of distinct approvers an access
 	// request needs (Phase 21 multi-tier chains; default 1). RequireReason
 	// rejects an access request that carries no reason.
@@ -313,6 +318,7 @@ type Server struct {
 	alerter            alert.Notifier
 	ticketValidator    *ticket.Validator
 	requireTicket      bool
+	revalidateTicket   bool
 	approvalsRequired  int
 	requireReason      bool
 	oneTimeAccess      bool
@@ -490,6 +496,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		winrm:              runner,
 		ticketValidator:    opts.TicketValidator,
 		requireTicket:      opts.RequireTicket,
+		revalidateTicket:   opts.RevalidateTicket,
 		approvalsRequired:  opts.ApprovalsRequired,
 		requireReason:      opts.RequireReason,
 		oneTimeAccess:      opts.OneTimeAccess,

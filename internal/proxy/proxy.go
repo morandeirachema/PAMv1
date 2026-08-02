@@ -119,6 +119,10 @@ type Config struct {
 	// artifact in the recording directory, sealed and hash-chained like a
 	// session recording (PAM_SSH_SFTP_CAPTURE; off by default).
 	SFTPCapture SFTPCaptureMode
+	// TicketCheck, when set, re-validates the ITSM ticket on the access request
+	// that admits a connection, at connect time rather than at request time
+	// (PAM_TICKET_REVALIDATE, Phase 60). nil leaves the pre-Phase-60 behaviour.
+	TicketCheck store.TicketChecker
 	// SFTPCaptureMaxBytes caps the captured bytes per file (0 = unlimited).
 	// Beyond the cap the transfer is REFUSED, not merely unrecorded — the same
 	// posture as the session-recording cap (PAM_SSH_SFTP_CAPTURE_MAX_MB).
@@ -164,6 +168,7 @@ type Proxy struct {
 	sftpPaths    *cmdguard.Guard
 	sftpCapture  SFTPCaptureMode
 	sftpCapMax   int64
+	ticketCheck  store.TicketChecker
 
 	bg sync.WaitGroup // background tasks (post-session rotation) to drain on shutdown
 
@@ -219,6 +224,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		sftpPaths:    cfg.SFTPPathGuard,
 		sftpCapture:  cfg.SFTPCapture,
 		sftpCapMax:   cfg.SFTPCaptureMaxBytes,
+		ticketCheck:  cfg.TicketCheck,
 		conns:        make(map[net.Conn]struct{}),
 	}
 	if p.certTTL <= 0 {
@@ -601,20 +607,18 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		return
 	}
 	if approvalPolicy.Required && ext["break_glass"] != "true" {
-		approved, consumedID, aerr := p.store.ConsumeApproval(ctx, actor, target.ID, time.Now())
+		ok, reason, aerr := claimApproval(ctx, p.store, p.ticketCheck, actor, target,
+			func(action, detail string) { p.audit(ctx, actor, action, detail) })
 		if aerr != nil {
 			p.log.Error("approval check failed", "target", target.Name, "err", aerr)
 			rejectAll(chans, ssh.Prohibited, "pamv1: approval check failed")
 			return
 		}
-		if !approved {
-			p.log.Warn("session denied: approval required", "actor", actor, "target", target.Name, "remote", remote)
-			p.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:approval-required")
+		if !ok {
+			p.log.Warn("session denied", "actor", actor, "target", target.Name, "remote", remote, "reason", reason)
+			p.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:"+reason)
 			rejectAll(chans, ssh.Prohibited, "pamv1: connection requires an approved access request")
 			return
-		}
-		if consumedID != 0 {
-			p.audit(ctx, actor, "access.consumed", fmt.Sprintf("request:%d target:%s", consumedID, target.Name))
 		}
 	}
 
@@ -1587,4 +1591,30 @@ func (p *Proxy) auditClosing(ctx context.Context, actor, action, detail string) 
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	p.audit(ctx, actor, action, detail)
+}
+
+// claimApproval runs the use-time approval gate for one connection and audits
+// its outcome. All three proxies and the API call the same fold
+// (store.ClaimApproval), so the connect-time ticket re-check cannot be present
+// on some paths and missing on others — the Phase 38 lesson, applied to the
+// gate rather than to command control.
+//
+// It returns the reason to put in the denial audit, so a caller only has to
+// decide how its own protocol says no.
+func claimApproval(ctx context.Context, st store.Store, tc store.TicketChecker, actor string, target *store.Target, audit func(action, detail string)) (ok bool, reason string, err error) {
+	claim, err := store.ClaimApproval(ctx, st, tc, actor, target.ID, time.Now())
+	if err != nil {
+		return false, "", err
+	}
+	if claim.ConsumedID != 0 {
+		audit("access.consumed", fmt.Sprintf("request:%d target:%s", claim.ConsumedID, target.Name))
+	}
+	if claim.TicketErr != nil {
+		audit("access.ticket_revoked", fmt.Sprintf("target:%s ticket:%q reason:%v", target.Name, claim.Ticket, claim.TicketErr))
+		return false, "ticket-not-valid", nil
+	}
+	if !claim.OK {
+		return false, "approval-required", nil
+	}
+	return true, "", nil
 }

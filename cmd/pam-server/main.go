@@ -964,6 +964,16 @@ func run() error {
 		return err
 	}
 
+	// Connect-time ticket re-check (Phase 60). Resolved to a single value here
+	// so every gate — the API, the viewer and the three proxies — is handed the
+	// same answer: nil means "validate at request time only", which is the
+	// pre-Phase-60 behaviour and the default.
+	var ticketRecheck store.TicketChecker
+	if cfg.RevalidateTicket && ticketValidator.Enabled() {
+		ticketRecheck = ticketValidator
+		log.Info("ITSM tickets are re-validated at connect time", "webhook", cfg.TicketValidateURL != "")
+	}
+
 	// Zero Standing Privilege (Phase 22): load (or create) the SSH certificate
 	// authority when PAM_SSH_CA_KEY is set. Shared by the proxy (which mints
 	// short-lived certificates JIT) and the API (which publishes its public key).
@@ -1042,6 +1052,7 @@ func run() error {
 		ApprovalWindow:          cfg.ApprovalWindow,
 		TicketValidator:         ticketValidator,
 		RequireTicket:           cfg.RequireTicket,
+		RevalidateTicket:        cfg.RevalidateTicket,
 		ApprovalsRequired:       cfg.ApprovalsRequired,
 		RequireReason:           cfg.RequireReason,
 		OneTimeAccess:           cfg.OneTimeAccess,
@@ -1198,6 +1209,7 @@ func run() error {
 			OpaqueRecordingNames: cfg.OpaqueRecordingNames,
 			SFTPMode:             proxy.SFTPMode(cfg.SSHSFTPMode),
 			SFTPPathGuard:        sftpPathGuard,
+			TicketCheck:          ticketRecheck,
 			SFTPCapture:          sftpCapture,
 			SFTPCaptureMaxBytes:  int64(cfg.SSHSFTPCaptureMaxMB) * 1024 * 1024,
 		})
@@ -1263,6 +1275,7 @@ func run() error {
 			RecordingDir:         cfg.RecordingDir,
 			Sessions:             sessions,
 			RequireApproval:      cfg.RequireApproval,
+			TicketCheck:          ticketRecheck,
 			AllowedProtocols:     splitAndTrim(cfg.AllowedProtocols),
 			RequireRecording:     cfg.RequireRecording,
 			ClientTLS:            dbClientTLS,
@@ -1306,6 +1319,7 @@ func run() error {
 			RecordingDir:         cfg.RecordingDir,
 			Sessions:             sessions,
 			RequireApproval:      cfg.RequireApproval,
+			TicketCheck:          ticketRecheck,
 			AllowedProtocols:     splitAndTrim(cfg.AllowedProtocols),
 			RequireRecording:     cfg.RequireRecording,
 			ClientTLS:            dbClientTLS,

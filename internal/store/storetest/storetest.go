@@ -487,6 +487,25 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatal("scheduled approval must be active inside its window")
 	}
 
+	// --- the admitting approval, without consuming it (Phase 60) ---
+	// A use-time check needs to see WHICH request would admit — and its ticket —
+	// before deciding to burn it, so ActiveApproval must agree with
+	// ConsumeApproval about the answer and leave nothing consumed.
+	if a, err := st.ActiveApproval(ctx, "alice", tgt.ID, now); err != nil || a == nil {
+		t.Fatalf("ActiveApproval(alice): %+v err %v", a, err)
+	} else if a.ID != ar.ID || a.Ticket != "CHG1001" {
+		t.Fatalf("ActiveApproval must return the admitting request with its ticket: %+v", a)
+	}
+	if a, err := st.ActiveApproval(ctx, "alice", tgt.ID, future.Add(time.Minute)); err != nil || a != nil {
+		t.Fatalf("an expired approval must not be returned: %+v err %v", a, err)
+	}
+	if a, err := st.ActiveApproval(ctx, "nobody", tgt.ID, now); err != nil || a != nil {
+		t.Fatalf("ActiveApproval with no approval must be (nil, nil): %+v err %v", a, err)
+	}
+	if a, err := st.ActiveApproval(ctx, "dave", tgt.ID, now); err != nil || a != nil {
+		t.Fatalf("a scheduled approval outside its window must not be returned: %+v err %v", a, err)
+	}
+
 	// --- one-time (single-use) approvals (Phase 26) ---
 	// A standing approval satisfies ConsumeApproval repeatedly without burning
 	// anything (alice's approval from above is standing).
@@ -518,6 +537,9 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 	if g, _ := st.GetAccessRequest(ctx, ot.ID); g == nil || g.ConsumedAt == nil {
 		t.Fatalf("consumed approval must carry ConsumedAt: %+v", g)
+	}
+	if a, err := st.ActiveApproval(ctx, "gina", tgt.ID, now); err != nil || a != nil {
+		t.Fatalf("a consumed one-time approval must not be returned as admitting: %+v err %v", a, err)
 	}
 	if ok, _ := st.HasActiveApproval(ctx, "gina", tgt.ID, now); ok {
 		t.Fatal("a consumed one-time approval must not be active")
