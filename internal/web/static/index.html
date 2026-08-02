@@ -418,9 +418,7 @@
   // terminal pane: the server reconstructs the transferred bytes and they are
   // downloaded instead — audited (session.playback) and hash-checked the same.
   async function openReplay(rec) {
-    if (rec.kind === "file") {
-      return download(`/api/recordings/${encodeURIComponent(rec.name)}`, rec.name.replace(/\.sftp$/, ".bin"), "FILE CONTENT");
-    }
+    if (rec.kind === "file") return downloadCaptured(rec);
     const res = await fetch(`/api/recordings/${encodeURIComponent(rec.name)}`, { headers: { "X-API-Key": apiKey } });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error((d.error || res.statusText).toUpperCase()); }
     const body = await res.text();
@@ -448,6 +446,27 @@
     };
     go("recplay");
     replayPlay();
+  }
+
+  // downloadCaptured saves the reconstructed content of a captured SFTP file
+  // and reports the SAME tamper verdict a replayed recording gets. The generic
+  // download() helper only knows about export digests, so using it here threw
+  // the verdict away — leaving captured content the one artifact type whose
+  // "hash not found in the audit trail" went unsaid.
+  async function downloadCaptured(rec) {
+    const res = await fetch(`/api/recordings/${encodeURIComponent(rec.name)}`, { headers: { "X-API-Key": apiKey } });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); say("CPF9999: " + (d.error || res.statusText).toUpperCase(), true); render(); return; }
+    const sha = res.headers.get("X-PAM-Recording-SHA256") || "";
+    const audited = res.headers.get("X-PAM-Recording-Audited") === "true";
+    const path = res.headers.get("X-PAM-SFTP-Path") || "";
+    const partial = res.headers.get("X-PAM-SFTP-Sparse") === "true" || res.headers.get("X-PAM-SFTP-Truncated") === "true";
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url; a.download = rec.name.replace(/\.sftp$/, ".bin"); a.click();
+    URL.revokeObjectURL(url);
+    say((audited ? "FILE CONTENT SAVED — HASH VERIFIED IN AUDIT TRAIL" : "FILE CONTENT SAVED — HASH NOT FOUND IN AUDIT TRAIL (TAMPERED, TRIMMED OR NEVER AUDITED)") +
+        (partial ? " — INCOMPLETE CAPTURE" : "") + (path ? " — " + path : "") + (sha ? " — SHA256 " + sha.slice(0, 16) + "…" : ""), !audited || partial);
+    render();
   }
 
   // stopReplay halts the player and drops its state; go() calls it whenever

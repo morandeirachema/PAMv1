@@ -134,28 +134,47 @@ func DecodeSFTPFile(r io.Reader) (SFTPFileHeader, []SFTPChunk, error) {
 		if len(line) == 0 {
 			continue
 		}
-		var raw [3]json.RawMessage
-		if err := json.Unmarshal(line, &raw); err != nil {
-			return hdr, chunks, io.ErrUnexpectedEOF // a torn final line: keep what decoded
-		}
-		var dir, b64 string
-		var off float64
-		if json.Unmarshal(raw[0], &dir) != nil || json.Unmarshal(raw[1], &off) != nil || json.Unmarshal(raw[2], &b64) != nil {
+		c, ok := decodeSFTPChunkLine(line)
+		if !ok {
+			// An undecodable line is a torn tail ONLY if it is the last one: a
+			// killed session leaves a half-written final line, whereas damage in
+			// the middle is corruption and must not be reported as a clean
+			// truncation (which a caller renders as "partial evidence, fine").
+			if sc.Scan() {
+				return hdr, chunks, fmt.Errorf("recording: sftp artifact chunk %d is malformed", len(chunks))
+			}
 			return hdr, chunks, io.ErrUnexpectedEOF
 		}
-		if (dir != "w" && dir != "r") || off < 0 || off > float64(SFTPMaxOffset) || off != math.Trunc(off) {
-			return hdr, chunks, fmt.Errorf("recording: sftp artifact chunk %d is malformed", len(chunks))
-		}
-		data, err := base64.StdEncoding.DecodeString(b64)
-		if err != nil {
-			return hdr, chunks, io.ErrUnexpectedEOF
-		}
-		chunks = append(chunks, SFTPChunk{Dir: dir, Offset: uint64(off), Data: data})
+		chunks = append(chunks, c)
 	}
 	if err := sc.Err(); err != nil {
 		return hdr, chunks, err
 	}
 	return hdr, chunks, nil
+}
+
+// decodeSFTPChunkLine parses one chunk line, reporting whether it decoded. It
+// is deliberately total — every malformed shape reports !ok rather than
+// erroring — so the caller can decide whether a bad line means a torn tail or
+// corruption, which depends only on whether anything follows it.
+func decodeSFTPChunkLine(line []byte) (SFTPChunk, bool) {
+	var raw [3]json.RawMessage
+	if err := json.Unmarshal(line, &raw); err != nil {
+		return SFTPChunk{}, false
+	}
+	var dir, b64 string
+	var off float64
+	if json.Unmarshal(raw[0], &dir) != nil || json.Unmarshal(raw[1], &off) != nil || json.Unmarshal(raw[2], &b64) != nil {
+		return SFTPChunk{}, false
+	}
+	if (dir != "w" && dir != "r") || off < 0 || off > float64(SFTPMaxOffset) || off != math.Trunc(off) {
+		return SFTPChunk{}, false
+	}
+	data, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return SFTPChunk{}, false
+	}
+	return SFTPChunk{Dir: dir, Offset: uint64(off), Data: data}, true
 }
 
 // ErrSFTPTooLarge reports a reconstruction whose result would exceed the
@@ -189,7 +208,11 @@ func ReconstructSFTP(chunks []SFTPChunk, dir string, max int64) (content []byte,
 	}
 	content = make([]byte, end)
 	for _, c := range chunks {
-		if c.Dir != dir {
+		// The same two conditions as the sizing loop above, and they must stay
+		// the same: a zero-length chunk contributes nothing to `end`, so slicing
+		// content at its offset would panic on an artifact holding an empty
+		// write past the end — which a client can produce at will.
+		if c.Dir != dir || len(c.Data) == 0 || c.Offset > uint64(len(content)) {
 			continue
 		}
 		copy(content[c.Offset:], c.Data)

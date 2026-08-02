@@ -961,7 +961,14 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	var capState *sftpCapture
 	var respWatch *sftpRespWatcher
 	if p.sftpCapture != SFTPCaptureOff && p.sftpMode != SFTPDeny && !observe {
-		capState = newSFTPCapture(p.recordingDir, title, p.recKey, p.chain, p.sftpCapture, p.sftpCapMax, p.requireRec, sftpAudit)
+		// The closing auditor is what writes each artifact's attestation: a
+		// session drained by shutdown finalizes its open artifacts, and those
+		// events must outlive the cancelled session context (the same reason
+		// session.record uses it three lines below).
+		sftpAuditClosing := func(action, detail string) {
+			p.auditClosing(ctx, actor, action, fmt.Sprintf("target:%s cred_user:%s %s", target.Name, cred.Username, detail))
+		}
+		capState = newSFTPCapture(ctx, p.recordingDir, title, p.recKey, p.chain, p.sftpCapture, p.sftpCapMax, p.requireRec, sftpAudit, sftpAuditClosing)
 		respWatch = &sftpRespWatcher{cap: capState}
 	}
 	insp := newSFTPInspector(p.sftpMode, p.sftpPaths, capState, sftpAudit)

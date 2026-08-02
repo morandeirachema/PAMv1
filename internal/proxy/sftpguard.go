@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"strings"
 	"sync/atomic"
 
 	"golang.org/x/crypto/ssh"
@@ -122,7 +123,18 @@ type sftpInspector struct {
 // legitimate fields to a human or a SIEM parser. The same package already did
 // this for commands (auditCmd); the SFTP inspector, added later, interpolated
 // raw.
-func auditPath(path string) string { return auditField(path, 400) }
+//
+// Quoting alone is not enough, because a detail is read as text, not as Go
+// syntax: `strconv.Quote` keeps the spaces and colons INSIDE the quotes, so a
+// file uploaded to a path named `x sha256:<hash of a doctored recording>` puts
+// that exact substring into the trail — and playback's tamper check is a
+// substring match for `sha256:<hash>` over sftp.file_recorded. That would let
+// an operator vouch for a recording they had altered. Escaping the colon costs
+// nothing on real paths and takes every `key:value` token out of reach at once,
+// injection into the hash check and into the target/file attribution alike.
+func auditPath(path string) string {
+	return strings.ReplaceAll(auditField(path, 400), ":", `\x3a`)
+}
 
 // newSFTPInspector builds an inspector for mode, with an optional path denylist
 // and optional content capture (Phase 59), auditing through audit. audit is
@@ -271,6 +283,20 @@ func (s *sftpInspector) handlePacket(body []byte, reply io.Writer) (forward bool
 	if len(body) < 1 {
 		return true
 	}
+	// Every request but the version handshake carries a request id, and while
+	// capture is on that id must name only one outstanding request — otherwise
+	// an unrelated response can resolve a pending OPEN and the handle it was
+	// about goes untracked. Claimed here, before the packet is forwarded.
+	if s.capture != nil && body[0] != fxpInit && body[0] != fxpVersion {
+		id, _, ok := readU32(body[1:])
+		if !ok {
+			return s.captureUnparsable("request")
+		}
+		if s.capture.noteRequest(id) {
+			s.deny(reply, id)
+			return false
+		}
+	}
 	switch body[0] {
 	case fxpInit, fxpVersion:
 		return true // the version handshake carries no request id
@@ -337,18 +363,20 @@ func (s *sftpInspector) handleWrite(rest []byte, reply io.Writer) (forward bool)
 
 // handleRead registers a READ with content capture so its DATA response can be
 // attributed to the right file and offset — or refuses it when the per-file cap
-// is already reached. rest: uint32 id, string handle, uint64 offset, uint32 len.
+// cannot cover the bytes it asks for. rest: uint32 id, string handle,
+// uint64 offset, uint32 len.
 func (s *sftpInspector) handleRead(rest []byte, reply io.Writer) (forward bool) {
 	if s.capture == nil {
 		return true
 	}
 	id, r, ok := readU32(rest)
 	handle, r2, ok2 := readString(r)
-	offset, _, ok3 := readU64(r2)
-	if !(ok && ok2 && ok3) {
+	offset, r3, ok3 := readU64(r2)
+	length, _, ok4 := readU32(r3)
+	if !(ok && ok2 && ok3 && ok4) {
 		return s.captureUnparsable("read")
 	}
-	if s.capture.gateRead(id, handle, offset) {
+	if s.capture.gateRead(id, handle, offset, length) {
 		s.deny(reply, id)
 		return false
 	}
@@ -391,6 +419,13 @@ func (s *sftpInspector) handleOpen(rest []byte, reply io.Writer) (forward bool) 
 		return s.denyPath(reply, id, "open", name, pattern)
 	}
 	write := pflags&fxfWriteMask != 0
+	// An OPEN with NO access bit set is a read: OpenSSH's sftp-server maps
+	// pflags 0 through flags_from_portable() to a plain O_RDONLY descriptor and
+	// answers with a working handle. Reading the read bit literally meant a
+	// one-packet bypass — the whole download flowed with no artifact, no cap
+	// and no attestation — so absence of write intent is treated as read
+	// intent, which is also what the audit event has always claimed.
+	read := pflags&fxfRead != 0 || !write
 	mode := "read"
 	if write {
 		mode = "write"
@@ -400,7 +435,7 @@ func (s *sftpInspector) handleOpen(rest []byte, reply io.Writer) (forward bool) 
 		s.deny(reply, id)
 		return false
 	}
-	if s.capture != nil && s.capture.trackOpen(id, name, pflags&fxfRead != 0, write) {
+	if s.capture != nil && s.capture.trackOpen(id, name, read, write) {
 		s.deny(reply, id)
 		return false
 	}
@@ -454,20 +489,46 @@ func (s *sftpInspector) handleRename(rest []byte, reply io.Writer) (forward bool
 	return true
 }
 
-// handleExtended applies policy to SSH_FXP_EXTENDED requests whose OpenSSH
-// extensions are path-mutating. This matters because a modern OpenSSH client
-// renames via `posix-rename@openssh.com` (not SSH_FXP_RENAME) whenever the
-// server advertises it — so before this, an ordinary `rename` in `sftp` slid
-// past both the read-only refusal and the path denylist, which only saw the
-// classic packet. `hardlink@openssh.com` gets the same treatment: a hard link
-// gives a denied path a second, undenied name. Other extensions (statvfs,
-// fsync, limits, copy-data — whose source is a handle an already-checked OPEN
-// produced) are forwarded as before. rest: uint32 id, string extended-request,
+// sftpBenignExtensions are the OpenSSH SSH_FXP_EXTENDED requests that neither
+// mutate a path nor move file content, so they pass ungoverned: filesystem
+// statistics, a flush, the server's limits, and path/identity lookups.
+var sftpBenignExtensions = map[string]bool{
+	"statvfs@openssh.com":            true,
+	"fstatvfs@openssh.com":           true,
+	"fsync@openssh.com":              true,
+	"limits@openssh.com":             true,
+	"expand-path@openssh.com":        true,
+	"home-directory":                 true,
+	"users-groups-by-id@openssh.com": true,
+}
+
+// handleExtended applies policy to SSH_FXP_EXTENDED requests. The type matters
+// more than its obscurity suggests: a modern OpenSSH client renames via
+// `posix-rename@openssh.com` (not SSH_FXP_RENAME) whenever the server
+// advertises it, so an ordinary `rename` in `sftp` used to slide past both the
+// read-only refusal and the path denylist, which only saw the classic packet.
+// The same reasoning covers the rest of the family:
+//
+//   - `hardlink@openssh.com` gives a denied path a second, undenied name.
+//   - `lsetstat@openssh.com` mutates attributes BY PATH — the extended twin of
+//     SSH_FXP_SETSTAT, which handleMutating has always gated.
+//   - `copy-data@openssh.com` copies file content entirely inside the server:
+//     no WRITE and no DATA crosses the proxy, so with capture on the
+//     destination's artifact would close attesting bytes_up:0 — a positively
+//     false statement, which is worse than a gap — and it is a write, so
+//     read-only has to refuse it too.
+//
+// Anything not named here is unknown: forwarded (and audited) in allow mode
+// without capture, refused under read-only or capture, where "we cannot say
+// what this does" has to mean no. rest: uint32 id, string extended-request,
 // then the extension's own payload.
 func (s *sftpInspector) handleExtended(rest []byte, reply io.Writer) (forward bool) {
 	id, r, ok := readU32(rest)
 	extName, r2, ok2 := readString(r)
 	if !(ok && ok2) {
+		if s.capture != nil {
+			return s.captureUnparsable("extended")
+		}
 		return true // unparsable extension header: forward, as before Phase 59
 	}
 	switch extName {
@@ -479,7 +540,7 @@ func (s *sftpInspector) handleExtended(rest []byte, reply io.Writer) (forward bo
 		oldp, r3, ok3 := readString(r2)
 		newp, _, ok4 := readString(r3)
 		if !(ok3 && ok4) {
-			return true
+			return s.refuseExtension(reply, id, op, "unparsable")
 		}
 		// Both sides are checked, exactly as handleRename: either direction can
 		// launder a denied path.
@@ -495,9 +556,51 @@ func (s *sftpInspector) handleExtended(rest []byte, reply io.Writer) (forward bo
 		}
 		s.audit("sftp.modify", fmt.Sprintf("op:%s path:%s to:%s", op, auditPath(oldp), auditPath(newp)))
 		return true
+
+	case "lsetstat@openssh.com":
+		path, _, okp := readString(r2)
+		if !okp {
+			return s.refuseExtension(reply, id, "lsetstat", "unparsable")
+		}
+		if pattern, denied := s.pathDenied(path); denied {
+			return s.denyPath(reply, id, "lsetstat", path, pattern)
+		}
+		if s.mode == SFTPReadOnly {
+			s.audit("sftp.blocked", fmt.Sprintf("op:lsetstat path:%s reason:readonly", auditPath(path)))
+			s.deny(reply, id)
+			return false
+		}
+		s.audit("sftp.modify", fmt.Sprintf("op:lsetstat path:%s", auditPath(path)))
+		return true
+
+	case "copy-data@openssh.com":
+		if s.mode == SFTPReadOnly {
+			return s.refuseExtension(reply, id, "copy-data", "readonly")
+		}
+		if s.capture != nil {
+			return s.refuseExtension(reply, id, "copy-data", "content-capture-unobservable")
+		}
+		s.audit("sftp.modify", "op:copy-data path:<handle>")
+		return true
+
 	default:
+		if sftpBenignExtensions[extName] {
+			return true
+		}
+		if s.mode == SFTPReadOnly || s.capture != nil {
+			return s.refuseExtension(reply, id, "extended", "ungoverned-extension name:"+auditField(extName, 120))
+		}
+		s.audit("sftp.extension", fmt.Sprintf("op:%s reason:forwarded-ungoverned", auditField(extName, 120)))
 		return true
 	}
+}
+
+// refuseExtension blocks one extended request, audits why, and answers the
+// client so it sees a refusal rather than a hang.
+func (s *sftpInspector) refuseExtension(reply io.Writer, id uint32, op, reason string) bool {
+	s.audit("sftp.blocked", fmt.Sprintf("op:%s reason:%s", op, reason))
+	s.deny(reply, id)
+	return false
 }
 
 // refuse audits a read-only block for op (reading the request id from rest, whose
@@ -513,7 +616,19 @@ func (s *sftpInspector) refuse(reply io.Writer, rest []byte, op, path string) bo
 // deny writes an SSH_FXP_STATUS(SSH_FX_PERMISSION_DENIED) for request id back to
 // the operator's channel, so the client sees a clean refusal instead of hanging
 // on a dropped request. A write error is ignored: the session is already ending.
+//
+// It also frees the id capture claimed: this request is never forwarded, so no
+// response will ever arrive to free it, and leaked ids would eventually fill
+// the outstanding-request bound and refuse an honest session.
 func (s *sftpInspector) deny(reply io.Writer, id uint32) {
+	if s.capture != nil {
+		s.capture.releaseID(id)
+	}
+	s.writeStatus(reply, id)
+}
+
+// writeStatus emits the permission-denied status packet itself.
+func (s *sftpInspector) writeStatus(reply io.Writer, id uint32) {
 	const msg = "pamv1: read-only session — write operation denied by policy"
 	body := []byte{fxpStatus}
 	body = binary.BigEndian.AppendUint32(body, id)

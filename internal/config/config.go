@@ -677,8 +677,12 @@ func Load() (*Config, error) {
 	default:
 		errs = append(errs, fmt.Sprintf("PAM_SSH_SFTP_CAPTURE must be one of off, uploads, downloads, all (got %q)", cfg.SSHSFTPCapture))
 	}
-	if cfg.SSHSFTPCaptureMaxMB < 0 {
-		errs = append(errs, "PAM_SSH_SFTP_CAPTURE_MAX_MB must be >= 0 (0 = unlimited)")
+	// Bounded at both ends: negative is a fat-finger, and a value large enough
+	// to overflow the int64 byte count it becomes would wrap into a negative
+	// cap — which reads as "unlimited" at one comparison and refuses everything
+	// at another. 1 PiB is far above any real per-file transfer.
+	if cfg.SSHSFTPCaptureMaxMB < 0 || cfg.SSHSFTPCaptureMaxMB > 1<<30 {
+		errs = append(errs, "PAM_SSH_SFTP_CAPTURE_MAX_MB must be between 0 (unlimited) and 1073741824")
 	}
 	// RDP clipboard policy is the same fixed enum.
 	switch cfg.RDPClipboard {

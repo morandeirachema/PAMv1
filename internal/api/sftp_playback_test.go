@@ -128,6 +128,60 @@ func TestSFTPArtifactPlayback(t *testing.T) {
 	}
 }
 
+// TestSFTPArtifactEmptyWriteDoesNotHideADownload proves two things a captured
+// read+write handle depends on: an empty WRITE neither crashes the
+// reconstruction nor wins the default direction election. Electing "up" on a
+// zero-byte chunk served an empty file to an auditor who pressed 5 on the
+// console — the exfiltrated bytes were still there, just invisible without a
+// query parameter nobody would think to add.
+func TestSFTPArtifactEmptyWriteDoesNotHideADownload(t *testing.T) {
+	dir := t.TempDir()
+	srv, _ := newTestServerOpts(t, nil, api.Options{RecordingDir: dir})
+	writeSFTPArtifact(t, dir, "300_mixed_f0.sftp", "/srv/secrets.db", []recording.SFTPChunk{
+		{Dir: "w", Offset: 1 << 20, Data: nil}, // an empty write, far past the end
+		{Dir: "r", Offset: 0, Data: []byte("exfiltrated-bytes")},
+	})
+	auditor := seedUser(t, srv, "sftp-auditor3", "auditor")
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/recordings/300_mixed_f0.sftp", nil)
+	req.Header.Set("X-API-Key", auditor)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("playback: %d %s", res.StatusCode, body)
+	}
+	if string(body) != "exfiltrated-bytes" {
+		t.Fatalf("the downloaded content must be what is served by default, got %q", body)
+	}
+	if res.Header.Get("X-PAM-SFTP-Direction") != "down" {
+		t.Fatalf("direction = %q, want down", res.Header.Get("X-PAM-SFTP-Direction"))
+	}
+}
+
+// TestSFTPArtifactRawParamIsAffirmative proves ?raw=0 serves the reconstructed
+// content, not the chunk log. Treating any value as "raw" made the flag mean
+// the opposite of what it says for the one operator careful enough to write it
+// out.
+func TestSFTPArtifactRawParamIsAffirmative(t *testing.T) {
+	dir := t.TempDir()
+	srv, _ := newTestServerOpts(t, nil, api.Options{RecordingDir: dir})
+	writeSFTPArtifact(t, dir, "400_flag_f0.sftp", "/srv/a.txt", []recording.SFTPChunk{
+		{Dir: "w", Offset: 0, Data: []byte("content")},
+	})
+	auditor := seedUser(t, srv, "sftp-auditor4", "auditor")
+
+	if c, body := do(t, srv, http.MethodGet, "/api/recordings/400_flag_f0.sftp?raw=0", auditor, nil); c != http.StatusOK || string(body) != "content" {
+		t.Fatalf("?raw=0 must serve the reconstructed content: %d %q", c, body)
+	}
+	if c, body := do(t, srv, http.MethodGet, "/api/recordings/400_flag_f0.sftp?raw=true", auditor, nil); c != http.StatusOK || !bytes.Contains(body, []byte(`"sftp-file"`)) {
+		t.Fatalf("?raw=true must serve the chunk log: %d %q", c, body)
+	}
+}
+
 // TestSFTPArtifactReconstructBound proves a chunk log whose reconstruction
 // would exceed the in-memory bound is refused with 413 — while its raw form
 // stays fully retrievable.
