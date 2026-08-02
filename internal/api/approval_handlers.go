@@ -297,12 +297,40 @@ func (s *Server) enforceApproval(ctx context.Context, t *store.Target) (bool, er
 	if principalFrom(ctx).BreakGlass {
 		return true, nil
 	}
-	ok, consumedID, err := s.store.ConsumeApproval(ctx, actorFrom(ctx), t.ID, time.Now())
+	claim, err := s.claimApproval(ctx, actorFrom(ctx), t)
 	if err != nil {
 		return false, err
 	}
-	if consumedID != 0 {
-		s.audit(ctx, "access.consumed", fmt.Sprintf("request:%d target:%s", consumedID, t.Name))
+	return claim.OK, nil
+}
+
+// claimApproval runs the shared use-time approval gate for target and audits
+// its outcome: a burned single-use approval (access.consumed) and a ticket that
+// no longer validates (access.ticket_revoked — the ITSM said no, or could not
+// be reached, at the moment access was used rather than when it was requested).
+// Callers still decide what a refusal means for their protocol.
+func (s *Server) claimApproval(ctx context.Context, actor string, t *store.Target) (store.ApprovalClaim, error) {
+	claim, err := store.ClaimApproval(ctx, s.store, s.ticketRechecker(), actor, t.ID, time.Now())
+	if err != nil {
+		return claim, err
 	}
-	return ok, nil
+	if claim.ConsumedID != 0 {
+		s.audit(ctx, "access.consumed", fmt.Sprintf("request:%d target:%s", claim.ConsumedID, t.Name))
+	}
+	if claim.TicketErr != nil {
+		s.audit(ctx, "access.ticket_revoked",
+			fmt.Sprintf("target:%s ticket:%q reason:%v", t.Name, claim.Ticket, claim.TicketErr))
+	}
+	return claim, nil
+}
+
+// ticketRechecker returns the validator to re-check tickets with at use time,
+// or nil when the re-check is off. Returning nil (rather than a disabled
+// validator) is what keeps the gate free of an extra store read and an ITSM
+// round trip on every connect in the default configuration.
+func (s *Server) ticketRechecker() store.TicketChecker {
+	if !s.revalidateTicket || !s.ticketValidator.Enabled() {
+		return nil
+	}
+	return s.ticketValidator
 }

@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–59a are shipped.** The narrative that follows traces the arc through
+**Phases 0–60 are shipped.** The narrative that follows traces the arc through
 Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -1817,6 +1817,59 @@ here, in the 52a–52g tradition: the review of a fix is part of the fix.
   against the pre-fix code first and fail there, which is the only thing that
   makes them evidence
 
+## Phase 60 — The ticket gate holds at connect time ✅
+
+Closes the half of the Phase 20 deferral that was a hole rather than a
+feature. The ITSM ticket on an access request was validated exactly once —
+when the request was **filed**. An approval is good for
+`PAM_APPROVAL_WINDOW_MIN` (an hour by default), and a scheduled request can
+sit for days waiting on its maintenance window, so a change that was
+cancelled, closed or rejected in the meantime still admitted the session it
+had authorized. "No privileged access without an approved change ticket" has
+to mean at the moment of access, or it means at the moment of paperwork.
+
+- [x] **Re-checked when access is used** (`PAM_TICKET_REVALIDATE`, default
+  off): before a use is admitted, the ticket on the request that would admit
+  it is put back to the ITSM. A ticket that no longer validates refuses the
+  use and is audited `access.ticket_revoked` with the ITSM's own reason; the
+  denial reads `reason:ticket-not-valid`, distinct from a missing approval,
+  because "your change was cancelled" and "you have no approval" send an
+  operator to different places
+- [x] **One fold, five gates** (`store.ClaimApproval`, alongside Phase 58's
+  `EffectiveApprovalPolicy`). The API (reveal, checkout, WinRM run, broker
+  tools), the in-portal viewer and the SSH, PostgreSQL and SQL Server proxies
+  each called `ConsumeApproval` directly — the same five sites, and the same
+  Phase 38 lesson, as the policy fold before it. They now share one use-time
+  gate, so a control cannot be present on four paths and missing from the
+  fifth. New store read `ActiveApproval` returns the request that *would*
+  admit, choosing it by the same order `ConsumeApproval` claims by
+- [x] **The re-check runs BEFORE the approval is consumed**, so a use refused
+  by the ITSM does not spend a single-use approval. An operator whose ticketing
+  system has a bad minute keeps the access they were granted instead of going
+  back through four-eyes for it. (The cost is a small documented race with two
+  concurrent approvals; burning approvals on failures was the worse trade)
+- [x] **Fail-closed, and bounded.** A ticket that cannot be *confirmed* refuses
+  — whether the ITSM rejected it or could not be reached — because a gate that
+  opens when it cannot do its job is not a gate. The call is bounded at five
+  seconds so a slow ITSM cannot hold an SSH handshake open, and the whole
+  behaviour is opt-in: unset, every path behaves exactly as it did before
+- [x] **Tests**: the fold in isolation (a rejected ticket refuses *and* leaves
+  the approval unspent, an unreachable ITSM refuses, valid/ticketless/disabled
+  all consume exactly as before, both store errors fail closed); the store
+  contract for `ActiveApproval` (agrees with `ConsumeApproval`, consumes
+  nothing, and is blind to expired, scheduled-but-not-open and already-consumed
+  approvals — live PostgreSQL in CI); end to end through the API against a fake
+  ITSM that is flipped mid-test (admitted, then refused, then admitted again
+  once the change re-opens — which is what proves the refusal came from the
+  ticket and not from a spent approval), plus the single-use non-burn and the
+  two negative controls: with the re-check off nothing changes and the ITSM is
+  not called at all, and a ticketless approval is never gated on a ticket; and
+  **through the SSH proxy**, where a cancelled change refuses the session and
+  an unreachable ITSM does too
+- Deferred (documented): a first-class ServiceNow/Jira connector — this ships
+  the generic webhook and regex the same way Phase 20 did, and a vendor
+  connector is a credentials-and-schema problem, not a gate problem
+
 ## What is left ⬜
 
 The canonical backlog. Both read-only security sweeps are closed — the
@@ -1909,9 +1962,11 @@ Buildable without external infrastructure, each deferred by the phase named.
   account.
 - **Campaign depth** (19) — scheduled/recurring campaigns, safe- or owner-scoped
   campaigns, reviewer assignment and reminders.
-- **Ticket gate depth** (20) — a first-class ServiceNow/Jira connector (the
-  generic webhook ships) and gating the *connect* path on a live ticket lookup
-  rather than validating at request time.
+- **Ticket gate depth** (20) — a first-class ServiceNow/Jira connector remains
+  (the generic webhook ships). ~~Gating the *connect* path on a live ticket
+  lookup rather than validating at request time~~ — ✅ closed 2026-08-02
+  (Phase 60): `PAM_TICKET_REVALIDATE` re-checks the admitting request's ticket
+  at the moment access is used, at all five gates, through one shared fold.
 - ~~**Vendor console screen** (29)~~ — already shipped in **Phase 45** (menu 22,
   *Work with Vendors*, plus contract grants); this line was stale and is struck
   here rather than left inviting someone to build it twice.

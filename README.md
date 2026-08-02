@@ -340,6 +340,7 @@ Every phase (0–55) has shipped — full per-phase detail in **[ROADMAP.md](ROA
 | 58 | Safe-scoped policy (a safe carries `require_approval` + a dual-control floor, strictest-wins at all five gates) | ✅ shipped |
 | 59 | SFTP per-file content recording (sealed, hash-chained chunk-log artifacts; replayable; cap doubles as a size limit) | ✅ shipped |
 | 59a | Close the review of 59 (three capture bypasses, artifact-name containment, `lsetstat`, audit-field forgery, a reachable panic) | ✅ shipped |
+| 60 | The ticket gate holds at connect time (the change ticket is re-checked when access is used, at all five gates) | ✅ shipped |
 
 Since 52g the work has been **release and consolidation**: v0.10.0 (the first signed,
 attested release — the image every manifest pins is now real and public), tests for the
