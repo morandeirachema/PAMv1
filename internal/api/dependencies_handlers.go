@@ -53,6 +53,10 @@ type dependencyIn struct {
 	Host string `json:"host"`
 	Port int    `json:"port"`
 	Name string `json:"name"`
+	// ManagementCredentialID is the credential pamv1 connects to Host WITH to
+	// update this consumer (Phase 61). Omitted or 0 keeps the original
+	// behaviour of connecting as the account being rotated.
+	ManagementCredentialID int64 `json:"management_credential_id"`
 }
 
 // createDependency declares a consumer of a credential (CapManageCredentials).
@@ -82,13 +86,33 @@ func (s *Server) createDependency(w http.ResponseWriter, r *http.Request) {
 	case in.Port < 0 || in.Port > 65535:
 		writeError(w, http.StatusUnprocessableEntity, "port must be 0-65535")
 		return
+	case in.ManagementCredentialID < 0:
+		writeError(w, http.StatusUnprocessableEntity, "management_credential_id must be a credential id")
+		return
 	}
-	d := store.CredentialDependency{CredentialID: id, Kind: in.Kind, Host: in.Host, Port: in.Port, Name: in.Name}
+	// A management credential is checked to exist HERE, at the only point where
+	// a human is present to be told. Propagation runs unattended after a
+	// rotation, so a typo discovered there is an audit line nobody is reading.
+	if in.ManagementCredentialID != 0 {
+		mc, err := s.store.GetCredential(r.Context(), in.ManagementCredentialID)
+		if err != nil || mc == nil {
+			writeError(w, http.StatusUnprocessableEntity, "management_credential_id does not name an existing credential")
+			return
+		}
+	}
+	d := store.CredentialDependency{
+		CredentialID: id, Kind: in.Kind, Host: in.Host, Port: in.Port, Name: in.Name,
+		ManagementCredentialID: in.ManagementCredentialID,
+	}
 	if err := s.store.CreateCredentialDependency(r.Context(), &d); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "dependency.create", fmt.Sprintf("credential:%d %s:%s@%s", id, in.Kind, in.Name, in.Host))
+	via := "self"
+	if d.ManagementCredentialID != 0 {
+		via = fmt.Sprintf("credential:%d", d.ManagementCredentialID)
+	}
+	s.audit(r.Context(), "dependency.create", fmt.Sprintf("credential:%d %s:%s@%s managed_via:%s", id, in.Kind, in.Name, in.Host, via))
 	writeJSON(w, http.StatusCreated, d)
 }
 

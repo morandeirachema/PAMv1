@@ -378,6 +378,37 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 	if ds, err := st.ListCredentialDependencies(ctx, cred.ID); err != nil || len(ds) != 1 || ds[0].Name != "MyService" {
 		t.Fatalf("ListCredentialDependencies: %+v err %v", ds, err)
+	} else if ds[0].ManagementCredentialID != 0 {
+		t.Fatalf("an undeclared management credential must read back as 0, got %d", ds[0].ManagementCredentialID)
+	}
+	// A declared management credential round-trips (Phase 61): it decides which
+	// account pamv1 authenticates to the consumer's host as, so losing it in
+	// storage would silently revert to logging in as the rotated account.
+	managed := &store.CredentialDependency{
+		CredentialID: cred.ID, Kind: "scheduled_task", Host: "app-02", Name: "NightlyJob",
+		ManagementCredentialID: cred.ID,
+	}
+	if err := st.CreateCredentialDependency(ctx, managed); err != nil {
+		t.Fatalf("CreateCredentialDependency(managed): %v", err)
+	}
+	if ds, err := st.ListCredentialDependencies(ctx, cred.ID); err != nil || len(ds) != 2 {
+		t.Fatalf("ListCredentialDependencies(2): %+v err %v", ds, err)
+	} else {
+		var found bool
+		for _, d := range ds {
+			if d.ID == managed.ID {
+				found = true
+				if d.ManagementCredentialID != cred.ID {
+					t.Fatalf("management credential did not round-trip: %+v", d)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("the managed dependency is missing from the listing")
+		}
+	}
+	if err := st.DeleteCredentialDependency(ctx, managed.ID); err != nil {
+		t.Fatalf("DeleteCredentialDependency(managed): %v", err)
 	}
 	if err := st.DeleteCredentialDependency(ctx, dep.ID); err != nil {
 		t.Fatalf("DeleteCredentialDependency: %v", err)

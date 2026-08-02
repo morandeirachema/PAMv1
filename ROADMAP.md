@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–60 are shipped.** The narrative that follows traces the arc through
+**Phases 0–61 are shipped.** The narrative that follows traces the arc through
 Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -1870,6 +1870,54 @@ to mean at the moment of access, or it means at the moment of paperwork.
   the generic webhook and regex the same way Phase 20 did, and a vendor
   connector is a credentials-and-schema problem, not a gate problem
 
+## Phase 61 — A dependent account names the credential that manages it ✅
+
+Closes the other half of the Phase 17 deferral, and it was a privilege bug
+rather than a missing feature. Propagation logged into the consumer's host **as
+the rotated service account itself**, using its brand-new password, to run
+`sc.exe config` / `schtasks /Change` / `appcmd`. That asks the wrong account for
+the wrong rights: reconfiguring a service, task or app pool needs remote
+management and local-administrator rights on that host, which is exactly what a
+service account is not supposed to hold — and a hardened one usually cannot log
+on remotely at all, so propagation failed precisely where a PAM is most needed.
+It also had nowhere to stand when the rotation was being run *because* the
+account was broken.
+
+- [x] **A dependency can name its management credential** (migration `0028`,
+  `store.CredentialDependency.ManagementCredentialID`): the credential pamv1
+  authenticates to that host **with**, decrypted just-in-time from the vault
+  like every other use. Unset keeps the previous behaviour, so an existing
+  deployment sees no change until an operator sets it — but the console now
+  says plainly which consumers still log in as the account being rotated
+- [x] **Deliberately not a foreign key.** The reference records an operator's
+  *intent*, and both cascade options lose it: `ON DELETE SET NULL` would
+  silently resume logging in as the rotated account — the very thing the
+  operator moved away from — and `ON DELETE RESTRICT` would make an unrelated
+  credential undeletable. A dangling id lets propagation **fail closed** and say
+  exactly why (`credential.dependency_failed reason:management-credential-missing`),
+  which is the only outcome that neither surprises nor blocks
+- [x] **Checked when it is declared, not only when it is used.** A management
+  credential that names nothing is a 422 at `POST /api/credentials/{id}/dependencies`,
+  while a human is present to be told; propagation runs unattended after a
+  rotation, where a typo would be an audit line nobody is reading. A Zero
+  Standing Privilege credential (which holds no secret to present over WinRM)
+  is refused at use time for the same reason it cannot work
+- [x] **The audit says who connected**: `managed_via:credential:<id>` or
+  `managed_via:self` on both `credential.dependency_updated` and the failure
+  event, and on `dependency.create`. Neither secret appears — the rotated one
+  still reaches only the command line, exactly as before
+- [x] **Console** (menu *Work with Dependent Accounts*): a **Managed via**
+  column that reads `cred <id>` or, in amber, `this account`, plus the field on
+  the add form with the reason it matters stated on screen
+- [x] **Tests**: end to end through rotation with a fake WinRM that records the
+  login it was handed — proving the management account is what authenticates
+  and that the rotated account's new secret is *not* used to log in, while
+  still being delivered into the service configuration; the fallback path
+  unchanged (`managed_via:self`); the fail-closed path when the management
+  credential is deleted after the fact (nothing is attempted over WinRM at
+  all); the 422s at declaration time; and a store-contract round-trip so the
+  reference cannot be lost in storage
+
 ## What is left ⬜
 
 The canonical backlog. Both read-only security sweeps are closed — the
@@ -1956,10 +2004,10 @@ Buildable without external infrastructure, each deferred by the phase named.
 - ~~**Safe-scoped policy** (17)~~ — ✅ closed 2026-07-31 (Phase 58): a safe now
   carries `require_approval` and a dual-control `min_approvers` floor binding
   every target in it, strictest-wins with the global and per-target settings and
-  enforced through one shared fold at all five gates. **Still open, the other
-  half of that bullet**: a **per-consumer management credential** for
-  dependent-account propagation, which currently connects as the rotated
-  account.
+  enforced through one shared fold at all five gates. ~~**Still open, the other half of that bullet**: a per-consumer management
+  credential for dependent-account propagation~~ — ✅ closed 2026-08-02
+  (Phase 61): a dependency can name the credential pamv1 connects with, so
+  propagation no longer logs in as the account it is rotating.
 - **Campaign depth** (19) — scheduled/recurring campaigns, safe- or owner-scoped
   campaigns, reviewer assignment and reminders.
 - **Ticket gate depth** (20) — a first-class ServiceNow/Jira connector remains
