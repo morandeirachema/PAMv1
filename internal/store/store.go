@@ -609,6 +609,12 @@ type Store interface {
 	// request for targetID as of now. A consumed single-use approval is not
 	// active.
 	HasActiveApproval(ctx context.Context, requester string, targetID int64, now time.Time) (bool, error)
+	// ActiveApproval returns the approval that would admit requester to
+	// targetID as of now — the same one ConsumeApproval would claim, chosen by
+	// the same order — WITHOUT consuming it, or (nil, nil) when there is none.
+	// It exists so a use-time check can inspect the admitting request (its ITSM
+	// ticket, Phase 60) before deciding to burn it.
+	ActiveApproval(ctx context.Context, requester string, targetID int64, now time.Time) (*AccessRequest, error)
 	// ConsumeApproval is the use-time twin of HasActiveApproval (Phase 26): it
 	// reports whether requester holds an active approval for targetID and, when
 	// the only active approval is single-use (OneTime), atomically burns it by

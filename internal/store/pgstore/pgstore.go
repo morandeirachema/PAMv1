@@ -598,6 +598,30 @@ func (s *PGStore) HasActiveApproval(ctx context.Context, requester string, targe
 	return exists, err
 }
 
+// ActiveApproval returns the approval that would admit requester to targetID as
+// of now, without consuming it. The ORDER BY mirrors ConsumeApproval's
+// selection — standing approvals first, then the oldest — because a caller
+// inspects this request (its ticket) and then consumes, and the two must agree
+// on which request that is.
+func (s *PGStore) ActiveApproval(ctx context.Context, requester string, targetID int64, now time.Time) (*store.AccessRequest, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, requester, target_id, reason, status, approver, created_at, decided_at, expires_at, ticket, required_approvals, approved_by, not_before, one_time, consumed_at
+		 FROM access_requests
+		 WHERE requester = $1 AND target_id = $2 AND status = 'approved'
+		   AND expires_at > $3 AND (not_before IS NULL OR not_before <= $3)
+		   AND (NOT one_time OR consumed_at IS NULL)
+		 ORDER BY one_time, id LIMIT 1`,
+		requester, targetID, now.UTC())
+	if err != nil {
+		return nil, err
+	}
+	ars, err := pgx.CollectRows(rows, scanAccessRequest)
+	if err != nil || len(ars) == 0 {
+		return nil, err
+	}
+	return &ars[0], nil
+}
+
 // ConsumeApproval reports whether requester holds an active approval for
 // targetID and, when the only active approval is single-use, atomically burns
 // it (stamps consumed_at) so it cannot admit a second use. A standing

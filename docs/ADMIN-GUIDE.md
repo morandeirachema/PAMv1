@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-02 · Reflects: Phases 0–59a + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-02 · Reflects: Phases 0–60 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -255,6 +255,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_APPROVAL_WINDOW_MIN` | | `60` | How long an approved access request stays valid. |
 | `PAM_REQUIRE_TICKET` | | `false` | Require an ITSM change/incident ticket on access requests (Phase 20). |
 | `PAM_TICKET_PATTERN` / `PAM_TICKET_VALIDATE_URL` | | | Ticket format regex / ITSM validation webhook (`POST {"ticket":…}` → 2xx = valid). |
+| `PAM_TICKET_REVALIDATE` | | `false` | **Re-check the ticket when access is used** (Phase 60), not only when the request was filed — so a change cancelled mid-window stops admitting sessions. Puts your ITSM on the connect path (bounded at 5s) and refuses when it cannot confirm the ticket, including when it is unreachable. See §5. |
 | `PAM_APPROVALS_REQUIRED` | | `1` | Default distinct approvers per access request — N-of-M chains (Phase 21). |
 | `PAM_REQUIRE_REASON` | | `false` | Reject an access request that carries no reason. |
 | `PAM_ACCESS_ONE_TIME` | | `false` | Make **every** access request single-use (Phase 26): the first privileged use its approval admits consumes it. Requests can also opt in individually (`one_time`). |
@@ -1813,6 +1814,40 @@ also gate on an **amount** with the numeric comparators `gte`/`gt`/`lte`/`lt`
   non-zero when unhealthy. The container images use it as their `HEALTHCHECK`
   because the distroless base has no shell or curl.
 
+### 9.5b Change tickets, checked when access is used (Phase 60)
+
+The ITSM gate (Phase 20) requires a change ticket on an access request and
+validates it — by regex format (`PAM_TICKET_PATTERN`) and/or by asking your ITSM
+(`PAM_TICKET_VALIDATE_URL`). By default that check happens **once, when the
+request is filed**. An approval is then good for `PAM_APPROVAL_WINDOW_MIN`, and
+a scheduled request can wait days for its maintenance window, so a change that
+is cancelled in the meantime goes on admitting sessions.
+
+Set **`PAM_TICKET_REVALIDATE=true`** and the ticket on the admitting request is
+re-checked at the moment access is used — on every path: the SSH, PostgreSQL and
+SQL Server proxies, the in-portal RDP/VNC viewer, credential reveal and
+check-out, the WinRM run endpoint, and the agent broker's tools.
+
+| What the ITSM says | What happens |
+|---|---|
+| The ticket is still valid | The use proceeds exactly as before. |
+| The ticket is rejected (non-2xx) | The use is **refused** — `access.ticket_revoked` names the ticket and the ITSM's reason, and the denial reads `reason:ticket-not-valid` rather than `reason:approval-required`, so an operator is sent to the right place. |
+| The ITSM cannot be reached | Also **refused**. A gate that opens when it cannot do its job is not a gate. |
+
+Three operational points before enabling it:
+
+- **Your ITSM is now on the connect path.** The call is bounded at 5 seconds so a
+  slow ITSM cannot hold an SSH handshake open, but an ITSM outage becomes an
+  access outage for ticketed requests. That is the trade the control asks for;
+  leaving the variable unset keeps the pre-Phase-60 behaviour exactly.
+- **A refusal costs the operator nothing but the attempt.** The re-check runs
+  *before* the approval is consumed, so a single-use approval is not spent by a
+  use the ITSM refused — no going back through four-eyes because your ticketing
+  system had a bad minute.
+- **Only tickets are re-checked.** An approved request with no ticket is
+  unaffected, so turning this on does not silently start requiring tickets; that
+  is still `PAM_REQUIRE_TICKET`.
+
 ### 9.6 Access certification campaigns (Phase 19)
 
 A **certification campaign** is the periodic "recertify or revoke who has access
@@ -2008,6 +2043,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-02 | **Phase 60 — change tickets are re-checked when access is used.** Until now a ticket was validated when the access request was filed; if the change was cancelled an hour later, the approval kept working for the rest of its window. Set **`PAM_TICKET_REVALIDATE=true`** and every privileged use — SSH, PostgreSQL, SQL Server, the in-portal viewer, reveal, check-out, WinRM run and agent tools — puts the ticket back to your ITSM first, refusing with `access.ticket_revoked` if it no longer validates. Two things to plan for: your ITSM is now on the connect path (bounded at 5 seconds), and a ticket that cannot be **confirmed** refuses, including when the ITSM is unreachable. Left unset, nothing changes. See §5 |
 | 2026-08-02 | **Phase 59a — fifteen fixes to the capture, from its own review.** Nothing to reconfigure. What changed that you can observe: the per-file cap now bounds **downloads** as well as uploads (it counts the bytes reads have asked for, not only what came back), `lsetstat` and unrecognized SFTP extensions are refused under read-only and under capture, `copy-data` is refused under capture because it copies inside the server where the proxy cannot see it, and the console reports the hash verdict when you download captured content instead of staying silent. Several bypasses of capture were closed (a flagless open, a reused request id, an overflowing write offset), and artifact names are now guaranteed to stay inside the recording directory and to be listable. See §5 |
 | 2026-08-01 | **Phase 59 — SFTP transfers can now be recorded in full.** `PAM_SSH_SFTP_CAPTURE` (`uploads`/`downloads`/`all`) makes every file moved through the SSH proxy leave a sealed, hash-chained artifact beside the session recordings, attributed in the audit trail (`sftp.file_recorded`) and downloadable hash-verified from menu 19. `PAM_SSH_SFTP_CAPTURE_MAX_MB` caps a file by **refusing** data past the cap (a size limit, not a silent gap), and while capture is on an unparsable SFTP stream is refused rather than forwarded opaque. Also fixed: OpenSSH's `posix-rename`/`hardlink` extension requests now obey readonly mode and the path denylist — a modern client renames via the extension, which previously slid past both. See §5 |
 | 2026-07-31 | **Phase 58 — a safe can now carry its own approval policy.** `require_approval` and `min_approvers` (dual control) on a safe bind **every target in it**, so a whole class of systems is governed in one place instead of per target. Strictest-wins: a safe tightens the global and per-target settings and can never loosen them. The dual-control floor is re-read as each approval is cast, so raising it binds requests already waiting, and it applies when a request is filed too. Both fields are on the console's safe screens (new **Approval** column) and in `POST`/`PUT /api/safes`; a floor outside 0–10 is refused. See §"Safes" |

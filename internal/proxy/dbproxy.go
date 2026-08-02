@@ -45,12 +45,15 @@ import (
 
 // DBConfig configures the PostgreSQL session proxy.
 type DBConfig struct {
-	Addr             string            // listen address, e.g. ":5433"; "off" disables it
-	RecordingDir     string            // where session recordings are written
-	Sessions         *session.Registry // live-session registry (optional)
-	RequireApproval  bool              // global 4-eyes/OT gate (per-target also applies)
-	AllowedProtocols []string          // protocol allowlist (must include "postgres")
-	RequireRecording bool              // refuse a session that cannot be recorded
+	Addr            string            // listen address, e.g. ":5433"; "off" disables it
+	RecordingDir    string            // where session recordings are written
+	Sessions        *session.Registry // live-session registry (optional)
+	RequireApproval bool              // global 4-eyes/OT gate (per-target also applies)
+	// TicketCheck re-validates the admitting request's ITSM ticket at connect
+	// time rather than at request time (PAM_TICKET_REVALIDATE, Phase 60).
+	TicketCheck      store.TicketChecker
+	AllowedProtocols []string // protocol allowlist (must include "postgres")
+	RequireRecording bool     // refuse a session that cannot be recorded
 	DialTimeout      time.Duration
 	// ClientTLS, when set, offers TLS on the operator-facing leg (responds 'S' to
 	// an SSLRequest). When nil the proxy responds 'N' and the operator's PAM key
@@ -101,6 +104,7 @@ type DBProxy struct {
 	recordingDir string
 	sessions     *session.Registry
 	requireApprv bool
+	ticketCheck  store.TicketChecker
 	onBreakGlass func(ctx context.Context, actor, detail string)
 	allowedProto map[string]bool
 	requireRec   bool
@@ -147,6 +151,7 @@ func NewDB(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg DBConfig
 		recordingDir: cfg.RecordingDir,
 		sessions:     cfg.Sessions,
 		requireApprv: cfg.RequireApproval,
+		ticketCheck:  cfg.TicketCheck,
 		onBreakGlass: cfg.OnBreakGlass,
 		allowedProto: protocolSet(cfg.AllowedProtocols),
 		requireRec:   cfg.RequireRecording,
@@ -460,19 +465,17 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		return
 	}
 	if approvalPolicy.Required && !principal.BreakGlass {
-		approved, consumedID, aerr := d.store.ConsumeApproval(ctx, actor, target.ID, time.Now())
+		ok, reason, aerr := claimApproval(ctx, d.store, d.ticketCheck, actor, target,
+			func(action, detail string) { d.audit(ctx, actor, action, detail) })
 		if aerr != nil {
 			d.log.Error("approval check failed", "target", target.Name, "err", aerr)
 			d.fail(backend, "58000", "pamv1: approval check failed")
 			return
 		}
-		if !approved {
-			d.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:approval-required")
+		if !ok {
+			d.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:"+reason)
 			d.fail(backend, "28000", "pamv1: connection requires an approved access request")
 			return
-		}
-		if consumedID != 0 {
-			d.audit(ctx, actor, "access.consumed", fmt.Sprintf("request:%d target:%s", consumedID, target.Name))
 		}
 	}
 
