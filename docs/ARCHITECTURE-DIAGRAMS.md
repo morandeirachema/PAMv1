@@ -293,6 +293,7 @@ erDiagram
     string Host
     int Port
     string Name
+    int64 ManagementCredentialID
   }
   KeyMaterial {
     string Name

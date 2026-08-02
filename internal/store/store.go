@@ -150,6 +150,12 @@ type CredentialDependency struct {
 	Host         string `json:"host"` // WinRM-reachable host running the consumer
 	Port         int    `json:"port"` // WinRM port (0 → 5985)
 	Name         string `json:"name"` // service / task / app-pool name
+	// ManagementCredentialID names the credential pamv1 connects to Host WITH in
+	// order to update this consumer (Phase 61). 0 means "connect as the rotated
+	// account", which is what pamv1 did before this existed — and what it should
+	// rarely do, since reconfiguring a service needs administrative rights on the
+	// host that a service account is not supposed to hold.
+	ManagementCredentialID int64 `json:"management_credential_id,omitempty"`
 }
 
 // Safe is a named container that groups targets and delegates who may access

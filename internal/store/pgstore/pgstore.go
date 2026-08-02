@@ -414,8 +414,9 @@ func (s *PGStore) CreateCredentialDependency(ctx context.Context, d *store.Crede
 		d.Port = 5985
 	}
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO credential_dependencies (credential_id, kind, host, port, name) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		d.CredentialID, d.Kind, d.Host, d.Port, d.Name,
+		`INSERT INTO credential_dependencies (credential_id, kind, host, port, name, management_credential_id)
+		 VALUES ($1, $2, $3, $4, $5, NULLIF($6, 0)::BIGINT) RETURNING id`,
+		d.CredentialID, d.Kind, d.Host, d.Port, d.Name, d.ManagementCredentialID,
 	).Scan(&d.ID)
 	if pgCode(err) == pgForeignKeyViolation {
 		return store.ErrNotFound
@@ -426,13 +427,14 @@ func (s *PGStore) CreateCredentialDependency(ctx context.Context, d *store.Crede
 // ListCredentialDependencies returns a credential's declared consumers.
 func (s *PGStore) ListCredentialDependencies(ctx context.Context, credentialID int64) ([]store.CredentialDependency, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, credential_id, kind, host, port, name FROM credential_dependencies WHERE credential_id = $1 ORDER BY id`, credentialID)
+		`SELECT id, credential_id, kind, host, port, name, COALESCE(management_credential_id, 0)
+		 FROM credential_dependencies WHERE credential_id = $1 ORDER BY id`, credentialID)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.CredentialDependency, error) {
 		var d store.CredentialDependency
-		err := row.Scan(&d.ID, &d.CredentialID, &d.Kind, &d.Host, &d.Port, &d.Name)
+		err := row.Scan(&d.ID, &d.CredentialID, &d.Kind, &d.Host, &d.Port, &d.Name, &d.ManagementCredentialID)
 		return d, err
 	})
 }

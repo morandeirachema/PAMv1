@@ -176,14 +176,67 @@ func (s *Server) propagateDependencies(ctx context.Context, cred *store.Credenti
 		if port == 0 {
 			port = 5985
 		}
-		if _, err := s.winrm.Run(ctx, d.Host, port, cred.Username, newSecret, cmd); err != nil {
+		// Who pamv1 connects AS to make this change (Phase 61). A declared
+		// management credential is used when there is one; otherwise this falls
+		// back to the rotated account, which is what it always did.
+		user, secret, via, cerr := s.dependencyLogin(ctx, cred, newSecret, d)
+		if cerr != nil {
 			s.audit(ctx, "credential.dependency_failed",
-				fmt.Sprintf("credential:%d %s:%s@%s error:%v", cred.ID, d.Kind, d.Name, d.Host, err))
+				fmt.Sprintf("credential:%d %s:%s@%s reason:%v", cred.ID, d.Kind, d.Name, d.Host, cerr))
+			continue
+		}
+		if _, err := s.winrm.Run(ctx, d.Host, port, user, secret, cmd); err != nil {
+			s.audit(ctx, "credential.dependency_failed",
+				fmt.Sprintf("credential:%d %s:%s@%s managed_via:%s error:%v", cred.ID, d.Kind, d.Name, d.Host, via, err))
 			continue
 		}
 		s.audit(ctx, "credential.dependency_updated",
-			fmt.Sprintf("credential:%d %s:%s@%s", cred.ID, d.Kind, d.Name, d.Host))
+			fmt.Sprintf("credential:%d %s:%s@%s managed_via:%s", cred.ID, d.Kind, d.Name, d.Host, via))
 	}
+}
+
+// errManagementCredential describes why a declared management credential could
+// not be used. It is deliberately a plain sentence: it goes straight into the
+// audit trail, where an operator reads it without the code in front of them.
+type errManagementCredential string
+
+// Error renders the reason.
+func (e errManagementCredential) Error() string { return string(e) }
+
+// dependencyLogin resolves the account pamv1 authenticates to the consumer's
+// host with, returning its username, its plaintext secret, and a short label
+// for the audit trail (never the secret itself).
+//
+// Before Phase 61 this was always the rotated account with its brand-new
+// password, which asked the wrong account for the wrong rights: reconfiguring a
+// service, scheduled task or app pool needs remote management and local
+// administrator rights on that host, exactly what a service account should not
+// have — and a hardened one often cannot log on remotely at all, so propagation
+// failed precisely where it mattered. A dependency may now name a management
+// credential instead.
+//
+// FAIL CLOSED on a broken reference. If a management credential was declared
+// and cannot be resolved, this refuses rather than quietly falling back to the
+// rotated account: the operator chose to stop using that account for this, and
+// silently resuming it would undo the decision at the least visible moment.
+func (s *Server) dependencyLogin(ctx context.Context, cred *store.Credential, newSecret string, d store.CredentialDependency) (user, secret, via string, err error) {
+	if d.ManagementCredentialID == 0 {
+		return cred.Username, newSecret, "self", nil
+	}
+	mc, gerr := s.store.GetCredential(ctx, d.ManagementCredentialID)
+	if gerr != nil || mc == nil {
+		return "", "", "", errManagementCredential(fmt.Sprintf("management-credential-missing id:%d", d.ManagementCredentialID))
+	}
+	if mc.SecretEnc == "" {
+		// A Zero Standing Privilege credential holds no secret to present over
+		// WinRM; naming one here is a configuration error, not a runtime hiccup.
+		return "", "", "", errManagementCredential(fmt.Sprintf("management-credential-has-no-secret id:%d", mc.ID))
+	}
+	plain, derr := s.vault.Decrypt(ctx, mc.SecretEnc, store.CredentialAAD(mc.TargetID, mc.ID))
+	if derr != nil {
+		return "", "", "", errManagementCredential(fmt.Sprintf("management-credential-undecryptable id:%d", mc.ID))
+	}
+	return mc.Username, plain, fmt.Sprintf("credential:%d", mc.ID), nil
 }
 
 // dependencyCommand builds the WinRM command that updates a consumer's stored
