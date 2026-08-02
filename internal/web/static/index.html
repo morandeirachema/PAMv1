@@ -1405,11 +1405,13 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         term.innerHTML = `${head("PAMWRKDEP", "Work with Dependent Accounts")}
 Consumers of credential <span class="white">${esc(c.username || c.id)}</span> (id ${esc(c.id)}) — services that log on with this
 account. On rotation, pamv1 also updates each consumer over WinRM so rotation does not break production.
+<span class="cyan">Managed via</span> is the account pamv1 logs in to that host AS. <span class="amber">this account</span> means it logs in as the
+credential being rotated, which needs admin rights on the host — name a management credential instead.
 Type options, press Enter.  <span class="cyan">${canManage ? "4=Delete" : "(read-only role)"}</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Kind</th><th>Name</th><th>Host</th><th>Port</th></tr>
-${deps.map((d) => `<tr><td>${opt(d.id)}</td><td>${esc(d.id)}</td><td>${pad(d.kind, 16)}</td><td class="white">${pad(d.name, 18)}</td><td>${pad(d.host, 18)}</td><td>${esc(d.port || 5985)}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Kind</th><th>Name</th><th>Host</th><th>Port</th><th>Managed via</th></tr>
+${deps.map((d) => `<tr><td>${opt(d.id)}</td><td>${esc(d.id)}</td><td>${pad(d.kind, 16)}</td><td class="white">${pad(d.name, 18)}</td><td>${pad(d.host, 18)}</td><td>${esc(d.port || 5985)}</td><td class="${d.management_credential_id ? "cyan" : "amber"}">${d.management_credential_id ? "cred " + esc(d.management_credential_id) : "this account"}</td></tr>`).join("")}
 </table>${deps.length ? "" : `<div class="cyan indent">(No dependents declared.${canManage ? " Press F6 to add one." : ""})</div>`}
 <input type="submit" hidden></form>
 ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add dependent" : ""}   F12=Cancel`)}`;
@@ -1437,13 +1439,17 @@ Declare a consumer of credential <span class="white">${esc(c.username || c.id)}<
 <label>Name  . . . . . . . :  <input name="name" size="24" required>   <span class="cyan">service / task / app-pool name</span></label>
 <label>Host  . . . . . . . :  <input name="host" size="24" required>   <span class="cyan">WinRM-reachable host running it</span></label>
 <label>Port  . . . . . . . :  <input name="port" type="number" min="0" max="65535" size="6" value="5985"></label>
+<label>Managed via . . . . :  <input name="management_credential_id" type="number" min="0" size="8" placeholder="0">   <span class="cyan">credential id to connect to the host WITH</span></label>
 <input type="submit" hidden>
 </form>
+<div class="cyan indent">Leave "Managed via" empty to log in as the account being rotated — that account then needs
+administrative rights on the host, which a service account usually should not have (and often cannot use
+remotely at all). Naming a management credential is the recommended setup.</div>
 ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-add").onsubmit = async (ev) => {
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
-          const body = { kind: f.kind, name: f.name, host: f.host, port: Number(f.port) || 0 };
+          const body = { kind: f.kind, name: f.name, host: f.host, port: Number(f.port) || 0, management_credential_id: Number(f.management_credential_id) || 0 };
           try { await api("POST", `/api/credentials/${c.id}/dependencies`, body); say(`DEPENDENT ${String(f.name).toUpperCase()} DECLARED.`); await openDeps(c.id); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };

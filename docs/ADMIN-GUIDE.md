@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-02 · Reflects: Phases 0–60 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-02 · Reflects: Phases 0–61 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -875,7 +875,7 @@ WinRM after the rotation:
 
 ```bash
 curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/credentials/3/dependencies \
-  -d '{"kind":"windows_service","host":"app-01","name":"MyAppSvc"}'
+  -d '{"kind":"windows_service","host":"app-01","name":"MyAppSvc","management_credential_id":7}'
 # kinds: windows_service | scheduled_task | iis_apppool ; port defaults to 5985 (WinRM)
 ```
 
@@ -884,9 +884,26 @@ re-vaults it, then runs the appropriate WinRM command on each consumer's host
 (`sc.exe config` / `schtasks /Change /RP` / `appcmd …processModel.password`) with
 the new secret. A propagation failure is audited (`credential.dependency_failed`)
 but does **not** fail the rotation — the new secret is already vaulted, so the
-fix is to update the stale consumer, not to roll back. *(The propagation
-currently connects as the rotated account; a per-consumer management credential
-is a documented follow-on.)*
+fix is to update the stale consumer, not to roll back.
+
+**Which account does the updating (Phase 61).** `management_credential_id` names
+the credential pamv1 **logs into that host as** to make the change. Set it.
+Without it, pamv1 connects as the service account it is rotating, which means
+that account needs remote-management and local-administrator rights on the
+consumer's host — the opposite of what a service account should hold, and
+hardened ones usually cannot log on remotely at all, so propagation fails
+exactly where you need it. It also leaves nothing to stand on when you are
+rotating *because* the account is broken.
+
+- The credential is decrypted just-in-time, like every other use, and the audit
+  records which one was used (`managed_via:credential:7`) — never its secret.
+- An id that names no credential is refused **when you declare the dependency**
+  (422), not silently at 3am during an unattended rotation.
+- If you later delete that credential, the update **fails closed**
+  (`credential.dependency_failed reason:management-credential-missing`) rather
+  than quietly reverting to logging in as the rotated account.
+- *Work with Dependent Accounts* in the console shows a **Managed via** column;
+  anything reading `this account` in amber is still on the old path.
 
 ### Third-party vendor access (Phase 29)
 
@@ -2043,6 +2060,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-02 | **Phase 61 — say which account updates a dependent service.** Declaring a dependent account (a Windows service, scheduled task or app pool) now takes an optional **management credential**: the account pamv1 logs into that host as in order to reconfigure the consumer. Until now it logged in as the service account it was rotating, which needs administrator rights on the host — and hardened service accounts usually cannot log on remotely at all, so propagation failed there. *Work with Dependent Accounts* shows a **Managed via** column; anything reading `this account` in amber is still on the old path. If the credential you name is later deleted, the update fails closed and says so rather than falling back. See §7 |
 | 2026-08-02 | **Phase 60 — change tickets are re-checked when access is used.** Until now a ticket was validated when the access request was filed; if the change was cancelled an hour later, the approval kept working for the rest of its window. Set **`PAM_TICKET_REVALIDATE=true`** and every privileged use — SSH, PostgreSQL, SQL Server, the in-portal viewer, reveal, check-out, WinRM run and agent tools — puts the ticket back to your ITSM first, refusing with `access.ticket_revoked` if it no longer validates. Two things to plan for: your ITSM is now on the connect path (bounded at 5 seconds), and a ticket that cannot be **confirmed** refuses, including when the ITSM is unreachable. Left unset, nothing changes. See §5 |
 | 2026-08-02 | **Phase 59a — fifteen fixes to the capture, from its own review.** Nothing to reconfigure. What changed that you can observe: the per-file cap now bounds **downloads** as well as uploads (it counts the bytes reads have asked for, not only what came back), `lsetstat` and unrecognized SFTP extensions are refused under read-only and under capture, `copy-data` is refused under capture because it copies inside the server where the proxy cannot see it, and the console reports the hash verdict when you download captured content instead of staying silent. Several bypasses of capture were closed (a flagless open, a reused request id, an overflowing write offset), and artifact names are now guaranteed to stay inside the recording directory and to be listable. See §5 |
 | 2026-08-01 | **Phase 59 — SFTP transfers can now be recorded in full.** `PAM_SSH_SFTP_CAPTURE` (`uploads`/`downloads`/`all`) makes every file moved through the SSH proxy leave a sealed, hash-chained artifact beside the session recordings, attributed in the audit trail (`sftp.file_recorded`) and downloadable hash-verified from menu 19. `PAM_SSH_SFTP_CAPTURE_MAX_MB` caps a file by **refusing** data past the cap (a size limit, not a silent gap), and while capture is on an unparsable SFTP stream is refused rather than forwarded opaque. Also fixed: OpenSSH's `posix-rename`/`hardlink` extension requests now obey readonly mode and the path denylist — a modern client renames via the extension, which previously slid past both. See §5 |
