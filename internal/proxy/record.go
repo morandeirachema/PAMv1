@@ -159,7 +159,17 @@ func (r *Recording) Close() (path, sha256hex string, n int64) {
 }
 
 // sanitize replaces any character outside [A-Za-z0-9-_.@] with '-' so the
-// result is safe to use as a filename.
+// result is safe to use as a filename, and guarantees it neither is empty nor
+// begins with '.'.
+//
+// The leading-dot rule is not cosmetic. A name starting with '.' is a dotfile,
+// and dotfiles are exactly what the rest of the pipeline refuses to touch: the
+// playback allowlist rejects them (so the recording lists and replays nowhere),
+// the WORM archiver skips them, and retention preserves them — because the
+// recordings' hash-chain head is itself a dotfile. A recording that lands there
+// is evidence no one can reach and no one can archive. Callers derive names
+// from target and actor names, which are only checked non-empty, so this has to
+// hold here rather than by convention.
 func sanitize(s string) string {
 	var b strings.Builder
 	for _, c := range s {
@@ -171,5 +181,9 @@ func sanitize(s string) string {
 			b.WriteByte('-')
 		}
 	}
-	return b.String()
+	out := b.String()
+	if out == "" || out[0] == '.' {
+		out = "r" + out
+	}
+	return out
 }

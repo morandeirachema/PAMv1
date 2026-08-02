@@ -247,8 +247,10 @@ func (s *Server) playRecording(w http.ResponseWriter, r *http.Request) {
 	// Captured SFTP file content (Phase 59): by default serve the RECONSTRUCTED
 	// bytes — what actually moved — decrypting the artifact if it is sealed;
 	// ?raw=1 falls through to the generic paths below and serves the chunk log
-	// itself (the full wire truth, including overlapping rewrites).
-	if recordingKind(name) == "file" && r.URL.Query().Get("raw") == "" {
+	// itself (the full wire truth, including overlapping rewrites). Only an
+	// affirmative value selects raw: reading "any value at all" made ?raw=0
+	// mean raw, which is the opposite of what it says.
+	if recordingKind(name) == "file" && !truthyParam(r.URL.Query().Get("raw")) {
 		s.serveSFTPContent(w, r, f, fi.Size(), name)
 		return
 	}
@@ -273,6 +275,17 @@ func (s *Server) playRecording(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeContent(w, r, "", fi.ModTime(), io.NewSectionReader(f, 0, fi.Size()))
+}
+
+// truthyParam reads an affirmative query-string flag. Deliberately explicit:
+// a flag that treats "0" and "false" as set is a footgun in a URL an auditor
+// types by hand.
+func truthyParam(v string) bool {
+	switch strings.ToLower(v) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // sftpReconstructMax bounds the size of a reconstructed SFTP file the API will
@@ -317,9 +330,13 @@ func (s *Server) serveSFTPContent(w http.ResponseWriter, r *http.Request, f *os.
 	case "down":
 		dir = "r"
 	case "":
+		// Elect the direction that actually carried bytes. Counting a
+		// zero-length write as evidence of an upload let one empty WRITE on a
+		// read+write handle serve an empty file by default and hide the
+		// download — and the console never passes ?dir.
 		dir = "r"
 		for _, c := range chunks {
-			if c.Dir == "w" {
+			if c.Dir == "w" && len(c.Data) > 0 {
 				dir = "w"
 				break
 			}

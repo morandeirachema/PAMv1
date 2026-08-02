@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–59 are shipped.** The narrative that follows traces the arc through
+**Phases 0–59a are shipped.** The narrative that follows traces the arc through
 Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -1737,6 +1737,85 @@ proxy does too. Opt-in via `PAM_SSH_SFTP_CAPTURE` ∈
   governed renames (nothing else OpenSSH ships moves content across the
   wire), and scp/shell-redirection capture, which stays inherent to the
   interactive-PTY boundary (§6 deliberate limits)
+
+## Phase 59a — Close the review of Phase 59 ✅
+
+A max-effort read-only review of Phase 59, run the day it merged, found
+fifteen defects in it — several of them bypasses of the very containment the
+phase exists to provide, five reproduced by running code. They are closed
+here, in the 52a–52g tradition: the review of a fix is part of the fix.
+
+- [x] **Three ways past capture, closed.** An `SSH_FXP_OPEN` with **no access
+  flag** was treated as neither read nor write and went untracked — yet
+  OpenSSH's own server maps `pflags=0` to a working `O_RDONLY` handle, so one
+  packet bought an entirely uncaptured download. A **reused request id** let an
+  unrelated response resolve a pending OPEN, orphaning the handle and every
+  byte written through it; an id may now name only one outstanding request
+  while capture is on, claimed on the request leg and released by the response
+  (including the `NAME`/`ATTRS`/`EXTENDED_REPLY` kinds capture ignores, whose
+  ids would otherwise have leaked until the bound refused honest work). And a
+  **WRITE offset that overflowed** `offset+len` skipped the range check, broke
+  the artifact from inside the encoder and — because `broken` is sticky — left
+  the rest of that file forwarding with capture silently off; the bound is now
+  a subtraction, and a broken artifact refuses in every mode, not only under
+  `PAM_REQUIRE_RECORDING`
+- [x] **The artifact name is contained.** It was built from the **raw** session
+  title while the sibling `.cast` used `sanitize`, so a target named
+  `x/../../pwned` wrote outside the recording directory with `O_CREATE|O_TRUNC`
+  and operator-chosen bytes, and a target named `web 01` produced evidence the
+  playback allowlist rejects — invisible, unarchivable, and still deleted on
+  schedule by retention. `sanitize` now also guarantees no leading `.`, since a
+  dotfile recording is skipped by the archiver and *preserved* by the pruner
+  (the chain head is a dotfile), and that flaw was latent for `.cast` too
+- [x] **`lsetstat@openssh.com`, the one Phase 59 missed.** Governing
+  `posix-rename` and `hardlink` while leaving the third path-mutating OpenSSH
+  extension ungoverned is the same bug one name over: it bypassed both the
+  read-only refusal and the path denylist, unaudited. Extensions are now an
+  explicit list — the benign ones (statvfs, fsync, limits, path lookups) pass,
+  the mutating ones are gated, `copy-data@openssh.com` is **refused under
+  capture** because it moves content server-side where no WRITE or DATA crosses
+  the proxy (the artifact would have closed attesting `bytes_up:0`, a false
+  statement rather than a gap), and anything unrecognized is refused under
+  read-only or capture instead of forwarded because it is unfamiliar
+- [x] **A client-chosen path can no longer forge audit fields.** Quoting kept
+  spaces and colons *inside* the quotes, and a detail is read as text: a file
+  uploaded to a path named `evade sha256:<hash>` put that exact substring in
+  the trail, which is what playback's tamper check matches — so an operator
+  could vouch for a recording they had altered. Colons in audited paths are
+  escaped, which takes every `key:value` token out of reach at once
+- [x] **The cap is a limit again.** It counted only delivered bytes, so a
+  pipelined download — every real client — ran 16 MiB past a 1 MiB cap before
+  the first refusal; a READ now claims the bytes it asks for when it is
+  admitted and releases the remainder when it resolves
+- [x] **A reachable panic, and a lie about truncation.** `ReconstructSFTP`
+  skipped zero-length chunks when sizing but not when copying, so one empty
+  WRITE — which the proxy records verbatim — crashed every attempt to read that
+  file's evidence back. `DecodeSFTPFile` reported *any* malformed line as a
+  torn tail, which a caller renders as "partial but genuine"; only a damaged
+  **last** line is a truncation now
+- [x] **Two stream-integrity fixes.** The response leg forwarded raw 32 KiB
+  reads into the same serialized writer that carries synthesized refusals, so a
+  mid-transfer refusal could land inside a half-written `DATA` packet and shift
+  every later boundary — it now forwards whole packets only. And each
+  artifact's attestation is written through the **teardown** auditor, so a
+  session drained by shutdown cannot leave `.sftp` files whose hash appears
+  nowhere (indistinguishable from tampering) while the chain head has already
+  advanced
+- [x] **Smaller ones**: the KEK wrap that seals each artifact is bounded and
+  cancellable (a blackholed KMS hung the session, once per *file*), audit
+  writes no longer happen under the mutex both SFTP legs need, `?raw=0` no
+  longer means raw, an empty write no longer wins the direction election and
+  hides a download, the console reports the tamper verdict on a captured-file
+  download instead of discarding it, `PAM_SSH_SFTP_CAPTURE_MAX_MB` is bounded
+  above so it cannot overflow into a negative cap, and the two capture
+  variables reached `.env.example`
+- [x] **Tests**: every fix above has one, and the two Phase 59 tests the review
+  called weak are repaired — the extension test's fake upstream now records
+  extended requests, so "it never reached the target" is an assertion rather
+  than a hope, and the fail-closed test no longer blocks to the suite timeout
+  in the failure mode it guards. The two most load-bearing new tests were run
+  against the pre-fix code first and fail there, which is the only thing that
+  makes them evidence
 
 ## What is left ⬜
 

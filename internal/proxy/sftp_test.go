@@ -226,6 +226,15 @@ func (up *sftpUpstream) serveSFTP(ch ssh.Channel) {
 			name, _, _ := readStr(body[4:])
 			up.got <- "remove:" + name
 			ch.Write(sftpPacket(tStatus, be32(id), be32(0), sftpStr("ok"), sftpStr("")))
+		case tExtended:
+			// Recorded so a test can assert an extended request never reached
+			// the target — without this the "nothing got through" assertions on
+			// posix-rename/hardlink/lsetstat were vacuous.
+			id := binary.BigEndian.Uint32(body[:4])
+			ext, rest, _ := readStr(body[4:])
+			arg, _, _ := readStr(rest)
+			up.got <- "ext:" + ext + ":" + arg
+			ch.Write(sftpPacket(tStatus, be32(id), be32(0), sftpStr("ok"), sftpStr("")))
 		case tClose:
 			id := binary.BigEndian.Uint32(body[:4])
 			if havePending {
@@ -598,27 +607,77 @@ func TestSFTPExtendedRenameGoverned(t *testing.T) {
 		t.Fatalf("denied-path posix-rename reply type = %d, want STATUS(denied)", typ)
 	}
 	ch2.Write(sftpPacket(tExtended, be32(2), sftpStr("hardlink@openssh.com"), sftpStr("/etc/shadow"), sftpStr("/tmp/alias")))
-	if typ, _, _ := readPacket(ch2); typ != tStatus {
-		t.Fatalf("denied-path hardlink reply type = %d, want STATUS(denied)", typ)
+	if typ, body2, _ := readPacket(ch2); typ != tStatus || binary.BigEndian.Uint32(body2[4:8]) != 3 {
+		t.Fatalf("denied-path hardlink reply type = %d, want STATUS(permission denied)", typ)
 	}
-	// An extension pamv1 does not govern still flows (audited nothing, refused
-	// nothing): statvfs reaches the target as before.
-	ch2.Write(sftpPacket(tExtended, be32(3), sftpStr("statvfs@openssh.com"), sftpStr("/srv")))
-	if typ, _, _ := readPacket(ch2); typ != tStatus { // the fake upstream acks unknowns with ok
-		t.Fatalf("ungoverned extension should be forwarded, got type=%d", typ)
+	// lsetstat mutates attributes BY PATH — the extended twin of SETSTAT, and
+	// the one an operator reaches for once rename and hardlink are closed.
+	ch2.Write(sftpPacket(tExtended, be32(3), sftpStr("lsetstat@openssh.com"), sftpStr("/etc/shadow"), be32(4), be32(0o666)))
+	if typ, body3, _ := readPacket(ch2); typ != tStatus || binary.BigEndian.Uint32(body3[4:8]) != 3 {
+		t.Fatalf("denied-path lsetstat reply type = %d, want STATUS(permission denied)", typ)
+	}
+	// An extension pamv1 knows to be harmless still flows: statvfs reaches the
+	// target as before.
+	ch2.Write(sftpPacket(tExtended, be32(4), sftpStr("statvfs@openssh.com"), sftpStr("/srv")))
+	if typ, _, _ := readPacket(ch2); typ != tStatus { // the fake upstream acks with ok
+		t.Fatalf("benign extension should be forwarded, got type=%d", typ)
 	}
 	client2.Close()
+	// The upstream records every extended request it receives, so this proves
+	// the refusals never reached the target — and that statvfs did.
+	sawStatvfs := false
 	for {
 		select {
 		case got := <-up2.got:
 			if strings.Contains(got, "shadow") {
-				t.Fatalf("a denied extension rename reached the target: %q", got)
+				t.Fatalf("a denied extension request reached the target: %q", got)
+			}
+			if strings.HasPrefix(got, "ext:statvfs@openssh.com:") {
+				sawStatvfs = true
 			}
 			continue
 		default:
 		}
 		break
 	}
+	if !sawStatvfs {
+		t.Fatal("a benign extension must still reach the target")
+	}
 	assertAuditContains(t, st2, "sftp.blocked", `op:posix-rename path:"/etc/shadow" reason:path-denied`)
 	assertAuditContains(t, st2, "sftp.blocked", `op:hardlink path:"/etc/shadow" reason:path-denied`)
+	assertAuditContains(t, st2, "sftp.blocked", `op:lsetstat path:"/etc/shadow" reason:path-denied`)
+}
+
+// TestSFTPUngovernedExtensionRefusedUnderReadOnly proves an extension pamv1
+// does not recognize is refused where it could do harm — read-only mode —
+// rather than forwarded because it is unfamiliar. `lsetstat@openssh.com` was
+// exactly that case: a real, path-mutating request that sailed through both
+// the read-only refusal and the path denylist because only the classic packet
+// types were parsed.
+func TestSFTPUngovernedExtensionRefusedUnderReadOnly(t *testing.T) {
+	st, addr, up := startProxySFTP(t, proxy.SFTPReadOnly)
+	client, ch, ok := openSFTPChannel(t, addr)
+	if !ok {
+		t.Fatal("sftp subsystem refused")
+	}
+	defer client.Close()
+	initSFTP(t, ch)
+
+	ch.Write(sftpPacket(tExtended, be32(1), sftpStr("lsetstat@openssh.com"), sftpStr("/srv/app.conf"), be32(4), be32(0o777)))
+	if typ, body, _ := readPacket(ch); typ != tStatus || binary.BigEndian.Uint32(body[4:8]) != 3 {
+		t.Fatalf("readonly lsetstat: type=%d, want STATUS(permission denied)", typ)
+	}
+	ch.Write(sftpPacket(tExtended, be32(2), sftpStr("some-future-thing@openssh.com"), sftpStr("/srv/app.conf")))
+	if typ, body, _ := readPacket(ch); typ != tStatus || binary.BigEndian.Uint32(body[4:8]) != 3 {
+		t.Fatalf("readonly unknown extension: type=%d, want STATUS(permission denied)", typ)
+	}
+	client.Close()
+
+	select {
+	case got := <-up.got:
+		t.Fatalf("a refused extension reached the target: %q", got)
+	default:
+	}
+	assertAuditContains(t, st, "sftp.blocked", "op:lsetstat")
+	assertAuditContains(t, st, "sftp.blocked", "reason:ungoverned-extension")
 }
