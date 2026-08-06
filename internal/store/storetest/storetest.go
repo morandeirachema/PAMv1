@@ -518,23 +518,23 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatal("scheduled approval must be active inside its window")
 	}
 
-	// --- the admitting approval, without consuming it (Phase 60) ---
-	// A use-time check needs to see WHICH request would admit — and its ticket —
-	// before deciding to burn it, so ActiveApproval must agree with
-	// ConsumeApproval about the answer and leave nothing consumed.
-	if a, err := st.ActiveApproval(ctx, "alice", tgt.ID, now); err != nil || a == nil {
-		t.Fatalf("ActiveApproval(alice): %+v err %v", a, err)
-	} else if a.ID != ar.ID || a.Ticket != "CHG1001" {
-		t.Fatalf("ActiveApproval must return the admitting request with its ticket: %+v", a)
+	// --- the admitting approvals, without consuming them (Phase 60/60a) ---
+	// A use-time check needs to see WHICH requests could admit — and their
+	// tickets — before deciding which to burn, so ActiveApprovals must agree
+	// with ConsumeApproval about the order and leave nothing consumed.
+	if as, err := st.ActiveApprovals(ctx, "alice", tgt.ID, now, 8); err != nil || len(as) != 1 {
+		t.Fatalf("ActiveApprovals(alice): %+v err %v", as, err)
+	} else if as[0].ID != ar.ID || as[0].Ticket != "CHG1001" {
+		t.Fatalf("ActiveApprovals must return the admitting request with its ticket: %+v", as[0])
 	}
-	if a, err := st.ActiveApproval(ctx, "alice", tgt.ID, future.Add(time.Minute)); err != nil || a != nil {
-		t.Fatalf("an expired approval must not be returned: %+v err %v", a, err)
+	if as, err := st.ActiveApprovals(ctx, "alice", tgt.ID, future.Add(time.Minute), 8); err != nil || len(as) != 0 {
+		t.Fatalf("an expired approval must not be returned: %+v err %v", as, err)
 	}
-	if a, err := st.ActiveApproval(ctx, "nobody", tgt.ID, now); err != nil || a != nil {
-		t.Fatalf("ActiveApproval with no approval must be (nil, nil): %+v err %v", a, err)
+	if as, err := st.ActiveApprovals(ctx, "nobody", tgt.ID, now, 8); err != nil || len(as) != 0 {
+		t.Fatalf("ActiveApprovals with no approval must be empty: %+v err %v", as, err)
 	}
-	if a, err := st.ActiveApproval(ctx, "dave", tgt.ID, now); err != nil || a != nil {
-		t.Fatalf("a scheduled approval outside its window must not be returned: %+v err %v", a, err)
+	if as, err := st.ActiveApprovals(ctx, "dave", tgt.ID, now, 8); err != nil || len(as) != 0 {
+		t.Fatalf("a scheduled approval outside its window must not be returned: %+v err %v", as, err)
 	}
 
 	// --- one-time (single-use) approvals (Phase 26) ---
@@ -569,8 +569,8 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if g, _ := st.GetAccessRequest(ctx, ot.ID); g == nil || g.ConsumedAt == nil {
 		t.Fatalf("consumed approval must carry ConsumedAt: %+v", g)
 	}
-	if a, err := st.ActiveApproval(ctx, "gina", tgt.ID, now); err != nil || a != nil {
-		t.Fatalf("a consumed one-time approval must not be returned as admitting: %+v err %v", a, err)
+	if as, err := st.ActiveApprovals(ctx, "gina", tgt.ID, now, 8); err != nil || len(as) != 0 {
+		t.Fatalf("a consumed one-time approval must not be returned as admitting: %+v err %v", as, err)
 	}
 	if ok, _ := st.HasActiveApproval(ctx, "gina", tgt.ID, now); ok {
 		t.Fatal("a consumed one-time approval must not be active")
@@ -617,6 +617,75 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 	if g, _ := st.GetAccessRequest(ctx, both.ID); g == nil || g.ConsumedAt != nil {
 		t.Fatalf("the one-time approval must survive while a standing one admits: %+v", g)
+	}
+
+	// --- claiming ONE NAMED approval (Phase 60a) ---
+	// The use-time gate inspects an approval's ticket and must then burn THAT
+	// approval rather than whichever the store would have picked, or a
+	// concurrent use is admitted on a ticket nobody ever checked. Alice now has
+	// exactly two active approvals: the standing one and the single-use one.
+	if as, err := st.ActiveApprovals(ctx, "alice", tgt.ID, now, 8); err != nil || len(as) != 2 {
+		t.Fatalf("alice should have a standing and a single-use approval: %+v err %v", as, err)
+	} else if as[0].ID != ar.ID || as[1].ID != both.ID {
+		t.Fatalf("ActiveApprovals must order standing first, then by id: %+v", as)
+	}
+	if as, err := st.ActiveApprovals(ctx, "alice", tgt.ID, now, 1); err != nil || len(as) != 1 || as[0].ID != ar.ID {
+		t.Fatalf("the limit must cap the list at the most-preferred: %+v err %v", as, err)
+	}
+	// Naming the single-use approval burns exactly it.
+	if ok, err := st.ConsumeApprovalByID(ctx, both.ID, "alice", tgt.ID, now); err != nil || !ok {
+		t.Fatalf("ConsumeApprovalByID(one-time): ok=%v err=%v", ok, err)
+	}
+	if g, _ := st.GetAccessRequest(ctx, both.ID); g == nil || g.ConsumedAt == nil {
+		t.Fatalf("the named approval must be burned: %+v", g)
+	}
+	if ok, err := st.ConsumeApprovalByID(ctx, both.ID, "alice", tgt.ID, now); err != nil || ok {
+		t.Fatalf("a burned approval must not be claimable twice: ok=%v err=%v", ok, err)
+	}
+	// A standing approval is confirmed and left untouched, however often.
+	for i := 0; i < 2; i++ {
+		if ok, err := st.ConsumeApprovalByID(ctx, ar.ID, "alice", tgt.ID, now); err != nil || !ok {
+			t.Fatalf("ConsumeApprovalByID(standing): ok=%v err=%v", ok, err)
+		}
+	}
+	if g, _ := st.GetAccessRequest(ctx, ar.ID); g == nil || g.ConsumedAt != nil {
+		t.Fatalf("a standing approval must never be burned: %+v", g)
+	}
+	// An id alone claims nothing — the requester, the target and the clock are
+	// all re-checked, so a known id cannot borrow somebody else's approval.
+	if ok, _ := st.ConsumeApprovalByID(ctx, ar.ID, "mallory", tgt.ID, now); ok {
+		t.Fatal("another requester's approval must not be claimable by id")
+	}
+	if ok, _ := st.ConsumeApprovalByID(ctx, ar.ID, "alice", tgt.ID+9999, now); ok {
+		t.Fatal("an approval for another target must not be claimable by id")
+	}
+	if ok, _ := st.ConsumeApprovalByID(ctx, ar.ID, "alice", tgt.ID, future.Add(time.Minute)); ok {
+		t.Fatal("an expired approval must not be claimable by id")
+	}
+	if ok, err := st.ConsumeApprovalByID(ctx, 0, "alice", tgt.ID, now); err != nil || ok {
+		t.Fatalf("an id that names nothing must refuse, not error: ok=%v err=%v", ok, err)
+	}
+	// Racing claims of the SAME single-use approval: exactly one wins, and the
+	// losers are told to look elsewhere rather than handed an error.
+	byID := &store.AccessRequest{Requester: "ivy", TargetID: tgt.ID, Status: "approved", ExpiresAt: future, OneTime: true}
+	if err := st.CreateAccessRequest(ctx, byID); err != nil {
+		t.Fatalf("CreateAccessRequest(byID): %v", err)
+	}
+	var wgID sync.WaitGroup
+	wonByID := make(chan struct{}, 8)
+	for i := 0; i < 8; i++ {
+		wgID.Add(1)
+		go func() {
+			defer wgID.Done()
+			if ok, err := st.ConsumeApprovalByID(ctx, byID.ID, "ivy", tgt.ID, now); err == nil && ok {
+				wonByID <- struct{}{}
+			}
+		}()
+	}
+	wgID.Wait()
+	close(wonByID)
+	if n := len(wonByID); n != 1 {
+		t.Fatalf("one single-use approval admitted %d racing claims by id, want exactly 1", n)
 	}
 
 	// --- checkouts (exclusive lease) ---

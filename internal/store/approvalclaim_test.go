@@ -13,31 +13,75 @@ import (
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
-// claimFake is a two-method stand-in for the store, recording whether the
-// approval was actually consumed.
+// claimFake is a stand-in for the store, recording which approvals were
+// actually consumed. `taken` names approvals a concurrent use has already
+// claimed, so a claim by id fails the way a lost race does.
 type claimFake struct {
-	active   *store.AccessRequest
-	consumed int
+	candidates []store.AccessRequest
+	consumed   []int64
+	taken      map[int64]bool
+	limit      int
 	activeErr,
 	consumeErr error
 }
 
-func (f *claimFake) ActiveApproval(_ context.Context, _ string, _ int64, _ time.Time) (*store.AccessRequest, error) {
-	return f.active, f.activeErr
+// oneCandidate builds a fake holding a single admitting approval.
+func oneCandidate(ar *store.AccessRequest) *claimFake {
+	f := &claimFake{}
+	if ar != nil {
+		f.candidates = []store.AccessRequest{*ar}
+	}
+	return f
+}
+
+func (f *claimFake) ActiveApprovals(_ context.Context, _ string, _ int64, _ time.Time, limit int) ([]store.AccessRequest, error) {
+	if f.activeErr != nil {
+		return nil, f.activeErr
+	}
+	f.limit = limit
+	out := f.candidates
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (f *claimFake) ConsumeApproval(_ context.Context, _ string, _ int64, _ time.Time) (bool, int64, error) {
 	if f.consumeErr != nil {
 		return false, 0, f.consumeErr
 	}
-	f.consumed++
-	if f.active == nil {
+	if len(f.candidates) == 0 {
 		return false, 0, nil
 	}
-	if f.active.OneTime {
-		return true, f.active.ID, nil
+	ar := f.candidates[0]
+	f.consumed = append(f.consumed, ar.ID)
+	if ar.OneTime {
+		return true, ar.ID, nil
 	}
 	return true, 0, nil
+}
+
+func (f *claimFake) ConsumeApprovalByID(_ context.Context, id int64, _ string, _ int64, _ time.Time) (bool, error) {
+	if f.consumeErr != nil {
+		return false, f.consumeErr
+	}
+	if f.taken[id] {
+		return false, nil
+	}
+	for _, ar := range f.candidates {
+		if ar.ID != id {
+			continue
+		}
+		if ar.OneTime {
+			if f.taken == nil {
+				f.taken = map[int64]bool{}
+			}
+			f.taken[id] = true
+		}
+		f.consumed = append(f.consumed, id)
+		return true, nil
+	}
+	return false, nil
 }
 
 // checkFn adapts a function to store.TicketChecker.
@@ -51,7 +95,7 @@ func (f checkFn) Validate(ctx context.Context, ticket string) error { return f(c
 // system's answer — they would have to obtain a fresh approval to retry
 // something they were already granted.
 func TestClaimApprovalRefusesWithoutBurning(t *testing.T) {
-	f := &claimFake{active: &store.AccessRequest{ID: 7, Ticket: "CHG1001", OneTime: true}}
+	f := oneCandidate(&store.AccessRequest{ID: 7, Ticket: "CHG1001", OneTime: true})
 	rejected := errors.New("ticket CHG1001 was rejected by the ITSM system (status 404)")
 	checked := ""
 
@@ -70,7 +114,7 @@ func TestClaimApprovalRefusesWithoutBurning(t *testing.T) {
 	if claim.Ticket != "CHG1001" || checked != "CHG1001" {
 		t.Fatalf("the admitting request's ticket must be the one checked: checked=%q claim=%q", checked, claim.Ticket)
 	}
-	if f.consumed != 0 {
+	if len(f.consumed) != 0 {
 		t.Fatal("a refused use must not consume the approval")
 	}
 }
@@ -80,7 +124,7 @@ func TestClaimApprovalRefusesWithoutBurning(t *testing.T) {
 // job is not a gate — deployments that cannot accept that leave the re-check
 // off entirely.
 func TestClaimApprovalUnreachableITSMFailsClosed(t *testing.T) {
-	f := &claimFake{active: &store.AccessRequest{ID: 7, Ticket: "CHG1001"}}
+	f := oneCandidate(&store.AccessRequest{ID: 7, Ticket: "CHG1001"})
 	claim, err := store.ClaimApproval(context.Background(), f,
 		checkFn(func(context.Context, string) error {
 			return errors.New("ticket validation request failed: connection refused")
@@ -89,7 +133,7 @@ func TestClaimApprovalUnreachableITSMFailsClosed(t *testing.T) {
 	if err != nil || claim.OK {
 		t.Fatalf("an unreachable ITSM must refuse: ok=%v err=%v", claim.OK, err)
 	}
-	if f.consumed != 0 {
+	if len(f.consumed) != 0 {
 		t.Fatal("a refused use must not consume the approval")
 	}
 }
@@ -112,7 +156,7 @@ func TestClaimApprovalPassesAndConsumes(t *testing.T) {
 		{"standing approval", &store.AccessRequest{ID: 10, Ticket: "CHG1001"}, valid, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := &claimFake{active: tc.active}
+			f := oneCandidate(tc.active)
 			claim, err := store.ClaimApproval(context.Background(), f, tc.checker, "alice", 1, time.Now())
 			if err != nil || !claim.OK {
 				t.Fatalf("want admitted, got ok=%v err=%v", claim.OK, err)
@@ -120,8 +164,8 @@ func TestClaimApprovalPassesAndConsumes(t *testing.T) {
 			if claim.ConsumedID != tc.wantID {
 				t.Fatalf("consumed id = %d, want %d", claim.ConsumedID, tc.wantID)
 			}
-			if f.consumed != 1 {
-				t.Fatalf("the approval must be consumed exactly once, got %d", f.consumed)
+			if len(f.consumed) != 1 {
+				t.Fatalf("the approval must be claimed exactly once, got %v", f.consumed)
 			}
 			if claim.TicketErr != nil {
 				t.Fatalf("unexpected ticket error: %v", claim.TicketErr)
@@ -140,7 +184,8 @@ func TestClaimApprovalStoreErrorsFailClosed(t *testing.T) {
 	if claim, err := store.ClaimApproval(context.Background(), f, valid, "alice", 1, time.Now()); err == nil || claim.OK {
 		t.Fatalf("an unreadable approval must not admit: ok=%v err=%v", claim.OK, err)
 	}
-	f = &claimFake{active: &store.AccessRequest{ID: 7}, consumeErr: boom}
+	f = oneCandidate(&store.AccessRequest{ID: 7})
+	f.consumeErr = boom
 	if claim, err := store.ClaimApproval(context.Background(), f, valid, "alice", 1, time.Now()); err == nil || claim.OK {
 		t.Fatalf("a failed consume must not admit: ok=%v err=%v", claim.OK, err)
 	}

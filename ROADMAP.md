@@ -1870,6 +1870,48 @@ to mean at the moment of access, or it means at the moment of paperwork.
   the generic webhook and regex the same way Phase 20 did, and a vendor
   connector is a credentials-and-schema problem, not a gate problem
 
+## Phase 60a — The claim consumes the approval whose ticket it checked ✅
+
+Closes a read of Phase 60. The fold's own comment called the gap between the
+re-check and the consume "a small race" and accepted it; it was not small. The
+re-check ran against the approval `ActiveApproval` returned, and the consume
+re-ran its own selection, so the two could disagree about which approval was
+being spent.
+
+- [x] **The gate no longer opens on a ticket it did not check.** Two
+  connections racing both validated the front-runner's open change; the second
+  one's consume then took the approval *behind* it — a cancelled change whose
+  ticket was never put to the ITSM at all. `ConsumeApprovalByID` claims the id
+  that was just validated, or reports that somebody else got there first
+- [x] **And one cancelled change no longer locks an operator out.** The mirror
+  image was worse in daily use: an approval with a rejected ticket shadowed
+  every valid approval behind it *permanently*, because the fold refused before
+  consuming and so could never clear it — anyone who could get a change
+  cancelled could deny an operator their whole window. `ClaimApproval` now
+  walks the candidates, and a refused one is skipped rather than fatal
+- [x] **Refusing is still refusing.** The use is denied when *no* candidate
+  passes, reporting the last ticket and reason, and nothing is burned on the way
+  through — the Phase 60 property that a policy refusal must not cost the
+  operator their approval is unchanged
+- [x] **Bounded** (`maxApprovalCandidates = 8`) and **one budget for the whole
+  walk**: every ITSM call in a claim shares a single `ticketRecheckTimeout`, so
+  several approvals cannot multiply the wait on an SSH handshake. A hung ITSM
+  refuses once, on time
+- [x] **Store contract.** `ActiveApproval` (singular) is *replaced* by
+  `ActiveApprovals(…, limit)` rather than kept alongside it — leaving the
+  single-approval peek in the interface would leave the same trap set for the
+  next caller. `ConsumeApprovalByID` re-checks the requester, the target and the
+  clock, so an id alone can never claim somebody else's approval; the burn is a
+  compare-and-set, and a standing approval is confirmed without being written
+- [x] **Tests**: the race itself against the real store — two concurrent claims,
+  one cancelled change, exactly one admission and it is the checked one, with the
+  cancelled approval left unburned; the shadowing case admitted on the good
+  approval behind the poisoned one; every-candidate-fails still refused with
+  nothing burned; the lost-race fall-through checking the *next* candidate's own
+  ticket; the cap and the shared deadline; a hung ITSM failing closed once; and
+  store-contract coverage of the ordering, the limit, the atomic claim under
+  eight racing goroutines, and the requester/target/clock re-checks
+
 ## Phase 61 — A dependent account names the credential that manages it ✅
 
 Closes the other half of the Phase 17 deferral, and it was a privilege bug
@@ -1968,10 +2010,11 @@ more, against a domain-admin credential on a target granted to somebody else.
 
 ## What is left ⬜
 
-The canonical backlog. Both read-only security sweeps are closed — the
-2026-07-26 one by phases 37–46, the 2026-07-27 post-beta one by phases 52–52g —
-so nothing here is a known defect. It is the honest remainder, grouped by what it
-would take to close, with each item recorded against the phase that deferred it.
+The canonical backlog. Every read-only security sweep is closed — the
+2026-07-26 one by phases 37–46, the 2026-07-27 post-beta one by phases 52–52g,
+and the 2026-08-06 read of the two newest phases by 60a and 61a — so nothing
+here is a known defect. It is the honest remainder, grouped by what it would
+take to close, with each item recorded against the phase that deferred it.
 
 #### 1. Blocking the beta claim — ✅ resolved 2026-07-28
 
@@ -2063,7 +2106,9 @@ Buildable without external infrastructure, each deferred by the phase named.
   (the generic webhook ships). ~~Gating the *connect* path on a live ticket
   lookup rather than validating at request time~~ — ✅ closed 2026-08-02
   (Phase 60): `PAM_TICKET_REVALIDATE` re-checks the admitting request's ticket
-  at the moment access is used, at all five gates, through one shared fold.
+  at the moment access is used, at all five gates, through one shared fold —
+  and, since Phase 60a, the approval that is spent is the one whose ticket
+  passed.
 - ~~**Vendor console screen** (29)~~ — already shipped in **Phase 45** (menu 22,
   *Work with Vendors*, plus contract grants); this line was stale and is struck
   here rather than left inviting someone to build it twice.
