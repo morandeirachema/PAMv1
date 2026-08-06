@@ -1,11 +1,14 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
+	"time"
 
+	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
@@ -90,15 +93,12 @@ func (s *Server) createDependency(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "management_credential_id must be a credential id")
 		return
 	}
-	// A management credential is checked to exist HERE, at the only point where
-	// a human is present to be told. Propagation runs unattended after a
-	// rotation, so a typo discovered there is an audit line nobody is reading.
-	if in.ManagementCredentialID != 0 {
-		mc, err := s.store.GetCredential(r.Context(), in.ManagementCredentialID)
-		if err != nil || mc == nil {
-			writeError(w, http.StatusUnprocessableEntity, "management_credential_id does not name an existing credential")
-			return
-		}
+	// A management credential is checked to exist — and the caller checked to be
+	// allowed to point it at Host — HERE, at the only point where a human is
+	// present to be told. Propagation runs unattended after a rotation, so a
+	// typo discovered there is an audit line nobody is reading.
+	if in.ManagementCredentialID != 0 && !s.gateManagementCredential(w, r, in.ManagementCredentialID, in.Host) {
+		return
 	}
 	d := store.CredentialDependency{
 		CredentialID: id, Kind: in.Kind, Host: in.Host, Port: in.Port, Name: in.Name,
@@ -114,6 +114,95 @@ func (s *Server) createDependency(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), "dependency.create", fmt.Sprintf("credential:%d %s:%s@%s managed_via:%s", id, in.Kind, in.Name, in.Host, via))
 	writeJSON(w, http.StatusCreated, d)
+}
+
+// gateManagementCredential authorizes naming credID as a dependency's
+// management credential (Phase 61a). It writes the refusal and returns false
+// when the caller may not.
+//
+// WHY THIS IS A CREDENTIAL-ACCESS PATH. Phase 61 read the reference as
+// configuration — a caller with CapManageCredentials could name any credential
+// at all, and only its existence was checked. But naming it means pamv1 will
+// later decrypt that secret and present it, over WinRM, to `host` — a host the
+// same caller chooses freely on the same request. That is a reveal with extra
+// steps: it hands the plaintext to a machine the caller controls without the
+// caller ever holding CapRevealSecret or a grant on the credential's target.
+// So the bar here is the reveal bar, applied to the MANAGEMENT credential's
+// target rather than to the target being rotated.
+//
+// WHY IT DOES NOT CONSUME AN APPROVAL. Declaring a dependency is not the use;
+// the use happens unattended, after some later rotation. Burning a single-use
+// approval on a configuration change would spend the operator's session
+// approval on paperwork, so this checks the same approval condition without
+// claiming it (`HasActiveApproval`, the status-only twin the approval gate
+// documents) — the one deliberate difference from `gateCredentialAccess`.
+func (s *Server) gateManagementCredential(w http.ResponseWriter, r *http.Request, credID int64, host string) bool {
+	ctx := r.Context()
+	// The capability is checked BEFORE the credential is looked up, so a caller
+	// who may not reveal anything gets the same refusal for every id and cannot
+	// use this endpoint to map which credential ids exist.
+	if !principalFrom(ctx).Can(auth.CapRevealSecret) {
+		s.audit(ctx, "dependency.create_denied",
+			fmt.Sprintf("management_credential:%d host:%s reason:reveal-secret-required", credID, host))
+		writeError(w, http.StatusForbidden,
+			"naming a management credential presents its secret to the consumer's host, which requires reveal_secret")
+		return false
+	}
+	mc, err := s.store.GetCredential(ctx, credID)
+	if err != nil || mc == nil {
+		writeError(w, http.StatusUnprocessableEntity, "management_credential_id does not name an existing credential")
+		return false
+	}
+	// Only a password can be presented as a WinRM password. An SSH private key
+	// sent into that field is not authentication, it is disclosure: the key
+	// travels to `host` in full and cannot log anything in. A Zero Standing
+	// Privilege credential (`ssh_ca`) holds no secret at all. Both are refused
+	// here rather than at use time, while a human is present to be told.
+	if mc.SecretType != "" && mc.SecretType != "password" {
+		writeError(w, http.StatusUnprocessableEntity,
+			"a management credential must hold a password; this one holds "+mc.SecretType)
+		return false
+	}
+	mt, err := s.store.GetTarget(ctx, mc.TargetID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusUnprocessableEntity, "the management credential's target no longer exists")
+			return false
+		}
+		storeError(w, err)
+		return false
+	}
+	if ok, err := s.authorizedForTarget(ctx, mt); err != nil {
+		storeError(w, err)
+		return false
+	} else if !ok {
+		s.audit(ctx, "dependency.create_denied",
+			fmt.Sprintf("management_credential:%d target:%s host:%s reason:target-policy", credID, mt.Name, host))
+		writeError(w, http.StatusForbidden, "not authorized for the management credential's target")
+		return false
+	}
+	if !principalFrom(ctx).BreakGlass {
+		required, err := s.requireApprovalFor(ctx, mt)
+		if err != nil {
+			storeError(w, err)
+			return false
+		}
+		if required {
+			held, err := s.store.HasActiveApproval(ctx, actorFrom(ctx), mt.ID, time.Now())
+			if err != nil {
+				storeError(w, err)
+				return false
+			}
+			if !held {
+				s.audit(ctx, "dependency.create_denied",
+					fmt.Sprintf("management_credential:%d target:%s host:%s reason:approval-required", credID, mt.Name, host))
+				writeError(w, http.StatusForbidden,
+					"the management credential's target requires an approved access request")
+				return false
+			}
+		}
+	}
+	return s.vendorGate(w, r, mt, mc.Username, "dependency.create_denied")
 }
 
 // listDependencies returns a credential's declared consumers (CapReadInventory).

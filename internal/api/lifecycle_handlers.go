@@ -232,6 +232,14 @@ func (s *Server) dependencyLogin(ctx context.Context, cred *store.Credential, ne
 		// WinRM; naming one here is a configuration error, not a runtime hiccup.
 		return "", "", "", errManagementCredential(fmt.Sprintf("management-credential-has-no-secret id:%d", mc.ID))
 	}
+	// Re-checked here, not only at declaration (Phase 61a), for the same reason
+	// the dependency's name is: this is the last point before the value leaves
+	// pamv1, and a row could predate the rule or have been written straight into
+	// the database. An SSH private key handed to WinRM as a password authenticates
+	// nothing and discloses everything, so it never leaves.
+	if mc.SecretType != "" && mc.SecretType != "password" {
+		return "", "", "", errManagementCredential(fmt.Sprintf("management-credential-not-a-password id:%d type:%s", mc.ID, mc.SecretType))
+	}
 	plain, derr := s.vault.Decrypt(ctx, mc.SecretEnc, store.CredentialAAD(mc.TargetID, mc.ID))
 	if derr != nil {
 		return "", "", "", errManagementCredential(fmt.Sprintf("management-credential-undecryptable id:%d", mc.ID))

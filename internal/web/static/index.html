@@ -1444,7 +1444,10 @@ Declare a consumer of credential <span class="white">${esc(c.username || c.id)}<
 </form>
 <div class="cyan indent">Leave "Managed via" empty to log in as the account being rotated — that account then needs
 administrative rights on the host, which a service account usually should not have (and often cannot use
-remotely at all). Naming a management credential is the recommended setup.</div>
+remotely at all). Naming a management credential is the recommended setup. Naming one presents its
+password to the host above, so it requires REVEAL_SECRET and a grant on that credential's own target —
+the same bar as revealing it. It must hold a password: an SSH key or a zero-standing-privilege
+credential is refused.</div>
 ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-add").onsubmit = async (ev) => {
           ev.preventDefault();
