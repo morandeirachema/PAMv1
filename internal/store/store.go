@@ -615,12 +615,19 @@ type Store interface {
 	// request for targetID as of now. A consumed single-use approval is not
 	// active.
 	HasActiveApproval(ctx context.Context, requester string, targetID int64, now time.Time) (bool, error)
-	// ActiveApproval returns the approval that would admit requester to
-	// targetID as of now — the same one ConsumeApproval would claim, chosen by
-	// the same order — WITHOUT consuming it, or (nil, nil) when there is none.
-	// It exists so a use-time check can inspect the admitting request (its ITSM
-	// ticket, Phase 60) before deciding to burn it.
-	ActiveApproval(ctx context.Context, requester string, targetID int64, now time.Time) (*AccessRequest, error)
+	// ActiveApprovals returns EVERY approval that could admit requester to
+	// targetID as of now, WITHOUT consuming any of them, most-preferred first
+	// (standing approvals before single-use ones, then oldest id) and capped at
+	// limit. It exists so a use-time check can inspect the admitting request
+	// (its ITSM ticket, Phase 60) before deciding to burn it.
+	//
+	// It returns the whole set rather than the single front-runner because the
+	// caller must be free to move on to the next candidate (Phase 61a's sibling
+	// finding, fixed in 60a): peeking at one approval and then consuming
+	// "whichever the store picks" let a use be admitted on an approval whose
+	// ticket was never checked, and let one approval with a cancelled ticket
+	// permanently shadow a valid one behind it.
+	ActiveApprovals(ctx context.Context, requester string, targetID int64, now time.Time, limit int) ([]AccessRequest, error)
 	// ConsumeApproval is the use-time twin of HasActiveApproval (Phase 26): it
 	// reports whether requester holds an active approval for targetID and, when
 	// the only active approval is single-use (OneTime), atomically burns it by
@@ -630,6 +637,17 @@ type Store interface {
 	// Atomic under concurrent use: one single-use approval admits exactly one
 	// of two racing consumers.
 	ConsumeApproval(ctx context.Context, requester string, targetID int64, now time.Time) (ok bool, consumedID int64, err error)
+	// ConsumeApprovalByID claims ONE NAMED approval — the one the caller
+	// inspected — rather than whichever the store would have picked. ok is false
+	// when that approval is no longer active for (requester, targetID) as of
+	// now, which includes a concurrent use having burned it first; that is not
+	// an error, it is the caller's cue to try its next candidate. A single-use
+	// approval is burned atomically, so exactly one of two racing consumers
+	// wins; a standing one is confirmed and left untouched.
+	//
+	// The requester and targetID are re-checked here and not taken on trust:
+	// an id alone must never be able to claim somebody else's approval.
+	ConsumeApprovalByID(ctx context.Context, id int64, requester string, targetID int64, now time.Time) (ok bool, err error)
 
 	// Credential checkout/check-in (exclusive time-boxed leases).
 	// CreateCheckout fails with ErrConflict if the credential already has an

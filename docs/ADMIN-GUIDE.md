@@ -1875,6 +1875,13 @@ Three operational points before enabling it:
   *before* the approval is consumed, so a single-use approval is not spent by a
   use the ITSM refused — no going back through four-eyes because your ticketing
   system had a bad minute.
+- **One cancelled change does not lock you out (Phase 60a).** If you hold
+  several live approvals for the same target, each is checked in turn and the
+  one that is admitted is the one whose ticket passed. A cancelled change
+  refuses only the approval it belongs to; it neither hides a valid approval
+  behind it nor lets a concurrent connection slip in on an unchecked ticket.
+  Up to 8 approvals are considered, and the whole walk shares the same
+  5-second ITSM budget.
 - **Only tickets are re-checked.** An approved request with no ticket is
   unaffected, so turning this on does not silently start requiring tickets; that
   is still `PAM_REQUIRE_TICKET`.
@@ -2074,6 +2081,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-06 | **Phase 60a — the ticket re-check no longer misfires when you hold more than one approval.** With `PAM_TICKET_REVALIDATE=true`, each live approval for the target is now checked in turn and the one admitted is the one whose ticket passed. Before, a second concurrent connection could be let in on an approval whose change had been cancelled (its ticket was never put to the ITSM at all), and one cancelled change could block a valid approval behind it for the rest of the window. Up to 8 approvals are considered and the whole walk shares the same 5-second ITSM budget. Nothing to configure. See §9.5 |
 | 2026-08-06 | **Phase 61a — naming a management credential now takes the same authorization as revealing it.** Declaring a dependent account with `management_credential_id` makes pamv1 present that password to the host on the same request, so it now requires `reveal_secret`, a grant on that credential's **own** target, an approved access request where that target needs one, and an in-contract vendor grant for a vendor — refusals audited as `dependency.create_denied`. It also must be a **password**: an SSH key or a zero-standing-privilege credential is refused, at declaration and again at use. Nothing changes for an administrator who was already entitled to the credential they name. See §7 |
 | 2026-08-02 | **Phase 61 — say which account updates a dependent service.** Declaring a dependent account (a Windows service, scheduled task or app pool) now takes an optional **management credential**: the account pamv1 logs into that host as in order to reconfigure the consumer. Until now it logged in as the service account it was rotating, which needs administrator rights on the host — and hardened service accounts usually cannot log on remotely at all, so propagation failed there. *Work with Dependent Accounts* shows a **Managed via** column; anything reading `this account` in amber is still on the old path. If the credential you name is later deleted, the update fails closed and says so rather than falling back. See §7 |
 | 2026-08-02 | **Phase 60 — change tickets are re-checked when access is used.** Until now a ticket was validated when the access request was filed; if the change was cancelled an hour later, the approval kept working for the rest of its window. Set **`PAM_TICKET_REVALIDATE=true`** and every privileged use — SSH, PostgreSQL, SQL Server, the in-portal viewer, reveal, check-out, WinRM run and agent tools — puts the ticket back to your ITSM first, refusing with `access.ticket_revoked` if it no longer validates. Two things to plan for: your ITSM is now on the connect path (bounded at 5 seconds), and a ticket that cannot be **confirmed** refuses, including when the ITSM is unreachable. Left unset, nothing changes. See §5 |

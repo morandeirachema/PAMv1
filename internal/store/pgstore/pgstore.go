@@ -600,28 +600,27 @@ func (s *PGStore) HasActiveApproval(ctx context.Context, requester string, targe
 	return exists, err
 }
 
-// ActiveApproval returns the approval that would admit requester to targetID as
-// of now, without consuming it. The ORDER BY mirrors ConsumeApproval's
-// selection — standing approvals first, then the oldest — because a caller
-// inspects this request (its ticket) and then consumes, and the two must agree
-// on which request that is.
-func (s *PGStore) ActiveApproval(ctx context.Context, requester string, targetID int64, now time.Time) (*store.AccessRequest, error) {
+// ActiveApprovals returns every approval that could admit requester to targetID
+// as of now, without consuming any of them. The ORDER BY mirrors
+// ConsumeApproval's selection — standing approvals first (`one_time` sorts
+// false before true), then the oldest — so the caller walks them in the order
+// the store would have picked them.
+func (s *PGStore) ActiveApprovals(ctx context.Context, requester string, targetID int64, now time.Time, limit int) ([]store.AccessRequest, error) {
+	if limit <= 0 {
+		limit = 1
+	}
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, requester, target_id, reason, status, approver, created_at, decided_at, expires_at, ticket, required_approvals, approved_by, not_before, one_time, consumed_at
 		 FROM access_requests
 		 WHERE requester = $1 AND target_id = $2 AND status = 'approved'
 		   AND expires_at > $3 AND (not_before IS NULL OR not_before <= $3)
 		   AND (NOT one_time OR consumed_at IS NULL)
-		 ORDER BY one_time, id LIMIT 1`,
-		requester, targetID, now.UTC())
+		 ORDER BY one_time, id LIMIT $4`,
+		requester, targetID, now.UTC(), limit)
 	if err != nil {
 		return nil, err
 	}
-	ars, err := pgx.CollectRows(rows, scanAccessRequest)
-	if err != nil || len(ars) == 0 {
-		return nil, err
-	}
-	return &ars[0], nil
+	return pgx.CollectRows(rows, scanAccessRequest)
 }
 
 // ConsumeApproval reports whether requester holds an active approval for
@@ -664,6 +663,50 @@ func (s *PGStore) ConsumeApproval(ctx context.Context, requester string, targetI
 		return false, 0, err
 	}
 	return true, id, nil
+}
+
+// ConsumeApprovalByID claims the one approval the caller named. The active
+// predicate is repeated in the UPDATE's WHERE — not taken from the read — so
+// the burn is a compare-and-set: two connections racing for the same
+// single-use approval both see `consumed_at IS NULL`, the row lock serializes
+// them, and the loser's UPDATE matches nothing and returns ok=false. That is
+// the caller's cue to try its next candidate, not an error.
+//
+// A standing approval is never burned, so it takes the cheap path: confirming
+// it is active is the whole job, and writing to it on every connect would
+// churn the row for nothing.
+func (s *PGStore) ConsumeApprovalByID(ctx context.Context, id int64, requester string, targetID int64, now time.Time) (bool, error) {
+	var oneTime bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT one_time FROM access_requests
+		 WHERE id = $1 AND requester = $2 AND target_id = $3 AND status = 'approved'
+		   AND expires_at > $4 AND (not_before IS NULL OR not_before <= $4)
+		   AND (NOT one_time OR consumed_at IS NULL)`,
+		id, requester, targetID, now.UTC()).Scan(&oneTime)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !oneTime {
+		return true, nil
+	}
+	var burned int64
+	err = s.pool.QueryRow(ctx,
+		`UPDATE access_requests SET consumed_at = $4
+		 WHERE id = $1 AND requester = $2 AND target_id = $3 AND status = 'approved'
+		   AND expires_at > $4 AND (not_before IS NULL OR not_before <= $4)
+		   AND one_time AND consumed_at IS NULL
+		 RETURNING id`,
+		id, requester, targetID, now.UTC()).Scan(&burned)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil // a concurrent use burned it first
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // SetApprovalState records a multi-approver decision (Phase 21).
