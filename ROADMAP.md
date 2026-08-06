@@ -1918,6 +1918,54 @@ account was broken.
   all); the 422s at declaration time; and a store-contract round-trip so the
   reference cannot be lost in storage
 
+## Phase 61a — Naming a management credential is a use of that credential ✅
+
+Closes a read of Phase 61. The reference shipped as *configuration* — the
+handler checked that `management_credential_id` named an existing row and
+nothing else — but it is an *instruction to present a secret*, and the same
+request also chooses the host it is presented to. That combination turned
+`CapManageCredentials` into a credential-theft primitive: name a credential you
+may neither reveal nor rotate, point the dependency's `host` at a machine you
+control, rotate any credential you *are* allowed to rotate, and pamv1 decrypts
+the named secret and hands it over WinRM to your machine. Proven end to end
+against a profile holding `manage_credentials` + `read_inventory` and nothing
+more, against a domain-admin credential on a target granted to somebody else.
+
+- [x] **The bar is the reveal bar** (`Server.gateManagementCredential`), applied
+  to the management credential's **own** target, not to the one being rotated:
+  `CapRevealSecret`, the per-target grant (direct ∪ safe members), the target's
+  approval requirement, and the vendor contract gate. An administrator already
+  entitled to the credential they name sees no change
+- [x] **It does not consume an approval.** Declaring is not the use — the use
+  happens unattended, after some later rotation — so the approval requirement is
+  checked with `HasActiveApproval` rather than claimed. Burning a single-use
+  approval on a configuration change would spend the operator's session approval
+  on paperwork; this is the one deliberate difference from `gateCredentialAccess`
+- [x] **Not an existence oracle.** The capability is checked **before** the
+  store lookup, so a caller who may not reveal anything gets the same 403 for
+  every id and learns nothing about which credentials exist
+- [x] **A management credential must hold a password.** An `ssh_key` credential
+  sent into a WinRM password field authenticates nothing and delivers the whole
+  private key to the consumer's host; an `ssh_ca` (Zero Standing Privilege)
+  credential holds no secret at all. Both are 422 at declaration and refused
+  again inside `dependencyLogin`
+  (`credential.dependency_failed reason:management-credential-not-a-password`),
+  the same belt-and-braces as the dependency-name allowlist — a row written
+  straight into the database cannot leak one either
+- [x] **The refusals are audited**: `dependency.create_denied` with
+  `reason:reveal-secret-required` / `target-policy` / `approval-required` /
+  `vendor-contract`, naming the credential and the host that was asked for
+- [x] **Console**: the add form states on screen that naming a credential
+  presents its password to that host, what it therefore costs, and that it must
+  be a password
+- [x] **Tests**: the exfiltration attempt itself, refused, with nothing reaching
+  WinRM on the rotation that followed; the grant leg (reveal-capable but not
+  granted the credential's target) refused while an ungated credential from the
+  same caller is accepted, so the refusal is the grant and not the capability;
+  the oracle closed (existing and missing ids answer alike); both non-password
+  secret types refused at declaration; and the use-time refusal proven the only
+  way it can now arise — the dependency row written straight into the store
+
 ## What is left ⬜
 
 The canonical backlog. Both read-only security sweeps are closed — the
@@ -2007,7 +2055,8 @@ Buildable without external infrastructure, each deferred by the phase named.
   enforced through one shared fold at all five gates. ~~**Still open, the other half of that bullet**: a per-consumer management
   credential for dependent-account propagation~~ — ✅ closed 2026-08-02
   (Phase 61): a dependency can name the credential pamv1 connects with, so
-  propagation no longer logs in as the account it is rotating.
+  propagation no longer logs in as the account it is rotating — and, since
+  Phase 61a, naming one takes the same authorization as revealing it.
 - **Campaign depth** (19) — scheduled/recurring campaigns, safe- or owner-scoped
   campaigns, reviewer assignment and reminders.
 - **Ticket gate depth** (20) — a first-class ServiceNow/Jira connector remains
