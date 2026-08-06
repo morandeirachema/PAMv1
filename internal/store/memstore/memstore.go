@@ -676,35 +676,31 @@ func approvalActiveAt(ar store.AccessRequest, requester string, targetID int64, 
 		(!ar.OneTime || ar.ConsumedAt == nil)
 }
 
-// ActiveApproval returns the approval that would admit requester to targetID as
-// of now, without consuming it. The selection mirrors ConsumeApproval exactly —
-// a standing approval wins (the lowest-id one, so the answer is stable), else
-// the oldest unconsumed single-use approval — because a caller inspects this
-// request and then consumes, and the two must agree on which one that is.
-func (m *Memstore) ActiveApproval(_ context.Context, requester string, targetID int64, now time.Time) (*store.AccessRequest, error) {
+// ActiveApprovals returns every approval that could admit requester to targetID
+// as of now, without consuming any of them, most-preferred first: standing
+// approvals before single-use ones and oldest id first, which is the order
+// ConsumeApproval would have picked them in. The map this iterates has no
+// order of its own, so the result is sorted explicitly — a caller re-reading
+// the list must see the same answer twice.
+func (m *Memstore) ActiveApprovals(_ context.Context, requester string, targetID int64, now time.Time, limit int) ([]store.AccessRequest, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var standing, oneTime *store.AccessRequest
+	var out []store.AccessRequest
 	for _, ar := range m.accessReq {
-		if !approvalActiveAt(ar, requester, targetID, now) {
-			continue
-		}
-		cur := ar
-		switch {
-		case !ar.OneTime:
-			if standing == nil || cur.ID < standing.ID {
-				standing = &cur
-			}
-		default:
-			if oneTime == nil || cur.ID < oneTime.ID {
-				oneTime = &cur
-			}
+		if approvalActiveAt(ar, requester, targetID, now) {
+			out = append(out, ar)
 		}
 	}
-	if standing != nil {
-		return standing, nil
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].OneTime != out[j].OneTime {
+			return !out[i].OneTime // standing first
+		}
+		return out[i].ID < out[j].ID
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
 	}
-	return oneTime, nil
+	return out, nil
 }
 
 // ConsumeApproval reports whether requester holds an active approval for
@@ -735,6 +731,25 @@ func (m *Memstore) ConsumeApproval(_ context.Context, requester string, targetID
 	ar.ConsumedAt = &at
 	m.accessReq[oneTimeID] = ar
 	return true, oneTimeID, nil
+}
+
+// ConsumeApprovalByID claims the one approval the caller named, under the same
+// lock, so of two racing consumers of the SAME single-use approval exactly one
+// wins and the loser is told to look elsewhere rather than handed an error.
+func (m *Memstore) ConsumeApprovalByID(_ context.Context, id int64, requester string, targetID int64, now time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ar, ok := m.accessReq[id]
+	if !ok || !approvalActiveAt(ar, requester, targetID, now) {
+		return false, nil
+	}
+	if !ar.OneTime {
+		return true, nil // a standing approval is never burned
+	}
+	at := now.UTC()
+	ar.ConsumedAt = &at
+	m.accessReq[id] = ar
+	return true, nil
 }
 
 // activeCheckoutLocked returns the credential's active (unreturned, unexpired)
