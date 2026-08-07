@@ -2154,12 +2154,16 @@ them invisible because nothing built the second image at all.
 
 - [x] **BuildKit cache mounts** on the module cache and the Go build cache in
   both Dockerfiles (`sharing=locked`, and a separate build-cache id for the
-  cgo-enabled PKCS#11 build so its objects never mix with the static one's), plus
-  `cache-from`/`cache-to: type=gha` on the release build. The layer cache only
-  helps when nothing above it changed, and the layer in question is the one whose
-  input *is* the source — so every build, including every signed release,
-  recompiled the standard library and every dependency from cold. GitHub scopes
-  its cache by branch, so a pull request cannot seed what a release compiles.
+  cgo-enabled PKCS#11 build so its objects never mix with the static one's). The
+  layer cache only helps when nothing above it changed, and the layer in question
+  is the one whose input *is* the source — so every build recompiled the standard
+  library and every dependency from cold. **Correction (65b):** this phase also
+  put `cache-from`/`cache-to: type=gha` on the release build, which broke the
+  v0.11.1 tag outright (`type=gha` needs the docker-container driver; the job uses
+  buildx's default `docker` driver, which cannot export cache). It is removed
+  rather than repaired — a release is the one build whose speed matters least and
+  whose provenance matters most, and with no backend attached the Dockerfile's
+  mounts simply start empty there, so the release builds cold by construction.
 - [x] **`Dockerfile.pkcs11` accepts `VERSION`/`COMMIT`.** It never had, so the
   one deployment flavour used with an HSM — the most security-sensitive of them —
   reported `pam-server dev (none)` from `-version`, from its startup log and from
@@ -2186,6 +2190,30 @@ not touch Go source — which is not what a build of this repo usually is.
 Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap but
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
+
+## Phase 65b — The release build takes no cache ✅
+
+Phase 64 put `cache-from`/`cache-to: type=gha` on the release build and **the
+v0.11.1 tag failed on it**: `type=gha` requires the docker-container driver, and
+the job uses buildx's default `docker` driver, which cannot export cache at all.
+Nothing was published — the failure is before the push — so the tag was unclaimed
+and could be recreated rather than burned.
+
+The fix is removal, not a driver. A release is the one build whose speed matters
+least and whose provenance matters most; a signed, attested artifact is a stronger
+claim when nothing outside the commit fed the compiler. The Dockerfile's
+`RUN --mount=type=cache` mounts stay: with no cache backend attached they start
+empty in CI, so the release builds cold by construction, while the same Dockerfile
+still caches for everyday `docker build` and `docker compose build` — which is
+where the time was actually being spent.
+
+- [x] `release.yml` carries no cache configuration, and says why in place
+- [x] Phase 64's roadmap entry and the 0.11.1 changelog entry corrected, rather
+  than left claiming a cache that does not exist
+- [x] The lesson: **a workflow change is not verified by the CI that does not run
+  it.** `ci.yml` never exercises `release.yml`, so this passed six green checks
+  and failed on the tag. The `workflow_dispatch` dry run exists for exactly this
+  and was not used
 
 ## Phase 65a — v0.11.1, cut rather than banked ✅
 
