@@ -605,13 +605,14 @@ curl -s http://pamv1:8080/metrics | grep pam_build_info      # same, for monitor
 ```
 
 **Status:** **[v0.11.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.11.0)
-was released on 2026-08-07** and is what every manifest here pins; the first release was
+was released on 2026-08-07** and is what every manifest here pins — image digest
+`sha256:04422b7c80b3ed56691fb46196fd4b921dc18a240140184ea9ab24feacdf4b6c`, public
+(anonymous pull verified). The first release was
 **[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** on
 2026-07-28 (digest
 `sha256:ab2a5fa5db27fae805f9096dfdf526497ddff4cc3774b33469ab108b98637b39`). Each
 release publishes its cosign signature, SPDX SBOM attestation and SLSA provenance
-alongside the image in GHCR, and each tag's digest is on its release page — the
-commands above work against either.
+alongside the image in GHCR — the commands above work against either.
 
 ## Break-glass procedure
 
