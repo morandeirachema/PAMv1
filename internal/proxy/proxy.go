@@ -972,7 +972,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		sftpAuditClosing := func(action, detail string) {
 			p.auditClosing(ctx, actor, action, fmt.Sprintf("target:%s cred_user:%s %s", target.Name, cred.Username, detail))
 		}
-		capState = newSFTPCapture(ctx, p.recordingDir, title, p.recKey, p.chain, p.sftpCapture, p.sftpCapMax, p.requireRec, sftpAudit, sftpAuditClosing)
+		capState = newSFTPCapture(ctx, p.recordingDir, title, p.recKey, p.chain, p.sftpCapture, p.sftpCapMax, sftpAudit, sftpAuditClosing)
 		respWatch = &sftpRespWatcher{cap: capState}
 	}
 	insp := newSFTPInspector(p.sftpMode, p.sftpPaths, capState, sftpAudit)

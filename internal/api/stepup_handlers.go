@@ -64,6 +64,52 @@ func (s *Server) decideStepUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	decider := actorFrom(r.Context())
+
+	// FIRST establish that a decision will actually be attempted, and that this
+	// decider may make it. Both checks are read-only and claim nothing.
+	//
+	// The audit below is fail-closed and says a step-up WAS decided, which is the
+	// four-eyes evidence an investigator reads back. Writing it before knowing the
+	// outcome meant every ordinary refusal left a record asserting the opposite of
+	// what happened: a refused self-approval recorded the paused operator as
+	// having decided their own statement — exactly what the refusal exists to
+	// prevent — and a decision for a session paused on no replica recorded a
+	// release that could never have occurred, which any approver could spray into
+	// the chained trail the retention worker will not prune.
+	//
+	// The look is advisory: a pause can time out between it and the claim, so
+	// DecideBy still enforces self-approval under the lock and both refusals are
+	// still handled below. What this removes is the systematic case, not the race.
+	pausedActor, heldHere := s.stepup.Holder(id)
+	if heldHere && decider != "" && pausedActor == decider {
+		s.audit(r.Context(), "session.self_stepup_denied", "session:"+id)
+		writeError(w, http.StatusForbidden, "you cannot decide the step-up for your own session")
+		return
+	}
+	var remotePause int64
+	if !heldHere {
+		outcome, pause, lerr := s.stepup.LookupRemote(r.Context(), id, decider)
+		if lerr != nil {
+			// A store failure is neither "nothing is pending" nor "decided" — say
+			// so instead of picking one.
+			writeError(w, http.StatusServiceUnavailable,
+				"could not reach the cluster's step-up inventory; the decision was NOT applied — retry, or decide on the replica hosting the session")
+			return
+		}
+		switch outcome {
+		case session.StepUpFound:
+			remotePause = pause
+		case session.StepUpSelfApproval:
+			s.audit(r.Context(), "session.self_stepup_denied", "session:"+id)
+			writeError(w, http.StatusForbidden, "you cannot decide the step-up for your own session")
+			return
+		default:
+			s.stepUpNotPending(w, r, id, outcome)
+			return
+		}
+	}
+
 	// Audit BEFORE applying. DecideBy releases the paused statement, so auditing
 	// afterwards meant a failed append left the statement running on the production
 	// database with the four-eyes evidence — WHO released it — gone, while the
@@ -75,7 +121,20 @@ func (s *Server) decideStepUp(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("session:%s approve:%t", auditField(id, 64), in.Approve)) {
 		return
 	}
-	ok, selfApproval := s.stepup.DecideBy(id, in.Approve, actorFrom(r.Context()))
+
+	if !heldHere {
+		// Phase 56: another replica holds the pause — dispatch the sealed decision
+		// to it, bound to the pause LookupRemote found (Phase 62).
+		if derr := s.stepup.DispatchRemote(r.Context(), id, remotePause, in.Approve, decider); derr != nil {
+			writeError(w, http.StatusServiceUnavailable,
+				"could not publish the decision to the replica hosting the session; it was NOT applied — retry, or decide on that replica")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"session": id, "approved": in.Approve, "dispatched": true})
+		return
+	}
+
+	ok, selfApproval := s.stepup.DecideBy(id, in.Approve, decider)
 	if selfApproval {
 		s.audit(r.Context(), "session.self_stepup_denied", "session:"+id)
 		writeError(w, http.StatusForbidden, "you cannot decide the step-up for your own session")
@@ -85,24 +144,17 @@ func (s *Server) decideStepUp(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"session": id, "approved": in.Approve})
 		return
 	}
-	// Not paused here. Phase 56: consult the shared inventory and, if another
-	// replica holds the pause, dispatch the sealed decision to it.
-	outcome, derr := s.stepup.DecideRemote(r.Context(), id, in.Approve, actorFrom(r.Context()))
-	if derr != nil {
-		// A store or publish failure is neither "nothing is pending" nor
-		// "decided" — say so instead of picking one.
-		writeError(w, http.StatusServiceUnavailable,
-			"could not reach the cluster's step-up inventory; the decision was NOT applied — retry, or decide on the replica hosting the session")
-		return
-	}
+	// Held a moment ago and gone now: it timed out, or another supervisor got
+	// there first. Report it honestly rather than as a cluster-wide absence.
+	writeError(w, http.StatusConflict,
+		"the step-up was resolved (timed out, or decided by someone else) before this decision could be applied")
+}
+
+// stepUpNotPending answers a decision for a session no replica has paused. It is
+// its own function because the honest answer depends on whether a bus is
+// attached at all.
+func (s *Server) stepUpNotPending(w http.ResponseWriter, r *http.Request, id string, outcome session.RemoteDecision) {
 	switch outcome {
-	case session.StepUpDispatched:
-		writeJSON(w, http.StatusAccepted, map[string]any{"session": id, "approved": in.Approve, "dispatched": true})
-		return
-	case session.StepUpSelfApproval:
-		s.audit(r.Context(), "session.self_stepup_denied", "session:"+id)
-		writeError(w, http.StatusForbidden, "you cannot decide the step-up for your own session")
-		return
 	case session.StepUpNoBus:
 		// Replica-local coordinator (no bus): be replica-honest, as before Phase 56.
 		// A paused statement blocks in the memory of the replica hosting the

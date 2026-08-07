@@ -9,6 +9,7 @@ import (
 
 	"github.com/morandeirachema/pamv1/internal/api"
 	"github.com/morandeirachema/pamv1/internal/session"
+	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/store/memstore"
 )
 
@@ -138,4 +139,86 @@ func TestStepUpCrossReplica(t *testing.T) {
 	if code, _ := do(t, srv, http.MethodPost, "/api/sessions/sess-far/stepup", boss, map[string]any{"approve": true}); code != http.StatusNotFound {
 		t.Fatalf("decide with nothing pending anywhere: want 404, got %d", code)
 	}
+}
+
+// TestStepUpRefusalLeavesNoDecisionRecord proves the fail-closed
+// `session.stepup_decided` record is written only when a decision is actually
+// attempted — the audit-fidelity half of the step-up decision point.
+//
+// It used to be written first, unconditionally, so the two ordinary refusals
+// both left a record asserting the opposite of what happened. The self-approval
+// case is the sharp one: the trail recorded the PAUSED OPERATOR as having
+// decided their own statement, which is precisely what the refusal exists to
+// prevent, and what makes an audit trail that says an approval happened worse
+// than no gate at all. The 404 case let any approver spray decision records for
+// sessions that were never paused into a chained trail the retention worker
+// will not prune.
+//
+// Verified to fail against the pre-fix code, which recorded both.
+func TestStepUpRefusalLeavesNoDecisionRecord(t *testing.T) {
+	su := session.NewStepUp()
+	srv, st := newTestServerOpts(t, nil, api.Options{StepUp: su})
+
+	// alice holds CapApprove and is also the operator whose statement is paused.
+	alice := seedUser(t, srv, "alice", "approver")
+	result := make(chan bool, 1)
+	go func() {
+		result <- su.Await(t.Context(), "sess-af", "alice", "DELETE FROM ledger", 3*time.Second)
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	// (1) Self-approval: refused, and it must leave no "decided" record.
+	if code, body := do(t, srv, http.MethodPost, "/api/sessions/sess-af/stepup", alice, map[string]any{"approve": true}); code != http.StatusForbidden {
+		t.Fatalf("self-approval: want 403, got %d %s", code, body)
+	}
+	// (2) Nothing pending anywhere: 404, and likewise no record.
+	approver := seedUser(t, srv, "su-approver2", "approver")
+	if code, _ := do(t, srv, http.MethodPost, "/api/sessions/no-such-session/stepup", approver, map[string]any{"approve": true}); code != http.StatusNotFound {
+		t.Fatal("deciding a session that is paused nowhere must be 404")
+	}
+
+	decided, selfDenied := countAuditActions(t, st, "session.stepup_decided", "session.self_stepup_denied")
+	if decided != 0 {
+		t.Fatalf("refusals wrote %d session.stepup_decided records; a refused decision is not a decision", decided)
+	}
+	if selfDenied != 1 {
+		t.Fatalf("session.self_stepup_denied written %d times, want 1", selfDenied)
+	}
+
+	// The pause survived both refusals and a second person can still decide it —
+	// a refusal must never consume the gate.
+	if code, body := do(t, srv, http.MethodPost, "/api/sessions/sess-af/stepup", approver, map[string]any{"approve": true}); code != http.StatusOK {
+		t.Fatalf("approve by a second person: %d %s", code, body)
+	}
+	select {
+	case ok := <-result:
+		if !ok {
+			t.Fatal("the second person's approval did not release the statement")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Await did not resolve after the approval")
+	}
+	// And the genuine decision IS recorded.
+	if decided, _ := countAuditActions(t, st, "session.stepup_decided", ""); decided != 1 {
+		t.Fatalf("the real decision wrote %d records, want exactly 1", decided)
+	}
+}
+
+// countAuditActions returns how many audit events carry each of two actions.
+func countAuditActions(t *testing.T, st store.Store, a, b string) (int, int) {
+	t.Helper()
+	events, err := st.ListAudit(context.Background(), 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	na, nb := 0, 0
+	for _, e := range events {
+		switch e.Action {
+		case a:
+			na++
+		case b:
+			nb++
+		}
+	}
+	return na, nb
 }

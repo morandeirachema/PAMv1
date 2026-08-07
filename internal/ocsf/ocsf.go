@@ -30,11 +30,19 @@ const (
 // than routine API Activity: authorization failures, blocked commands,
 // emergency access, and behavioral risk flags. Matched by exact action or, for
 // the families below, by prefix.
+//
+// Every name here must be one the code can actually emit, or the rule built on
+// it can never fire. `proxy.auth_rate_limited` sat here for a week after Phase
+// 52e stopped appending it (both proxies log without auditing on the throttle
+// branch, so a flood cannot amplify into the audit trail) — a classification for
+// an event that no longer exists, which reads to a SIEM author as coverage.
+// `breakglass.unseal_failed` was the mirror image: emitted, and classified
+// nowhere.
 var findingExact = map[string]bool{
 	"authz.denied": true, "access.denied": true, "session.denied": true,
 	"session.error": true, "db.session.denied": true, "db.session.error": true,
 	"command.blocked": true, "login.failed": true, "proxy.auth_failed": true,
-	"proxy.auth_rate_limited": true, "credential.decrypt_failed": true,
+	"credential.decrypt_failed": true, "breakglass.unseal_failed": true,
 	"access.ticket_rejected": true, "access.decision_denied": true,
 	"broker.tool_call.denied": true, "broker.approval.refused": true,
 	"app.secret_denied": true, "session.revoked": true, "session.killed": true,
