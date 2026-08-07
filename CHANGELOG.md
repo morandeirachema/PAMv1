@@ -33,8 +33,10 @@ and the claim answers **409** rather than a misleading 404.
 
 **Build.** `Dockerfile.pkcs11` accepts `VERSION`/`COMMIT`, so an HSM-backed
 deployment stops reporting `pam-server dev (none)`; base images are pinned by
-digest; BuildKit cache mounts and a GitHub Actions cache mean a build no longer
-recompiles the standard library from cold.
+digest; BuildKit cache mounts mean an everyday `docker build` no longer
+recompiles the standard library from cold. The release build itself deliberately
+takes no cache — a signed, attested artifact is a stronger claim when nothing
+outside the commit fed the compiler.
 
 - **The self-audit absorbs the phases it had not read** (Phase 65) —
   documentation only. `docs/SECURITY-GAPS.md` recorded every read-only sweep and
