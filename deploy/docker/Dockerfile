@@ -1,4 +1,10 @@
-FROM golang:1.26-alpine AS build
+# Base images are pinned BY DIGEST, not only by tag. A tag is a moving pointer:
+# `golang:1.26-alpine` is a different image next week, so two builds of the same
+# commit produce different binaries and neither the SBOM nor the SLSA provenance
+# describes what the other shipped. Dependabot watches this directory weekly and
+# raises the digest, so the pin is maintained rather than merely frozen — which is
+# the same bargain the deployment manifests make with the pamv1 image tag itself.
+FROM golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build
 # VERSION and COMMIT are stamped into the binary so a running container can say
 # what it is (`pam-server -version`, the startup log, and the pam_build_info
 # metric). They default to a local-build marker; the release workflow passes the
@@ -7,16 +13,30 @@ ARG VERSION=dev
 ARG COMMIT=none
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+# Cache the module downloads and the Go build cache across builds. Without the
+# second mount every build compiles the standard library and every dependency
+# from scratch, which is most of the wall clock: the layer cache only helps when
+# nothing above it changed, and the whole point of the layer below is that the
+# source DID change. `sharing=locked` because two concurrent builds writing one
+# module cache corrupt it.
+RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
+    go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath \
+RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
+    --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
+    CGO_ENABLED=0 go build -trimpath \
     -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
     -o /out/pam-server ./cmd/pam-server
 
 # Distroless, static, non-root: minimal attack surface for a credential vault.
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35
 COPY --from=build /out/pam-server /pam-server
-EXPOSE 8080 2222
+# Every listener the server can open, at its default address: the portal/API,
+# the SSH session proxy, the PostgreSQL proxy and the SQL Server proxy. EXPOSE is
+# documentation rather than enforcement, so an incomplete list is a reader
+# quietly concluding a proxy does not exist. The database proxies default to
+# `off`; they listen here only when PAM_DB_ADDR / PAM_MSSQL_ADDR are set.
+EXPOSE 8080 2222 5433 1433
 # Numeric UID (distroless nonroot = 65532) so Kubernetes runAsNonRoot can verify
 # the container is non-root without resolving a username.
 USER 65532:65532

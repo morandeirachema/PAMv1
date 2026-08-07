@@ -79,6 +79,14 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Reuse the Go module and build caches across releases. Safe for a
+          # SIGNED artifact because GitHub scopes its cache by branch: a pull
+          # request's cache is not readable from the default branch or from a tag
+          # built off it, so a contributor cannot seed what a release compiles.
+          # BuildKit keys entries by content either way, and the build stays
+          # reproducible through -trimpath and the digest-pinned bases.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Generate SBOM (SPDX)
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
