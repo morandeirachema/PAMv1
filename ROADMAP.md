@@ -2191,6 +2191,23 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 65c — v0.11.2, because a tag is not free to move ✅
+
+The v0.11.1 tag failed before its push, so nothing was published under it and the
+obvious move was to delete it and re-tag the fix. Checking first is what stopped
+that: **`proxy.golang.org` had already cached `v0.11.1`.** pamv1 is a public Go
+module, so the proxy and the checksum database hold that tag's commit
+immutably — moving it would leave a permanent `go get …@v0.11.1` checksum
+mismatch for everyone, in exchange for tidiness.
+
+- [x] **v0.11.1 stays exactly where it is**, recorded in the changelog as a
+  source tag with no artifacts and superseded rather than quietly overwritten
+- [x] **v0.11.2** carries the same content plus the two release-pipeline fixes,
+  and every pin moves to it (both k8s deployments, terraform, Helm `appVersion` +
+  chart `0.2.2`, both READMEs)
+- [x] **Rehearsed before tagging**, using the dry run that now actually builds:
+  `Build and push` ran for real and every publishing step was skipped
+
 ## Phase 65b — The release build takes no cache ✅
 
 Phase 64 put `cache-from`/`cache-to: type=gha` on the release build and **the
