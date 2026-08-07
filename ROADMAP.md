@@ -2191,6 +2191,35 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 66 — The review of 62–65 ✅
+
+The 52a–52g discipline applied to the phases that closed the sweep: read them the
+way the sweep read everything else, on the argument that new code is where the
+defects are and that the author is the worst person to be the only reader. Three
+findings, all mine, none a bypass.
+
+- [x] **The SFTP handle-table bound was nine times what its comment claimed.**
+  Phase 63 bounded `files` at OPEN time, but checked `len(c.files)` alone — so
+  every OPEN a client pipelined before the first HANDLE came back saw an empty
+  table and was admitted. The real ceiling was that cap *plus* the pending-request
+  cap: **1152, not 128**, reproduced at 600 admitted opens against a 128 cap.
+  Still bounded, so the finding Phase 63 closed stayed closed and nothing grew
+  without limit — but a bound nobody can reason about from its own comment is the
+  same defect as a comment describing a knob that does not exist, which is what
+  Phase 63 removed two files away. Opens in flight now count
+- [x] **`dry_run` had become a dead input.** Phase 65b stopped skipping the
+  release job on `workflow_dispatch` and derived everything from
+  `github.event_name == 'push'` — after which the boolean controlled nothing:
+  `dry_run: false` behaved exactly like `true`. Removed, so the manual trigger is
+  unambiguously the rehearsal. That also removes the ability to publish a signed
+  release from an arbitrary ref by hand, which is a control rather than a loss —
+  a real release comes from a version tag or it does not happen
+- [x] **The path-derived session id reached three audit details raw**, while the
+  `mustAudit` call three lines away quoted and bounded it. Not reachable with
+  hostile text today — only a value matching a real pending session id gets to
+  those branches — so it was safe by circumstance, and circumstance is what
+  changes when someone adds a branch. Quoted at all three
+
 ## Phase 65c — v0.11.2, because a tag is not free to move ✅
 
 The v0.11.1 tag failed before its push, so nothing was published under it and the

@@ -302,7 +302,14 @@ func (c *sftpCapture) trackOpen(id uint32, path string, read, write bool) (refus
 	// end to refuse at: the client gets a permission-denied it can act on, and no
 	// data ever moves against a handle capture is not tracking. 128 concurrently
 	// open remote files is already far outside what any real SFTP client does.
-	if len(c.files) >= sftpCaptureMaxOpen {
+	//
+	// Opens ALREADY IN FLIGHT count. Checking `files` alone bounded nothing a
+	// pipelining client could not walk straight past: every OPEN sent before the
+	// first HANDLE came back saw an empty table and was admitted, so the real
+	// ceiling was this cap plus the pending-request cap — 1152, not 128. Bounded,
+	// so nothing grew without limit, but a bound that is nine times what its own
+	// comment claims is not a bound anyone can reason about.
+	if len(c.files)+len(c.pendingOpens) >= sftpCaptureMaxOpen {
 		return c.refuseBacklog("tracked handles")
 	}
 	mode := "readwrite"
