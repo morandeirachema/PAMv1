@@ -2080,7 +2080,10 @@ because "deploys as code" had come to mean "deploys the pre-fix code".
 
 - [x] **`v0.11.0`**, carrying phases 53–62 and the ten fixes, cut through the
   same test-gated pipeline (digest build, SPDX SBOM attestation, cosign keyless
-  signature, SLSA provenance)
+  signature, SLSA provenance). Published 2026-08-07 as
+  `ghcr.io/morandeirachema/pamv1:0.11.0`, digest
+  `sha256:04422b7c80b3ed56691fb46196fd4b921dc18a240140184ea9ab24feacdf4b6c`,
+  public — anonymous pull verified, the same check that closed finding 18
 - [x] **Every pin moved together** — `deploy/k8s/deployment.yaml`,
   `deploy/k8s/conjur/deployment.yaml`, `deploy/terraform/variables.tf`, and the
   Helm chart's `appVersion` (chart `0.2.0`) — so no flavor is left behind, which
