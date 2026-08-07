@@ -2187,6 +2187,24 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 65a — v0.11.1, cut rather than banked ✅
+
+Phases 63–65 are fixes an operator can see — a refused step-up decision no longer
+recording that it *was* decided, recording playback failing closed, an HSM build
+that can finally say which build it is — plus an **audit-vocabulary change** that
+SIEM rules are written against. Banking them would have restarted the exact drift
+v0.11.0 existed to close, which is the argument for cutting on the day rather
+than on a schedule.
+
+- [x] **`v0.11.1`** through the test-gated pipeline, the first release to use the
+  Phase 64 build cache
+- [x] **All four pins moved together** (both k8s deployments, terraform, Helm
+  `appVersion` + chart `0.2.1`) and both READMEs restate the current release —
+  the same checklist as 62b, because the failure mode was one flavour left behind
+- [x] **The vocabulary change is called out in the release notes**, not buried in
+  a phase bullet: removing `proxy.auth_rate_limited` from the OCSF classifier
+  silently retires any rule built on it, even though the rule could never fire
+
 ## Phase 65 — The self-audit absorbs the phases it had not read ✅
 
 The last item of the 2026-08-07 sweep, and a documentation phase rather than a
@@ -2257,7 +2275,6 @@ was the last item. Struck below, with what closed each:
   the low-level doc omitted ~34 variables was **withdrawn** — §4 documents
   families in a slash shorthand the check did not expand; expanding it gives zero
   missing of the 158 the code reads.
-
 
 #### 1. Blocking the beta claim — ✅ resolved 2026-07-28
 
