@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-06 · Reflects: Phases 0–61a + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-07 · Reflects: Phases 0–68 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -1923,9 +1923,56 @@ curl -sX POST https://pam.example/api/campaigns/1/items/8/decision \
 curl -sX POST https://pam.example/api/campaigns/1/close -H "X-API-Key: $PAM_API_KEY"
 ```
 
+#### Scope it, or nobody finishes it (Phase 68)
+
+An unscoped campaign snapshots **every** grant and safe member in the estate. On
+anything past a demo that is a list of thousands nobody completes, and a review
+nobody completes attests to nothing. Two scopes narrow it to a review somebody
+actually runs:
+
+```bash
+# one safe: its members AND the grants on every target assigned to it —
+# covering only the members would leave a target in the safe reachable by a
+# direct grant the review never showed
+curl -sX POST https://pam.example/api/campaigns -H "X-API-Key: $PAM_API_KEY" \
+  -d '{"name":"PCI safe, Q3","scope_kind":"safe","scope_safe_id":4}'
+
+# one subject: everything a person or role holds, anywhere — the leaver review
+curl -sX POST https://pam.example/api/campaigns -H "X-API-Key: $PAM_API_KEY" \
+  -d '{"name":"leaver: alice","scope_kind":"subject","scope_subject":"alice"}'
+```
+
+An unknown `scope_kind`, a `scope_safe_id` that names no safe, or a scope with
+its value missing are all **422** — never a silent widening to "everything",
+because a typo that quietly reviews the whole estate produces exactly the
+unreviewable campaign the scope exists to prevent.
+
+#### Repeat it, so it does not depend on remembering (Phase 68)
+
+`recur_days` makes a campaign the **anchor** of a recurring series: every N days
+pamv1 opens a fresh campaign with the same name and scope, snapshotting access as
+it stands then. Recertification is a calendar obligation, and a control that
+needs somebody to remember a button lapses the first busy quarter.
+
+```bash
+curl -sX POST https://pam.example/api/campaigns -H "X-API-Key: $PAM_API_KEY" \
+  -d '{"name":"PCI safe","scope_kind":"safe","scope_safe_id":4,"recur_days":90}'
+```
+
+- The schedule lives on the anchor and never moves. Successors are ordinary
+  campaigns carrying no schedule, so a series cannot fork.
+- **Closing the anchor stops the series.** That is the only stop button, and it
+  is the one an operator would reach for first.
+- It runs under the HA leader lock, so N replicas open one campaign, not N. The
+  worker is always on — there is no interval to configure and nothing to forget.
+- `recur_days` is capped at 366.
+
 The whole flow is also in the console: **Certification campaigns** (menu 17) —
-F6 snapshots a new campaign (with an optional due date), option **5** on a
-campaign opens the item review (certify / revoke per item), option **8** closes it.
+F6 snapshots a new campaign (due date, scope, and repeat interval), option **5**
+on a campaign opens the item review (certify / revoke per item), option **8**
+closes it. The list names each campaign's scope and marks a repeating one in
+amber, since that is the row you must not close by accident — and must close on
+purpose to end the series.
 
 Three capabilities, deliberately split (Phase 39):
 

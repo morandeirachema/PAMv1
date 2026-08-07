@@ -186,3 +186,93 @@ func TestCertificationAuthz(t *testing.T) {
 		t.Fatalf("approver create campaign: want 403 (management stays manage_users), got %d", code)
 	}
 }
+
+// TestCampaignScope proves a scoped campaign snapshots only what it was asked to
+// review — the point of the feature, since an unscoped campaign over the whole
+// estate is a list nobody completes.
+//
+// It also pins the two refusals that matter: an unknown scope and a safe that
+// does not exist are 422 rather than silently widening to "everything", which is
+// how a typo would otherwise produce exactly the unreviewable campaign scoping
+// exists to prevent.
+func TestCampaignScope(t *testing.T) {
+	srv := newTestServer(t)
+
+	mk := func(path string, body map[string]any) int64 {
+		t.Helper()
+		code, data := do(t, srv, http.MethodPost, path, testAPIKey, body)
+		if code != http.StatusCreated {
+			t.Fatalf("POST %s: %d %s", path, code, data)
+		}
+		return int64(jsonMap(t, data)["id"].(float64))
+	}
+	// Two safes, a target in each, a grant on each target, and a member in each.
+	safeA := mk("/api/safes", map[string]any{"name": "scope-safe-a"})
+	safeB := mk("/api/safes", map[string]any{"name": "scope-safe-b"})
+	newTarget := func(name string, safe int64) int64 {
+		id := mk("/api/targets", map[string]any{
+			"name": name, "host": "10.0.0.1", "port": 22, "os_type": "linux", "protocol": "ssh",
+		})
+		if code, d := do(t, srv, http.MethodPut, fmt.Sprintf("/api/targets/%d/safe", id), testAPIKey,
+			map[string]any{"safe_id": safe}); code != http.StatusOK && code != http.StatusNoContent {
+			t.Fatalf("assign %s to safe: %d %s", name, code, d)
+		}
+		return id
+	}
+	tgtA, tgtB := newTarget("scope-web-a", safeA), newTarget("scope-web-b", safeB)
+	grant := func(target int64, subject string) {
+		t.Helper()
+		if code, d := do(t, srv, http.MethodPost, fmt.Sprintf("/api/targets/%d/grants", target), testAPIKey,
+			map[string]any{"subject_type": "user", "subject": subject}); code != http.StatusCreated {
+			t.Fatalf("grant %s: %d %s", subject, code, d)
+		}
+	}
+	grant(tgtA, "alice")
+	grant(tgtB, "bob")
+	if code, d := do(t, srv, http.MethodPost, fmt.Sprintf("/api/safes/%d/members", safeA), testAPIKey,
+		map[string]any{"subject_type": "user", "subject": "alice"}); code != http.StatusCreated {
+		t.Fatalf("safe member: %d %s", code, d)
+	}
+
+	items := func(body []byte) int { return int(jsonMap(t, body)["items"].(float64)) }
+
+	// Unscoped: everything (2 grants + 1 member).
+	_, all := do(t, srv, http.MethodPost, "/api/campaigns", testAPIKey, map[string]any{"name": "all"})
+	if n := items(all); n != 3 {
+		t.Fatalf("unscoped campaign captured %d items, want 3", n)
+	}
+	// Safe-scoped: safe A's member AND the grant on the target assigned to it —
+	// covering only the members would leave that target reachable by a direct
+	// grant the review never showed.
+	_, bySafe := do(t, srv, http.MethodPost, "/api/campaigns", testAPIKey,
+		map[string]any{"name": "safe A", "scope_kind": "safe", "scope_safe_id": safeA})
+	if n := items(bySafe); n != 2 {
+		t.Fatalf("safe-scoped campaign captured %d items, want 2 (one grant + one member)", n)
+	}
+	// Subject-scoped: everything alice holds, anywhere (her grant + her membership).
+	_, bySubj := do(t, srv, http.MethodPost, "/api/campaigns", testAPIKey,
+		map[string]any{"name": "alice", "scope_kind": "subject", "scope_subject": "alice"})
+	if n := items(bySubj); n != 2 {
+		t.Fatalf("subject-scoped campaign captured %d items, want 2", n)
+	}
+	// bob holds one thing.
+	_, byBob := do(t, srv, http.MethodPost, "/api/campaigns", testAPIKey,
+		map[string]any{"name": "bob", "scope_kind": "subject", "scope_subject": "bob"})
+	if n := items(byBob); n != 1 {
+		t.Fatalf("bob's campaign captured %d items, want 1", n)
+	}
+
+	// Refusals: an unknown scope must not fall through to "everything".
+	for _, bad := range []map[string]any{
+		{"name": "typo", "scope_kind": "safes"},
+		{"name": "no id", "scope_kind": "safe"},
+		{"name": "missing safe", "scope_kind": "safe", "scope_safe_id": 999999},
+		{"name": "no subject", "scope_kind": "subject"},
+		{"name": "too often", "recur_days": 4000},
+		{"name": "negative", "recur_days": -1},
+	} {
+		if code, d := do(t, srv, http.MethodPost, "/api/campaigns", testAPIKey, bad); code != http.StatusUnprocessableEntity {
+			t.Fatalf("campaign %v: want 422, got %d %s", bad["name"], code, d)
+		}
+	}
+}

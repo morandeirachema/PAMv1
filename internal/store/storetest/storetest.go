@@ -457,6 +457,80 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("ListCampaigns: %d err %v", len(cs), err)
 	}
 
+	// --- campaign scope + recurrence (Phase 68) ---
+	//
+	// Scope fields must SURVIVE a round trip: a campaign whose scope is dropped
+	// on read snapshots the whole estate on its next occurrence, which is the
+	// failure scoping exists to prevent and would look like nothing at all.
+	safeID := int64(4242)
+	scoped := &store.Campaign{
+		Name: "PCI safe, quarterly", CreatedBy: "alice",
+		ScopeKind: store.CampaignScopeSafe, ScopeSafeID: &safeID, RecurDays: 90,
+	}
+	// A real safe id, so the FK in migration 0029 is satisfied on PostgreSQL.
+	pciSafe := &store.Safe{Name: "pci-safe-for-campaign"}
+	if err := st.CreateSafe(ctx, pciSafe); err != nil {
+		t.Fatalf("CreateSafe: %v", err)
+	}
+	scoped.ScopeSafeID = &pciSafe.ID
+	past := now.Add(-time.Hour)
+	scoped.NextRunAt = &past
+	if err := st.CreateCampaign(ctx, scoped); err != nil {
+		t.Fatalf("CreateCampaign(scoped): %v", err)
+	}
+	gotCamp, err := st.GetCampaign(ctx, scoped.ID)
+	if err != nil {
+		t.Fatalf("GetCampaign(scoped): %v", err)
+	}
+	if gotCamp.ScopeKind != store.CampaignScopeSafe || gotCamp.ScopeSafeID == nil || *gotCamp.ScopeSafeID != pciSafe.ID {
+		t.Fatalf("scope did not round-trip: %+v", gotCamp)
+	}
+	if gotCamp.RecurDays != 90 || gotCamp.NextRunAt == nil {
+		t.Fatalf("recurrence did not round-trip: %+v", gotCamp)
+	}
+	// It is due, so the scheduler must see it.
+	dueList, err := st.ListDueCampaigns(ctx, now)
+	if err != nil {
+		t.Fatalf("ListDueCampaigns: %v", err)
+	}
+	if len(dueList) != 1 || dueList[0].ID != scoped.ID {
+		t.Fatalf("ListDueCampaigns = %+v, want just the due anchor %d", dueList, scoped.ID)
+	}
+	// Advancing the schedule takes it out of the due set.
+	nextQuarter := now.Add(24 * time.Hour)
+	if err := st.SetCampaignNextRun(ctx, scoped.ID, nextQuarter); err != nil {
+		t.Fatalf("SetCampaignNextRun: %v", err)
+	}
+	if due, err := st.ListDueCampaigns(ctx, now); err != nil || len(due) != 0 {
+		t.Fatalf("advanced anchor still due: %+v err %v", due, err)
+	}
+	if err := st.SetCampaignNextRun(ctx, 999999, nextQuarter); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("SetCampaignNextRun(missing): want ErrNotFound, got %v", err)
+	}
+	// CLOSING THE ANCHOR ENDS THE SERIES — the stop button. Bring it back into
+	// the due window first, so the only thing the assertion can be measuring is
+	// the close.
+	if err := st.SetCampaignNextRun(ctx, scoped.ID, past); err != nil {
+		t.Fatalf("SetCampaignNextRun(back): %v", err)
+	}
+	if due, _ := st.ListDueCampaigns(ctx, now); len(due) != 1 {
+		t.Fatalf("anchor should be due again before the close, got %d", len(due))
+	}
+	if err := st.CloseCampaign(ctx, scoped.ID, now); err != nil {
+		t.Fatalf("CloseCampaign(anchor): %v", err)
+	}
+	if due, err := st.ListDueCampaigns(ctx, now); err != nil || len(due) != 0 {
+		t.Fatalf("a CLOSED anchor must not keep spawning: %+v err %v", due, err)
+	}
+	// A one-off is never due, whatever the clock says.
+	oneOff := &store.Campaign{Name: "one-off", CreatedBy: "alice"}
+	if err := st.CreateCampaign(ctx, oneOff); err != nil {
+		t.Fatalf("CreateCampaign(one-off): %v", err)
+	}
+	if due, _ := st.ListDueCampaigns(ctx, now.Add(10000*time.Hour)); len(due) != 0 {
+		t.Fatalf("a non-recurring campaign must never be due: %+v", due)
+	}
+
 	// --- access requests (4-eyes) ---
 	ar := &store.AccessRequest{Requester: "alice", TargetID: tgt.ID, Reason: "patch", Status: "pending", ExpiresAt: future, Ticket: "CHG1001"}
 	if err := st.CreateAccessRequest(ctx, ar); err != nil {

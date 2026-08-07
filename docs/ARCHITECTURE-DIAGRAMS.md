@@ -254,6 +254,11 @@ erDiagram
     ptr_time_Time DueAt
     string Status
     ptr_time_Time ClosedAt
+    CampaignScope ScopeKind
+    ptr_int64 ScopeSafeID
+    string ScopeSubject
+    int RecurDays
+    ptr_time_Time NextRunAt
   }
   CampaignItem {
     int64 ID

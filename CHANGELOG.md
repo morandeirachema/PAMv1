@@ -11,6 +11,17 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **Campaigns you can scope and schedule** (Phase 68) — a certification campaign
+  snapshotted *every* grant and safe member, which past a demo is a list nobody
+  completes. It can now be scoped to **one safe** (its members and the grants on
+  every target in it) or **one subject** (everything a person or role holds — the
+  leaver review), and `recur_days` makes it the anchor of a recurring series that
+  opens the next campaign on schedule with the same scope. Closing the anchor
+  stops the series. An unknown scope is refused rather than silently widened to
+  "everything". Migration `0029` is additive; existing campaigns are unchanged.
+  **Audit-detail change**: `certification.campaign_created` gains `scope:`,
+  `safe:`, `subject:`, `recur_days:` and `recurring_from:`.
+
 - **The token-exchange screen fits its terminal** (Phase 67b) — Phase 67's table
   put a full SPIFFE ID in every cell, so a row overflowed `#term`'s 980px and
   pushed the last column off the screen: on a refused row that column is the
