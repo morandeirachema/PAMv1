@@ -11,6 +11,31 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-08-07
+
+Phases 63–65: the rest of the 2026-08-07 sweep, the container build, and the
+self-audit catching up with itself. Cut immediately rather than banked, because
+the gap v0.11.0 existed to close was precisely a pinned image drifting behind the
+fixes — banking these would have started that over.
+
+**Audit-vocabulary change.** `proxy.auth_rate_limited` is removed from the
+documented vocabulary **and from the OCSF exporter's Detection Finding
+classification**; no code path has emitted it since Phase 52e, so any SIEM rule
+built on it was one that could never fire. `breakglass.unseal_failed` and
+`session.relay_start` are now documented, the first also classified.
+
+**Operator-visible fixes.** A refused in-session step-up decision no longer
+leaves an audit record saying it *was* decided — a refused self-approval had
+recorded the paused operator as having decided their own statement. Recording
+playback now fails closed on its audit like every other path that hands over
+KEK-protected material. And a step-up decision that resolves between the check
+and the claim answers **409** rather than a misleading 404.
+
+**Build.** `Dockerfile.pkcs11` accepts `VERSION`/`COMMIT`, so an HSM-backed
+deployment stops reporting `pam-server dev (none)`; base images are pinned by
+digest; BuildKit cache mounts and a GitHub Actions cache mean a build no longer
+recompiles the standard library from cold.
+
 - **The self-audit absorbs the phases it had not read** (Phase 65) —
   documentation only. `docs/SECURITY-GAPS.md` recorded every read-only sweep and
   none of the per-phase reviews, so the seventeen defects found by reviewing
@@ -211,6 +236,7 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.11.1
 [0.11.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.11.0
 [0.10.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0
