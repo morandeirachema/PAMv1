@@ -2147,6 +2147,46 @@ other tools are built against.
   Expanding it first gives zero missing of the 158 the code reads. A drift check
   that does not understand the document's own notation manufactures drift.
 
+## Phase 64 — The container build ✅
+
+No runtime code change; five defects in how the images are produced, four of
+them invisible because nothing built the second image at all.
+
+- [x] **BuildKit cache mounts** on the module cache and the Go build cache in
+  both Dockerfiles (`sharing=locked`, and a separate build-cache id for the
+  cgo-enabled PKCS#11 build so its objects never mix with the static one's), plus
+  `cache-from`/`cache-to: type=gha` on the release build. The layer cache only
+  helps when nothing above it changed, and the layer in question is the one whose
+  input *is* the source — so every build, including every signed release,
+  recompiled the standard library and every dependency from cold. GitHub scopes
+  its cache by branch, so a pull request cannot seed what a release compiles.
+- [x] **`Dockerfile.pkcs11` accepts `VERSION`/`COMMIT`.** It never had, so the
+  one deployment flavour used with an HSM — the most security-sensitive of them —
+  reported `pam-server dev (none)` from `-version`, from its startup log and from
+  the `pam_build_info` metric. There is no published PKCS#11 image, so the admin
+  guide now shows the build with the arguments passed.
+- [x] **Base images pinned by digest**, not only by tag. `golang:1.26-alpine` is
+  a different image next week, so two builds of one commit produced different
+  binaries and neither the SBOM nor the SLSA provenance described what the other
+  shipped. Dependabot already watches `/deploy/docker` weekly, so the pin is
+  maintained rather than frozen — the same bargain the deployment manifests make
+  with the pamv1 tag itself.
+- [x] **`EXPOSE` names every listener**: the PostgreSQL (15) and SQL Server (53)
+  proxy ports had never been added. It is documentation, not enforcement, so an
+  incomplete list is a reader concluding a proxy does not exist.
+- [x] **CI builds both images**, with `DOCKER_BUILDKIT=1` set explicitly rather
+  than assumed (the classic builder rejects `RUN --mount` outright). The PKCS#11
+  image had no build coverage at all, which is why its missing build args went
+  unnoticed for six phases.
+
+Deliberately not changed: `COPY . .` stays. A linter flags it, but `.dockerignore`
+already keeps secrets, VCS history and local artifacts out of the context, and
+splitting the copy to improve layer reuse would only pay off for changes that do
+not touch Go source — which is not what a build of this repo usually is.
+Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap but
+a deliberate one: nothing has asked for arm64, and building it under emulation
+would cost more release time than it currently buys.
+
 ## What is left ⬜
 
 The canonical backlog. Earlier read-only sweeps are closed — the 2026-07-26 one

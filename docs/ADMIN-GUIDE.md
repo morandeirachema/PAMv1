@@ -1412,7 +1412,20 @@ For a hardware security module, the AES wrapping key lives *inside* the HSM and
 data keys are wrapped/unwrapped there — the KEK never leaves the token. This
 provider needs cgo and the vendor PKCS#11 module, so it is **not** in the default
 static image; build with the tag (`go build -tags pkcs11`) or use
-`deploy/docker/Dockerfile.pkcs11`. Example with [SoftHSM2](https://www.opendnssec.org/softhsm/)
+`deploy/docker/Dockerfile.pkcs11`. There is no published PKCS#11 image — you
+build it, so pass the same build arguments the release pipeline passes the
+default one, or the container reports `pam-server dev (none)` from `-version`,
+from its startup log and from `pam_build_info`, and you lose the ability to tell
+which build an HSM-backed deployment is running:
+
+```bash
+docker build -f deploy/docker/Dockerfile.pkcs11 \
+  --build-arg VERSION="$(git describe --tags --always)" \
+  --build-arg COMMIT="$(git rev-parse HEAD)" \
+  -t pamv1:pkcs11 .            # from the repo root
+```
+
+Example with [SoftHSM2](https://www.opendnssec.org/softhsm/)
 (swap in your vendor module for a real HSM):
 
 ```bash
