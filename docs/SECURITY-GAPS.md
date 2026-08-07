@@ -9,20 +9,12 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-08-07 · Reflects: Phases 0–62 + the 2026-07 hardening
+> Last updated: 2026-08-07 · Reflects: Phases 0–65 + the 2026-07 hardening
 > passes, including the **post-beta sweep of 2026-07-27** (thirty findings, all
-> closed) and the **sweep of 2026-08-07** over phases 56–61a, whose two most
-> serious findings shipped as Phase 62 and whose remaining seven are open and
-> listed below.
->
-> **Known currency gap in this document.** Phases 56–61a have no entries of their
-> own here beyond the 2026-08-07 section — in particular the Phase 59a review,
-> which found fifteen defects in SFTP content capture the day it merged, five of
-> them reproduced by running code. That work is recorded in
-> [ROADMAP.md](../ROADMAP.md) and the
-> [low-level change log](ARCHITECTURE-LOW-LEVEL.md#8-change-log); absorbing it
-> here is open work, tracked in
-> [What is left §0](../ROADMAP.md#0-open-findings-from-the-2026-08-07-sweep).
+> closed), the **sweep of 2026-08-07** over phases 56–61a (nine findings: two
+> closed by Phase 62, six by Phase 63, half of one withdrawn as a false
+> positive), and the **per-phase reviews of 56–61a**, which are the section
+> immediately below.
 
 ## How the review was run
 
@@ -190,6 +182,58 @@ roadmap is the plan.
 | ~~F~~ | ~~**Certification decisions have no separation of duties.**~~ | Was: only `CapManageUsers` (i.e. an admin) could certify or revoke, so the principal who grants access was the only one who could attest to it. | **Fixed in Phases 39 + 46** — Phase 39 moved the decision to `CapApprove`, so a dedicated `approver` runs the recertification without holding the access-granting capability (creating/closing a campaign stay `CapManageUsers`). Phase 46 closed the remaining hole with **per-item four-eyes**: every grant records its creator (`target_grants.created_by`, `safe_members.created_by`, migration `0023`), the campaign snapshot carries it (`campaign_items.granted_by`, shown as "granted by X" in the item detail), and certifying an item you granted yourself is refused 403 + audited `certification.decision_denied`. Self-revoke stays allowed (it reduces access); pre-migration rows with no recorded creator are not blocked retroactively. Tests: `api.TestCertificationAuthz`, `api.TestCertificationFourEyes`, the store contract. |
 | ~~G~~ | ~~**Console parity has drifted since Phase 25.**~~ | Was: nine capabilities had no screen. Two of them — a parked agent tool call and a paused SQL statement — are human decisions **with a deadline**, which is what made curl-only actually cost something. | **Fixed across Phases 43 + 45** — Phase 43 shipped the two time-critical screens (*Approve AI-agent tool calls*, menu 20, showing the arguments the policy matched on; *In-session step-up decisions*, menu 21). Phase 45 shipped the other seven: vendors & contract grants (22), operator SSH certificates (23), identity blast radius (24), login-session revocation (25), agent keys (26), credential dependencies (option 9 on a credential), and the audit chain verify / signed head / OCSF export on the audit screen. One deliberate new route: `GET /api/ca/ssh/certs` (CapReadInventory) — the issued-cert serials a revocation needs were listable in the store but invisible over HTTP. All verified against a running server; the console is back at **full parity**. |
 | ~~H~~ | ~~**No update endpoints and no pagination.**~~ | Was: the `Store` interface had create/delete but no update for targets, safes, users or vendors — fixing a target's port meant delete + recreate, cascading away its credentials, grants, dependencies and safe assignment — and no list method except the audit reads was bounded (an authenticated memory-exhaustion vector). | **Fixed in Phase 44** — `UpdateTarget`/`UpdateSafe`/`UpdateUserRole`/`UpdateVendorOrg` + `PUT` routes with create-equivalent validation and authorization (the user edit re-runs the privilege-escalation guard; tokens survive a role change), audited `*.update`; the seven top-level list reads take an id-ascending `(limit, afterID)` window and every list endpoint clamps `?limit=&after=` to 1..500 (default 100) the way `listAudit` already did. Grants and safe members deliberately stay create + delete (no dependents to lose; two audited events beat one mutated row), and usernames stay immutable (they are the subject key in grants/sessions/vendor rows). Console: cursor-draining fetches + 2=Change screens. Tests: the store contract (both stores, live PostgreSQL in CI) + `api/update_test.go`. |
+
+## The per-phase reviews of 56–61a (2026-07-31 → 2026-08-07)
+
+Three of those six phases were reviewed the day they merged, in the 52a–52g
+tradition that the review of a fix is part of the fix. Those reviews found
+**seventeen defects** between them, several of them bypasses of the very
+containment their phase existed to provide. All are closed; they are recorded
+here because a self-audit that only records the sweeps it ran misses the defects
+that were caught by the practice of reviewing new code immediately — which is,
+on this codebase's own evidence, where most of them are.
+
+The generalisable finding across all three is one shape: **a new control that
+governs a set, and a member of the set that was missed.** Three OpenSSH SFTP
+extensions gated and a fourth left open; a re-check performed on one approval and
+a consume performed on another; a credential reference read as configuration when
+every sibling reference is a use.
+
+### Phase 59a — fifteen defects in SFTP content capture (2026-08-02)
+
+Phase 59 shipped per-file content recording; a max-effort read of it the next day
+found fifteen defects, five reproduced by running code. Grouped by what they cost:
+
+| Class | What was wrong | Why it mattered |
+|---|---|---|
+| **Three ways past capture** | An `SSH_FXP_OPEN` with **no access flag** was treated as neither read nor write and went untracked; a **reused request id** let an unrelated response resolve a pending OPEN, orphaning the handle; a **WRITE offset overflowing** `offset+len` skipped the range check and broke the artifact from inside the encoder, and `broken` is sticky. | Each was a complete bypass of the containment the phase exists for. OpenSSH's own server maps `pflags=0` to a working `O_RDONLY` handle, so **one packet bought an entirely uncaptured download**. Closed by: absence of write intent reads as read intent; an id may name only one outstanding request while capture is on (released by every response kind, including the ones capture ignores, whose ids would otherwise leak until the bound refused honest work); the bound is a subtraction; and a broken artifact refuses in **every** mode. |
+| **The artifact name escaped** | It was built from the **raw** session title while the sibling `.cast` used `sanitize`. | A target named `x/../../pwned` wrote outside the recording directory with `O_CREATE\|O_TRUNC` and operator-chosen bytes; a target named `web 01` produced evidence the playback allowlist rejects — invisible, unarchivable, and still deleted on schedule by retention. `sanitize` now also forbids a leading `.`, since a dotfile is skipped by the archiver and *preserved* by the pruner; that flaw was latent for `.cast` too. |
+| **`lsetstat@openssh.com`** | Phase 59 gated `posix-rename` and `hardlink` and left the third path-mutating OpenSSH extension ungoverned. | It bypassed both the read-only refusal and the path denylist, unaudited. Extensions are now an explicit list: benign ones pass, mutating ones are gated, `copy-data@openssh.com` is **refused under capture** (it moves content server-side, so the artifact would close attesting `bytes_up:0` — a false statement, worse than a gap), and anything unrecognized is refused under read-only or capture rather than forwarded because it is unfamiliar. |
+| **Audit-field forgery through a path** | Quoting kept spaces and colons *inside* the quotes, and a detail is read as text. | A file uploaded to a path named `evade sha256:<hash>` put that exact substring into the trail — which is what playback's tamper check matches. **An operator could vouch for a recording they had altered.** Colons in audited paths are now escaped, which takes every `key:value` token out of reach at once. |
+| **The cap was not a limit** | It counted only delivered bytes. | A pipelined download — every real client — ran 16 MiB past a 1 MiB cap before the first refusal. A READ now claims the bytes it asks for when admitted and releases the remainder when it resolves. |
+| **A reachable panic, and a lie about truncation** | `ReconstructSFTP` skipped zero-length chunks when sizing but not when copying; `DecodeSFTPFile` reported any malformed line as a torn tail. | One empty WRITE — which the proxy records verbatim — **crashed every attempt to read that file's evidence back**. And "partial but genuine" was rendered for damage anywhere in the file, not only a truncated last line. |
+| **Two stream-integrity fixes** | The response leg forwarded raw 32 KiB reads into the same serialized writer that carries synthesized refusals; attestations were written through the live auditor. | A mid-transfer refusal could land inside a half-written `DATA` packet and shift every later boundary. And a session drained by shutdown could leave `.sftp` files whose hash appears nowhere — indistinguishable from tampering — while the chain head had already advanced. |
+| **Smaller** | A blackholed KMS hung the session once per *file*; audit writes happened under the mutex both SFTP legs need; `?raw=0` meant raw; an empty write won the direction election and hid a download; the console discarded the tamper verdict on a captured-file download; `PAM_SSH_SFTP_CAPTURE_MAX_MB` could overflow into a negative cap. | Each closed, each with a test. |
+
+Two of Phase 59's own tests were also repaired: the extension test's fake upstream
+now records extended requests, so "it never reached the target" is an assertion
+rather than a hope, and the fail-closed test no longer blocks to the suite timeout
+in the very failure mode it guards. The two most load-bearing new tests were run
+against the pre-fix code first and fail there — which is the only thing that makes
+them evidence.
+
+### Phase 60a — the gate opened on a ticket it had not checked (2026-08-06)
+
+| Finding | Why it matters | Fix |
+|---|---|---|
+| **The use-time ticket re-check and the approval consume could disagree about which approval was being spent.** `ClaimApproval` validated the ticket on the approval `ActiveApproval` returned, then called `ConsumeApproval`, which re-ran its own selection. The fold's own comment called this "a small race" and accepted it. | It was not small, and it failed **open**: two connections racing each validated the front-runner's open change, and the second one's consume took the approval *behind* it — a cancelled change whose ticket was never put to the ITSM at all. The gate Phase 60 exists to provide opened on a ticket it had not checked. | `ConsumeApprovalByID` claims the id that was just validated, or reports that somebody else got there first. `ActiveApproval` (singular) is **replaced** rather than kept alongside, so the single-approval peek is not left in the interface for the next caller. |
+| **One cancelled change locked an operator out of their whole window.** The mirror image, and worse in daily use: an approval with a rejected ticket shadowed every valid approval behind it *permanently*, because the fold refused before consuming and so could never clear it. | Anyone who could get a change cancelled could deny an operator access for the rest of the approval window. | `ClaimApproval` walks the candidates (bounded at 8, one shared ITSM deadline for the whole walk so several approvals cannot multiply the wait on an SSH handshake); a refused candidate is skipped rather than fatal, and the use is denied only when none passes. |
+
+### Phase 61a — a credential reference that was a credential use (2026-08-07)
+
+| Finding | Why it matters | Fix |
+|---|---|---|
+| **`createDependency` read `management_credential_id` as configuration.** It checked only that the id named an existing row. | Naming a credential means pamv1 will later decrypt that secret and present it, over WinRM, to a host **chosen freely on the same request**. That is a reveal with extra steps: a caller holding `CapManageCredentials` and nothing else could name a credential they may neither reveal nor rotate, point `host` at a machine they control, rotate any credential they *are* allowed to rotate, and receive the named secret. Proven end to end against a profile holding `manage_credentials` + `read_inventory` only, against a domain-admin credential on a target granted to somebody else. | `gateManagementCredential` applies the **reveal bar** to the management credential's own target: `CapRevealSecret`, the per-target grant, the approval requirement and the vendor contract gate. The capability is checked **before** the store lookup, so it is not an existence oracle. It checks the approval requirement with `HasActiveApproval` rather than claiming one — declaring is not the use — the single deliberate difference from `gateCredentialAccess`. A management credential must hold a **password**: an `ssh_key` in a WinRM password field is not authentication but disclosure of the whole key, and `ssh_ca` holds no secret at all; both are refused at declaration **and again** at use, so a row written straight into the database cannot leak one either. |
 
 ## The 2026-08-07 sweep — the six phases nobody had read as a whole
 
