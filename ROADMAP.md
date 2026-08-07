@@ -2191,6 +2191,25 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 67a — v0.12.0 ✅
+
+A **minor** rather than a patch, because Phase 67 adds a capability rather than
+fixing one — and the capability it adds is the last curl-only one, so the console
+parity the README has claimed since Phase 25 is finally true rather than nearly.
+
+- [x] **v0.12.0** through the test-gated pipeline, **rehearsed first** with the
+  `workflow_dispatch` run that now actually builds — the discipline Phase 65b
+  bought and Phase 66 tidied
+- [x] **All four pins move together** (both k8s deployments, terraform, Helm
+  `appVersion` + chart `0.3.0`) and both READMEs restate the current release: the
+  same checklist as 62b, 65a and 65c, because the failure it exists to prevent is
+  one flavour left behind
+- [x] **Two broken release links repaired**, found while rewriting them: the
+  README carried `[v0.11.1](…/tag/v0.11.2)` twice — a label saying one version
+  while its link went to another, left by a context-scoped `sed` during the
+  previous release. Every release link in both READMEs is now checked for
+  label/URL agreement, which is a one-line check that would have caught it
+
 ## Phase 67 — Console screen for the token exchange ✅
 
 The last curl-only capability, and the one place the README's *full console
