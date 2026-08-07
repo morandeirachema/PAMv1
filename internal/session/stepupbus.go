@@ -16,12 +16,16 @@ package session
 //     no privilege model, so a database observer sees ciphertext, and a
 //     fabricated row fails to open and is never shown to a supervisor.
 //   - Decisions: a replica that does not hold the pause seals
-//     {session, approve, decider} with a freshness-bound timestamp and publishes
-//     it; every replica receives it (self-delivery included, as on the kill bus)
-//     and the ONE holding the pending entry applies it through DecideBy — the
-//     same claim point, the same self-approval refusal — while the rest ignore
-//     it. The publisher can never hold the entry (the API decides locally
-//     first), so an echo is never applied twice.
+//     {session, pause, approve, decider} with a freshness-bound timestamp and
+//     publishes it; every replica receives it (self-delivery included, as on the
+//     kill bus) and the ONE holding that pending entry applies it through the
+//     same claim point, with the same self-approval refusal, while the rest
+//     ignore it. The publisher can never hold the entry (the API decides locally
+//     first), so an echo is never applied twice. The decision names the PAUSE
+//     and not merely the session, because a session pauses once per flagged
+//     statement: without that, a decision captured off the bus — which anything
+//     holding a database session can do — released the operator's next flagged
+//     statement for as long as its timestamp stayed fresh.
 //
 // What deliberately does NOT change: the pause itself. The blocked statement
 // stays in the hosting replica's memory; the bus only carries visibility and
@@ -42,13 +46,27 @@ type StepUpDecision struct {
 	SessionID string `json:"session_id"`
 	Approve   bool   `json:"approve"`
 	Decider   string `json:"decider"`
+	// Pause names WHICH pause of that session this decision releases (PauseID of
+	// the pending entry's request time). A session id is not enough: `pending` is
+	// keyed by session id and a session pauses once per flagged statement, so the
+	// applying replica needs to be told which one — otherwise a decision released
+	// whatever happened to be pending when it arrived.
+	//
+	// That is the difference between a stale message and a bypass. A sealed
+	// decision is readable to anything holding a database session (NOTIFY has no
+	// privilege model, which is why it is sealed rather than trusted), and its
+	// timestamp stays fresh for interestSkew. Replaying one inside that window
+	// used to release the operator's NEXT flagged statement with no supervisor in
+	// the loop — and audit it under the name of the supervisor who decided the
+	// previous one. Bound to a pause, a replay finds the pause it names already
+	// gone and is refused.
+	Pause int64 `json:"pause,omitempty"`
 	// Seal authenticates the decision under the cluster's shared-custody bus key
 	// (livecrypto.go). Without it, anything able to NOTIFY the decision channel —
 	// on PostgreSQL, anything holding a database session — could release a
 	// statement a supervisor paused. It is base64 of a sealed timestamp bound to
 	// the other fields as AAD, so it can be neither forged, re-pointed at another
-	// session or verdict, nor replayed beyond a short window (and a replay inside
-	// the window finds the entry already claimed).
+	// session, verdict or pause, nor replayed beyond a short window.
 	Seal string `json:"seal,omitempty"`
 }
 
@@ -276,7 +294,11 @@ func (s *StepUp) DecideRemote(ctx context.Context, sessionID string, approve boo
 		if decider != "" && r.Actor == decider {
 			return StepUpSelfApproval, nil
 		}
-		d, serr := sealer.sealStepUpDecision(StepUpDecision{SessionID: sessionID, Approve: approve, Decider: decider}, time.Now())
+		// Name the pause, not just the session: the row we just read IS the pause
+		// this supervisor is deciding, and binding it into the sealed decision is
+		// what keeps the message from applying to a later one.
+		d, serr := sealer.sealStepUpDecision(StepUpDecision{SessionID: sessionID, Approve: approve,
+			Decider: decider, Pause: PauseID(r.Requested)}, time.Now())
 		if serr != nil {
 			return StepUpNotFound, serr
 		}
@@ -293,12 +315,20 @@ func (s *StepUp) DecideRemote(ctx context.Context, sessionID string, approve boo
 
 // applyDecision applies one inbound bus decision to THIS replica's pending
 // entries. Verify before acting — an inbound decision is an unauthenticated
-// instruction to release a paused statement until proven otherwise — then let
-// DecideBy do exactly what it does for a local decision: claim under the lock,
-// refuse self-approval, deliver the verdict. Decisions for pauses this replica
+// instruction to release a paused statement until proven otherwise — then claim
+// under the lock exactly as a local decision does, with one addition: the claim
+// is BOUND to the pause the decision names. Decisions for pauses this replica
 // does not hold (another replica's, an echo of our own publish, or one that
 // raced its timeout) are ignored; some replica held it when the row was read,
-// and if that was us DecideBy resolves it.
+// and if that was us the claim resolves it.
+//
+// A decision that authenticates but names a pause this replica has already
+// resolved is a stale or REPLAYED message — the case the pause binding exists
+// for. It is logged, not audited: the payload is readable to anything holding a
+// database session, so appending a row per arrival would let a flood of replays
+// amplify into the audit trail the retention worker refuses to prune with the
+// chain on (the lesson of the unauthenticated-input finding). The refusal itself
+// is the control; the log line is the evidence.
 //
 // The audit here is AFTER the apply and best-effort, unlike the API path's
 // fail-closed audit-before-release — because the deciding replica already wrote
@@ -314,7 +344,14 @@ func (s *StepUp) applyDecision(d StepUpDecision) {
 			"session", d.SessionID, "decider", d.Decider)
 		return
 	}
-	ok, selfApproval := s.DecideBy(d.SessionID, d.Approve, d.Decider)
+	outcome := s.claim(d.SessionID, d.Pause, d.Approve, d.Decider)
+	if outcome == stepUpClaimStale {
+		slog.Warn("REFUSED a cross-replica step-up decision naming a pause this replica has already resolved; "+
+			"the session is paused again, so this is a stale or replayed message and a supervisor must decide the current pause",
+			"session", d.SessionID, "decider", d.Decider, "pause", d.Pause)
+		return
+	}
+	ok, selfApproval := outcome == stepUpClaimOK, outcome == stepUpClaimSelf
 	s.mu.Lock()
 	audit := s.audit
 	s.mu.Unlock()

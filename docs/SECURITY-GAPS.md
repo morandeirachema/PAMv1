@@ -9,9 +9,20 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-07-29 · Reflects: Phases 0–55 + the 2026-07 hardening passes,
-> including the **post-beta sweep of 2026-07-27**, whose thirty findings are all
-> now closed (see the section below for what each fix actually was).
+> Last updated: 2026-08-07 · Reflects: Phases 0–62 + the 2026-07 hardening
+> passes, including the **post-beta sweep of 2026-07-27** (thirty findings, all
+> closed) and the **sweep of 2026-08-07** over phases 56–61a, whose two most
+> serious findings shipped as Phase 62 and whose remaining seven are open and
+> listed below.
+>
+> **Known currency gap in this document.** Phases 56–61a have no entries of their
+> own here beyond the 2026-08-07 section — in particular the Phase 59a review,
+> which found fifteen defects in SFTP content capture the day it merged, five of
+> them reproduced by running code. That work is recorded in
+> [ROADMAP.md](../ROADMAP.md) and the
+> [low-level change log](ARCHITECTURE-LOW-LEVEL.md#8-change-log); absorbing it
+> here is open work, tracked in
+> [What is left §0](../ROADMAP.md#0-open-findings-from-the-2026-08-07-sweep).
 
 ## How the review was run
 
@@ -37,6 +48,15 @@ The core invariant held again; what it found clustered at the edges rather than
 the centre — the one HTTP handler that authenticated itself, cancellation and
 deadlines around the session path, and an offline maintenance command that had
 not kept pace with the features built around it. All thirty are now fixed.
+
+A **fourth sweep on 2026-08-07** covered phases 56–61a, the ~4k lines that had
+never been read as a whole, and is in
+[the 2026-08-07 sweep section](#the-2026-08-07-sweep--the-six-phases-nobody-had-read-as-a-whole).
+Its lesson is the one this document keeps re-learning from a different angle: the
+two findings that mattered were both **a control that was correct about the wrong
+noun**. A decision bus seal bound the *session* when a session pauses many times,
+and an image pin named a *version* when what was needed was the version's
+contents. Neither is a missing control; both are a control aimed one level off.
 
 ## Status legend
 
@@ -171,6 +191,41 @@ roadmap is the plan.
 | ~~G~~ | ~~**Console parity has drifted since Phase 25.**~~ | Was: nine capabilities had no screen. Two of them — a parked agent tool call and a paused SQL statement — are human decisions **with a deadline**, which is what made curl-only actually cost something. | **Fixed across Phases 43 + 45** — Phase 43 shipped the two time-critical screens (*Approve AI-agent tool calls*, menu 20, showing the arguments the policy matched on; *In-session step-up decisions*, menu 21). Phase 45 shipped the other seven: vendors & contract grants (22), operator SSH certificates (23), identity blast radius (24), login-session revocation (25), agent keys (26), credential dependencies (option 9 on a credential), and the audit chain verify / signed head / OCSF export on the audit screen. One deliberate new route: `GET /api/ca/ssh/certs` (CapReadInventory) — the issued-cert serials a revocation needs were listable in the store but invisible over HTTP. All verified against a running server; the console is back at **full parity**. |
 | ~~H~~ | ~~**No update endpoints and no pagination.**~~ | Was: the `Store` interface had create/delete but no update for targets, safes, users or vendors — fixing a target's port meant delete + recreate, cascading away its credentials, grants, dependencies and safe assignment — and no list method except the audit reads was bounded (an authenticated memory-exhaustion vector). | **Fixed in Phase 44** — `UpdateTarget`/`UpdateSafe`/`UpdateUserRole`/`UpdateVendorOrg` + `PUT` routes with create-equivalent validation and authorization (the user edit re-runs the privilege-escalation guard; tokens survive a role change), audited `*.update`; the seven top-level list reads take an id-ascending `(limit, afterID)` window and every list endpoint clamps `?limit=&after=` to 1..500 (default 100) the way `listAudit` already did. Grants and safe members deliberately stay create + delete (no dependents to lose; two audited events beat one mutated row), and usernames stay immutable (they are the subject key in grants/sessions/vendor rows). Console: cursor-draining fetches + 2=Change screens. Tests: the store contract (both stores, live PostgreSQL in CI) + `api/update_test.go`. |
 
+## The 2026-08-07 sweep — the six phases nobody had read as a whole
+
+A fourth read-only sweep, over phases **56–61a**: cross-replica step-up decisions
+(56), RFC 8693 token-exchange minting and Terraform remediation (57), safe-scoped
+policy (58), SFTP per-file content recording (59/59a), the connect-time ticket
+gate (60/60a) and dependency management credentials (61/61a). Phases 60a and 61a
+had each been reviewed on their own, but the six had never been read together,
+which is where the newest ~4k lines of production code were. Dimensions: the
+authorization surface of the new routes and gates, fail-open/fail-closed
+consistency, concurrency and resource bounds in the two new state machines,
+crypto and secret handling on the new bus payloads and the minted tokens, audit
+completeness, and documented-claim-versus-code drift.
+
+The central invariant held again, and so did the two most load-bearing new
+mechanisms: the token-exchange minter's actor chain round-trips exactly against
+`svid.go`'s verifier with the depth cap consistent at both ends and delegated
+expiry bounded by the delegator's; and `blast/terraform.go` escapes every
+interpolation site, so no attacker-influenced id reaches generated HCL unescaped.
+Nine findings, of which **two are fixed in Phase 62** and seven are open — the
+open ones are carried in
+[ROADMAP §0](../ROADMAP.md#0-open-findings-from-the-2026-08-07-sweep) so there is
+one backlog, not two.
+
+| # | Finding | Why it matters | Status |
+|---|---|---|---|
+| ~~AM~~ | ~~**A sealed cross-replica step-up decision could be replayed onto the session's NEXT pause.**~~ The seal bound `{session, verdict, decider}` with a ±2 min freshness window, but `StepUp.pending` is keyed by session id and a session pauses **once per flagged statement** — so a decision named a session, not a pause. | **Bypass, plus a false audit record.** PostgreSQL `NOTIFY` has no privilege model, so anything holding a database session can read a genuine approval off the channel and publish it back. Inside the window the replay released the operator's next flagged statement with no supervisor in the loop, and the applying replica audited `session.stepup_decided … decider:<the supervisor who decided the previous statement> via:bus`. The code's own claim — "a replay inside the window finds the entry already claimed" — held only if the session did not pause again, and for a database session under a step-up policy pausing twice inside two minutes is the ordinary case. | **Fixed in Phase 62a.** `StepUpDecision.Pause` carries the pause's registration time (microseconds, so it survives the `timestamptz` round trip), bound into the AAD because it is the field a replay would want to change; `StepUp.claim` refuses an entry whose pause differs and reports it distinctly, so a stale message is told apart from "not hosted here". Refused replays are **logged, not audited** — the payload is readable to any database session, and a row per arrival would let a flood amplify into a trail the retention worker will not prune with the chain on. Test: `session.TestStepUpBusDecisionCannotBeReplayedOntoTheNextPause`, verified to fail against the old code, where the replay released the second statement. |
+| ~~AN~~ | ~~**Every documented deployment path pinned an image that predated ten security fixes.**~~ `v0.10.0` was tagged 2026-07-28; the 2026-07-30 sweep's fixes landed over the following two days. | **The whole of the sweep above, undelivered.** `deploy/k8s/deployment.yaml`, `deploy/k8s/conjur/deployment.yaml`, `deploy/terraform/variables.tf` and the Helm chart all resolved `0.10.0`, so an operator following the README got a build containing the tunnel-scoped viewer token that authenticated at all three session proxies (reproduced *opening a session*), the unauthenticated live and kill buses, and the rest. Finding 18's shape exactly — a pin is only as good as what it points at — and it silently undid the fourth beta criterion, since "deploys as code" had come to mean "deploys the pre-fix code". | **Fixed in Phase 62b.** `v0.11.0` cut through the test-gated pipeline; all four pins moved together (the Helm chart to `0.2.0`/`appVersion 0.11.0`); `[Unreleased]` promoted with the bus wire-format upgrade note; both READMEs now state the current release rather than the first. |
+| AO | **`session.stepup_decided` is written before the outcome is known.** `decideStepUp` calls `mustAudit` first, then `DecideBy`; the self-approval 403 and the cluster-wide 404 both return afterwards. | **Audit fidelity at a four-eyes decision point.** A refused self-approval leaves a positive "decided" record attributed to the session's *own operator* — precisely what the self-approval refusal exists to prevent — and any `approve`-capable principal can write decision records for sessions that were never paused, into a chained trail the retention worker will not prune. The pre-audit is correct and must stay: a released statement must not outlive the evidence of who released it. | **Open.** The refusal paths need a compensating event, or a two-phase claim so the record can state the outcome. |
+| AP | **`session.playback` is best-effort audited.** `playRecording` uses `s.audit`, not `mustAudit`. | **The one read of KEK-protected material that is.** Reveal, checkout, app-secret, MFA enrolment, break-glass, token exchange, viewer connect, WinRM run and both proxies' session start all fail closed (invariant §6.4). Playback decrypts a sealed recording — everything the operator typed and saw — and since Phase 59 `serveSFTPContent` serves the reconstructed bytes of a transferred file, so it can hand over an actual secret. With the audit store down, all of that is readable with no durable record. | **Open.** Same shape as finding Y, on the path Phase 41 sealed at rest *because* the content is sensitive. |
+| AQ | **`sftpCapture.required` is dead state.** Assigned from `PAM_REQUIRE_RECORDING` in the constructor and never read anywhere. | **Documentation describing a knob that does not exist.** The file header, the constructor doc and two method docs all say an unwritable artifact refuses the transfer *under required mode*; in fact `broken`/`refuseData` refuse in every mode, so the behaviour is stricter than documented rather than weaker. Not a hole — but a reader reasoning about the posture from the comments reasons about a control that is not there. | **Open.** Either drop the field or give `PAM_REQUIRE_RECORDING` a meaning here. |
+| AR | **The per-session SFTP artifact bound stops counting exactly when a client misbehaves.** `bindHandle` inserts into `c.files` **before** the `sftpCaptureMaxOpen` check and returns early without advancing `c.seq` — the counter `trackOpen` enforces the 10 000-artifact bound on. | **A bound that reads as protection and is not, past 128 open artifacts.** Every further OPEN adds a permanent `c.files` entry no bound covers, and `openArtifacts()` rescans the whole map on each one, under the mutex both SFTP legs need for every packet — so the cost is quadratic. Scoped honestly: a real sftp-server self-limits at its file-descriptor ceiling (~1k entries), so this is not a practical DoS from the client side; a **compromised or hostile target** answering every OPEN with a fresh handle is not so limited. The bounds block's stated purpose is that a hostile client cannot grow the proxy's memory or descriptors without limit. | **Open.** Check the cap before inserting, and count artifacts rather than rescanning. |
+| AS | **Audit-vocabulary drift, in both directions.** `breakglass.unseal_failed` (`breakglass_handlers.go`) and `session.relay_start` (`livebus.go`, added by the AF fix) are emitted and absent from §5; `proxy.auth_rate_limited` is listed in §5 **and** classified by the OCSF exporter, while no code path can produce it since Phase 52e made both proxies log-without-append on the throttle branch. | **The vocabulary is the contract SIEM rules are written against.** A prior sweep verified "159 actions, no drift either way", so this is new; a dead action in the OCSF map is a rule that can never fire, and two undocumented ones are events nobody will write a rule for. | **Open.** |
+| AT | **This document was six phases stale and self-contradictory.** Its header claimed phases 0–55, and the 2026-07-30 section said "All of it is now closed" above a paragraph still listing that sweep's findings as "being worked through in severity order". | **The self-audit of record asserting open defects that were closed a week earlier.** A reader — the audience this document exists for — would conclude pamv1 had unfixed reproduced defects in its live buses. | **Partly fixed here**: the header is current and the contradicting paragraph is corrected. **Open**: phases 56–61a still have no entries of their own, including the Phase 59a fifteen-finding review. |
+| AU | **Deployment reference drift.** `deploy/docker/.env.example` omits all three Phase 57 variables (`PAM_BROKER_TOKEN_EXCHANGE`, `PAM_BROKER_TOKEN_SIGN_SEED`, `PAM_BROKER_EXCHANGE_TTL_MIN`); §4 of the low-level doc omits ~34 variables the code reads, including credential-bearing ones (`PAM_OIDC_CLIENT_SECRET`, `PAM_LDAP_BIND_PASSWORD`, `PAM_KEK_PKCS11_PIN`, `PAM_CONJUR_API_KEY`); `PAM_SSH_JUMP_USER`/`_KEY` appear in neither that table nor the admin guide. | **Finding V recurring, one phase later.** An operator running the shipped compose stack cannot discover a security feature the docs elsewhere claim exists — which is how a feature ships and is never turned on. | **Open.** |
+
 ## The 2026-07-30 sweep — six parallel dimensions
 
 A third read-only sweep, run over the tree as it stood after Phase 55, across six
@@ -217,13 +272,18 @@ Deliberately left, with reasons:
 - **A recording's digest is audited on a `Close()` that never `fsync`s**, so an unclean host stop can leave the chain attesting to bytes not on disk. Ordinary process exit is safe.
 - **Broker `Resume` is not bound to the requesting agent** (`Withdraw` is, via `sameAgent`). Exploitable only by a holder of both another valid agent key and the captured single-use token.
 
-The rest of that sweep's findings — including three Phase 55 defects (a
-reproduced `send on closed channel` panic in the memstore live bus, an end marker
-that can overtake queued output so a remote watcher loses a run's final bytes, and
-a heartbeat that can resurrect an ended session's inventory row for ~45s), the
-unauthenticated LISTEN/NOTIFY buses, `PAM_MAX_RECORDING_MB` being a silent no-op
-on both database proxies, and a dozen documented claims the code no longer
-supports — are being worked through in severity order.
+The rest of that sweep's findings **also landed**, on 2026-07-30/31, and are in
+the [low-level change log](ARCHITECTURE-LOW-LEVEL.md#8-change-log) under those
+dates: the three Phase 55 defects (a reproduced `send on closed channel` panic in
+the memstore live bus, an end marker that could overtake queued output so a
+remote watcher lost a run's final bytes, and a heartbeat that could resurrect an
+ended session's inventory row for ~45s), both unauthenticated LISTEN/NOTIFY
+buses, `PAM_MAX_RECORDING_MB` being a silent no-op on both database proxies, the
+five paths that acted before or without recording it, the unbounded upstream
+legs, and the dozen documented claims the code no longer supported. *(This
+paragraph said they were "being worked through in severity order" for a week
+after they were all done, contradicting the sentence above it — corrected
+2026-08-07 by the sweep that noticed.)*
 
 ## The 2026-07-27 post-beta sweep — all 30 findings, now closed
 

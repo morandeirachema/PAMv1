@@ -203,10 +203,17 @@ func (s *liveSealer) openStepUpStatement(id, actor, replica, sealed string) (str
 }
 
 // stepUpDecisionAAD binds a sealed decision to the session it releases, the
-// verdict and the decider, so a captured seal cannot be re-pointed at another
-// pause, flipped from deny to approve, or re-attributed.
+// PAUSE of that session it was made about, the verdict and the decider — so a
+// captured seal cannot be re-pointed at another session or pause, flipped from
+// deny to approve, or re-attributed.
+//
+// The pause is in the AAD, not merely in the payload, because it is the field a
+// replay would want to change: with the session id alone binding it, a captured
+// decision stayed applicable to every later pause of the same session for as
+// long as its timestamp was fresh.
 func stepUpDecisionAAD(d StepUpDecision) string {
-	return "pamv1-stepup-decision|" + d.SessionID + "|" + strconv.FormatBool(d.Approve) + "|" + d.Decider
+	return "pamv1-stepup-decision|" + d.SessionID + "|" + strconv.FormatInt(d.Pause, 10) +
+		"|" + strconv.FormatBool(d.Approve) + "|" + d.Decider
 }
 
 // sealStepUpDecision returns d with its Seal set: a timestamp sealed under the
@@ -226,8 +233,13 @@ func (s *liveSealer) sealStepUpDecision(d StepUpDecision, now time.Time) (StepUp
 // openStepUpDecision verifies a decision's seal and freshness. A decision whose
 // seal is missing, forged, re-pointed at other fields, or older than
 // interestSkew is refused — so a database observer can neither invent a release
-// nor replay one beyond the window (and inside it, the entry is already
-// claimed, so a replay finds nothing).
+// nor replay one beyond the window.
+//
+// Freshness alone does not stop a replay INSIDE the window, which is why the
+// decision also names the pause it was made about (StepUpDecision.Pause, bound
+// into the AAD above): the applying replica refuses one whose pause it has
+// already resolved. Freshness bounds how long a captured message survives; the
+// pause binding is what makes it apply to exactly one statement.
 func (s *liveSealer) openStepUpDecision(d StepUpDecision, now time.Time) error {
 	if d.Seal == "" {
 		return errLiveAuth
