@@ -2191,6 +2191,61 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 68 — Campaigns you can scope and schedule ✅
+
+Closes the first half of the Phase 19 deferral. A campaign snapshotted **every**
+grant and safe member in the estate, which on anything past a demo is a list of
+thousands that nobody completes — and a review nobody completes attests to
+nothing. Scheduling it without scoping it would only have automated that.
+
+- [x] **Scope: one safe, or one subject.** A safe-scoped campaign covers both
+  halves of what "access to that safe" means — its members **and** the grants on
+  every target assigned to it, because covering only the members would leave a
+  target in the safe reachable by a direct grant the review never showed. A
+  subject-scoped one covers everything a person or role holds anywhere, which is
+  the leaver review. Filtering happens at snapshot time, not on the way out: a
+  campaign's items are its evidence, and asking someone to certify a list they
+  were not asked to review is worse than a list that is too long
+- [x] **An unknown scope is refused, never widened.** `scope_kind` outside the
+  enum, a `scope_safe_id` naming no safe, or a scope missing its value are 422 —
+  falling back to "review everything" would turn a typo into precisely the
+  unreviewable campaign the scope exists to prevent, with nobody told
+- [x] **Recurrence, anchored.** `recur_days` makes a campaign the anchor of a
+  series; every N days the scheduler opens a fresh one with the same name and
+  scope. The schedule lives on the anchor and never moves, so there is no
+  invariant about which row in a series carries it and a series cannot fork
+- [x] **Closing the anchor stops the series** — the only stop button, and the one
+  an operator reaches for first, so it is the one that works. Enforced in the
+  store's own predicate rather than by the caller remembering
+- [x] **Leader-locked and always on.** N replicas open one campaign, not N; the
+  worker needs no interval to configure, because a recertification schedule that
+  only runs when a second variable was also remembered lapses exactly where it
+  matters. It does nothing until somebody makes a campaign recurring
+- [x] **Advance after the spawn.** A crash between the two repeats a review next
+  tick; the other order silently skips a quarter. Duplicating a review is
+  recoverable, missing one is not
+- [x] **Console** (menu 17): the new-campaign screen takes a scope and a repeat
+  interval, the list names each campaign's scope — by safe **name**, not id —
+  and marks a repeating one in amber. Both screens were rendered with live data
+  at the terminal's real width and inspected, the Phase 67b method
+- [x] **Tests**: store contract on both implementations (scope round-trips, the
+  due predicate, advancing, and that a closed anchor stops spawning); the API
+  scoping test covering all three scopes and six refusals; and an internal test
+  of the scheduler proving a child inherits the scope, carries no schedule of its
+  own, and that closing the anchor ends the series
+
+**Migration `0029`**, additive with defaults that reproduce the old behaviour, so
+every existing campaign keeps meaning exactly what it meant. **Audit-detail
+change**: `certification.campaign_created` gains `scope:` / `safe:` / `subject:` /
+`recur_days:` / `recurring_from:`, so the trail records what a campaign covered
+rather than leaving a reader to infer it from an item count.
+
+**Still open from the Phase 19 deferral**, and deliberately not attempted here:
+**reviewer assignment** (items routed to a named reviewer) and **reminders**
+(nudging before a due date). Both are real; neither is worth bolting onto this
+change, and scope + schedule is the pair that makes quarterly recertification of
+a safe work end to end.
+
 ## Phase 67b — The screen fits ✅
 
 Phase 67 shipped a screen nobody had looked at. The verification was real as far
@@ -2528,8 +2583,10 @@ Buildable without external infrastructure, each deferred by the phase named.
   (Phase 61): a dependency can name the credential pamv1 connects with, so
   propagation no longer logs in as the account it is rotating — and, since
   Phase 61a, naming one takes the same authorization as revealing it.
-- **Campaign depth** (19) — scheduled/recurring campaigns, safe- or owner-scoped
-  campaigns, reviewer assignment and reminders.
+- **Campaign depth** (19) — ~~scheduled/recurring campaigns, safe- or
+  owner-scoped campaigns~~ ✅ closed 2026-08-07 (Phase 68). **Reviewer assignment
+  and reminders remain**: items routed to a named reviewer, and a nudge before
+  the due date.
 - **Ticket gate depth** (20) — a first-class ServiceNow/Jira connector remains
   (the generic webhook ships). ~~Gating the *connect* path on a live ticket
   lookup rather than validating at request time~~ — ✅ closed 2026-08-02

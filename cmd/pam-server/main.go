@@ -1101,6 +1101,12 @@ func run() error {
 	// previously started only when a broker policy file was configured, which
 	// meant the common deployment had no garbage collection at all.
 	go handler.RunGC(ctx)
+	// Recurring certification campaigns (Phase 68). Started unconditionally and
+	// with no interval to configure: it does nothing at all until somebody makes
+	// a campaign recurring, and a recertification schedule that only runs when a
+	// second environment variable was also remembered is a control that lapses
+	// exactly where it matters. The leader lock keeps N replicas to one spawn.
+	go handler.RunCampaignScheduler(ctx)
 	if cfg.AnalyticsInterval > 0 {
 		go handler.RunAnalyticsWorker(ctx, cfg.AnalyticsInterval)
 	}
