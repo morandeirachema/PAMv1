@@ -11,6 +11,32 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-08-07
+
+A **minor** rather than a patch: Phase 67 adds a capability, not a fix. It is the
+last curl-only one, so the console-parity claim the README has made since Phase 25
+is finally true — every shipped capability is operable from the 5250 portal.
+
+- **Console screen for the token exchange** (Phase 67) — menu **27, Delegated
+  agent tokens (RFC 8693)** (`read_audit`): the broker's signing key (`kid`, key
+  type, curve, algorithm) and the delegation chains it has issued, with refusals
+  beside them. The chains come from the audit trail because a minted SVID is
+  stateless — the broker signs it and forgets it — so `broker.token.exchanged` is
+  the only record one ever existed. Read-only by nature: minting is an agent
+  presenting its *own* credential to `POST /v1/token`, which a human at a
+  terminal cannot do on its behalf and should not be able to.
+
+- **The review of phases 62–65** (Phase 66) — three findings, none a bypass. The
+  SFTP capture handle table admitted pipelined opens past its cap (a real ceiling
+  of 1152 against a documented 128 — bounded either way, so nothing grew without
+  limit); the release workflow's `dry_run` input had become dead and is removed,
+  so the manual trigger is unambiguously a rehearsal and a signed release can no
+  longer be published by hand from an arbitrary ref; and the path-derived session
+  id reached three audit details unquoted.
+
+No schema, environment-variable, audit-vocabulary or wire-format change.
+Upgrading from 0.11.2 needs nothing.
+
 - **Console screen for the token exchange** (Phase 67) — menu **27, Delegated
   agent tokens (RFC 8693)** (`read_audit`): the broker's signing key (`kid`,
   type, curve, algorithm) and the delegation chains it has issued, read from the
@@ -274,7 +300,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.11.2...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.12.0
 [0.11.2]: https://github.com/morandeirachema/pamv1/releases/tag/v0.11.2
 [0.11.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.11.1
 [0.11.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.11.0
