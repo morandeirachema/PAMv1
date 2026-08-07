@@ -266,7 +266,18 @@
     go("targetsafe");
   }
   // Certification campaigns console (Phase 19).
-  async function openCampaigns() { try { campaigns = await api("GET", "/api/campaigns"); } catch (e) { campaigns = []; } go("campaigns"); }
+  // Safes come along so the list can name the one a campaign is scoped to.
+  // "safe 4" makes a reader go and look it up, which for a screen whose job is
+  // "what does this review cover?" is the wrong answer.
+  async function openCampaigns() {
+    try { campaigns = await api("GET", "/api/campaigns"); } catch (e) { campaigns = []; }
+    try { safes = await api("GET", "/api/safes"); } catch (e) { safes = []; }
+    go("campaigns");
+  }
+  // The new-campaign screen offers a safe picker, so the safes have to be loaded
+  // before it renders — a plain go() would show an empty select and make a
+  // safe-scoped campaign look impossible.
+  async function openCampaignAdd() { try { safes = await api("GET", "/api/safes"); } catch (e) { safes = []; } go("campaignadd"); }
   async function openCampaign(id) {
     try { campView = await api("GET", `/api/campaigns/${id}`); } catch (e) { campView = null; }
     go("campitems");
@@ -2282,12 +2293,24 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         const canManage = can("manage_users");
         term.innerHTML = `${head("PAMWRKCMP", "Certification Campaigns")}
 Point-in-time access reviews: a campaign snapshots who has access to what; each
-item is certified (kept) or revoked (the grant is deleted). Type options, press Enter.
+item is certified (kept) or revoked (the grant is deleted). A campaign that repeats
+opens the next one on schedule — <span class="amber">closing it stops the series</span>. Type options, press Enter.
   <span class="cyan">${["5=Review items", canManage ? "8=Close campaign" : ""].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Name</th><th>Status</th><th>Created by</th><th>Created</th><th>Due</th></tr>
-${campaigns.map((c) => `<tr><td>${opt(c.id)}</td><td>${esc(c.id)}</td><td>${pad(c.name, 18)}</td><td class="${c.status === "open" ? "amber" : "cyan"}">${esc(c.status)}</td><td>${pad(c.created_by, 12)}</td><td class="cyan">${fmtTime(c.created_at)}</td><td class="cyan">${fmtTime(c.due_at)}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Name</th><th>Scope</th><th>Repeat</th><th>Status</th><th>Created by</th><th>Due</th></tr>
+${campaigns.map((c) => {
+  // A safe-scoped campaign whose safe was deleted keeps its items — the review
+  // is evidence and outlives the safe — so say so rather than printing "safe ".
+  const sf = safes.find((x) => x.id === c.scope_safe_id);
+  const scope = c.scope_kind === "safe" ? (sf ? `safe ${sf.name}` : "safe (deleted)")
+    : c.scope_kind === "subject" ? `subject ${c.scope_subject ?? ""}`
+    : "all";
+  // A repeating campaign is the one an operator must not close by accident, and
+  // the one they must close on purpose to stop the series — so it is labelled.
+  const repeat = c.recur_days ? `every ${c.recur_days}d` : "-";
+  return `<tr><td>${opt(c.id)}</td><td>${esc(c.id)}</td><td>${pad(c.name, 20)}</td><td>${pad(scope, 16)}</td><td class="${c.recur_days ? "amber" : ""}">${pad(repeat, 10)}</td><td class="${c.status === "open" ? "amber" : "cyan"}">${pad(c.status, 7)}</td><td>${pad(c.created_by, 10)}</td><td class="cyan">${fmtTime(c.due_at)}</td></tr>`;
+}).join("")}
 </table>${campaigns.length ? "" : `<div class="cyan indent">(No campaigns.${canManage ? " Press F6 to snapshot the current access grants into one." : ""})</div>`}
 <input type="submit" hidden></form>
 ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=New campaign" : ""}   F12=Cancel`)}`;
@@ -2308,19 +2331,37 @@ ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=New campaign" : ""}   F12=Canc
       campaignadd() {
         back = "campaigns";
         term.innerHTML = `${head("PAMADDCMP", "New Certification Campaign")}
-Snapshots every current target grant and safe member as reviewable items.
+Snapshots the access under review as items a reviewer certifies or revokes.
+
+A campaign over the WHOLE estate is a list nobody finishes. Scope it to one safe
+(its members, and the grants on every target in it) or to one subject (everything
+that person or role holds, anywhere) — a leaver's recertification is the second.
 
 <form id="f-add" class="indent">
 <label>Name  . . . . . . . :  <input name="name" size="28" required autofocus>   <span class="cyan">e.g. 2026-Q3 access review</span></label>
 <label>Due date  . . . . . :  <input name="due" type="date" size="12">   <span class="cyan">optional</span></label>
+<label>Scope . . . . . . . :  <select name="scope">
+  <option value="">everything (all grants and safe members)</option>
+  <option value="safe">one safe</option>
+  <option value="subject">one subject (user or role)</option>
+</select></label>
+<label>  Safe  . . . . . . :  <select name="safe_id">${safes.map((sf) => `<option value="${esc(sf.id)}">${esc(sf.name)}</option>`).join("")}</select>   <span class="cyan">when scope is "one safe"</span></label>
+<label>  Subject . . . . . :  <input name="subject" size="20">   <span class="cyan">when scope is "one subject"</span></label>
+<label>Repeat every  . . . :  <input name="recur" type="number" min="0" max="366" size="4" value="0"> days   <span class="cyan">0 = one-off; e.g. 90 for quarterly</span></label>
 <input type="submit" hidden>
 </form>
+<div class="cyan indent">A repeating campaign opens the next one on schedule, with the same scope.
+CLOSE IT TO STOP THE SERIES — that is the only stop button, and it is the obvious one.</div>
 ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-add").onsubmit = async (ev) => {
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
           const body = { name: f.name };
           if (f.due) body.due_at = new Date(f.due + "T23:59:59").toISOString();
+          if (f.scope) body.scope_kind = f.scope;
+          if (f.scope === "safe") body.scope_safe_id = Number(f.safe_id);
+          if (f.scope === "subject") body.scope_subject = f.subject;
+          if (Number(f.recur) > 0) body.recur_days = Number(f.recur);
           try {
             const r = await api("POST", "/api/campaigns", body);
             say(`CAMPAIGN CREATED — ${r.items ?? 0} ITEM(S) CAPTURED.`);
@@ -2458,7 +2499,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
   const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id) };
-  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: () => go("campaignadd"), vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), deps: () => go("depadd") };
+  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), deps: () => go("depadd") };
 
   window.addEventListener("keydown", async (ev) => {
     // While the RDP viewer is open it owns the keyboard (its own capture-phase

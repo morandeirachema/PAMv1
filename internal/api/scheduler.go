@@ -145,6 +145,7 @@ const (
 	lifecycleLockKey = int64(0x70616d5f6c6663) // "pam_lfc"
 	analyticsLockKey = int64(0x70616d5f616e61) // "pam_ana"
 	retentionLockKey = int64(0x70616d5f726574) // "pam_ret"
+	campaignLockKey  = int64(0x70616d5f636d70) // "pam_cmp"
 )
 
 // RunLifecycleWorker runs the credential-lifecycle worker until ctx is cancelled:
@@ -177,6 +178,85 @@ func (s *Server) RunLifecycleWorker(ctx context.Context, pol RotationPolicy) {
 			}
 		}
 	}
+}
+
+// RunCampaignScheduler opens the next campaign in every recurring series whose
+// turn has come, until ctx is cancelled.
+//
+// Recertification is a calendar obligation — "every quarter, someone reviews who
+// can reach the PCI safe" — and a control that depends on somebody remembering
+// to press a button is one that lapses the first busy quarter. This is the
+// button being pressed.
+//
+// Under the leader lock, so N replicas do not each open the same campaign. The
+// anchor's schedule is advanced AFTER the spawn succeeds: a crash between the
+// two repeats the spawn next tick, which duplicates a review, and duplicating a
+// review is recoverable in a way that silently skipping a quarter is not.
+func (s *Server) RunCampaignScheduler(ctx context.Context) {
+	const interval = time.Hour
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			ran, err := s.store.WithLeaderLock(systemContext(ctx), campaignLockKey, func(c context.Context) error {
+				if n := s.spawnDueCampaigns(c, time.Now()); n > 0 {
+					s.log.Info("recurring certification campaigns opened", "count", n)
+				}
+				return nil
+			})
+			if err != nil {
+				s.log.Warn("campaign scheduler lock unavailable; skipping pass", "err", err)
+			} else if !ran {
+				s.log.Debug("campaign scheduler pass skipped (another replica is leader)")
+			}
+		}
+	}
+}
+
+// spawnDueCampaigns opens one successor per due anchor and returns how many were
+// opened. One anchor's failure does not stop the others: a broken series must
+// not take the rest of the schedule down with it.
+func (s *Server) spawnDueCampaigns(ctx context.Context, now time.Time) int {
+	due, err := s.store.ListDueCampaigns(ctx, now)
+	if err != nil {
+		s.log.Warn("campaign scheduler: reading due campaigns failed", "err", err)
+		return 0
+	}
+	opened := 0
+	for _, anchor := range due {
+		next := now.UTC().AddDate(0, 0, anchor.RecurDays)
+		child := store.Campaign{
+			// The child is named for the occasion, so a list of ten quarters is
+			// ten distinguishable rows rather than ten identical ones.
+			Name:      fmt.Sprintf("%s (%s)", anchor.Name, now.UTC().Format("2006-01-02")),
+			CreatedBy: anchor.CreatedBy, Status: "open", DueAt: &next,
+			ScopeKind: anchor.ScopeKind, ScopeSafeID: anchor.ScopeSafeID, ScopeSubject: anchor.ScopeSubject,
+			// Children carry no schedule: the anchor is the only row that spawns,
+			// so a series can never fork.
+		}
+		if err := s.store.CreateCampaign(ctx, &child); err != nil {
+			s.log.Warn("campaign scheduler: creating the next campaign failed", "anchor", anchor.ID, "err", err)
+			continue
+		}
+		items, serr := s.snapshotAccess(ctx, &child)
+		if serr != nil {
+			s.log.Warn("campaign scheduler: snapshotting access failed", "campaign", child.ID, "err", serr)
+			// The campaign exists but is empty; leave the schedule where it is so
+			// the next tick tries again rather than silently skipping the period.
+			continue
+		}
+		s.auditAs(ctx, anchor.CreatedBy, "certification.campaign_created",
+			fmt.Sprintf("campaign:%d name:%q items:%d %s recurring_from:%d",
+				child.ID, child.Name, items, campaignScopeDetail(&child), anchor.ID))
+		if err := s.store.SetCampaignNextRun(ctx, anchor.ID, next); err != nil {
+			s.log.Warn("campaign scheduler: advancing the schedule failed; it will retry", "anchor", anchor.ID, "err", err)
+		}
+		opened++
+	}
+	return opened
 }
 
 // RunGC periodically deletes rows whose lifetime has ended, so the tables that

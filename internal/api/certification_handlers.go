@@ -20,7 +20,19 @@ import (
 type campaignIn struct {
 	Name  string     `json:"name"`
 	DueAt *time.Time `json:"due_at,omitempty"`
+	// Scope (Phase 68). Absent means the whole estate, as before.
+	ScopeKind    store.CampaignScope `json:"scope_kind,omitempty"`
+	ScopeSafeID  *int64              `json:"scope_safe_id,omitempty"`
+	ScopeSubject string              `json:"scope_subject,omitempty"`
+	// RecurDays > 0 makes this campaign the anchor of a recurring series.
+	RecurDays int `json:"recur_days,omitempty"`
 }
+
+// maxRecurDays bounds a recurrence at roughly a year. A campaign that repeats
+// less often than annually is not a schedule anybody is relying on, and the
+// bound keeps a fat-fingered value from parking a series past any horizon an
+// operator would think to look at.
+const maxRecurDays = 366
 
 // createCampaign snapshots the current access grants into a new campaign
 // (CapManageUsers) and audits it.
@@ -34,36 +46,130 @@ func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	c := store.Campaign{Name: in.Name, CreatedBy: actorFrom(ctx), DueAt: in.DueAt, Status: "open"}
+	c := store.Campaign{
+		Name: in.Name, CreatedBy: actorFrom(ctx), DueAt: in.DueAt, Status: "open",
+		ScopeKind: in.ScopeKind, ScopeSafeID: in.ScopeSafeID, ScopeSubject: in.ScopeSubject,
+		RecurDays: in.RecurDays,
+	}
+	if !s.validateCampaignScope(w, ctx, &c) {
+		return
+	}
+	if c.RecurDays > 0 {
+		next := time.Now().UTC().AddDate(0, 0, c.RecurDays)
+		c.NextRunAt = &next
+	}
 	if err := s.store.CreateCampaign(ctx, &c); err != nil {
 		storeError(w, err)
 		return
 	}
-	items, err := s.snapshotAccess(ctx, c.ID)
+	items, err := s.snapshotAccess(ctx, &c)
 	if err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(ctx, "certification.campaign_created", fmt.Sprintf("campaign:%d name:%q items:%d", c.ID, c.Name, items))
+	s.audit(ctx, "certification.campaign_created",
+		fmt.Sprintf("campaign:%d name:%q items:%d %s", c.ID, c.Name, items, campaignScopeDetail(&c)))
 	writeJSON(w, http.StatusCreated, map[string]any{"campaign": c, "items": items})
 }
 
-// snapshotAccess records the current target grants and safe members as items of
-// campaign cid, returning how many were captured.
-func (s *Server) snapshotAccess(ctx context.Context, cid int64) (int, error) {
+// validateCampaignScope checks a campaign's scope and recurrence, writing the
+// refusal and reporting false when it does not hold.
+//
+// An unknown scope is refused rather than ignored: falling back to "review
+// everything" would turn a typo into the unreviewable campaign the scope exists
+// to avoid, and the caller would never know their filter was dropped.
+func (s *Server) validateCampaignScope(w http.ResponseWriter, ctx context.Context, c *store.Campaign) bool {
+	if !store.ValidCampaignScope(c.ScopeKind) {
+		writeError(w, http.StatusUnprocessableEntity, "scope_kind must be omitted, \"safe\" or \"subject\"")
+		return false
+	}
+	switch c.ScopeKind {
+	case store.CampaignScopeSafe:
+		if c.ScopeSafeID == nil {
+			writeError(w, http.StatusUnprocessableEntity, "scope_safe_id is required for a safe-scoped campaign")
+			return false
+		}
+		// Resolved now, while a human is present to be told: a campaign scoped to
+		// a safe that does not exist snapshots nothing and looks complete.
+		if _, err := s.store.GetSafe(ctx, *c.ScopeSafeID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusUnprocessableEntity, "scope_safe_id does not name an existing safe")
+			} else {
+				storeError(w, err)
+			}
+			return false
+		}
+		c.ScopeSubject = ""
+	case store.CampaignScopeSubject:
+		if strings.TrimSpace(c.ScopeSubject) == "" {
+			writeError(w, http.StatusUnprocessableEntity, "scope_subject is required for a subject-scoped campaign")
+			return false
+		}
+		c.ScopeSafeID = nil
+	default:
+		c.ScopeSafeID, c.ScopeSubject = nil, ""
+	}
+	if c.RecurDays < 0 || c.RecurDays > maxRecurDays {
+		writeError(w, http.StatusUnprocessableEntity,
+			fmt.Sprintf("recur_days must be between 0 (one-off) and %d", maxRecurDays))
+		return false
+	}
+	return true
+}
+
+// campaignScopeDetail renders a campaign's scope and recurrence for an audit
+// detail, so the trail records what a campaign actually covered rather than
+// leaving a reader to infer it from the item count.
+func campaignScopeDetail(c *store.Campaign) string {
+	scope := "scope:all"
+	switch c.ScopeKind {
+	case store.CampaignScopeSafe:
+		if c.ScopeSafeID != nil {
+			scope = fmt.Sprintf("scope:safe safe:%d", *c.ScopeSafeID)
+		}
+	case store.CampaignScopeSubject:
+		scope = "scope:subject subject:" + auditField(c.ScopeSubject, 128)
+	}
+	if c.RecurDays > 0 {
+		scope += fmt.Sprintf(" recur_days:%d", c.RecurDays)
+	}
+	return scope
+}
+
+// snapshotAccess records the access under review as items of campaign c,
+// returning how many were captured.
+//
+// The scope is applied HERE rather than by filtering afterwards, because an item
+// that is not in scope should never be written: a campaign's items are its
+// evidence, and a reviewer certifying a list they were not asked to review is
+// worse than a list that is too long.
+//
+// A safe-scoped campaign covers both halves of what "access to that safe" means:
+// its members, and the grants on every target assigned to it. Covering only the
+// members would leave a target in the safe reachable by a direct grant that the
+// review never showed.
+func (s *Server) snapshotAccess(ctx context.Context, c *store.Campaign) (int, error) {
 	n := 0
 	targets, err := s.store.ListTargets(ctx, 0, 0)
 	if err != nil {
 		return 0, err
 	}
 	for _, t := range targets {
+		if c.ScopeKind == store.CampaignScopeSafe {
+			if t.SafeID == nil || c.ScopeSafeID == nil || *t.SafeID != *c.ScopeSafeID {
+				continue
+			}
+		}
 		grants, err := s.store.ListTargetGrants(ctx, t.ID)
 		if err != nil {
 			return 0, err
 		}
 		for _, g := range grants {
+			if !campaignCovers(c, g.Subject) {
+				continue
+			}
 			if err := s.store.AddCampaignItem(ctx, &store.CampaignItem{
-				CampaignID: cid, Kind: "target_grant", RefID: g.ID,
+				CampaignID: c.ID, Kind: "target_grant", RefID: g.ID,
 				SubjectType: g.SubjectType, Subject: g.Subject,
 				Detail:    itemDetail(fmt.Sprintf("grant on target %q", t.Name), g.CreatedBy),
 				GrantedBy: g.CreatedBy,
@@ -78,13 +184,19 @@ func (s *Server) snapshotAccess(ctx context.Context, cid int64) (int, error) {
 		return 0, err
 	}
 	for _, sf := range safes {
+		if c.ScopeKind == store.CampaignScopeSafe && (c.ScopeSafeID == nil || sf.ID != *c.ScopeSafeID) {
+			continue
+		}
 		members, err := s.store.ListSafeMembers(ctx, sf.ID)
 		if err != nil {
 			return 0, err
 		}
 		for _, mem := range members {
+			if !campaignCovers(c, mem.Subject) {
+				continue
+			}
 			if err := s.store.AddCampaignItem(ctx, &store.CampaignItem{
-				CampaignID: cid, Kind: "safe_member", RefID: mem.ID,
+				CampaignID: c.ID, Kind: "safe_member", RefID: mem.ID,
 				SubjectType: mem.SubjectType, Subject: mem.Subject,
 				Detail:    itemDetail(fmt.Sprintf("member of safe %q", sf.Name), mem.CreatedBy),
 				GrantedBy: mem.CreatedBy,
@@ -95,6 +207,15 @@ func (s *Server) snapshotAccess(ctx context.Context, cid int64) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+// campaignCovers reports whether a grant held by subject belongs in c. Only the
+// subject scope filters on the holder; the others are decided by the loops above.
+func campaignCovers(c *store.Campaign, subject string) bool {
+	if c.ScopeKind != store.CampaignScopeSubject {
+		return true
+	}
+	return subject == c.ScopeSubject
 }
 
 // itemDetail appends the grant's creator to an item's human-readable detail

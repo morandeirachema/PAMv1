@@ -118,6 +118,59 @@ type Campaign struct {
 	DueAt     *time.Time `json:"due_at,omitempty"`
 	Status    string     `json:"status"` // open | closed
 	ClosedAt  *time.Time `json:"closed_at,omitempty"`
+
+	// Scope narrows what the campaign snapshots (Phase 68). Empty ScopeKind is
+	// the whole estate, which is what every campaign was before — a review of
+	// several thousand grants that nobody completes. A scoped one is the review
+	// somebody actually runs: this safe, this quarter; or everything this leaver
+	// still holds.
+	ScopeKind CampaignScope `json:"scope_kind,omitempty"`
+	// ScopeSafeID is the safe reviewed when ScopeKind is CampaignScopeSafe: its
+	// members, and the grants on every target assigned to it.
+	ScopeSafeID *int64 `json:"scope_safe_id,omitempty"`
+	// ScopeSubject is the grant holder reviewed when ScopeKind is
+	// CampaignScopeSubject — matched against CampaignItem.Subject, so it covers
+	// a user and a role alike.
+	ScopeSubject string `json:"scope_subject,omitempty"`
+
+	// RecurDays makes this campaign the ANCHOR of a recurring series: every
+	// RecurDays a fresh campaign is opened with the same name and scope. Zero is
+	// a one-off, which is what every campaign was before.
+	//
+	// The schedule lives on the anchor and never moves, so there is no invariant
+	// about which row in a series carries it: the anchor spawns children, the
+	// children are ordinary campaigns, and CLOSING THE ANCHOR ENDS THE SERIES.
+	// That last part is the whole stop button — "close the recurring campaign"
+	// is what an operator would try first, so it had better be the thing that
+	// works.
+	RecurDays int `json:"recur_days,omitempty"`
+	// NextRunAt is when the anchor next spawns. Nil on a one-off or a child.
+	NextRunAt *time.Time `json:"next_run_at,omitempty"`
+}
+
+// CampaignScope is what a campaign reviews.
+type CampaignScope string
+
+const (
+	// CampaignScopeAll reviews every target grant and safe membership.
+	CampaignScopeAll CampaignScope = ""
+	// CampaignScopeSafe reviews one safe: its members, and the grants on every
+	// target assigned to it.
+	CampaignScopeSafe CampaignScope = "safe"
+	// CampaignScopeSubject reviews everything one subject holds, anywhere.
+	CampaignScopeSubject CampaignScope = "subject"
+)
+
+// ValidCampaignScope reports whether s is a scope the snapshot understands. An
+// unknown scope must never fall through to "review everything": that silently
+// turns a typo into a campaign nobody can complete, which is the failure the
+// scope exists to prevent.
+func ValidCampaignScope(s CampaignScope) bool {
+	switch s {
+	case CampaignScopeAll, CampaignScopeSafe, CampaignScopeSubject:
+		return true
+	}
+	return false
 }
 
 // CampaignItem is one access grant under review in a campaign. RefID points at
@@ -587,7 +640,18 @@ type Store interface {
 	// GetCampaign returns a campaign by ID, or ErrNotFound.
 	GetCampaign(ctx context.Context, id int64) (*Campaign, error)
 	// CloseCampaign marks a campaign closed at the given time, or ErrNotFound.
+	// Closing a recurring anchor also ends the series, because ListDueCampaigns
+	// only considers open ones.
 	CloseCampaign(ctx context.Context, id int64, at time.Time) error
+	// ListDueCampaigns returns the OPEN recurring anchors whose next run has
+	// arrived, oldest first. Scoped deliberately narrowly: a closed anchor is a
+	// stopped series, and a campaign with no recurrence is not a schedule.
+	ListDueCampaigns(ctx context.Context, now time.Time) ([]Campaign, error)
+	// SetCampaignNextRun moves an anchor's next occurrence. ErrNotFound if the
+	// campaign is absent. Called after a spawn, so a failure to advance repeats
+	// the spawn on the next tick rather than skipping one — duplicating a review
+	// is recoverable, silently missing a quarter's recertification is not.
+	SetCampaignNextRun(ctx context.Context, id int64, next time.Time) error
 	// AddCampaignItem adds one access item to a campaign (ErrNotFound if absent).
 	AddCampaignItem(ctx context.Context, item *CampaignItem) error
 	// ListCampaignItems returns a campaign's items ordered by id.

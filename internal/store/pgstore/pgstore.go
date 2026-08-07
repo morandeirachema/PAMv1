@@ -450,14 +450,21 @@ func (s *PGStore) CreateCampaign(ctx context.Context, c *store.Campaign) error {
 		c.Status = "open"
 	}
 	return s.pool.QueryRow(ctx,
-		`INSERT INTO campaigns (name, created_by, due_at, status) VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
+		`INSERT INTO campaigns (name, created_by, due_at, status, scope_kind, scope_safe_id, scope_subject, recur_days, next_run_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at`,
 		c.Name, c.CreatedBy, c.DueAt, c.Status,
+		string(c.ScopeKind), c.ScopeSafeID, c.ScopeSubject, c.RecurDays, c.NextRunAt,
 	).Scan(&c.ID, &c.CreatedAt)
 }
 
+// campaignCols is the one column list every campaign read uses, so a field
+// cannot reach some reads and quietly miss others.
+const campaignCols = `id, name, created_by, created_at, due_at, status, closed_at,
+	scope_kind, scope_safe_id, scope_subject, recur_days, next_run_at`
+
 // ListCampaigns returns all campaigns, newest first.
 func (s *PGStore) ListCampaigns(ctx context.Context) ([]store.Campaign, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, name, created_by, created_at, due_at, status, closed_at FROM campaigns ORDER BY id DESC`)
+	rows, err := s.pool.Query(ctx, `SELECT `+campaignCols+` FROM campaigns ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -466,12 +473,30 @@ func (s *PGStore) ListCampaigns(ctx context.Context) ([]store.Campaign, error) {
 
 // GetCampaign returns a campaign by ID, or ErrNotFound.
 func (s *PGStore) GetCampaign(ctx context.Context, id int64) (*store.Campaign, error) {
-	return getOne(ctx, s.pool, scanCampaign, `SELECT id, name, created_by, created_at, due_at, status, closed_at FROM campaigns WHERE id = $1`, id)
+	return getOne(ctx, s.pool, scanCampaign, `SELECT `+campaignCols+` FROM campaigns WHERE id = $1`, id)
 }
 
 // CloseCampaign marks a campaign closed at the given time.
 func (s *PGStore) CloseCampaign(ctx context.Context, id int64, at time.Time) error {
 	return execExpectingRow(ctx, s.pool, `UPDATE campaigns SET status = 'closed', closed_at = $2 WHERE id = $1`, id, at)
+}
+
+// ListDueCampaigns returns the open recurring anchors whose next run has
+// arrived, oldest first. The predicate matches the partial index in migration
+// 0029, so this stays a lookup rather than a scan of every campaign ever run.
+func (s *PGStore) ListDueCampaigns(ctx context.Context, now time.Time) ([]store.Campaign, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+campaignCols+` FROM campaigns
+		WHERE status = 'open' AND recur_days > 0 AND next_run_at IS NOT NULL AND next_run_at <= $1
+		ORDER BY next_run_at, id`, now)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanCampaign)
+}
+
+// SetCampaignNextRun moves an anchor's next occurrence.
+func (s *PGStore) SetCampaignNextRun(ctx context.Context, id int64, next time.Time) error {
+	return execExpectingRow(ctx, s.pool, `UPDATE campaigns SET next_run_at = $2 WHERE id = $1`, id, next)
 }
 
 // AddCampaignItem adds one access item to a campaign.
@@ -515,7 +540,10 @@ const campaignItemCols = `id, campaign_id, kind, ref_id, subject_type, subject, 
 // scanCampaign scans one campaign row.
 func scanCampaign(row pgx.CollectableRow) (store.Campaign, error) {
 	var c store.Campaign
-	err := row.Scan(&c.ID, &c.Name, &c.CreatedBy, &c.CreatedAt, &c.DueAt, &c.Status, &c.ClosedAt)
+	var scope string
+	err := row.Scan(&c.ID, &c.Name, &c.CreatedBy, &c.CreatedAt, &c.DueAt, &c.Status, &c.ClosedAt,
+		&scope, &c.ScopeSafeID, &c.ScopeSubject, &c.RecurDays, &c.NextRunAt)
+	c.ScopeKind = store.CampaignScope(scope)
 	return c, err
 }
 

@@ -511,6 +511,41 @@ func (m *Memstore) CloseCampaign(_ context.Context, id int64, at time.Time) erro
 	return nil
 }
 
+// ListDueCampaigns returns the open recurring anchors whose next run has
+// arrived, oldest first — the same predicate pgstore applies in SQL.
+func (m *Memstore) ListDueCampaigns(_ context.Context, now time.Time) ([]store.Campaign, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []store.Campaign
+	for _, c := range m.campaigns {
+		if c.Status != "open" || c.RecurDays <= 0 || c.NextRunAt == nil || c.NextRunAt.After(now) {
+			continue
+		}
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].NextRunAt.Equal(*out[j].NextRunAt) {
+			return out[i].NextRunAt.Before(*out[j].NextRunAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
+// SetCampaignNextRun moves an anchor's next occurrence.
+func (m *Memstore) SetCampaignNextRun(_ context.Context, id int64, next time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.campaigns[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	t := next.UTC()
+	c.NextRunAt = &t
+	m.campaigns[id] = c
+	return nil
+}
+
 // AddCampaignItem adds one access item to a campaign.
 func (m *Memstore) AddCampaignItem(_ context.Context, item *store.CampaignItem) error {
 	m.mu.Lock()
