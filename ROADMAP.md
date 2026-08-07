@@ -2210,10 +2210,16 @@ where the time was actually being spent.
 - [x] `release.yml` carries no cache configuration, and says why in place
 - [x] Phase 64's roadmap entry and the 0.11.1 changelog entry corrected, rather
   than left claiming a cache that does not exist
-- [x] The lesson: **a workflow change is not verified by the CI that does not run
-  it.** `ci.yml` never exercises `release.yml`, so this passed six green checks
-  and failed on the tag. The `workflow_dispatch` dry run exists for exactly this
-  and was not used
+- [x] **The dry run now builds.** The lesson looked like "a workflow change is
+  not verified by the CI that does not run it" — `ci.yml` never exercises
+  `release.yml`, so this passed six green checks and failed on the tag — and the
+  obvious retort was that the `workflow_dispatch` dry run exists for exactly
+  this. It does not: it skipped the whole `release` job (`if: … || !inputs.dry_run`),
+  so a rehearsal proved only that `go test` runs. **A rehearsal that skips the
+  step that breaks is not a rehearsal.** The job now runs either way and the
+  build happens for real; everything with an outward effect — the push, the
+  cosign signature, the SBOM and SLSA attestations, the GitHub Release — stays
+  gated on a genuine tag push
 
 ## Phase 65a — v0.11.1, cut rather than banked ✅
 
