@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -281,6 +282,29 @@ func TestCaptureBoundsTheTrackingTable(t *testing.T) {
 	if blocked != 1 {
 		t.Fatalf("capture-backlog audited %d times, want exactly 1", blocked)
 	}
+	// Pipelining does not walk past the bound. Every OPEN sent before the first
+	// HANDLE comes back used to see an empty table and be admitted, so the real
+	// ceiling was this cap PLUS the pending-request cap — 1152 rather than 128,
+	// nine times what the bound's own comment claimed. Opens in flight now count.
+	{
+		p := newCaptureHarness(t, "t_web-01_alice", SFTPCaptureAll, 0)
+		admitted := 0
+		for i := 0; i < 600; i++ {
+			if !p.c.trackOpen(uint32(i+1), "/srv/f", false, true) {
+				admitted++
+			}
+		}
+		for i := 0; i < admitted; i++ {
+			p.c.bindHandle(uint32(i+1), fmt.Sprintf("h-%d", i))
+		}
+		if len(p.c.files) > sftpCaptureMaxOpen {
+			t.Fatalf("pipelined opens grew the table to %d, past the cap of %d", len(p.c.files), sftpCaptureMaxOpen)
+		}
+		if admitted == 0 {
+			t.Fatal("the bound refused every open; it must admit up to the cap")
+		}
+	}
+
 	// Closing a handle frees a slot, so an honest session recovers rather than
 	// staying wedged for the rest of its life.
 	h.c.noteClose("handle-0")
