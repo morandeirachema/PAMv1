@@ -79,14 +79,18 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Reuse the Go module and build caches across releases. Safe for a
-          # SIGNED artifact because GitHub scopes its cache by branch: a pull
-          # request's cache is not readable from the default branch or from a tag
-          # built off it, so a contributor cannot seed what a release compiles.
-          # BuildKit keys entries by content either way, and the build stays
-          # reproducible through -trimpath and the digest-pinned bases.
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # NO cache-from/cache-to here, deliberately. Phase 64 added them and the
+          # v0.11.1 tag failed outright — `type=gha` needs the docker-container
+          # driver, and this job uses buildx's default `docker` driver, which
+          # cannot export cache at all.
+          #
+          # The fix is not to add a driver. A release is the one build whose speed
+          # matters least and whose provenance matters most: a signed, attested
+          # artifact is a stronger claim when nothing outside this commit fed the
+          # compiler. The Dockerfile's `RUN --mount=type=cache` mounts stay — with
+          # no cache backend attached they simply start empty here, so the release
+          # builds cold by construction, while the same Dockerfile still caches for
+          # everyday `docker build` and `docker compose build`.
 
       - name: Generate SBOM (SPDX)
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
