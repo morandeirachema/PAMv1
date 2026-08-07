@@ -2199,7 +2199,10 @@ parity the README has claimed since Phase 25 is finally true rather than nearly.
 
 - [x] **v0.12.0** through the test-gated pipeline, **rehearsed first** with the
   `workflow_dispatch` run that now actually builds — the discipline Phase 65b
-  bought and Phase 66 tidied
+  bought and Phase 66 tidied. Published 2026-08-07 as
+  `ghcr.io/morandeirachema/pamv1:0.12.0`, digest
+  `sha256:f324e2b14ba9ce49706cd14c51f7ecfb1326d1a874f2fcced7f76eee88a61f8e`,
+  public — anonymous pull verified
 - [x] **All four pins move together** (both k8s deployments, terraform, Helm
   `appVersion` + chart `0.3.0`) and both READMEs restate the current release: the
   same checklist as 62b, 65a and 65c, because the failure it exists to prevent is
