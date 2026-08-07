@@ -2204,7 +2204,10 @@ mismatch for everyone, in exchange for tidiness.
   source tag with no artifacts and superseded rather than quietly overwritten
 - [x] **v0.11.2** carries the same content plus the two release-pipeline fixes,
   and every pin moves to it (both k8s deployments, terraform, Helm `appVersion` +
-  chart `0.2.2`, both READMEs)
+  chart `0.2.2`, both READMEs). Published 2026-08-07 as
+  `ghcr.io/morandeirachema/pamv1:0.11.2`, digest
+  `sha256:50c46ad69ac7cd2263ec49b46553b3186f26b011ef7090802421be2492b58d99`,
+  public — anonymous pull verified
 - [x] **Rehearsed before tagging**, using the dry run that now actually builds:
   `Build and push` ran for real and every publishing step was skipped
 
