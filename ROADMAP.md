@@ -2191,6 +2191,38 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 67b — The screen fits ✅
+
+Phase 67 shipped a screen nobody had looked at. The verification was real as far
+as it went — the JSON shapes, the parser against Go-authentic quoting, the served
+page, `node --check` — but it stopped at "the data is right", and a table is also
+a layout. Rendering it with live data at the terminal's actual width found two
+defects in the first frame.
+
+- [x] **The reason column had fallen off the screen.** Every cell held a full
+  SPIFFE ID, and a chain concatenates two or more of them — so the row ran past
+  `#term`'s `max-width: 980px` and took the last column with it, which is where a
+  refusal's reason lives. The reason is the entire value of a refused row, and it
+  was invisible
+- [x] **The prefix was the problem, not the width.** `spiffe://<trust-domain>/`
+  is identical on every row of this screen — roughly 24 columns per cell carrying
+  no information. It is stated once above the table and the rows show paths, so
+  `/ops/sub-agent>/ops/planner` fits where the full form did not
+- [x] **Cells truncate before they pad.** `pad()` alone lets one long value push
+  the last column off the edge — the failure above, one input away from returning
+  under a different name
+- [x] **The column header was wrong for half the rows**: a refused row names the
+  *delegator* that asked, not an actor, so "Actor (sub-agent)" became
+  "Actor / delegator" with a line saying so
+- [x] **All three states rendered and inspected**: populated (a real exchange
+  plus two real refusals driven against a running server with genuine JWT-SVIDs),
+  disabled, and empty
+
+The method is worth keeping: the screen's template and helpers were lifted out
+and rendered in node against data pulled from the live server, then screenshotted
+headless at `#term`'s real width. No browser automation, and it still catches
+what only looking catches.
+
 ## Phase 67a — v0.12.0 ✅
 
 A **minor** rather than a patch, because Phase 67 adds a capability rather than
