@@ -99,6 +99,7 @@
   let watchSess = null, watchAbort = null, watchText = "";
   let liveTimer = null;
   let recordings = [], replay = null; // replay = one loaded recording + player state
+  let tokenKeys = null, tokenEvents = []; // RFC 8693 signing key + delegation history
 
   // The Apache Guacamole client (vendored) powers the in-portal RDP viewer. It is
   // imported on demand — the first time an operator opens RDP — so the ~75KB module
@@ -307,6 +308,74 @@
   }
   // Agent keys (Phase 13): the routes exist only when the broker is enabled, so
   // a 404 shows a hint rather than an error — the app-secrets screen's pattern.
+  // unquoteDetail reverses the strconv.Quote the server applies to untrusted
+  // audit text (auditField). Go's quoting is JSON-string compatible, so JSON.parse
+  // is the inverse. Text that is not quoted is returned as-is.
+  function unquoteDetail(s) {
+    const t = String(s ?? "").trim();
+    if (!t.startsWith('"')) return t;
+    try { return JSON.parse(t); } catch (e) { return t; }
+  }
+
+  // detailFields splits a `key:value key:value` audit detail.
+  //
+  // Two shapes have to work, because the server quotes at two different
+  // granularities: the token-exchange success detail is quoted WHOLE
+  // (`auditField` over the entire string), while a refusal quotes each untrusted
+  // VALUE separately (`delegator:"…" reason:"…"`). So the whole string is
+  // unquoted first, and then each value is unquoted again if it is itself quoted.
+  //
+  // Values are scanned rather than split on whitespace: a quoted value may
+  // legitimately contain spaces, and a SPIFFE ID is mostly colons and slashes —
+  // so a key ends at its FIRST colon and its value is either a JSON string or a
+  // run of non-space characters.
+  function detailFields(s) {
+    const src = unquoteDetail(s);
+    const out = {};
+    let i = 0;
+    while (i < src.length) {
+      while (i < src.length && /\s/.test(src[i])) i++;
+      const colon = src.indexOf(":", i);
+      if (colon < 0) break;
+      const key = src.slice(i, colon);
+      i = colon + 1;
+      if (src[i] === '"') {
+        // Consume a quoted value, honouring backslash escapes.
+        let j = i + 1;
+        while (j < src.length && src[j] !== '"') j += src[j] === "\\" ? 2 : 1;
+        out[key] = unquoteDetail(src.slice(i, Math.min(j + 1, src.length)));
+        i = j + 1;
+      } else {
+        let j = i;
+        while (j < src.length && !/\s/.test(src[j])) j++;
+        out[key] = src.slice(i, j);
+        i = j;
+      }
+    }
+    return out;
+  }
+
+  // openTokenExchange loads the RFC 8693 view (Phase 57's console follow-on):
+  // the broker's signing key, and the delegations it has actually issued.
+  //
+  // The chains come from the audit trail rather than from any live table because
+  // there is no live table to read: a delegated SVID is stateless once minted —
+  // the broker signs it and forgets it — so the audited broker.token.exchanged
+  // event is the only record that a delegation ever existed. That is also why
+  // this screen is read-only: minting is an agent presenting its own credential
+  // to POST /v1/token, which a human at a terminal cannot do on its behalf, and
+  // should not be able to.
+  async function openTokenExchange() {
+    tokenKeys = null; tokenEvents = [];
+    try { tokenKeys = await api("GET", "/v1/token/jwks"); }
+    catch (e) { if (e.status === 404) tokenKeys = { disabled: true }; }
+    try {
+      const ev = await api("GET", "/api/audit?limit=500");
+      tokenEvents = (ev || []).filter((e) => e.action === "broker.token.exchanged" || e.action === "broker.token.refused");
+    } catch (e) { tokenEvents = []; }
+    go("tokenexchange");
+  }
+
   async function openAgents() {
     agents = [];
     try { agents = await api("GET", "/v1/agents"); }
@@ -709,6 +778,7 @@ ${fkeys("")}
           line(24, can("read_audit"), "Identity blast radius (CIEM)") +
           line(25, can("manage_users"), "Work with login sessions") +
           line(26, can("manage_users"), "Work with AI-agent keys") +
+          line(27, can("read_audit"), "Delegated agent tokens (RFC 8693)") +
           "90. Sign off\n";
         term.innerHTML = `${head("PAMMAIN", "PAMV1 Main Menu")}
 Select one of the following:
@@ -728,7 +798,8 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
             "15": openApps, "16": openSafes, "17": openCampaigns, "18": openRisk,
             "19": openRecordings, "20": openBrokerApprovals, "21": openStepUps,
             "22": openVendors, "23": openSSHCerts, "24": () => go("blast"),
-            "25": openLoginSessions, "26": openAgents, "90": signoff,
+            "25": openLoginSessions, "26": openAgents, "27": openTokenExchange,
+            "90": signoff,
           };
           if (routes[c]) { try { await routes[c](); } catch (e) { say("CPF9999: " + e.message, true); render(); } }
           else { say("CPF0001: SELECTION " + c.toUpperCase() + " NOT VALID.", true); render(); }
@@ -1360,6 +1431,52 @@ ${fkeys("F3=Exit   F5=Refresh   F6=Mint agent key   F12=Cancel")}`;
             await openAgents();
           } catch (e) { say("CPF9999: " + e.message, true); render(); }
         };
+      },
+
+      // Menu 27 — the RFC 8693 token exchange (Phase 57), which shipped
+      // curl-only. Read-only by nature: minting is an agent presenting its own
+      // credential, so there is nothing here for a human to press.
+      tokenexchange() {
+        back = "main";
+        const k = (tokenKeys && tokenKeys.keys && tokenKeys.keys[0]) || null;
+        const off = !tokenKeys || tokenKeys.disabled;
+        const rows = tokenEvents.map((e) => {
+          const f = detailFields(e.detail);
+          const refused = e.action === "broker.token.refused";
+          // The chain is delegator-outward (actor first); showing it as
+          // actor>delegator>… is the direction accountability is read in.
+          const chain = refused ? "-" : (f.chain || "-");
+          const who = refused ? (f.delegator || e.actor) : (f.actor || "-");
+          return `<tr>
+<td class="cyan">${fmtTime(e.ts)}</td>
+<td>${refused ? '<span class="red">refused</span>' : "issued "}</td>
+<td class="white">${pad(who, 30)}</td>
+<td>${pad(chain, 46)}</td>
+<td>${refused ? pad(f.reason || "-", 18) : pad((f.expires_in || "-") + "s", 8)}</td>
+</tr>`;
+        }).join("");
+        term.innerHTML = `${head("PAMWRKTKX", "Delegated Agent Tokens (RFC 8693)")}
+An agent delegates its OWN authority to a sub-agent and the broker signs a short-lived
+JWT-SVID whose actor chain grows by exactly one link. Impersonation is refused: the
+intermediary is always recorded, so every brokered call names the party accountable for it.
+
+<div class="indent">Signing key . . . . :  ${off
+  ? '<span class="red">TOKEN EXCHANGE IS DISABLED</span>  <span class="cyan">(set PAM_BROKER_TOKEN_EXCHANGE)</span>'
+  : `<span class="white">${esc((k && k.kid) || "-")}</span>`}
+${off ? "" : `Algorithm . . . . . :  ${esc((k && k.kty) || "-")} ${esc((k && k.crv) || "")} / ${esc((k && k.alg) || "-")}
+Published at  . . . :  <span class="cyan">GET /v1/token/jwks</span>  (read_audit — the same gate as this screen)`}
+</div>
+
+Delegations, newest first. <span class="cyan">Minting is POST /v1/token, presented by the agent itself.</span>
+
+<table>
+<tr><th>When</th><th>Result</th><th>Actor (sub-agent)</th><th>Chain (actor&gt;delegator&gt;…)</th><th>TTL / reason</th></tr>
+${rows}
+</table>${tokenEvents.length ? "" : `<div class="cyan indent">(No delegation has been issued or refused in the last 500 audit events.)</div>`}
+<div class="cyan">A minted token is stateless — the broker signs it and forgets it — so the audit
+trail above is the only record that a delegation existed. It is bounded by the delegator's
+own expiry, and its chain is capped by PAM_BROKER_MAX_DELEGATION_DEPTH.</div>
+${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
       },
 
       agentadd() {
@@ -2324,7 +2441,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   }
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
-  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, deps: () => depsCred && openDeps(depsCred.id) };
+  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id) };
   const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: () => go("campaignadd"), vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), deps: () => go("depadd") };
 
   window.addEventListener("keydown", async (ev) => {
