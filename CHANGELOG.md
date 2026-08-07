@@ -11,7 +11,27 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
-## [0.11.1] — 2026-08-07
+## [0.11.2] — 2026-08-07
+
+**The artifacts for 0.11.1.** That tag exists and stays where it is — the Go
+module proxy had already cached it, so re-pointing it would leave a permanent
+checksum mismatch for anyone running `go get …@v0.11.1` — but its release
+pipeline failed *before the push*, so no image, no signature, no attestations and
+no GitHub Release were ever produced under it. 0.11.2 is the same content plus
+the two fixes for that failure, and it is what every manifest pins.
+
+- **The release build takes no cache** (Phase 65b) — Phase 64 had added
+  `cache-from`/`cache-to: type=gha`, which requires the docker-container driver
+  while the job uses buildx's default `docker` driver. Removed rather than
+  repaired: a release is the one build whose speed matters least and whose
+  provenance matters most. The Dockerfile's cache mounts stay and still serve
+  everyday `docker build`.
+- **The release dry run actually rehearses** (Phase 65b) — it used to skip the
+  entire release job, so it proved only that `go test` runs and would have sailed
+  past the failure above. It now BUILDS the image, while the push, signature,
+  attestations and GitHub Release stay gated on a real tag.
+
+## [0.11.1] — 2026-08-07 · source tag only, superseded by 0.11.2
 
 Phases 63–65: the rest of the 2026-08-07 sweep, the container build, and the
 self-audit catching up with itself. Cut immediately rather than banked, because
@@ -238,7 +258,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.11.2...HEAD
+[0.11.2]: https://github.com/morandeirachema/pamv1/releases/tag/v0.11.2
 [0.11.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.11.1
 [0.11.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.11.0
 [0.10.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0
