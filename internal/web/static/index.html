@@ -1440,19 +1440,35 @@ ${fkeys("F3=Exit   F5=Refresh   F6=Mint agent key   F12=Cancel")}`;
         back = "main";
         const k = (tokenKeys && tokenKeys.keys && tokenKeys.keys[0]) || null;
         const off = !tokenKeys || tokenKeys.disabled;
+        // A SPIFFE ID is `spiffe://<trust-domain>/<path>`, and every row on this
+        // screen shares the same trust domain — so repeating it per cell spends
+        // ~24 columns carrying no information, and a chain of two of them ran
+        // off the 980px terminal, taking the reason column with it. The prefix is
+        // shown once, above; the rows show paths.
+        const shortID = (s) => String(s ?? "").replace(/^spiffe:\/\/[^/]+/, "");
+        // Truncate before padding: pad() alone lets one long value push the last
+        // column off the screen, which is where the reason lives.
+        const cell = (s, n) => { s = String(s ?? ""); return pad(s.length > n ? s.slice(0, n - 1) + "…" : s, n); };
+        // The trust domain the ids below are relative to, taken from the first id
+        // that has one. Every SVID this broker accepts is in one trust domain.
+        let domain = "";
+        for (const e of tokenEvents) {
+          const m = /spiffe:\/\/([^/\s"]+)/.exec(e.detail || "");
+          if (m) { domain = m[1]; break; }
+        }
         const rows = tokenEvents.map((e) => {
           const f = detailFields(e.detail);
           const refused = e.action === "broker.token.refused";
           // The chain is delegator-outward (actor first); showing it as
           // actor>delegator>… is the direction accountability is read in.
-          const chain = refused ? "-" : (f.chain || "-");
-          const who = refused ? (f.delegator || e.actor) : (f.actor || "-");
+          const chain = refused ? "-" : (f.chain || "-").split(">").map(shortID).join(">");
+          const who = shortID(refused ? (f.delegator || e.actor) : (f.actor || "-"));
           return `<tr>
 <td class="cyan">${fmtTime(e.ts)}</td>
 <td>${refused ? '<span class="red">refused</span>' : "issued "}</td>
-<td class="white">${pad(who, 30)}</td>
-<td>${pad(chain, 46)}</td>
-<td>${refused ? pad(f.reason || "-", 18) : pad((f.expires_in || "-") + "s", 8)}</td>
+<td class="white">${cell(who, 22)}</td>
+<td>${cell(chain, 34)}</td>
+<td>${refused ? cell(f.reason || "-", 18) : cell((f.expires_in || "-") + "s", 18)}</td>
 </tr>`;
         }).join("");
         term.innerHTML = `${head("PAMWRKTKX", "Delegated Agent Tokens (RFC 8693)")}
@@ -1462,15 +1478,15 @@ intermediary is always recorded, so every brokered call names the party accounta
 
 <div class="indent">Signing key . . . . :  ${off
   ? '<span class="red">TOKEN EXCHANGE IS DISABLED</span>  <span class="cyan">(set PAM_BROKER_TOKEN_EXCHANGE)</span>'
-  : `<span class="white">${esc((k && k.kid) || "-")}</span>`}
-${off ? "" : `Algorithm . . . . . :  ${esc((k && k.kty) || "-")} ${esc((k && k.crv) || "")} / ${esc((k && k.alg) || "-")}
+  : `<span class="white">${esc((k && k.kid) || "-")}</span>`}${off ? "" : `
+Algorithm . . . . . :  ${esc((k && k.kty) || "-")} ${esc((k && k.crv) || "")} / ${esc((k && k.alg) || "-")}
 Published at  . . . :  <span class="cyan">GET /v1/token/jwks</span>  (read_audit — the same gate as this screen)`}
 </div>
 
 Delegations, newest first. <span class="cyan">Minting is POST /v1/token, presented by the agent itself.</span>
-
+${domain ? `<div class="indent cyan">Identities below are paths within the trust domain <span class="white">${esc(domain)}</span>; a refused row names the delegator that asked.</div>` : ""}
 <table>
-<tr><th>When</th><th>Result</th><th>Actor (sub-agent)</th><th>Chain (actor&gt;delegator&gt;…)</th><th>TTL / reason</th></tr>
+<tr><th>When</th><th>Result</th><th>Actor / delegator</th><th>Chain (actor&gt;delegator&gt;…)</th><th>TTL / reason</th></tr>
 ${rows}
 </table>${tokenEvents.length ? "" : `<div class="cyan indent">(No delegation has been issued or refused in the last 500 audit events.)</div>`}
 <div class="cyan">A minted token is stateless — the broker signs it and forgets it — so the audit

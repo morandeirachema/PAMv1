@@ -11,6 +11,13 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **The token-exchange screen fits its terminal** (Phase 67b) — Phase 67's table
+  put a full SPIFFE ID in every cell, so a row overflowed `#term`'s 980px and
+  pushed the last column off the screen: on a refused row that column is the
+  *reason*, which is the whole point of the row. Identities now show as paths
+  within a trust domain stated once above the table, cells truncate before they
+  pad, and the column header no longer says "Actor" on rows that name a delegator.
+
 ## [0.12.0] — 2026-08-07
 
 A **minor** rather than a patch: Phase 67 adds a capability, not a fix. It is the
