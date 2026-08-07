@@ -11,6 +11,12 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **The self-audit absorbs the phases it had not read** (Phase 65) —
+  documentation only. `docs/SECURITY-GAPS.md` recorded every read-only sweep and
+  none of the per-phase reviews, so the seventeen defects found by reviewing
+  phases 59a, 60a and 61a the day each merged lived only in the roadmap. Closes
+  the last item of the 2026-08-07 sweep; every sweep is now closed.
+
 - **The container build** (Phase 64) — no runtime change. Both Dockerfiles gain
   BuildKit cache mounts for the Go module and build caches (and `release.yml`
   a GitHub Actions cache), so a build no longer recompiles the standard library

@@ -2187,32 +2187,51 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 65 — The self-audit absorbs the phases it had not read ✅
+
+The last item of the 2026-08-07 sweep, and a documentation phase rather than a
+code one. `docs/SECURITY-GAPS.md` had recorded every *sweep* and none of the
+**per-phase reviews** — so seventeen defects found by reviewing new code the day
+it merged lived only in this roadmap and the low-level change log, while the
+document that exists to be the security record said it reflected phases 0–55.
+
+- [x] **A new section covering the reviews of 59a, 60a and 61a**, written as
+  findings rather than as a change list: what was wrong, what it cost, what
+  closed it. Fifteen defects in SFTP content capture (three of them complete
+  bypasses of the containment Phase 59 exists for, one a reachable panic that
+  crashed every attempt to read a file's evidence back, one an audit-field
+  forgery that would let an operator vouch for a recording they had altered); the
+  approval claim that consumed an approval whose ticket it had never checked, and
+  its mirror image that let a third party lock an operator out of their whole
+  window; and the credential reference that was a credential use.
+- [x] **The header states 0–65** and no longer carries a known-currency-gap
+  caveat, because there is no longer a gap to caveat.
+- [x] **One lesson, stated once**, because all seventeen share a shape: *a new
+  control that governs a set, and a member of the set that was missed.* Three
+  OpenSSH SFTP extensions gated and a fourth left open; a re-check performed on
+  one approval and a consume performed on another; a credential reference read as
+  configuration when every sibling reference is a use. It is the argument for
+  reviewing a phase the day it merges, which is where most of this codebase's
+  defects have actually been found.
+
 ## What is left ⬜
 
 The canonical backlog. Earlier read-only sweeps are closed — the 2026-07-26 one
 by phases 37–46, the 2026-07-27 post-beta one by phases 52–52g, the 2026-07-30
 one by the fixes of 2026-07-30/31, and the 2026-08-06 read of the two newest
 phases by 60a and 61a. The **2026-08-07 sweep** (the first over phases 56–61a as
-a whole) closed across two phases: two of its nine findings shipped as Phase 62,
-six more as Phase 63, half of one was withdrawn as a false positive, and **one
-documentation item is open** — see §0 below and
-[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md). Everything after §0 is the
+a whole) closed across phases 62, 63 and 65 — see §0 below and
+[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md). **Every read-only sweep is
+closed**, so nothing here is a known defect. Everything after §0 is the
 honest remainder, grouped by what it would take to close, with each item
 recorded against the phase that deferred it.
 
-#### 0. Open findings from the 2026-08-07 sweep
+#### 0. The 2026-08-07 sweep — closed
 
-**Phase 63 closed all but one of these**, and withdrew half of another (the §4
-config-table claim was a false positive — see finding AU). What remains:
-
-- **`docs/SECURITY-GAPS.md` has not absorbed phases 56–61a.** The 2026-08-07
-  section is there and the contradiction is corrected, but those six phases have
-  no entries of their own — in particular the Phase 59a review, which found
-  fifteen defects in SFTP content capture the day it merged, five of them
-  reproduced by running code. That work is in this roadmap and the low-level
-  change log; consolidating it into the self-audit is a documentation phase.
-
-Struck below, with what closed each:
+Nine findings: two shipped as Phase 62, six as Phase 63, and half of one was
+**withdrawn as a false positive** (the §4 config-table claim — see finding AU).
+Phase 65 then absorbed the per-phase reviews of 56–61a into the self-audit, which
+was the last item. Struck below, with what closed each:
 
 - ~~**Audit fidelity at the step-up decision point**~~ — ✅ Phase 63. The
   fail-closed `session.stepup_decided` is written only once a decision will be
@@ -2232,8 +2251,7 @@ Struck below, with what closed each:
 - ~~**Audit-vocabulary drift**~~ — ✅ Phase 63: `breakglass.unseal_failed` and
   `session.relay_start` documented, `proxy.auth_rate_limited` removed from §5 and
   from the OCSF classifier, where it had been a rule that could never fire.
-- **`docs/SECURITY-GAPS.md` has not absorbed phases 56–61a** — the one still
-  open, described above.
+- ~~**`docs/SECURITY-GAPS.md` has not absorbed phases 56–61a**~~ — ✅ Phase 65.
 - ~~**Deployment reference drift**~~ — ✅ Phase 63 for the real half: the three
   Phase 57 variables are in `deploy/docker/.env.example`. The claim that §4 of
   the low-level doc omitted ~34 variables was **withdrawn** — §4 documents
