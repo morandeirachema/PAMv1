@@ -230,8 +230,19 @@ func (s *Server) playRecording(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.audit(r.Context(), "session.playback",
-		fmt.Sprintf("file:%s bytes:%d sha256:%s audited:%t", name, fi.Size(), sum, audited))
+	// Fail CLOSED, before a byte leaves. This is a read of KEK-protected material
+	// — a sealed recording is everything the operator typed and saw, and since
+	// Phase 59 a .sftp artifact reconstructs the actual content of a transferred
+	// file, which can be a secret outright. Every other path that hands over
+	// protected material refuses when the durable audit is unavailable (reveal,
+	// checkout, app-secret, MFA enrolment, break-glass, token exchange, the
+	// viewer's session start, both proxies' session start); playback was the one
+	// that did not, so an audit outage made the whole recording archive readable
+	// with no record of who read it. Invariant §6.4.
+	if !s.mustAudit(w, r.Context(), "session.playback",
+		fmt.Sprintf("file:%s bytes:%d sha256:%s audited:%t", name, fi.Size(), sum, audited)) {
+		return
+	}
 
 	contentType := "application/x-asciicast; charset=utf-8"
 	switch recordingKind(name) {

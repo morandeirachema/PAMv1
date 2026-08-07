@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -33,7 +34,7 @@ type captureHarness struct {
 func newCaptureHarness(t *testing.T, base string, mode SFTPCaptureMode, maxBytes int64) *captureHarness {
 	t.Helper()
 	h := &captureHarness{dir: t.TempDir()}
-	h.c = newSFTPCapture(context.Background(), h.dir, base, nil, newRecordChain(h.dir), mode, maxBytes, false,
+	h.c = newSFTPCapture(context.Background(), h.dir, base, nil, newRecordChain(h.dir), mode, maxBytes,
 		func(action, detail string) { h.live = append(h.live, action+" "+detail); h.liveN++ },
 		func(action, detail string) { h.closing = append(h.closing, action+" "+detail); h.closeN++ },
 	)
@@ -228,5 +229,65 @@ func TestCaptureRefusesReusedRequestID(t *testing.T) {
 	h.c.releaseID(7)
 	if h.c.noteRequest(7) {
 		t.Fatal("id 7 must be reusable once its response has arrived")
+	}
+}
+
+// TestCaptureBoundsTheTrackingTable proves the handle table cannot be grown
+// without limit, which is the whole premise of the bounds block above it.
+//
+// The hole it closes: `seq` — the per-session artifact bound trackOpen enforces
+// — only advances when an artifact is actually created, and creation stops once
+// the open-artifact cap is reached. So past that point every further OPEN added
+// a permanent entry that no bound covered, while the bind path rescanned the
+// whole table each time, under the mutex both SFTP legs need for every packet.
+// A real sftp-server self-limits at its descriptor ceiling; a compromised target
+// answering every OPEN with a fresh handle does not.
+//
+// Verified to fail against the pre-fix code, where the table grew past the cap.
+func TestCaptureBoundsTheTrackingTable(t *testing.T) {
+	h := newCaptureHarness(t, "t_web-01_alice", SFTPCaptureAll, 0)
+	// Fill the table with handles that are opened and never closed.
+	for i := 0; i < sftpCaptureMaxOpen; i++ {
+		id := uint32(i + 1)
+		if h.c.trackOpen(id, "/srv/f", false, true) {
+			t.Fatalf("open %d refused while the table still has room", i)
+		}
+		h.c.bindHandle(id, "handle-"+strconv.Itoa(i))
+	}
+	if got := len(h.c.files); got != sftpCaptureMaxOpen {
+		t.Fatalf("tracked handles = %d, want %d", got, sftpCaptureMaxOpen)
+	}
+	// Every further OPEN is refused on the REQUEST leg, so no handle is ever
+	// issued for it and no data can move against one capture is not tracking.
+	for i := 0; i < 500; i++ {
+		id := uint32(sftpCaptureMaxOpen + i + 1)
+		if !h.c.trackOpen(id, "/srv/overflow", false, true) {
+			t.Fatalf("open %d past the cap must be refused", i)
+		}
+	}
+	if got := len(h.c.files); got != sftpCaptureMaxOpen {
+		t.Fatalf("tracked handles grew to %d past the cap of %d", got, sftpCaptureMaxOpen)
+	}
+	if h.c.open != sftpCaptureMaxOpen {
+		t.Fatalf("open-artifact count = %d, want %d", h.c.open, sftpCaptureMaxOpen)
+	}
+	// The refusal is audited once, not once per refused open.
+	blocked := 0
+	for _, a := range h.live {
+		if strings.Contains(a, "reason:capture-backlog") {
+			blocked++
+		}
+	}
+	if blocked != 1 {
+		t.Fatalf("capture-backlog audited %d times, want exactly 1", blocked)
+	}
+	// Closing a handle frees a slot, so an honest session recovers rather than
+	// staying wedged for the rest of its life.
+	h.c.noteClose("handle-0")
+	if h.c.open != sftpCaptureMaxOpen-1 {
+		t.Fatalf("closing a handle left open=%d, want %d", h.c.open, sftpCaptureMaxOpen-1)
+	}
+	if h.c.trackOpen(99999, "/srv/after-close", false, true) {
+		t.Fatal("an open must be admitted again once a handle has closed")
 	}
 }

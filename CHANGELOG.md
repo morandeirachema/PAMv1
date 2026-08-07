@@ -11,6 +11,18 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **Close the rest of the 2026-08-07 sweep** (Phase 63) — six findings, none a
+  bypass. A refused step-up decision no longer leaves an audit record saying it
+  was decided (a refused self-approval had recorded the *paused operator* as
+  deciding their own statement); `session.playback` fails closed on its audit
+  like every other path that hands over KEK-protected material; the SFTP capture
+  handle table is bounded on the request leg instead of growing past the
+  open-artifact cap; the dead `required` field is gone; and the audit vocabulary
+  matches the code again (`proxy.auth_rate_limited` removed from the docs and the
+  OCSF classifier, where it was a rule that could never fire).
+  `deploy/docker/.env.example` documents the Phase 57 token-exchange variables.
+  **Audit-vocabulary change**: one removal, two additions.
+
 ## [0.11.0] — 2026-08-07
 
 The release that makes the deployable artifact current again. `v0.10.0` was

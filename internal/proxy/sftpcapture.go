@@ -140,12 +140,12 @@ type sftpCapture struct {
 	auditClosing func(action, detail string) // events written as the session unwinds
 	maxBytes     int64                       // per-file captured-byte cap (0 = unlimited)
 	up, down     bool                        // which directions this deployment captures
-	required     bool                        // PAM_REQUIRE_RECORDING: an unwritable artifact refuses the transfer
 
 	pendingOpens map[uint32]sftpPendingOpen
 	pendingReads map[uint32]sftpPendingRead
 	outstanding  map[uint32]struct{}         // request ids awaiting a response
-	files        map[string]*sftpCaptureFile // keyed by the server-issued handle
+	files        map[string]*sftpCaptureFile // keyed by the server-issued handle, bounded by sftpCaptureMaxOpen
+	open         int                         // entries in files still holding a descriptor
 	seq          int                         // artifacts created so far (names + the per-session bound)
 	backlogged   bool                        // a tracking bound refused work (audited once)
 	pending      []sftpAuditRec              // audit events queued while the lock is held
@@ -172,10 +172,15 @@ const artifactWrapTimeout = 10 * time.Second
 // same treatment newRecording gives the .cast name: the title embeds the
 // target and actor names, so an unsanitized one could escape the recording
 // directory or produce a file the playback allowlist can never serve.
-// required mirrors PAM_REQUIRE_RECORDING: when set, a file whose artifact
-// cannot be created or written has its data refused rather than forwarded
-// unrecorded.
-func newSFTPCapture(ctx context.Context, dir, base string, kw recording.KeyWrapper, chain *recordChain, mode SFTPCaptureMode, maxBytes int64, required bool, audit, auditClosing func(action, detail string)) *sftpCapture {
+//
+// There is deliberately no per-capture mirror of PAM_REQUIRE_RECORDING. One
+// shipped, unread, while three comments described it as the switch that made an
+// unwritable artifact refuse the transfer — but an artifact that cannot be
+// written refuses in EVERY mode (see gateWrite), because capture is a
+// containment control and `broken` is sticky, so continuing would forward the
+// rest of the file with recording silently stopped. The flag still governs the
+// session recording itself in handleSession; it has nothing left to say here.
+func newSFTPCapture(ctx context.Context, dir, base string, kw recording.KeyWrapper, chain *recordChain, mode SFTPCaptureMode, maxBytes int64, audit, auditClosing func(action, detail string)) *sftpCapture {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -190,7 +195,6 @@ func newSFTPCapture(ctx context.Context, dir, base string, kw recording.KeyWrapp
 		maxBytes:     maxBytes,
 		up:           mode == SFTPCaptureUploads || mode == SFTPCaptureAll,
 		down:         mode == SFTPCaptureDownloads || mode == SFTPCaptureAll,
-		required:     required,
 		pendingOpens: make(map[uint32]sftpPendingOpen),
 		pendingReads: make(map[uint32]sftpPendingRead),
 		outstanding:  make(map[uint32]struct{}),
@@ -290,6 +294,17 @@ func (c *sftpCapture) trackOpen(id uint32, path string, read, write bool) (refus
 	if c.seq >= sftpCaptureMaxFiles {
 		return c.refuseBacklog("artifacts this session")
 	}
+	// Bound the tracking table itself, not only the artifacts under it. A handle
+	// stays in `files` until its CLOSE, and the per-session `seq` bound above
+	// stops advancing once the open-artifact cap is reached — so without this the
+	// one thing that grew without limit was the table whose whole purpose is to
+	// keep a hostile client from growing anything. Refusing the OPEN is the right
+	// end to refuse at: the client gets a permission-denied it can act on, and no
+	// data ever moves against a handle capture is not tracking. 128 concurrently
+	// open remote files is already far outside what any real SFTP client does.
+	if len(c.files) >= sftpCaptureMaxOpen {
+		return c.refuseBacklog("tracked handles")
+	}
 	mode := "readwrite"
 	switch {
 	case write && !read:
@@ -326,10 +341,12 @@ func (c *sftpCapture) bindHandle(id uint32, handle string) {
 	}
 	cf := &sftpCaptureFile{remote: po.path, mode: po.mode}
 	c.files[handle] = cf
-	if c.openArtifacts() >= sftpCaptureMaxOpen {
-		// No artifact can back this handle, so its data is refused outright:
-		// the bound exists to contain abuse, and only a client far outside any
-		// real SFTP implementation's behavior can reach it.
+	// Backstop for the bound trackOpen now enforces on the request leg. It can
+	// still fire — a handle whose OPEN was tracked before others closed — and
+	// when it does the handle's data is refused outright, because no artifact
+	// can back it. Counted rather than recounted: this used to walk `files` on
+	// every bind, which is quadratic in a table the other leg blocks on.
+	if c.open >= sftpCaptureMaxOpen {
 		cf.refuseData = true
 		c.refuseBacklog("open artifacts")
 		return
@@ -346,17 +363,6 @@ func (c *sftpCapture) bindHandle(id uint32, handle string) {
 		cf.f = nil
 		c.note("sftp.capture_failed", fmt.Sprintf("path:%s file:%s error:%v", auditPath(po.path), name, err))
 	}
-}
-
-// openArtifacts counts the files that actually hold an open descriptor.
-func (c *sftpCapture) openArtifacts() int {
-	n := 0
-	for _, f := range c.files {
-		if f.f != nil {
-			n++
-		}
-	}
-	return n
 }
 
 // openArtifact creates one artifact file and its hashing/sealing pipeline,
@@ -398,6 +404,7 @@ func (c *sftpCapture) openArtifact(cf *sftpCaptureFile, name string) error {
 		return err
 	}
 	cf.name, cf.f, cf.sink, cf.hasher = name, f, sink, hasher
+	c.open++ // paired with the decrement in finalizeLocked, the only place f is closed
 	return nil
 }
 
@@ -625,6 +632,7 @@ func (c *sftpCapture) finalizeLocked(handle string, cf *sftpCaptureFile, reason 
 		return
 	}
 	cf.f.Close()
+	c.open--
 	sum := fmt.Sprintf("%x", cf.hasher.Sum(nil))
 	chain := c.chain.append(sum)
 	detail := fmt.Sprintf("path:%s file:%s open_mode:%s bytes_up:%d bytes_down:%d sha256:%s chain:%s",

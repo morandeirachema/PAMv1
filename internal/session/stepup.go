@@ -217,6 +217,28 @@ func (s *StepUp) DecideBy(sessionID string, approve bool, decider string) (ok, s
 	return c == stepUpClaimOK, c == stepUpClaimSelf
 }
 
+// Holder reports the operator whose statement is paused for sessionID on THIS
+// replica, and whether one is paused here at all. Read-only: it claims nothing.
+//
+// It exists so a caller can find out whether a decision will apply, and whether
+// the decider is the paused operator, BEFORE writing the fail-closed record that
+// says a decision was made. It is advisory — the pause can time out between the
+// look and the claim — so DecideBy still enforces self-approval under the lock;
+// this only keeps the ordinary refusals from leaving a record that says the
+// opposite of what happened.
+func (s *StepUp) Holder(sessionID string) (actor string, held bool) {
+	if s == nil {
+		return "", false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.pending[sessionID]
+	if !ok {
+		return "", false
+	}
+	return p.actor, true
+}
+
 // Pending lists the sessions awaiting a step-up decision on THIS replica (for a
 // supervisor). PendingCluster (stepupbus.go) is the cluster-wide view.
 func (s *StepUp) Pending() []PendingStepUp {

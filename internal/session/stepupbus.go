@@ -35,6 +35,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sort"
 	"time"
@@ -115,6 +116,9 @@ const (
 	// StepUpDispatched: the sealed decision was published; the hosting replica
 	// will apply it. Verify via the pending list, as with a dispatched kill.
 	StepUpDispatched
+	// StepUpFound: LookupRemote only — some replica mirrors this pause and the
+	// decider may decide it. Nothing has been dispatched yet.
+	StepUpFound
 )
 
 // StepUpBusConfig is what StartBus needs. BusKey is mandatory — the same
@@ -272,16 +276,38 @@ func (s *StepUp) PendingCluster(ctx context.Context) ([]PendingStepUp, error) {
 // The error reports a store or publish failure — the caller must not present
 // either as "nothing is pending" or "decided".
 func (s *StepUp) DecideRemote(ctx context.Context, sessionID string, approve bool, decider string) (RemoteDecision, error) {
+	outcome, pause, err := s.LookupRemote(ctx, sessionID, decider)
+	if err != nil || outcome != StepUpFound {
+		return outcome, err
+	}
+	if derr := s.DispatchRemote(ctx, sessionID, pause, approve, decider); derr != nil {
+		// Like a failed kill broadcast: the one wrong answer is "dispatched".
+		return StepUpNotFound, derr
+	}
+	return StepUpDispatched, nil
+}
+
+// LookupRemote answers "is there a pause elsewhere in the cluster for this
+// session, and may this decider decide it?" WITHOUT dispatching anything, and
+// returns the pause id a later DispatchRemote must bind to.
+//
+// It is split out from DecideRemote so a caller can write its fail-closed
+// "a decision was made" audit record only once it knows a decision will in fact
+// be attempted. Auditing first and looking after meant every refusal — a
+// self-approval, or a session paused on no replica at all — still left a record
+// saying the statement had been decided, which is the opposite of what happened
+// and, for the self-approval case, attributed to the paused operator.
+func (s *StepUp) LookupRemote(ctx context.Context, sessionID, decider string) (RemoteDecision, int64, error) {
 	if s == nil {
-		return StepUpNoBus, nil
+		return StepUpNoBus, 0, nil
 	}
 	st, sealer := s.bus()
 	if st == nil {
-		return StepUpNoBus, nil
+		return StepUpNoBus, 0, nil
 	}
 	rows, err := st.ListStepUps(ctx)
 	if err != nil {
-		return StepUpNotFound, err
+		return StepUpNotFound, 0, err
 	}
 	for _, r := range rows {
 		if r.SessionID != sessionID {
@@ -292,25 +318,34 @@ func (s *StepUp) DecideRemote(ctx context.Context, sessionID string, approve boo
 			break
 		}
 		if decider != "" && r.Actor == decider {
-			return StepUpSelfApproval, nil
+			return StepUpSelfApproval, 0, nil
 		}
-		// Name the pause, not just the session: the row we just read IS the pause
-		// this supervisor is deciding, and binding it into the sealed decision is
-		// what keeps the message from applying to a later one.
-		d, serr := sealer.sealStepUpDecision(StepUpDecision{SessionID: sessionID, Approve: approve,
-			Decider: decider, Pause: PauseID(r.Requested)}, time.Now())
-		if serr != nil {
-			return StepUpNotFound, serr
-		}
-		pctx, cancel := context.WithTimeout(ctx, busOpTimeout)
-		defer cancel()
-		if perr := st.PublishStepUpDecision(pctx, d); perr != nil {
-			// Like a failed kill broadcast: the one wrong answer is "dispatched".
-			return StepUpNotFound, perr
-		}
-		return StepUpDispatched, nil
+		// The row we just read IS the pause this supervisor is deciding.
+		return StepUpFound, PauseID(r.Requested), nil
 	}
-	return StepUpNotFound, nil
+	return StepUpNotFound, 0, nil
+}
+
+// DispatchRemote seals a decision for the pause LookupRemote found and publishes
+// it, for the replica holding that pause to apply. The pause id must come from
+// LookupRemote: naming the session alone would let the message apply to a later
+// pause of the same session (Phase 62).
+func (s *StepUp) DispatchRemote(ctx context.Context, sessionID string, pause int64, approve bool, decider string) error {
+	if s == nil {
+		return errors.New("session: no step-up coordinator")
+	}
+	st, sealer := s.bus()
+	if st == nil {
+		return errors.New("session: no step-up bus attached")
+	}
+	d, serr := sealer.sealStepUpDecision(StepUpDecision{SessionID: sessionID, Approve: approve,
+		Decider: decider, Pause: pause}, time.Now())
+	if serr != nil {
+		return serr
+	}
+	pctx, cancel := context.WithTimeout(ctx, busOpTimeout)
+	defer cancel()
+	return st.PublishStepUpDecision(pctx, d)
 }
 
 // applyDecision applies one inbound bus decision to THIS replica's pending

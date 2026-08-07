@@ -2092,59 +2092,113 @@ because "deploys as code" had come to mean "deploys the pre-fix code".
   for the bus wire-format change, and both READMEs state the current release
   rather than the first one
 
+## Phase 63 — Close the rest of the 2026-08-07 sweep ✅
+
+The six findings Phase 62 left. None is a bypass; four are a control or a bound
+that did not do what its own comments said, and two are drift in the documents
+other tools are built against.
+
+- [x] **A refused step-up decision leaves no record saying it was decided**
+  (AO). `decideStepUp` wrote the fail-closed `session.stepup_decided` *before*
+  calling `DecideBy`, so both ordinary refusals left a record asserting the
+  opposite of what happened — a refused self-approval recorded the **paused
+  operator** as having decided their own statement, which is exactly what the
+  refusal exists to prevent, and any approver could spray decisions for sessions
+  paused nowhere into the chained trail the retention worker will not prune. New
+  read-only `StepUp.Holder`, and `DecideRemote` splits into `LookupRemote` +
+  `DispatchRemote`, so the handler establishes that a decision will be attempted
+  — and that this decider may make it — before it writes anything. The pre-audit
+  itself stays: a released statement must not outlive the evidence of who
+  released it. The look is advisory, so `DecideBy` still enforces self-approval
+  under the lock and a pause that times out in between now answers **409**
+  rather than a misleading 404. Test verified against the pre-fix handler,
+  restored from git rather than simulated: it wrote 2 phantom records.
+- [x] **`session.playback` fails closed** (AP). It was the one read of
+  KEK-protected material that did not — and since Phase 59 it also serves
+  reconstructed SFTP file content, so it can hand over a secret outright. An
+  audit outage made the whole recording archive readable with no record of who
+  read it. Now `mustAudit`, before a byte leaves.
+- [x] **The SFTP handle table is bounded** (AR). `trackOpen` now refuses an OPEN
+  once `sftpCaptureMaxOpen` handles are tracked, and `bindHandle` counts open
+  artifacts instead of rescanning the table. The hole: `seq` — the per-session
+  artifact bound — only advances when an artifact is created, and creation stops
+  at the open-artifact cap, so past that point every OPEN added a permanent entry
+  no bound covered while the bind path went quadratic under the mutex both SFTP
+  legs need. A real sftp-server self-limits at its descriptor ceiling; a
+  compromised target answering every OPEN with a fresh handle does not. Refusing
+  on the request leg means no data ever moves against an untracked handle.
+- [x] **`sftpCapture.required` is gone** (AQ). It was assigned from
+  `PAM_REQUIRE_RECORDING` and never read, while three comments described it as
+  the switch making an unwritable artifact refuse the transfer. The code is
+  stricter than that — `broken` is sticky and refuses in every mode — so the
+  comments were the defect. The flag still governs the session recording itself.
+- [x] **Audit vocabulary matches the code again** (AS). `breakglass.unseal_failed`
+  and `session.relay_start` are documented; `proxy.auth_rate_limited` is removed
+  from §5 **and from the OCSF classifier**, where it had been a Detection Finding
+  rule that could never fire since Phase 52e stopped appending it.
+  `breakglass.unseal_failed` takes its place there — it was emitted and
+  classified nowhere.
+- [x] **The reference env file documents token exchange** (AU).
+  `PAM_BROKER_TOKEN_EXCHANGE`, `PAM_BROKER_TOKEN_SIGN_SEED` and
+  `PAM_BROKER_EXCHANGE_TTL_MIN`, in their own block noting they need the SVID
+  block above them. **Half of this finding was withdrawn**: §4 of the low-level
+  doc does *not* omit ~34 variables — it documents families in a slash shorthand
+  (`` `PAM_LDAP_BIND_DN` / `_BIND_PASSWORD` ``) that the check did not expand.
+  Expanding it first gives zero missing of the 158 the code reads. A drift check
+  that does not understand the document's own notation manufactures drift.
+
 ## What is left ⬜
 
 The canonical backlog. Earlier read-only sweeps are closed — the 2026-07-26 one
 by phases 37–46, the 2026-07-27 post-beta one by phases 52–52g, the 2026-07-30
 one by the fixes of 2026-07-30/31, and the 2026-08-06 read of the two newest
 phases by 60a and 61a. The **2026-08-07 sweep** (the first over phases 56–61a as
-a whole) is the exception: two of its nine findings shipped as Phase 62 and
-**seven are open**, listed in §0 below and detailed in
+a whole) closed across two phases: two of its nine findings shipped as Phase 62,
+six more as Phase 63, half of one was withdrawn as a false positive, and **one
+documentation item is open** — see §0 below and
 [docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md). Everything after §0 is the
 honest remainder, grouped by what it would take to close, with each item
 recorded against the phase that deferred it.
 
 #### 0. Open findings from the 2026-08-07 sweep
 
-None is a bypass — the one bypass and the one release gap are closed by Phase 62
-— but each is a real defect or a documented claim the code does not support.
+**Phase 63 closed all but one of these**, and withdrew half of another (the §4
+config-table claim was a false positive — see finding AU). What remains:
 
-- **Audit fidelity at the step-up decision point.** `decideStepUp` writes the
-  fail-closed `session.stepup_decided` before it knows the outcome, so a refused
-  self-approval and a decision for a session that is paused nowhere both leave a
-  positive "decided" record — the first attributed to the session's own
-  operator. The pre-audit is right (a released statement must not outlive its
-  evidence); the refusal paths need a compensating event or a two-phase claim.
-- **`session.playback` is best-effort audited** — the one read of KEK-protected
-  material that is, where reveal, checkout, app-secret, viewer connect, WinRM
-  and both proxies' session start all fail closed. Since Phase 59 that path also
-  serves reconstructed SFTP file content, so it can deliver an actual secret.
-- **`sftpCapture.required` is dead state** — assigned from `PAM_REQUIRE_RECORDING`
-  and never read. The behaviour is *stricter* than its three comments describe
-  (a broken artifact refuses in every mode), so this is dead config plus docs
-  describing a knob that does not exist, not a hole.
-- **The per-session SFTP artifact bound stops counting when it matters most.**
-  `bindHandle` inserts into `c.files` before the `sftpCaptureMaxOpen` check and
-  returns without advancing `c.seq`, the counter `trackOpen` bounds on — so past
-  128 open artifacts every further OPEN adds an untracked entry and
-  `openArtifacts()` rescans the map under the lock both SFTP legs need. A real
-  sftp-server self-limits at its descriptor ceiling; a **compromised target** that
-  answers every OPEN with a fresh handle does not.
-- **Audit-vocabulary drift** (§5 of the low-level doc): `breakglass.unseal_failed`
-  and `session.relay_start` are emitted and undocumented, and
-  `proxy.auth_rate_limited` is documented *and* classified by the OCSF exporter
-  while no code path can produce it any more (Phase 52e removed the append).
-- **`docs/SECURITY-GAPS.md` currency** — partly closed by this change, which adds
-  the 2026-08-07 section and removes the paragraph that still described the
-  2026-07-30 findings as open. What stays open is the backlog it never absorbed:
-  phases 56–61a have no entries of their own, including the Phase 59a review that
-  found fifteen defects.
-- **Deployment reference drift** — `deploy/docker/.env.example` is missing all
-  three Phase 57 variables (`PAM_BROKER_TOKEN_EXCHANGE`,
-  `PAM_BROKER_TOKEN_SIGN_SEED`, `PAM_BROKER_EXCHANGE_TTL_MIN`), and §4 of the
-  low-level doc is missing ~34 variables the code reads, including
-  credential-bearing ones; `PAM_SSH_JUMP_USER`/`_KEY` appear in neither that
-  table nor the admin guide.
+- **`docs/SECURITY-GAPS.md` has not absorbed phases 56–61a.** The 2026-08-07
+  section is there and the contradiction is corrected, but those six phases have
+  no entries of their own — in particular the Phase 59a review, which found
+  fifteen defects in SFTP content capture the day it merged, five of them
+  reproduced by running code. That work is in this roadmap and the low-level
+  change log; consolidating it into the self-audit is a documentation phase.
+
+Struck below, with what closed each:
+
+- ~~**Audit fidelity at the step-up decision point**~~ — ✅ Phase 63. The
+  fail-closed `session.stepup_decided` is written only once a decision will be
+  attempted: `StepUp.Holder` and the new `LookupRemote`/`DispatchRemote` split
+  establish that read-only first, so a refused self-approval and a decision for
+  a session paused nowhere leave no record claiming otherwise.
+- ~~**`session.playback` is best-effort audited**~~ — ✅ Phase 63: `mustAudit`,
+  refusing before a byte leaves, like every other path that hands over
+  KEK-protected material.
+- ~~**`sftpCapture.required` is dead state**~~ — ✅ Phase 63: the field and its
+  parameter are gone, and the comments now describe what the code does (an
+  unwritable artifact refuses in every mode).
+- ~~**The per-session SFTP artifact bound stops counting when it matters most**~~
+  — ✅ Phase 63: `trackOpen` bounds the handle table itself, `bindHandle` uses a
+  counter instead of rescanning, and the refused OPEN is answered on the request
+  leg so no data moves against an untracked handle.
+- ~~**Audit-vocabulary drift**~~ — ✅ Phase 63: `breakglass.unseal_failed` and
+  `session.relay_start` documented, `proxy.auth_rate_limited` removed from §5 and
+  from the OCSF classifier, where it had been a rule that could never fire.
+- **`docs/SECURITY-GAPS.md` has not absorbed phases 56–61a** — the one still
+  open, described above.
+- ~~**Deployment reference drift**~~ — ✅ Phase 63 for the real half: the three
+  Phase 57 variables are in `deploy/docker/.env.example`. The claim that §4 of
+  the low-level doc omitted ~34 variables was **withdrawn** — §4 documents
+  families in a slash shorthand the check did not expand; expanding it gives zero
+  missing of the 158 the code reads.
 
 
 #### 1. Blocking the beta claim — ✅ resolved 2026-07-28
