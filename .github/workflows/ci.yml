@@ -134,12 +134,25 @@ jobs:
           PAM_TEST_DATABASE_URL: postgres://pam:pam@localhost:5432/pam?sslmode=disable
         run: go test -p 1 ./internal/store/pgstore/ ./cmd/pam-server/ -race -count=1 -v
 
+  # Both images are built, not just the default one: the PKCS#11 flavour has its
+  # own base, its own cgo build and its own build args, so it can break on its
+  # own — and it went several phases without the version stamping the default
+  # image had, which nothing here would have caught.
+  #
+  # DOCKER_BUILDKIT is explicit rather than assumed. The Dockerfiles use
+  # `RUN --mount=type=cache`, which the classic builder rejects outright, so a
+  # runner image that ever defaulted the other way would fail with a parse error
+  # rather than silently building something else.
   docker:
     runs-on: ubuntu-latest
+    env:
+      DOCKER_BUILDKIT: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: build image
         run: docker build -f deploy/docker/Dockerfile -t pamv1:ci .
+      - name: build pkcs11 image
+        run: docker build -f deploy/docker/Dockerfile.pkcs11 -t pamv1:ci-pkcs11 .
 
   # A broken chart or manifest should fail here, not at `kubectl apply` time:
   # helm lint, a full render of the chart (defaults and everything-on, so the

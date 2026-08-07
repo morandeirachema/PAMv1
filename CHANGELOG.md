@@ -11,6 +11,15 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **The container build** (Phase 64) — no runtime change. Both Dockerfiles gain
+  BuildKit cache mounts for the Go module and build caches (and `release.yml`
+  a GitHub Actions cache), so a build no longer recompiles the standard library
+  and every dependency from cold. `Dockerfile.pkcs11` finally accepts
+  `VERSION`/`COMMIT`, so an HSM-backed deployment stops reporting
+  `pam-server dev (none)`. Base images are pinned **by digest** as well as by
+  tag, dependabot keeps them current, `EXPOSE` names the database-proxy ports it
+  had omitted, and CI builds **both** images instead of one.
+
 - **Close the rest of the 2026-08-07 sweep** (Phase 63) — six findings, none a
   bypass. A refused step-up decision no longer leaves an audit record saying it
   was decided (a refused self-approval had recorded the *paused operator* as
