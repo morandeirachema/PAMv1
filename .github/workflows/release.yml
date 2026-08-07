@@ -2,19 +2,18 @@ name: Release
 
 # Builds, pushes, SBOM-scans and signs the container image on a version tag.
 #
-# workflow_dispatch exists so this can be rehearsed before it is trusted. Until
-# it was added, the first execution of this workflow would have been a real
-# release — an unrehearsed pipeline publishing signed, attested artifacts.
+# workflow_dispatch is the REHEARSAL, always — it builds the image for real and
+# publishes nothing. It takes no input: it used to carry a `dry_run` boolean, and
+# once the job stopped being skipped wholesale that boolean controlled nothing at
+# all (`dry_run: false` behaved exactly like `true`), which is a lie in a
+# pipeline's own interface. Removing it also removes the ability to publish a
+# signed release from an arbitrary ref by hand, which is a control, not a loss:
+# a real release comes from a version tag or it does not happen.
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "Rehearse: build the image for real, but push, sign and release nothing"
-        type: boolean
-        default: true
 
 permissions:
   contents: write      # create the GitHub Release
@@ -44,12 +43,13 @@ jobs:
       - name: test
         run: go test -race ./...
 
-  # A dry run BUILDS. It used to skip this job entirely, which made it a rehearsal
-  # that rehearsed nothing: the v0.11.1 tag failed in `Build and push` on a cache
-  # backend the driver cannot export to, after six green CI checks, and a dry run
-  # would have sailed past it too. Everything with an outward effect — the push,
-  # the signature, the attestations, the GitHub Release — stays gated on a real
-  # tag; the build itself, which is what breaks, now runs either way.
+  # A rehearsal BUILDS. This job used to be skipped entirely on workflow_dispatch,
+  # which made it a rehearsal that rehearsed nothing: the v0.11.1 tag failed in
+  # `Build and push` on a cache backend the driver cannot export to, after six
+  # green CI checks, and a rehearsal would have sailed past it too. Everything
+  # with an outward effect — the push, the signature, the attestations, the
+  # GitHub Release — is gated on REAL, which is set only by a tag push; the build
+  # itself, which is the step that actually breaks, runs either way.
   release:
     needs: test
     runs-on: ubuntu-latest

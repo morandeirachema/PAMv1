@@ -11,6 +11,14 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **The review of phases 62–65** (Phase 66) — reading the phases that closed the
+  2026-08-07 sweep the way the sweep read everything else. Three findings, none a
+  bypass: the SFTP handle-table bound admitted pipelined opens past its cap
+  (1152 rather than the 128 its comment claimed — bounded either way); the
+  release workflow's `dry_run` input had become dead, controlling nothing, and is
+  removed so the manual trigger is unambiguously a rehearsal; and the
+  path-derived session id reached three audit details unquoted.
+
 ## [0.11.2] — 2026-08-07
 
 **The artifacts for 0.11.1.** That tag exists and stays where it is — the Go

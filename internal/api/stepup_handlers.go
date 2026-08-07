@@ -81,9 +81,15 @@ func (s *Server) decideStepUp(w http.ResponseWriter, r *http.Request) {
 	// The look is advisory: a pause can time out between it and the claim, so
 	// DecideBy still enforces self-approval under the lock and both refusals are
 	// still handled below. What this removes is the systematic case, not the race.
+	//
+	// `id` is quoted and bounded everywhere it reaches a detail, including here.
+	// It comes from the request path, so it is client-supplied text; today only a
+	// value matching a real pending session id can reach these branches, which
+	// makes it safe by circumstance rather than by construction. Circumstance is
+	// what changes when someone adds a branch.
 	pausedActor, heldHere := s.stepup.Holder(id)
 	if heldHere && decider != "" && pausedActor == decider {
-		s.audit(r.Context(), "session.self_stepup_denied", "session:"+id)
+		s.audit(r.Context(), "session.self_stepup_denied", "session:"+auditField(id, 64))
 		writeError(w, http.StatusForbidden, "you cannot decide the step-up for your own session")
 		return
 	}
@@ -101,7 +107,7 @@ func (s *Server) decideStepUp(w http.ResponseWriter, r *http.Request) {
 		case session.StepUpFound:
 			remotePause = pause
 		case session.StepUpSelfApproval:
-			s.audit(r.Context(), "session.self_stepup_denied", "session:"+id)
+			s.audit(r.Context(), "session.self_stepup_denied", "session:"+auditField(id, 64))
 			writeError(w, http.StatusForbidden, "you cannot decide the step-up for your own session")
 			return
 		default:
@@ -136,7 +142,7 @@ func (s *Server) decideStepUp(w http.ResponseWriter, r *http.Request) {
 
 	ok, selfApproval := s.stepup.DecideBy(id, in.Approve, decider)
 	if selfApproval {
-		s.audit(r.Context(), "session.self_stepup_denied", "session:"+id)
+		s.audit(r.Context(), "session.self_stepup_denied", "session:"+auditField(id, 64))
 		writeError(w, http.StatusForbidden, "you cannot decide the step-up for your own session")
 		return
 	}
