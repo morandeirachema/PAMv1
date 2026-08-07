@@ -40,7 +40,7 @@ Construido fase a fase con una regla: **cada fase es funcional de principio a fi
 pasa los tests y se despliega como Infraestructura-como-Código. El **[roadmap](ROADMAP.md)**
 abarca de la 0 a la 62, **se han entregado todas las fases**, y la release etiquetada y
 firmada con cosign vigente es la
-**[v0.11.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.11.0)** (2026-08-07;
+**[v0.11.1](https://github.com/morandeirachema/pamv1/releases/tag/v0.11.1)** (2026-08-07;
 la primera fue la v0.10.0, el 2026-07-28). Lo que eso suma:
 **intermediación de sesiones JIT** para SSH, PostgreSQL, WinRM y RDP en el portal;
 **RBAC + perfiles a medida** con login AD/Entra/OIDC y MFA TOTP; **break-glass** con quórum
@@ -224,7 +224,7 @@ Opcional vía `PAM_BROKER_POLICY_FILE`.
 
 - **Almacenamiento PostgreSQL** con [pgx](https://github.com/jackc/pgx) y migraciones embebidas y versionadas; un almacén en memoria para tests y demos; **alta disponibilidad con [CloudNativePG](https://cloudnative-pg.io/)** opcional.
 - **Observabilidad** — un endpoint [Prometheus](https://prometheus.io/) `/metrics` sin dependencias (conteos por estado, volumen de auditoría, uso de break-glass, rotaciones, gauge de sesiones activas), más una separación liveness/readiness (`/healthz`, `/readyz` que comprueba la BD).
-- **Despliegue como código** — [Docker](https://docs.docker.com/) (distroless, sin root), [docker-compose](https://docs.docker.com/compose/) con Postgres endurecida, manifiestos [Kubernetes](https://kubernetes.io/) bajo el PSS restringido, un **[chart de Helm](deploy/helm/pamv1)** y un módulo de [Terraform](https://developer.hashicorp.com/terraform). El pipeline de release construye por digest con **[SBOM](https://www.cisa.gov/sbom), firma keyless [cosign](https://docs.sigstore.dev/) y procedencia SLSA**. *Release vigente: **[v0.11.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.11.0)** (2026-08-07; la primera fue la v0.10.0) — la imagen firmada es pública en `ghcr.io/morandeirachema/pamv1:0.11.0`, que es la que fijan todos los manifiestos, así que las rutas de instalación por artefacto publicado ya funcionan.*
+- **Despliegue como código** — [Docker](https://docs.docker.com/) (distroless, sin root), [docker-compose](https://docs.docker.com/compose/) con Postgres endurecida, manifiestos [Kubernetes](https://kubernetes.io/) bajo el PSS restringido, un **[chart de Helm](deploy/helm/pamv1)** y un módulo de [Terraform](https://developer.hashicorp.com/terraform). El pipeline de release construye por digest con **[SBOM](https://www.cisa.gov/sbom), firma keyless [cosign](https://docs.sigstore.dev/) y procedencia SLSA**. *Release vigente: **[v0.11.1](https://github.com/morandeirachema/pamv1/releases/tag/v0.11.1)** (2026-08-07; la primera fue la v0.10.0) — la imagen firmada es pública en `ghcr.io/morandeirachema/pamv1:0.11.1`, que es la que fijan todos los manifiestos, así que las rutas de instalación por artefacto publicado ya funcionan.*
 - **Secretos cifrados en git** — el manifiesto de Secret de Kubernetes puede sellarse con **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: los valores se cifran mientras `kind`/`metadata` quedan legibles, y se descifra al desplegar (`sops -d | kubectl apply -f -`, el texto plano nunca toca el disco) o de forma nativa con Flux / Argo / helm-secrets — así los secretos viven en el **mismo repo de IaC** sin filtrarse. Ver **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **O aprovisiona los secretos desde CyberArk Conjur** — como alternativa en tiempo de ejecución a SOPS, define `PAM_CONJUR_URL` y pamv1 obtiene sus secretos de arranque (clave maestra, clave de API, URL de la BD, …) de **[Conjur](https://www.conjur.org/)** al arrancar, autenticándose con una clave de API de host o un token proyectado de Kubernetes (**`authn-jwt`**) — de modo que ningún secreto de arranque vive en Git. Ambos mecanismos se entregan; SOPS sigue siendo el predeterminado sin dependencias. Ver **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
 
@@ -342,9 +342,9 @@ Se han entregado todas las fases (0–55) — detalle por fase en **[ROADMAP.md]
 | 55 | Monitorización en vivo entre réplicas (listado de sesiones de todo el clúster + visualización SSE mediante un relé sobre el almacén activado por interés) | ✅ entregada |
 
 Desde la 52g el trabajo ha sido **release y consolidación**: la v0.10.0 (la primera
-release firmada y con atestaciones) y la v0.11.0 (que vuelve a poner la imagen fijada al
-día del árbol — la 0.10.0 era anterior a las diez correcciones del barrido del
-2026-07-30), tests para el único paquete que no tenía (`cmd/pam-server`, el cableado
+release firmada y con atestaciones), y luego la v0.11.0 y la v0.11.1 (que devolvieron la
+imagen fijada al día del árbol y la mantienen ahí — la 0.10.0 era anterior a las diez
+correcciones del barrido del 2026-07-30), tests para el único paquete que no tenía (`cmd/pam-server`, el cableado
 de arranque), las claves de auditoría del bróker pasaron a custodia compartida sellada
 por la KEK, las sesiones WinRM se unieron al monitor en vivo, el portapapeles RDP se
 volvió endurecible por objetivo, los streams de observación ahora terminan con su
@@ -438,9 +438,12 @@ Todas las fases hasta la 62 están entregadas y las autoauditorías de seguridad
 primera release firmada — cumplió el 2026-07-28 el último de los cuatro criterios de
 beta, y la
 **[v0.11.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.11.0)**
-(2026-08-07) vuelve a poner la imagen fijada al día del árbol: la 0.10.0 se etiquetó dos
-días antes de que aterrizaran las correcciones del barrido del 2026-07-30, así que
-durante una semana todos los manifiestos fijaron una build anterior a ellas.
+(2026-08-07) devolvió la imagen fijada al día del árbol —la 0.10.0 se etiquetó dos días
+antes de que aterrizaran las correcciones del barrido del 2026-07-30, así que durante una
+semana todos los manifiestos fijaron una build anterior a ellas— y la
+**[v0.11.1](https://github.com/morandeirachema/pamv1/releases/tag/v0.11.1)** la mantiene
+ahí, cortada el mismo día en que se fusionaron las fases 63–65 en lugar de dejarlas
+acumularse.
 
 Lo que queda está consolidado en
 **[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)** — mejoras en curso, la
