@@ -11,6 +11,14 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **Console screen for the token exchange** (Phase 67) — menu **27, Delegated
+  agent tokens (RFC 8693)** (`read_audit`): the broker's signing key (`kid`,
+  type, curve, algorithm) and the delegation chains it has issued, read from the
+  audit trail because a minted SVID is stateless and that event is the only
+  record it existed. Refusals are shown beside them. Read-only by nature —
+  minting is an agent presenting its own credential. This was the last curl-only
+  capability, and the one place the "full console parity" claim was false.
+
 - **The review of phases 62–65** (Phase 66) — reading the phases that closed the
   2026-08-07 sweep the way the sweep read everything else. Three findings, none a
   bypass: the SFTP handle-table bound admitted pipelined opens past its cap
