@@ -2008,13 +2008,141 @@ more, against a domain-admin credential on a target granted to somebody else.
   secret types refused at declaration; and the use-time refusal proven the only
   way it can now arise — the dependency row written straight into the store
 
+## Phase 62 — A step-up decision names the pause it was made about, and the released artifact is current ✅
+
+Opened by the read-only sweep of **2026-08-07** (the first over phases 56–61a as
+a whole; nine findings, recorded in
+[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md)). Two of them are closed here —
+the one bypass and the one that made every documented deployment path ship a
+build the project itself had already fixed. The other seven are recorded there
+and carried into [What is left](#what-is-left-).
+
+### 62a — The cross-replica step-up decision binds to one pause
+
+Phase 56 sealed the decision bus so a database observer could neither forge nor
+replay a release: the seal binds `{session, verdict, decider}` and its timestamp
+is refused outside ±2 minutes. The gap was in what "replay" was taken to mean.
+The seal named the **session**, `StepUp.pending` is keyed by **session id**, and
+a session pauses **once per flagged statement** — so a captured decision stayed
+applicable to whatever was pending when it arrived. The comment asserting "a
+replay inside the window finds the entry already claimed" held only if the
+session did not pause again, and for a database session under a step-up policy
+pausing twice inside two minutes is the ordinary case, not an exotic one.
+
+Reachable by exactly the adversary the seal exists for: PostgreSQL `NOTIFY`
+channels have no privilege model, so anything holding a database session can
+read a genuine approval off the wire and publish it back. The result was a
+flagged statement released with no supervisor in the loop, recorded as
+`session.stepup_decided … decider:<the supervisor who decided the previous
+one> via:bus` — an audit trail asserting an approval that never happened, which
+is the failure `DecideBy`'s own self-approval refusal calls worse than no gate.
+
+- [x] **`StepUpDecision.Pause`** carries `PauseID(requested)` — the pause's
+  registration time in **microseconds**, because the value round-trips through a
+  PostgreSQL `timestamptz` and a nanosecond id would never equal the one still
+  in the hosting replica's memory. `DecideRemote` fills it from the inventory row
+  it just read, which *is* the pause the supervisor is deciding
+- [x] **It is in the AAD**, not merely in the payload (`stepUpDecisionAAD`): the
+  pause is the field a replay would want to change
+- [x] **The claim is bound.** `StepUp.claim(sessionID, pause, …)` refuses an
+  entry whose `PauseID` differs and reports it distinctly (`stepUpClaimStale`),
+  so a stale message is told apart from "not hosted here". The local API path
+  passes 0 and is unchanged — no message crosses a bus, so what is pending now
+  is what the supervisor is looking at
+- [x] **Refused replays are logged, not audited.** The payload is readable to
+  anything with a database session, so a row per arrival would let a flood
+  amplify into the audit trail the retention worker refuses to prune with the
+  chain on — the lesson of the unauthenticated-input finding. The refusal is the
+  control; the log line is the evidence
+- [x] **Test**: `session.TestStepUpBusDecisionCannotBeReplayedOntoTheNextPause`
+  taps the decision channel exactly as a database session can, captures a genuine
+  approval, and replays it verbatim onto the session's next pause — which must
+  stay pending, stay decidable, and leave exactly one `session.stepup_decided` in
+  the trail. **Verified to fail against the pre-fix code**, where the replay
+  released the second statement
+- [x] **Wire-format change, fail-closed in a mixed fleet**: a 0.10.x replica and
+  a 0.11.0 replica cannot authenticate each other's cross-replica decisions. A
+  decision is refused, never misapplied, and a supervisor can still decide on the
+  replica hosting the session; roll all replicas to finish
+
+### 62b — The released image is the code that is released
+
+`v0.10.0` was tagged 2026-07-28 and every Kubernetes, Helm and Terraform
+manifest has pinned it since. The 2026-07-30 sweep's fixes landed over the two
+days **after** it — ten commits, including the tunnel-scoped viewer token that
+authenticated at all three session proxies (reproduced *opening a session*), the
+unauthenticated live and kill buses, three paths to a credential that skipped
+their siblings' gates, and five paths that acted before or without recording it.
+So for a week the documented way to deploy pamv1 produced a build the repo
+itself documents as fixed. This is finding 18's shape again — a pin is only as
+good as what it points at — and it quietly undid the fourth beta criterion,
+because "deploys as code" had come to mean "deploys the pre-fix code".
+
+- [x] **`v0.11.0`**, carrying phases 53–62 and the ten fixes, cut through the
+  same test-gated pipeline (digest build, SPDX SBOM attestation, cosign keyless
+  signature, SLSA provenance)
+- [x] **Every pin moved together** — `deploy/k8s/deployment.yaml`,
+  `deploy/k8s/conjur/deployment.yaml`, `deploy/terraform/variables.tf`, and the
+  Helm chart's `appVersion` (chart `0.2.0`) — so no flavor is left behind, which
+  is how the drift started
+- [x] **CHANGELOG `[Unreleased]` promoted** to `[0.11.0]`, with the upgrade note
+  for the bus wire-format change, and both READMEs state the current release
+  rather than the first one
+
 ## What is left ⬜
 
-The canonical backlog. Every read-only security sweep is closed — the
-2026-07-26 one by phases 37–46, the 2026-07-27 post-beta one by phases 52–52g,
-and the 2026-08-06 read of the two newest phases by 60a and 61a — so nothing
-here is a known defect. It is the honest remainder, grouped by what it would
-take to close, with each item recorded against the phase that deferred it.
+The canonical backlog. Earlier read-only sweeps are closed — the 2026-07-26 one
+by phases 37–46, the 2026-07-27 post-beta one by phases 52–52g, the 2026-07-30
+one by the fixes of 2026-07-30/31, and the 2026-08-06 read of the two newest
+phases by 60a and 61a. The **2026-08-07 sweep** (the first over phases 56–61a as
+a whole) is the exception: two of its nine findings shipped as Phase 62 and
+**seven are open**, listed in §0 below and detailed in
+[docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md). Everything after §0 is the
+honest remainder, grouped by what it would take to close, with each item
+recorded against the phase that deferred it.
+
+#### 0. Open findings from the 2026-08-07 sweep
+
+None is a bypass — the one bypass and the one release gap are closed by Phase 62
+— but each is a real defect or a documented claim the code does not support.
+
+- **Audit fidelity at the step-up decision point.** `decideStepUp` writes the
+  fail-closed `session.stepup_decided` before it knows the outcome, so a refused
+  self-approval and a decision for a session that is paused nowhere both leave a
+  positive "decided" record — the first attributed to the session's own
+  operator. The pre-audit is right (a released statement must not outlive its
+  evidence); the refusal paths need a compensating event or a two-phase claim.
+- **`session.playback` is best-effort audited** — the one read of KEK-protected
+  material that is, where reveal, checkout, app-secret, viewer connect, WinRM
+  and both proxies' session start all fail closed. Since Phase 59 that path also
+  serves reconstructed SFTP file content, so it can deliver an actual secret.
+- **`sftpCapture.required` is dead state** — assigned from `PAM_REQUIRE_RECORDING`
+  and never read. The behaviour is *stricter* than its three comments describe
+  (a broken artifact refuses in every mode), so this is dead config plus docs
+  describing a knob that does not exist, not a hole.
+- **The per-session SFTP artifact bound stops counting when it matters most.**
+  `bindHandle` inserts into `c.files` before the `sftpCaptureMaxOpen` check and
+  returns without advancing `c.seq`, the counter `trackOpen` bounds on — so past
+  128 open artifacts every further OPEN adds an untracked entry and
+  `openArtifacts()` rescans the map under the lock both SFTP legs need. A real
+  sftp-server self-limits at its descriptor ceiling; a **compromised target** that
+  answers every OPEN with a fresh handle does not.
+- **Audit-vocabulary drift** (§5 of the low-level doc): `breakglass.unseal_failed`
+  and `session.relay_start` are emitted and undocumented, and
+  `proxy.auth_rate_limited` is documented *and* classified by the OCSF exporter
+  while no code path can produce it any more (Phase 52e removed the append).
+- **`docs/SECURITY-GAPS.md` currency** — partly closed by this change, which adds
+  the 2026-08-07 section and removes the paragraph that still described the
+  2026-07-30 findings as open. What stays open is the backlog it never absorbed:
+  phases 56–61a have no entries of their own, including the Phase 59a review that
+  found fifteen defects.
+- **Deployment reference drift** — `deploy/docker/.env.example` is missing all
+  three Phase 57 variables (`PAM_BROKER_TOKEN_EXCHANGE`,
+  `PAM_BROKER_TOKEN_SIGN_SEED`, `PAM_BROKER_EXCHANGE_TTL_MIN`), and §4 of the
+  low-level doc is missing ~34 variables the code reads, including
+  credential-bearing ones; `PAM_SSH_JUMP_USER`/`_KEY` appear in neither that
+  table nor the admin guide.
+
 
 #### 1. Blocking the beta claim — ✅ resolved 2026-07-28
 

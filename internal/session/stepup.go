@@ -134,6 +134,62 @@ func (s *StepUp) Decide(sessionID string, approve bool) bool {
 	return ok
 }
 
+// stepUpClaim reports how a decision resolved against this replica's pending map.
+type stepUpClaim int
+
+const (
+	stepUpClaimNone  stepUpClaim = iota // nothing pending here for that session
+	stepUpClaimOK                       // claimed, and the verdict delivered to Await
+	stepUpClaimSelf                     // refused: the decider is the paused operator
+	stepUpClaimStale                    // a pause IS held here, but not the one named
+)
+
+// PauseID identifies ONE pause of a session, as microseconds since the epoch of
+// the moment it was registered. A session id alone does not identify a pause:
+// `pending` is keyed by session id and a session pauses once per flagged
+// statement, so the same id names a different pause every time. Anything that
+// travels between replicas and later releases a statement has to name the pause,
+// not just the session — see StepUpDecision.Pause.
+//
+// Microseconds rather than nanoseconds because the value round-trips through the
+// shared inventory: PostgreSQL `timestamptz` holds microseconds, so a nanosecond
+// id read back from a row would never equal the one still in the hosting
+// replica's memory. Both sides truncate, so both agree.
+func PauseID(t time.Time) int64 { return t.UnixMicro() }
+
+// claim resolves sessionID's pending step-up, removing it from the map under the
+// lock — the same atomic point Await's timeout path contends for, so exactly one
+// of the two wins.
+//
+// pause, when non-zero, BINDS the decision to one pause: an entry whose
+// PauseID differs is left alone and reported stale. That is what stops a sealed
+// decision captured off the cross-replica bus from releasing the NEXT flagged
+// statement of the same session — the seal is authentic and, inside its
+// freshness window, so is its timestamp, but it was made about a pause that is
+// already resolved. A local decision passes 0: no message crossed a bus, so the
+// entry pending right now IS the one the supervisor is looking at.
+func (s *StepUp) claim(sessionID string, pause int64, approve bool, decider string) stepUpClaim {
+	s.mu.Lock()
+	p, found := s.pending[sessionID]
+	if !found {
+		s.mu.Unlock()
+		return stepUpClaimNone
+	}
+	if pause != 0 && PauseID(p.requested) != pause {
+		s.mu.Unlock()
+		return stepUpClaimStale
+	}
+	if decider != "" && p.actor == decider {
+		s.mu.Unlock()
+		return stepUpClaimSelf // leave it pending for someone else to decide
+	}
+	delete(s.pending, sessionID)
+	s.mu.Unlock()
+	s.deleteRow(sessionID) // the claim is done; drop the shared-inventory mirror
+	p.decided <- approve   // buffered (cap 1); the waiting Await receives it
+	return stepUpClaimOK
+}
+
 // DecideBy resolves a session's pending step-up on behalf of decider. It claims
 // the pending entry by removing it from the map under the lock — the same atomic
 // point Await's timeout path contends for — so exactly one of the two wins.
@@ -148,26 +204,17 @@ func (s *StepUp) Decide(sessionID string, approve bool) bool {
 //
 // The check happens under the same lock as the claim, so a concurrent decision
 // cannot slip a self-approval through between a lookup and a claim.
+//
+// This is the LOCAL decision path — the supervisor is on the replica holding the
+// pause, so whatever is pending now is what they are deciding. A decision that
+// arrives over the cross-replica bus goes through claim() with a pause binding
+// instead, because a message can outlive the pause it was made about.
 func (s *StepUp) DecideBy(sessionID string, approve bool, decider string) (ok, selfApproval bool) {
 	if s == nil {
 		return false, false
 	}
-	s.mu.Lock()
-	p, found := s.pending[sessionID]
-	if found && decider != "" && p.actor == decider {
-		s.mu.Unlock()
-		return false, true // leave it pending for someone else to decide
-	}
-	if found {
-		delete(s.pending, sessionID)
-	}
-	s.mu.Unlock()
-	if !found {
-		return false, false
-	}
-	s.deleteRow(sessionID) // the claim is done; drop the shared-inventory mirror
-	p.decided <- approve   // buffered (cap 1); the waiting Await receives it
-	return true, false
+	c := s.claim(sessionID, 0, approve, decider)
+	return c == stepUpClaimOK, c == stepUpClaimSelf
 }
 
 // Pending lists the sessions awaiting a step-up decision on THIS replica (for a

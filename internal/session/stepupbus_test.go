@@ -221,6 +221,106 @@ func TestStepUpBusRejectsForgeries(t *testing.T) {
 	}
 }
 
+// TestStepUpBusDecisionCannotBeReplayedOntoTheNextPause is the regression test
+// for the replay the pause binding closes. It plays the attacker the seal was
+// written for: something holding a database session, which on PostgreSQL can
+// both READ and WRITE the NOTIFY channel without any privilege at all.
+//
+// The shape that matters is that a session pauses REPEATEDLY — once per flagged
+// statement — while `pending` is keyed by session id. So a sealed decision that
+// named only the session stayed applicable to whatever was pending when it
+// arrived, and its freshness window (±interestSkew) is minutes wide, which for a
+// database session under a step-up policy is several statements. Capturing one
+// genuine approval therefore bought a second, unsupervised release — audited
+// under the name of the supervisor who approved the first.
+//
+// Verified to fail against the pre-fix code, where the replayed decision
+// released the second statement.
+func TestStepUpBusDecisionCannotBeReplayedOntoTheNextPause(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := memstore.New()
+	var audits []string
+	var mu sync.Mutex
+	a := stepUpReplica(t, ctx, st, "rep-a", &audits, &mu)
+	b := stepUpReplica(t, ctx, st, "rep-b", nil, nil)
+
+	// The observer taps the decision channel, exactly as a database session can.
+	tapped, err := st.SubscribeStepUpDecisions(ctx)
+	if err != nil {
+		t.Fatalf("SubscribeStepUpDecisions: %v", err)
+	}
+
+	// First flagged statement: paused on A, approved by a supervisor on B.
+	first := make(chan bool, 1)
+	go func() { first <- a.Await(ctx, "sess-r", "alice", "DELETE FROM ledger WHERE id = 1", 30*time.Second) }()
+	pendingFrom(t, b, 1)
+	if outcome, derr := b.DecideRemote(ctx, "sess-r", true, "boss"); derr != nil || outcome != session.StepUpDispatched {
+		t.Fatalf("DecideRemote(first) = (%v, %v), want StepUpDispatched", outcome, derr)
+	}
+	select {
+	case ok := <-first:
+		if !ok {
+			t.Fatal("the supervisor's genuine approval did not release the first statement")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Await still blocked after the genuine approval")
+	}
+
+	// The observer now holds a VALID, freshly sealed approval for this session.
+	var captured session.StepUpDecision
+	select {
+	case captured = <-tapped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("nothing was published on the decision channel")
+	}
+	if captured.Seal == "" || captured.SessionID != "sess-r" || !captured.Approve {
+		t.Fatalf("captured decision is not the supervisor's approval: %+v", captured)
+	}
+
+	// Second flagged statement, same session — the ordinary case, not a contrived
+	// one: this is what a step-up policy does on every flagged statement.
+	second := make(chan bool, 1)
+	go func() { second <- a.Await(ctx, "sess-r", "alice", "DROP TABLE ledger", 30*time.Second) }()
+	pendingFrom(t, b, 1)
+
+	// Replay the captured approval verbatim, well inside its freshness window.
+	if perr := st.PublishStepUpDecision(ctx, captured); perr != nil {
+		t.Fatalf("PublishStepUpDecision(replay): %v", perr)
+	}
+	select {
+	case ok := <-second:
+		t.Fatalf("a REPLAYED approval released the next flagged statement (approve=%v)", ok)
+	case <-time.After(500 * time.Millisecond):
+	}
+	// It is still pending, so a supervisor can still decide it — a refused replay
+	// must not consume the gate either.
+	if got := pendingFrom(t, b, 1); got[0].SessionID != "sess-r" {
+		t.Fatalf("the replay consumed the pause: %+v", got)
+	}
+	// And no audit claims the supervisor decided a statement they never saw.
+	mu.Lock()
+	joined := strings.Join(audits, "\n")
+	mu.Unlock()
+	if strings.Count(joined, "session.stepup_decided") != 1 {
+		t.Fatalf("the replay was recorded as a decision; audits:\n%s", joined)
+	}
+
+	// The genuine path still works for the second statement: a fresh decision
+	// names the CURRENT pause and releases it.
+	if outcome, derr := b.DecideRemote(ctx, "sess-r", false, "boss"); derr != nil || outcome != session.StepUpDispatched {
+		t.Fatalf("DecideRemote(second) = (%v, %v), want StepUpDispatched", outcome, derr)
+	}
+	select {
+	case ok := <-second:
+		if ok {
+			t.Fatal("the supervisor denied the second statement; it was released anyway")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Await still blocked after the second genuine decision")
+	}
+}
+
 func TestStepUpBusTimeoutCleansSharedRow(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

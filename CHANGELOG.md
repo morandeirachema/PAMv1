@@ -11,6 +11,41 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-08-07
+
+The release that makes the deployable artifact current again. `v0.10.0` was
+tagged on 2026-07-28 and every Kubernetes, Helm and Terraform manifest has
+pinned it since — but the read-only sweep of 2026-07-30 landed **ten fixes over
+the following two days**, so the pinned image did not contain them. Among them:
+a tunnel-scoped viewer token that authenticated at all three session proxies
+(reproduced *opening a session*), the unauthenticated cross-replica live and
+kill buses, three paths to a credential that skipped their siblings' gates, and
+five paths that acted before — or without — recording it. A pin is only as good
+as what it points at, and this one pointed at a build the project itself
+documents as fixed.
+
+Everything from phases 53–62 is in this release. Beyond the fixes above:
+
+- **In-session step-up decisions are bound to the pause they were made about**
+  (Phase 62) — a sealed cross-replica decision named only the session, while a
+  session pauses once per flagged statement, so a decision captured off the
+  NOTIFY channel released the operator's *next* statement for as long as its
+  timestamp stayed fresh. Decisions now name the pause and the applying replica
+  refuses one it has already resolved. **Wire-format change** on the step-up
+  decision bus (see below).
+- **A dependent account names the credential that manages it** (Phases 61/61a),
+  the ITSM ticket gate holds at connect time (60/60a), safe-scoped approval
+  policy (58), RFC 8693 token-exchange minting (57), cross-replica step-up
+  decisions (56), SFTP per-file content recording (59/59a), the SQL Server (TDS)
+  proxy (53), the VNC connector (54) and cross-replica live monitoring (55).
+
+**Upgrade note (HA only).** The step-up decision seal now binds the pause, so a
+replica running 0.11.0 and one running 0.10.0 cannot authenticate each other's
+cross-replica step-up decisions. The failure is closed — a decision is refused,
+never misapplied — and a supervisor can still decide on the replica hosting the
+session. Roll all replicas to finish the upgrade. Nothing else on the bus, in
+the store or in the API changes.
+
 - **Safe-scoped approval policy** (Phase 58) — a safe now carries
   `require_approval` and a dual-control `min_approvers` floor that bind **every
   target in it**, strictest-wins with the global and per-target settings (a safe
@@ -149,5 +184,6 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.11.0
 [0.10.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0

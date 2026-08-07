@@ -37,9 +37,10 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
-runs 0–55 and **every phase has shipped**, then
-**[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** — the first
-tagged, cosign-signed release — went out on 2026-07-28. What that adds up to: **JIT session
+runs 0–62 and **every phase has shipped**, and the current
+tagged, cosign-signed release is
+**[v0.11.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.11.0)** (2026-08-07;
+the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
 brokering** for SSH, PostgreSQL, WinRM and in-portal RDP; **RBAC + custom profiles** with
 AD/Entra/OIDC login and TOTP MFA; **break-glass** with M-of-N quorum unseal; **safes** and
 dependent-account propagation; **Zero Standing Privilege** via ephemeral SSH certificates;
@@ -219,7 +220,7 @@ PAM for AI agents — the same chokepoint, extended to autonomous tools. Opt-in 
 
 - **PostgreSQL storage** via [pgx](https://github.com/jackc/pgx) with embedded, versioned migrations; an in-memory store for tests and demos; optional **[CloudNativePG](https://cloudnative-pg.io/) HA**.
 - **Observability** — a dependency-free [Prometheus](https://prometheus.io/) `/metrics` endpoint (request counts by status, audit volume, break-glass use, rotations, active-sessions gauge), plus a health/readiness split (`/healthz` liveness, `/readyz` checks the database).
-- **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. The release pipeline builds by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance** — see [Verifying a release](#verifying-a-release). *First release: **[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** (2026-07-28) — the signed image is public at `ghcr.io/morandeirachema/pamv1:0.10.0`, so the published-artifact paths below work.*
+- **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. The release pipeline builds by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance** — see [Verifying a release](#verifying-a-release). *Current release: **[v0.11.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.11.0)** (2026-08-07; first was v0.10.0) — the signed image is public at `ghcr.io/morandeirachema/pamv1:0.11.0`, which is what every manifest here pins, so the published-artifact paths below work.*
 - **Encrypted secrets in git** — the Kubernetes secret manifest can be sealed with **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: values are encrypted while `kind`/`metadata` stay reviewable, decrypted at deploy time (`sops -d | kubectl apply -f -`, plaintext never on disk) or natively by Flux / Argo / helm-secrets — so secrets live in the **same IaC repo** without leaking. See **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **Or source secrets from CyberArk Conjur** — as a runtime alternative to SOPS, set `PAM_CONJUR_URL` and pamv1 fetches its own bootstrap secrets (master key, API key, DB URL, …) from **[Conjur](https://www.conjur.org/)** at startup, authenticating with a host API key or a **Kubernetes `authn-jwt`** projected token — so no bootstrap secret lives in Git at all. Both mechanisms ship; SOPS stays the zero-dependency default. See **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
 
@@ -344,7 +345,8 @@ Every phase (0–55) has shipped — full per-phase detail in **[ROADMAP.md](ROA
 | 61 | A dependent account names the credential that manages it (propagation stops logging in as the account it rotates) | ✅ shipped |
 
 Since 52g the work has been **release and consolidation**: v0.10.0 (the first signed,
-attested release — the image every manifest pins is now real and public), tests for the
+attested release) and v0.11.0 (which brings the pinned image back in step with the tree —
+0.10.0 predated the ten fixes from the 2026-07-30 sweep), tests for the
 one package that had none (`cmd/pam-server`, the startup wiring), the broker audit keys
 moved into KEK-sealed shared custody, WinRM sessions joined the live monitor, the RDP
 clipboard became tightenable per target, watch streams now end with their session, and a
@@ -427,13 +429,14 @@ vault + proxy chokepoint, and is **out of scope** by design.
 
 ### Where it stands, and what's next
 
-Every phase through 52g has shipped and both 2026-07 security self-audits are fully
-closed ([docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md)).
+Every phase through 62 has shipped and the 2026-07 and 2026-08 security self-audits
+are closed ([docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md)).
 **[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** — the
-first signed release — met the last of the four beta criteria on 2026-07-28, and the
-post-release wave (startup-wiring tests, broker-key custody, WinRM live streaming,
-per-target clipboard, watch-stream lifecycle, plus a fifteen-finding review of it all)
-has landed too.
+first signed release — met the last of the four beta criteria on 2026-07-28, and
+**[v0.11.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.11.0)**
+(2026-08-07) brings the pinned image back in step with the tree: 0.10.0 was tagged
+two days before the 2026-07-30 sweep's fixes landed, so for a week every manifest
+pinned a build that predated them.
 
 What is left is consolidated in
 **[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)** — in-process feature
@@ -503,7 +506,7 @@ docker compose up --build
 > [CloudNativePG operator](https://cloudnative-pg.io/) is installed first.
 > Install it, or apply the individual manifests you want and bring your own
 > PostgreSQL. (The image the manifests pin,
-> `ghcr.io/morandeirachema/pamv1:0.10.0`, is published and public.)
+> `ghcr.io/morandeirachema/pamv1:0.11.0`, is published and public.)
 
 ```bash
 kubectl apply -f deploy/k8s/namespace.yaml
@@ -575,7 +578,7 @@ Once a release exists, every artifact is verifiable — and these are the comman
 to do it, because a signature nobody can check is decoration.
 
 ```bash
-TAG=v0.10.0                       # the released version
+TAG=v0.11.0                       # the released version
 IMAGE=ghcr.io/morandeirachema/pamv1
 
 # 1. The image was built by this repository's release workflow, not by someone else.
@@ -597,15 +600,18 @@ gh attestation verify "oci://$IMAGE:${TAG#v}" --repo morandeirachema/pamv1
 And to confirm what you are actually running:
 
 ```bash
-kubectl -n pamv1 exec deploy/pamv1 -- /pam-server -version   # → pam-server 0.10.0 (<full commit sha>)
+kubectl -n pamv1 exec deploy/pamv1 -- /pam-server -version   # → pam-server 0.11.0 (<full commit sha>)
 curl -s http://pamv1:8080/metrics | grep pam_build_info      # same, for monitoring
 ```
 
-**Status:** **[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)
-was released on 2026-07-28** — image digest
-`sha256:ab2a5fa5db27fae805f9096dfdf526497ddff4cc3774b33469ab108b98637b39`, with the
-cosign signature, SPDX SBOM attestation and SLSA provenance published alongside it
-in GHCR. The commands above work against it today.
+**Status:** **[v0.11.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.11.0)
+was released on 2026-08-07** and is what every manifest here pins; the first release was
+**[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** on
+2026-07-28 (digest
+`sha256:ab2a5fa5db27fae805f9096dfdf526497ddff4cc3774b33469ab108b98637b39`). Each
+release publishes its cosign signature, SPDX SBOM attestation and SLSA provenance
+alongside the image in GHCR, and each tag's digest is on its release page — the
+commands above work against either.
 
 ## Break-glass procedure
 
