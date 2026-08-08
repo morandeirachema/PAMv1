@@ -2351,6 +2351,35 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 89 — Close the open-findings backlog ✅
+
+Answering "what is next" honestly turned up that `docs/SECURITY-GAPS.md` still
+marked five findings (AO–AS) **Open** that ROADMAP §0 and the Phase 63 entry had
+recorded closed. The self-audit of record asserting fixed defects were open is
+**finding AT recurring** — so the reconciliation is itself the point.
+
+- [x] **Re-verified AP, AQ, AR, AS against current code** — all fixed by Phase 63
+  (playback `mustAudit`; the dead `required` field removed; a real `c.open`
+  counter replacing the whole-map rescan; the vocabulary drift corrected) — and
+  corrected their Status cells to match
+- [x] **AO had a genuine residual, which its own status line had predicted.**
+  Phase 63 moved the *systematic* refusals (self-approval, paused-nowhere) before
+  the fail-closed `session.stepup_decided`, so an ordinary refusal writes no
+  record. But when a decision **is** attempted and the remote dispatch then fails
+  — or a local `DecideBy` loses the microsecond race the advisory `Holder`
+  pre-check cannot close — the decided-record was already written, standing for a
+  four-eyes release that never happened, in a chained trail the retention worker
+  will not prune
+- [x] **Fixed with a compensating event, not by reordering.** Auditing *before*
+  the side effect is correct — a released statement must never outlive the
+  evidence of who released it — so the fix is a best-effort
+  **`session.stepup_decision_voided`** on the three failure branches
+  (dispatch-failed / self-approval-race / already-resolved) that nets the trail
+  out. Test verified to fail against the pre-fix code, using a fake bus that lists
+  the sealed pause but fails the publish
+- [x] The section header's stale "seven are open" corrected; §5 gains the new
+  action
+
 ## Phase 88 — v0.17.0 ✅
 
 Phases 86 (analytics depth) and 87 (its review) unreleased. Phase 87 fixed a way

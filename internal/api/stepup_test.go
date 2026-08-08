@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -241,5 +242,69 @@ func awaitPending(t *testing.T, srv *httptest.Server, sessionID string) []byte {
 			t.Fatalf("step-up for %s never appeared in the listing: %s", sessionID, body)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// failPublishStore is a StepUpStore that mirrors and lists pauses normally but
+// refuses to publish a decision — the store hiccup that leaves DispatchRemote
+// with a decided-record already written and nothing dispatched.
+type failPublishStore struct{ session.StepUpStore }
+
+func (failPublishStore) PublishStepUpDecision(context.Context, session.StepUpDecision) error {
+	return errors.New("bus down")
+}
+
+// TestStepUpDispatchFailureVoidsTheDecidedRecord is the regression for finding
+// AO's residual (Phase 89). The decision audit is written BEFORE the dispatch,
+// on purpose — a released statement must never outlive the evidence of who
+// released it. But a failed dispatch then left a positive "decided" record for a
+// decision that never took effect: a four-eyes release an investigator would read
+// as having happened. The compensating session.stepup_decision_voided nets it
+// out.
+func TestStepUpDispatchFailureVoidsTheDecidedRecord(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := memstore.New()
+	busKey := make([]byte, session.LiveBusKeySize)
+	for i := range busKey {
+		busKey[i] = byte(i + 7)
+	}
+	// A hosts the real pause; B serves the API but its bus cannot publish.
+	suA := session.NewStepUp()
+	if err := suA.StartBus(ctx, st, session.StepUpBusConfig{BusKey: busKey, Replica: "rep-a"}); err != nil {
+		t.Fatalf("StartBus(rep-a): %v", err)
+	}
+	suB := session.NewStepUp()
+	if err := suB.StartBus(ctx, failPublishStore{st}, session.StepUpBusConfig{BusKey: busKey, Replica: "rep-b"}); err != nil {
+		t.Fatalf("StartBus(rep-b): %v", err)
+	}
+	srv, _ := newTestServerStoreOpts(t, nil, st, api.Options{StepUp: suB})
+
+	go func() { _ = suA.Await(ctx, "sess-df", "alice", "DROP TABLE prod", 10*time.Second) }()
+	// Wait for A's sealed pause to be visible cluster-wide.
+	deadline := time.After(5 * time.Second)
+	for {
+		if _, ld := do(t, srv, http.MethodGet, "/api/sessions/stepups", testAPIKey, nil); strings.Contains(string(ld), "sess-df") {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("the remote pause never appeared")
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+
+	boss := seedUser(t, srv, "boss", "approver")
+	// The dispatch fails, so the operator is told it was NOT applied.
+	if code, _ := do(t, srv, http.MethodPost, "/api/sessions/sess-df/stepup", boss, map[string]any{"approve": true}); code != http.StatusServiceUnavailable {
+		t.Fatalf("a failed dispatch must report 503, got %d", code)
+	}
+
+	decided, voided := countAuditActions(t, st, "session.stepup_decided", "session.stepup_decision_voided")
+	if decided != 1 {
+		t.Fatalf("expected the decided-record to be written before the dispatch (got %d)", decided)
+	}
+	if voided != 1 {
+		t.Fatalf("a failed dispatch left %d compensating records; the trail shows a decision that never applied", voided)
 	}
 }

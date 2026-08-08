@@ -11,6 +11,21 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A step-up decision that was recorded but did not take effect left a false
+  "decided" record.** The four-eyes `session.stepup_decided` audit is written
+  before the decision's side effect (a released statement must never outlive the
+  evidence of who released it) — but a failed cross-replica dispatch, or a lost
+  local race, then left that record standing for a release that never happened. A
+  compensating `session.stepup_decision_voided` now nets the trail out.
+
+### Docs
+
+- Reconciled `docs/SECURITY-GAPS.md`: five findings (AO–AS) were marked Open
+  though they had been fixed (four in Phase 63, AO's residual here). The record of
+  what is open now matches reality.
+
 ## [0.17.0] — 2026-08-09
 
 A **minor**: threat analytics learns two history-relative signals and a gentler
