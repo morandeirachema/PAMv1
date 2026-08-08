@@ -259,6 +259,7 @@ erDiagram
     string ScopeSubject
     int RecurDays
     ptr_time_Time NextRunAt
+    string Reviewer
   }
   CampaignItem {
     int64 ID
@@ -272,6 +273,7 @@ erDiagram
     string Decision
     string DecidedBy
     ptr_time_Time DecidedAt
+    string Reviewer
   }
   Checkout {
     int64 ID
@@ -418,7 +420,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 127 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 129 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -444,9 +446,11 @@ The 127 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/ca/ssh/sign` | CapConnect |
 | GET | `/api/campaigns` | CapReadAudit |
 | POST | `/api/campaigns` | CapManageUsers |
+| GET | `/api/campaigns/mine` | CapApprove |
 | GET | `/api/campaigns/{id}` | CapReadAudit |
 | POST | `/api/campaigns/{id}/close` | CapManageUsers |
 | POST | `/api/campaigns/{id}/items/{iid}/decision` | CapApprove |
+| PUT | `/api/campaigns/{id}/items/{itemID}/reviewer` | CapManageUsers |
 | GET | `/api/checkouts` | CapReadAudit |
 | GET | `/api/config` | CapManageUsers |
 | PUT | `/api/config` | CapManageUsers |

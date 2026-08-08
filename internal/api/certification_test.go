@@ -276,3 +276,124 @@ func TestCampaignScope(t *testing.T) {
 		}
 	}
 }
+
+// TestCampaignReviewerAssignment proves an item can have an owner: items inherit
+// the campaign's reviewer, one can be reassigned, and a reviewer's queue is their
+// pending items across open campaigns.
+//
+// It also pins two things that are easy to get wrong. `GET /api/campaigns/mine`
+// sits under the same prefix as `GET /api/campaigns/{id}` and must not be
+// swallowed by it; and reassignment is scoped to the campaign in the path, so one
+// campaign's route cannot touch another's item.
+func TestCampaignReviewerAssignment(t *testing.T) {
+	srv := newTestServer(t)
+
+	tc, td := do(t, srv, http.MethodPost, "/api/targets", testAPIKey, map[string]any{
+		"name": "rev-web", "host": "10.0.0.11", "port": 22, "os_type": "linux", "protocol": "ssh",
+	})
+	if tc != http.StatusCreated {
+		t.Fatalf("create target: %d %s", tc, td)
+	}
+	targetID := int64(jsonMap(t, td)["id"].(float64))
+	for _, sub := range []string{"alice", "bob"} {
+		if code, d := do(t, srv, http.MethodPost, fmt.Sprintf("/api/targets/%d/grants", targetID), testAPIKey,
+			map[string]any{"subject_type": "user", "subject": sub}); code != http.StatusCreated {
+			t.Fatalf("grant %s: %d %s", sub, code, d)
+		}
+	}
+
+	// The campaign names a reviewer; every item it snapshots inherits it.
+	code, cd := do(t, srv, http.MethodPost, "/api/campaigns", testAPIKey,
+		map[string]any{"name": "with reviewer", "reviewer": "carol"})
+	if code != http.StatusCreated {
+		t.Fatalf("create campaign: %d %s", code, cd)
+	}
+	campID := int64(jsonMap(t, cd)["campaign"].(map[string]any)["id"].(float64))
+
+	_, vd := do(t, srv, http.MethodGet, fmt.Sprintf("/api/campaigns/%d", campID), testAPIKey, nil)
+	var view struct {
+		Items []struct {
+			ID       int64  `json:"id"`
+			Reviewer string `json:"reviewer"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(vd, &view); err != nil {
+		t.Fatalf("decode campaign: %v (%s)", err, vd)
+	}
+	if len(view.Items) != 2 {
+		t.Fatalf("want 2 items, got %d", len(view.Items))
+	}
+	for _, it := range view.Items {
+		if it.Reviewer != "carol" {
+			t.Fatalf("item %d inherited reviewer %q, want carol", it.ID, it.Reviewer)
+		}
+	}
+
+	// Carol's queue is both items. `mine` must not be parsed as a campaign id.
+	carol := seedUser(t, srv, "carol", "approver")
+	qc, qd := do(t, srv, http.MethodGet, "/api/campaigns/mine", carol, nil)
+	if qc != http.StatusOK {
+		t.Fatalf("review queue: %d %s — /campaigns/mine must not be swallowed by /campaigns/{id}", qc, qd)
+	}
+	var queue []struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(qd, &queue); err != nil {
+		t.Fatalf("decode queue: %v (%s)", err, qd)
+	}
+	if len(queue) != 2 {
+		t.Fatalf("carol's queue has %d items, want 2", len(queue))
+	}
+
+	// Reassign one to dave; carol's queue shrinks and dave's is that item.
+	first := view.Items[0].ID
+	if code, d := do(t, srv, http.MethodPut, fmt.Sprintf("/api/campaigns/%d/items/%d/reviewer", campID, first),
+		testAPIKey, map[string]any{"reviewer": "dave"}); code != http.StatusOK {
+		t.Fatalf("reassign: %d %s", code, d)
+	}
+	_, qd2 := do(t, srv, http.MethodGet, "/api/campaigns/mine", carol, nil)
+	queue = queue[:0]
+	if err := json.Unmarshal(qd2, &queue); err != nil {
+		t.Fatal(err)
+	}
+	if len(queue) != 1 {
+		t.Fatalf("after reassignment carol has %d items, want 1", len(queue))
+	}
+	dave := seedUser(t, srv, "dave", "approver")
+	_, dq := do(t, srv, http.MethodGet, "/api/campaigns/mine", dave, nil)
+	var daveQ []struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(dq, &daveQ); err != nil {
+		t.Fatal(err)
+	}
+	if len(daveQ) != 1 || daveQ[0].ID != first {
+		t.Fatalf("dave's queue = %+v, want just item %d", daveQ, first)
+	}
+
+	// Reassignment is scoped to the campaign in the path: another campaign's
+	// route must not reach this item.
+	_, od := do(t, srv, http.MethodPost, "/api/campaigns", testAPIKey, map[string]any{"name": "other"})
+	otherID := int64(jsonMap(t, od)["campaign"].(map[string]any)["id"].(float64))
+	if code, _ := do(t, srv, http.MethodPut, fmt.Sprintf("/api/campaigns/%d/items/%d/reviewer", otherID, first),
+		testAPIKey, map[string]any{"reviewer": "mallory"}); code != http.StatusNotFound {
+		t.Fatalf("cross-campaign reassignment: want 404, got %d", code)
+	}
+
+	// Deciding an item takes it out of the queue — a queue that still shows
+	// decided work is not a queue. Decided AS DAVE: the bootstrap admin created
+	// these grants, and Phase 46's four-eyes rule refuses the grantor, which is
+	// exactly the separation the assignment is meant to operate inside.
+	if code, d := do(t, srv, http.MethodPost, fmt.Sprintf("/api/campaigns/%d/items/%d/decision", campID, first),
+		dave, map[string]any{"decision": "certify"}); code != http.StatusNoContent && code != http.StatusOK {
+		t.Fatalf("decide: %d %s", code, d)
+	}
+	_, dq2 := do(t, srv, http.MethodGet, "/api/campaigns/mine", dave, nil)
+	daveQ = daveQ[:0]
+	if err := json.Unmarshal(dq2, &daveQ); err != nil {
+		t.Fatal(err)
+	}
+	if len(daveQ) != 0 {
+		t.Fatalf("a decided item stayed in the queue: %+v", daveQ)
+	}
+}

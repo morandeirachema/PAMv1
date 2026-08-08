@@ -2191,6 +2191,49 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 69 — An item has an owner ✅
+
+Closes the assignment half of the Phase 19 deferral. A campaign's items were a
+flat list with no owner, so nothing sat with anybody in particular — and work
+that is everyone's is nobody's.
+
+- [x] **A campaign names a default reviewer**, stamped onto every item it
+  snapshots; **one item can be reassigned** (`PUT …/items/{itemID}/reviewer`,
+  `manage_users`, scoped to the campaign in the path like every other child
+  resource), and an empty value unassigns
+- [x] **A reviewer has a queue**: `GET /api/campaigns/mine` (`CapApprove`) —
+  **pending** items in **open** campaigns only, because a decided item is
+  finished work and a closed campaign's leftovers are not a queue. Registered as
+  a literal so `/api/campaigns/{id}` cannot swallow it, which the test pins
+- [x] **Assignment is ADVISORY, and that is deliberate.** It routes work and
+  makes a queue visible; it is not an authorization gate. Anyone holding
+  `approve` can still decide any item, and `DecidedBy` records who actually did —
+  so accountability comes from the trail. Binding it would add a deadlock (the
+  assigned reviewer leaves and the campaign cannot be closed) without adding
+  evidence, since any approver could reassign the item anyway. Said in the code,
+  the API docs and on the assign screen, so nobody reads the field as a control
+  it is not
+- [x] **A pre-existing console bug, found while building the screen**: the items
+  screen gated deciding on `manage_users`, while the API has gated it on
+  `approve` since **Phase 39**. So the dedicated `approver` role — the entire
+  point of that split — saw the review screen as read-only, while the API would
+  have accepted its decisions. Now `approve`, with assignment staying
+  `manage_users`
+- [x] **Console**: reviewer column and `7=Assign reviewer` on the items screen, a
+  `PAMCMPASG` assign screen, and `PAMMYQUE` (F7 from menu 17) for the queue. Both
+  new screens rendered with live data at the terminal's real width and inspected
+- [x] **Tests**: store contract on both implementations (round-trip, queue
+  predicate, reassignment moves an item between queues, `ErrNotFound`, and that
+  deciding *or* closing the campaign takes an item out of the queue); and an API
+  test covering inheritance, the queue, reassignment, cross-campaign scoping, and
+  that `/campaigns/mine` is not parsed as an id
+
+**Migration `0030`**, additive with an empty default. **New audit action**
+`certification.item_assigned`.
+
+**The Phase 19 deferral is now down to one item**: reminders — nudging a reviewer
+before the due date. With assignment in place there is finally somebody to nudge.
+
 ## Phase 68a — v0.13.0 ✅
 
 Minor, and the first release since 0.10.0 to carry a **migration**, so the
@@ -2605,9 +2648,9 @@ Buildable without external infrastructure, each deferred by the phase named.
   propagation no longer logs in as the account it is rotating — and, since
   Phase 61a, naming one takes the same authorization as revealing it.
 - **Campaign depth** (19) — ~~scheduled/recurring campaigns, safe- or
-  owner-scoped campaigns~~ ✅ closed 2026-08-07 (Phase 68). **Reviewer assignment
-  and reminders remain**: items routed to a named reviewer, and a nudge before
-  the due date.
+  owner-scoped campaigns~~ ✅ Phase 68; ~~reviewer assignment~~ ✅ Phase 69.
+  **Reminders remain**: nudging a reviewer before the due date. With assignment
+  in place there is finally somebody to nudge.
 - **Ticket gate depth** (20) — a first-class ServiceNow/Jira connector remains
   (the generic webhook ships). ~~Gating the *connect* path on a live ticket
   lookup rather than validating at request time~~ — ✅ closed 2026-08-02

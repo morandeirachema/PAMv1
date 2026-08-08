@@ -834,6 +834,11 @@ func (s *Server) routes() {
 	// CapManageUsers.
 	s.mux.Handle("POST /api/campaigns/{id}/items/{iid}/decision", s.authz(auth.CapApprove, s.decideCampaignItem))
 	s.mux.Handle("POST /api/campaigns/{id}/close", s.authz(auth.CapManageUsers, s.closeCampaign))
+	// Assignment is administration (who reviews what), so manage_users — the same
+	// gate as creating the campaign. Deciding stays approve.
+	s.mux.Handle("PUT /api/campaigns/{id}/items/{itemID}/reviewer", s.authz(auth.CapManageUsers, s.assignCampaignItem))
+	// A reviewer's own queue across every open campaign.
+	s.mux.Handle("GET /api/campaigns/mine", s.authz(auth.CapApprove, s.myReviewQueue))
 
 	// Custom permission profiles (Phase 12): named capability sets for users.
 	s.mux.Handle("POST /api/profiles", s.authz(auth.CapManageUsers, s.createProfile))
