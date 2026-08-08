@@ -227,6 +227,18 @@ type Config struct {
 	RevalidateTicket  bool
 	TicketPattern     string
 	TicketValidateURL string
+	// TicketProvider selects the ITSM connector: "webhook" (the default when a
+	// URL is set), "servicenow" or "jira". The first-class connectors check the
+	// ticket's STATE, its change WINDOW and whether it names the operator —
+	// none of which a 2xx webhook can express (Phase 84).
+	TicketProvider      string
+	TicketURL           string
+	TicketUser          string
+	TicketToken         string
+	TicketStates        []string
+	TicketActorFields   []string
+	TicketRequireWindow bool
+	TicketBindActor     bool
 	// Approval workflow (Phase 21). ApprovalsRequired is the default number of
 	// distinct approvers an access request needs (multi-tier chains); a request
 	// may ask for more. RequireReason rejects an access request with no reason.
@@ -401,6 +413,17 @@ type Config struct {
 // Load reads configuration from the PAM_* environment variables, applying
 // defaults, and returns an error if a required variable (API key, database URL,
 // or the master key when the local KEK provider is used) is missing.
+// commaList splits a comma-separated setting into trimmed, non-empty entries.
+func commaList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // weakAPIKeyAllowed reports the PAM_ALLOW_WEAK_API_KEY escape hatch. Read here
 // rather than through Load's `boolean` closure so the rule is usable from the
 // refresh path too.
@@ -536,18 +559,29 @@ func Load() (*Config, error) {
 		RevalidateTicket:        boolean("PAM_TICKET_REVALIDATE", false),
 		TicketPattern:           os.Getenv("PAM_TICKET_PATTERN"),
 		TicketValidateURL:       os.Getenv("PAM_TICKET_VALIDATE_URL"),
-		ApprovalsRequired:       integer("PAM_APPROVALS_REQUIRED", 1),
-		RequireReason:           boolean("PAM_REQUIRE_REASON", false),
-		OneTimeAccess:           boolean("PAM_ACCESS_ONE_TIME", false),
-		VendorAttestURL:         getenv("PAM_VENDOR_ATTEST_URL", ""),
-		VendorSweepInterval:     time.Duration(integer("PAM_VENDOR_SWEEP_INTERVAL_MIN", 0)) * time.Minute,
-		AirGap:                  boolean("PAM_OT_AIRGAP", false),
-		CheckoutTTL:             time.Duration(integer("PAM_CHECKOUT_TTL_MIN", 30)) * time.Minute,
-		AllowedProtocols:        os.Getenv("PAM_ALLOWED_PROTOCOLS"),
-		CommandDenyFile:         os.Getenv("PAM_COMMAND_DENY_FILE"),
-		SSHSFTPDenyFile:         os.Getenv("PAM_SSH_SFTP_DENY_FILE"),
-		DBStepUpFile:            os.Getenv("PAM_DB_STEPUP_FILE"),
-		DBStepUpTTL:             time.Duration(integer("PAM_DB_STEPUP_TTL_SEC", 120)) * time.Second,
+		TicketProvider:          strings.ToLower(strings.TrimSpace(os.Getenv("PAM_TICKET_PROVIDER"))),
+		TicketURL:               os.Getenv("PAM_TICKET_URL"),
+		TicketUser:              os.Getenv("PAM_TICKET_USER"),
+		TicketToken:             os.Getenv("PAM_TICKET_TOKEN"),
+		TicketStates:            commaList(os.Getenv("PAM_TICKET_STATES")),
+		TicketActorFields:       commaList(os.Getenv("PAM_TICKET_ACTOR_FIELDS")),
+		TicketRequireWindow:     boolean("PAM_TICKET_REQUIRE_WINDOW", true),
+		// Binding the ticket to the person is the point of a first-class
+		// connector, so it is ON by default. Off, a ticket number works as a
+		// shared password.
+		TicketBindActor:     boolean("PAM_TICKET_BIND_ACTOR", true),
+		ApprovalsRequired:   integer("PAM_APPROVALS_REQUIRED", 1),
+		RequireReason:       boolean("PAM_REQUIRE_REASON", false),
+		OneTimeAccess:       boolean("PAM_ACCESS_ONE_TIME", false),
+		VendorAttestURL:     getenv("PAM_VENDOR_ATTEST_URL", ""),
+		VendorSweepInterval: time.Duration(integer("PAM_VENDOR_SWEEP_INTERVAL_MIN", 0)) * time.Minute,
+		AirGap:              boolean("PAM_OT_AIRGAP", false),
+		CheckoutTTL:         time.Duration(integer("PAM_CHECKOUT_TTL_MIN", 30)) * time.Minute,
+		AllowedProtocols:    os.Getenv("PAM_ALLOWED_PROTOCOLS"),
+		CommandDenyFile:     os.Getenv("PAM_COMMAND_DENY_FILE"),
+		SSHSFTPDenyFile:     os.Getenv("PAM_SSH_SFTP_DENY_FILE"),
+		DBStepUpFile:        os.Getenv("PAM_DB_STEPUP_FILE"),
+		DBStepUpTTL:         time.Duration(integer("PAM_DB_STEPUP_TTL_SEC", 120)) * time.Second,
 
 		AnalyticsInterval:      time.Duration(integer("PAM_ANALYTICS_INTERVAL_MIN", 0)) * time.Minute,
 		AnalyticsWindow:        time.Duration(integer("PAM_ANALYTICS_WINDOW_MIN", 60)) * time.Minute,

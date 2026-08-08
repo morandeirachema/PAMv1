@@ -1,35 +1,40 @@
 // Package ticket validates an ITSM change/incident ticket reference before
 // privileged access is granted (Phase 20) — the "no access without an approved
-// change ticket" control. Validation is two optional, composable checks: a
-// regular-expression format (e.g. a ServiceNow/Jira number) and a webhook that
-// the ITSM system answers 2xx for a valid ticket. A nil Validator accepts any
-// ticket (validation disabled), so callers can hold one unconditionally.
+// change ticket" control.
+//
+// Validation composes two optional checks: a regular-expression format (a
+// ServiceNow/Jira number shape) and a live lookup through a Provider. A nil
+// Validator accepts any ticket (validation disabled), so callers can hold one
+// unconditionally.
+//
+// Phase 84 added the Provider layer and, with it, the thing the control was
+// missing: the ticket is now checked against the PERSON using it. A generic
+// webhook could only answer "does this ticket exist", so a valid change number
+// admitted anyone who knew one — the gate proved a ticket was valid, never that
+// it was yours.
 package ticket
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"regexp"
 	"time"
 )
 
-// Validator checks a ticket reference against a format pattern and/or a webhook.
+// Validator checks a ticket reference against a format pattern and/or a live
+// ITSM lookup.
 type Validator struct {
-	pattern *regexp.Regexp
-	webhook string
-	http    *http.Client
+	pattern  *regexp.Regexp
+	provider Provider
 }
 
-// New builds a Validator from an optional regex pattern and an optional webhook
-// URL. When neither is set it returns (nil, nil) — validation is disabled.
-func New(pattern, webhookURL string) (*Validator, error) {
-	if pattern == "" && webhookURL == "" {
+// New builds a Validator from an optional regex pattern and an optional
+// provider. When neither is set it returns (nil, nil) — validation is disabled.
+func New(pattern string, provider Provider) (*Validator, error) {
+	if pattern == "" && provider == nil {
 		return nil, nil
 	}
-	v := &Validator{webhook: webhookURL, http: &http.Client{Timeout: 8 * time.Second}}
+	v := &Validator{provider: provider}
 	if pattern != "" {
 		re, err := regexp.Compile(pattern)
 		if err != nil {
@@ -43,32 +48,30 @@ func New(pattern, webhookURL string) (*Validator, error) {
 // Enabled reports whether any validation is configured.
 func (v *Validator) Enabled() bool { return v != nil }
 
-// Validate returns nil if ticket is acceptable, else an error describing why. A
-// nil Validator accepts any ticket. The webhook receives {"ticket": "<id>"} and
-// a 2xx response means valid.
-func (v *Validator) Validate(ctx context.Context, ticket string) error {
+// Provider reports the configured provider's name, or "" when only a format
+// check is configured. Used for audit details and the startup log.
+func (v *Validator) Provider() string {
+	if v == nil || v.provider == nil {
+		return ""
+	}
+	return v.provider.Name()
+}
+
+// Validate returns nil if ticket authorises actor, else an error describing why.
+// A nil Validator accepts any ticket.
+//
+// The actor is passed even when a provider ignores it, so that turning on a
+// first-class connector later is a configuration change and not a code change —
+// the value is already threaded through every call site.
+func (v *Validator) Validate(ctx context.Context, ticket, actor string) error {
 	if v == nil {
 		return nil
 	}
 	if v.pattern != nil && !v.pattern.MatchString(ticket) {
 		return fmt.Errorf("ticket %q does not match the required format", ticket)
 	}
-	if v.webhook == "" {
+	if v.provider == nil {
 		return nil
 	}
-	body, _ := json.Marshal(map[string]string{"ticket": ticket})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.webhook, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := v.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("ticket validation request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("ticket %q was rejected by the ITSM system (status %d)", ticket, resp.StatusCode)
-	}
-	return nil
+	return v.provider.Check(ctx, ticket, actor, time.Now().UTC())
 }

@@ -45,7 +45,7 @@ func TestTicketGate(t *testing.T) {
 	}))
 	t.Cleanup(itsm.Close)
 
-	tv, err := ticket.New(`^CHG[0-9]{3,}$`, itsm.URL)
+	tv, err := ticket.New(`^CHG[0-9]{3,}$`, ticket.NewWebhook(itsm.URL, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

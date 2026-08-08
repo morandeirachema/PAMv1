@@ -40,7 +40,10 @@ type ApprovalClaimStore interface {
 // it; store deliberately depends on this one-method view rather than importing
 // the package, the same way `recording` takes a two-method view of the vault.
 type TicketChecker interface {
-	Validate(ctx context.Context, ticket string) error
+	// The actor is passed so a connector can require that the ticket names the
+	// person using it. Without that, a valid change number is a shared password:
+	// the gate proves the ticket is real, not that it is yours (Phase 84).
+	Validate(ctx context.Context, ticket, actor string) error
 }
 
 // ticketRecheckTimeout bounds the ITSM calls made on the connect path. The
@@ -131,7 +134,9 @@ func ClaimApproval(ctx context.Context, st ApprovalClaimStore, tc TicketChecker,
 		// An approval with no ticket was never gated by one, so there is nothing
 		// to re-check; it admits as it always did.
 		if ar.Ticket != "" {
-			if err := tc.Validate(rctx, ar.Ticket); err != nil {
+			// The person CONNECTING, not the approval's recorded requester: this
+			// gate asks whether the ticket authorises the access being used now.
+			if err := tc.Validate(rctx, ar.Ticket, requester); err != nil {
 				lastTicket, lastErr = ar.Ticket, err
 				continue
 			}

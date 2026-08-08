@@ -71,7 +71,7 @@ func approvedTicketedRequest(t *testing.T, srv *httptest.Server, targetID int64,
 // having changed.
 func TestTicketRevalidatedAtUseTime(t *testing.T) {
 	itsm := newFlippableITSM(t)
-	tv, err := ticket.New(`^CHG[0-9]{3,}$`, itsm.URL)
+	tv, err := ticket.New(`^CHG[0-9]{3,}$`, ticket.NewWebhook(itsm.URL, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestTicketRevalidatedAtUseTime(t *testing.T) {
 // already granted.
 func TestTicketRevalidationDoesNotBurnOneTimeApproval(t *testing.T) {
 	itsm := newFlippableITSM(t)
-	tv, err := ticket.New(`^CHG[0-9]{3,}$`, itsm.URL)
+	tv, err := ticket.New(`^CHG[0-9]{3,}$`, ticket.NewWebhook(itsm.URL, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestTicketRevalidationDoesNotBurnOneTimeApproval(t *testing.T) {
 // accident rather than by decision.
 func TestTicketRevalidationOffIsUnchanged(t *testing.T) {
 	itsm := newFlippableITSM(t)
-	tv, err := ticket.New(`^CHG[0-9]{3,}$`, itsm.URL)
+	tv, err := ticket.New(`^CHG[0-9]{3,}$`, ticket.NewWebhook(itsm.URL, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestTicketRevalidationOffIsUnchanged(t *testing.T) {
 func TestTicketRevalidationIgnoresRequestsWithoutTickets(t *testing.T) {
 	itsm := newFlippableITSM(t)
 	itsm.valid.Store(false) // the ITSM rejects everything it is asked about
-	tv, err := ticket.New("", itsm.URL)
+	tv, err := ticket.New("", ticket.NewWebhook(itsm.URL, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
