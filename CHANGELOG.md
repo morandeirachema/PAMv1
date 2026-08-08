@@ -11,6 +11,18 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.14.2] — 2026-08-08
+
+The 2026-08-08 sweep over phases 66–75. A **patch**: no schema change, no new
+environment variable, no route or audit-vocabulary change. Three audit records
+now quote the values inside them, which the console's parser already handled at
+both granularities, so nothing downstream needs changing.
+
+**One upgrade note.** `PAM_CERT_REMIND_DAYS` is now range-checked. If it is set
+outside `0`–`366` the server refuses to start instead of reminding on every
+campaign at once — deliberate, and the only way this release can change a running
+deployment's behaviour.
+
 ### Security
 
 - **The delegation record in `broker.token.exchanged` could name the wrong
@@ -522,7 +534,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.14.1...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.14.2...HEAD
+[0.14.2]: https://github.com/morandeirachema/pamv1/releases/tag/v0.14.2
 [0.14.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.14.1
 [0.14.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.14.0
 [0.13.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.13.0

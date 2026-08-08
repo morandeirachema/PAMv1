@@ -2351,6 +2351,26 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 76a — v0.14.2 ✅
+
+Phase 76 fixed three audit-integrity defects, and `v0.14.1` predated all of them
+— so every pin in `deploy/` resolved to an image without them. That is the exact
+shape of finding AN, which is why the rule is *check whether the pinned tag
+predates the fix* after any security change, not *after any feature*.
+
+- [x] **v0.14.2** through the test-gated pipeline, rehearsed on `main` first
+- [x] All four pins moved together — `deploy/k8s/deployment.yaml`,
+  `deploy/k8s/conjur/deployment.yaml`, `deploy/terraform/variables.tf`, and the
+  Helm chart's **`version` (0.5.1 → 0.5.2) as well as its `appVersion`**
+- [x] Both READMEs restated. This also fixed a **label/URL mismatch that had been
+  live since v0.11.2**: `README.es.md` still announced *"Release vigente:
+  v0.11.2 (2026-08-07)"* while the image reference beside it read `0.14.1`. The
+  Spanish README's prose version had simply stopped being moved with the pins —
+  which is the same failure the pin-currency rule exists to catch, one file over
+- [x] `CHANGELOG.md` `[Unreleased]` promoted with the one upgrade note that
+  matters: `PAM_CERT_REMIND_DAYS` outside `0`–`366` now stops the server at
+  startup
+
 ## Phase 76 — One sanitiser, and the three places that needed it ✅
 
 The sweep over phases 66–75. Ten phases, never read as a whole, and the newest
