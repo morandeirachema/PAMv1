@@ -11,6 +11,14 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **What of `internal/api` actually wanted to move** (Phase 75) — clipboard
+  observation moved to `internal/guacd`, where the protocol it parses already
+  lives (it had zero coupling to the HTTP server), and `serveAndShutDown` split
+  out of `run()`, whose three copy-pasted proxy-drain blocks became a slice. The
+  rest was measured and left alone: `scheduler.go` touches sixteen `Server`
+  members including handler methods, so extracting it would rebuild the
+  god-object under a new name.
+
 - **Policy parity between the database proxies** (Phase 74) — the PostgreSQL and
   SQL Server proxies are deliberately line-for-line siblings so that anything
   differing between them is the transport and never the policy, which means every

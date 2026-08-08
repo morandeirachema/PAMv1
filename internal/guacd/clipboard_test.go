@@ -1,4 +1,4 @@
-package api
+package guacd
 
 import (
 	"crypto/sha256"
@@ -6,25 +6,23 @@ import (
 	"encoding/hex"
 	"strings"
 	"testing"
-
-	"github.com/morandeirachema/pamv1/internal/guacd"
 )
 
 // clipFrames renders one complete Guacamole clipboard transfer (open, one or
 // more blobs, end) as the wire frames the tunnel carries.
 func clipFrames(stream, mimetype string, chunks ...string) [][]byte {
-	out := [][]byte{[]byte(guacd.Instruction{Opcode: "clipboard", Args: []string{stream, mimetype}}.Encode())}
+	out := [][]byte{[]byte(Instruction{Opcode: "clipboard", Args: []string{stream, mimetype}}.Encode())}
 	for _, c := range chunks {
-		out = append(out, []byte(guacd.Instruction{
+		out = append(out, []byte(Instruction{
 			Opcode: "blob", Args: []string{stream, base64.StdEncoding.EncodeToString([]byte(c))},
 		}.Encode()))
 	}
-	return append(out, []byte(guacd.Instruction{Opcode: "end", Args: []string{stream}}.Encode()))
+	return append(out, []byte(Instruction{Opcode: "end", Args: []string{stream}}.Encode()))
 }
 
 // observeAll feeds frames to the watcher and collects completed transfers.
-func observeAll(w *clipWatcher, direction string, frames [][]byte) []clipTransfer {
-	var got []clipTransfer
+func observeAll(w *ClipWatcher, direction string, frames [][]byte) []ClipTransfer {
+	var got []ClipTransfer
 	for _, f := range frames {
 		got = append(got, w.Observe(direction, f)...)
 	}
@@ -36,7 +34,7 @@ func observeAll(w *clipWatcher, direction string, frames [][]byte) []clipTransfe
 // and digest — but the CONTENT is not recorded, because a privileged desktop's
 // clipboard routinely carries a password the operator just copied.
 func TestClipWatcherMetaMode(t *testing.T) {
-	w := newClipWatcher("meta")
+	w := NewClipWatcher("meta")
 	if w == nil {
 		t.Fatal("meta mode must produce a watcher")
 	}
@@ -61,7 +59,7 @@ func TestClipWatcherMetaMode(t *testing.T) {
 // TestClipWatcherFullMode proves the opt-in records content, flattened so one
 // transfer stays one audit line and cannot forge a second.
 func TestClipWatcherFullMode(t *testing.T) {
-	w := newClipWatcher("full")
+	w := NewClipWatcher("full")
 	got := observeAll(w, "in", clipFrames("2", "text/plain", "line one\nrdp.clipboard forged"))
 	if len(got) != 1 {
 		t.Fatalf("want 1 transfer, got %d", len(got))
@@ -83,12 +81,12 @@ func TestClipWatcherFullMode(t *testing.T) {
 // clipboard content into the trail.
 func TestClipWatcherOffIsNil(t *testing.T) {
 	for _, mode := range []string{"", "off", "nonsense", "FULLY"} {
-		if w := newClipWatcher(mode); w != nil {
+		if w := NewClipWatcher(mode); w != nil {
 			t.Fatalf("mode %q produced a watcher; want nil (auditing is opt-in)", mode)
 		}
 	}
 	// A nil watcher observes nothing and does not panic on the hot path.
-	var nilW *clipWatcher
+	var nilW *ClipWatcher
 	if tr := nilW.Observe("out", []byte("9.clipboard,1.1,10.text/plain;")); tr != nil {
 		t.Fatal("nil watcher reported a transfer")
 	}
@@ -98,11 +96,11 @@ func TestClipWatcherOffIsNil(t *testing.T) {
 // transfers: an image/file stream's blob+end (the bulk of an RDP session) must
 // not be mistaken for one.
 func TestClipWatcherIgnoresOtherStreams(t *testing.T) {
-	w := newClipWatcher("meta")
+	w := NewClipWatcher("meta")
 	frames := [][]byte{
-		[]byte(guacd.Instruction{Opcode: "img", Args: []string{"7", "12", "0", "image/png", "0", "0"}}.Encode()),
-		[]byte(guacd.Instruction{Opcode: "blob", Args: []string{"7", base64.StdEncoding.EncodeToString([]byte("PNGDATA"))}}.Encode()),
-		[]byte(guacd.Instruction{Opcode: "end", Args: []string{"7"}}.Encode()),
+		[]byte(Instruction{Opcode: "img", Args: []string{"7", "12", "0", "image/png", "0", "0"}}.Encode()),
+		[]byte(Instruction{Opcode: "blob", Args: []string{"7", base64.StdEncoding.EncodeToString([]byte("PNGDATA"))}}.Encode()),
+		[]byte(Instruction{Opcode: "end", Args: []string{"7"}}.Encode()),
 	}
 	if got := observeAll(w, "out", frames); len(got) != 0 {
 		t.Fatalf("non-clipboard stream reported as a clipboard transfer: %+v", got)
@@ -113,7 +111,7 @@ func TestClipWatcherIgnoresOtherStreams(t *testing.T) {
 // happen to share a stream index are tracked separately — the two directions
 // are distinct Guacamole streams and must not merge.
 func TestClipWatcherDirectionsAreIndependent(t *testing.T) {
-	w := newClipWatcher("meta")
+	w := NewClipWatcher("meta")
 	out := observeAll(w, "out", clipFrames("1", "text/plain", "from-target"))
 	in := observeAll(w, "in", clipFrames("1", "text/plain", "to-target-longer"))
 	if len(out) != 1 || len(in) != 1 {
@@ -129,7 +127,7 @@ func TestClipWatcherDirectionsAreIndependent(t *testing.T) {
 // real one does — many modest blob chunks, not one enormous element — since
 // guacd chunks a stream and the decoder caps any single element at 1 MiB.
 func TestClipWatcherTruncatesHugeTransfer(t *testing.T) {
-	w := newClipWatcher("meta")
+	w := NewClipWatcher("meta")
 	const chunk = 4096
 	chunks := make([]string, clipStreamMax/chunk+2)
 	for i := range chunks {
@@ -151,8 +149,8 @@ func TestClipWatcherTruncatesHugeTransfer(t *testing.T) {
 // including values that contain the protocol's own delimiters — the reason the
 // length prefixes, not the separators, are authoritative.
 func TestGuacdDecodeRoundTrip(t *testing.T) {
-	want := guacd.Instruction{Opcode: "clipboard", Args: []string{"1", "text/plain;charset=utf-8", "a,b;c"}}
-	got, ok := guacd.Decode([]byte(want.Encode()))
+	want := Instruction{Opcode: "clipboard", Args: []string{"1", "text/plain;charset=utf-8", "a,b;c"}}
+	got, ok := Decode([]byte(want.Encode()))
 	if !ok {
 		t.Fatal("Decode rejected its own Encode output")
 	}
@@ -167,7 +165,7 @@ func TestGuacdDecodeRoundTrip(t *testing.T) {
 	// Malformed input is reported, never panics — the observer must forward
 	// frames it cannot read rather than choke on them.
 	for _, bad := range []string{"", "nonsense", "5.abc", "99999999999999.x;"} {
-		if _, ok := guacd.Decode([]byte(bad)); ok {
+		if _, ok := Decode([]byte(bad)); ok {
 			t.Fatalf("Decode accepted malformed input %q", bad)
 		}
 	}
@@ -185,11 +183,11 @@ func TestGuacdDecodeRoundTrip(t *testing.T) {
 // with nothing in the audit trail, which is precisely what Phase 50 exists to
 // prevent.
 func TestClipWatcherSeesBatchedInstructions(t *testing.T) {
-	w := newClipWatcher("meta")
+	w := NewClipWatcher("meta")
 
 	// Everything in one frame, led by a decoy instruction.
 	var batch []byte
-	batch = append(batch, []byte(guacd.Instruction{Opcode: "nop"}.Encode())...)
+	batch = append(batch, []byte(Instruction{Opcode: "nop"}.Encode())...)
 	for _, f := range clipFrames("7", "text/plain", "exfiltrated-secret") {
 		batch = append(batch, f...)
 	}
@@ -218,7 +216,7 @@ func TestClipWatcherSeesBatchedInstructions(t *testing.T) {
 // made the watcher decode every instruction still reported a single transfer,
 // so the hole was narrower but not shut.
 func TestClipWatcherReportsEveryTransferInAFrame(t *testing.T) {
-	w := newClipWatcher("meta")
+	w := NewClipWatcher("meta")
 
 	var batch []byte
 	for _, f := range clipFrames("1", "text/plain", "first-secret") {
@@ -244,17 +242,17 @@ func TestClipWatcherReportsEveryTransferInAFrame(t *testing.T) {
 // The observer must degrade to "saw what I could parse", never to a hang on the
 // data path of a live desktop.
 func TestGuacdDecodeAllStopsCleanly(t *testing.T) {
-	two := guacd.Instruction{Opcode: "nop"}.Encode() +
-		guacd.Instruction{Opcode: "clipboard", Args: []string{"1", "text/plain"}}.Encode()
-	if got := guacd.DecodeAll([]byte(two)); len(got) != 2 || got[1].Opcode != "clipboard" {
+	two := Instruction{Opcode: "nop"}.Encode() +
+		Instruction{Opcode: "clipboard", Args: []string{"1", "text/plain"}}.Encode()
+	if got := DecodeAll([]byte(two)); len(got) != 2 || got[1].Opcode != "clipboard" {
 		t.Fatalf("DecodeAll(two instructions) = %+v, want both", got)
 	}
 	// Trailing garbage: keep the clean prefix, discard the rest.
-	if got := guacd.DecodeAll([]byte(two + "not-an-instruction")); len(got) != 2 {
+	if got := DecodeAll([]byte(two + "not-an-instruction")); len(got) != 2 {
 		t.Fatalf("DecodeAll with trailing garbage returned %d instructions, want the 2 clean ones", len(got))
 	}
 	for _, bad := range []string{"", "nonsense", "5.abc", "99999999999999.x;"} {
-		if got := guacd.DecodeAll([]byte(bad)); len(got) != 0 {
+		if got := DecodeAll([]byte(bad)); len(got) != 0 {
 			t.Fatalf("DecodeAll(%q) = %+v, want none", bad, got)
 		}
 	}

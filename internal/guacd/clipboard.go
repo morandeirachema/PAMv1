@@ -1,4 +1,4 @@
-package api
+package guacd
 
 // clipboard.go audits the RDP clipboard (Phase 50). Phase 33 could already
 // GATE the clipboard bridge (`PAM_RDP_CLIPBOARD`: both directions, paste-in
@@ -24,15 +24,13 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-
-	"github.com/morandeirachema/pamv1/internal/guacd"
 )
 
 // Clipboard-audit modes for PAM_RDP_CLIPBOARD_AUDIT.
 const (
-	clipAuditOff  = "off"  // no clipboard auditing (Phase 33 behavior)
-	clipAuditMeta = "meta" // direction, mimetype, byte count, SHA-256 (default when on)
-	clipAuditFull = "full" // also the content, truncated — see the warning above
+	ClipAuditOff  = "off"  // no clipboard auditing (Phase 33 behavior)
+	ClipAuditMeta = "meta" // direction, mimetype, byte count, SHA-256 (default when on)
+	ClipAuditFull = "full" // also the content, truncated — see the warning above
 )
 
 // clipAuditPreviewMax bounds how much content a "full" audit records, so one
@@ -44,17 +42,17 @@ const clipAuditPreviewMax = 4096
 // Past the cap the transfer is still audited, flagged truncated.
 const clipStreamMax = 1 << 20 // 1 MiB
 
-// normalizeClipAudit maps a configured clipboard-audit mode to a known value,
+// NormalizeClipAudit maps a configured clipboard-audit mode to a known value,
 // defaulting anything unrecognized (including empty) to off — auditing content
 // is opt-in and a typo must not silently enable it.
-func normalizeClipAudit(mode string) string {
+func NormalizeClipAudit(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case clipAuditMeta, "on", "true":
-		return clipAuditMeta
-	case clipAuditFull:
-		return clipAuditFull
+	case ClipAuditMeta, "on", "true":
+		return ClipAuditMeta
+	case ClipAuditFull:
+		return ClipAuditFull
 	default:
-		return clipAuditOff
+		return ClipAuditOff
 	}
 }
 
@@ -65,7 +63,7 @@ type clipStream struct {
 	truncated bool
 }
 
-// clipWatcher observes the Guacamole instruction stream of one RDP session and
+// ClipWatcher observes the Guacamole instruction stream of one RDP session and
 // reports completed clipboard transfers. It is fed both directions of the
 // tunnel; direction is supplied by the caller ("out" = target → operator, "in"
 // = operator → target), since the opcodes are identical either way.
@@ -73,24 +71,24 @@ type clipStream struct {
 // It never modifies or blocks a frame: gating is Phase 33's job (guacd is told
 // not to bridge the clipboard at all), and an observer that could drop a frame
 // would be able to corrupt the display.
-type clipWatcher struct {
+type ClipWatcher struct {
 	mode string
 
 	mu      sync.Mutex
 	streams map[string]*clipStream // keyed by direction + stream index
 }
 
-// newClipWatcher returns a watcher for the given mode, or nil when auditing is
+// NewClipWatcher returns a watcher for the given mode, or nil when auditing is
 // off so the caller's hot path is a single nil check.
-func newClipWatcher(mode string) *clipWatcher {
-	if normalizeClipAudit(mode) == clipAuditOff {
+func NewClipWatcher(mode string) *ClipWatcher {
+	if NormalizeClipAudit(mode) == ClipAuditOff {
 		return nil
 	}
-	return &clipWatcher{mode: normalizeClipAudit(mode), streams: map[string]*clipStream{}}
+	return &ClipWatcher{mode: NormalizeClipAudit(mode), streams: map[string]*clipStream{}}
 }
 
-// clipTransfer is one completed clipboard transfer, ready to audit.
-type clipTransfer struct {
+// ClipTransfer is one completed clipboard transfer, ready to audit.
+type ClipTransfer struct {
 	Direction string // out (target → operator) | in (operator → target)
 	Mimetype  string
 	Bytes     int
@@ -102,7 +100,7 @@ type clipTransfer struct {
 // Detail renders the transfer as an audit detail string. In full mode the
 // content is included with newlines flattened, so one transfer stays one audit
 // line and cannot forge a second.
-func (t clipTransfer) Detail() string {
+func (t ClipTransfer) Detail() string {
 	d := fmt.Sprintf("direction:%s mimetype:%s bytes:%d sha256:%s", t.Direction, t.Mimetype, t.Bytes, t.SHA256)
 	if t.Truncated {
 		d += " truncated:true"
@@ -129,12 +127,12 @@ func (t clipTransfer) Detail() string {
 // what Decode returns) meant a batched `nop;clipboard;blob` was forwarded to the
 // target with only the `nop` examined, so the clipboard audit could be evaded by
 // a client that simply did not send one instruction per message.
-func (w *clipWatcher) Observe(direction string, raw []byte) []clipTransfer {
+func (w *ClipWatcher) Observe(direction string, raw []byte) []ClipTransfer {
 	if w == nil {
 		return nil
 	}
-	var completed []clipTransfer
-	for _, inst := range guacd.DecodeAll(raw) {
+	var completed []ClipTransfer
+	for _, inst := range DecodeAll(raw) {
 		if t := w.observeOne(direction, inst); t != nil {
 			completed = append(completed, *t)
 		}
@@ -143,7 +141,7 @@ func (w *clipWatcher) Observe(direction string, raw []byte) []clipTransfer {
 }
 
 // observeOne applies a single decoded instruction to the watcher's stream state.
-func (w *clipWatcher) observeOne(direction string, inst guacd.Instruction) *clipTransfer {
+func (w *ClipWatcher) observeOne(direction string, inst Instruction) *ClipTransfer {
 	switch inst.Opcode {
 	case "clipboard":
 		// clipboard,<stream index>,<mimetype>
@@ -188,11 +186,11 @@ func (w *clipWatcher) observeOne(direction string, inst guacd.Instruction) *clip
 			return nil // an "end" for a non-clipboard stream (image, file, audio)
 		}
 		sum := sha256.Sum256(st.data)
-		t := &clipTransfer{
+		t := &ClipTransfer{
 			Direction: direction, Mimetype: st.mimetype, Bytes: len(st.data),
 			SHA256: hex.EncodeToString(sum[:]), Truncated: st.truncated,
 		}
-		if w.mode == clipAuditFull {
+		if w.mode == ClipAuditFull {
 			preview := st.data
 			if len(preview) > clipAuditPreviewMax {
 				preview, t.Truncated = preview[:clipAuditPreviewMax], true

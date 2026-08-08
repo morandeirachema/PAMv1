@@ -1358,6 +1358,34 @@ func run() error {
 		}()
 	}
 
+	return serveAndShutDown(ctx, stop, cfg, handler, log, errc, []proxyDrain{
+		{"ssh proxy", proxyDone},
+		{"database proxy", dbProxyDone},
+		{"sql server proxy", mssqlProxyDone},
+	})
+}
+
+// proxyDrain names one session listener whose graceful stop must finish before
+// the store is closed under it.
+type proxyDrain struct {
+	name string
+	done <-chan struct{}
+}
+
+// serveAndShutDown runs the API/portal listener until it fails or ctx is
+// cancelled, then shuts it down and drains the session proxies.
+//
+// Split out of run() because it is the one part of that wiring genuinely
+// separable: everything above it builds forty locals feeding one 65-field
+// Options literal, so extracting THAT would return the same forty under a new
+// name. This takes what it needs and nothing else.
+//
+// The drains are a slice rather than three copy-pasted selects. They were three
+// near-identical blocks — the shape that loses a listener the day a fourth is
+// added, which is the same hazard the two database proxies carry and now have a
+// test for.
+func serveAndShutDown(ctx context.Context, stop func(), cfg *config.Config, handler http.Handler,
+	log *slog.Logger, errc chan error, drains []proxyDrain) error {
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,
@@ -1389,25 +1417,17 @@ func run() error {
 	log.Info("pam-server listening", "version", version, "commit", commit, "addr", cfg.ListenAddr, "tls", tlsEnabled,
 		"breakglass", cfg.BreakGlassKeyHash != "", "log_level", cfg.LogLevel)
 
-	// drainProxy cancels the run context (so the proxy Serve returns) and waits,
-	// bounded, for it to finish flushing session audit/recordings before the
-	// deferred st.Close() runs — on either exit path.
-	drainProxy := func() {
+	// drainProxies cancels the run context (so each proxy's Serve returns) and
+	// waits, bounded, for every one to finish flushing session audit and
+	// recordings before the deferred st.Close() runs — on either exit path.
+	drainProxies := func() {
 		stop() // cancel ctx so the proxies drain
-		select {
-		case <-proxyDone:
-		case <-time.After(10 * time.Second):
-			log.Warn("ssh proxy drain timed out")
-		}
-		select {
-		case <-dbProxyDone:
-		case <-time.After(10 * time.Second):
-			log.Warn("database proxy drain timed out")
-		}
-		select {
-		case <-mssqlProxyDone:
-		case <-time.After(10 * time.Second):
-			log.Warn("sql server proxy drain timed out")
+		for _, d := range drains {
+			select {
+			case <-d.done:
+			case <-time.After(10 * time.Second):
+				log.Warn("proxy drain timed out", "proxy", d.name)
+			}
 		}
 	}
 
@@ -1418,14 +1438,14 @@ func run() error {
 		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)
-		drainProxy()
+		drainProxies()
 		return err
 	case <-ctx.Done():
 		log.Info("shutting down")
 		shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		err := srv.Shutdown(shutCtx)
-		drainProxy()
+		drainProxies()
 		return err
 	}
 }
