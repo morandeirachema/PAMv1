@@ -2351,6 +2351,20 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 85 — v0.16.0 ✅
+
+Phase 84 closed finding **BW** — a valid ticket number worked as a shared
+password — so the pin-currency rule applies: after a security fix, check whether
+the pinned tag predates it. It did.
+
+- [x] **v0.16.0** through the test-gated pipeline, rehearsed on `main` first
+- [x] **All five pins**, using the sweep rather than the list: `grep` every
+  version reference under `deploy/` and require exactly one release. That is the
+  check that caught the flux tag last time, and it is the one worth running
+  because it cannot go stale the way a list of paths can
+- [x] Helm chart `version` 0.6.0 → **0.7.0** alongside `appVersion`
+- [x] Both READMEs restated; label-vs-URL equality re-checked (0 mismatches)
+
 ## Phase 84 — The ticket gate learns who you are ✅
 
 Closes the Phase 20 deferral. The generic webhook shipped; a first-class
