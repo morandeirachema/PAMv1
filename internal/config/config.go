@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -400,6 +401,39 @@ type Config struct {
 // Load reads configuration from the PAM_* environment variables, applying
 // defaults, and returns an error if a required variable (API key, database URL,
 // or the master key when the local KEK provider is used) is missing.
+// weakAPIKeyAllowed reports the PAM_ALLOW_WEAK_API_KEY escape hatch. Read here
+// rather than through Load's `boolean` closure so the rule is usable from the
+// refresh path too.
+func weakAPIKeyAllowed() bool {
+	v, err := strconv.ParseBool(strings.TrimSpace(os.Getenv("PAM_ALLOW_WEAK_API_KEY")))
+	return err == nil && v
+}
+
+// MinAPIKeyLen is the floor for the bootstrap key.
+const MinAPIKeyLen = 16
+
+// ValidateBootstrapAPIKey reports why key is unfit to be PAM_API_KEY.
+//
+// It is exported because the runtime secret refresh (Phase 78) adopts a new
+// bootstrap key without going through Load, and originally applied ANY non-empty
+// value — so a running server could accept a three-character admin key that the
+// same binary would refuse to start with, and the next restart CrashLooped on the
+// error the running process had walked past. One rule, both paths (Phase 80).
+func ValidateBootstrapAPIKey(key, databaseURL string) error {
+	if key == "" {
+		return errors.New("PAM_API_KEY is required")
+	}
+	if len(key) < MinAPIKeyLen && databaseURL != "memory" && !weakAPIKeyAllowed() {
+		// The bootstrap key is presented as the SSH/DB proxy password and grants
+		// admin; the proxies now throttle guessing, but a real (non-demo)
+		// deployment must not run on a short, human-chosen key. The in-memory demo
+		// store and an explicit PAM_ALLOW_WEAK_API_KEY escape hatch are exempt so
+		// the quickstart keeps working.
+		return fmt.Errorf("PAM_API_KEY must be at least %d characters (set PAM_ALLOW_WEAK_API_KEY=true to override, e.g. for demos)", MinAPIKeyLen)
+	}
+	return nil
+}
+
 func Load() (*Config, error) {
 	var errs []string
 	// boolean parses a strict bool (true/false/1/0/t/f/…) and records an error for
@@ -614,13 +648,13 @@ func Load() (*Config, error) {
 	}
 	if cfg.APIKey == "" {
 		errs = append(errs, "PAM_API_KEY is required")
-	} else if len(cfg.APIKey) < 16 && cfg.DatabaseURL != "memory" && !boolean("PAM_ALLOW_WEAK_API_KEY", false) {
+	} else if err := ValidateBootstrapAPIKey(cfg.APIKey, cfg.DatabaseURL); err != nil {
 		// The bootstrap key is presented as the SSH/DB proxy password and grants
 		// admin; the proxies now throttle guessing, but a real (non-demo) deployment
 		// must not run on a short, human-chosen key. The in-memory demo store and an
 		// explicit PAM_ALLOW_WEAK_API_KEY escape hatch are exempt so the quickstart
 		// keeps working.
-		errs = append(errs, "PAM_API_KEY must be at least 16 characters (set PAM_ALLOW_WEAK_API_KEY=true to override, e.g. for demos)")
+		errs = append(errs, err.Error())
 	}
 	if cfg.DatabaseURL == "" {
 		errs = append(errs, `PAM_DATABASE_URL is required (postgres://... or "memory" for an ephemeral demo)`)

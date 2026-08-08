@@ -14,12 +14,13 @@ import (
 
 // Metrics is a concurrency-safe collector.
 type Metrics struct {
-	mu           sync.Mutex
-	httpRequests map[int]uint64 // status code -> count
-	auditTotal   uint64
-	breakglass   uint64
-	authFailures uint64
-	rotations    uint64
+	mu                    sync.Mutex
+	httpRequests          map[int]uint64 // status code -> count
+	auditTotal            uint64
+	breakglass            uint64
+	authFailures          uint64
+	rotations             uint64
+	secretRefreshFailures uint64
 
 	// activeSessions supplies the current live-session count (0 if unset).
 	activeSessions func() int
@@ -51,6 +52,14 @@ func (m *Metrics) BreakGlass() { m.inc(&m.breakglass) }
 
 // Rotation records one credential rotation.
 func (m *Metrics) Rotation() { m.inc(&m.rotations) }
+
+// SecretRefreshFailed counts a failed runtime secret refresh.
+//
+// It exists because a refresh that stops working is otherwise invisible: the
+// portal, the audit trail and /readyz all look identical to a healthy cluster
+// while the control whose purpose is REVOCATION quietly does nothing. A counter
+// that stops being zero is the cheapest way for that to be alertable.
+func (m *Metrics) SecretRefreshFailed() { m.inc(&m.secretRefreshFailures) }
 
 // inc atomically increments the given counter under the lock.
 func (m *Metrics) inc(p *uint64) {
@@ -95,6 +104,7 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 		reqs[s] = v
 	}
 	auditTotal, breakglass, authFailures, rotations := m.auditTotal, m.breakglass, m.authFailures, m.rotations
+	secretRefreshFailures := m.secretRefreshFailures
 	buildVersion, buildCommit := m.buildVersion, m.buildCommit
 	activeFn := m.activeSessions
 	m.mu.Unlock()
@@ -116,6 +126,8 @@ func (m *Metrics) WritePrometheus(w io.Writer) {
 	writeCounter(w, "pam_breakglass_access_total", "Total break-glass accesses.", breakglass)
 	writeCounter(w, "pam_auth_failures_total", "Total 401/403 responses.", authFailures)
 	writeCounter(w, "pam_credential_rotations_total", "Total credential rotations.", rotations)
+	writeCounter(w, "pam_secret_refresh_failures_total",
+		"Total failed runtime secret refreshes (Conjur).", secretRefreshFailures)
 
 	if buildVersion != "" {
 		fmt.Fprintln(w, "# HELP pam_build_info Build metadata of the running binary; the value is always 1.")

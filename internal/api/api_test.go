@@ -50,10 +50,40 @@ func newTestServerOpts(t *testing.T, authn auth.Authenticator, opts api.Options)
 	return newTestServerStoreOpts(t, authn, memstore.New(), opts)
 }
 
+// newTestServerBreakGlass builds a server whose RESOLVER carries the given
+// emergency key, which is the only place a break-glass hash lives. Tests used to
+// pass it through api.Options instead, so the option and the resolver could hold
+// different keys and nothing noticed — the same split that let a rotation reach
+// one authentication path and not the other.
+func newTestServerBreakGlass(t *testing.T, emergencyKey string, opts api.Options) (*httptest.Server, store.Store) {
+	t.Helper()
+	srv, st, _ := newTestServerRotatable(t, emergencyKey, opts)
+	return srv, st
+}
+
+// newTestServerRotatable additionally hands back the resolver, so a test can
+// rotate the bootstrap secrets the way the Conjur refresher does and assert what
+// the change reaches.
+func newTestServerRotatable(t *testing.T, emergencyKey string, opts api.Options) (*httptest.Server, store.Store, *auth.Resolver) {
+	t.Helper()
+	sum := sha256.Sum256([]byte(emergencyKey))
+	return newTestServerFull(t, nil, memstore.New(), hex.EncodeToString(sum[:]), opts)
+}
+
 // newTestServerStoreOpts builds a server on a CALLER-PROVIDED store, for tests
 // that must share the store with something outside the server — e.g. a second
 // simulated replica on the same cross-replica live bus (Phase 55).
 func newTestServerStoreOpts(t *testing.T, authn auth.Authenticator, st store.Store, opts api.Options) (*httptest.Server, store.Store) {
+	t.Helper()
+	bg := sha256.Sum256([]byte(breakGlassKey))
+	srv, store, _ := newTestServerFull(t, authn, st, hex.EncodeToString(bg[:]), opts)
+	return srv, store
+}
+
+// newTestServerFull is the one constructor the others funnel through, with the
+// break-glass hash explicit because it is resolver state, not server options.
+func newTestServerFull(t *testing.T, authn auth.Authenticator, st store.Store,
+	breakGlassHashHex string, opts api.Options) (*httptest.Server, store.Store, *auth.Resolver) {
 	t.Helper()
 	masterKey, err := vault.GenerateMasterKey()
 	if err != nil {
@@ -63,8 +93,7 @@ func newTestServerStoreOpts(t *testing.T, authn auth.Authenticator, st store.Sto
 	if err != nil {
 		t.Fatal(err)
 	}
-	bgHash := sha256.Sum256([]byte(breakGlassKey))
-	resolver, err := auth.NewResolver(st, testAPIKey, hex.EncodeToString(bgHash[:]))
+	resolver, err := auth.NewResolver(st, testAPIKey, breakGlassHashHex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +104,7 @@ func newTestServerStoreOpts(t *testing.T, authn auth.Authenticator, st store.Sto
 	}
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return srv, st
+	return srv, st, resolver
 }
 
 // newTestHandler builds the API handler without starting a server, so a test can

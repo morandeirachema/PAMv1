@@ -5,7 +5,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/ed25519"
-	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net"
@@ -163,8 +162,11 @@ type Options struct {
 	// StepUp coordinates in-session step-up approvals with the DB proxy (Phase 30):
 	// a supervisor decides a paused statement via POST /api/sessions/{id}/stepup.
 	StepUp *session.StepUp
-	// BreakGlassHashHex is the hex SHA-256 of the emergency key (for quorum unseal).
-	BreakGlassHashHex string
+	// NOTE: there is deliberately no BreakGlassHashHex here. The hash lives once,
+	// in auth.Resolver, and the quorum-unseal handler asks it. Two inputs for one
+	// value is what let Phase 78's rotation reach the direct key path and not the
+	// quorum path — and the test harness had already drifted the two apart
+	// without anything noticing.
 	// BreakGlassThreshold (M) enables M-of-N quorum unseal when >= 2.
 	BreakGlassThreshold int
 	// BreakGlassTTL is the lifetime of an unsealed break-glass session.
@@ -316,7 +318,6 @@ type Server struct {
 	live               *session.Hub
 	cluster            *session.Cluster
 	stepup             *session.StepUp
-	breakGlassHash     []byte
 	bgThreshold        int
 	bgTTL              time.Duration
 	unseal             *unsealState
@@ -384,6 +385,10 @@ type RuntimeConfig struct {
 	CheckoutTTL      time.Duration
 	AllowedProtocols []string
 }
+
+// Metrics exposes the server's collector, so a background worker wired in main
+// can record into the same series the /metrics endpoint serves.
+func (s *Server) Metrics() *metrics.Metrics { return s.metrics }
 
 // runtimeConf is the server's immutable in-memory copy of a RuntimeConfig,
 // stored behind s.rtc (atomic.Pointer) so in-flight requests read a consistent
@@ -464,12 +469,9 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 	if portalURL == "" {
 		portalURL = "/"
 	}
-	var bgHash []byte
-	if opts.BreakGlassHashHex != "" {
-		if b, derr := hex.DecodeString(opts.BreakGlassHashHex); derr == nil {
-			bgHash = b
-		}
-	}
+	// NOTE: the break-glass hash is deliberately NOT copied onto the Server. It
+	// lives once, in auth.Resolver, so a rotation reaches every consumer at the
+	// same instant; see Resolver.MatchesBreakGlass.
 	bgTTL := opts.BreakGlassTTL
 	if bgTTL <= 0 {
 		bgTTL = 15 * time.Minute
@@ -525,7 +527,6 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		live:               opts.Live,
 		cluster:            opts.Cluster,
 		stepup:             opts.StepUp,
-		breakGlassHash:     bgHash,
 		bgThreshold:        opts.BreakGlassThreshold,
 		bgTTL:              bgTTL,
 		unseal:             newUnsealState(),

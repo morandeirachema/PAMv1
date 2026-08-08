@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -417,6 +418,10 @@ type Resolver struct {
 	// means a refresh can never be observed half-applied — with the API key
 	// updated and the break-glass hash not yet.
 	keys atomic.Pointer[bootstrapKeys]
+	// setMu serialises WRITES so a per-secret setter can replace one half without
+	// racing another setter over the other half. Reads stay lock-free through the
+	// atomic pointer, because Resolve runs on every request on every connection.
+	setMu sync.Mutex
 }
 
 // bootstrapKeys is the pair of key-derived comparison values, swapped together.
@@ -439,7 +444,47 @@ func (r *Resolver) SetBootstrapSecrets(apiKey, breakGlassHashHex string) error {
 	if err != nil {
 		return err
 	}
+	r.setMu.Lock()
+	defer r.setMu.Unlock()
 	r.keys.Store(k)
+	return nil
+}
+
+// SetBootstrapAPIKey replaces just the bootstrap API key.
+//
+// Per-secret rather than pair-at-once because the refresher applies each secret
+// independently: with one call taking both, a single malformed break-glass hash
+// rejected the whole pair and blocked an otherwise-valid key rotation on every
+// tick, forever.
+func (r *Resolver) SetBootstrapAPIKey(apiKey string) error {
+	r.setMu.Lock()
+	defer r.setMu.Unlock()
+	cur := r.keys.Load()
+	next := &bootstrapKeys{breakGlassHash: cur.breakGlassHash}
+	if apiKey != "" {
+		h := sha256.Sum256([]byte(apiKey))
+		next.apiKeyHash = h[:]
+	}
+	r.keys.Store(next)
+	return nil
+}
+
+// SetBreakGlassHash replaces just the break-glass hash. The hex is validated
+// before anything is swapped, so a bad value from the secret store leaves the
+// running configuration untouched rather than disabling the emergency path.
+func (r *Resolver) SetBreakGlassHash(breakGlassHashHex string) error {
+	var h []byte
+	if breakGlassHashHex != "" {
+		b, err := hex.DecodeString(breakGlassHashHex)
+		if err != nil || len(b) != sha256.Size {
+			return errors.New("auth: PAM_BREAK_GLASS_KEY_HASH must be a hex-encoded SHA-256")
+		}
+		h = b
+	}
+	r.setMu.Lock()
+	defer r.setMu.Unlock()
+	cur := r.keys.Load()
+	r.keys.Store(&bootstrapKeys{apiKeyHash: cur.apiKeyHash, breakGlassHash: h})
 	return nil
 }
 
@@ -479,6 +524,27 @@ func NewResolver(dir Directory, apiKey, breakGlassHashHex string) (*Resolver, er
 		return nil, err
 	}
 	return r, nil
+}
+
+// BreakGlassEnabled reports whether a break-glass hash is currently configured.
+func (r *Resolver) BreakGlassEnabled() bool { return len(r.keys.Load().breakGlassHash) != 0 }
+
+// MatchesBreakGlass reports, in constant time, whether sum is the SHA-256 of the
+// CURRENT break-glass key.
+//
+// It exists so nothing else has to keep its own copy of that hash. The Shamir
+// quorum-unseal endpoint did, decoded once at construction, and Phase 78 then
+// added rotation that reached only the resolver — so a rotated deployment
+// rejected the new emergency key on the quorum path while the RETIRED one still
+// minted full-admin sessions. Rotation inverted, on the one path that exists for
+// when nothing else works. A second copy of a comparison value is the bug; one
+// accessor is the fix.
+func (r *Resolver) MatchesBreakGlass(sum []byte) bool {
+	h := r.keys.Load().breakGlassHash
+	if len(h) == 0 {
+		return false
+	}
+	return subtle.ConstantTimeCompare(sum, h) == 1
 }
 
 // Resolve maps a presented key to a Principal, or ErrUnauthorized.

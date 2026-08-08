@@ -28,11 +28,9 @@ func (c captureAlerter) Notify(_ context.Context, e alert.Event) {
 // working break-glass admin session, and fire the unseal + access alerts.
 func TestBreakGlassQuorumUnseal(t *testing.T) {
 	const emergencyKey = "the-sealed-emergency-key-2026"
-	sum := sha256.Sum256([]byte(emergencyKey))
 	alerts := captureAlerter{ch: make(chan alert.Event, 8)}
 
-	srv, _ := newTestServerOpts(t, nil, api.Options{
-		BreakGlassHashHex:   hex.EncodeToString(sum[:]),
+	srv, _ := newTestServerBreakGlass(t, emergencyKey, api.Options{
 		BreakGlassThreshold: 3,
 		BreakGlassTTL:       time.Minute,
 		Alerter:             alerts,
@@ -91,10 +89,7 @@ func TestBreakGlassQuorumUnseal(t *testing.T) {
 // unseal with 401.
 func TestBreakGlassWrongSharesRejected(t *testing.T) {
 	const emergencyKey = "sealed-key"
-	sum := sha256.Sum256([]byte(emergencyKey))
-	srv, _ := newTestServerOpts(t, nil, api.Options{
-		BreakGlassHashHex: hex.EncodeToString(sum[:]), BreakGlassThreshold: 2,
-	})
+	srv, _ := newTestServerBreakGlass(t, emergencyKey, api.Options{BreakGlassThreshold: 2})
 	// Shares of a *different* key won't reconstruct the configured key.
 	wrong, _ := shamir.Split([]byte("not-the-key"), 3, 2)
 	do(t, srv, http.MethodPost, "/api/breakglass/unseal", "", map[string]any{"share": hex.EncodeToString(wrong[0])})
@@ -111,5 +106,58 @@ func TestBreakGlassNotConfigured(t *testing.T) {
 	if status, _ := do(t, srv, http.MethodPost, "/api/breakglass/unseal", "",
 		map[string]any{"share": "00"}); status != http.StatusNotFound {
 		t.Fatalf("unseal without config should be 404, got %d", status)
+	}
+}
+
+// TestBreakGlassRotationReachesTheQuorumPath is the regression for the defect
+// Phase 78 shipped and Phase 80 fixed.
+//
+// Phase 78 added runtime rotation of PAM_BREAK_GLASS_KEY_HASH and claimed, in
+// the architecture doc and the admin guide, that "a single swap reaches every
+// authentication surface". It did not. api.Server kept its OWN copy of the hash,
+// decoded once at construction, and the Shamir quorum-unseal endpoint compared
+// against that copy. So after a rotation the endpoint accepted shares of the
+// RETIRED key -- issuing a full-admin break-glass session -- and rejected shares
+// of the new one. Rotation inverted, on the one path that exists for when
+// nothing else works, reachable unauthenticated.
+//
+// The fix deletes the second copy rather than adding a second setter: the hash
+// lives once, in auth.Resolver, and this asserts both directions of the swap.
+func TestBreakGlassRotationReachesTheQuorumPath(t *testing.T) {
+	const oldKey, newKey = "the-retired-emergency-key", "the-rotated-emergency-key"
+	srv, _, resolver := newTestServerRotatable(t, oldKey, api.Options{
+		BreakGlassThreshold: 2, BreakGlassTTL: time.Minute,
+	})
+
+	unsealWith := func(t *testing.T, key string) int {
+		t.Helper()
+		shares, err := shamir.Split([]byte(key), 3, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var status int
+		for i := range 2 {
+			status, _ = do(t, srv, http.MethodPost, "/api/breakglass/unseal", "",
+				map[string]any{"share": hex.EncodeToString(shares[i])})
+		}
+		return status
+	}
+
+	// Before rotating, the configured key works. (If this fails the test proves
+	// nothing about rotation.)
+	if got := unsealWith(t, oldKey); got != http.StatusCreated {
+		t.Fatalf("pre-rotation unseal with the configured key = %d, want 201", got)
+	}
+
+	newSum := sha256.Sum256([]byte(newKey))
+	if err := resolver.SetBootstrapSecrets(testAPIKey, hex.EncodeToString(newSum[:])); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := unsealWith(t, oldKey); got == http.StatusCreated {
+		t.Fatal("the RETIRED emergency key still unseals a full-admin session after rotation")
+	}
+	if got := unsealWith(t, newKey); got != http.StatusCreated {
+		t.Fatalf("the ROTATED emergency key does not unseal (%d) — rotation reached the direct key path only", got)
 	}
 }

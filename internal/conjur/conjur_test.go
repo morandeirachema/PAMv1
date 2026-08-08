@@ -109,7 +109,7 @@ func TestSourceEnvFillsEmptyOnly(t *testing.T) {
 	t.Setenv("PAM_DATABASE_URL", "")             // empty → sourced from Conjur
 	t.Setenv("PAM_API_KEY", "explicit-from-env") // set → must win
 
-	if err := conjur.SourceEnv(context.Background()); err != nil {
+	if _, _, err := conjur.Source(context.Background()); err != nil {
 		t.Fatalf("SourceEnv: %v", err)
 	}
 	if got := os.Getenv("PAM_MASTER_KEY"); got != "conjur-master" {
@@ -128,7 +128,7 @@ func TestSourceEnvDisabled(t *testing.T) {
 	t.Setenv("PAM_CONJUR_URL", "")
 	t.Setenv("PAM_SECRETS_PROVIDER", "")
 	t.Setenv("PAM_MASTER_KEY", "unchanged")
-	if err := conjur.SourceEnv(context.Background()); err != nil {
+	if _, _, err := conjur.Source(context.Background()); err != nil {
 		t.Fatalf("disabled SourceEnv should be a no-op, got %v", err)
 	}
 	if os.Getenv("PAM_MASTER_KEY") != "unchanged" {
@@ -140,7 +140,7 @@ func TestSourceEnvDisabled(t *testing.T) {
 func TestSourceEnvProviderWithoutURL(t *testing.T) {
 	t.Setenv("PAM_CONJUR_URL", "")
 	t.Setenv("PAM_SECRETS_PROVIDER", "conjur")
-	if err := conjur.SourceEnv(context.Background()); err == nil {
+	if _, _, err := conjur.Source(context.Background()); err == nil {
 		t.Fatal("PAM_SECRETS_PROVIDER=conjur without PAM_CONJUR_URL must fail loud")
 	}
 }

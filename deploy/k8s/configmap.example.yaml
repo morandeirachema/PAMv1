@@ -249,6 +249,12 @@ data:
   # PAM_CONJUR_AUTHN_JWT_SERVICE_ID: "kubernetes"
   # PAM_CONJUR_JWT_FILE: "/var/run/secrets/conjur/token"
   # PAM_CONJUR_CACERT: "/etc/conjur/ca.pem"
+  # Rotate the refreshable secrets without a restart (Phase 78/80). Only
+  # PAM_API_KEY and PAM_BREAK_GLASS_KEY_HASH are refreshed; the KEK, the database
+  # URL and the two audit-chain keys need a restart and are never fetched.
+  # PAM_CONJUR_REFRESH_MIN: "60"
+  # Map individual secrets to non-conventional Conjur variable ids:
+  # PAM_CONJUR_VARS: "PAM_API_KEY=prod/keys/api,PAM_DATABASE_URL=prod/db/url"
 
   # --- OT / air-gapped sites -----------------------------------------------
   # Air-gap forces the no-op alerter and REFUSES TO START alongside any

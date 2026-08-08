@@ -44,6 +44,16 @@ type Config struct {
 	// bootstrap secret needs to live in Git.
 	JWTServiceID string
 	JWT          string
+	// JWTFile is the path the JWT is read from, RE-READ on every authenticate.
+	//
+	// This matters as much as the token itself. A Kubernetes projected service
+	// account token is short-lived by design — the repo's own manifest sets
+	// expirationSeconds: 600 — and the kubelet rotates the FILE. Until Phase 80
+	// the value was read once at startup and re-sent forever, which was harmless
+	// while the client authenticated exactly once at boot and became permanent
+	// failure the moment Phase 78 started using it on a timer: every refresh
+	// presenting a token that expired ten minutes into the process's life.
+	JWTFile string
 
 	CACertPEM string // optional PEM CA bundle for TLS to Conjur (empty = system roots)
 	Timeout   time.Duration
@@ -66,7 +76,7 @@ func New(cfg Config) (*Client, error) {
 		return nil, errors.New("conjur: account is required")
 	}
 	apiKeyAuth := cfg.Login != "" && cfg.APIKey != ""
-	jwtAuth := cfg.JWTServiceID != "" && cfg.JWT != ""
+	jwtAuth := cfg.JWTServiceID != "" && (cfg.JWT != "" || cfg.JWTFile != "")
 	if apiKeyAuth == jwtAuth {
 		return nil, errors.New("conjur: configure exactly one of authn-api-key (login + api key) or authn-jwt (service id + jwt)")
 	}
@@ -88,15 +98,37 @@ func New(cfg Config) (*Client, error) {
 	}, nil
 }
 
+// currentJWT returns the JWT to present: re-read from JWTFile if one is
+// configured, otherwise the static value.
+//
+// Re-reading is the whole point — see Config.JWTFile. A read failure is an error
+// rather than a fall-back to the stale value, because presenting a token the
+// platform has replaced is not a degraded mode, it is an authentication that
+// will fail with a confusing 401.
+func (c *Client) currentJWT() (string, error) {
+	if c.cfg.JWTFile == "" {
+		return c.cfg.JWT, nil
+	}
+	b, err := os.ReadFile(c.cfg.JWTFile)
+	if err != nil {
+		return "", fmt.Errorf("conjur: re-reading %s: %w", c.cfg.JWTFile, err)
+	}
+	return strings.TrimSpace(string(b)), nil
+}
+
 // Authenticate exchanges the configured credential for a short-lived Conjur
 // access token, base64-encoded ready for the Authorization header.
 func (c *Client) Authenticate(ctx context.Context) (string, error) {
 	base := strings.TrimRight(c.cfg.URL, "/")
+	jwt, err := c.currentJWT()
+	if err != nil {
+		return "", err
+	}
 	var endpoint, contentType, body string
-	if c.cfg.JWT != "" {
+	if jwt != "" {
 		endpoint = fmt.Sprintf("%s/authn-jwt/%s/%s/authenticate", base, url.PathEscape(c.cfg.JWTServiceID), url.PathEscape(c.cfg.Account))
 		contentType = "application/x-www-form-urlencoded"
-		body = "jwt=" + url.QueryEscape(c.cfg.JWT)
+		body = "jwt=" + url.QueryEscape(jwt)
 	} else {
 		endpoint = fmt.Sprintf("%s/authn/%s/%s/authenticate", base, url.PathEscape(c.cfg.Account), url.PathEscape(c.cfg.Login))
 		contentType = "text/plain"
@@ -164,28 +196,21 @@ var bootstrapSecrets = []struct{ env, suffix string }{
 	{"PAM_BROKER_AUDIT_SIGN_SEED", "broker-audit-sign-seed"},
 }
 
-// SourceEnv is the startup entry point. When Conjur is configured (PAM_CONJUR_URL
+// Source is the startup entry point. When Conjur is configured (PAM_CONJUR_URL
 // set, or PAM_SECRETS_PROVIDER=conjur), it authenticates and fills any empty
 // bootstrap PAM_* secret from Conjur before config.Load reads the environment.
 // It fails loud on auth/transport errors — a configured-but-unreachable Conjur
 // must not silently start pamv1 with empty secrets — but treats a variable
 // missing in Conjur (404) as "not managed here" and leaves it to the normal
-// fail-loud config validation. Disabled = no-op.
-func SourceEnv(ctx context.Context) error {
-	_, _, err := Source(ctx)
-	return err
-}
-
-// Source is SourceEnv for callers that also want to refresh later. It returns
-// the authenticated client and the env-var names Conjur actually filled — both
-// nil when Conjur is disabled.
+// fail-loud config validation. Disabled = a nil client and no error.
 //
-// The filled list is what makes refresh correct rather than approximately
-// correct. After boot, a non-empty PAM_API_KEY could have come from the
-// operator's environment OR from Conjur, and only the first must never be
-// overwritten. Recording the answer at the one moment it is knowable is the
-// difference between "an explicit env value wins" being true and being true
-// only until the first refresh.
+// It returns the authenticated client, for a caller that goes on to refresh, and
+// the env-var names Conjur actually filled. That second list is NOT what decides
+// what may be refreshed — Phase 78 made that mistake, and since sourcing only
+// fills what the environment left empty, it excluded the one secret the feature
+// was built for in every shipped deployment. It is used only to warn about the
+// genuinely ambiguous case: a value both pinned in the environment and managed
+// in Conjur.
 func Source(ctx context.Context) (*Client, []string, error) {
 	provider := strings.EqualFold(os.Getenv("PAM_SECRETS_PROVIDER"), "conjur")
 	urlSet := os.Getenv("PAM_CONJUR_URL") != ""
@@ -211,7 +236,11 @@ func Source(ctx context.Context) (*Client, []string, error) {
 		APIKey:       os.Getenv("PAM_CONJUR_API_KEY"),
 		JWTServiceID: os.Getenv("PAM_CONJUR_AUTHN_JWT_SERVICE_ID"),
 		JWT:          strings.TrimSpace(jwt),
-		CACertPEM:    cacert,
+		// The path as well as the contents: the kubelet rotates this file, so
+		// every authenticate re-reads it. Without this the refresher presented a
+		// token frozen at boot and 401'd forever (Phase 80).
+		JWTFile:   os.Getenv("PAM_CONJUR_JWT_FILE"),
+		CACertPEM: cacert,
 	})
 	if err != nil {
 		return nil, nil, err
