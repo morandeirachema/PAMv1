@@ -115,8 +115,12 @@ func TestTokenExchangeEndToEnd(t *testing.T) {
 			exchanged = e.Detail
 		}
 	}
-	if !strings.Contains(exchanged, "actor:spiffe://example.org/worker") ||
-		!strings.Contains(exchanged, "delegator:spiffe://example.org/planner") {
+	// Per-value quoted: the record is read by a parser that splits on spaces, so
+	// every field carries its own quotes rather than the whole detail carrying one
+	// pair. See TestTokenExchangeAuditResistsForgery for why that distinction is
+	// load-bearing and not cosmetic.
+	if !strings.Contains(exchanged, `actor:"spiffe://example.org/worker"`) ||
+		!strings.Contains(exchanged, `delegator:"spiffe://example.org/planner"`) {
 		t.Fatalf("broker.token.exchanged detail = %q; want both ends of the delegation", exchanged)
 	}
 

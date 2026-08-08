@@ -235,6 +235,17 @@ func (s *Server) spawnDueCampaigns(ctx context.Context, now time.Time) int {
 	opened := 0
 	for _, anchor := range due {
 		next := now.UTC().AddDate(0, 0, anchor.RecurDays)
+		// Claim the period BEFORE creating anything. Every step below writes a row
+		// that cannot be un-written, so if the schedule is advanced last, any
+		// failure after the insert leaves the anchor still due and the next tick
+		// creates ANOTHER campaign — a persistent failure opens one per tick
+		// forever, flooding reviewers and the audit trail. Claiming first turns
+		// the worst case into a single skipped period, which is bounded, visible
+		// in the campaign list, and logged loudly below.
+		if err := s.store.SetCampaignNextRun(ctx, anchor.ID, next); err != nil {
+			s.log.Warn("campaign scheduler: claiming the period failed; retrying next pass", "anchor", anchor.ID, "err", err)
+			continue
+		}
 		child := store.Campaign{
 			// The child is named for the occasion, so a list of ten quarters is
 			// ten distinguishable rows rather than ten identical ones.
@@ -246,22 +257,22 @@ func (s *Server) spawnDueCampaigns(ctx context.Context, now time.Time) int {
 			// so a series can never fork.
 		}
 		if err := s.store.CreateCampaign(ctx, &child); err != nil {
-			s.log.Warn("campaign scheduler: creating the next campaign failed", "anchor", anchor.ID, "err", err)
+			// The period is already claimed, so this one is skipped rather than
+			// retried. That is the deliberate trade: a missed review period is
+			// bounded and loud, an unbounded run of duplicates is neither.
+			s.log.Error("campaign scheduler: creating the next campaign failed; THIS PERIOD IS SKIPPED",
+				"anchor", anchor.ID, "period_ending", next, "err", err)
 			continue
 		}
 		items, serr := s.snapshotAccess(ctx, &child)
 		if serr != nil {
-			s.log.Warn("campaign scheduler: snapshotting access failed", "campaign", child.ID, "err", serr)
-			// The campaign exists but is empty; leave the schedule where it is so
-			// the next tick tries again rather than silently skipping the period.
+			s.log.Error("campaign scheduler: snapshotting access failed; the campaign is open but EMPTY",
+				"campaign", child.ID, "err", serr)
 			continue
 		}
 		s.auditAs(ctx, anchor.CreatedBy, "certification.campaign_created",
-			fmt.Sprintf("campaign:%d name:%q items:%d %s recurring_from:%d",
-				child.ID, child.Name, items, campaignScopeDetail(&child), anchor.ID))
-		if err := s.store.SetCampaignNextRun(ctx, anchor.ID, next); err != nil {
-			s.log.Warn("campaign scheduler: advancing the schedule failed; it will retry", "anchor", anchor.ID, "err", err)
-		}
+			fmt.Sprintf("campaign:%d name:%s items:%d %s recurring_from:%d",
+				child.ID, auditField(child.Name, 128), items, campaignScopeDetail(&child), anchor.ID))
 		opened++
 	}
 	return opened
@@ -316,8 +327,8 @@ func (s *Server) sendCampaignReminders(ctx context.Context, now time.Time) int {
 			}
 			continue
 		}
-		detail := fmt.Sprintf("campaign:%d name:%q pending:%d %s reviewers:%s",
-			c.ID, c.Name, pending, duePhrase(c.DueAt, now), reviewerBreakdown(byReviewer))
+		detail := fmt.Sprintf("campaign:%d name:%s pending:%d %s reviewers:%s",
+			c.ID, auditField(c.Name, 128), pending, duePhrase(c.DueAt, now), reviewerBreakdown(byReviewer))
 		s.alerter.Notify(ctx, alert.Event{
 			Type: "certification.reminder", Actor: c.CreatedBy, Detail: detail, Time: now,
 		})
@@ -345,18 +356,40 @@ func duePhrase(due *time.Time, now time.Time) string {
 	return fmt.Sprintf("due:in_%dd", days)
 }
 
+// maxReminderReviewers bounds how many reviewers one reminder names. A campaign
+// with hundreds of assignees would otherwise put hundreds of names into an audit
+// row and an alert payload every day, and the reader only needs to know who to
+// chase.
+const maxReminderReviewers = 8
+
 // reviewerBreakdown renders "who is holding this up", sorted so the same state
 // always produces the same string — an alert that reorders itself looks like a
 // change when nothing changed.
+//
+// Every name goes through auditField. A reviewer name is only trimmed on the way
+// in, so it may contain spaces, colons and newlines — and this string lands in an
+// audit detail parsed as `key:value` pairs AND in the alert payload. A reviewer
+// called `carol pending:0 due:in_999d reviewers:nobody` otherwise made an overdue
+// campaign read, to a last-wins parser, as having nothing pending: a reminder
+// saying the opposite of the truth. Quoting each name closes it, the same way the
+// assignment event beside it already did.
 func reviewerBreakdown(byReviewer map[string]int) string {
 	names := make([]string, 0, len(byReviewer))
 	for k := range byReviewer {
 		names = append(names, k)
 	}
 	sort.Strings(names)
-	parts := make([]string, 0, len(names))
+	over := 0
+	if len(names) > maxReminderReviewers {
+		over = len(names) - maxReminderReviewers
+		names = names[:maxReminderReviewers]
+	}
+	parts := make([]string, 0, len(names)+1)
 	for _, n := range names {
-		parts = append(parts, fmt.Sprintf("%s(%d)", n, byReviewer[n]))
+		parts = append(parts, fmt.Sprintf("%s(%d)", auditField(n, 64), byReviewer[n]))
+	}
+	if over > 0 {
+		parts = append(parts, fmt.Sprintf("+%d_more", over))
 	}
 	return strings.Join(parts, ",")
 }

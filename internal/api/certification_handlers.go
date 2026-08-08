@@ -71,7 +71,7 @@ func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(ctx, "certification.campaign_created",
-		fmt.Sprintf("campaign:%d name:%q items:%d %s", c.ID, c.Name, items, campaignScopeDetail(&c)))
+		fmt.Sprintf("campaign:%d name:%s items:%d %s", c.ID, auditField(c.Name, 128), items, campaignScopeDetail(&c)))
 	writeJSON(w, http.StatusCreated, map[string]any{"campaign": c, "items": items})
 }
 

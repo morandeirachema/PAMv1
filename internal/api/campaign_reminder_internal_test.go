@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +11,10 @@ import (
 	"github.com/morandeirachema/pamv1/internal/alert"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
+
+// quotedSpan matches one Go-quoted string, so a test can strip the spans a
+// quoting-aware reader would never parse fields out of.
+var quotedSpan = regexp.MustCompile(`"(\\.|[^"\\])*"`)
 
 // captureAlerts records what the reminder actually sent.
 type captureAlerts struct{ events []alert.Event }
@@ -55,7 +61,7 @@ func TestCampaignRemindersNudgeAndStop(t *testing.T) {
 	d := alerts.events[0].Detail
 	// It has to say what is pending, that it is overdue, and WHO is holding it up
 	// — a nudge nobody can act on is noise.
-	for _, want := range []string{"pending:2", "due:overdue_by_3d", "carol(1)", "dave(1)"} {
+	for _, want := range []string{"pending:2", "due:overdue_by_3d", `"carol"(1)`, `"dave"(1)`} {
 		if !strings.Contains(d, want) {
 			t.Fatalf("reminder detail %q is missing %q", d, want)
 		}
@@ -138,5 +144,77 @@ func TestFirstReminderWindow(t *testing.T) {
 	srv.certRemindDays = 0
 	if got := srv.firstReminder(&due, now); got != nil {
 		t.Fatalf("PAM_CERT_REMIND_DAYS=0 must disable reminders, got %v", got)
+	}
+}
+
+// TestCampaignReminderResistsAuditInjection pins the sanitisation of the one
+// field in a reminder that an operator chooses the text of.
+//
+// A reviewer name is only trimmed on the way in, so it may hold spaces, colons
+// and newlines — and it is interpolated into a detail that both the audit trail
+// and the alert channel parse as `key:value` pairs. Before this was fixed a
+// reviewer called `carol pending:0 due:in_999d reviewers:nobody` produced
+//
+//	campaign:1 name:"q3" pending:1 due:overdue_by_2d reviewers:carol pending:0 due:in_999d reviewers:nobody(1)
+//
+// where the forged pairs land AFTER the real ones, so a last-wins parser reads
+// an overdue campaign as having nothing pending: a reminder stating the opposite
+// of the truth, delivered over the channel people trust to tell them otherwise.
+func TestCampaignReminderResistsAuditInjection(t *testing.T) {
+	srv, st := newRetentionServer(t, t.TempDir())
+	alerts := &captureAlerts{}
+	srv.alerter = alerts
+	ctx := context.Background()
+	now := time.Now().UTC()
+	past, overdue := now.Add(-time.Minute), now.Add(-48*time.Hour)
+	c := &store.Campaign{Name: "q3", CreatedBy: "alice", Status: "open", DueAt: &overdue, RemindAt: &past}
+	if err := st.CreateCampaign(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddCampaignItem(ctx, &store.CampaignItem{CampaignID: c.ID, Kind: "target_grant",
+		RefID: 1, SubjectType: "user", Subject: "u", Detail: "d",
+		Reviewer: "carol pending:0 due:in_999d reviewers:nobody"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := srv.sendCampaignReminders(ctx, now); n != 1 {
+		t.Fatalf("sent %d reminders, want 1", n)
+	}
+	d := alerts.events[0].Detail
+	// The truth must survive: one item is pending and the campaign is overdue.
+	if !strings.Contains(d, "pending:1") || !strings.Contains(d, "due:overdue_by_2d") {
+		t.Fatalf("reminder lost its real fields: %q", d)
+	}
+	// The forged pairs must not be readable AS FIELDS. Quoting is what stops them,
+	// so the check is made the way a quoting-aware reader sees it: remove the
+	// quoted spans — which is exactly what the console's detailFields does — and
+	// nothing of the injected text may be left behind.
+	outside := quotedSpan.ReplaceAllString(d, `""`)
+	for _, forged := range []string{"pending:0", "due:in_999d", "reviewers:nobody"} {
+		if strings.Contains(outside, forged) {
+			t.Fatalf("a reviewer name forged the field %q into the reminder detail: %q", forged, d)
+		}
+	}
+	// And it is genuinely the quoting doing the work, not the name being dropped:
+	// the reviewer is still named, so the nudge still says who to chase.
+	if !strings.Contains(d, `"carol pending:0`) {
+		t.Fatalf("the reviewer name was not quoted: %q", d)
+	}
+}
+
+// TestReminderNamesABoundedNumberOfReviewers keeps one campaign from writing an
+// unbounded audit row and alert payload every day. A campaign with hundreds of
+// assignees would otherwise name every one of them, and a reader only needs to
+// know who to chase.
+func TestReminderNamesABoundedNumberOfReviewers(t *testing.T) {
+	byReviewer := map[string]int{}
+	for i := range 40 {
+		byReviewer[fmt.Sprintf("reviewer-%02d", i)] = 1
+	}
+	got := reviewerBreakdown(byReviewer)
+	if n := strings.Count(got, "("); n > maxReminderReviewers {
+		t.Fatalf("named %d reviewers, want at most %d: %q", n, maxReminderReviewers, got)
+	}
+	if !strings.Contains(got, "+32_more") {
+		t.Fatalf("the elided reviewers were not counted: %q", got)
 	}
 }

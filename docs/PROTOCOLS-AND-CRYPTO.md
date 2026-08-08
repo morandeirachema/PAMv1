@@ -3,7 +3,7 @@
 > Every protocol pamv1 speaks or brokers, and every cryptographic mechanism it
 > relies on — with the file that implements each one.
 >
-> Last updated: 2026-08-08 · Reflects: Phases 0–70 (Phase 62 changed the step-up decision seal's AAD; 63–70 introduce no protocol or cryptography).
+> Last updated: 2026-08-08 · Reflects: Phases 0–76 (Phase 62 changed the step-up decision seal's AAD; 63–75 introduce no protocol or cryptography; Phase 76 changes no protocol or key, only how untrusted values are quoted inside three audit details — see [SECURITY-GAPS](SECURITY-GAPS.md) findings AY–BA).
 
 > 🟢 **Living document** — updated in the same change as the code. Whenever a
 > protocol, cipher, key, TLS posture or transport-security env var changes, this

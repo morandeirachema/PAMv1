@@ -56,6 +56,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/morandeirachema/pamv1/internal/auditfmt"
 	"strings"
 	"time"
 )
@@ -338,8 +339,18 @@ func (x *Exchanger) Exchange(ctx context.Context, req *ExchangeRequest, delegato
 	return &IssuedToken{
 		Token:     token,
 		ExpiresIn: ttlSec,
+		// Every field is quoted HERE rather than the whole string being quoted by
+		// the caller. Whole-quoting stops a value breaking out of the record, but
+		// the console un-quotes and then splits on spaces, so an inner `key:value`
+		// still landed as a field — and detailFields takes last-wins, so an
+		// on_behalf_of of `ops-team actor:spiffe://trusted/root` made the console
+		// display a DIFFERENT actor than the one the token was minted for. The
+		// refusal path beside this one already quoted per value; this is the same
+		// treatment, so the delegation chain reads the same way on both.
 		Audit: fmt.Sprintf("actor:%s delegator:%s on_behalf_of:%s chain:%s jti:%s expires_in:%d",
-			actor.SPIFFEID, delegator.SPIFFEID, delegator.OnBehalfOf, strings.Join(chain, ">"), jti, ttlSec),
+			auditfmt.Field(actor.SPIFFEID, 128), auditfmt.Field(delegator.SPIFFEID, 128),
+			auditfmt.Field(delegator.OnBehalfOf, 128), auditfmt.Field(strings.Join(chain, ">"), 256),
+			auditfmt.Field(jti, 64), ttlSec),
 	}, nil
 }
 
