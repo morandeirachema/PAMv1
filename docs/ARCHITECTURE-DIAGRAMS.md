@@ -65,6 +65,7 @@ flowchart LR
   end
   subgraph n_Other["Other"]
     n_analytics[analytics]
+    n_auditfmt[auditfmt]
     n_auditfwd[auditfwd]
     n_blast[blast]
     n_cmdguard[cmdguard]
@@ -77,6 +78,7 @@ flowchart LR
     n_ticket[ticket]
     n_vendor[vendor]
   end
+  n_agentid --> n_auditfmt
   n_agentid --> n_auth
   n_agentid --> n_store
   n_alert --> n_logging
@@ -85,6 +87,7 @@ flowchart LR
   n_api --> n_alert
   n_api --> n_analytics
   n_api --> n_auditchain
+  n_api --> n_auditfmt
   n_api --> n_auth
   n_api --> n_blast
   n_api --> n_broker
@@ -125,6 +128,7 @@ flowchart LR
   n_broker --> n_policy
   n_broker --> n_store
   n_conjur --> n_logging
+  n_guacd --> n_auditfmt
   n_keycustody --> n_store
   n_maint --> n_store
   n_maint --> n_vault
@@ -161,6 +165,7 @@ flowchart LR
   n_pgstore --> n_logging
   n_pgstore --> n_session
   n_pgstore --> n_store
+  n_proxy --> n_auditfmt
   n_proxy --> n_auth
   n_proxy --> n_cmdguard
   n_proxy --> n_logging

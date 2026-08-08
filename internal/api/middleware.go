@@ -1,9 +1,9 @@
 package api
 
 import (
+	"github.com/morandeirachema/pamv1/internal/auditfmt"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 )
 
@@ -67,13 +67,12 @@ func (s *Server) authFailed(w http.ResponseWriter, r *http.Request, surface, msg
 
 // auditField makes an untrusted string safe to place in an audit detail: bounded
 // in length and quoted, so embedded newlines or forged `key:value` pairs cannot
-// restructure the record around it. Mirrors proxy.auditField.
-func auditField(s string, limit int) string {
-	if len(s) > limit {
-		s = s[:limit] + "…"
-	}
-	return strconv.Quote(s)
-}
+// restructure the record around it.
+//
+// Kept as a package-local name because it is used on nearly every handler; the
+// implementation is shared so there is one sanitiser in the repo rather than one
+// per package that remembered to write it.
+func auditField(s string, limit int) string { return auditfmt.Field(s, limit) }
 
 // clientIP resolves the address the rate limiter keys on. With no trusted proxy
 // (trustedProxyHops==0) it uses the direct RemoteAddr, so a spoofed

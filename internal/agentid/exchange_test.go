@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -354,3 +356,58 @@ func TestExchangerConstructionFailsClosed(t *testing.T) {
 		}
 	}
 }
+
+// TestExchangeAuditResistsFieldForgery pins the shape of the delegation record —
+// the evidence for who an agent token was minted for.
+//
+// The record used to be assembled unquoted and quoted as ONE string by the API
+// handler. That stops a value breaking out of the record, and it is not enough:
+// the console un-quotes a detail and then splits it on spaces, so an inner
+// `key:value` still became a field, and that parser takes last-wins. An
+// on_behalf_of of `ops-team actor:spiffe://trusted/root` therefore made the
+// console display an actor the token was never minted for — a forged identity in
+// exactly the record an investigator opens to answer "which agent did this".
+//
+// OnBehalfOf is reachable: for a static broker key it is the key's Owner, set
+// when the agent was registered, and for an SVID it is the tail of the presented
+// delegation chain.
+func TestExchangeAuditResistsFieldForgery(t *testing.T) {
+	ctx := context.Background()
+	v, x, priv, aud := exchangeFixture(t, 3, 5*time.Minute)
+
+	delegator, err := v.Verify(ctx, svid(t, priv, aud, "planner", nil))
+	if err != nil {
+		t.Fatalf("delegator SVID: %v", err)
+	}
+	delegator.OnBehalfOf = "ops-team actor:spiffe://trusted/root on_behalf_of:ceo"
+
+	req, err := agentid.ParseExchangeForm(form(
+		"grant_type", agentid.ExchangeGrantType,
+		"actor_token", svid(t, priv, aud, "worker", nil),
+		"subject_token", svid(t, priv, aud, "planner", nil),
+	))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	issued, err := x.Exchange(ctx, req, delegator)
+	if err != nil {
+		t.Fatalf("exchange: %v", err)
+	}
+
+	// Read it the way the console does: outside the quoted spans, none of the
+	// injected text may survive as a field.
+	outside := quotedSpan.ReplaceAllString(issued.Audit, `""`)
+	for _, forged := range []string{"actor:spiffe://trusted/root", "on_behalf_of:ceo"} {
+		if strings.Contains(outside, forged) {
+			t.Fatalf("a hostile on_behalf_of forged %q into the delegation record: %q", forged, issued.Audit)
+		}
+	}
+	// The real actor must still be readable — this is evidence, not just safety.
+	if !strings.Contains(issued.Audit, `actor:"spiffe://example.org/worker"`) {
+		t.Fatalf("the real actor is missing from the record: %q", issued.Audit)
+	}
+}
+
+// quotedSpan matches one Go-quoted string, so a test can strip the spans a
+// quoting-aware reader would never parse fields out of.
+var quotedSpan = regexp.MustCompile(`"(\\.|[^"\\])*"`)
