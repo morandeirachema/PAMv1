@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-08-08 · Reflects: Phases 0–70 (60–70 add no port, listener or egress: the certification scheduler and reminders reuse the database and the existing alert channel) (55–59 add no port and no new flow — the live-monitor relay and the step-up decision bus ride the existing server ↔ PostgreSQL store connection, flow E1; token exchange (57), safe policy (58) and SFTP content capture (59) live inside existing listeners and flows). **Phase 53 added the first new
+> Last updated: 2026-08-08 · Reflects: Phases 0–80 (60–70 add no port, listener or egress: the certification scheduler and reminders reuse the database and the existing alert channel) (55–59 add no port and no new flow — the live-monitor relay and the step-up decision bus ride the existing server ↔ PostgreSQL store connection, flow E1; token exchange (57), safe policy (58) and SFTP content capture (59) live inside existing listeners and flows). **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; everything from
 > 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
@@ -75,7 +75,7 @@ add `5433 → 5433` and/or `1433 → 1433` when the database proxies are enabled
 | E9 | pam-server | SMTP / webhook (mgmt zone) | 587 / 443 | SMTP / HTTPS | Break-glass & approval alerts | ✅ P6 |
 | E10 | pam-server (DB proxy) | PostgreSQL target (target zone) | 5432 | PostgreSQL/TLS | JIT-injected brokered database session (`:5433` ingress) | ✅ P15 |
 | E13 | pam-server (mssql proxy) | SQL Server target (target zone) | 1433 | TDS/TLS | JIT-injected brokered database session (`:1433` ingress); upstream certificate verified via `PAM_DB_UPSTREAM_CA` / `_TLS_VERIFY` | ✅ P53 |
-| E11 | pam-server | CyberArk Conjur (identity/secrets zone) | 443 | HTTPS | Source bootstrap secrets at startup (optional) | ✅ P18 |
+| E11 | pam-server | CyberArk Conjur (identity/secrets zone) | 443 | HTTPS | Source bootstrap secrets at startup, and — with `PAM_CONJUR_REFRESH_MIN` — re-read the refreshable ones every N minutes from **every replica** (optional) | ✅ P18, P78 |
 | E12 | pam-server | KMS / HSM (Vault-Transit / AWS-KMS / PKCS#11) | 443 / — | HTTPS / PKCS#11 | Envelope-encryption KEK (wrap/unwrap), when not `local` | ✅ P5 |
 
 ## 4. Internal / data-plane

@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-08 · Reflects: Phases 0–70 + the 2026-07 hardening passes.
+> Last updated: 2026-08-08 · Reflects: Phases 0–80 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -207,7 +207,7 @@ earlier ones:
 
 ```mermaid
 flowchart TD
-  A["conjur.SourceEnv — optionally fill empty PAM_* from Conjur"] --> B["config.Load — parse PAM_* env (fail-loud)"]
+  A["conjur.Source — optionally fill empty PAM_* from Conjur"] --> B["config.Load — parse PAM_* env (fail-loud)"]
   B --> C["logging.Setup"]
   C --> D["vault.NewKEK → vault.NewWithKEK — the KEK provider + vault"]
   D --> E["open store — pgstore.Open or memstore.New"]
@@ -899,9 +899,18 @@ approval gate but triggers post-session rotation.
 - **SOPS + age** (Phase 14, `deploy/k8s/sops/`) keeps the Kubernetes Secret
   manifest in Git, encrypting only the values — the GitOps sealing option.
 - **Conjur** (Phase 18, `internal/conjur`) — the runtime alternative:
-  `conjur.SourceEnv(ctx)` runs *before* `config.Load` and fills any **empty**
+  `conjur.Source(ctx)` runs *before* `config.Load` and fills any **empty**
   bootstrap `PAM_*` secret from CyberArk Conjur (authn-api-key or Kubernetes
   authn-jwt), fail-loud if configured but unreachable. An explicit env value wins.
+  It returns the authenticated client as well, because with
+  `PAM_CONJUR_REFRESH_MIN` set a `conjur.Refresher` then re-reads the
+  **refreshable** secrets on a timer and applies them to the running server
+  (Phase 78, rebuilt in Phase 80). Refreshable means `PAM_API_KEY` and
+  `PAM_BREAK_GLASS_KEY_HASH` only — pure comparison values — and the definition
+  lives in one place, the map of appliers `main` passes in: a secret with no
+  applier is never fetched, never applied and cannot be audited as refreshed.
+  `PAM_CONJUR_VARS` overrides the variable id per secret. The audit is
+  fail-closed and precedes the swap, so a change never outlives the record of it.
 
 Which secrets need a real external system to *verify* is catalogued in
 [EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md).

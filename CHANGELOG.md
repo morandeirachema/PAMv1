@@ -11,6 +11,35 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Security
+
+- **Rotating `PAM_BREAK_GLASS_KEY_HASH` inverted the quorum-unseal path.** The
+  runtime refresh added in the previous unreleased change updated the resolver
+  only, while the Shamir `POST /api/breakglass/unseal` endpoint compared against
+  a second copy taken at startup — so after a rotation the **retired** emergency
+  key still minted full-admin sessions and the new one was rejected. The hash now
+  lives in one place. (Never released; introduced and fixed between tags.)
+- **A refreshed `PAM_API_KEY` skipped the strength check**, so a running server
+  could adopt a bootstrap key the next restart refuses to boot with.
+- **The refresh audit is now fail-closed** and written before the change, so a
+  secret rotation cannot outlive the record of it.
+
+### Fixed
+
+- **Runtime secret refresh could never work on Kubernetes**: the projected
+  service-account JWT was read once at startup and re-sent forever, while the
+  kubelet rotates it every ten minutes. It is now re-read on every authenticate.
+- **Refresh applied to nothing in every shipped deployment.** It only refreshed
+  secrets Conjur had *filled* at boot, and sourcing skips anything already set in
+  the environment — which docker-compose, the Kubernetes secret and the OVA all
+  do for `PAM_API_KEY`. It now refreshes what Conjur *manages*, and the startup
+  log names the real list instead of a static one.
+- One malformed value no longer blocks the other secret's rotation; a deleted
+  Conjur variable is warned about rather than silently ignored (deleting is not
+  revoking); a failing refresh increments `pam_secret_refresh_failures_total`,
+  fires an alert and logs at `Error`; `PAM_CONJUR_VARS` validates the variable id
+  and refuses duplicates.
+
 ### Fixed
 
 - **`kubectl apply -f deploy/k8s/` overwrote the secret you had just created.**

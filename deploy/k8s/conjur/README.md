@@ -100,10 +100,41 @@ values themselves.
 | `PAM_CONJUR_AUTHN_LOGIN` / `PAM_CONJUR_API_KEY` | authn-api-key credentials |
 | `PAM_CONJUR_AUTHN_JWT_SERVICE_ID` / `PAM_CONJUR_JWT_FILE` | authn-jwt service id + JWT file |
 | `PAM_CONJUR_CACERT` | PEM CA bundle path for TLS to Conjur (optional) |
+| `PAM_CONJUR_VARS` | per-variable override of the `<prefix>/<name>` convention: `PAM_API_KEY=prod/keys/api,...`. Unknown names and malformed ids stop the server (Phase 78/80) |
+| `PAM_CONJUR_REFRESH_MIN` | minutes between re-reads of the refreshable secrets; `0` (default) is off (Phase 78/80) |
 | `PAM_SECRETS_PROVIDER=conjur` | optional explicit enable (requires `PAM_CONJUR_URL`) |
+
+## Rotating without a restart
+
+With `PAM_CONJUR_REFRESH_MIN` set, every replica re-reads the secrets Conjur
+**manages** and adopts changes in place — audited `config.secret_refreshed` under
+actor `system-conjur`, which names the key and never the value.
+
+**Only `PAM_API_KEY` and `PAM_BREAK_GLASS_KEY_HASH` are refreshable.** They are
+pure comparison values, so replacing what the resolver compares against is
+complete and instant. `PAM_MASTER_KEY` is the KEK — changing it does not rotate
+the vault, it makes it undecryptable (`pam-server -rotate-kek`, offline, is the
+path); `PAM_DATABASE_URL` is bound into a live pool; and the two broker audit
+keys key the HMAC chain and its signatures. Those four are **never fetched** on
+the refresh tick, so the KEK does not cross the network to produce a log line,
+and the startup log names both lists.
+
+Two things worth knowing before you rely on it:
+
+- **Conjur must actually manage the variable.** The refresher probes at startup
+  and refreshes only what it finds; if `pamv1/api-key` does not exist, the log
+  says so rather than promising a rotation that never happens.
+- **A variable you delete is not a revocation.** Removing or emptying it keeps
+  the running value — a policy edit must never disable break-glass — and logs a
+  warning. To retire a key, set a new value.
+
+On this authn-jwt deployment the projected token below expires every 10 minutes
+and the kubelet rewrites the file; the client re-reads it on every authenticate,
+so refresh keeps working past the first expiry.
 
 ## Deferred
 
-Runtime secret refresh (re-fetch without a restart), a per-variable override map,
-and pushing pamv1's *managed* secrets out to Conjur (Secrets-Hub-style sync) are
-documented follow-ons — this phase covers sourcing pamv1's own bootstrap secrets.
+Pushing pamv1's *managed* secrets out to Conjur (Secrets-Hub-style sync) remains
+a documented follow-on. Runtime secret refresh and the per-variable override map
+**shipped in Phase 78** and were rebuilt in Phase 80 — see "Rotating without a
+restart" above.

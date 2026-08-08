@@ -5,12 +5,15 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/morandeirachema/pamv1/internal/conjur"
 )
+
+const bgHashA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 // TestParseVarOverrides covers the per-variable map. The error cases are the
 // point: a typo that is silently ignored leaves the operator concluding the
@@ -27,11 +30,18 @@ func TestParseVarOverrides(t *testing.T) {
 		t.Fatalf("empty should parse to an empty map: %v %v", empty, err)
 	}
 	for _, bad := range []string{
-		"PAM_API_KEY",              // no "="
-		"=prod/keys/api",           // no name
-		"PAM_API_KEY=",             // no id
-		"PAM_NOT_A_SECRET=x/y",     // not a sourced secret
-		"PAM_API_KEY_=prod/keys/a", // the typo this rejects on purpose
+		"PAM_API_KEY",                           // no "="
+		"=prod/keys/api",                        // no name
+		"PAM_API_KEY=",                          // no id
+		"PAM_NOT_A_SECRET=x/y",                  // not a sourced secret
+		"PAM_API_KEY_=prod/keys/a",              // the typo this rejects on purpose
+		"PAM_API_KEY=/prod/keys/api",            // leading slash
+		"PAM_API_KEY=prod/keys/api/",            // trailing slash
+		"PAM_API_KEY=prod//keys/api",            // empty path segment
+		"PAM_API_KEY=prod/keys/api key",         // whitespace
+		"PAM_API_KEY=a/b,PAM_API_KEY=c/d",       // mapped twice
+		"PAM_API_KEY=prod/keys/\x01api",         // control character
+		"PAM_BREAK_GLASS_KEY_HASH=  ,PAM_x=y/z", // empty id then unknown name
 	} {
 		if _, err := conjur.ParseVarOverrides(bad); err == nil {
 			t.Errorf("ParseVarOverrides(%q) should be an error", bad)
@@ -39,49 +49,147 @@ func TestParseVarOverrides(t *testing.T) {
 	}
 }
 
-// applier records what the refresher applied.
-type applier struct {
-	apiKey, bgHash string
-	calls          int
-	reject         error
+// recorder captures what each applier received and what the audit recorded.
+type recorder struct {
+	mu      sync.Mutex
+	applied map[string]string
+	audits  []string
+	reject  map[string]error
+	auditNo error
 }
 
-func (a *applier) apply(apiKey, bgHash string) error {
-	a.calls++
-	if a.reject != nil {
-		return a.reject
+func newRecorder() *recorder {
+	return &recorder{applied: map[string]string{}, reject: map[string]error{}}
+}
+
+func (r *recorder) applier(name string) conjur.SecretApplier {
+	return func(v string) error {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if err := r.reject[name]; err != nil {
+			return err
+		}
+		r.applied[name] = v
+		return nil
 	}
-	a.apiKey, a.bgHash = apiKey, bgHash
+}
+
+func (r *recorder) audit(_ context.Context, action, detail string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.auditNo != nil {
+		return r.auditNo
+	}
+	r.audits = append(r.audits, action+" "+detail)
 	return nil
 }
 
-// newRefresher wires a refresher over a fake Conjur holding vars, telling it
-// which env names Conjur filled at boot.
-func newRefresher(t *testing.T, vars map[string]string, sourced []string,
-	overrides map[string]string) (*conjur.Refresher, *applier) {
+// build wires a refresher over a fake Conjur holding vars, with appliers for the
+// two refreshable secrets.
+func build(t *testing.T, vars map[string]string, asked map[string]bool) (*conjur.Refresher, *recorder) {
 	t.Helper()
-	srv := fakeConjur(t, vars)
+	srv := fakeConjurRecording(t, vars, asked)
 	c, err := conjur.New(conjur.Config{URL: srv.URL, Account: "default", Login: "host/x", APIKey: "k"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ap := &applier{}
-	return conjur.NewRefresher(c, "pamv1", overrides, sourced, ap.apply, nil, nil), ap
+	rec := newRecorder()
+	r, err := conjur.NewRefresher(context.Background(), c, conjur.RefreshOptions{
+		Prefix: "pamv1",
+		Appliers: map[string]conjur.SecretApplier{
+			"PAM_API_KEY":              rec.applier("PAM_API_KEY"),
+			"PAM_BREAK_GLASS_KEY_HASH": rec.applier("PAM_BREAK_GLASS_KEY_HASH"),
+		},
+		Audit: rec.audit,
+	})
+	if err != nil {
+		t.Fatalf("NewRefresher: %v", err)
+	}
+	return r, rec
 }
 
-const bgHashA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-
-// TestRefreshAppliesAChangedKey is the feature: rotating the bootstrap key in
-// Conjur reaches a running server without a restart.
-func TestRefreshAppliesAChangedKey(t *testing.T) {
-	t.Setenv("PAM_API_KEY", "old-key")
-	t.Setenv("PAM_BREAK_GLASS_KEY_HASH", bgHashA)
-	vars := map[string]string{
-		"pamv1/api-key":              "new-key",
-		"pamv1/break-glass-key-hash": bgHashA,
+// TestRefresherOnlyOwnsWhatConjurManages proves the ownership probe, which is
+// what makes the feature work at all.
+//
+// Ownership used to mean "Conjur FILLED this at boot", and sourcing only fills
+// what the environment left empty — while docker-compose hard-requires
+// PAM_API_KEY, the Kubernetes secret ships it and the OVA generates it. So the
+// one secret this was built for was never refreshable in any shipped deployment,
+// while the startup log said it was.
+func TestRefresherOnlyOwnsWhatConjurManages(t *testing.T) {
+	r, _ := build(t, map[string]string{"pamv1/api-key": "k"}, map[string]bool{})
+	if got := r.Owned(); len(got) != 1 || got[0] != "PAM_API_KEY" {
+		t.Fatalf("Owned() = %v, want [PAM_API_KEY]", got)
 	}
-	r, ap := newRefresher(t, vars, []string{"PAM_API_KEY", "PAM_BREAK_GLASS_KEY_HASH"}, nil)
+}
 
+// TestRefresherIsNilWhenConjurManagesNothing keeps a pointless ticker (and a
+// pointless authenticate every interval) from running.
+func TestRefresherIsNilWhenConjurManagesNothing(t *testing.T) {
+	srv := fakeConjurRecording(t, map[string]string{"pamv1/master-key": "m"}, map[string]bool{})
+	c, err := conjur.New(conjur.Config{URL: srv.URL, Account: "default", Login: "host/x", APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := conjur.NewRefresher(context.Background(), c, conjur.RefreshOptions{
+		Prefix:   "pamv1",
+		Appliers: map[string]conjur.SecretApplier{"PAM_API_KEY": func(string) error { return nil }},
+		Audit:    func(context.Context, string, string) error { return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r != nil {
+		t.Fatal("a refresher was built for a Conjur that manages none of the refreshable secrets")
+	}
+}
+
+// TestRefreshNeverFetchesAPinnedSecret is the phase's headline safety claim, and
+// the previous version of this test could not fail: it built its needles from
+// the ENV names (`master_key`) while variable ids use hyphens
+// (`pamv1/master-key`), so all four Contains checks were false no matter what.
+// Removing both guards left it green. It now asserts the positive form — the set
+// of ids fetched must be exactly the owned ones — which cannot pass vacuously.
+func TestRefreshNeverFetchesAPinnedSecret(t *testing.T) {
+	asked := map[string]bool{}
+	vars := map[string]string{
+		"pamv1/api-key":                "new-key",
+		"pamv1/break-glass-key-hash":   bgHashA,
+		"pamv1/master-key":             "the-kek",
+		"pamv1/database-url":           "postgres://x",
+		"pamv1/broker-audit-key":       "chain-key",
+		"pamv1/broker-audit-sign-seed": "seed",
+	}
+	r, _ := build(t, vars, asked)
+	if _, err := r.RefreshOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"pamv1/api-key": true, "pamv1/break-glass-key-hash": true}
+	var got []string
+	for id := range asked {
+		got = append(got, id)
+		if !want[id] {
+			t.Errorf("fetched %q, which is not one of the refreshable secrets — a value that cannot be applied must not cross the network", id)
+		}
+	}
+	sort.Strings(got)
+	if len(got) != len(want) {
+		t.Fatalf("fetched %v, want exactly %d refreshable ids — if this is empty the test is proving nothing", got, len(want))
+	}
+}
+
+// TestRefreshAppliesAChangedKey is the feature: rotating in Conjur reaches a
+// running server without a restart, once, and is recorded.
+func TestRefreshAppliesAChangedKey(t *testing.T) {
+	asked := map[string]bool{}
+	vars := map[string]string{"pamv1/api-key": "old-key", "pamv1/break-glass-key-hash": bgHashA}
+	r, rec := build(t, vars, asked)
+
+	// Nothing changed since the probe.
+	if changed, err := r.RefreshOnce(context.Background()); err != nil || len(changed) != 0 {
+		t.Fatalf("first tick: changed=%v err=%v, want no change", changed, err)
+	}
+	vars["pamv1/api-key"] = "new-key"
 	changed, err := r.RefreshOnce(context.Background())
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
@@ -89,157 +197,188 @@ func TestRefreshAppliesAChangedKey(t *testing.T) {
 	if len(changed) != 1 || changed[0] != "PAM_API_KEY" {
 		t.Fatalf("changed = %v, want [PAM_API_KEY]", changed)
 	}
-	if ap.apiKey != "new-key" {
-		t.Fatalf("applied api key = %q, want new-key", ap.apiKey)
+	if rec.applied["PAM_API_KEY"] != "new-key" {
+		t.Fatalf("applied %q, want new-key", rec.applied["PAM_API_KEY"])
 	}
-	// The break-glass hash is passed through unchanged, never dropped: the pair
-	// is always applied together so the two cannot drift.
-	if ap.bgHash != bgHashA {
-		t.Fatalf("applied break-glass hash = %q, want it carried through", ap.bgHash)
+	if len(rec.audits) != 1 || !strings.Contains(rec.audits[0], "config.secret_refreshed") ||
+		!strings.Contains(rec.audits[0], "key:PAM_API_KEY") {
+		t.Fatalf("audits = %v", rec.audits)
 	}
-	// An unchanged second tick must not re-apply — a swap per tick would be noise
-	// in the audit trail and a needless write on every replica.
-	if changed, err := r.RefreshOnce(context.Background()); err != nil || len(changed) != 0 {
-		t.Fatalf("second tick: changed=%v err=%v, want no change", changed, err)
+	// The value itself must never reach the trail.
+	if strings.Contains(rec.audits[0], "new-key") {
+		t.Fatalf("the secret VALUE was written to the audit trail: %q", rec.audits[0])
 	}
-	if ap.calls != 1 {
-		t.Fatalf("applier called %d times, want 1", ap.calls)
-	}
-}
-
-// TestRefreshKeepsCurrentWhenConjurHasNothing is the fail-safe that matters
-// most: a policy edit or a 404 must never clear the key that lets people in, and
-// must never disable break-glass.
-func TestRefreshKeepsCurrentWhenConjurHasNothing(t *testing.T) {
-	t.Setenv("PAM_API_KEY", "live-key")
-	t.Setenv("PAM_BREAK_GLASS_KEY_HASH", bgHashA)
-	for name, vars := range map[string]map[string]string{
-		"missing (404)": {},
-		"empty value":   {"pamv1/api-key": ""},
-	} {
-		r, ap := newRefresher(t, vars, []string{"PAM_API_KEY", "PAM_BREAK_GLASS_KEY_HASH"}, nil)
-		changed, err := r.RefreshOnce(context.Background())
-		if err != nil {
-			t.Errorf("%s: unexpected error %v", name, err)
-		}
-		if len(changed) != 0 || ap.calls != 0 {
-			t.Errorf("%s: changed=%v calls=%d — a missing variable must keep the current value",
-				name, changed, ap.calls)
-		}
+	// A steady state does not re-apply or re-audit.
+	if changed, _ := r.RefreshOnce(context.Background()); len(changed) != 0 || len(rec.audits) != 1 {
+		t.Fatalf("second tick re-applied: changed=%v audits=%v", changed, rec.audits)
 	}
 }
 
-// TestRefreshLeavesOperatorSetValuesAlone keeps "an explicit env value wins"
-// true past the first tick. Conjur only owns what it actually filled at boot.
-func TestRefreshLeavesOperatorSetValuesAlone(t *testing.T) {
-	t.Setenv("PAM_API_KEY", "operator-set")
-	vars := map[string]string{"pamv1/api-key": "conjur-wants-this"}
-	// sourced is empty: Conjur filled nothing, because the operator set it.
-	r, ap := newRefresher(t, vars, nil, nil)
-	changed, err := r.RefreshOnce(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(changed) != 0 || ap.calls != 0 {
-		t.Fatalf("an operator-set value was overwritten: changed=%v calls=%d", changed, ap.calls)
-	}
-}
-
-// TestRefreshNeverTouchesPinnedSecrets proves the honest half of the design: the
-// KEK, the database URL and the audit-chain keys are not fetched at all, so a
-// refresh cannot half-rotate something it has no way to complete — and the KEK
-// does not cross the network every tick to produce a log line.
-func TestRefreshNeverTouchesPinnedSecrets(t *testing.T) {
-	t.Setenv("PAM_API_KEY", "old-key")
-	asked := map[string]bool{}
-	vars := map[string]string{"pamv1/api-key": "new-key"}
-	srv := fakeConjurRecording(t, vars, asked)
-	c, err := conjur.New(conjur.Config{URL: srv.URL, Account: "default", Login: "host/x", APIKey: "k"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ap := &applier{}
-	r := conjur.NewRefresher(c, "pamv1", nil, []string{"PAM_API_KEY"}, ap.apply, nil, nil)
+// TestRefreshTrimsTheValue: Conjur returns the raw body, and `conjur variable
+// set` with a trailing newline would otherwise silently become a different key.
+func TestRefreshTrimsTheValue(t *testing.T) {
+	vars := map[string]string{"pamv1/api-key": "the-key\n"}
+	r, rec := build(t, vars, map[string]bool{})
 	if _, err := r.RefreshOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	for _, pinned := range conjur.PinnedSecrets() {
-		for id := range asked {
-			if strings.Contains(id, strings.ToLower(strings.TrimPrefix(pinned, "PAM_"))) {
-				t.Errorf("refresh fetched the pinned secret %s (as %q); it cannot be applied, so it must not be read", pinned, id)
-			}
-		}
-	}
-	if len(conjur.PinnedSecrets()) == 0 {
-		t.Fatal("no pinned secrets — this test would pass vacuously")
+	// The probe already trimmed, so nothing should change — and if anything is
+	// applied it must be the trimmed form.
+	if v, ok := rec.applied["PAM_API_KEY"]; ok && v != "the-key" {
+		t.Fatalf("applied %q, want the trimmed value", v)
 	}
 }
 
-// TestRefreshRetriesAfterARejectedValue proves a value the applier refused is
-// not remembered as applied. Otherwise one malformed hash in Conjur would be
-// skipped forever, and fixing it upstream would never take effect.
-func TestRefreshRetriesAfterARejectedValue(t *testing.T) {
-	t.Setenv("PAM_API_KEY", "old-key")
-	vars := map[string]string{"pamv1/api-key": "new-key"}
-	r, ap := newRefresher(t, vars, []string{"PAM_API_KEY"}, nil)
-	ap.reject = errTest
+// TestOneBadSecretDoesNotBlockTheOther is why appliers are per-secret. With one
+// call taking both values, a malformed break-glass hash rejected the pair and
+// blocked a perfectly good API-key rotation on every tick, forever.
+func TestOneBadSecretDoesNotBlockTheOther(t *testing.T) {
+	vars := map[string]string{"pamv1/api-key": "old-key", "pamv1/break-glass-key-hash": bgHashA}
+	r, rec := build(t, vars, map[string]bool{})
+	rec.reject["PAM_BREAK_GLASS_KEY_HASH"] = errors.New("must be a hex-encoded SHA-256")
 
+	vars["pamv1/api-key"] = "new-key"
+	vars["pamv1/break-glass-key-hash"] = "not-hex"
+	changed, err := r.RefreshOnce(context.Background())
+	if err == nil {
+		t.Fatal("the rejected secret should be reported")
+	}
+	if len(changed) != 1 || changed[0] != "PAM_API_KEY" {
+		t.Fatalf("changed = %v — the good rotation was blocked by the bad one", changed)
+	}
+	if rec.applied["PAM_API_KEY"] != "new-key" {
+		t.Fatalf("the API key was not rotated: %q", rec.applied["PAM_API_KEY"])
+	}
+}
+
+// TestRefreshIsFailClosedOnAudit: a secret change that cannot be recorded is not
+// made, and is retried. Every other path that hands out or changes a secret in
+// this repo follows the same rule.
+func TestRefreshIsFailClosedOnAudit(t *testing.T) {
+	vars := map[string]string{"pamv1/api-key": "old-key"}
+	r, rec := build(t, vars, map[string]bool{})
+	rec.auditNo = errors.New("audit store down")
+
+	vars["pamv1/api-key"] = "new-key"
+	if _, err := r.RefreshOnce(context.Background()); err == nil {
+		t.Fatal("an unrecordable refresh must surface as an error")
+	}
+	if _, ok := rec.applied["PAM_API_KEY"]; ok {
+		t.Fatal("the secret was applied even though the audit failed — the change outlived the evidence of it")
+	}
+	// And it retries rather than remembering the failure as done.
+	rec.auditNo = nil
+	changed, err := r.RefreshOnce(context.Background())
+	if err != nil || len(changed) != 1 {
+		t.Fatalf("the retry did not happen: changed=%v err=%v", changed, err)
+	}
+	if rec.applied["PAM_API_KEY"] != "new-key" {
+		t.Fatalf("retry applied %q", rec.applied["PAM_API_KEY"])
+	}
+}
+
+// TestRejectedValueIsRetried: a value the applier refused must not be recorded
+// as applied, or fixing it upstream would never take effect.
+func TestRejectedValueIsRetried(t *testing.T) {
+	vars := map[string]string{"pamv1/api-key": "old-key"}
+	r, rec := build(t, vars, map[string]bool{})
+	rec.reject["PAM_API_KEY"] = errors.New("too short")
+
+	vars["pamv1/api-key"] = "new-key"
 	if _, err := r.RefreshOnce(context.Background()); err == nil {
 		t.Fatal("a rejected apply must surface as an error")
 	}
-	ap.reject = nil
+	rec.reject["PAM_API_KEY"] = nil
 	changed, err := r.RefreshOnce(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(changed) != 1 || ap.apiKey != "new-key" {
-		t.Fatalf("the retry did not re-apply: changed=%v key=%q", changed, ap.apiKey)
+	if err != nil || len(changed) != 1 || rec.applied["PAM_API_KEY"] != "new-key" {
+		t.Fatalf("the retry did not re-apply: changed=%v err=%v key=%q", changed, err, rec.applied["PAM_API_KEY"])
 	}
 }
 
-// TestRefreshUsesTheVariableOverride proves the override reaches the wire: with
-// a per-variable id set, the conventional path is never requested.
+// TestDeletedVariableKeepsTheCurrentValue is the fail-safe: a policy edit must
+// not disable break-glass. (That it is now WARNED about is the other half; the
+// silent version made revocation-by-deletion look like it had worked.)
+func TestDeletedVariableKeepsTheCurrentValue(t *testing.T) {
+	vars := map[string]string{"pamv1/api-key": "live-key"}
+	r, rec := build(t, vars, map[string]bool{})
+	delete(vars, "pamv1/api-key")
+	changed, err := r.RefreshOnce(context.Background())
+	if err != nil {
+		t.Fatalf("a deleted variable is not an error: %v", err)
+	}
+	if len(changed) != 0 || len(rec.applied) != 0 {
+		t.Fatalf("a deleted variable changed the running secret: changed=%v applied=%v", changed, rec.applied)
+	}
+}
+
+// TestRefreshUsesTheVariableOverride proves the override reaches the wire.
 func TestRefreshUsesTheVariableOverride(t *testing.T) {
-	t.Setenv("PAM_API_KEY", "old-key")
 	asked := map[string]bool{}
-	srv := fakeConjurRecording(t, map[string]string{"prod/keys/api": "new-key"}, asked)
+	srv := fakeConjurRecording(t, map[string]string{"prod/keys/api": "old-key"}, asked)
 	c, err := conjur.New(conjur.Config{URL: srv.URL, Account: "default", Login: "host/x", APIKey: "k"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ap := &applier{}
-	r := conjur.NewRefresher(c, "pamv1", map[string]string{"PAM_API_KEY": "prod/keys/api"},
-		[]string{"PAM_API_KEY"}, ap.apply, nil, nil)
-	if _, err := r.RefreshOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if ap.apiKey != "new-key" {
-		t.Fatalf("the override was not used: applied %q", ap.apiKey)
+	rec := newRecorder()
+	r, err := conjur.NewRefresher(context.Background(), c, conjur.RefreshOptions{
+		Prefix:    "pamv1",
+		Overrides: map[string]string{"PAM_API_KEY": "prod/keys/api"},
+		Appliers:  map[string]conjur.SecretApplier{"PAM_API_KEY": rec.applier("PAM_API_KEY")},
+		Audit:     rec.audit,
+	})
+	if err != nil || r == nil {
+		t.Fatalf("NewRefresher: %v (nil=%v)", err, r == nil)
 	}
 	if asked["pamv1/api-key"] {
 		t.Error("the conventional variable id was requested even though an override was set")
 	}
+	if !asked["prod/keys/api"] {
+		t.Error("the override id was never requested")
+	}
 }
 
-// errTest is a stand-in for an applier refusing a value.
-var errTest = errors.New("rejected")
+// TestRefresherRequiresAnAuditor: a nil Auditor would make every refresh
+// silently unrecorded, which is the failure the fail-closed design exists to
+// avoid — so it is refused at construction rather than at 3am.
+func TestRefresherRequiresAnAuditor(t *testing.T) {
+	srv := fakeConjurRecording(t, map[string]string{"pamv1/api-key": "k"}, map[string]bool{})
+	c, _ := conjur.New(conjur.Config{URL: srv.URL, Account: "default", Login: "host/x", APIKey: "k"})
+	_, err := conjur.NewRefresher(context.Background(), c, conjur.RefreshOptions{
+		Prefix:   "pamv1",
+		Appliers: map[string]conjur.SecretApplier{"PAM_API_KEY": func(string) error { return nil }},
+	})
+	if err == nil {
+		t.Fatal("a refresher without an Auditor must be refused")
+	}
+}
 
 // fakeConjurRecording is fakeConjur plus a record of which variable ids were
-// actually requested, so a test can assert what was NOT fetched.
+// actually requested, so a test can assert what was and was not fetched. It
+// keeps fakeConjur's assertions: a secret read must be authorized, so a client
+// that forgets the token fails here rather than passing.
 func fakeConjurRecording(t *testing.T, vars map[string]string, asked map[string]bool) *httptest.Server {
 	t.Helper()
 	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/authenticate"):
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
 			_, _ = w.Write([]byte(`{"protected":"x","payload":"y","signature":"z"}`))
 		case strings.Contains(r.URL.Path, "/secrets/"):
+			if !strings.HasPrefix(r.Header.Get("Authorization"), "Token token=") {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
 			i := strings.Index(r.URL.Path, "/variable/")
 			id := r.URL.Path[i+len("/variable/"):]
 			mu.Lock()
 			asked[id] = true
+			v, ok := vars[id]
 			mu.Unlock()
-			if v, ok := vars[id]; ok {
+			if ok {
 				_, _ = w.Write([]byte(v))
 				return
 			}

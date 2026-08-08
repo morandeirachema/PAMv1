@@ -2351,6 +2351,56 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 80 — The review of Phase 78 ✅
+
+Fourteen defects in one phase — the worst return of any review in this repo. The
+count matters less than the shapes, which are all failures of the same kind:
+checking a claim one level less deeply than the claim was stated.
+
+- [x] **A rotation inverted the break-glass quorum path** (finding BE). Phase 78
+  said, in the architecture doc and the admin guide, that "a single swap reaches
+  every authentication surface". The *resolver* sharing was verified; whether
+  anything else held a copy of the same value was not. `api.Server` did, decoded
+  once at construction, so after a rotation `POST /api/breakglass/unseal` —
+  unauthenticated — accepted shares of the **retired** key and rejected the new
+  one. Fixed by **deleting the second copy**, not adding a second setter:
+  `Options.BreakGlassHashHex` is gone and the handler asks
+  `Resolver.MatchesBreakGlass`
+- [x] **On Kubernetes it could never have worked** (BF). The projected JWT was
+  read once at boot and re-sent forever; the repo's own manifest expires it every
+  600s. `Config.JWTFile` is now re-read on every authenticate
+- [x] **The feature was inert exactly where it was aimed** (BM). Ownership meant
+  "Conjur *filled* this at boot", and sourcing only fills what the environment
+  left empty — while docker-compose hard-requires `PAM_API_KEY`, the K8s secret
+  ships it and the OVA generates it. Ownership is now *probed*: Conjur manages
+  it. The startup log names what will really be refreshed, and warns when a
+  secret is both pinned in the environment and managed in Conjur
+- [x] **A test that could not fail** (BJ), guarding the phase's headline safety
+  claim. Its needles used env names (`master_key`) against hyphenated variable
+  ids (`pamv1/master-key`), so removing *both* skip guards left it green. It now
+  asserts the positive form — the set of ids fetched must be exactly the
+  refreshable ones — and the same mutation fails it
+- [x] **Per-secret appliers** (BI, BK): one malformed break-glass hash no longer
+  blocks an API-key rotation forever, and the applier map is the single
+  definition of "refreshable", so a secret with no applier can never be audited
+  as refreshed
+- [x] **Fail-closed audit** (BL): the record precedes the swap, matching §6.4.
+  **State out of `os.Getenv`** (BH): a failed environment write could otherwise
+  reinstate the retired key on a later tick
+- [x] **One strength rule for the bootstrap key** (BG): `config.ValidateBootstrapAPIKey`,
+  so a running server cannot adopt a key the next restart refuses to boot with
+- [x] **Observability** (BN, BO, BQ, BR): a deleted variable is warned about
+  rather than silently ignored (deleting is not revoking), a failing refresh
+  increments `pam_secret_refresh_failures_total` and fires an alert at `Error`,
+  every declining branch at startup says why, and the actor is `system-conjur`
+- [x] **`PAM_CONJUR_VARS` validates the id and refuses duplicates** (BP)
+- [x] **The Kubernetes docs and IaC caught up** (BS) — the Conjur README no
+  longer lists this phase's own feature under "Deferred", and the deployment,
+  configmap, `CODE-GUIDE` and `PORTS-AND-FLOWS` all carry the two new variables
+- [x] **One reported finding refuted**: `deploy/.sops.yaml` was changed in the
+  Phase 79 commit, not Phase 78 — the reviewer read a tree with the next phase in
+  progress
+
 ## Phase 79 — Deploy examples, and the wholesale apply that overwrote your secret ✅
 
 Closes the Phase 14 deferral. Three things the docs described and never shipped —

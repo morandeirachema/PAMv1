@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-08 · Reflects: Phases 0–78 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-08 · Reflects: Phases 0–80 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -146,8 +146,8 @@ rotate rather than after:
 
 | Secret | Rotating it |
 | --- | --- |
-| `PAM_API_KEY` | picked up on the next tick |
-| `PAM_BREAK_GLASS_KEY_HASH` | picked up on the next tick |
+| `PAM_API_KEY` | picked up on the next tick — **if Conjur manages it**; see below |
+| `PAM_BREAK_GLASS_KEY_HASH` | picked up on the next tick — **if Conjur manages it**; see below |
 | `PAM_MASTER_KEY` | **restart, and not just a restart** — it is the KEK, so changing it does not rotate the vault, it makes every stored secret undecryptable. Use `pam-server -rotate-kek` offline, which re-wraps everything |
 | `PAM_DATABASE_URL` | restart (it is bound into a live connection pool) |
 | `PAM_BROKER_AUDIT_KEY` | restart — it keys the HMAC chain, so swapping it invalidates the history rather than re-keying it |
@@ -156,6 +156,25 @@ rotate rather than after:
 The pinned secrets are **not read** on the refresh tick at all — pulling the KEK
 across the network every few minutes to notice a change nothing can act on is
 exposure bought for nothing. The startup log names both lists.
+
+**Two conditions decide whether a rotation actually lands**, and the startup log
+tells you both rather than making you find out by watching nothing happen:
+
+1. **Conjur must manage the variable.** At startup the server asks Conjur which
+   of the refreshable secrets it holds, and refreshes only those. If
+   `pamv1/api-key` does not exist, the log says nothing will be refreshed.
+2. **Enabling refresh means Conjur wins.** If a secret is set in the environment
+   *and* managed in Conjur, refresh will overwrite the environment value — you
+   get a warning naming the variable at startup. (Without refresh enabled, the
+   explicit environment value still wins, as it always has.)
+
+**Deleting a variable in Conjur is not a revocation.** Removing or emptying it
+keeps the value the server is running with — a policy edit must never disable
+break-glass — and logs a warning. To retire a key, set a new one.
+
+A refresh that stops working is not silent: every failed pass logs at `Error`,
+increments `pam_secret_refresh_failures_total`, and fires a
+`config.secret_refresh_failed` alert.
 
 If your Conjur policy does not follow the `<prefix>/<name>` convention, map each
 variable explicitly with

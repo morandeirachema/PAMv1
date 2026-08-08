@@ -3,7 +3,7 @@
 > Every protocol pamv1 speaks or brokers, and every cryptographic mechanism it
 > relies on — with the file that implements each one.
 >
-> Last updated: 2026-08-08 · Reflects: Phases 0–78 (Phase 62 changed the step-up decision seal's AAD; 63–75 introduce no protocol or cryptography; Phase 76 changes no protocol or key, only how untrusted values are quoted inside three audit details — see [SECURITY-GAPS](SECURITY-GAPS.md) findings AY–BA; 77 adds input validation, no cryptography; 78 changes **when** two key-derived comparison values are read, not how).
+> Last updated: 2026-08-08 · Reflects: Phases 0–80 (Phase 62 changed the step-up decision seal's AAD; 63–75 introduce no protocol or cryptography; Phase 76 changes no protocol or key, only how untrusted values are quoted inside three audit details — see [SECURITY-GAPS](SECURITY-GAPS.md) findings AY–BA; 77 adds input validation, no cryptography; 78 changes **when** two key-derived comparison values are read, not how).
 
 **Phase 78 note, because it looks like cryptography and is not.** The Conjur
 refresher fingerprints each secret as the first 8 bytes of its SHA-256 to notice

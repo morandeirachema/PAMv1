@@ -29,6 +29,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -1046,7 +1048,6 @@ func run() error {
 		CommandGuard:            cmdGuard,
 		TrustedProxyHops:        cfg.TrustedProxyHops,
 		RevealDisabled:          cfg.RevealDisabled,
-		BreakGlassHashHex:       cfg.BreakGlassKeyHash,
 		BreakGlassThreshold:     cfg.BreakGlassThreshold,
 		BreakGlassTTL:           cfg.BreakGlassTTL,
 		Alerter:                 alerter,
@@ -1110,30 +1111,12 @@ func run() error {
 	// second environment variable was also remembered is a control that lapses
 	// exactly where it matters. The leader lock keeps N replicas to one spawn.
 	go handler.RunCampaignScheduler(ctx)
-	// Runtime secret refresh (Phase 78). Opt-in, and NOT leader-locked: every
-	// replica holds its own copy of these comparison values, so every replica has
-	// to re-read them itself — a leader-only refresh would leave the rest of the
-	// cluster authenticating against the retired key.
-	if conjurClient != nil && cfg.ConjurRefreshMin > 0 {
-		overrides, oerr := conjur.ParseVarOverrides(os.Getenv("PAM_CONJUR_VARS"))
-		if oerr != nil {
-			return oerr
-		}
-		refresher := conjur.NewRefresher(conjurClient,
-			cmp.Or(os.Getenv("PAM_CONJUR_POLICY_PREFIX"), "pamv1"), overrides, conjurFilled,
-			func(apiKey, bgHash string) error { return resolver.SetBootstrapSecrets(apiKey, bgHash) },
-			func(actx context.Context, action, detail string) {
-				if aerr := st.AppendAudit(actx, &store.AuditEvent{
-					Actor: "system", Action: action, Detail: detail,
-				}); aerr != nil {
-					log.Warn("recording the secret refresh failed", "err", aerr)
-				}
-			}, log)
-		log.Info("runtime secret refresh enabled",
-			"every_min", cfg.ConjurRefreshMin,
-			"refreshes", strings.Join(conjur.RefreshableSecrets(), ","),
-			"restart_required_for", strings.Join(conjur.PinnedSecrets(), ","))
-		go refresher.Run(ctx, time.Duration(cfg.ConjurRefreshMin)*time.Minute)
+	// Runtime secret refresh (Phase 78, rebuilt in Phase 80). Opt-in, and NOT
+	// leader-locked: every replica holds its own copy of these comparison values,
+	// so every replica has to re-read them itself — a leader-only refresh would
+	// leave the rest of the cluster authenticating against the retired key.
+	if err := startSecretRefresh(ctx, cfg, conjurClient, conjurFilled, resolver, st, handler, alerter, log); err != nil {
+		return err
 	}
 	if cfg.AnalyticsInterval > 0 {
 		go handler.RunAnalyticsWorker(ctx, cfg.AnalyticsInterval)
@@ -1524,6 +1507,119 @@ func splitAndTrim(csv string) []string {
 	for _, p := range strings.Split(csv, ",") {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// startSecretRefresh wires the opt-in Conjur secret refresher, or explains why
+// it did not.
+//
+// Every branch that declines to start it says so. The first version logged only
+// on the success path, so an operator who set PAM_CONJUR_REFRESH_MIN without
+// Conjur configured — or with a typo in PAM_CONJUR_URL — got a clean startup, no
+// refresh, and nothing anywhere saying why. "Watching nothing happen" is the
+// outcome this whole feature is supposed to prevent.
+func startSecretRefresh(ctx context.Context, cfg *config.Config, client *conjur.Client,
+	filled []string, resolver *auth.Resolver, st store.Store, handler *api.Server,
+	alerter alert.Notifier, log *slog.Logger) error {
+	if cfg.ConjurRefreshMin <= 0 {
+		return nil
+	}
+	if client == nil {
+		log.Warn("PAM_CONJUR_REFRESH_MIN is set but Conjur is not configured; no secret will be refreshed",
+			"hint", "set PAM_CONJUR_URL (or PAM_SECRETS_PROVIDER=conjur) — refresh sources from Conjur only")
+		return nil
+	}
+	overrides, err := conjur.ParseVarOverrides(os.Getenv("PAM_CONJUR_VARS"))
+	if err != nil {
+		return err
+	}
+
+	// The appliers ARE the definition of what can be refreshed. A secret absent
+	// from this map is never fetched, never applied and never audited — which is
+	// what stops a "refreshed" event being recorded for something that reached no
+	// consumer.
+	appliers := map[string]conjur.SecretApplier{
+		"PAM_API_KEY": func(v string) error {
+			// The same rule Load enforces at startup. Without it a running server
+			// would adopt a bootstrap key the next restart refuses to boot with.
+			if verr := config.ValidateBootstrapAPIKey(v, cfg.DatabaseURL); verr != nil {
+				return verr
+			}
+			return resolver.SetBootstrapAPIKey(v)
+		},
+		"PAM_BREAK_GLASS_KEY_HASH": resolver.SetBreakGlassHash,
+	}
+
+	refresher, err := conjur.NewRefresher(ctx, client, conjur.RefreshOptions{
+		Prefix:    cmp.Or(os.Getenv("PAM_CONJUR_POLICY_PREFIX"), "pamv1"),
+		Overrides: overrides,
+		Appliers:  appliers,
+		Audit: func(actx context.Context, action, detail string) error {
+			return st.AppendAudit(actx, &store.AuditEvent{
+				// Self-describing like every other background writer
+				// (system-scheduler, system-analytics, kek-rotation, relay); a bare
+				// "system" is not in the documented actor vocabulary.
+				Actor: "system-conjur", Action: action, Detail: detail,
+			})
+		},
+		OnError: func(actx context.Context, rerr error) {
+			handler.Metrics().SecretRefreshFailed()
+			if alerter != nil {
+				alerter.Notify(actx, alert.Event{
+					Type: "config.secret_refresh_failed", Actor: "system-conjur",
+					Detail: "source:conjur error:" + rerr.Error(), Time: time.Now().UTC(),
+				})
+			}
+		},
+		Log: log,
+	})
+	if err != nil {
+		return fmt.Errorf("conjur secret refresh: %w", err)
+	}
+	if refresher == nil {
+		log.Warn("runtime secret refresh is enabled but Conjur manages none of the refreshable secrets; nothing will be refreshed",
+			"refreshable", strings.Join(sortedKeys(appliers), ","),
+			"hint", "create those variables under PAM_CONJUR_POLICY_PREFIX, or map them with PAM_CONJUR_VARS")
+		return nil
+	}
+
+	owned := refresher.Owned()
+	// Name what will ACTUALLY be refreshed, not what could be in principle. The
+	// first version printed the static list, so it promised rotations that every
+	// tick then skipped.
+	log.Info("runtime secret refresh enabled",
+		"every_min", cfg.ConjurRefreshMin,
+		"refreshes", strings.Join(owned, ","),
+		"restart_required_for", strings.Join(pinnedSecrets(appliers), ","))
+	for _, env := range owned {
+		if !slices.Contains(filled, env) {
+			log.Warn("a refreshable secret is set in the environment AND managed in Conjur; enabling refresh means Conjur wins for it",
+				"var", env)
+		}
+	}
+	go refresher.Run(ctx, time.Duration(cfg.ConjurRefreshMin)*time.Minute)
+	return nil
+}
+
+// sortedKeys lists an applier map's names, sorted, for logging.
+func sortedKeys(m map[string]conjur.SecretApplier) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// pinnedSecrets lists the bootstrap secrets a restart is the only way to change
+// — derived from the appliers, so the two lists cannot drift apart.
+func pinnedSecrets(appliers map[string]conjur.SecretApplier) []string {
+	var out []string
+	for _, name := range conjur.AllSecrets() {
+		if appliers[name] == nil {
+			out = append(out, name)
 		}
 	}
 	return out
