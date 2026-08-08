@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -182,4 +183,89 @@ func TestResolve(t *testing.T) {
 			t.Fatalf("Resolve(%q) = %v, want ErrUnauthorized", bad, err)
 		}
 	}
+}
+
+// TestSetBootstrapSecretsSwapsAtomically covers the hot-swap behind runtime
+// secret refresh (Phase 78): after a rotation the retired key must stop working
+// immediately and the new one must work, with no restart.
+func TestSetBootstrapSecretsSwapsAtomically(t *testing.T) {
+	ctx := context.Background()
+	oldBG := sha256.Sum256([]byte("old-break-glass"))
+	r, err := NewResolver(nil, "old-key", hex.EncodeToString(oldBG[:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, err := r.Resolve(ctx, "old-key"); err != nil || p.Name != "bootstrap-admin" {
+		t.Fatalf("the initial key should resolve: %v %v", p, err)
+	}
+
+	newBG := sha256.Sum256([]byte("new-break-glass"))
+	if err := r.SetBootstrapSecrets("new-key", hex.EncodeToString(newBG[:])); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Resolve(ctx, "old-key"); !errors.Is(err, ErrUnauthorized) {
+		t.Fatal("the RETIRED key still authenticates — a rotation that leaves the old key live is not a rotation")
+	}
+	if p, err := r.Resolve(ctx, "new-key"); err != nil || p.Name != "bootstrap-admin" {
+		t.Fatalf("the new key does not authenticate: %v %v", p, err)
+	}
+	if _, err := r.Resolve(ctx, "old-break-glass"); !errors.Is(err, ErrUnauthorized) {
+		t.Fatal("the retired break-glass key still authenticates")
+	}
+	p, err := r.Resolve(ctx, "new-break-glass")
+	if err != nil || !p.BreakGlass {
+		t.Fatalf("the new break-glass key does not authenticate: %v %v", p, err)
+	}
+}
+
+// TestSetBootstrapSecretsRejectsBeforeSwapping proves a malformed value from the
+// secret store leaves the running configuration untouched. The failure this
+// guards is the dangerous one: a bad hash that cleared break-glass would remove
+// the emergency path at the moment nobody is looking.
+func TestSetBootstrapSecretsRejectsBeforeSwapping(t *testing.T) {
+	ctx := context.Background()
+	bg := sha256.Sum256([]byte("break-glass"))
+	r, err := NewResolver(nil, "key", hex.EncodeToString(bg[:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetBootstrapSecrets("new-key", "not-a-hash"); err == nil {
+		t.Fatal("a malformed break-glass hash must be refused")
+	}
+	// Nothing moved: both original values still work.
+	if _, err := r.Resolve(ctx, "key"); err != nil {
+		t.Fatal("the rejected swap changed the API key anyway")
+	}
+	if p, err := r.Resolve(ctx, "break-glass"); err != nil || !p.BreakGlass {
+		t.Fatal("the rejected swap disabled break-glass")
+	}
+}
+
+// TestResolveIsSafeWhileSecretsRotate is the reason the pair is an atomic
+// pointer rather than two fields: Resolve runs on every request on every
+// connection, so a refresh lands while requests are in flight. Run under -race,
+// which CI does.
+func TestResolveIsSafeWhileSecretsRotate(t *testing.T) {
+	ctx := context.Background()
+	bg := sha256.Sum256([]byte("bg"))
+	r, err := NewResolver(nil, "key-0", hex.EncodeToString(bg[:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := range 200 {
+			if err := r.SetBootstrapSecrets(fmt.Sprintf("key-%d", i), hex.EncodeToString(bg[:])); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	for range 200 {
+		// The answer varies with the race; only the absence of a data race and of
+		// a panic is asserted here.
+		_, _ = r.Resolve(ctx, "key-7")
+	}
+	<-done
 }

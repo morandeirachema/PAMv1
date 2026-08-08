@@ -11,6 +11,21 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Added
+
+- **Bootstrap secrets can be rotated without a restart.** Set
+  `PAM_CONJUR_REFRESH_MIN` and every replica re-reads the refreshable secrets on
+  that interval, adopting a change immediately — audited
+  `config.secret_refreshed`, which names the keys and never the values. **Only
+  `PAM_API_KEY` and `PAM_BREAK_GLASS_KEY_HASH` are refreshable**: they are pure
+  comparison values. `PAM_MASTER_KEY` (the KEK — changing it makes the vault
+  undecryptable; rotate offline with `-rotate-kek`), `PAM_DATABASE_URL`, and the
+  two broker audit keys still need a restart, are **not** read on the refresh
+  tick, and are named in the startup log so you know before you rotate.
+- **`PAM_CONJUR_VARS`** maps individual bootstrap secrets to arbitrary Conjur
+  variable ids (`PAM_API_KEY=prod/keys/api`), for policies that do not follow the
+  `<prefix>/<name>` convention. An unknown name is fail-loud.
+
 ## [0.14.3] — 2026-08-08
 
 Closes the residual the 0.14.2 sweep recorded and left open: a name could forge

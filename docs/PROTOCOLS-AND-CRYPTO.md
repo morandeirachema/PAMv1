@@ -3,7 +3,18 @@
 > Every protocol pamv1 speaks or brokers, and every cryptographic mechanism it
 > relies on — with the file that implements each one.
 >
-> Last updated: 2026-08-08 · Reflects: Phases 0–76 (Phase 62 changed the step-up decision seal's AAD; 63–75 introduce no protocol or cryptography; Phase 76 changes no protocol or key, only how untrusted values are quoted inside three audit details — see [SECURITY-GAPS](SECURITY-GAPS.md) findings AY–BA).
+> Last updated: 2026-08-08 · Reflects: Phases 0–78 (Phase 62 changed the step-up decision seal's AAD; 63–75 introduce no protocol or cryptography; Phase 76 changes no protocol or key, only how untrusted values are quoted inside three audit details — see [SECURITY-GAPS](SECURITY-GAPS.md) findings AY–BA; 77 adds input validation, no cryptography; 78 changes **when** two key-derived comparison values are read, not how).
+
+**Phase 78 note, because it looks like cryptography and is not.** The Conjur
+refresher fingerprints each secret as the first 8 bytes of its SHA-256 to notice
+that a value changed without keeping the value resident or logging it. That is a
+**change detector, not an authenticator**: nothing is authorized on the strength
+of a match, so its collision resistance is irrelevant — a collision would cause a
+missed refresh, never a wrong one. The values that *are* compared for
+authentication (`PAM_API_KEY`, `PAM_BREAK_GLASS_KEY_HASH`) keep the full SHA-256
+and `crypto/subtle` constant-time comparison they already had; Phase 78 only
+moves them behind an `atomic.Pointer` so they can be replaced while requests are
+in flight.
 
 > 🟢 **Living document** — updated in the same change as the code. Whenever a
 > protocol, cipher, key, TLS posture or transport-security env var changes, this

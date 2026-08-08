@@ -2351,6 +2351,49 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 78 — Config depth: secrets that can be rotated without a restart ✅
+
+Closes the Phase 12 deferral. Sourcing was one-shot at boot, so rotating the
+bootstrap API key — the most widely shared credential in the system — meant
+restarting every replica. That friction is why keys do not get rotated.
+
+- [x] **Per-variable override.** `PAM_CONJUR_VARS` maps individual secrets to
+  arbitrary Conjur variable ids (`PAM_API_KEY=prod/keys/api`). The
+  `<prefix>/<suffix>` convention is a guess about someone else's policy, and a
+  site that cannot rename its variables could not use the integration at all —
+  the feature ships and is never turned on. An unknown name is **fail-loud**,
+  because a silently ignored typo is how an operator concludes it does not work
+- [x] **Runtime refresh**, opt-in via `PAM_CONJUR_REFRESH_MIN`, applied to a
+  running server with no restart. Not leader-locked: every replica holds its own
+  copy, so a leader-only refresh is the split-brain version of the bug
+- [x] **Only two of the six secrets are refreshable, and the exclusions are the
+  design.** `PAM_API_KEY` and `PAM_BREAK_GLASS_KEY_HASH` are pure comparison
+  values. `PAM_MASTER_KEY` is the KEK — changing it does not rotate the vault, it
+  makes it undecryptable, and `-rotate-kek` offline is the path.
+  `PAM_DATABASE_URL` is bound into a live pool. `PAM_BROKER_AUDIT_KEY` keys the
+  HMAC chain, so a swap invalidates history rather than re-keying it, and
+  `PAM_BROKER_AUDIT_SIGN_SEED` already has a rotation path that keeps the retired
+  public half trusted
+- [x] **The pinned secrets are not fetched at all.** Pulling the KEK across the
+  network every tick to notice a change nothing can act on multiplies the
+  exposure of the most valuable secret in the system to produce a log line. The
+  startup log names both lists instead, so an operator learns what will be picked
+  up *before* rotating rather than by watching nothing happen
+- [x] `auth.Resolver` holds the pair behind an `atomic.Pointer`. `Resolve` runs on
+  every request on every connection, and **one resolver is shared by the API, the
+  SSH proxy and both database proxies**, so a single swap reaches every
+  authentication surface. Proven by a `-race` test, verified to trip the detector
+  against the plain-field shape it replaced
+- [x] **Fail-safe on every partial outcome**, because this runs unattended against
+  a network service and manages the values that let people in: a 404 or empty
+  value keeps the current secret (a policy edit must never disable break-glass), a
+  malformed hash is rejected *before* anything is swapped, a rejected value is not
+  remembered as applied, and Conjur only owns what it actually filled at boot —
+  `conjur.Source` now returns that list, because after startup a non-empty
+  `PAM_API_KEY` is indistinguishable from one the operator set
+- [x] New audit action `config.secret_refreshed`, naming the keys and never the
+  values
+
 ## Phase 77a — v0.14.3 ✅
 
 Phase 77 is a security fix and `v0.14.2` predated it, so the same rule that drove
@@ -3099,8 +3142,12 @@ Buildable without external infrastructure, each deferred by the phase named.
 - ~~**Vendor console screen** (29)~~ — already shipped in **Phase 45** (menu 22,
   *Work with Vendors*, plus contract grants); this line was stale and is struck
   here rather than left inviting someone to build it twice.
-- **Config depth** (12) — runtime secret refresh without a restart (sourcing is
-  one-shot at boot) and a per-variable override map.
+- ~~**Config depth** (12)~~ — ✅ closed 2026-08-08 in **Phase 78**. Both halves:
+  `PAM_CONJUR_VARS` overrides the variable id per secret, and
+  `PAM_CONJUR_REFRESH_MIN` re-reads the refreshable ones on a running server.
+  Only `PAM_API_KEY` and `PAM_BREAK_GLASS_KEY_HASH` can honestly be refreshed;
+  the KEK, the database URL and the two audit-chain keys are pinned to a restart
+  and are deliberately **not fetched**, so the startup log names both lists.
 - ~~**KEK-wrap the broker audit keys** (13)~~ — ✅ closed 2026-07-28. The two
   variables are now optional: unset, each key is generated once and held under
   shared custody (KEK-sealed in `key_material`, converged on by every replica,

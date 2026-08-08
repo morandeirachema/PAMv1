@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"github.com/morandeirachema/pamv1/internal/store"
 )
@@ -406,10 +407,61 @@ type ProfileSource interface {
 
 // Resolver authenticates a presented key into a Principal.
 type Resolver struct {
-	dir            Directory
-	profiles       ProfileSource
+	dir      Directory
+	profiles ProfileSource
+	// keys holds the two values compared against a presented key. It is an
+	// atomic pointer rather than two fields because a secret refresh
+	// (PAM_CONJUR_REFRESH_MIN, Phase 78) replaces them while requests are being
+	// authenticated: Resolve runs on every request on every connection, so a
+	// plain field write is a data race, and swapping the pair as one pointer also
+	// means a refresh can never be observed half-applied — with the API key
+	// updated and the break-glass hash not yet.
+	keys atomic.Pointer[bootstrapKeys]
+}
+
+// bootstrapKeys is the pair of key-derived comparison values, swapped together.
+// A nil slice means that path is disabled.
+type bootstrapKeys struct {
 	apiKeyHash     []byte // SHA-256 of the bootstrap API key (empty = disabled)
 	breakGlassHash []byte
+}
+
+// SetBootstrapSecrets atomically replaces the bootstrap API key and break-glass
+// hash — the hot-swap behind runtime secret refresh.
+//
+// Both are passed every call, and both are replaced together, so a caller cannot
+// accidentally leave one stale. An empty apiKey disables the bootstrap-admin
+// path; an empty breakGlassHashHex disables break-glass. The hash is validated
+// before anything is swapped, so a malformed value from the secret store leaves
+// the running configuration untouched rather than disabling break-glass.
+func (r *Resolver) SetBootstrapSecrets(apiKey, breakGlassHashHex string) error {
+	k, err := newBootstrapKeys(apiKey, breakGlassHashHex)
+	if err != nil {
+		return err
+	}
+	r.keys.Store(k)
+	return nil
+}
+
+// newBootstrapKeys derives the comparison values, rejecting a malformed
+// break-glass hash.
+func newBootstrapKeys(apiKey, breakGlassHashHex string) (*bootstrapKeys, error) {
+	k := &bootstrapKeys{}
+	if apiKey != "" {
+		// Store the SHA-256 so the bootstrap-key comparison is over a fixed
+		// 32-byte value, not raw bytes (a raw ConstantTimeCompare short-circuits
+		// on length, leaking the key's length via timing).
+		h := sha256.Sum256([]byte(apiKey))
+		k.apiKeyHash = h[:]
+	}
+	if breakGlassHashHex != "" {
+		b, err := hex.DecodeString(breakGlassHashHex)
+		if err != nil || len(b) != sha256.Size {
+			return nil, errors.New("auth: PAM_BREAK_GLASS_KEY_HASH must be a hex-encoded SHA-256")
+		}
+		k.breakGlassHash = b
+	}
+	return k, nil
 }
 
 // WithProfiles enables custom-profile resolution for identities whose stored role
@@ -423,19 +475,8 @@ func (r *Resolver) WithProfiles(ps ProfileSource) *Resolver {
 // break-glass path; otherwise it must be a hex-encoded SHA-256.
 func NewResolver(dir Directory, apiKey, breakGlassHashHex string) (*Resolver, error) {
 	r := &Resolver{dir: dir}
-	if apiKey != "" {
-		// Store the SHA-256 so the bootstrap-key comparison is over a fixed 32-byte
-		// value, not raw bytes (a raw ConstantTimeCompare short-circuits on length,
-		// leaking the key's length via timing).
-		h := sha256.Sum256([]byte(apiKey))
-		r.apiKeyHash = h[:]
-	}
-	if breakGlassHashHex != "" {
-		b, err := hex.DecodeString(breakGlassHashHex)
-		if err != nil || len(b) != sha256.Size {
-			return nil, errors.New("auth: PAM_BREAK_GLASS_KEY_HASH must be a hex-encoded SHA-256")
-		}
-		r.breakGlassHash = b
+	if err := r.SetBootstrapSecrets(apiKey, breakGlassHashHex); err != nil {
+		return nil, err
 	}
 	return r, nil
 }
@@ -447,10 +488,13 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (*Principal, error) 
 		return nil, ErrUnauthorized
 	}
 	sum := sha256.Sum256(kb)
-	if len(r.apiKeyHash) != 0 && subtle.ConstantTimeCompare(sum[:], r.apiKeyHash) == 1 {
+	// One load, so both comparisons are made against the same generation of the
+	// secrets even if a refresh lands mid-request.
+	k := r.keys.Load()
+	if len(k.apiKeyHash) != 0 && subtle.ConstantTimeCompare(sum[:], k.apiKeyHash) == 1 {
 		return &Principal{Name: "bootstrap-admin", Role: RoleAdmin}, nil
 	}
-	if len(r.breakGlassHash) != 0 && subtle.ConstantTimeCompare(sum[:], r.breakGlassHash) == 1 {
+	if len(k.breakGlassHash) != 0 && subtle.ConstantTimeCompare(sum[:], k.breakGlassHash) == 1 {
 		return &Principal{Name: "break-glass", Role: RoleAdmin, BreakGlass: true}, nil
 	}
 	hash := hex.EncodeToString(sum[:])
