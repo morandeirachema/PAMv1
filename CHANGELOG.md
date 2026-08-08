@@ -11,6 +11,15 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **`store.Store` is composed from role interfaces** (Phase 72) — one flat
+  149-method interface became 19 named roles (`TargetStore`, `CredentialStore`,
+  `AuditStore`, …) that `Store` embeds, so both implementations and every caller
+  are unchanged while a new consumer can depend on the slice it actually needs.
+  `auditchain` now takes a 3-method `BrokerAuditStore` instead of the whole
+  surface, and `-rotate-kek` takes a named interface listing the four kinds of
+  KEK-wrapped value it must re-wrap — the omission that once left a rotated
+  deployment unable to start.
+
 - **The console gets a safety net** (Phase 71) — the portal's ~2,500 lines of
   embedded JavaScript were never parsed by anything: `go:embed` copies bytes, and
   no CI step ran node, so a syntax error would have shipped. Now `node --check`

@@ -2191,6 +2191,42 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 72 — Store composed from role interfaces ✅
+
+The second improvement from the 2026-08-08 audit. `store.Store` was one flat
+interface and **the main tax on every change**: a feature edits the interface and
+both implementations, which is a bill paid three times in phases 68–70 alone.
+
+- [x] **Composed from 19 role interfaces**, one per domain — `TargetStore`,
+  `CredentialStore`, `GrantStore`, `CertificationStore`, `ApprovalStore`,
+  `CheckoutStore`, `AuditStore`, `UserStore`, `LoginSessionStore`, `MFAStore`,
+  `BrokerStore`, `BrokerAuditStore`, `AppSecretStore`, `VendorStore`,
+  `SSHCertStore`, `KeyMaterialStore`, `SettingStore`, `SessionBusStore`,
+  `SystemStore`. `Store` embeds all of them, so both implementations and every
+  caller are untouched
+- [x] **Cut mechanically, not retyped.** The interface was already separated into
+  blank-line groups by domain; a script mapped groups to roles and moved the text
+  verbatim, so no signature or doc comment could be altered in transcription
+- [x] **The method set is asserted, not assumed.** `TestStoreMethodSetIsUnchanged`
+  reflects over the composed interface and pins the count. It also settles a
+  discrepancy: the surface is **149** methods, not the 137 you get by counting
+  declarations, because it has always also carried `session.LiveStore` and
+  `session.StepUpStore` — a gap between *what the file lists* and *what the
+  interface is* that is itself the argument for naming the roles. Verified by
+  running the same assertion against the pre-refactor file: 149 before, 149 after
+- [x] **Two consumers narrowed, to show the payoff rather than assert it.**
+  `auditchain.New` took all 149 methods and used **three**; it now takes
+  `store.BrokerAuditStore`. And `maint.RotateVaultKEK` takes a named
+  `VaultRotationStore` listing the **four kinds** of KEK-wrapped value it must
+  re-wrap — because the bug that function shipped once was *omission*, and the
+  exhaustive set now sits in the signature where a reviewer reads it instead of
+  having to be reconstructed from the body
+
+Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
+store and uses most of it; rewriting every signature would be a large diff for
+little gain. The value is that a *new* consumer can now state its 3 methods, and
+two did.
+
 ## Phase 71 — The console gets a safety net ✅
 
 The first of five improvements from the 2026-08-08 repo audit, and the one with

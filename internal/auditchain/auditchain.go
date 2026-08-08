@@ -71,7 +71,7 @@ type Chain struct {
 	verifyKeys []ed25519.PublicKey // trusted checkpoint signers: current + rotated-out previous
 	cpEvery    int                 // emit an in-chain checkpoint every N events (0 = disabled)
 	sinceCP    int                 // events appended since the last checkpoint
-	st         store.Store
+	st         store.BrokerAuditStore
 	head       []byte // last event's HMAC, kept in memory
 }
 
@@ -80,7 +80,7 @@ type Chain struct {
 // current signing key's public half is trusted for checkpoint verification;
 // WithRotation adds rotated-out predecessors, WithCheckpointEvery enables periodic
 // in-chain checkpoints.
-func New(ctx context.Context, key []byte, signKey ed25519.PrivateKey, st store.Store) (*Chain, error) {
+func New(ctx context.Context, key []byte, signKey ed25519.PrivateKey, st store.BrokerAuditStore) (*Chain, error) {
 	if len(key) != KeySize {
 		return nil, fmt.Errorf("auditchain: HMAC key must be %d bytes, got %d", KeySize, len(key))
 	}
