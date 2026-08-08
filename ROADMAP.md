@@ -2191,6 +2191,35 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 74 — Policy parity between the database proxies, and a test that does not bet on the scheduler ✅
+
+Two of the three small items from the 2026-08-08 audit. (The third — `run()` at
+815 lines — belongs with the `internal/api` work, since it is what builds that
+package's 63-field `Server`, and is deferred to it.)
+
+- [x] **The two database proxies are held to the same gate set.** They are ~1,000
+  lines each and deliberately line-for-line siblings, so that *anything differing
+  between them is the transport and never the policy*. That is a good decision
+  and a fragile one: every policy fix must be made twice, and nothing but care
+  stopped the second being forgotten. `TestDBProxiesEnforceTheSameGates` names
+  the fourteen identifiers that constitute policy — authorization, the
+  identity-time refusals, the abuse limits, recording and in-session control, and
+  the fail-closed audit before the upstream dial — and fails if either file
+  references one the other does not. **Verified by simulating the drift**: with
+  the tunnel-only-token refusal deleted from the SQL Server path — which compiles
+  cleanly and passes every other test — it fails with `policy drift: dbproxy.go
+  references "TunnelOnly" and mssqlproxy.go does not`. That is the exact shape of
+  a real 2026-07-30 finding
+- [x] **A gate that matches neither file fails too**, so the list cannot rot into
+  a set of dead names quietly checking nothing. Comments are stripped before
+  matching, so a gate merely *mentioned* in prose cannot stand in for one that is
+  enforced
+- [x] **The two sleep-then-assert tests are gone.** Most of the repo's sleeps sit
+  inside polling loops, which is the right pattern; two in the step-up API tests
+  were fixed 50 ms bets that a goroutine would be scheduled in time — true on an
+  idle laptop, a coin toss on a loaded runner. They now poll to a deadline, which
+  is the same test without the bet
+
 ## Phase 73 — The coverage number stops understating itself ✅
 
 The fourth improvement from the 2026-08-08 audit, and the smallest change with
