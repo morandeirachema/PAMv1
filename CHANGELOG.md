@@ -11,6 +11,16 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Added
+
+- **An end-to-end test of the server as shipped.** It boots the real server
+  against a live SSH upstream that accepts *only* the vaulted credential, then
+  drives it over the REST API and the SSH proxy, asserting the six properties
+  that make this a PAM: just-in-time injection, the secret never appearing in the
+  recording/chain/audit, RBAC, the approval gate on both connect and reveal,
+  recording-tamper detection in both directions, and command control. Every
+  assertion was verified against a deliberately broken build.
+
 ### Security
 
 - **Rotating `PAM_BREAK_GLASS_KEY_HASH` inverted the quorum-unseal path.** The
