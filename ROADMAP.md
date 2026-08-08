@@ -2358,7 +2358,23 @@ Phase 76 fixed three audit-integrity defects, and `v0.14.1` predated all of them
 shape of finding AN, which is why the rule is *check whether the pinned tag
 predates the fix* after any security change, not *after any feature*.
 
-- [x] **v0.14.2** through the test-gated pipeline, rehearsed on `main` first
+- [x] **v0.14.2** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-08 as `ghcr.io/morandeirachema/pamv1:0.14.2` (also `latest`),
+  digest
+  `sha256:8df04bf5728ab44ded945281dd8c22419d1c1b83ec1882cdfbdc0e4f5df2c9f1`,
+  **public** — an anonymous manifest pull returns 200. Signed keyless with the
+  SBOM and SLSA provenance attested; the GitHub Release carries
+  `sbom.spdx.json`, and the provenance is in Rekor (`logIndex 2386044650`)
+- [x] **Where the signature lives has changed, and a check written against the
+  old shape reports a false alarm.** Verifying by listing registry tags for
+  `sha256-<digest>.sig` / `.att` finds **nothing** for any release since v0.10.0
+  — not because signing broke, but because cosign now attaches artifacts through
+  the **OCI referrers API**, under a single suffix-less `sha256-<digest>` tag
+  holding a `application/vnd.dev.sigstore.bundle.v0.3+json` bundle plus the two
+  attestations. `cosign verify` and `gh attestation verify` resolve that
+  automatically, so the README's documented commands were never affected — only
+  a hand-rolled tag-listing check would be, and it would conclude the opposite of
+  the truth
 - [x] All four pins moved together — `deploy/k8s/deployment.yaml`,
   `deploy/k8s/conjur/deployment.yaml`, `deploy/terraform/variables.tf`, and the
   Helm chart's **`version` (0.5.1 → 0.5.2) as well as its `appVersion`**
