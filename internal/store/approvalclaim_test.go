@@ -87,7 +87,7 @@ func (f *claimFake) ConsumeApprovalByID(_ context.Context, id int64, _ string, _
 // checkFn adapts a function to store.TicketChecker.
 type checkFn func(ctx context.Context, ticket string) error
 
-func (f checkFn) Validate(ctx context.Context, ticket string) error { return f(ctx, ticket) }
+func (f checkFn) Validate(ctx context.Context, ticket, _ string) error { return f(ctx, ticket) }
 
 // TestClaimApprovalRefusesWithoutBurning is the point of the whole fold: when
 // the ITSM no longer accepts the ticket, the use is refused AND the single-use

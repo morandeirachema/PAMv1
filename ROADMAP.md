@@ -2351,6 +2351,43 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 84 — The ticket gate learns who you are ✅
+
+Closes the Phase 20 deferral. The generic webhook shipped; a first-class
+ServiceNow/Jira connector did not — and the gap was not only convenience.
+
+- [x] **A valid ticket number admitted anyone who knew one.** The webhook payload
+  carried `{"ticket": id}` and nothing else, so the endpoint could answer "does
+  this ticket exist" and never "is it *yours*". A change number quoted from a
+  colleague's queue passed the gate. `Validator.Validate` now takes the **actor**,
+  threaded through both call sites — and at the connect-time fold it is the person
+  *connecting*, not the approval's recorded requester, because the question is
+  whether the ticket authorises the access being used right now
+- [x] **`internal/ticket` gains a `Provider` interface** and three
+  implementations, selected by `PAM_TICKET_PROVIDER`: **ServiceNow** (Table API,
+  `sysparm_display_value=true` so reference fields read as names rather than
+  sys_ids), **Jira** (`/rest/api/3/issue/{key}`), and the existing **webhook**,
+  which stays the default so an existing deployment is untouched
+- [x] **Three checks a 2xx cannot express**: *state* (closed, cancelled or draft
+  is not authorisation), *window* (`start_date`/`end_date` — access outside the
+  approved window is the classic audit finding), and *person*. An absent window
+  bound means "no bound", so an open-ended standard change still works; a bound
+  that IS present is enforced strictly
+- [x] **Person matching is deliberately forgiving**: case-insensitive, and an
+  email local part counts, because the same human is `alice` in pamv1 and
+  `alice@acme.com` in Jira. A rule that rejects real people gets switched off, and
+  a control that is off protects nobody. What an operator tightens is the *field
+  list*, not the comparison
+- [x] `PAM_TICKET_BIND_ACTOR` defaults **on** — the binding is the point. The
+  webhook payload gains `"actor"`, which is backward compatible: an endpoint that
+  ignores it behaves exactly as before
+- [x] Fake-ITSM tests for both connectors — state, window, person, unknown ticket,
+  and an unauthenticated lookup (so a connector that forgot its credentials
+  cannot pass). The **person** and **window** checks were each verified against a
+  deliberately broken build
+- [x] **Not asserted, deliberately**: what a live ServiceNow or Jira returns. That
+  needs an account; it is catalogued in EXTERNAL-INFRA-GAPS rather than claimed
+
 ## Phase 83 — v0.15.0 ✅
 
 Five phases unreleased (78–82): a feature with two new environment variables, the
@@ -3337,8 +3374,11 @@ Buildable without external infrastructure, each deferred by the phase named.
 - ~~**Campaign depth** (19)~~ — ✅ **closed entirely**: scheduled/recurring and
   safe/subject-scoped campaigns (Phase 68), reviewer assignment (69) and
   reminders (70).
-- **Ticket gate depth** (20) — a first-class ServiceNow/Jira connector remains
-  (the generic webhook ships). ~~Gating the *connect* path on a live ticket
+- ~~**Ticket gate depth** (20)~~ — ✅ closed 2026-08-08 in **Phase 84**:
+  first-class ServiceNow and Jira connectors that check the ticket's state, its
+  change window and **whether it names the operator** — the last of which the
+  generic webhook could not express, so a valid change number used to admit
+  anyone who knew one. ~~Gating the *connect* path on a live ticket
   lookup rather than validating at request time~~ — ✅ closed 2026-08-02
   (Phase 60): `PAM_TICKET_REVALIDATE` re-checks the admitting request's ticket
   at the moment access is used, at all five gates, through one shared fold —

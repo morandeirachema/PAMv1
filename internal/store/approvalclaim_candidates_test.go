@@ -34,12 +34,16 @@ type recordingChecker struct {
 	seen      []string
 	deadlines []time.Time
 	delay     time.Duration
+	actors    []string
 }
 
-// Validate answers for one ticket, the way an ITSM connector would.
-func (c *recordingChecker) Validate(ctx context.Context, ticket string) error {
+// Validate answers for one ticket, the way an ITSM connector would. The actor
+// is recorded too: a connector may bind the ticket to the person using it, so
+// the fold has to pass one (Phase 84).
+func (c *recordingChecker) Validate(ctx context.Context, ticket, actor string) error {
 	c.mu.Lock()
 	c.seen = append(c.seen, ticket)
+	c.actors = append(c.actors, actor)
 	if dl, ok := ctx.Deadline(); ok {
 		c.deadlines = append(c.deadlines, dl)
 	}
