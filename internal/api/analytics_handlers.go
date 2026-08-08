@@ -155,8 +155,8 @@ func (s *Server) analyticsPass(ctx context.Context, now time.Time) {
 			continue
 		}
 
-		detail := fmt.Sprintf("actor:%s score:%d level:%s signals:%s events:%d",
-			f.Actor, f.Score, f.Level, f.SignalSummary(), f.Events)
+		detail := fmt.Sprintf("actor:%s score:%d level:%s response_level:%s signals:%s events:%d",
+			f.Actor, f.Score, f.Level, f.ResponseLevel, f.SignalSummary(), f.Events)
 		s.auditAs(ctx, "system-analytics", "analytics.risk_flagged", detail)
 		s.log.Warn("threat analytics flagged an actor", "actor", f.Actor, "score", f.Score, "level", f.Level)
 		s.alerter.Notify(ctx, alert.Event{
@@ -172,7 +172,11 @@ func (s *Server) analyticsPass(ctx context.Context, now time.Time) {
 		//
 		// It runs BELOW the kill threshold, so a critical actor is killed rather
 		// than merely challenged.
-		if s.analyticsAutoStepUp && f.Level == analytics.LevelHigh {
+		// Gated on ResponseLevel, not Level: a finding whose risk is only failed
+		// logins under this name is an attack ON the actor, not BY them, and the
+		// attacker chose the name (see analytics.Finding.ResponseScore). It alerts
+		// above, but must draw no automated action against the victim.
+		if s.analyticsAutoStepUp && f.ResponseLevel == analytics.LevelHigh {
 			revoked, rerr := s.store.DeleteSessionsByUsername(ctx, f.Actor)
 			resp := fmt.Sprintf("actor:%s action:require-reauth revoked:%d score:%d", f.Actor, revoked, f.Score)
 			if rerr != nil {
@@ -188,7 +192,7 @@ func (s *Server) analyticsPass(ctx context.Context, now time.Time) {
 		}
 
 		// Automated response: cut off a critical-risk actor's live sessions.
-		if s.analyticsAutoKill && f.Level == analytics.LevelCritical && s.sessions != nil {
+		if s.analyticsAutoKill && f.ResponseLevel == analytics.LevelCritical && s.sessions != nil {
 			// See the note in revokeUserSessions: the local count is not the cluster
 			// outcome, so the response is audited whether or not this replica hosted
 			// any of the actor's sessions.

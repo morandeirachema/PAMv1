@@ -2351,6 +2351,34 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 87 — The review of Phase 86 ✅
+
+One finding, and it is the shape a review is for: a security feature an
+unauthenticated attacker could point at a bystander.
+
+- [x] **An automated response could be aimed at any account** (finding BX). The
+  risk score counts auth failures, and an auth failure records the *presented*
+  username as the actor — `login.failed` stores it raw, and anyone can present
+  any username unauthenticated. So the auto-kill (Phase 23) and the new
+  auto-step-up (Phase 86) fired on a name the attacker chose. Confirmed by
+  execution: **7** failed logins as a victim reach *high* → their logins are
+  revoked; **10** reach *critical* → their live sessions are killed. The attacker
+  needs only a username, which is not secret. "Many auth failures for X" means
+  *someone is attacking X*, not *X is misbehaving* — and the response punished X
+- [x] **Fixed by splitting alert from response.** `analytics.Finding` gains
+  `ResponseScore`/`ResponseLevel`, which exclude the signals a stranger can pin
+  on a name they do not control — `auth_failure` is the only one, because every
+  other signal requires the actor to have authenticated and acted. The responses
+  gate on `ResponseLevel`; the **alert still fires on `Level`**, because a human
+  *should* be told an account is being brute-forced. An attacker can no longer
+  push even a legitimately-active actor over the response threshold by adding
+  failed logins under their name
+- [x] Both regression tests verified to **fail against the pre-fix code** — the
+  pass test kills the victim's session when the gate is reverted to `Level`
+- [x] The `analytics.risk_flagged` detail now carries `response_level:` beside
+  `level:` so an operator reading the trail sees why an auth-failure-only
+  "critical" drew no automated response. No new audit action
+
 ## Phase 86 — Analytics that need history ✅
 
 Closes the Phase 23 deferral. The six original signals all answer "is this event
