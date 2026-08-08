@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -29,11 +30,12 @@ func TestStepUpEndpoints(t *testing.T) {
 		result <- su.Await(t.Context(), "sess-1", "alice", "DELETE FROM accounts", 3*time.Second)
 	}()
 
-	// Give the Await goroutine a moment to register, then the paused statement
-	// shows up for a supervisor.
-	time.Sleep(50 * time.Millisecond)
-	_, ld := do(t, srv, http.MethodGet, "/api/sessions/stepups", testAPIKey, nil)
-	if !strings.Contains(string(ld), "sess-1") || !strings.Contains(string(ld), "DELETE FROM accounts") {
+	// The paused statement shows up for a supervisor. Waited for rather than
+	// slept on: a fixed sleep is a bet that a goroutine is scheduled within N
+	// milliseconds, which is true on an idle laptop and a coin toss on a loaded
+	// CI runner. Polling to a deadline is the same test without the bet.
+	ld := awaitPending(t, srv, "sess-1")
+	if !strings.Contains(string(ld), "DELETE FROM accounts") {
 		t.Fatalf("step-up listing missing the paused statement: %s", ld)
 	}
 
@@ -165,7 +167,7 @@ func TestStepUpRefusalLeavesNoDecisionRecord(t *testing.T) {
 	go func() {
 		result <- su.Await(t.Context(), "sess-af", "alice", "DELETE FROM ledger", 3*time.Second)
 	}()
-	time.Sleep(50 * time.Millisecond)
+	awaitPending(t, srv, "sess-af")
 
 	// (1) Self-approval: refused, and it must leave no "decided" record.
 	if code, body := do(t, srv, http.MethodPost, "/api/sessions/sess-af/stepup", alice, map[string]any{"approve": true}); code != http.StatusForbidden {
@@ -221,4 +223,23 @@ func countAuditActions(t *testing.T, st store.Store, a, b string) (int, int) {
 		}
 	}
 	return na, nb
+}
+
+// awaitPending polls the step-up listing until sessionID appears, and returns
+// the listing. It replaces a fixed sleep: the Await goroutine registers the
+// pause on its own schedule, and how long that takes is a property of the
+// machine, not of the code under test.
+func awaitPending(t *testing.T, srv *httptest.Server, sessionID string) []byte {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, body := do(t, srv, http.MethodGet, "/api/sessions/stepups", testAPIKey, nil)
+		if strings.Contains(string(body), sessionID) {
+			return body
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("step-up for %s never appeared in the listing: %s", sessionID, body)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
