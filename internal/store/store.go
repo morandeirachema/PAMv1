@@ -146,6 +146,11 @@ type Campaign struct {
 	RecurDays int `json:"recur_days,omitempty"`
 	// NextRunAt is when the anchor next spawns. Nil on a one-off or a child.
 	NextRunAt *time.Time `json:"next_run_at,omitempty"`
+
+	// Reviewer is the default reviewer stamped onto every item this campaign
+	// snapshots (Phase 69). Empty means unassigned, which is what every campaign
+	// was before.
+	Reviewer string `json:"reviewer,omitempty"`
 }
 
 // CampaignScope is what a campaign reviews.
@@ -190,6 +195,16 @@ type CampaignItem struct {
 	Decision    string     `json:"decision"` // pending | certified | revoked
 	DecidedBy   string     `json:"decided_by,omitempty"`
 	DecidedAt   *time.Time `json:"decided_at,omitempty"`
+	// Reviewer is who is EXPECTED to decide this item (Phase 69), seeded from
+	// the campaign and reassignable per item. Empty means unassigned.
+	//
+	// It is ADVISORY, deliberately: it routes work and makes a queue visible, it
+	// is not an authorization gate. Anyone holding `approve` can still decide any
+	// item, and DecidedBy records who actually did — so accountability comes from
+	// the trail rather than from the assignment. Making it binding would add a
+	// deadlock (the assigned reviewer leaves, nobody can close the campaign)
+	// without adding evidence, since any approver could reassign the item anyway.
+	Reviewer string `json:"reviewer,omitempty"`
 }
 
 // CredentialDependency declares a consumer of a credential — a Windows Service,
@@ -656,6 +671,13 @@ type Store interface {
 	AddCampaignItem(ctx context.Context, item *CampaignItem) error
 	// ListCampaignItems returns a campaign's items ordered by id.
 	ListCampaignItems(ctx context.Context, campaignID int64) ([]CampaignItem, error)
+	// SetCampaignItemReviewer reassigns one item, or ErrNotFound. An empty
+	// reviewer unassigns it.
+	SetCampaignItemReviewer(ctx context.Context, itemID int64, reviewer string) error
+	// ListItemsForReviewer returns the PENDING items assigned to reviewer across
+	// every OPEN campaign, oldest first — a reviewer's queue. A campaign that is
+	// closed is not work; an item already decided is not work.
+	ListItemsForReviewer(ctx context.Context, reviewer string) ([]CampaignItem, error)
 	// GetCampaignItem returns one item by ID, or ErrNotFound.
 	GetCampaignItem(ctx context.Context, id int64) (*CampaignItem, error)
 	// DecideCampaignItem records a certify/revoke decision on an item.

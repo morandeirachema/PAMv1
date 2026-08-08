@@ -450,17 +450,17 @@ func (s *PGStore) CreateCampaign(ctx context.Context, c *store.Campaign) error {
 		c.Status = "open"
 	}
 	return s.pool.QueryRow(ctx,
-		`INSERT INTO campaigns (name, created_by, due_at, status, scope_kind, scope_safe_id, scope_subject, recur_days, next_run_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at`,
+		`INSERT INTO campaigns (name, created_by, due_at, status, scope_kind, scope_safe_id, scope_subject, recur_days, next_run_at, reviewer)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, created_at`,
 		c.Name, c.CreatedBy, c.DueAt, c.Status,
-		string(c.ScopeKind), c.ScopeSafeID, c.ScopeSubject, c.RecurDays, c.NextRunAt,
+		string(c.ScopeKind), c.ScopeSafeID, c.ScopeSubject, c.RecurDays, c.NextRunAt, c.Reviewer,
 	).Scan(&c.ID, &c.CreatedAt)
 }
 
 // campaignCols is the one column list every campaign read uses, so a field
 // cannot reach some reads and quietly miss others.
 const campaignCols = `id, name, created_by, created_at, due_at, status, closed_at,
-	scope_kind, scope_safe_id, scope_subject, recur_days, next_run_at`
+	scope_kind, scope_safe_id, scope_subject, recur_days, next_run_at, reviewer`
 
 // ListCampaigns returns all campaigns, newest first.
 func (s *PGStore) ListCampaigns(ctx context.Context) ([]store.Campaign, error) {
@@ -505,9 +505,9 @@ func (s *PGStore) AddCampaignItem(ctx context.Context, item *store.CampaignItem)
 		item.Decision = "pending"
 	}
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO campaign_items (campaign_id, kind, ref_id, subject_type, subject, detail, granted_by, decision)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-		item.CampaignID, item.Kind, item.RefID, item.SubjectType, item.Subject, item.Detail, item.GrantedBy, item.Decision,
+		`INSERT INTO campaign_items (campaign_id, kind, ref_id, subject_type, subject, detail, granted_by, decision, reviewer)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+		item.CampaignID, item.Kind, item.RefID, item.SubjectType, item.Subject, item.Detail, item.GrantedBy, item.Decision, item.Reviewer,
 	).Scan(&item.ID)
 	if pgCode(err) == pgForeignKeyViolation {
 		return store.ErrNotFound
@@ -535,14 +535,43 @@ func (s *PGStore) DecideCampaignItem(ctx context.Context, id int64, decision, de
 		`UPDATE campaign_items SET decision = $2, decided_by = $3, decided_at = $4 WHERE id = $1`, id, decision, decidedBy, at)
 }
 
-const campaignItemCols = `id, campaign_id, kind, ref_id, subject_type, subject, detail, granted_by, decision, decided_by, decided_at`
+// SetCampaignItemReviewer reassigns one item.
+func (s *PGStore) SetCampaignItemReviewer(ctx context.Context, itemID int64, reviewer string) error {
+	return execExpectingRow(ctx, s.pool, `UPDATE campaign_items SET reviewer = $2 WHERE id = $1`, itemID, reviewer)
+}
+
+// ListItemsForReviewer returns the pending items assigned to reviewer across
+// every open campaign, oldest first. The join is what makes it a queue: a closed
+// campaign's leftovers are not work anybody should still be shown.
+func (s *PGStore) ListItemsForReviewer(ctx context.Context, reviewer string) ([]store.CampaignItem, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+prefixed(campaignItemCols, "i.")+`
+		FROM campaign_items i JOIN campaigns c ON c.id = i.campaign_id
+		WHERE i.reviewer = $1 AND i.decision = 'pending' AND c.status = 'open'
+		ORDER BY i.id`, reviewer)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanCampaignItem)
+}
+
+// prefixed qualifies a comma-separated column list with a table alias, so the
+// one column list stays the single source of truth even in a join.
+func prefixed(cols, alias string) string {
+	parts := strings.Split(cols, ",")
+	for i, c := range parts {
+		parts[i] = alias + strings.TrimSpace(c)
+	}
+	return strings.Join(parts, ", ")
+}
+
+const campaignItemCols = `id, campaign_id, kind, ref_id, subject_type, subject, detail, granted_by, decision, decided_by, decided_at, reviewer`
 
 // scanCampaign scans one campaign row.
 func scanCampaign(row pgx.CollectableRow) (store.Campaign, error) {
 	var c store.Campaign
 	var scope string
 	err := row.Scan(&c.ID, &c.Name, &c.CreatedBy, &c.CreatedAt, &c.DueAt, &c.Status, &c.ClosedAt,
-		&scope, &c.ScopeSafeID, &c.ScopeSubject, &c.RecurDays, &c.NextRunAt)
+		&scope, &c.ScopeSafeID, &c.ScopeSubject, &c.RecurDays, &c.NextRunAt, &c.Reviewer)
 	c.ScopeKind = store.CampaignScope(scope)
 	return c, err
 }
@@ -550,7 +579,7 @@ func scanCampaign(row pgx.CollectableRow) (store.Campaign, error) {
 // scanCampaignItem scans one campaign-item row.
 func scanCampaignItem(row pgx.CollectableRow) (store.CampaignItem, error) {
 	var it store.CampaignItem
-	err := row.Scan(&it.ID, &it.CampaignID, &it.Kind, &it.RefID, &it.SubjectType, &it.Subject, &it.Detail, &it.GrantedBy, &it.Decision, &it.DecidedBy, &it.DecidedAt)
+	err := row.Scan(&it.ID, &it.CampaignID, &it.Kind, &it.RefID, &it.SubjectType, &it.Subject, &it.Detail, &it.GrantedBy, &it.Decision, &it.DecidedBy, &it.DecidedAt, &it.Reviewer)
 	return it, err
 }
 

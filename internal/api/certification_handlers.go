@@ -26,6 +26,8 @@ type campaignIn struct {
 	ScopeSubject string              `json:"scope_subject,omitempty"`
 	// RecurDays > 0 makes this campaign the anchor of a recurring series.
 	RecurDays int `json:"recur_days,omitempty"`
+	// Reviewer is stamped onto every item this campaign snapshots (Phase 69).
+	Reviewer string `json:"reviewer,omitempty"`
 }
 
 // maxRecurDays bounds a recurrence at roughly a year. A campaign that repeats
@@ -49,7 +51,7 @@ func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 	c := store.Campaign{
 		Name: in.Name, CreatedBy: actorFrom(ctx), DueAt: in.DueAt, Status: "open",
 		ScopeKind: in.ScopeKind, ScopeSafeID: in.ScopeSafeID, ScopeSubject: in.ScopeSubject,
-		RecurDays: in.RecurDays,
+		RecurDays: in.RecurDays, Reviewer: strings.TrimSpace(in.Reviewer),
 	}
 	if !s.validateCampaignScope(w, ctx, &c) {
 		return
@@ -133,7 +135,75 @@ func campaignScopeDetail(c *store.Campaign) string {
 	if c.RecurDays > 0 {
 		scope += fmt.Sprintf(" recur_days:%d", c.RecurDays)
 	}
+	if c.Reviewer != "" {
+		scope += " reviewer:" + auditField(c.Reviewer, 128)
+	}
 	return scope
+}
+
+type reviewerIn struct {
+	Reviewer string `json:"reviewer"`
+}
+
+// assignCampaignItem reassigns one item's reviewer (CapManageUsers), or
+// unassigns it with an empty value.
+//
+// Assignment is ADVISORY — it routes work and makes a queue visible; it is not
+// an authorization gate, and anyone holding `approve` can still decide any item.
+// Making it binding would add a deadlock (the assigned reviewer leaves and the
+// campaign cannot be closed) without adding evidence, because the trail already
+// records who actually decided. Say it plainly here so nobody reads the field as
+// a control it is not.
+func (s *Server) assignCampaignItem(w http.ResponseWriter, r *http.Request) {
+	cid, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "campaign id must be numeric")
+		return
+	}
+	itemID, err := strconv.ParseInt(r.PathValue("itemID"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "item id must be numeric")
+		return
+	}
+	var in reviewerIn
+	if !readJSON(w, r, &in) {
+		return
+	}
+	ctx := r.Context()
+	// Scoped to the campaign in the path, like every other child-resource route:
+	// an item id alone must never let one campaign's route touch another's item.
+	item, err := s.store.GetCampaignItem(ctx, itemID)
+	if err != nil || item.CampaignID != cid {
+		writeError(w, http.StatusNotFound, "no such item in this campaign")
+		return
+	}
+	reviewer := strings.TrimSpace(in.Reviewer)
+	if err := s.store.SetCampaignItemReviewer(ctx, itemID, reviewer); err != nil {
+		storeError(w, err)
+		return
+	}
+	who := reviewer
+	if who == "" {
+		who = "(unassigned)"
+	}
+	s.audit(ctx, "certification.item_assigned",
+		fmt.Sprintf("campaign:%d item:%d reviewer:%s", cid, itemID, auditField(who, 128)))
+	writeJSON(w, http.StatusOK, map[string]any{"item": itemID, "reviewer": reviewer})
+}
+
+// myReviewQueue returns the caller's pending items across every open campaign —
+// "what is waiting on me". Gated on CapApprove, the capability that can act on
+// the answer; an auditor reads campaigns through the campaign endpoints.
+func (s *Server) myReviewQueue(w http.ResponseWriter, r *http.Request) {
+	items, err := s.store.ListItemsForReviewer(r.Context(), actorFrom(r.Context()))
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	if items == nil {
+		items = []store.CampaignItem{}
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 // snapshotAccess records the access under review as items of campaign c,
@@ -172,7 +242,7 @@ func (s *Server) snapshotAccess(ctx context.Context, c *store.Campaign) (int, er
 				CampaignID: c.ID, Kind: "target_grant", RefID: g.ID,
 				SubjectType: g.SubjectType, Subject: g.Subject,
 				Detail:    itemDetail(fmt.Sprintf("grant on target %q", t.Name), g.CreatedBy),
-				GrantedBy: g.CreatedBy,
+				GrantedBy: g.CreatedBy, Reviewer: c.Reviewer,
 			}); err != nil {
 				return 0, err
 			}
@@ -199,7 +269,7 @@ func (s *Server) snapshotAccess(ctx context.Context, c *store.Campaign) (int, er
 				CampaignID: c.ID, Kind: "safe_member", RefID: mem.ID,
 				SubjectType: mem.SubjectType, Subject: mem.Subject,
 				Detail:    itemDetail(fmt.Sprintf("member of safe %q", sf.Name), mem.CreatedBy),
-				GrantedBy: mem.CreatedBy,
+				GrantedBy: mem.CreatedBy, Reviewer: c.Reviewer,
 			}); err != nil {
 				return 0, err
 			}

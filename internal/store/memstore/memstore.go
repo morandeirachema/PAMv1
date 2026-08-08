@@ -511,6 +511,38 @@ func (m *Memstore) CloseCampaign(_ context.Context, id int64, at time.Time) erro
 	return nil
 }
 
+// SetCampaignItemReviewer reassigns one item.
+func (m *Memstore) SetCampaignItemReviewer(_ context.Context, itemID int64, reviewer string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	it, ok := m.campaignItems[itemID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	it.Reviewer = reviewer
+	m.campaignItems[itemID] = it
+	return nil
+}
+
+// ListItemsForReviewer returns the pending items assigned to reviewer across
+// every open campaign, oldest first — the same predicate pgstore applies in SQL.
+func (m *Memstore) ListItemsForReviewer(_ context.Context, reviewer string) ([]store.CampaignItem, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []store.CampaignItem
+	for _, it := range m.campaignItems {
+		if it.Reviewer != reviewer || it.Decision != "pending" {
+			continue
+		}
+		if c, ok := m.campaigns[it.CampaignID]; !ok || c.Status != "open" {
+			continue
+		}
+		out = append(out, it)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
 // ListDueCampaigns returns the open recurring anchors whose next run has
 // arrived, oldest first — the same predicate pgstore applies in SQL.
 func (m *Memstore) ListDueCampaigns(_ context.Context, now time.Time) ([]store.Campaign, error) {

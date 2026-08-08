@@ -11,6 +11,18 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **An item has an owner** (Phase 69) — a campaign can name a default reviewer,
+  stamped onto every item it snapshots; a single item can be reassigned; and
+  `GET /api/campaigns/mine` is a reviewer's queue (pending items in open
+  campaigns). **Assignment is advisory**: it routes work and makes a queue
+  visible, it is not an authorization gate — anyone with `approve` can still
+  decide any item, and the trail records who did. Console: a reviewer column,
+  `7=Assign reviewer`, and a My Review Queue screen (F7 from menu 17). Migration
+  `0030` is additive; new audit action `certification.item_assigned`.
+  **Also fixes a pre-existing console bug**: the item screen gated deciding on
+  `manage_users` while the API has gated it on `approve` since Phase 39, so the
+  dedicated approver role saw a read-only screen.
+
 ## [0.13.0] — 2026-08-08
 
 Certification campaigns become something an organisation can actually run: scoped

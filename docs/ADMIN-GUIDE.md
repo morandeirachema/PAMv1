@@ -1967,8 +1967,34 @@ curl -sX POST https://pam.example/api/campaigns -H "X-API-Key: $PAM_API_KEY" \
   worker is always on — there is no interval to configure and nothing to forget.
 - `recur_days` is capped at 366.
 
+#### Give each item an owner (Phase 69)
+
+Work that is everyone's is nobody's. A campaign can name a **default reviewer**,
+stamped onto every item it snapshots, and any single item can be reassigned:
+
+```bash
+curl -sX POST https://pam.example/api/campaigns -H "X-API-Key: $PAM_API_KEY" \
+  -d '{"name":"PCI safe, Q3","scope_kind":"safe","scope_safe_id":4,"reviewer":"carol"}'
+
+# reassign one item (CapManageUsers); "" unassigns it
+curl -sX PUT https://pam.example/api/campaigns/1/items/7/reviewer \
+  -H "X-API-Key: $PAM_API_KEY" -d '{"reviewer":"dave"}'
+
+# a reviewer's own queue: pending items across every OPEN campaign (CapApprove)
+curl -s https://pam.example/api/campaigns/mine -H "X-API-Key: $REVIEWER_TOKEN"
+```
+
+> **Assignment is advisory, not a gate.** It routes work and makes a queue
+> visible. Anyone holding `approve` can still decide any item, and the audit
+> trail records who actually decided (`decided_by`) — so accountability comes
+> from the trail, not the assignment. Binding it would mean a campaign could not
+> be closed once its assigned reviewer left, without adding any evidence, since
+> any approver could reassign the item anyway. The **four-eyes** rule is the real
+> control here and is unchanged: you may not certify access you granted yourself.
+
 The whole flow is also in the console: **Certification campaigns** (menu 17) —
-F6 snapshots a new campaign (due date, scope, and repeat interval), option **5**
+F6 snapshots a new campaign (due date, scope, reviewer and repeat interval),
+**F7** is your own review queue, option **7** on an item reassigns it, option **5**
 on a campaign opens the item review (certify / revoke per item), option **8**
 closes it. The list names each campaign's scope and marks a repeating one in
 amber, since that is the row you must not close by accident — and must close on
