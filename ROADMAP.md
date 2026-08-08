@@ -2357,7 +2357,13 @@ Phase 84 closed finding **BW** — a valid ticket number worked as a shared
 password — so the pin-currency rule applies: after a security fix, check whether
 the pinned tag predates it. It did.
 
-- [x] **v0.16.0** through the test-gated pipeline, rehearsed on `main` first
+- [x] **v0.16.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-08 as `ghcr.io/morandeirachema/pamv1:0.16.0` (also `latest`),
+  digest
+  `sha256:04cdbddbe83ff465fd1aa12ba3123f69858a25fea62f97649bff056429c0e2f5`,
+  **public** — an anonymous manifest pull returns 200. Keyless-signed with the
+  SBOM and SLSA provenance as OCI referrers; the GitHub Release carries
+  `sbom.spdx.json`
 - [x] **All five pins**, using the sweep rather than the list: `grep` every
   version reference under `deploy/` and require exactly one release. That is the
   check that caught the flux tag last time, and it is the one worth running
