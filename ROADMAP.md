@@ -2351,6 +2351,16 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 90 — v0.18.0 ✅
+
+Phase 89 is an audit-integrity fix (false four-eyes records on a failed step-up
+dispatch). Applying the pin-currency rule to it — even though the residual is
+narrow — is the consistency the rule is worth nothing without.
+
+- [x] **v0.18.0** through the test-gated pipeline, rehearsed on `main` first
+- [x] All five pins via the sweep; Helm chart `version` 0.8.0 -> **0.9.0**
+- [x] Both READMEs restated; label-vs-URL equality re-checked (0 mismatches)
+
 ## Phase 89 — Close the open-findings backlog ✅
 
 Answering "what is next" honestly turned up that `docs/SECURITY-GAPS.md` still
