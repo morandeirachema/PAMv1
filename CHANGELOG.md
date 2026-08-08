@@ -11,6 +11,37 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-08-08
+
+The five improvements from the 2026-08-08 repo audit. A **patch**: no feature, no
+schema change, no new environment variable, no audit-vocabulary change. Upgrading
+from 0.14.0 needs nothing.
+
+The one operator-visible change is cosmetic and an improvement: long values in
+console tables now truncate with an ellipsis instead of pushing later columns off
+the terminal.
+
+- **The console gets a safety net** (Phase 71) — the portal's ~2,500 lines of
+  embedded JavaScript were never parsed by anything, so a syntax error would have
+  shipped. `node --check` now runs as a Go test and an explicit CI step, and every
+  covered screen is rendered twice to assert a table row does not widen with its
+  data. It found two more instances of the column-overflow bug immediately, in the
+  campaigns list and the review queue.
+- **`store.Store` composed from role interfaces** (Phase 72) — one flat
+  149-method interface became 19 named roles it embeds, so callers and both
+  implementations are unchanged while a new consumer can depend on the slice it
+  needs. `auditchain` now takes 3 methods instead of 149.
+- **The coverage number stops understating itself** (Phase 73) — CI prints the
+  total, the total excluding the database-gated package (**77.5%**) and that
+  package's own figure (**81.9%**, from the job that has a database), instead of
+  one number depressed about four points by code it could not run.
+- **Policy parity between the database proxies** (Phase 74) — the two are
+  deliberate line-for-line siblings, so a test now names the fourteen gates that
+  constitute policy and fails if either references one the other does not.
+- **Clipboard observation moved to `internal/guacd`** (Phase 75), where the
+  protocol it parses already lives, and `serveAndShutDown` split out of `run()`.
+  The rest of `internal/api` was measured and deliberately left alone.
+
 - **What of `internal/api` actually wanted to move** (Phase 75) — clipboard
   observation moved to `internal/guacd`, where the protocol it parses already
   lives (it had zero coupling to the HTTP server), and `serveAndShutDown` split
@@ -458,7 +489,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.14.1...HEAD
+[0.14.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.14.1
 [0.14.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.14.0
 [0.13.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.13.0
 [0.12.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.12.0
