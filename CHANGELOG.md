@@ -11,6 +11,12 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-08-09
+
+A **patch**-level audit-integrity fix, released as a minor for the pin currency:
+a step-up decision that was recorded but did not take effect could leave a false
+four-eyes record. No schema change; upgrading from 0.17.x needs nothing.
+
 ### Fixed
 
 - **A step-up decision that was recorded but did not take effect left a false
@@ -702,7 +708,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.18.0
 [0.17.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.17.0
 [0.16.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.16.0
 [0.15.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.15.0
