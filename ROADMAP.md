@@ -2196,7 +2196,10 @@ would cost more release time than it currently buys.
 Minor, and the first release since 0.10.0 to carry a **migration**, so the
 upgrade note is the point of the release rather than a footnote.
 
-- [x] **v0.13.0** through the test-gated pipeline, rehearsed first on `main`
+- [x] **v0.13.0** through the test-gated pipeline, rehearsed first on `main`.
+  Published 2026-08-08 as `ghcr.io/morandeirachema/pamv1:0.13.0`, digest
+  `sha256:b239f0a4c4bd0aaa3aec0088c78a0eabcbe9ee1549e725ff7e556acbf4eb5131`,
+  public — anonymous pull verified
 - [x] **Migration `0029` is additive and its rollback was checked, not assumed.**
   The added columns are `NOT NULL DEFAULT` or nullable; 0.12.0 names its columns
   explicitly in every campaign read and write; and the migration runner applies
