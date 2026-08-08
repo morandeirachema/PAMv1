@@ -2351,6 +2351,32 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 83 — v0.15.0 ✅
+
+Five phases unreleased (78–82): a feature with two new environment variables, the
+deploy examples, and the end-to-end test. A **minor**, not a patch.
+
+- [x] **v0.15.0** through the test-gated pipeline, rehearsed on `main` first
+- [x] **The release checklist was wrong, and its own check caught it.** It has
+  always said "all four pins together"; Phase 79 added a **fifth** —
+  `deploy/k8s/flux/gitrepository.yaml`, which pins the git *tag* Flux reconciles
+  from — without adding it to the checklist. It was still on `v0.14.3` after the
+  other four moved, so the shipped GitOps example would have deployed the
+  previous release. The checklist now says **five**, and the sweep that found it
+  (`grep` every version reference in `deploy/` and require exactly one release)
+  is the check to keep: a list of places is only as good as its last update,
+  while "show me every version string" cannot go stale
+- [x] Helm chart `version` 0.5.3 → **0.6.0** alongside `appVersion`, because the
+  app change is a minor
+- [x] Both READMEs restated; label-vs-URL equality re-checked (0 mismatches)
+- [x] **The changelog was consolidated rather than concatenated.** Five phases had
+  each prepended their own `### Added`/`### Fixed`, leaving duplicated headings.
+  More importantly, most of the "Security"/"Fixed" entries described defects
+  **introduced and fixed between tags** — listing them as fixes would tell a
+  reader that 0.14.3 was vulnerable to things it never contained. They are now one
+  honest "Development note" pointing at SECURITY-GAPS, and the only entry under
+  **Fixed** is the `kubectl apply -f` bug, which really had been shipping
+
 ## Phase 82 — The review of Phases 79–81 ✅
 
 Three findings, and the first is the one worth remembering: **Phase 80's fix for
