@@ -11,6 +11,17 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Runtime secret refresh did nothing when the secret was also set in the
+  environment** — which is every shipped deployment, since docker-compose,
+  the Kubernetes secret and the OVA all set `PAM_API_KEY`. The change-detection
+  digest was seeded from Conjur's own value, so the first tick compared Conjur
+  against Conjur and skipped forever, while the startup log said "enabling
+  refresh means Conjur wins for it". Never released.
+- An applier registered for a name that is not a sourceable bootstrap secret is
+  now refused at startup instead of silently never running.
+
 ### Added
 
 - **An end-to-end test of the server as shipped.** It boots the real server

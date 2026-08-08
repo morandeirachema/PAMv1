@@ -729,21 +729,21 @@ func Load() (*Config, error) {
 	default:
 		errs = append(errs, fmt.Sprintf("PAM_SSH_SFTP_CAPTURE must be one of off, uploads, downloads, all (got %q)", cfg.SSHSFTPCapture))
 	}
-	// Bounded at both ends: negative is a fat-finger, and a value large enough
-	// to overflow the int64 byte count it becomes would wrap into a negative
-	// cap — which reads as "unlimited" at one comparison and refuses everything
-	// at another. 1 PiB is far above any real per-file transfer.
-	// A reminder cadence outside a year is a typo, not a schedule. Unbounded, a
-	// fat-fingered value silently means "remind immediately, every day, forever",
-	// because a due date already inside the window clamps to now.
 	// A refresh faster than a minute hammers Conjur for values that change
 	// rarely; slower than a day is not a refresh.
 	if cfg.ConjurRefreshMin < 0 || cfg.ConjurRefreshMin > 1440 {
 		errs = append(errs, "PAM_CONJUR_REFRESH_MIN must be between 0 (off) and 1440")
 	}
+	// A reminder cadence outside a year is a typo, not a schedule. Unbounded, a
+	// fat-fingered value silently means "remind immediately, every day, forever",
+	// because a due date already inside the window clamps to now.
 	if cfg.CertRemindDays < 0 || cfg.CertRemindDays > 366 {
 		errs = append(errs, "PAM_CERT_REMIND_DAYS must be between 0 (reminders off) and 366")
 	}
+	// Bounded at both ends: negative is a fat-finger, and a value large enough
+	// to overflow the int64 byte count it becomes would wrap into a negative
+	// cap — which reads as "unlimited" at one comparison and refuses everything
+	// at another. 1 PiB is far above any real per-file transfer.
 	if cfg.SSHSFTPCaptureMaxMB < 0 || cfg.SSHSFTPCaptureMaxMB > 1<<30 {
 		errs = append(errs, "PAM_SSH_SFTP_CAPTURE_MAX_MB must be between 0 (unlimited) and 1073741824")
 	}

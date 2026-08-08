@@ -2351,6 +2351,44 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 82 — The review of Phases 79–81 ✅
+
+Three findings, and the first is the one worth remembering: **Phase 80's fix for
+finding BM reintroduced BM inside the fix itself.**
+
+- [x] **A secret pinned in the environment and managed in Conjur was never
+  refreshed, while the startup log said Conjur wins** (finding BT). Phase 80
+  correctly changed ownership from "Conjur *filled* this at boot" to "Conjur
+  *manages* this", and added a warning for the ambiguous case — then seeded the
+  change-detection digest from **what Conjur held**, so the opening tick compared
+  Conjur against Conjur, found no change, and skipped forever. In every shipped
+  deployment (docker-compose hard-requires `PAM_API_KEY`, the K8s secret ships
+  it, the OVA generates it) that is the *only* case. Reproduced before fixing:
+  `changed=[] applied=""`. Now seeded from what the process booted with —
+  a single read, not the finding-BH mistake of treating the environment as the
+  last-applied store across ticks
+- [x] **Two comments had drifted from the statements they document** (BU). Three
+  explanatory blocks had stacked in `config.Load`'s validation with no code
+  between them, so the 1 PiB SFTP reasoning sat above the Conjur refresh check.
+  Each insertion — Phase 76, then 78 — landed between a comment and its `if`
+- [x] **An applier for a non-sourceable name was a silent no-op** (BV): never
+  fetched, never applied, never audited, and indistinguishable from "Conjur does
+  not manage it". Since the applier map *is* the definition of refreshable
+  (finding BK), a typo in it silently shrank that definition. Refused at wiring
+  time now
+- [x] Both fixes carry a regression test **verified to fail against the previous
+  code**. The seeding mutation initially failed to compile, so that run proved
+  nothing and was redone — a mutation that does not apply looks exactly like a
+  test that caught nothing
+- [x] **Phases 79 and 81 came through clean.** 79's examples were already
+  verified by building both kustomize bases and round-tripping all three sealed
+  files; 81's six assertions were each checked against a broken build before it
+  landed
+
+**The generalizable lesson:** a fix that adds a claim to a log has to be checked
+against *the claim*, not against the bug it replaced. Both halves of Phase 80's
+fix were implemented and neither was run against the other.
+
 ## Phase 81 — Proving it is a PAM, in CI ✅
 
 The question "is this actually a functional PAM?" was answered by hand: an SSH
