@@ -113,14 +113,38 @@ type Signal struct {
 
 // Finding is the aggregate risk assessment for one actor over the scored window.
 type Finding struct {
-	Actor   string    `json:"actor"`
-	Score   int       `json:"score"`
-	Level   string    `json:"level"`
+	Actor string `json:"actor"`
+	Score int    `json:"score"`
+	Level string `json:"level"`
+	// ResponseScore is Score with the signals EXCLUDED that an unauthenticated
+	// party can attribute to a name they do not control (auth failures). It is
+	// the score an automated response must be gated on, and it is usually equal
+	// to Score — they differ only for an actor whose risk is inflated by failed
+	// logins carrying their name.
+	//
+	// The reason is a real attack. A failed login records the PRESENTED username
+	// as the actor, and anyone can present any username unauthenticated, so
+	// "many auth failures for X" means "someone is attacking X", not "X is
+	// misbehaving". Auto-responding on Level would let an attacker who knows a
+	// username force that user's sessions to be revoked or killed by failing
+	// login as them. Alerts still use Level — a human should be told X is being
+	// brute-forced — but the response uses ResponseLevel, so the attack drives no
+	// automated action against the victim.
+	ResponseScore int    `json:"response_score"`
+	ResponseLevel string `json:"response_level"`
+
 	Signals []Signal  `json:"signals"`
 	Events  int       `json:"events"`
 	FirstTS time.Time `json:"first_ts"`
 	LastTS  time.Time `json:"last_ts"`
 }
+
+// responseExcludedSignals are the signals an unauthenticated party can pin on a
+// victim's name, so they must not drive an automated response. auth_failure is
+// the only one: every other signal requires the actor to have authenticated and
+// acted, which an attacker cannot do under someone else's name without first
+// compromising them (in which case the response is warranted).
+var responseExcludedSignals = map[string]bool{"auth_failure": true}
 
 // SignalSummary renders the finding's signals as a compact "name=points" list
 // for an audit detail or alert body.
@@ -330,6 +354,17 @@ func (e *Engine) finding(actor string, pa *perActor) Finding {
 	add("new_target", pa.counts["new_target"], w.NewTarget)
 	add("peer_outlier", pa.counts["peer_outlier"], w.PeerOutlier)
 	f.Level = e.level(f.Score)
+	// The response-eligibility score drops the signals a stranger can attribute
+	// to this actor's name (see responseExcludedSignals). Everything left is
+	// something the actor themselves did while authenticated.
+	resp := 0
+	for _, sig := range f.Signals {
+		if !responseExcludedSignals[sig.Name] {
+			resp += sig.Points
+		}
+	}
+	f.ResponseScore = resp
+	f.ResponseLevel = e.level(resp)
 	// Present the strongest signals first.
 	sort.SliceStable(f.Signals, func(i, j int) bool { return f.Signals[i].Points > f.Signals[j].Points })
 	return f

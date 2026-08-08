@@ -174,3 +174,31 @@ func auditActions(t *testing.T, st store.Store) map[string]int {
 	}
 	return m
 }
+
+// TestAnalyticsPassIgnoresAuthFailureOnlyActor is the regression for the
+// session-DoS the Phase 86 review found. An unauthenticated attacker who knows a
+// username can fail login under it — login.failed records the PRESENTED name — and
+// with auto-kill enabled that would score the victim critical and terminate their
+// live sessions. The victim did nothing and did not choose to be named.
+//
+// After the fix the victim is still ALERTED (a human should know an account is
+// being brute-forced) but no automated action is taken against them.
+func TestAnalyticsPassIgnoresAuthFailureOnlyActor(t *testing.T) {
+	srv, st, capt, reg := newAnalyticsServer(t, true) // auto-kill ON
+	seedAudit(t, st, "victim", "login.failed", 15)    // 100 pts on the full score → critical
+
+	killed := 0
+	reg.Register(session.Info{Actor: "victim", Target: "web-01", Protocol: "ssh"}, func() { killed++ })
+
+	srv.analyticsPass(context.Background(), time.Now())
+
+	if killed != 0 {
+		t.Fatalf("spoofed failed logins killed the victim's live session (killed=%d) — a DoS driven by the response itself", killed)
+	}
+	if capt.types()["analytics.risk_flagged"] == 0 {
+		t.Fatal("the brute-forced account must still be flagged so a human can investigate")
+	}
+	if auditActions(t, st)["analytics.auto_response"] != 0 {
+		t.Fatal("no automated response may act on an actor whose risk is only auth failures")
+	}
+}

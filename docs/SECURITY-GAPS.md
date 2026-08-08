@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-08-08 · Reflects: Phases 0–84 + the 2026-07 hardening
+> Last updated: 2026-08-09 · Reflects: Phases 0–87 + the 2026-07 hardening
 > passes, including the **post-beta sweep of 2026-07-27** (thirty findings, all
 > closed), the **sweep of 2026-08-07** over phases 56–61a (nine findings: two
 > closed by Phase 62, six by Phase 63, half of one withdrawn as a false
@@ -182,6 +182,24 @@ roadmap is the plan.
 | ~~F~~ | ~~**Certification decisions have no separation of duties.**~~ | Was: only `CapManageUsers` (i.e. an admin) could certify or revoke, so the principal who grants access was the only one who could attest to it. | **Fixed in Phases 39 + 46** — Phase 39 moved the decision to `CapApprove`, so a dedicated `approver` runs the recertification without holding the access-granting capability (creating/closing a campaign stay `CapManageUsers`). Phase 46 closed the remaining hole with **per-item four-eyes**: every grant records its creator (`target_grants.created_by`, `safe_members.created_by`, migration `0023`), the campaign snapshot carries it (`campaign_items.granted_by`, shown as "granted by X" in the item detail), and certifying an item you granted yourself is refused 403 + audited `certification.decision_denied`. Self-revoke stays allowed (it reduces access); pre-migration rows with no recorded creator are not blocked retroactively. Tests: `api.TestCertificationAuthz`, `api.TestCertificationFourEyes`, the store contract. |
 | ~~G~~ | ~~**Console parity has drifted since Phase 25.**~~ | Was: nine capabilities had no screen. Two of them — a parked agent tool call and a paused SQL statement — are human decisions **with a deadline**, which is what made curl-only actually cost something. | **Fixed across Phases 43 + 45** — Phase 43 shipped the two time-critical screens (*Approve AI-agent tool calls*, menu 20, showing the arguments the policy matched on; *In-session step-up decisions*, menu 21). Phase 45 shipped the other seven: vendors & contract grants (22), operator SSH certificates (23), identity blast radius (24), login-session revocation (25), agent keys (26), credential dependencies (option 9 on a credential), and the audit chain verify / signed head / OCSF export on the audit screen. One deliberate new route: `GET /api/ca/ssh/certs` (CapReadInventory) — the issued-cert serials a revocation needs were listable in the store but invisible over HTTP. All verified against a running server; the console is back at **full parity**. |
 | ~~H~~ | ~~**No update endpoints and no pagination.**~~ | Was: the `Store` interface had create/delete but no update for targets, safes, users or vendors — fixing a target's port meant delete + recreate, cascading away its credentials, grants, dependencies and safe assignment — and no list method except the audit reads was bounded (an authenticated memory-exhaustion vector). | **Fixed in Phase 44** — `UpdateTarget`/`UpdateSafe`/`UpdateUserRole`/`UpdateVendorOrg` + `PUT` routes with create-equivalent validation and authorization (the user edit re-runs the privilege-escalation guard; tokens survive a role change), audited `*.update`; the seven top-level list reads take an id-ascending `(limit, afterID)` window and every list endpoint clamps `?limit=&after=` to 1..500 (default 100) the way `listAudit` already did. Grants and safe members deliberately stay create + delete (no dependents to lose; two audited events beat one mutated row), and usernames stay immutable (they are the subject key in grants/sessions/vendor rows). Console: cursor-draining fetches + 2=Change screens. Tests: the store contract (both stores, live PostgreSQL in CI) + `api/update_test.go`. |
+
+## The 2026-08-09 review of Phase 86 — the response that could be turned on a victim
+
+One finding, and it is the kind a review exists to catch: a security feature that
+an unauthenticated attacker could aim at a bystander.
+
+Phase 86 added an automated step-up response (`PAM_ANALYTICS_AUTO_STEPUP`) beside
+the existing auto-kill (Phase 23). Both act on the actor of a high/critical risk
+finding — revoking that actor's logins, or killing their live sessions. The risk
+score, though, counts **auth failures**, and an auth failure records the
+**presented** username as the actor: `login.failed` stores `in.Username` raw, and
+anyone can present any username unauthenticated. So "many auth failures for X"
+means *someone is attacking X*, never *X is misbehaving* — and the response
+punished X.
+
+| # | Finding | Why it matters | Status |
+|---|---|---|---|
+| ~~BX~~ | ~~**An automated response could be aimed at any account by an unauthenticated attacker.**~~ The risk score counts auth failures, whose actor is the attacker-chosen presented username; the auto-kill and auto-step-up responses fired on the finding's Level and acted on its Actor with no check that the risk came from the actor's own authenticated behaviour. | **A denial of service delivered through the defence itself.** Confirmed by execution: **7** failed logins under a victim's name reach *high* (score 56) → with `AUTO_STEPUP` on, the victim's portal logins are revoked; **10** reach *critical* (80) → with `AUTO_KILL` on, the victim's **live privileged sessions are killed mid-work**. The attacker needs only a username, which is not a secret. Auto-kill has shipped since Phase 23, so this is a fix to released behaviour, not only to the unreleased Phase 86 half. | **Fixed in Phase 87.** `analytics.Finding` gains `ResponseScore`/`ResponseLevel`, which exclude the signals a stranger can attribute to a name they do not control (`auth_failure` is the only one — every other signal requires the actor to have authenticated and acted). The responses gate on `ResponseLevel`; the **alert** still fires on `Level`, because a human should be told an account is being brute-forced. An attacker can no longer push even a legitimately-active actor over the response threshold by adding failed logins under their name. Robust regardless of which auth-failure path quoted the name. Tests: `analytics.TestResponseScoreExcludesAuthFailures` and `api.TestAnalyticsPassIgnoresAuthFailureOnlyActor`, both verified to fail against the pre-fix code (the second kills the victim's session). |
 
 ## A control that proved the wrong thing (closed in Phase 84)
 
