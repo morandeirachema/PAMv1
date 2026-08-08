@@ -2191,6 +2191,36 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 73 — The coverage number stops understating itself ✅
+
+The fourth improvement from the 2026-08-08 audit, and the smallest change with
+the clearest payoff: a metric you would otherwise make decisions on was wrong by
+about four points, in the misleading direction.
+
+The `test` job measures with `-coverpkg=./...` and has **no database**, so
+`internal/store/pgstore`'s ~900 statements are counted as ~0 — while the
+`pgstore` job actually exercises them and its coverage was reported **nowhere**.
+The published figure was therefore depressed by a package this repo tests
+deliberately elsewhere, and the package that job covers looked untested in every
+report.
+
+- [x] **Three numbers instead of one**: the total as measured, the total
+  excluding pgstore (**77.5%**, what that job really exercises), and pgstore
+  alone (2.7% there, because it cannot run) — each labelled with why it differs
+- [x] **All three from `go tool cover`** on filtered copies of the same profile,
+  so they are one measurement and cannot disagree by method. An earlier attempt
+  computed the split with awk and landed 0.2 points off the tool; two totals
+  produced two different ways is exactly the confusion this phase exists to end
+- [x] **The pgstore job reports its own coverage**, from the one place with a
+  database — so the half the `test` job cannot see is finally printed
+- [x] **Still printed, not gated.** A threshold picked today would be arbitrary;
+  the change is to what the number *means*, not to what it blocks
+
+This codebase has been bitten by a coverage-measurement artifact before —
+per-package accounting once made `internal/broker` read as 35% when it was 85%,
+and sent a review after the wrong problem. This is the same class one layer up,
+and the comment in `ci.yml` says so, so it is not rediscovered a third time.
+
 ## Phase 72 — Store composed from role interfaces ✅
 
 The second improvement from the 2026-08-08 audit. `store.Store` was one flat
