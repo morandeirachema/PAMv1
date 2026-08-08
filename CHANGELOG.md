@@ -11,6 +11,15 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **Policy parity between the database proxies** (Phase 74) — the PostgreSQL and
+  SQL Server proxies are deliberately line-for-line siblings so that anything
+  differing between them is the transport and never the policy, which means every
+  policy fix must be made twice. A new test names the fourteen gates that
+  constitute policy and fails if either proxy references one the other does not —
+  verified by deleting the tunnel-only-token refusal from the SQL Server path,
+  which compiles and passes everything else. Two fixed-sleep tests now poll to a
+  deadline instead.
+
 - **The coverage number stops understating itself** (Phase 73) — the `test` job
   has no database, so `internal/store/pgstore` was measured as ~0 and dragged the
   published figure down about four points, while the job that does exercise it
