@@ -2191,6 +2191,22 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 75a — v0.14.1 ✅
+
+A **patch**: the five audit improvements are tests, CI and internal refactors —
+no feature, no schema, no environment variable, no audit-vocabulary change.
+
+- [x] **v0.14.1** through the test-gated pipeline, rehearsed first on `main`
+- [x] **All four pins move together** (both k8s deployments, terraform, Helm
+  `appVersion` + chart `0.5.1`), both READMEs restate the current release, and
+  every release link passes the label/URL agreement check
+- [x] **The one operator-visible change is called out**: long values in console
+  tables now truncate with an ellipsis rather than pushing later columns off the
+  terminal. It is an improvement, but it is a visible one
+- [x] **The README's release list stopped growing a line per release.** It had
+  become a chain of "and vX and vY and vZ"; it now names the newest and points at
+  the changelog
+
 ## Phase 75 — What of `internal/api` actually wanted to move ✅
 
 The last improvement from the 2026-08-08 audit, and the one whose honest answer
