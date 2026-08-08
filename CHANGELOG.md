@@ -11,6 +11,20 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Added
+
+- **Threat analytics gains two signals that need history**: `new_target` (this
+  actor has never used this target before, judged against the audit window
+  preceding the scored one) and `peer_outlier` (activity well above the peer
+  median). Both stay **silent** when there is nothing to compare against — a new
+  joiner is not an anomaly — so switching this on does not produce an alert
+  storm. `PAM_ANALYTICS_BASELINE_DAYS` (default 30) bounds the extra read.
+- **`PAM_ANALYTICS_AUTO_STEPUP`** — a *high*-risk actor's portal logins are
+  revoked, so their next action re-authenticates (a second factor where MFA is
+  enrolled). It sits below `PAM_ANALYTICS_AUTO_KILL`: killing a
+  high-risk-but-legitimate operator mid-change is itself an incident, and the
+  response that fits most findings is "prove it", not "get out".
+
 ## [0.16.0] — 2026-08-08
 
 A **minor**: the ITSM ticket gate becomes a real control rather than an existence

@@ -281,6 +281,8 @@ type Config struct {
 	AnalyticsInterval      time.Duration
 	AnalyticsWindow        time.Duration
 	AnalyticsAutoKill      bool
+	AnalyticsBaselineDays  int
+	AnalyticsAutoStepUp    bool
 	AnalyticsBusinessStart int
 	AnalyticsBusinessEnd   int
 	AnalyticsTimezone      string
@@ -583,9 +585,15 @@ func Load() (*Config, error) {
 		DBStepUpFile:        os.Getenv("PAM_DB_STEPUP_FILE"),
 		DBStepUpTTL:         time.Duration(integer("PAM_DB_STEPUP_TTL_SEC", 120)) * time.Second,
 
-		AnalyticsInterval:      time.Duration(integer("PAM_ANALYTICS_INTERVAL_MIN", 0)) * time.Minute,
-		AnalyticsWindow:        time.Duration(integer("PAM_ANALYTICS_WINDOW_MIN", 60)) * time.Minute,
-		AnalyticsAutoKill:      boolean("PAM_ANALYTICS_AUTO_KILL", false),
+		AnalyticsInterval: time.Duration(integer("PAM_ANALYTICS_INTERVAL_MIN", 0)) * time.Minute,
+		AnalyticsWindow:   time.Duration(integer("PAM_ANALYTICS_WINDOW_MIN", 60)) * time.Minute,
+		AnalyticsAutoKill: boolean("PAM_ANALYTICS_AUTO_KILL", false),
+		// 30 days of history for the novelty signal. On by default because a
+		// nil baseline simply removes the signal — it never produces a false
+		// positive — and because the first-run alert storm it might have caused
+		// is already prevented by only scoring actors that HAVE history.
+		AnalyticsBaselineDays:  integer("PAM_ANALYTICS_BASELINE_DAYS", 30),
+		AnalyticsAutoStepUp:    boolean("PAM_ANALYTICS_AUTO_STEPUP", false),
 		AnalyticsBusinessStart: integer("PAM_ANALYTICS_BUSINESS_START", 7),
 		AnalyticsBusinessEnd:   integer("PAM_ANALYTICS_BUSINESS_END", 20),
 		AnalyticsTimezone:      os.Getenv("PAM_ANALYTICS_TIMEZONE"),
@@ -762,6 +770,11 @@ func Load() (*Config, error) {
 	case "off", "uploads", "downloads", "all":
 	default:
 		errs = append(errs, fmt.Sprintf("PAM_SSH_SFTP_CAPTURE must be one of off, uploads, downloads, all (got %q)", cfg.SSHSFTPCapture))
+	}
+	// A year of history is plenty and bounds the audit read this performs on
+	// every pass; negative is a fat-finger.
+	if cfg.AnalyticsBaselineDays < 0 || cfg.AnalyticsBaselineDays > 366 {
+		errs = append(errs, "PAM_ANALYTICS_BASELINE_DAYS must be between 0 (off) and 366")
 	}
 	// A refresh faster than a minute hammers Conjur for values that change
 	// rarely; slower than a day is not a refresh.

@@ -35,6 +35,13 @@ type Weights struct {
 	OffHours       int // sensitive action outside business hours / on a weekend
 	DecryptFailure int // a credential decrypt failed (tampering / AAD mismatch)
 	VelocityOver   int // per session past the velocity threshold (burst of access)
+	// NewTarget scores access to a target this actor has never used before,
+	// judged against a Baseline. Nothing about such an event looks wrong on its
+	// own, which is exactly why it needs history to see (Phase 86).
+	NewTarget int
+	// PeerOutlier scores an actor whose activity is far above their peers' in
+	// the same window. Volume only means something relative to a peer group.
+	PeerOutlier int
 }
 
 // Config tunes the scorer: signal weights, per-signal caps, level thresholds,
@@ -48,6 +55,14 @@ type Config struct {
 	BusinessStart int // first business hour, inclusive [0,23]
 	BusinessEnd   int // first non-business hour, exclusive [1,24]
 	VelocityLimit int // sessions within the window before velocity counts as risk
+	// PeerFactor is how many times the peer MEDIAN an actor's activity must
+	// exceed to count as an outlier. The median, not the mean: the mean is
+	// dragged up by the very outlier being looked for.
+	PeerFactor int
+	// PeerMinActors is the smallest peer group worth comparing against. Below
+	// it the signal is skipped rather than guessed — two people are not a
+	// distribution.
+	PeerMinActors int
 	// Location is the timezone the business hours are interpreted in. Audit
 	// timestamps are stored in UTC, so an operator whose business hours are local
 	// must set this (e.g. "America/New_York"); nil defaults to UTC.
@@ -67,11 +82,22 @@ func DefaultConfig() Config {
 			OffHours:       5,
 			DecryptFailure: 15,
 			VelocityOver:   4,
+			// Modest on purpose. A first visit to a new target is INTERESTING,
+			// not damning — people are onboarded onto systems every week — so it
+			// nudges an actor toward review rather than tripping a response on
+			// its own. Ten new targets in one window is a different story, and
+			// the per-signal cap still bounds it.
+			NewTarget: 6,
+			// Being well above your peers is one fact, not a verdict; it earns
+			// medium alongside anything else, and nothing alone.
+			PeerOutlier: 20,
 		},
 		PerSignalCap:  100,
 		MediumScore:   25,
 		HighScore:     50,
 		CriticalScore: 80,
+		PeerFactor:    3,
+		PeerMinActors: 5,
 		BusinessStart: 7,
 		BusinessEnd:   20,
 		VelocityLimit: 8,
@@ -133,6 +159,17 @@ func New(cfg Config) *Engine {
 	if cfg.VelocityLimit <= 0 {
 		cfg.VelocityLimit = d.VelocityLimit
 	}
+	// These two must be defaulted, not left zero. A zero PeerFactor makes the
+	// outlier threshold `median * 0` = 0, and a zero PeerMinActors removes the
+	// "is there even a peer group?" guard — so every actor in every window scores
+	// as an outlier. A zero value that silently means "flag everything" is the
+	// worst kind, because it looks like the feature working.
+	if cfg.PeerFactor <= 0 {
+		cfg.PeerFactor = d.PeerFactor
+	}
+	if cfg.PeerMinActors <= 0 {
+		cfg.PeerMinActors = d.PeerMinActors
+	}
 	if cfg.Weights == (Weights{}) {
 		cfg.Weights = d.Weights
 	}
@@ -167,6 +204,8 @@ type perActor struct {
 	events  int
 	firstTS time.Time
 	lastTS  time.Time
+	// newTargets is a SET, so repeated use of one new host counts once.
+	newTargets map[string]struct{}
 }
 
 // Score computes a risk finding per actor from events (the caller chooses the
@@ -174,6 +213,15 @@ type perActor struct {
 // event set always yields the same findings. Findings are returned sorted by
 // score descending; actors with a zero score are omitted.
 func (e *Engine) Score(events []store.AuditEvent) []Finding {
+	return e.ScoreWithBaseline(events, nil)
+}
+
+// ScoreWithBaseline scores events against what the actors did BEFORE them.
+//
+// A nil baseline scores exactly as Score does: novelty contributes nothing
+// rather than marking every target new. That is the difference between a useful
+// first run and an alert storm on the day it is switched on.
+func (e *Engine) ScoreWithBaseline(events []store.AuditEvent, baseline *Baseline) []Finding {
 	byActor := map[string]*perActor{}
 	for _, ev := range events {
 		if ev.Actor == "" {
@@ -206,7 +254,34 @@ func (e *Engine) Score(events []store.AuditEvent) []Finding {
 			if e.offHours(ev.TS) {
 				pa.counts["off_hours"]++
 			}
+			// Novelty needs BOTH a baseline and history for this actor. Without
+			// the second check every new joiner's first week reads as a stream of
+			// anomalies, which is how a signal gets ignored.
+			if t := targetOf(ev); t != "" && baseline.hasHistoryFor(ev.Actor) && !baseline.knows(ev.Actor, t) {
+				if pa.newTargets == nil {
+					pa.newTargets = map[string]struct{}{}
+				}
+				// Counted once per DISTINCT target: ten sessions on one new host
+				// is one new thing, not ten.
+				pa.newTargets[t] = struct{}{}
+			}
 		}
+	}
+
+	// Peer comparison is a second pass, because it needs every actor's totals.
+	activity := make(map[string]int, len(byActor))
+	for actor, pa := range byActor {
+		activity[actor] = pa.counts["activity"]
+	}
+	if threshold, ok := peerVolumes(activity, e.cfg.PeerFactor, e.cfg.PeerMinActors); ok {
+		for _, pa := range byActor {
+			if pa.counts["activity"] > threshold {
+				pa.counts["peer_outlier"] = 1
+			}
+		}
+	}
+	for _, pa := range byActor {
+		pa.counts["new_target"] = len(pa.newTargets)
 	}
 
 	findings := make([]Finding, 0, len(byActor))
@@ -249,6 +324,11 @@ func (e *Engine) finding(actor string, pa *perActor) Finding {
 	if over := pa.counts["activity"] - e.cfg.VelocityLimit; over > 0 {
 		add("high_velocity", over, w.VelocityOver)
 	}
+	// History-relative signals (Phase 86). Both are absent, not zero, when there
+	// is nothing to compare against — an actor with no baseline and a window with
+	// no peer group simply do not carry them.
+	add("new_target", pa.counts["new_target"], w.NewTarget)
+	add("peer_outlier", pa.counts["peer_outlier"], w.PeerOutlier)
 	f.Level = e.level(f.Score)
 	// Present the strongest signals first.
 	sort.SliceStable(f.Signals, func(i, j int) bool { return f.Signals[i].Points > f.Signals[j].Points })
