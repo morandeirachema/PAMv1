@@ -20,8 +20,7 @@ func (s *Server) createProfile(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if in.Name == "" {
-		writeError(w, http.StatusUnprocessableEntity, "name is required")
+	if !checkName(w, "name", in.Name) {
 		return
 	}
 	// A profile name must not shadow a built-in role or the agent role.

@@ -38,8 +38,8 @@ func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 	}
 	zsp := in.SecretType == "ssh_ca"
 	switch {
-	case in.Username == "":
-		writeError(w, http.StatusUnprocessableEntity, "username is required")
+	case validName(in.Username) != nil:
+		writeError(w, http.StatusUnprocessableEntity, "username "+validName(in.Username).Error())
 		return
 	case !validSecret[in.SecretType]:
 		writeError(w, http.StatusUnprocessableEntity, `secret_type must be "password", "ssh_key" or "ssh_ca"`)

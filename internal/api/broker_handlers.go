@@ -191,8 +191,7 @@ func (s *Server) createAgentKey(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if in.Name == "" {
-		writeError(w, http.StatusUnprocessableEntity, "name is required")
+	if !checkName(w, "name", in.Name) {
 		return
 	}
 	// An owner is REQUIRED, because the broker's four-eyes refusal is
@@ -204,6 +203,9 @@ func (s *Server) createAgentKey(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(in.Owner) == "" {
 		writeError(w, http.StatusUnprocessableEntity,
 			"owner is required: it is the human this agent acts for, and the four-eyes approval refusal is keyed on it")
+		return
+	}
+	if !checkName(w, "owner", strings.TrimSpace(in.Owner)) {
 		return
 	}
 	token, err := generateToken()

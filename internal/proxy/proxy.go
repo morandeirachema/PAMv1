@@ -665,7 +665,10 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	if ext["observe"] == "true" {
 		startMode = "observer"
 	}
-	startDetail := fmt.Sprintf("target:%s host:%s:%d cred_user:%s mode:%s", target.Name, target.Host, target.Port, cred.Username, startMode)
+	// The host is quoted rather than charset-validated: an IPv6 literal
+	// legitimately contains colons, so `host:2001:db8::1:22` is ambiguous even
+	// with nobody attacking it.
+	startDetail := fmt.Sprintf("target:%s host:%s:%d cred_user:%s mode:%s", target.Name, auditField(target.Host, 255), target.Port, cred.Username, startMode)
 	if target.Protocol != "ssh" {
 		startDetail += " protocol:" + target.Protocol
 	}
@@ -710,7 +713,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		p.log.Error("upstream connection failed", "actor", actor, "target", target.Name,
 			"host", fmt.Sprintf("%s:%d", target.Host, target.Port), "err", err)
 		p.audit(ctx, actor, "session.error",
-			fmt.Sprintf("target:%s host:%s:%d error:%v", target.Name, target.Host, target.Port, err))
+			fmt.Sprintf("target:%s host:%s:%d error:%v", target.Name, auditField(target.Host, 255), target.Port, err))
 		rejectAll(chans, ssh.ConnectionFailed, "pamv1: upstream connection failed")
 		return
 	}
