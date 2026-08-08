@@ -23,4 +23,20 @@ for k in PAM_MASTER_KEY PAM_API_KEY PAM_DATABASE_URL; do
 done
 echo "$out" | grep -q "ENC\[AES256_GCM" && { echo "FAIL: values did not decrypt"; exit 1; }
 
+# 3. The other two sealed examples added in Phase 79 get the same treatment.
+#    Without this they would be the only committed sealed files nothing checks,
+#    and a plaintext commit is exactly the accident this script exists to catch.
+check_sealed() {
+  local file="$1" key="$2"
+  [ -f "$file" ] || { echo "FAIL: $file is missing"; exit 1; }
+  grep -q "ENC\[AES256_GCM" "$file" || { echo "FAIL: $file is not SOPS-encrypted"; exit 1; }
+  local dec
+  dec="$(SOPS_AGE_KEY_FILE="$KEY" sops --decrypt "$file")"
+  echo "$dec" | grep -q "$key" || { echo "FAIL: $file decrypted without $key"; exit 1; }
+  echo "$dec" | grep -q "ENC\[AES256_GCM" && { echo "FAIL: $file did not decrypt"; exit 1; }
+  echo "ok: $file seals and round-trips"
+}
+check_sealed "pg-app.sops.example.yaml" "password"
+check_sealed "../../helm/pamv1/secrets.example.sops.yaml" "PAM_MASTER_KEY"
+
 echo "OK: SOPS example is encrypted and round-trips with the demo key."

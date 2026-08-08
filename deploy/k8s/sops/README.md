@@ -71,14 +71,45 @@ Edit a sealed file later with `sops --config deploy/.sops.yaml deploy/k8s/sops/s
 (it decrypts into your editor and re-encrypts on save), and rotate recipients with
 `sops --config deploy/.sops.yaml updatekeys deploy/k8s/sops/secrets.sops.yaml`.
 
+### The database password, too
+
+`pg-app.sops.example.yaml` seals the **CloudNativePG application credentials**. By default
+CNPG generates that password itself, which puts a manual step in the middle of an
+otherwise-IaC deployment: somebody reads it out of the running cluster and pastes it into
+pamv1's `PAM_DATABASE_URL`. Two copies of one password, kept in step by hand.
+
+Sealing it makes the password an input instead of an output — uncomment
+`bootstrap.initdb.secret.name` in [`../postgres-cnpg.yaml`](../postgres-cnpg.yaml) and both
+sides read the same value. Create your own from the example first: that line makes the
+cluster fail to bootstrap if the secret is absent.
+
 ## GitOps
 
-- **Flux** decrypts SOPS natively — point a `Kustomization` at `.spec.decryption.provider: sops`
-  with the age key in a cluster Secret. See the [Flux SOPS guide](https://fluxcd.io/flux/guides/mozilla-sops/).
+- **Flux** — a **working example ships** in [`../flux/`](../flux/): a `GitRepository` plus
+  two `Kustomization`s, one carrying `.spec.decryption.provider: sops` for the sealed
+  secrets and one for the workload that `dependsOn` it. Two rather than one because only
+  the secrets need the decryption key, and the workload must not start before its secret
+  exists. Background: the [Flux SOPS guide](https://fluxcd.io/flux/guides/mozilla-sops/).
+- **Helm** — a **working example ships** at
+  [`../../helm/pamv1/secrets.example.sops.yaml`](../../helm/pamv1/secrets.example.sops.yaml):
+  a real sealed values file for [`helm secrets`](https://github.com/jkroepke/helm-secrets),
+  which decrypts it into a temp file for the duration of the command. This used to be
+  described here with nothing behind it, which is how "supported" comes to mean
+  "you work it out".
 - **Argo CD** works via the [helm-secrets](https://github.com/jkroepke/helm-secrets) or
-  [ksops](https://github.com/viaduct-ai/kustomize-sops) plugins.
-- **Helm**: [`helm secrets`](https://github.com/jkroepke/helm-secrets) wraps `helm` so a
-  `deploy/helm/**/secrets*.sops.yaml` values file is decrypted at install/upgrade time.
+  [ksops](https://github.com/viaduct-ai/kustomize-sops) plugins. No example here — it needs
+  a plugin installed into the Argo repo-server, which this repo cannot exercise honestly.
+
+### Cloud KMS instead of (or alongside) age
+
+`age` is the zero-dependency default, and in a cloud deployment its private key is itself
+a secret somebody has to distribute — the problem it was meant to solve, one level down.
+[`../../.sops.yaml`](../../.sops.yaml) carries commented recipient lines for **AWS KMS**,
+**GCP KMS**, **Azure Key Vault** and **Vault Transit**. SOPS encrypts the data key to
+*every* recipient on a rule and **any one** can decrypt, so adding a KMS beside `age` is
+additive: CI and laptops keep using age, the cluster uses its cloud identity, and neither
+needs the other's key. That is also the migration path — add the recipient, run
+`sops updatekeys`, then remove the old one.
 
 Nothing in pamv1 *requires* SOPS — a plain `kubectl create secret` (or the Helm
 `secret.data` values) still works. SOPS is the recommended way to keep the secret manifest

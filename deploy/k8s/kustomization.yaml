@@ -1,0 +1,22 @@
+# The deployable set, curated (Phase 79).
+#
+# `kubectl apply -k deploy/k8s/` applies exactly what is listed here. That is the
+# safe form of the wholesale apply: `kubectl apply -f deploy/k8s/` sweeps up
+# EVERY yaml in the directory, including secret.example.yaml -- which declares
+# `metadata.name: pam-secrets` with PAM_MASTER_KEY: "CHANGE_ME", so it silently
+# overwrote the real secret the quickstart had just told you to create.
+#
+# Secrets are deliberately NOT here: they are yours to supply, as
+# secret.yaml/configmap.yaml (copy the *.example.yaml files and edit), or sealed
+# under sops/ for GitOps. Nothing in this list carries a credential.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - postgres-cnpg.yaml
+  - service.yaml
+  - deployment.yaml
+  # Optional, uncomment as needed:
+  # - guacd.yaml            # RDP/VNC viewer backend
+  # - networkpolicy.yaml    # default-deny + the flows pamv1 needs

@@ -19,3 +19,9 @@ keys.txt
 !deploy/k8s/sops/age-example.key
 # real (non-example) sealed secrets stay local unless you intend to commit them
 deploy/k8s/sops/secrets.sops.yaml
+# Same safety default for the two files Phase 79 added: it stops a HALF-FINISHED
+# secrets file being committed before you have confirmed it is sealed. Once
+# verify.sh-style checks pass on your own file, commit it with `git add -f` (or
+# drop these rules) so GitOps can see it.
+deploy/k8s/sops/pg-app.sops.yaml
+deploy/helm/pamv1/secrets.sops.yaml

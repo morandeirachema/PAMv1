@@ -18,10 +18,46 @@
 # The committed example (deploy/k8s/sops/secrets.sops.example.yaml) is encrypted to
 # the throwaway key deploy/k8s/sops/age-example.key — for learning only; never
 # deploy real secrets sealed to that key (its private half is public in this repo).
+# ---------------------------------------------------------------------------
+# Cloud KMS recipients (Phase 79)
+#
+# `age` is the zero-dependency default and stays the documented one. In a cloud
+# deployment the age private key is itself a secret somebody has to distribute,
+# which is the problem it was meant to solve, one level down. A KMS moves the
+# root of trust to a service with its own IAM, audit trail and rotation — the
+# same reasoning as the pluggable KEK in internal/vault.
+#
+# SOPS encrypts the data key to EVERY recipient listed on the matching rule, and
+# ANY ONE of them can decrypt. So adding a KMS alongside `age` is additive: CI
+# and laptops keep using age, the cluster uses its cloud identity, and neither
+# needs the other's key. That is also the migration path — add the new recipient,
+# run `sops updatekeys`, then remove the old one.
+#
+# Uncomment the line that matches your platform and put it beside `age:` on the
+# rule you use. The value is a comma-separated list, exactly like `age:`.
+#
+#   AWS KMS      kms: 'arn:aws:kms:eu-west-1:111122223333:key/1234abcd-...'
+#                (add `+role: arn:aws:iam::...:role/sops` to assume a role first)
+#   GCP KMS      gcp_kms: projects/my-project/locations/europe-west1/keyRings/sops/cryptoKeys/pamv1
+#   Azure KV     azure_keyvault: https://my-vault.vault.azure.net/keys/pamv1/<version>
+#   HashiCorp    hc_vault_transit_uri: https://vault.example:8200/v1/transit/keys/pamv1
+#
+# Credentials come from the platform's normal chain (instance/pod identity,
+# workload identity federation, `az login`, VAULT_TOKEN) — SOPS does not want a
+# credential of its own, which is the point.
+# ---------------------------------------------------------------------------
 creation_rules:
   - path_regex: k8s/sops/secrets.*\.ya?ml$
     encrypted_regex: ^(data|stringData)$
     # age recipients (comma-separated for multiple custodians / KMS fallback).
+    age: age1pfn57mnl9gg6c5tu05tgaym2jk8kzgxnwf20hd008lzghsp6vyrqetlmny
+    # kms: 'arn:aws:kms:eu-west-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab'
+
+  # The CloudNativePG application credentials (Phase 79). Same shape as above —
+  # it is a Kubernetes Secret — but a separate rule so the intent is explicit
+  # rather than a filename happening to match a wildcard.
+  - path_regex: k8s/sops/pg-app.*\.ya?ml$
+    encrypted_regex: ^(data|stringData)$
     age: age1pfn57mnl9gg6c5tu05tgaym2jk8kzgxnwf20hd008lzghsp6vyrqetlmny
 
   - path_regex: helm/.*secrets.*\.ya?ml$

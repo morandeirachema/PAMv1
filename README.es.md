@@ -519,7 +519,7 @@ kubectl -n pamv1 create secret generic pam-secrets \
   --from-literal=PAM_API_KEY=... \
   --from-literal=PAM_BREAK_GLASS_KEY_HASH=... \
   --from-literal=PAM_DATABASE_URL=postgres://...
-kubectl apply -f deploy/k8s/
+kubectl apply -k deploy/k8s/
 ```
 
 O con Helm (readiness/métricas cableadas, réplicas configurables, ServiceMonitor opcional):
