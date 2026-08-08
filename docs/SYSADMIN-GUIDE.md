@@ -3,7 +3,7 @@
 > **Living document.** Update when the operator-facing behavior or the runbook
 > recipes change. See the [change log](#10-change-log).
 >
-> Last updated: 2026-08-08 · Reflects: Phases 0–76. Phases 53–70 add one background worker (the hourly, leader-locked certification scheduler — always on, nothing to configure beyond `PAM_CERT_REMIND_DAYS`, which Phase 76 range-checks at `0`–`366` and refuses to start outside) and migrations `0025`–`0031`, all additive and applied at startup; 71–76 add no worker, migration or knob, so nothing else in this runbook changes.
+> Last updated: 2026-08-08 · Reflects: Phases 0–78. Phases 53–70 add one background worker (the hourly, leader-locked certification scheduler — always on, nothing to configure beyond `PAM_CERT_REMIND_DAYS`, which Phase 76 range-checks at `0`–`366` and refuses to start outside) and migrations `0025`–`0031`, all additive and applied at startup; 71–77 add no worker, migration or knob. Phase 78 adds one **optional, per-replica** worker — the Conjur secret refresh, off unless `PAM_CONJUR_REFRESH_MIN` is set, and deliberately not leader-locked because each replica holds its own copy of the secrets it re-reads. Nothing else in this runbook changes.
 
 > ⚠️ **Beta · for learning purposes.** pamv1 is feature-complete against its
 > [roadmap](../ROADMAP.md) and has closed every finding of its own security

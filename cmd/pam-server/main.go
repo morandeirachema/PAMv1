@@ -11,6 +11,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -618,7 +619,8 @@ func run() error {
 	// (Phase 18) before reading the environment. A no-op unless PAM_CONJUR_URL is
 	// set; SOPS/env remains the default. Fail-loud so a configured-but-unreachable
 	// Conjur never starts the server with empty secrets.
-	if err := conjur.SourceEnv(context.Background()); err != nil {
+	conjurClient, conjurFilled, err := conjur.Source(context.Background())
+	if err != nil {
 		return fmt.Errorf("conjur secret source: %w", err)
 	}
 	cfg, err := config.Load()
@@ -1108,6 +1110,31 @@ func run() error {
 	// second environment variable was also remembered is a control that lapses
 	// exactly where it matters. The leader lock keeps N replicas to one spawn.
 	go handler.RunCampaignScheduler(ctx)
+	// Runtime secret refresh (Phase 78). Opt-in, and NOT leader-locked: every
+	// replica holds its own copy of these comparison values, so every replica has
+	// to re-read them itself — a leader-only refresh would leave the rest of the
+	// cluster authenticating against the retired key.
+	if conjurClient != nil && cfg.ConjurRefreshMin > 0 {
+		overrides, oerr := conjur.ParseVarOverrides(os.Getenv("PAM_CONJUR_VARS"))
+		if oerr != nil {
+			return oerr
+		}
+		refresher := conjur.NewRefresher(conjurClient,
+			cmp.Or(os.Getenv("PAM_CONJUR_POLICY_PREFIX"), "pamv1"), overrides, conjurFilled,
+			func(apiKey, bgHash string) error { return resolver.SetBootstrapSecrets(apiKey, bgHash) },
+			func(actx context.Context, action, detail string) {
+				if aerr := st.AppendAudit(actx, &store.AuditEvent{
+					Actor: "system", Action: action, Detail: detail,
+				}); aerr != nil {
+					log.Warn("recording the secret refresh failed", "err", aerr)
+				}
+			}, log)
+		log.Info("runtime secret refresh enabled",
+			"every_min", cfg.ConjurRefreshMin,
+			"refreshes", strings.Join(conjur.RefreshableSecrets(), ","),
+			"restart_required_for", strings.Join(conjur.PinnedSecrets(), ","))
+		go refresher.Run(ctx, time.Duration(cfg.ConjurRefreshMin)*time.Minute)
+	}
 	if cfg.AnalyticsInterval > 0 {
 		go handler.RunAnalyticsWorker(ctx, cfg.AnalyticsInterval)
 	}

@@ -291,7 +291,11 @@ type Config struct {
 	// the first reminder fires (PAM_CERT_REMIND_DAYS, default 7; 0 disables
 	// reminders entirely). After the first, a campaign with pending items is
 	// nudged daily until it is closed or emptied.
-	CertRemindDays    int
+	CertRemindDays int
+	// ConjurRefreshMin is how often, in minutes, the refreshable bootstrap
+	// secrets are re-read from Conjur (0 = off, the default). Only the secrets
+	// that can be adopted by a running server are refreshed; see internal/conjur.
+	ConjurRefreshMin  int
 	BrokerMaxArgBytes int // PAM_BROKER_MAX_ARG_BYTES — cap on a tool call's serialized args (0 = off)
 	BrokerRatePerMin  int // PAM_BROKER_RATE_PER_MIN — per-agent tool-call rate limit (0 = off)
 	// Audit-chain checkpoints + signing-key rotation (Phase 27).
@@ -523,6 +527,7 @@ func Load() (*Config, error) {
 		BrokerAuditSignSeed:    os.Getenv("PAM_BROKER_AUDIT_SIGN_SEED"),
 		BrokerTokenTTL:         time.Duration(integer("PAM_BROKER_TOKEN_TTL_MIN", 15)) * time.Minute,
 		CertRemindDays:         integer("PAM_CERT_REMIND_DAYS", 7),
+		ConjurRefreshMin:       integer("PAM_CONJUR_REFRESH_MIN", 0),
 		BrokerMaxArgBytes:      integer("PAM_BROKER_MAX_ARG_BYTES", 16384),
 		BrokerRatePerMin:       integer("PAM_BROKER_RATE_PER_MIN", 0),
 		BrokerCheckpointEvery:  integer("PAM_BROKER_AUDIT_CHECKPOINT_EVERY", 0),
@@ -697,6 +702,11 @@ func Load() (*Config, error) {
 	// A reminder cadence outside a year is a typo, not a schedule. Unbounded, a
 	// fat-fingered value silently means "remind immediately, every day, forever",
 	// because a due date already inside the window clamps to now.
+	// A refresh faster than a minute hammers Conjur for values that change
+	// rarely; slower than a day is not a refresh.
+	if cfg.ConjurRefreshMin < 0 || cfg.ConjurRefreshMin > 1440 {
+		errs = append(errs, "PAM_CONJUR_REFRESH_MIN must be between 0 (off) and 1440")
+	}
 	if cfg.CertRemindDays < 0 || cfg.CertRemindDays > 366 {
 		errs = append(errs, "PAM_CERT_REMIND_DAYS must be between 0 (reminders off) and 366")
 	}

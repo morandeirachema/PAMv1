@@ -172,22 +172,37 @@ var bootstrapSecrets = []struct{ env, suffix string }{
 // missing in Conjur (404) as "not managed here" and leaves it to the normal
 // fail-loud config validation. Disabled = no-op.
 func SourceEnv(ctx context.Context) error {
+	_, _, err := Source(ctx)
+	return err
+}
+
+// Source is SourceEnv for callers that also want to refresh later. It returns
+// the authenticated client and the env-var names Conjur actually filled — both
+// nil when Conjur is disabled.
+//
+// The filled list is what makes refresh correct rather than approximately
+// correct. After boot, a non-empty PAM_API_KEY could have come from the
+// operator's environment OR from Conjur, and only the first must never be
+// overwritten. Recording the answer at the one moment it is knowable is the
+// difference between "an explicit env value wins" being true and being true
+// only until the first refresh.
+func Source(ctx context.Context) (*Client, []string, error) {
 	provider := strings.EqualFold(os.Getenv("PAM_SECRETS_PROVIDER"), "conjur")
 	urlSet := os.Getenv("PAM_CONJUR_URL") != ""
 	if !provider && !urlSet {
-		return nil // Conjur disabled; SOPS/env is the source
+		return nil, nil, nil // Conjur disabled; SOPS/env is the source
 	}
 	if provider && !urlSet {
-		return errors.New("PAM_SECRETS_PROVIDER=conjur requires PAM_CONJUR_URL")
+		return nil, nil, errors.New("PAM_SECRETS_PROVIDER=conjur requires PAM_CONJUR_URL")
 	}
 
 	jwt, err := readFileEnv("PAM_CONJUR_JWT_FILE")
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	cacert, err := readFileEnv("PAM_CONJUR_CACERT")
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	c, err := New(Config{
 		URL:          os.Getenv("PAM_CONJUR_URL"),
@@ -199,38 +214,47 @@ func SourceEnv(ctx context.Context) error {
 		CACertPEM:    cacert,
 	})
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	return c.populateEnv(ctx)
+	filled, err := c.populateEnv(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return c, filled, nil
 }
 
-// populateEnv authenticates once and fills empty bootstrap secrets from Conjur.
-func (c *Client) populateEnv(ctx context.Context) error {
+// populateEnv authenticates once and fills empty bootstrap secrets from Conjur,
+// returning the env-var names it filled.
+func (c *Client) populateEnv(ctx context.Context) ([]string, error) {
 	prefix := getenv("PAM_CONJUR_POLICY_PREFIX", "pamv1")
+	overrides, err := ParseVarOverrides(os.Getenv("PAM_CONJUR_VARS"))
+	if err != nil {
+		return nil, err
+	}
 	token, err := c.Authenticate(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	filled := make([]string, 0, len(bootstrapSecrets))
 	for _, s := range bootstrapSecrets {
 		if os.Getenv(s.env) != "" {
 			continue // an explicit env value wins
 		}
-		val, ok, err := c.Get(ctx, token, prefix+"/"+s.suffix)
+		val, ok, err := c.Get(ctx, token, variableID(prefix, s.suffix, s.env, overrides))
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if !ok {
 			continue // not managed in Conjur
 		}
 		if err := os.Setenv(s.env, val); err != nil {
-			return err
+			return nil, err
 		}
 		filled = append(filled, s.env)
 	}
 	// The values themselves are never logged — only which keys Conjur supplied.
 	c.log.Info("sourced bootstrap secrets from Conjur", "url", c.cfg.URL, "account", c.cfg.Account, "keys", strings.Join(filled, ","))
-	return nil
+	return filled, nil
 }
 
 // readFileEnv reads the file named by the env var key, returning "" when the var
