@@ -91,6 +91,9 @@ type Options struct {
 	BuildVersion, BuildCommit string
 	// RecordingDir is where session/command transcripts are written.
 	RecordingDir string
+	// CertRemindDays is how many days before a certification campaign's due date
+	// its first reminder fires (PAM_CERT_REMIND_DAYS). 0 disables reminders.
+	CertRemindDays int
 	// RequireRecording refuses a session that cannot be recorded, matching what
 	// PAM_REQUIRE_RECORDING already did for the SSH and PostgreSQL proxies. It
 	// covers the two paths the flag never reached: the in-portal RDP viewer and
@@ -288,6 +291,7 @@ type Server struct {
 	resolver           *auth.Resolver
 	winrm              winrm.Runner
 	recordingDir       string
+	certRemindDays     int
 	requireRecording   bool
 	portalURL          string
 	guacdAddr          string
@@ -501,6 +505,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		requireReason:      opts.RequireReason,
 		oneTimeAccess:      opts.OneTimeAccess,
 		recordingDir:       opts.RecordingDir,
+		certRemindDays:     opts.CertRemindDays,
 		requireRecording:   opts.RequireRecording,
 		portalURL:          portalURL,
 		guacdAddr:          opts.GuacdAddr,

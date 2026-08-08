@@ -1074,6 +1074,7 @@ func run() error {
 		BrokerTokenSignKey:      brokerTokenKey,
 		BrokerExchangeTTL:       cfg.BrokerExchangeTTL,
 		BrokerAudience:          cfg.BrokerAudience,
+		CertRemindDays:          cfg.CertRemindDays,
 		BrokerMaxDelegation:     cfg.BrokerMaxDelegation,
 		CA:                      sshCA,
 		SSHOperatorCertTTL:      cfg.SSHOperatorCertTTL,

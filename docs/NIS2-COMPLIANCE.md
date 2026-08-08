@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a mapped control or endpoint changes.
 >
-> Last updated: 2026-07-28 · Reflects: Phases 0–52g (introduced Phase 9).
+> Last updated: 2026-08-08 · Reflects: Phases 0–70 (introduced Phase 9).
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited, not legal advice.**
 > This maps pamv1 features to [Directive (EU) 2022/2555 (NIS2)](https://eur-lex.europa.eu/eli/dir/2022/2555/oj)
@@ -24,10 +24,10 @@ Privileged access is where many of those measures are enforced.
 | (c) | Business continuity, backup, crisis mgmt | [Backup & restore runbook](BACKUP-AND-RESTORE.md); break-glass emergency access | ✅ |
 | (d) | Supply-chain security | A dedicated third-party gate (Phase 29): vendor access needs a **customer-approved, time-boxed contract grant** — the approver cannot be the vendor — with **live employment attestation** checked at approval, so a technician the vendor no longer employs is refused. Disabling a vendor triggers an **instant offboard cascade** (grants revoked, live sessions cut cluster-wide), a sweeper ends sessions when the contract window closes, the gate is enforced on every connect path, and `GET /api/vendors/{id}/evidence` produces a per-vendor SOC 2 / DORA bundle with a SHA-256. No standing vendor credentials | ✅ |
 | (e) | Security in acquisition/development/maintenance, vuln handling | Versioned DB migrations; CI gates `gofmt`/`vet`/`staticcheck`/`govulncheck`/`gosec`/`test -race`; SBOM + cosign-signed releases + SLSA provenance (`.github/workflows/release.yml`) | ✅ — **v0.10.0 (2026-07-28) is published, cosign-signed and attested** (SPDX SBOM + SLSA provenance on `ghcr.io/morandeirachema/pamv1:0.10.0`), verifiable with the commands in the README |
-| (f) | Policies to assess effectiveness | Audit trail + reconciliation reports (`GET /api/reconcile`) evidence control operation | ✅ |
+| (f) | Policies to assess effectiveness | Audit trail + reconciliation reports (`GET /api/reconcile`) evidence control operation; a **recurring** certification campaign is the periodic re-assessment itself, and its reminders make a lapse visible instead of silent (Phase 70) | ✅ |
 | (g) | Basic cyber hygiene & training | AS/400 portal deliberately signals gravity; least-privilege defaults | 🟡 partial |
 | (h) | Cryptography & encryption policy | Envelope encryption (AES-256-GCM per-secret data key wrapped by a pluggable KEK — local / Vault Transit / AWS KMS / **PKCS#11 HSM**); LDAPS/HTTPS/TLS only. Session recordings and WinRM transcripts are also **sealed at rest** (`PAM_RECORDING_ENCRYPT`) with a per-recording data key wrapped by the same KEK and chunk-level AAD binding each chunk to its file and position; `PAM_RECORDING_OPAQUE_NAMES` removes target and actor from the **filename**, so access to the volume or a backup no longer reveals who touched what | ✅ |
-| (i) | Human-resources security, access control, asset mgmt | Four RBAC roles, per-target grants, 4-eyes approval, break-glass quorum, credential lifecycle (rotation/reconciliation) | ✅ |
+| (i) | Human-resources security, access control, asset mgmt | Four RBAC roles, per-target grants, 4-eyes approval, break-glass quorum, credential lifecycle (rotation/reconciliation), and **periodic access recertification** — campaigns scoped to a safe or a person, recurring on a schedule, with per-item reviewers and reminders before the due date (Phases 19, 68–70) | ✅ |
 | (j) | MFA / continuous auth, secured comms, secured emergency comms | TOTP MFA + recovery codes + enforce-MFA policy; OIDC/Entra SSO; all sessions brokered, JIT-injected and recorded | ✅ |
 
 Legend: ✅ implemented · 🟡 partially implemented / documented.

@@ -260,6 +260,7 @@ erDiagram
     int RecurDays
     ptr_time_Time NextRunAt
     string Reviewer
+    ptr_time_Time RemindAt
   }
   CampaignItem {
     int64 ID

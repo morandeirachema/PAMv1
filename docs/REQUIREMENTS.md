@@ -2,8 +2,9 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-08-07 · Reflects: Phases 0–65. (The port table already
-> covered the SQL Server proxy from Phase 53; the marker had not moved with it.)
+> Last updated: 2026-08-08 · Reflects: Phases 0–70. Phases 66–70 add one more
+> background worker (the hourly, leader-locked certification scheduler) and no
+> port, resource floor or dependency.
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** These are the
 > specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate

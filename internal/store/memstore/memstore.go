@@ -543,6 +543,45 @@ func (m *Memstore) ListItemsForReviewer(_ context.Context, reviewer string) ([]s
 	return out, nil
 }
 
+// ListCampaignsToRemind returns the open campaigns whose reminder has come due,
+// oldest first — the same predicate pgstore applies in SQL.
+func (m *Memstore) ListCampaignsToRemind(_ context.Context, now time.Time) ([]store.Campaign, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []store.Campaign
+	for _, c := range m.campaigns {
+		if c.Status != "open" || c.RemindAt == nil || c.RemindAt.After(now) {
+			continue
+		}
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].RemindAt.Equal(*out[j].RemindAt) {
+			return out[i].RemindAt.Before(*out[j].RemindAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
+// SetCampaignRemindAt schedules or cancels a campaign's next reminder.
+func (m *Memstore) SetCampaignRemindAt(_ context.Context, id int64, at *time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.campaigns[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	if at == nil {
+		c.RemindAt = nil
+	} else {
+		t := at.UTC()
+		c.RemindAt = &t
+	}
+	m.campaigns[id] = c
+	return nil
+}
+
 // ListDueCampaigns returns the open recurring anchors whose next run has
 // arrived, oldest first — the same predicate pgstore applies in SQL.
 func (m *Memstore) ListDueCampaigns(_ context.Context, now time.Time) ([]store.Campaign, error) {

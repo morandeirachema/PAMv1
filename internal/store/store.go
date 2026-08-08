@@ -151,6 +151,11 @@ type Campaign struct {
 	// snapshots (Phase 69). Empty means unassigned, which is what every campaign
 	// was before.
 	Reviewer string `json:"reviewer,omitempty"`
+
+	// RemindAt is when the next reminder fires (Phase 70). Nil means no reminder
+	// is scheduled — which is the case for a campaign with no due date, since
+	// there is nothing to be early for.
+	RemindAt *time.Time `json:"remind_at,omitempty"`
 }
 
 // CampaignScope is what a campaign reviews.
@@ -658,6 +663,12 @@ type Store interface {
 	// Closing a recurring anchor also ends the series, because ListDueCampaigns
 	// only considers open ones.
 	CloseCampaign(ctx context.Context, id int64, at time.Time) error
+	// ListCampaignsToRemind returns the OPEN campaigns whose next reminder has
+	// come due, oldest first. Closed is not a reminder: the review is over.
+	ListCampaignsToRemind(ctx context.Context, now time.Time) ([]Campaign, error)
+	// SetCampaignRemindAt schedules (or, with nil, cancels) a campaign's next
+	// reminder. ErrNotFound if the campaign is absent.
+	SetCampaignRemindAt(ctx context.Context, id int64, at *time.Time) error
 	// ListDueCampaigns returns the OPEN recurring anchors whose next run has
 	// arrived, oldest first. Scoped deliberately narrowly: a closed anchor is a
 	// stopped series, and a campaign with no recurrence is not a schedule.

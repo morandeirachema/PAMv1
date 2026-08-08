@@ -8,7 +8,7 @@ review activity. If you deploy or administer pamv1, see the
 > user-facing behavior changes (portal, connecting, roles). Add a row to the
 > [change log](#8-change-log) with each update.
 >
-> Last updated: 2026-08-02 · Reflects: Phases 0–60 — the 5250 console (11, now keyboard-first and with full backend parity: safes, campaigns, risk analytics, live watch — Phase 25), custom permission profiles (12), the database session proxy you connect to with `psql` (15), supervised sessions (16: a supervisor may watch live, and a command can be blocked by policy), and Zero Standing Privilege on some targets (22: no stored password — pamv1 signs a short-lived certificate for your session). Since then, the things you are most likely to *notice*: a SQL statement can **pause mid-session** for a supervisor's decision (30) instead of the session dying; your session can be **refused outright** if recording is required but not configured (52c); certification and step-up decisions need the **approver** capability (39) and nobody may decide their own (46, 52c); recovery codes are now four groups of six (52e); and the **content of SFTP transfers may be recorded**, with a per-file size cap that refuses what crosses it (59). An admin revoking your access still ends your live sessions immediately. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-08 · Reflects: Phases 0–70 — the 5250 console (11, now keyboard-first and with full backend parity: safes, campaigns, risk analytics, live watch — Phase 25), custom permission profiles (12), the database session proxy you connect to with `psql` (15), supervised sessions (16: a supervisor may watch live, and a command can be blocked by policy), and Zero Standing Privilege on some targets (22: no stored password — pamv1 signs a short-lived certificate for your session). Since then, the things you are most likely to *notice*: a SQL statement can **pause mid-session** for a supervisor's decision (30) instead of the session dying; your session can be **refused outright** if recording is required but not configured (52c); certification and step-up decisions need the **approver** capability (39) and nobody may decide their own (46, 52c); recovery codes are now four groups of six (52e); and the **content of SFTP transfers may be recorded**, with a per-file size cap that refuses what crosses it (59). An admin revoking your access still ends your live sessions immediately. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ Educational / pre-production project — see the [README](../README.md).
 
@@ -317,6 +317,16 @@ Two more review screens (both need audit-read):
   is one grant; you (or an admin) certify it (keep) or revoke it (**the grant is
   deleted**). Auditors can read every campaign and its decisions as evidence;
   deciding an item needs the **approver** capability (`approve`) since Phase 39 — creating and closing a campaign is what needs a user-management role. You cannot certify a grant **you** created (four-eyes, Phase 46; revoking your own is still allowed), and a revoke now also terminates that user's live sessions to the affected targets.
+
+  Three things you are likely to notice (Phases 68–70). A campaign is usually
+  **scoped** — to one safe, or to everything one person holds — so what you are
+  asked to review is finishable rather than the whole estate. Items may be
+  **assigned to you**: press **F7** on menu 17 for *My Review Queue*, your
+  pending items across every open campaign. And if the campaign has a due date
+  you will be **reminded** through whatever alert channel your deployment uses,
+  with the nudge naming who is still holding it up. Assignment routes the work; it
+  is not a permission — anyone with `approve` can decide any item, and the trail
+  records who actually did.
 - **Risk analytics** (menu 18) — per-actor behavioral risk over the recent audit
   window. Every score is explainable: the screen lists the named signals
   (break-glass, blocked commands, auth-failure bursts, off-hours, velocity) and

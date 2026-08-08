@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-07 · Reflects: Phases 0–68 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-08 · Reflects: Phases 0–70 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -1991,6 +1991,27 @@ curl -s https://pam.example/api/campaigns/mine -H "X-API-Key: $REVIEWER_TOKEN"
 > be closed once its assigned reviewer left, without adding any evidence, since
 > any approver could reassign the item anyway. The **four-eyes** rule is the real
 > control here and is unchanged: you may not certify access you granted yourself.
+
+#### Nudge before it lapses (Phase 70)
+
+Recertification lapses quietly: the campaign stays open, the items stay pending,
+and nothing happens until an auditor asks. Set a **due date** and pamv1 nudges.
+
+- The first reminder fires **`PAM_CERT_REMIND_DAYS`** (default `7`, `0` disables)
+  before the due date, then **daily** while items are pending.
+- A campaign created with a due date already inside that window — or past it —
+  reminds on the next tick rather than being skipped.
+- It goes to the **alert channel** (`PAM_ALERT_WEBHOOK` / `PAM_ALERT_EMAIL_*`,
+  §4) and is audited as `certification.reminder`.
+- It carries the pending count, how overdue it is, and **which reviewer is
+  holding it up** — which is what assignment above is for.
+- It **stops** when the campaign is closed, or when nothing is left pending. The
+  second cancels the reminder rather than repeating it: nagging about finished
+  work is how an alert channel gets muted, and a muted channel is where the next
+  lapse hides. Closing the campaign is still a human's call.
+
+A recurring campaign's successors get their own due date and their own reminder,
+so a quarterly series nudges every quarter without further setup.
 
 The whole flow is also in the console: **Certification campaigns** (menu 17) —
 F6 snapshots a new campaign (due date, scope, reviewer and repeat interval),

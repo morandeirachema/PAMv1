@@ -3,9 +3,12 @@ package api
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/morandeirachema/pamv1/internal/alert"
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
@@ -202,8 +205,12 @@ func (s *Server) RunCampaignScheduler(ctx context.Context) {
 			return
 		case <-ticker.C:
 			ran, err := s.store.WithLeaderLock(systemContext(ctx), campaignLockKey, func(c context.Context) error {
-				if n := s.spawnDueCampaigns(c, time.Now()); n > 0 {
+				now := time.Now()
+				if n := s.spawnDueCampaigns(c, now); n > 0 {
 					s.log.Info("recurring certification campaigns opened", "count", n)
+				}
+				if n := s.sendCampaignReminders(c, now); n > 0 {
+					s.log.Info("certification reminders sent", "count", n)
 				}
 				return nil
 			})
@@ -234,6 +241,7 @@ func (s *Server) spawnDueCampaigns(ctx context.Context, now time.Time) int {
 			Name:      fmt.Sprintf("%s (%s)", anchor.Name, now.UTC().Format("2006-01-02")),
 			CreatedBy: anchor.CreatedBy, Status: "open", DueAt: &next,
 			ScopeKind: anchor.ScopeKind, ScopeSafeID: anchor.ScopeSafeID, ScopeSubject: anchor.ScopeSubject,
+			Reviewer: anchor.Reviewer, RemindAt: s.firstReminder(&next, now),
 			// Children carry no schedule: the anchor is the only row that spawns,
 			// so a series can never fork.
 		}
@@ -257,6 +265,100 @@ func (s *Server) spawnDueCampaigns(ctx context.Context, now time.Time) int {
 		opened++
 	}
 	return opened
+}
+
+// campaignReminderEvery is how often a campaign is nudged again once its first
+// reminder has fired. Daily: often enough that an overdue review is visible,
+// rare enough that the alert channel stays worth reading — an alert nobody reads
+// is the same as no alert.
+const campaignReminderEvery = 24 * time.Hour
+
+// sendCampaignReminders nudges the reviewers of every open campaign whose
+// reminder has come due, and returns how many were sent.
+//
+// Recertification lapses quietly: the campaign stays open, the items stay
+// pending, and nothing happens until an auditor asks. This is the thing that
+// makes it noisy instead. Assignment (Phase 69) is what makes the nudge
+// actionable — the alert names who is holding it up.
+//
+// A campaign with nothing pending is DONE even if nobody closed it, so its
+// reminder is cancelled rather than repeated: nagging about finished work is how
+// a channel gets muted, and a muted channel is where the next lapse hides.
+func (s *Server) sendCampaignReminders(ctx context.Context, now time.Time) int {
+	due, err := s.store.ListCampaignsToRemind(ctx, now)
+	if err != nil {
+		s.log.Warn("campaign reminders: reading due reminders failed", "err", err)
+		return 0
+	}
+	sent := 0
+	for _, c := range due {
+		items, ierr := s.store.ListCampaignItems(ctx, c.ID)
+		if ierr != nil {
+			s.log.Warn("campaign reminders: reading items failed", "campaign", c.ID, "err", ierr)
+			continue
+		}
+		pending, byReviewer := 0, map[string]int{}
+		for _, it := range items {
+			if it.Decision != "pending" {
+				continue
+			}
+			pending++
+			who := it.Reviewer
+			if who == "" {
+				who = "(unassigned)"
+			}
+			byReviewer[who]++
+		}
+		if pending == 0 {
+			// Finished but not closed. Stop nudging; closing it is a human's call.
+			if err := s.store.SetCampaignRemindAt(ctx, c.ID, nil); err != nil {
+				s.log.Warn("campaign reminders: cancelling failed", "campaign", c.ID, "err", err)
+			}
+			continue
+		}
+		detail := fmt.Sprintf("campaign:%d name:%q pending:%d %s reviewers:%s",
+			c.ID, c.Name, pending, duePhrase(c.DueAt, now), reviewerBreakdown(byReviewer))
+		s.alerter.Notify(ctx, alert.Event{
+			Type: "certification.reminder", Actor: c.CreatedBy, Detail: detail, Time: now,
+		})
+		s.auditAs(ctx, c.CreatedBy, "certification.reminder", detail)
+		next := now.Add(campaignReminderEvery)
+		if err := s.store.SetCampaignRemindAt(ctx, c.ID, &next); err != nil {
+			s.log.Warn("campaign reminders: rescheduling failed", "campaign", c.ID, "err", err)
+		}
+		sent++
+	}
+	return sent
+}
+
+// duePhrase renders how a campaign stands against its due date. "overdue" is
+// said in those words rather than as a negative number, because the alert is
+// read by a human deciding whether to care today.
+func duePhrase(due *time.Time, now time.Time) string {
+	if due == nil {
+		return "due:none"
+	}
+	days := int(due.Sub(now).Hours() / 24)
+	if days < 0 {
+		return fmt.Sprintf("due:overdue_by_%dd", -days)
+	}
+	return fmt.Sprintf("due:in_%dd", days)
+}
+
+// reviewerBreakdown renders "who is holding this up", sorted so the same state
+// always produces the same string — an alert that reorders itself looks like a
+// change when nothing changed.
+func reviewerBreakdown(byReviewer map[string]int) string {
+	names := make([]string, 0, len(byReviewer))
+	for k := range byReviewer {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, n := range names {
+		parts = append(parts, fmt.Sprintf("%s(%d)", n, byReviewer[n]))
+	}
+	return strings.Join(parts, ",")
 }
 
 // RunGC periodically deletes rows whose lifetime has ended, so the tables that

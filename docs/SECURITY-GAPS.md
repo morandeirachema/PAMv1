@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-08-07 · Reflects: Phases 0–65 + the 2026-07 hardening
+> Last updated: 2026-08-08 · Reflects: Phases 0–70 + the 2026-07 hardening
 > passes, including the **post-beta sweep of 2026-07-27** (thirty findings, all
 > closed), the **sweep of 2026-08-07** over phases 56–61a (nine findings: two
 > closed by Phase 62, six by Phase 63, half of one withdrawn as a false
@@ -234,6 +234,29 @@ them evidence.
 | Finding | Why it matters | Fix |
 |---|---|---|
 | **`createDependency` read `management_credential_id` as configuration.** It checked only that the id named an existing row. | Naming a credential means pamv1 will later decrypt that secret and present it, over WinRM, to a host **chosen freely on the same request**. That is a reveal with extra steps: a caller holding `CapManageCredentials` and nothing else could name a credential they may neither reveal nor rotate, point `host` at a machine they control, rotate any credential they *are* allowed to rotate, and receive the named secret. Proven end to end against a profile holding `manage_credentials` + `read_inventory` only, against a domain-admin credential on a target granted to somebody else. | `gateManagementCredential` applies the **reveal bar** to the management credential's own target: `CapRevealSecret`, the per-target grant, the approval requirement and the vendor contract gate. The capability is checked **before** the store lookup, so it is not an existence oracle. It checks the approval requirement with `HasActiveApproval` rather than claiming one — declaring is not the use — the single deliberate difference from `gateCredentialAccess`. A management credential must hold a **password**: an `ssh_key` in a WinRM password field is not authentication but disclosure of the whole key, and `ssh_ca` holds no secret at all; both are refused at declaration **and again** at use, so a row written straight into the database cannot leak one either. |
+
+## The 2026-08-07 review of 62–65 — reading the fixes
+
+The sweep above was closed by phases 62–65; those phases were then read the same
+way, on the argument the 52a–52g rounds established — the review of a fix is part
+of the fix, and the author is the worst person to be its only reader. Three
+findings, **all in code written by the pass that closed the sweep**, none a
+bypass. Closed in Phase 66.
+
+| id | Finding | Why it matters | Status |
+|---|---|---|---|
+| ~~AV~~ | **The SFTP handle-table bound was nine times what its own comment claimed.** Phase 63 bounded `files` at OPEN time but checked `len(c.files)` alone, so every OPEN a client pipelined before the first HANDLE returned saw an empty table and was admitted. | Bounded either way — the ceiling was `sftpCaptureMaxPending + sftpCaptureMaxOpen` = **1152**, not the 128 the comment stated — so the Phase 63 finding stayed closed and nothing grew without limit. But a bound nobody can derive from its own comment is the same defect as a comment describing a knob that does not exist, which is what Phase 63 *removed* two files away. Reproduced at 600 admitted opens. | **Fixed in Phase 66**: opens in flight count toward the bound; the test fails against the old check. |
+| ~~AW~~ | **`release.yml`'s `dry_run` input had become dead.** Once Phase 65b stopped skipping the release job on `workflow_dispatch`, `REAL` derived from the event name alone and the boolean controlled nothing — `dry_run: false` behaved exactly like `true`. | A pipeline whose own interface promises a choice it cannot make. Same class as the dead `sftpCapture.required` field Phase 63 removed, one phase later and in the release path. | **Fixed in Phase 66**: the input is removed, so `workflow_dispatch` is unambiguously the rehearsal — which also removes the ability to publish a signed release by hand from an arbitrary ref, a control rather than a loss. |
+| ~~AX~~ | **The path-derived session id reached three audit details raw**, while the `mustAudit` call three lines away quoted and bounded it. | Not reachable with hostile text today — only a value matching a real pending session id gets to those branches — so it was safe **by circumstance**, and circumstance is what changes when somebody adds a branch. | **Fixed in Phase 66**: `auditField` at all three sites. |
+
+**A process finding from the same period, recorded because it invalidated
+reporting rather than code.** Three low-level change-log entries (Phases 65b, 67b
+and 68) were written by a build script using `str.replace` with an anchor that did
+not match. `replace` is a silent no-op on a miss, so the documents were reported
+updated when they were not, and the gap was only found by counting entries. It is
+the same shape as most findings in this document — an operation that does nothing
+when its precondition fails and says nothing about it — arriving through tooling
+instead of the product. Every such replacement now asserts its anchor first.
 
 ## The 2026-08-07 sweep — the six phases nobody had read as a whole
 

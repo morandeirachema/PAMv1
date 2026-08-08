@@ -60,6 +60,7 @@ func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 		next := time.Now().UTC().AddDate(0, 0, c.RecurDays)
 		c.NextRunAt = &next
 	}
+	c.RemindAt = s.firstReminder(c.DueAt, time.Now())
 	if err := s.store.CreateCampaign(ctx, &c); err != nil {
 		storeError(w, err)
 		return
@@ -139,6 +140,25 @@ func campaignScopeDetail(c *store.Campaign) string {
 		scope += " reviewer:" + auditField(c.Reviewer, 128)
 	}
 	return scope
+}
+
+// firstReminder is when a campaign should first nudge its reviewers: remindDays
+// before it is due. Nil — no reminder — when reminders are switched off, or when
+// the campaign has no due date, since there is nothing to be early for.
+//
+// A campaign created with a due date already inside the window (or past it)
+// reminds on the NEXT tick rather than being skipped: "you gave me two days" is
+// exactly when a nudge is worth most, and silently declining to remind because
+// the ideal moment had passed would be the failure this exists to prevent.
+func (s *Server) firstReminder(due *time.Time, now time.Time) *time.Time {
+	if s.certRemindDays <= 0 || due == nil {
+		return nil
+	}
+	at := due.AddDate(0, 0, -s.certRemindDays)
+	if at.Before(now) {
+		at = now
+	}
+	return &at
 }
 
 type reviewerIn struct {
