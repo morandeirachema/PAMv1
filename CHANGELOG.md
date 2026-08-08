@@ -11,6 +11,13 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-08-09
+
+A **minor**: threat analytics learns two history-relative signals and a gentler
+automated response — and a review of that work closed a way the automated
+responses could be turned against a bystander. No schema change; upgrading from
+0.16.x needs nothing.
+
 ### Security
 
 - **The threat-analytics automated responses could be aimed at any account by an
@@ -680,7 +687,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.17.0
 [0.16.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.16.0
 [0.15.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.15.0
 [0.14.3]: https://github.com/morandeirachema/pamv1/releases/tag/v0.14.3
