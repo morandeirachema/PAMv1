@@ -2358,7 +2358,15 @@ the last release applies again: **after any security fix, check whether the pinn
 tag predates it.** Applying it consistently is the point — the rule is worth
 nothing if it only fires for the findings that feel serious enough.
 
-- [x] **v0.14.3** through the test-gated pipeline, rehearsed on `main` first
+- [x] **v0.14.3** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-08 as `ghcr.io/morandeirachema/pamv1:0.14.3` (also `latest`),
+  digest
+  `sha256:1fc4f75251ea0efe87b879500cb286e846841d3c96b4c5e728648c04d88017c2`,
+  **public** — an anonymous manifest pull returns 200. Keyless-signed with the
+  SBOM and SLSA provenance attached as OCI referrers (a
+  `application/vnd.dev.sigstore.bundle.v0.3+json` bundle plus the two
+  attestations, **not** the legacy `.sig`/`.att` tags — see Phase 76a), and the
+  GitHub Release carries `sbom.spdx.json`
 - [x] All four pins together, Helm `version` 0.5.2 → 0.5.3 alongside `appVersion`
 - [x] Both READMEs restated, label-vs-URL equality re-checked
 - [x] `CHANGELOG` records the one operator-visible consequence: a create or update
