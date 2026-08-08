@@ -457,6 +457,61 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("ListCampaigns: %d err %v", len(cs), err)
 	}
 
+	// --- reviewer assignment (Phase 69) ---
+	//
+	// A queue is "my PENDING items in OPEN campaigns". Each half of that matters:
+	// a decided item is finished work and a closed campaign's leftovers are not
+	// work anybody should still be shown.
+	qCamp := &store.Campaign{Name: "queue", CreatedBy: "alice", Reviewer: "carol"}
+	if err := st.CreateCampaign(ctx, qCamp); err != nil {
+		t.Fatalf("CreateCampaign(queue): %v", err)
+	}
+	if back, err := st.GetCampaign(ctx, qCamp.ID); err != nil || back.Reviewer != "carol" {
+		t.Fatalf("campaign reviewer did not round-trip: %+v err %v", back, err)
+	}
+	mine := &store.CampaignItem{CampaignID: qCamp.ID, Kind: "target_grant", RefID: 1,
+		SubjectType: "user", Subject: "u1", Detail: "d", Reviewer: "carol"}
+	theirs := &store.CampaignItem{CampaignID: qCamp.ID, Kind: "target_grant", RefID: 2,
+		SubjectType: "user", Subject: "u2", Detail: "d", Reviewer: "dave"}
+	for _, it := range []*store.CampaignItem{mine, theirs} {
+		if err := st.AddCampaignItem(ctx, it); err != nil {
+			t.Fatalf("AddCampaignItem: %v", err)
+		}
+	}
+	if got, err := st.GetCampaignItem(ctx, mine.ID); err != nil || got.Reviewer != "carol" {
+		t.Fatalf("item reviewer did not round-trip: %+v err %v", got, err)
+	}
+	if q, err := st.ListItemsForReviewer(ctx, "carol"); err != nil || len(q) != 1 || q[0].ID != mine.ID {
+		t.Fatalf("carol's queue = %+v err %v, want just item %d", q, err, mine.ID)
+	}
+	// Reassignment moves it between queues.
+	if err := st.SetCampaignItemReviewer(ctx, mine.ID, "dave"); err != nil {
+		t.Fatalf("SetCampaignItemReviewer: %v", err)
+	}
+	if q, _ := st.ListItemsForReviewer(ctx, "carol"); len(q) != 0 {
+		t.Fatalf("carol's queue should be empty after reassignment, got %+v", q)
+	}
+	if q, _ := st.ListItemsForReviewer(ctx, "dave"); len(q) != 2 {
+		t.Fatalf("dave's queue = %d items, want 2", len(q))
+	}
+	if err := st.SetCampaignItemReviewer(ctx, 999999, "x"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("SetCampaignItemReviewer(missing): want ErrNotFound, got %v", err)
+	}
+	// A decided item leaves the queue.
+	if err := st.DecideCampaignItem(ctx, mine.ID, "certified", "dave", now); err != nil {
+		t.Fatalf("DecideCampaignItem: %v", err)
+	}
+	if q, _ := st.ListItemsForReviewer(ctx, "dave"); len(q) != 1 {
+		t.Fatalf("a decided item stayed in the queue: %+v", q)
+	}
+	// ...and so does everything in a CLOSED campaign.
+	if err := st.CloseCampaign(ctx, qCamp.ID, now); err != nil {
+		t.Fatalf("CloseCampaign(queue): %v", err)
+	}
+	if q, err := st.ListItemsForReviewer(ctx, "dave"); err != nil || len(q) != 0 {
+		t.Fatalf("a closed campaign's items are not work: %+v err %v", q, err)
+	}
+
 	// --- campaign scope + recurrence (Phase 68) ---
 	//
 	// Scope fields must SURVIVE a round trip: a campaign whose scope is dropped

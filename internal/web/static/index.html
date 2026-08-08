@@ -95,6 +95,7 @@
   let sshCerts = [], caInfo = null, loginSessions = [], agents = [], newAgent = null;
   let deps = [], depsCred = null, blastResult = null, auditHead = null;
   let campaigns = [], campView = null, risk = null, riskMin = "", riskWin = "";
+  let assignItem = null, myQueue = [];
   let brokerApprovals = [], stepUps = [];
   let watchSess = null, watchAbort = null, watchText = "";
   let liveTimer = null;
@@ -277,6 +278,7 @@
   // The new-campaign screen offers a safe picker, so the safes have to be loaded
   // before it renders — a plain go() would show an empty select and make a
   // safe-scoped campaign look impossible.
+  async function openMyQueue() { try { myQueue = await api("GET", "/api/campaigns/mine"); } catch (e) { myQueue = []; } go("myqueue"); }
   async function openCampaignAdd() { try { safes = await api("GET", "/api/safes"); } catch (e) { safes = []; } go("campaignadd"); }
   async function openCampaign(id) {
     try { campView = await api("GET", `/api/campaigns/${id}`); } catch (e) { campView = null; }
@@ -2313,7 +2315,7 @@ ${campaigns.map((c) => {
 }).join("")}
 </table>${campaigns.length ? "" : `<div class="cyan indent">(No campaigns.${canManage ? " Press F6 to snapshot the current access grants into one." : ""})</div>`}
 <input type="submit" hidden></form>
-${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=New campaign" : ""}   F12=Cancel`)}`;
+${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=New campaign" : ""}${can("approve") ? "   F7=My review queue" : ""}   F12=Cancel`)}`;
         document.getElementById("f-list").onsubmit = async (ev) => {
           ev.preventDefault();
           try {
@@ -2370,20 +2372,72 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         };
       },
 
+      // Assigning one item's reviewer. Its own screen because a 5250 option cell
+      // holds one character, and a reviewer is a name.
+      campassign() {
+        back = "campitems";
+        const i = assignItem || {};
+        term.innerHTML = `${head("PAMCMPASG", "Assign Reviewer")}
+Who is expected to decide this item. Assignment ROUTES work and makes a queue
+visible — it is not an authorization gate: anyone holding <span class="white">approve</span> can still
+decide any item, and the trail records who actually did. Leave it empty to unassign.
+
+<div class="indent">
+Item  . . . . . . . :  <span class="white">${esc(i.id)}</span>
+Access  . . . . . . :  <span class="detail">${esc(i.detail)}</span>
+Currently . . . . . :  <span class="${i.reviewer ? "white" : "cyan"}">${esc(i.reviewer || "unassigned")}</span>
+</div>
+
+<form id="f-assign" class="indent">
+<label>Reviewer  . . . . . :  <input name="reviewer" size="20" value="${esc(i.reviewer || "")}" autofocus></label>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-assign").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          try {
+            await api("PUT", `/api/campaigns/${i.campaign_id}/items/${i.id}/reviewer`, { reviewer: f.reviewer });
+            say(f.reviewer ? `ITEM ${i.id} ASSIGNED TO ${String(f.reviewer).toUpperCase()}.` : `ITEM ${i.id} UNASSIGNED.`);
+            await openCampaign(i.campaign_id);
+          } catch (e) { say("CPF9898: " + e.message, true); render(); }
+        };
+      },
+
+      // A reviewer's own queue: pending items assigned to them across every open
+      // campaign. The question "what is waiting on me" had no screen at all.
+      myqueue() {
+        back = "campaigns";
+        term.innerHTML = `${head("PAMMYQUE", "My Review Queue")}
+Pending items assigned to <span class="white">${esc((me && me.name) || "you")}</span> across every OPEN campaign.
+Decide them from the campaign they belong to (menu 17, option 5 on a campaign).
+
+<table>
+<tr><th>Item</th><th>Campaign</th><th>Kind</th><th>Subject</th><th>Access</th></tr>
+${myQueue.map((i) => `<tr><td>${esc(i.id)}</td><td>${esc(i.campaign_id)}</td><td>${pad(i.kind, 12)}</td><td>${pad(i.subject_type + ":" + i.subject, 18)}</td><td class="detail">${esc(i.detail)}</td></tr>`).join("")}
+</table>${myQueue.length ? "" : `<div class="cyan indent">(Nothing is waiting on you.)</div>`}
+${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
+      },
+
       campitems() {
         back = "campaigns";
         const cv = campView || { campaign: {}, items: [] };
         const c = cv.campaign, items = cv.items || [];
-        const open = c.status === "open", canDecide = can("manage_users") && open;
+        const open = c.status === "open";
+        // Deciding is `approve` (Phase 39), not `manage_users`. The console asked
+        // for the wrong one, so the dedicated approver role — the whole point of
+        // that split — saw this screen as read-only while the API would have
+        // accepted its decisions. Assigning IS administration, so that stays.
+        const canDecide = can("approve") && open, canAssign = can("manage_users") && open;
         const decided = items.filter((i) => i.decision !== "pending").length;
         const dcls = { certified: "green", revoked: "red", pending: "amber" };
         term.innerHTML = `${head("PAMCMPITM", "Review Campaign Items")}
 Campaign <span class="white">${esc(c.name)}</span> (id ${esc(c.id)}) — <span class="${open ? "amber" : "cyan"}">${esc(c.status)}</span>, ${decided}/${items.length} decided.
-${canDecide ? `Type options, press Enter.  <span class="cyan">5=Certify (keep)   6=Revoke (DELETES the underlying grant)</span>` : `<span class="cyan">${open ? "(read-only — deciding needs manage_users)" : "(campaign closed — decisions are final)"}</span>`}
+${canDecide || canAssign ? `Type options, press Enter.  <span class="cyan">${[canDecide ? "5=Certify (keep)" : "", canDecide ? "6=Revoke (DELETES the underlying grant)" : "", canAssign ? "7=Assign reviewer" : ""].filter(Boolean).join("   ")}</span>` : `<span class="cyan">${open ? "(read-only — deciding needs approve)" : "(campaign closed — decisions are final)"}</span>`}
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>Item</th><th>Kind</th><th>Subject</th><th>Access</th><th>Decision</th><th>By</th></tr>
-${items.map((i) => `<tr><td>${canDecide && i.decision === "pending" ? opt(i.id) : ""}</td><td>${esc(i.id)}</td><td>${pad(i.kind, 12)}</td><td>${pad(i.subject_type + ":" + i.subject, 18)}</td><td class="detail">${esc(i.detail)}</td><td class="${dcls[i.decision] || ""}">${esc(i.decision)}</td><td>${pad(i.decided_by || "-", 10)}</td></tr>`).join("")}
+<tr><th>Opt</th><th>Item</th><th>Kind</th><th>Subject</th><th>Reviewer</th><th>Access</th><th>Decision</th><th>By</th></tr>
+${items.map((i) => `<tr><td>${(canDecide || canAssign) && i.decision === "pending" ? opt(i.id) : ""}</td><td>${esc(i.id)}</td><td>${pad(i.kind, 12)}</td><td>${pad(i.subject_type + ":" + i.subject, 16)}</td><td class="${i.reviewer ? "white" : "cyan"}">${pad(i.reviewer || "unassigned", 12)}</td><td class="detail">${esc(i.detail)}</td><td class="${dcls[i.decision] || ""}">${esc(i.decision)}</td><td>${pad(i.decided_by || "-", 10)}</td></tr>`).join("")}
 </table>${items.length ? "" : `<div class="cyan indent">(No items — there were no target grants or safe members to review when the campaign was created.)</div>`}
 <input type="submit" hidden></form>
 ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
@@ -2394,6 +2448,7 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
               const o = optVal(ev.target, i.id);
               if (o === "5") { await api("POST", `/api/campaigns/${c.id}/items/${i.id}/decision`, { decision: "certify" }); say(`ITEM ${i.id} CERTIFIED.`); }
               else if (o === "6") { await api("POST", `/api/campaigns/${c.id}/items/${i.id}/decision`, { decision: "revoke" }); say(`ITEM ${i.id} REVOKED — GRANT DELETED.`); }
+              else if (o === "7") { assignItem = i; go("campassign"); return; }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
             await openCampaign(c.id);
@@ -2498,7 +2553,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   }
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
-  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id) };
+  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id) };
   const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), deps: () => go("depadd") };
 
   window.addEventListener("keydown", async (ev) => {
@@ -2540,7 +2595,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
       if (k === "F3") { screen === "main" ? signoff() : go("main"); }
       else if (k === "F5") { const r = refreshers[screen]; if (r) await r(); else render(); }
       else if (k === "F6") { if (screen === "effective") await exportIaC("env"); else if (screen === "audit") await verifyChain(); else { const a = adders[screen]; if (a) a(); } }
-      else if (k === "F7") { if (screen === "effective") await exportIaC("helm"); else if (screen === "audit") await fetchAuditHead(); }
+      else if (k === "F7") { if (screen === "effective") await exportIaC("helm"); else if (screen === "audit") await fetchAuditHead(); else if (screen === "campaigns" && can("approve")) await openMyQueue(); }
       else if (k === "F8") { if (screen === "effective") await exportIaC("terraform"); }
       else if (k === "F9") { if (screen === "audit") await exportAudit(); else if (screen === "users") await reconcileIdentities(); else if (screen === "sshcerts") await download("/api/ca/ssh/krl", "pamv1-revoked-certs.krl", "KRL"); }
       else if (k === "F10") { if (screen === "audit") await download("/api/audit/ocsf", "pamv1-audit-ocsf.json", "OCSF"); }
