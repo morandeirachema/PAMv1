@@ -11,6 +11,19 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.14.3] — 2026-08-08
+
+Closes the residual the 0.14.2 sweep recorded and left open: a name could forge
+fields in **other people's** audit records. A **patch** — no schema change, no new
+environment variable, no route or audit-vocabulary change.
+
+**Upgrade note.** Names are now validated on create and update. Existing names are
+**not** rejected retroactively, so nothing breaks on upgrade; but a create or
+update carrying a colon, a control character, or more than 128 bytes now returns
+`422` naming the field. `Prod DB 01`, `sûreté`, `データベース`, `svc@corp` and
+`a/b` are all still accepted. Hosts are exempt — an IPv6 literal legitimately
+contains colons — and are quoted in the audit trail instead.
+
 ### Security
 
 - **A name could forge fields in other people's audit records.** Target, user and
@@ -553,7 +566,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.14.2...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.14.3...HEAD
+[0.14.3]: https://github.com/morandeirachema/pamv1/releases/tag/v0.14.3
 [0.14.2]: https://github.com/morandeirachema/pamv1/releases/tag/v0.14.2
 [0.14.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.14.1
 [0.14.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.14.0

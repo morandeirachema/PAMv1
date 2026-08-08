@@ -2351,6 +2351,20 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 77a — v0.14.3 ✅
+
+Phase 77 is a security fix and `v0.14.2` predated it, so the same rule that drove
+the last release applies again: **after any security fix, check whether the pinned
+tag predates it.** Applying it consistently is the point — the rule is worth
+nothing if it only fires for the findings that feel serious enough.
+
+- [x] **v0.14.3** through the test-gated pipeline, rehearsed on `main` first
+- [x] All four pins together, Helm `version` 0.5.2 → 0.5.3 alongside `appVersion`
+- [x] Both READMEs restated, label-vs-URL equality re-checked
+- [x] `CHANGELOG` records the one operator-visible consequence: a create or update
+  carrying a colon, a control character or over 128 bytes now returns `422`.
+  Existing names are not rejected retroactively, so nothing breaks on upgrade
+
 ## Phase 77 — A name cannot forge a field ✅
 
 Closes finding **BD**, the residual Phase 76 recorded and deliberately left. The
