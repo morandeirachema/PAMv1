@@ -2357,7 +2357,12 @@ Phase 89 is an audit-integrity fix (false four-eyes records on a failed step-up
 dispatch). Applying the pin-currency rule to it — even though the residual is
 narrow — is the consistency the rule is worth nothing without.
 
-- [x] **v0.18.0** through the test-gated pipeline, rehearsed on `main` first
+- [x] **v0.18.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-09 as `ghcr.io/morandeirachema/pamv1:0.18.0` (also `latest`),
+  digest
+  `sha256:981dd2f27b1575494ecbc788f687e4eb64cade73900e6dc678f4e55929fcc4ac`,
+  **public** (anonymous pull 200). Keyless-signed with the SBOM and SLSA
+  provenance as OCI referrers; the Release carries `sbom.spdx.json`
 - [x] All five pins via the sweep; Helm chart `version` 0.8.0 -> **0.9.0**
 - [x] Both READMEs restated; label-vs-URL equality re-checked (0 mismatches)
 
