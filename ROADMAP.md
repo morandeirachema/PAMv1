@@ -2191,6 +2191,51 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 71 — The console gets a safety net ✅
+
+The first of five improvements from the 2026-08-08 repo audit, and the one with
+evidence behind it. The portal is **~2,500 lines of JavaScript** embedded in
+`index.html`. `go:embed` copies bytes without parsing them, `internal/web`'s two
+tests checked a CSP nonce and a substring, and **nothing in CI ran node** — so a
+syntax error compiled clean, tested clean, shipped, and broke the portal at
+runtime.
+
+Three real defects had already reached `main` through that hole, each caught only
+by rendering a screen by hand: a column pushed off the terminal so a refused row
+hid its *reason* (67b), a header wrong for half its rows, and — the one that
+matters — **the console requiring `manage_users` to decide a certification item
+while the API had required `approve` since Phase 39**, so the dedicated approver
+role saw a read-only screen for six phases and every security sweep missed it,
+because no sweep reads the console.
+
+- [x] **`node --check` on the embedded script**, as a Go test and as an explicit
+  CI step. The Go test skips when node is absent, which is right for a laptop;
+  the CI step runs `node --version` on its own line first, so a runner without
+  node fails the job rather than passing on a skip
+- [x] **A table row must not widen with its data.** Every covered screen renders
+  twice — short values and pathological ones — and the rows must come out the
+  same width. That is the invariant behind the bug that shipped, and it is
+  input-relative, so unlike a pixel assertion it cannot go stale
+- [x] **It found two more of the same bug immediately**, both mine: the campaigns
+  list grew from 83 to 237 characters on a long name (Phase 68) and the review
+  queue from 32 to 84 on a long subject (Phase 69). `campitems` was fixed in the
+  same pass before it could be reported
+- [x] **`cell()` is promoted to a shared helper** beside `pad()`, with the rule
+  written down: `cell` for anything a user controls, `pad` only for values bounded
+  by their own domain. The truncating version had existed since 67b — inside one
+  screen, where no other screen could reach it
+- [x] **The harness refuses to pass vacuously.** Every helper it extracts must be
+  found, at least one screen must render, and each screen must produce rows — all
+  three are failures, not skips. It proved this on itself: promoting `cell`
+  broke extraction and the run failed with *"no screen rendered at all — the
+  harness is not testing anything"* rather than reporting green
+- [x] **Verified against the pre-fix code**: with the unbounded cells restored the
+  suite fails with the exact character counts above
+
+**Still open from the audit**, in order: the 137-method `store.Store` (the main
+tax on every change), `internal/api` at 26% of the tree with a 63-field `Server`,
+the coverage figure understating itself by ~4 points, and the smaller items.
+
 ## Phase 70b — v0.14.0 ✅
 
 Minor, and it carries **two** migrations (`0030`, `0031`) — both additive, both

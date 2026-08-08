@@ -119,6 +119,14 @@
 
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const pad = (s, n) => esc(String(s ?? "")).padEnd(n);
+  // cell() is pad() that TRUNCATES first. Use it for any value a user controls —
+  // a name, a subject, a SPIFFE id — and pad() only for values bounded by their
+  // own domain (a status, a kind, a count). pad() alone lets one long value push
+  // every column after it off a 980px terminal, which on a refused row is where
+  // the reason lives; that shipped once and is now a test
+  // (internal/web/testdata/console_check.js asserts a row does not widen with
+  // its data).
+  const cell = (s, n) => { s = String(s ?? ""); return pad(s.length > n ? s.slice(0, n - 1) + "…" : s, n); };
   const can = (c) => !!(me && me.capabilities && me.capabilities.includes(c));
   const fmtTime = (t) => t ? esc(String(t).replace("T", " ").slice(0, 19)) : "-";
   const now = () => { const d = new Date(), z = (x) => String(x).padStart(2, "0");
@@ -1459,9 +1467,6 @@ ${fkeys("F3=Exit   F5=Refresh   F6=Mint agent key   F12=Cancel")}`;
         // off the 980px terminal, taking the reason column with it. The prefix is
         // shown once, above; the rows show paths.
         const shortID = (s) => String(s ?? "").replace(/^spiffe:\/\/[^/]+/, "");
-        // Truncate before padding: pad() alone lets one long value push the last
-        // column off the screen, which is where the reason lives.
-        const cell = (s, n) => { s = String(s ?? ""); return pad(s.length > n ? s.slice(0, n - 1) + "…" : s, n); };
         // The trust domain the ids below are relative to, taken from the first id
         // that has one. Every SVID this broker accepts is in one trust domain.
         let domain = "";
@@ -2311,7 +2316,7 @@ ${campaigns.map((c) => {
   // A repeating campaign is the one an operator must not close by accident, and
   // the one they must close on purpose to stop the series — so it is labelled.
   const repeat = c.recur_days ? `every ${c.recur_days}d` : "-";
-  return `<tr><td>${opt(c.id)}</td><td>${esc(c.id)}</td><td>${pad(c.name, 20)}</td><td>${pad(scope, 16)}</td><td class="${c.recur_days ? "amber" : ""}">${pad(repeat, 10)}</td><td class="${c.status === "open" ? "amber" : "cyan"}">${pad(c.status, 7)}</td><td>${pad(c.created_by, 10)}</td><td class="cyan">${fmtTime(c.due_at)}</td></tr>`;
+  return `<tr><td>${opt(c.id)}</td><td>${esc(c.id)}</td><td>${cell(c.name, 20)}</td><td>${cell(scope, 16)}</td><td class="${c.recur_days ? "amber" : ""}">${pad(repeat, 10)}</td><td class="${c.status === "open" ? "amber" : "cyan"}">${pad(c.status, 7)}</td><td>${cell(c.created_by, 10)}</td><td class="cyan">${fmtTime(c.due_at)}</td></tr>`;
 }).join("")}
 </table>${campaigns.length ? "" : `<div class="cyan indent">(No campaigns.${canManage ? " Press F6 to snapshot the current access grants into one." : ""})</div>`}
 <input type="submit" hidden></form>
@@ -2414,7 +2419,7 @@ Decide them from the campaign they belong to (menu 17, option 5 on a campaign).
 
 <table>
 <tr><th>Item</th><th>Campaign</th><th>Kind</th><th>Subject</th><th>Access</th></tr>
-${myQueue.map((i) => `<tr><td>${esc(i.id)}</td><td>${esc(i.campaign_id)}</td><td>${pad(i.kind, 12)}</td><td>${pad(i.subject_type + ":" + i.subject, 18)}</td><td class="detail">${esc(i.detail)}</td></tr>`).join("")}
+${myQueue.map((i) => `<tr><td>${esc(i.id)}</td><td>${esc(i.campaign_id)}</td><td>${pad(i.kind, 12)}</td><td>${cell(i.subject_type + ":" + i.subject, 18)}</td><td class="detail">${esc(i.detail)}</td></tr>`).join("")}
 </table>${myQueue.length ? "" : `<div class="cyan indent">(Nothing is waiting on you.)</div>`}
 ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
       },
@@ -2437,7 +2442,7 @@ ${canDecide || canAssign ? `Type options, press Enter.  <span class="cyan">${[ca
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>Item</th><th>Kind</th><th>Subject</th><th>Reviewer</th><th>Access</th><th>Decision</th><th>By</th></tr>
-${items.map((i) => `<tr><td>${(canDecide || canAssign) && i.decision === "pending" ? opt(i.id) : ""}</td><td>${esc(i.id)}</td><td>${pad(i.kind, 12)}</td><td>${pad(i.subject_type + ":" + i.subject, 16)}</td><td class="${i.reviewer ? "white" : "cyan"}">${pad(i.reviewer || "unassigned", 12)}</td><td class="detail">${esc(i.detail)}</td><td class="${dcls[i.decision] || ""}">${esc(i.decision)}</td><td>${pad(i.decided_by || "-", 10)}</td></tr>`).join("")}
+${items.map((i) => `<tr><td>${(canDecide || canAssign) && i.decision === "pending" ? opt(i.id) : ""}</td><td>${esc(i.id)}</td><td>${pad(i.kind, 12)}</td><td>${cell(i.subject_type + ":" + i.subject, 16)}</td><td class="${i.reviewer ? "white" : "cyan"}">${cell(i.reviewer || "unassigned", 12)}</td><td class="detail">${esc(i.detail)}</td><td class="${dcls[i.decision] || ""}">${esc(i.decision)}</td><td>${cell(i.decided_by || "-", 10)}</td></tr>`).join("")}
 </table>${items.length ? "" : `<div class="cyan indent">(No items — there were no target grants or safe members to review when the campaign was created.)</div>`}
 <input type="submit" hidden></form>
 ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;

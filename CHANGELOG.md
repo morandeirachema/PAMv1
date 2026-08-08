@@ -11,6 +11,15 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **The console gets a safety net** (Phase 71) — the portal's ~2,500 lines of
+  embedded JavaScript were never parsed by anything: `go:embed` copies bytes, and
+  no CI step ran node, so a syntax error would have shipped. Now `node --check`
+  runs as a Go test and as an explicit CI step, and every covered screen is
+  rendered twice (short values and pathological ones) to assert that **a table row
+  does not widen with its data** — the invariant behind the column that fell off
+  the terminal in 0.12.0. It immediately found two more instances of the same
+  bug, in the campaigns list and the review queue, both fixed here.
+
 ## [0.14.0] — 2026-08-08
 
 Certification campaigns are complete: **scoped** so a review is finishable,

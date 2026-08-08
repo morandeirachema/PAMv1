@@ -46,6 +46,17 @@ jobs:
           "$(go env GOPATH)/bin/gosec" -quiet -confidence high -exclude=G104,G115,G304,G306,G101 ./...
       - name: build
         run: go build ./...
+      - name: console
+        # The portal is ~2,500 lines of JavaScript embedded in index.html, and
+        # go:embed copies bytes without parsing them — so before this step a
+        # syntax error compiled clean, tested clean, shipped, and broke the portal
+        # at runtime. `node --version` runs FIRST and on its own line so a runner
+        # without node fails the job: the Go tests skip themselves when node is
+        # absent (which is right for a laptop) and that skip must never be how CI
+        # passes.
+        run: |
+          node --version
+          go test ./internal/web/ -run TestConsole -v
       - name: architecture diagrams up to date
         run: go run ./cmd/archgen && git diff --exit-code docs/ARCHITECTURE-DIAGRAMS.md
       - name: test
