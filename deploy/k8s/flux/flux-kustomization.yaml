@@ -1,0 +1,73 @@
+# Flux: reconcile pamv1 from git, decrypting SOPS-sealed secrets in-cluster.
+#
+# This is the piece the SOPS README described in prose and never showed. The
+# point of `.spec.decryption` is that the sealed files can live in the same repo
+# as everything else: Flux decrypts them with a key that never leaves the
+# cluster, so no human and no CI job ever holds the plaintext.
+#
+# Prerequisites (once per cluster):
+#
+#   1. Install Flux and the CloudNativePG operator.
+#   2. Put the AGE PRIVATE key in a cluster Secret, under the key `age.agekey` --
+#      the name Flux looks for:
+#
+#        kubectl -n flux-system create secret generic sops-age \
+#          --from-file=age.agekey=age.key
+#
+#      Use YOUR key. deploy/k8s/sops/age-example.key is a throwaway whose private
+#      half is committed to this repo; anything sealed to it is public.
+#   3. Apply the objects in this directory -- by file, not by directory, since
+#      `kubectl apply -f <dir>` would also try to apply any kustomize overlay:
+#
+#        kubectl apply -f deploy/k8s/flux/gitrepository.yaml \
+#                      -f deploy/k8s/flux/flux-kustomization.yaml
+#
+# Why TWO Kustomizations rather than one: the secrets need `.spec.decryption` and
+# the workload does not, and the workload must not start before its secret
+# exists. Splitting them lets `dependsOn` express that ordering, and keeps the
+# decryption key scoped to the one reconciliation that needs it. It also means
+# the two kustomize bases stay independently useful -- `kubectl apply -k
+# deploy/k8s/` still works for a non-GitOps install, because that base has no
+# sealed material in it.
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pamv1-secrets
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./deploy/k8s/sops
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: pamv1
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pamv1
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./deploy/k8s
+  prune: true
+  wait: true
+  timeout: 5m
+  dependsOn:
+    - name: pamv1-secrets
+  sourceRef:
+    kind: GitRepository
+    name: pamv1
+  # Health-gate the reconciliation on the workload actually coming up, so a bad
+  # config is reported as a failed Kustomization rather than sitting green over a
+  # CrashLoopBackOff.
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: pamv1
+      namespace: pamv1

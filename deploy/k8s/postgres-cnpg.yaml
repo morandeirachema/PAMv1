@@ -28,6 +28,19 @@ spec:
     initdb:
       database: pam
       owner: pam
+      # By default CNPG GENERATES the app password into the secret it manages,
+      # which leaves a manual step in the middle of an otherwise-IaC deploy:
+      # somebody reads that password out of the running cluster and pastes it
+      # into pamv1's PAM_DATABASE_URL. Two copies of one password, kept in step
+      # by hand.
+      #
+      # Uncomment to SUPPLY it instead, so the password is an input rather than
+      # an output. deploy/k8s/sops/pg-app.sops.example.yaml is that secret,
+      # sealed; create your own from it first, because this line makes the
+      # cluster fail to bootstrap if the secret does not exist:
+      #
+      # secret:
+      #   name: pamv1-pg-app
 
   postgresql:
     parameters:

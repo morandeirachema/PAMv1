@@ -11,6 +11,28 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`kubectl apply -f deploy/k8s/` overwrote the secret you had just created.**
+  `secret.example.yaml` declares `pam-secrets` with `CHANGE_ME` values, and the
+  quickstart said to create the real secret and then apply the whole directory.
+  Both READMEs now use **`kubectl apply -k deploy/k8s/`**, which resolves a
+  curated base containing no secret material; CI fails if that base ever gains
+  any.
+
+### Added
+
+- **A working Flux example** (`deploy/k8s/flux/`) — a `GitRepository` pinned to a
+  tag and two `Kustomization`s, since only the sealed secrets need
+  `.spec.decryption` and the workload must not start before them.
+- **A really-sealed `helm secrets` values file**
+  (`deploy/helm/pamv1/secrets.example.sops.yaml`) for a flow the SOPS README had
+  advertised with no example behind it.
+- **The CloudNativePG app password can be sealed** rather than generated and read
+  back out of the cluster by hand (`deploy/k8s/sops/pg-app.sops.example.yaml`).
+- **Cloud-KMS recipients** documented in `deploy/.sops.yaml` (AWS KMS, GCP KMS,
+  Azure Key Vault, Vault Transit) — additive to `age`, and the migration path.
+
 ### Added
 
 - **Bootstrap secrets can be rotated without a restart.** Set

@@ -1,0 +1,17 @@
+# The git source Flux reconciles pamv1 from.
+#
+# Point `url` at YOUR fork/clone. For a private repo, add a secretRef with
+# credentials (see https://fluxcd.io/flux/components/source/gitrepositories/).
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: pamv1
+  namespace: flux-system
+spec:
+  interval: 5m
+  url: https://github.com/morandeirachema/pamv1
+  ref:
+    # Pin a tag rather than tracking a branch: a GitOps controller following
+    # `main` deploys whatever lands there, which is the supply-chain problem the
+    # signed releases exist to avoid.
+    tag: v0.14.3

@@ -224,8 +224,25 @@ jobs:
         run: |
           go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
           "$(go env GOPATH)/bin/kubeconform" -summary -ignore-missing-schemas \
-            deploy/k8s/*.yaml deploy/k8s/conjur/deployment.yaml \
+            deploy/k8s/*.yaml deploy/k8s/conjur/deployment.yaml deploy/k8s/flux/*.yaml \
             /tmp/rendered-default.yaml /tmp/rendered-all.yaml
+      - name: kustomize bases build
+        # The two bases are what `kubectl apply -k` and the Flux example both
+        # resolve, so a broken resource list should fail here rather than at
+        # reconcile time. The workload base is also checked to carry no secret
+        # material: it exists precisely so the wholesale apply cannot sweep up
+        # secret.example.yaml's CHANGE_ME values.
+        run: |
+          go install sigs.k8s.io/kustomize/kustomize/v5@v5.4.3
+          KUSTOMIZE="$(go env GOPATH)/bin/kustomize"
+          "$KUSTOMIZE" build deploy/k8s/ > /tmp/base.yaml
+          "$KUSTOMIZE" build deploy/k8s/sops/ > /tmp/sealed.yaml
+          if grep -qE 'CHANGE_ME|ENC\[AES256_GCM' /tmp/base.yaml; then
+            echo "FAIL: the workload base contains placeholder or sealed material"; exit 1
+          fi
+          grep -q 'ENC\[AES256_GCM' /tmp/sealed.yaml || {
+            echo "FAIL: the secrets base built without sealed values"; exit 1; }
+          "$(go env GOPATH)/bin/kubeconform" -summary -ignore-missing-schemas /tmp/base.yaml
 
   # Phase 14: prove the committed SOPS example is really encrypted and round-trips
   # with the throwaway demo key (guards against an accidental plaintext commit).
