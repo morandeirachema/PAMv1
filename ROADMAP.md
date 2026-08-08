@@ -2196,7 +2196,10 @@ would cost more release time than it currently buys.
 A **patch**: the five audit improvements are tests, CI and internal refactors —
 no feature, no schema, no environment variable, no audit-vocabulary change.
 
-- [x] **v0.14.1** through the test-gated pipeline, rehearsed first on `main`
+- [x] **v0.14.1** through the test-gated pipeline, rehearsed first on `main`.
+  Published 2026-08-08 as `ghcr.io/morandeirachema/pamv1:0.14.1`, digest
+  `sha256:ad19e07c485f1e1b1357d4c509b432125483b8cb7c4aa916d9ce1611e786ab48`,
+  public — anonymous pull verified
 - [x] **All four pins move together** (both k8s deployments, terraform, Helm
   `appVersion` + chart `0.5.1`), both READMEs restate the current release, and
   every release link passes the label/URL agreement check
