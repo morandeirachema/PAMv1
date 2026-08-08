@@ -2196,7 +2196,10 @@ would cost more release time than it currently buys.
 Minor, and it carries **two** migrations (`0030`, `0031`) — both additive, both
 rollback-safe on the grounds already checked for `0029`.
 
-- [x] **v0.14.0** through the test-gated pipeline, rehearsed first on `main`
+- [x] **v0.14.0** through the test-gated pipeline, rehearsed first on `main`.
+  Published 2026-08-08 as `ghcr.io/morandeirachema/pamv1:0.14.0`, digest
+  `sha256:be024e68394c4500b1c49d57214109612d67667d27ad7ade216c8f10e94d5bcb`,
+  public — anonymous pull verified
 - [x] **All four pins move together** (both k8s deployments, terraform, Helm
   `appVersion` + chart `0.5.0`), both READMEs restate the current release, and
   every release link passes the label/URL agreement check
