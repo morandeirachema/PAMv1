@@ -457,6 +457,52 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("ListCampaigns: %d err %v", len(cs), err)
 	}
 
+	// --- campaign reminders (Phase 70) ---
+	remCamp := &store.Campaign{Name: "reminder", CreatedBy: "alice"}
+	remPast := now.Add(-time.Minute)
+	remCamp.RemindAt = &remPast
+	if err := st.CreateCampaign(ctx, remCamp); err != nil {
+		t.Fatalf("CreateCampaign(reminder): %v", err)
+	}
+	if back, err := st.GetCampaign(ctx, remCamp.ID); err != nil || back.RemindAt == nil {
+		t.Fatalf("remind_at did not round-trip: %+v err %v", back, err)
+	}
+	if r, err := st.ListCampaignsToRemind(ctx, now); err != nil || len(r) != 1 || r[0].ID != remCamp.ID {
+		t.Fatalf("ListCampaignsToRemind = %+v err %v, want just %d", r, err, remCamp.ID)
+	}
+	// Rescheduling takes it out of the window; cancelling removes it entirely.
+	later := now.Add(24 * time.Hour)
+	if err := st.SetCampaignRemindAt(ctx, remCamp.ID, &later); err != nil {
+		t.Fatalf("SetCampaignRemindAt: %v", err)
+	}
+	if r, _ := st.ListCampaignsToRemind(ctx, now); len(r) != 0 {
+		t.Fatalf("a rescheduled reminder is still due: %+v", r)
+	}
+	if err := st.SetCampaignRemindAt(ctx, remCamp.ID, nil); err != nil {
+		t.Fatalf("SetCampaignRemindAt(nil): %v", err)
+	}
+	if back, _ := st.GetCampaign(ctx, remCamp.ID); back.RemindAt != nil {
+		t.Fatalf("a cancelled reminder must be nil, got %v", back.RemindAt)
+	}
+	if r, _ := st.ListCampaignsToRemind(ctx, now.Add(1000*time.Hour)); len(r) != 0 {
+		t.Fatalf("a cancelled reminder came back: %+v", r)
+	}
+	if err := st.SetCampaignRemindAt(ctx, 999999, &later); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("SetCampaignRemindAt(missing): want ErrNotFound, got %v", err)
+	}
+	// A CLOSED campaign never reminds, whatever its schedule says.
+	closedRem := &store.Campaign{Name: "closed reminder", CreatedBy: "alice"}
+	closedRem.RemindAt = &remPast
+	if err := st.CreateCampaign(ctx, closedRem); err != nil {
+		t.Fatalf("CreateCampaign(closed reminder): %v", err)
+	}
+	if err := st.CloseCampaign(ctx, closedRem.ID, now); err != nil {
+		t.Fatalf("CloseCampaign: %v", err)
+	}
+	if r, err := st.ListCampaignsToRemind(ctx, now); err != nil || len(r) != 0 {
+		t.Fatalf("a closed campaign reminded: %+v err %v", r, err)
+	}
+
 	// --- reviewer assignment (Phase 69) ---
 	//
 	// A queue is "my PENDING items in OPEN campaigns". Each half of that matters:
