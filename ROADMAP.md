@@ -2191,6 +2191,52 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 75 — What of `internal/api` actually wanted to move ✅
+
+The last improvement from the 2026-08-08 audit, and the one whose honest answer
+was *mostly no*. The audit flagged `internal/api` at 26% of the tree with a
+63-field `Server`, and `run()` at 815 lines. Both numbers are real; the
+conclusion they suggest is not.
+
+**The measurement came first, and it changed the plan.** Counting what each
+extraction candidate actually touches:
+
+| file | distinct `Server` members used |
+|---|---|
+| `scheduler.go` | **16**, including handler methods (`rotateCredential`, `snapshotAccess`, `spawnDueCampaigns`, `sendCampaignReminders`) |
+| `archive.go` / `retention.go` | 7 each, plus each other's methods |
+| `clipboard.go` | **0** |
+
+Moving the background workers out would mean passing sixteen things, most of them
+handler behaviour — the god-object rebuilt under a new name, which is worse than
+leaving it. The same holds for `run()`: forty locals feed one 65-field `Options`
+literal, so extracting the construction half returns the same forty renamed.
+**The package is large because the domain is, and the coupling is real rather
+than accidental.** That is the finding.
+
+Two things genuinely wanted to move, and did:
+
+- [x] **Clipboard observation moved to `internal/guacd`.** It is Guacamole
+  protocol knowledge — reconstructing a transfer from `clipboard`/`blob`/`end`
+  opcodes — with **zero** coupling to `Server`, sitting in the HTTP package while
+  the package that owns the protocol sat next door. `internal/guacd` is now the
+  single place that knows the wire format
+- [x] **`serveAndShutDown` split out of `run()`** (815 → 750 lines). It is the
+  one genuinely separable part: it takes what it needs and nothing else. The three
+  copy-pasted proxy-drain `select` blocks became **a slice** — that was the shape
+  that loses a listener the day a fourth is added, which is the same hazard
+  Phase 74 just wrote a test for on the database proxies. Covered by the existing
+  `TestRunServesAndShutsDownGracefully` and `TestRunServesTLS`
+
+Deliberately **not** done, with the reason recorded rather than left implicit:
+splitting the workers, archive/retention, or the construction half of `run()`.
+The right long-term move is to shrink `api.Options` (67 fields) into grouped
+sub-structs, which is a design decision worth taking on its own rather than as a
+side effect of a size metric.
+
+**All five audit improvements are now closed** (71 console, 72 store roles,
+73 coverage, 74 proxy parity, 75 this).
+
 ## Phase 74 — Policy parity between the database proxies, and a test that does not bet on the scheduler ✅
 
 Two of the three small items from the 2026-08-08 audit. (The third — `run()` at

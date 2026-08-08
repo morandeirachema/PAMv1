@@ -348,9 +348,9 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	// Clipboard auditing (Phase 50): observe what crosses the bridge Phase 33
 	// gates. The audit is written on a cancel-detached context so a transfer
 	// completed as the session tears down is still recorded.
-	clip := newClipWatcher(clipAudit)
+	clip := guacd.NewClipWatcher(clipAudit)
 	auditCtx := context.WithoutCancel(ctx)
-	bridgeGuacd(ctx, ws, gconn, clip, func(t clipTransfer) {
+	bridgeGuacd(ctx, ws, gconn, clip, func(t guacd.ClipTransfer) {
 		s.audit(auditCtx, proto.name+".clipboard", "target:"+target.Name+" "+t.Detail())
 	})
 }
@@ -383,7 +383,7 @@ func guacamolePrelude(uuid, connID string) [][]byte {
 // observes clipboard transfers in both directions (Phase 50) — observation
 // only: every frame is forwarded byte-for-byte regardless, because dropping one
 // would corrupt the display, and blocking the clipboard is Phase 33's gate.
-func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, clip *clipWatcher, onClip func(clipTransfer)) {
+func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, clip *guacd.ClipWatcher, onClip func(guacd.ClipTransfer)) {
 	done := make(chan struct{}, 2)
 	note := func(direction string, frame []byte) {
 		if onClip == nil {
@@ -501,7 +501,7 @@ func rdpClipboardMode(mode string) string {
 var clipboardRank = map[string]int{"allow": 0, "readonly": 1, "deny": 2}
 
 // clipAuditRank orders the clipboard-audit modes by how much they record.
-var clipAuditRank = map[string]int{clipAuditOff: 0, clipAuditMeta: 1, clipAuditFull: 2}
+var clipAuditRank = map[string]int{guacd.ClipAuditOff: 0, guacd.ClipAuditMeta: 1, guacd.ClipAuditFull: 2}
 
 // strictestClipboard merges the global clipboard policy with a target's
 // override, returning the STRICTER of the two (allow < readonly < deny); an
@@ -524,7 +524,7 @@ func strictestClipboard(global, target string) string {
 // password — setting it per target is an explicit admin decision on that
 // target, carrying the same warning as the global flag.
 func strictestClipAudit(global, target string) string {
-	g, t := normalizeClipAudit(global), normalizeClipAudit(target)
+	g, t := guacd.NormalizeClipAudit(global), guacd.NormalizeClipAudit(target)
 	if clipAuditRank[t] > clipAuditRank[g] {
 		return t
 	}
