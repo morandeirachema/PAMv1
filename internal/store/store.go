@@ -571,7 +571,23 @@ type MFAEnrollment struct {
 // starts from the beginning. Child lists scoped to one parent (a target's
 // grants, a safe's members) stay unwindowed — they are bounded by their parent.
 
-type Store interface {
+// The Store interface is composed from ROLE interfaces, one per domain, rather
+// than written as one flat list. It had grown to 137 methods, which made it the
+// main tax on every change — a new feature edits the interface and both
+// implementations — and made it impossible for a consumer to state the small
+// slice it actually needs.
+//
+// The pattern is not new here: `session.LiveStore`, `session.StepUpStore`,
+// `ApprovalClaimStore` and `SafeReader` were already narrow views taken by the
+// code that needed them. This applies the same idea to the whole surface.
+//
+// Store still embeds every role, so both implementations and every existing
+// caller are unchanged — the method set is identical. What it buys is that a new
+// consumer can depend on `store.CampaignStore` (14 methods) instead of
+// `store.Store` (137), which is what makes a fake or a second backend tractable.
+
+// TargetStore is the target inventory.
+type TargetStore interface {
 	// CreateTarget inserts a target, populating its ID and CreatedAt.
 	CreateTarget(ctx context.Context, t *Target) error
 	// ListTargets returns targets in the (limit, afterID) window, id-ascending.
@@ -589,7 +605,11 @@ type Store interface {
 	UpdateTarget(ctx context.Context, t *Target) error
 	// DeleteTarget removes a target (cascading to its dependents), or ErrNotFound.
 	DeleteTarget(ctx context.Context, id int64) error
+}
 
+// CredentialStore is the vaulted credentials and the consumers that
+// depend on them.
+type CredentialStore interface {
 	// CreateCredential inserts a credential for a target, or ErrNotFound if the target is missing.
 	CreateCredential(ctx context.Context, c *Credential) error
 	// ListCredentials returns credentials for one target (or all when targetID
@@ -608,6 +628,18 @@ type Store interface {
 	// DeleteCredential removes a credential by ID, or ErrNotFound.
 	DeleteCredential(ctx context.Context, id int64) error
 
+	// CreateCredentialDependency declares a consumer of a credential (ErrNotFound
+	// if the credential does not exist).
+	CreateCredentialDependency(ctx context.Context, d *CredentialDependency) error
+	// ListCredentialDependencies returns a credential's declared consumers.
+	ListCredentialDependencies(ctx context.Context, credentialID int64) ([]CredentialDependency, error)
+	// DeleteCredentialDependency removes a dependency by ID, or ErrNotFound.
+	DeleteCredentialDependency(ctx context.Context, id int64) error
+}
+
+// GrantStore is who may reach what: direct target grants, and safes with
+// their members (the two paths EffectiveTargetGrants folds together).
+type GrantStore interface {
 	// CreateTargetGrant adds an authorization grant to a target.
 	CreateTargetGrant(ctx context.Context, g *TargetGrant) error
 	// ListTargetGrants returns the grants for a target.
@@ -644,15 +676,11 @@ type Store interface {
 	DeleteSafeMember(ctx context.Context, id int64) error
 	// AssignTargetSafe sets (or clears, when safeID is nil) a target's safe.
 	AssignTargetSafe(ctx context.Context, targetID int64, safeID *int64) error
+}
 
-	// CreateCredentialDependency declares a consumer of a credential (ErrNotFound
-	// if the credential does not exist).
-	CreateCredentialDependency(ctx context.Context, d *CredentialDependency) error
-	// ListCredentialDependencies returns a credential's declared consumers.
-	ListCredentialDependencies(ctx context.Context, credentialID int64) ([]CredentialDependency, error)
-	// DeleteCredentialDependency removes a dependency by ID, or ErrNotFound.
-	DeleteCredentialDependency(ctx context.Context, id int64) error
-
+// CertificationStore is access certification — campaigns, their items, and
+// the recurrence and reminder schedules behind them.
+type CertificationStore interface {
 	// CreateCampaign inserts a certification campaign, populating ID/CreatedAt.
 	CreateCampaign(ctx context.Context, c *Campaign) error
 	// ListCampaigns returns all campaigns, newest first.
@@ -693,7 +721,11 @@ type Store interface {
 	GetCampaignItem(ctx context.Context, id int64) (*CampaignItem, error)
 	// DecideCampaignItem records a certify/revoke decision on an item.
 	DecideCampaignItem(ctx context.Context, id int64, decision, decidedBy string, at time.Time) error
+}
 
+// ApprovalStore is the four-eyes access-request workflow and the use-time
+// approval claim.
+type ApprovalStore interface {
 	// Access requests (4-eyes approval workflow).
 	CreateAccessRequest(ctx context.Context, ar *AccessRequest) error
 	// GetAccessRequest returns one access request by ID, or ErrNotFound.
@@ -745,7 +777,10 @@ type Store interface {
 	// The requester and targetID are re-checked here and not taken on trust:
 	// an id alone must never be able to claim somebody else's approval.
 	ConsumeApprovalByID(ctx context.Context, id int64, requester string, targetID int64, now time.Time) (ok bool, err error)
+}
 
+// CheckoutStore is exclusive, time-boxed credential leases.
+type CheckoutStore interface {
 	// Credential checkout/check-in (exclusive time-boxed leases).
 	// CreateCheckout fails with ErrConflict if the credential already has an
 	// active (unreturned, unexpired) checkout as of now.
@@ -757,7 +792,11 @@ type Store interface {
 	// ListCheckouts lists checkouts in the (limit, afterID) window,
 	// id-ascending; activeOnly limits to unreturned, unexpired ones.
 	ListCheckouts(ctx context.Context, activeOnly bool, now time.Time, limit int, afterID int64) ([]Checkout, error)
+}
 
+// AuditStore is the primary audit trail, its optional hash chain, and the
+// reads that export or prune it.
+type AuditStore interface {
 	// AppendAudit appends an audit event, populating its ID and TS. When an audit
 	// HMAC key has been configured (EnableAuditChain), the event is linked into the
 	// tamper-evident chain (prev_hash/hmac) as part of the same atomic append.
@@ -817,7 +856,11 @@ type Store interface {
 	// path uses it to verify a served session recording's SHA-256 against the
 	// value audited when the recording was written.
 	FindAuditDetail(ctx context.Context, action, substr string) (bool, error)
+}
 
+// UserStore is local users and the custom permission profiles assignable to
+// them.
+type UserStore interface {
 	// CreateUser inserts a user, populating its ID and CreatedAt.
 	CreateUser(ctx context.Context, u *User) error
 	// ListUsers returns users in the (limit, afterID) window, id-ascending.
@@ -835,6 +878,81 @@ type Store interface {
 	// DeleteUser removes a user by ID, or ErrNotFound.
 	DeleteUser(ctx context.Context, id int64) error
 
+	// CreateProfile inserts a custom permission profile; ErrConflict on a
+	// duplicate name.
+	CreateProfile(ctx context.Context, p *Profile) error
+	// GetProfile returns the profile with the given name, or ErrNotFound.
+	GetProfile(ctx context.Context, name string) (*Profile, error)
+	// ListProfiles returns all custom profiles.
+	ListProfiles(ctx context.Context) ([]Profile, error)
+	// DeleteProfile removes a profile by ID, or ErrNotFound.
+	DeleteProfile(ctx context.Context, id int64) error
+}
+
+// LoginSessionStore is portal login sessions and the OIDC handshake state
+// shared across replicas.
+type LoginSessionStore interface {
+	// CreateSession inserts a login session, populating its ID and CreatedAt.
+	CreateSession(ctx context.Context, s *Session) error
+	// GetSessionByTokenHash returns a non-expired session, or ErrNotFound.
+	GetSessionByTokenHash(ctx context.Context, tokenHashHex string) (*Session, error)
+	// DeleteSession removes the session with the given token hash, or ErrNotFound.
+	DeleteSession(ctx context.Context, tokenHashHex string) error
+	// ListSessions returns all non-expired login sessions (newest first), so an
+	// admin can see and revoke active logins.
+	ListSessions(ctx context.Context) ([]Session, error)
+	// DeleteSessionsByUsername revokes every login session for a username (e.g. a
+	// directory user disabled upstream, or a compromised account), returning how
+	// many were removed. It is idempotent — zero is not an error.
+	DeleteSessionsByUsername(ctx context.Context, username string) (int, error)
+	// DeleteExpiredSessions removes login sessions whose expiry has passed,
+	// returning how many were deleted.
+	//
+	// Expiry was previously enforced only by FILTERING reads, never by removing
+	// rows: the sole deletes were an explicit logout and per-username revocation.
+	// Every portal login, every break-glass activation and every 60-second RDP
+	// viewer token therefore left a row behind forever — table bloat in
+	// PostgreSQL, and in memstore a genuine leak of one permanent map entry per
+	// RDP viewer open. Broker tokens and OIDC states already had this sweep; login
+	// sessions were the omission.
+	DeleteExpiredSessions(ctx context.Context, now time.Time) (int64, error)
+
+	// OIDC login PKCE/nonce state, shared across replicas so the auth-code
+	// callback can land on any instance (HA).
+	PutOIDCState(ctx context.Context, state, verifier, nonce string, expiresAt time.Time) error
+	// TakeOIDCState atomically fetches and deletes an unexpired state; ok is false
+	// if it is missing or expired.
+	TakeOIDCState(ctx context.Context, state string, now time.Time) (verifier, nonce string, ok bool, err error)
+}
+
+// MFAStore is TOTP enrollment, its replay guard, and recovery codes.
+type MFAStore interface {
+	// UpsertMFAEnrollment creates or replaces a user's TOTP enrollment.
+	UpsertMFAEnrollment(ctx context.Context, e *MFAEnrollment) error
+	// GetMFAEnrollment returns a user's TOTP enrollment, or ErrNotFound.
+	GetMFAEnrollment(ctx context.Context, username string) (*MFAEnrollment, error)
+	// ListMFAEnrollments returns all TOTP enrollments.
+	ListMFAEnrollments(ctx context.Context) ([]MFAEnrollment, error)
+	// DeleteMFAEnrollment removes a user's enrollment (and recovery codes), or ErrNotFound.
+	DeleteMFAEnrollment(ctx context.Context, username string) error
+	// ConsumeTOTPStep atomically records step as the user's last-used TOTP
+	// time-step, returning true if step is newer than the last recorded one
+	// (accept) and false if it was already used (a replay to reject).
+	ConsumeTOTPStep(ctx context.Context, username string, step int64) (bool, error)
+
+	// ReplaceMFARecoveryCodes stores a fresh set of recovery-code hashes for a
+	// user, discarding any previous set.
+	ReplaceMFARecoveryCodes(ctx context.Context, username string, codeHashes []string) error
+	// ConsumeMFARecoveryCode removes a matching unused recovery code and reports
+	// whether one was consumed.
+	ConsumeMFARecoveryCode(ctx context.Context, username, codeHash string) (bool, error)
+	// CountMFARecoveryCodes returns how many recovery codes remain.
+	CountMFARecoveryCodes(ctx context.Context, username string) (int, error)
+}
+
+// BrokerStore is the AI-agent broker: agent identities, single-use resume
+// tokens, and the broker's own hash-chained audit.
+type BrokerStore interface {
 	// CreateAgentKey inserts an AI-agent identity key, populating ID and CreatedAt.
 	CreateAgentKey(ctx context.Context, k *AgentKey) error
 	// GetAgentKey returns an agent key by ID, or ErrNotFound — used to re-check an
@@ -848,19 +966,72 @@ type Store interface {
 	// DeleteAgentKey removes an agent key by ID, or ErrNotFound.
 	DeleteAgentKey(ctx context.Context, id int64) error
 
-	// Operator-issued SSH certificates + KRL revocation (Phase 28).
-	// RecordSSHCert stores an issued certificate (its serial is the revocation
-	// handle), populating ID and IssuedAt.
-	RecordSSHCert(ctx context.Context, c *SSHCert) error
-	// RevokeSSHCert stamps a certificate serial revoked; ErrNotFound if unknown,
-	// ErrConflict if already revoked.
-	RevokeSSHCert(ctx context.Context, serial int64, by string, at time.Time) error
-	// ListRevokedSSHCertSerials returns the serials of every revoked certificate,
-	// for KRL generation.
-	ListRevokedSSHCertSerials(ctx context.Context) ([]int64, error)
-	// ListSSHCerts returns recent issued certificates (newest first, capped).
-	ListSSHCerts(ctx context.Context, limit int) ([]SSHCert, error)
+	// CreateBrokerToken stores a single-use resume token (its JTI is the token's
+	// SHA-256 hash) for a parked, approval-pending tool call.
+	CreateBrokerToken(ctx context.Context, t *BrokerToken) error
+	// ConsumeBrokerToken atomically spends the token identified by jti, returning
+	// the bound call id. It succeeds at most once: a used, expired, or unknown jti
+	// yields ErrNotFound, so a replayed token can never collect a result twice.
+	ConsumeBrokerToken(ctx context.Context, jti string) (callID string, err error)
+	// PeekBrokerToken returns the call id a token is bound to WITHOUT spending it
+	// (ErrNotFound if used/expired/unknown), so a resume can avoid burning the
+	// token before the parked call is ready to collect.
+	PeekBrokerToken(ctx context.Context, jti string) (callID string, err error)
+	// DeleteExpiredBrokerTokens removes spent or expired tokens, returning the
+	// count deleted; a periodic sweep keeps the table bounded.
+	DeleteExpiredBrokerTokens(ctx context.Context) (int64, error)
+	BrokerAuditStore
+}
 
+// BrokerAuditStore is the agent broker's own hash-chained audit — a separate
+// chain from the primary trail, with its own head and verification. Split out
+// because auditchain.Chain needs exactly these three methods and nothing else;
+// it used to take the whole 149-method Store to reach them.
+type BrokerAuditStore interface {
+	// AppendBrokerAuditLinked appends one broker audit event whose hash-chain
+	// link is computed from the CURRENT persisted head under a serialization
+	// that also holds across processes (a Postgres advisory lock in pgstore),
+	// so two writers — e.g. an old and a new pod overlapping during a rolling
+	// deploy, or HA replicas — cannot fork the chain. link receives the current
+	// head (nil at genesis) and returns the fully-linked event (its PrevHash and
+	// HMAC set from that head); the store assigns ID and TS, inserts it, and
+	// returns the stored event. Reading the head and inserting are one atomic
+	// step, so the in-memory head an appender may cache is only advisory.
+	AppendBrokerAuditLinked(ctx context.Context, link func(head *BrokerAuditEvent) BrokerAuditEvent) (BrokerAuditEvent, error)
+	// ListBrokerAudit returns broker audit events ordered oldest-first (id ASC);
+	// limit <= 0 returns all (used by the chain verifier).
+	ListBrokerAudit(ctx context.Context, limit int) ([]BrokerAuditEvent, error)
+	// GetBrokerAuditHead returns the most recent broker audit event, or (nil, nil)
+	// when the log is empty (genesis).
+	GetBrokerAuditHead(ctx context.Context) (*BrokerAuditEvent, error)
+}
+
+// AppSecretStore is the application-secrets API: app identities and the
+// grants that let one fetch a credential.
+type AppSecretStore interface {
+	// CreateAppKey inserts an application identity key, populating ID and CreatedAt
+	// (ErrConflict on a duplicate token hash).
+	CreateAppKey(ctx context.Context, k *AppKey) error
+	// GetAppKeyByTokenHash returns the enabled app key whose token hash matches, or
+	// ErrNotFound (a disabled key is treated as not found).
+	GetAppKeyByTokenHash(ctx context.Context, tokenHashHex string) (*AppKey, error)
+	// ListAppKeys returns all application keys.
+	ListAppKeys(ctx context.Context) ([]AppKey, error)
+	// DeleteAppKey removes an app key by ID (cascading its secret grants), or ErrNotFound.
+	DeleteAppKey(ctx context.Context, id int64) error
+	// GrantAppSecret authorizes an app to retrieve a credential's secret
+	// (ErrConflict on a duplicate grant, ErrNotFound if the app or credential is missing).
+	GrantAppSecret(ctx context.Context, g *AppSecretGrant) error
+	// ListAppSecretGrants returns an app's secret grants ordered by id.
+	ListAppSecretGrants(ctx context.Context, appID int64) ([]AppSecretGrant, error)
+	// DeleteAppSecretGrant removes a grant by ID, or ErrNotFound.
+	DeleteAppSecretGrant(ctx context.Context, id int64) error
+	// AppMayAccessCredential reports whether app appID has a grant for credentialID.
+	AppMayAccessCredential(ctx context.Context, appID, credentialID int64) (bool, error)
+}
+
+// VendorStore is the third-party vendor access gate.
+type VendorStore interface {
 	// Third-party vendor access gate (Phase 29).
 	// CreateVendor registers a vendor (ErrConflict on a duplicate username).
 	CreateVendor(ctx context.Context, v *Vendor) error
@@ -896,42 +1067,27 @@ type Store interface {
 	// target". A non-vendor returns (isVendor=false, allowed=true) so non-vendor
 	// users are unaffected.
 	VendorSessionAllowed(ctx context.Context, username, targetName, account string, now time.Time) (isVendor, allowed bool, err error)
+}
 
-	// CreateAppKey inserts an application identity key, populating ID and CreatedAt
-	// (ErrConflict on a duplicate token hash).
-	CreateAppKey(ctx context.Context, k *AppKey) error
-	// GetAppKeyByTokenHash returns the enabled app key whose token hash matches, or
-	// ErrNotFound (a disabled key is treated as not found).
-	GetAppKeyByTokenHash(ctx context.Context, tokenHashHex string) (*AppKey, error)
-	// ListAppKeys returns all application keys.
-	ListAppKeys(ctx context.Context) ([]AppKey, error)
-	// DeleteAppKey removes an app key by ID (cascading its secret grants), or ErrNotFound.
-	DeleteAppKey(ctx context.Context, id int64) error
-	// GrantAppSecret authorizes an app to retrieve a credential's secret
-	// (ErrConflict on a duplicate grant, ErrNotFound if the app or credential is missing).
-	GrantAppSecret(ctx context.Context, g *AppSecretGrant) error
-	// ListAppSecretGrants returns an app's secret grants ordered by id.
-	ListAppSecretGrants(ctx context.Context, appID int64) ([]AppSecretGrant, error)
-	// DeleteAppSecretGrant removes a grant by ID, or ErrNotFound.
-	DeleteAppSecretGrant(ctx context.Context, id int64) error
-	// AppMayAccessCredential reports whether app appID has a grant for credentialID.
-	AppMayAccessCredential(ctx context.Context, appID, credentialID int64) (bool, error)
+// SSHCertStore is operator-issued SSH certificates and their revocation list.
+type SSHCertStore interface {
+	// Operator-issued SSH certificates + KRL revocation (Phase 28).
+	// RecordSSHCert stores an issued certificate (its serial is the revocation
+	// handle), populating ID and IssuedAt.
+	RecordSSHCert(ctx context.Context, c *SSHCert) error
+	// RevokeSSHCert stamps a certificate serial revoked; ErrNotFound if unknown,
+	// ErrConflict if already revoked.
+	RevokeSSHCert(ctx context.Context, serial int64, by string, at time.Time) error
+	// ListRevokedSSHCertSerials returns the serials of every revoked certificate,
+	// for KRL generation.
+	ListRevokedSSHCertSerials(ctx context.Context) ([]int64, error)
+	// ListSSHCerts returns recent issued certificates (newest first, capped).
+	ListSSHCerts(ctx context.Context, limit int) ([]SSHCert, error)
+}
 
-	// CreateBrokerToken stores a single-use resume token (its JTI is the token's
-	// SHA-256 hash) for a parked, approval-pending tool call.
-	CreateBrokerToken(ctx context.Context, t *BrokerToken) error
-	// ConsumeBrokerToken atomically spends the token identified by jti, returning
-	// the bound call id. It succeeds at most once: a used, expired, or unknown jti
-	// yields ErrNotFound, so a replayed token can never collect a result twice.
-	ConsumeBrokerToken(ctx context.Context, jti string) (callID string, err error)
-	// PeekBrokerToken returns the call id a token is bound to WITHOUT spending it
-	// (ErrNotFound if used/expired/unknown), so a resume can avoid burning the
-	// token before the parked call is ready to collect.
-	PeekBrokerToken(ctx context.Context, jti string) (callID string, err error)
-	// DeleteExpiredBrokerTokens removes spent or expired tokens, returning the
-	// count deleted; a periodic sweep keeps the table bounded.
-	DeleteExpiredBrokerTokens(ctx context.Context) (int64, error)
-
+// KeyMaterialStore is shared custody of long-lived keys (the SSH host key,
+// the ZSP CA, the broker and bus keys), each held KEK-sealed.
+type KeyMaterialStore interface {
 	// EnsureKeyMaterial claims custody of a named long-lived key. It stores value
 	// only if no row exists for name, and returns whatever is stored either way —
 	// so N replicas starting at the same moment all converge on ONE key instead of
@@ -949,7 +1105,10 @@ type Store interface {
 	// pair above. ErrNotFound when the name is absent, so a rotation cannot
 	// silently create custody of a key nobody claimed.
 	UpdateKeyMaterial(ctx context.Context, name, value string) error
+}
 
+// SettingStore is the runtime configuration overrides.
+type SettingStore interface {
 	// PutSetting upserts a configuration override, stamping UpdatedAt.
 	PutSetting(ctx context.Context, s *Setting) error
 	// GetSetting returns the override for key, or ErrNotFound.
@@ -958,59 +1117,11 @@ type Store interface {
 	ListSettings(ctx context.Context) ([]Setting, error)
 	// DeleteSetting removes the override for key, or ErrNotFound.
 	DeleteSetting(ctx context.Context, key string) error
+}
 
-	// CreateProfile inserts a custom permission profile; ErrConflict on a
-	// duplicate name.
-	CreateProfile(ctx context.Context, p *Profile) error
-	// GetProfile returns the profile with the given name, or ErrNotFound.
-	GetProfile(ctx context.Context, name string) (*Profile, error)
-	// ListProfiles returns all custom profiles.
-	ListProfiles(ctx context.Context) ([]Profile, error)
-	// DeleteProfile removes a profile by ID, or ErrNotFound.
-	DeleteProfile(ctx context.Context, id int64) error
-
-	// AppendBrokerAuditLinked appends one broker audit event whose hash-chain
-	// link is computed from the CURRENT persisted head under a serialization
-	// that also holds across processes (a Postgres advisory lock in pgstore),
-	// so two writers — e.g. an old and a new pod overlapping during a rolling
-	// deploy, or HA replicas — cannot fork the chain. link receives the current
-	// head (nil at genesis) and returns the fully-linked event (its PrevHash and
-	// HMAC set from that head); the store assigns ID and TS, inserts it, and
-	// returns the stored event. Reading the head and inserting are one atomic
-	// step, so the in-memory head an appender may cache is only advisory.
-	AppendBrokerAuditLinked(ctx context.Context, link func(head *BrokerAuditEvent) BrokerAuditEvent) (BrokerAuditEvent, error)
-	// ListBrokerAudit returns broker audit events ordered oldest-first (id ASC);
-	// limit <= 0 returns all (used by the chain verifier).
-	ListBrokerAudit(ctx context.Context, limit int) ([]BrokerAuditEvent, error)
-	// GetBrokerAuditHead returns the most recent broker audit event, or (nil, nil)
-	// when the log is empty (genesis).
-	GetBrokerAuditHead(ctx context.Context) (*BrokerAuditEvent, error)
-
-	// CreateSession inserts a login session, populating its ID and CreatedAt.
-	CreateSession(ctx context.Context, s *Session) error
-	// GetSessionByTokenHash returns a non-expired session, or ErrNotFound.
-	GetSessionByTokenHash(ctx context.Context, tokenHashHex string) (*Session, error)
-	// DeleteSession removes the session with the given token hash, or ErrNotFound.
-	DeleteSession(ctx context.Context, tokenHashHex string) error
-	// ListSessions returns all non-expired login sessions (newest first), so an
-	// admin can see and revoke active logins.
-	ListSessions(ctx context.Context) ([]Session, error)
-	// DeleteSessionsByUsername revokes every login session for a username (e.g. a
-	// directory user disabled upstream, or a compromised account), returning how
-	// many were removed. It is idempotent — zero is not an error.
-	DeleteSessionsByUsername(ctx context.Context, username string) (int, error)
-	// DeleteExpiredSessions removes login sessions whose expiry has passed,
-	// returning how many were deleted.
-	//
-	// Expiry was previously enforced only by FILTERING reads, never by removing
-	// rows: the sole deletes were an explicit logout and per-username revocation.
-	// Every portal login, every break-glass activation and every 60-second RDP
-	// viewer token therefore left a row behind forever — table bloat in
-	// PostgreSQL, and in memstore a genuine leak of one permanent map entry per
-	// RDP viewer open. Broker tokens and OIDC states already had this sweep; login
-	// sessions were the omission.
-	DeleteExpiredSessions(ctx context.Context, now time.Time) (int64, error)
-
+// SessionBusStore is the cross-replica session surface: the kill broadcast,
+// the live-monitoring relay and the step-up decision bus.
+type SessionBusStore interface {
 	// PublishSessionKill broadcasts a live-session kill to every replica so the
 	// kill-switch works in HA (Postgres LISTEN/NOTIFY; an in-process hub for the
 	// memory store). SubscribeSessionKills returns a stream of kills published by
@@ -1036,36 +1147,11 @@ type Store interface {
 	// in-process, so the demo and tests drive the same session.StepUp code the
 	// HA path does.
 	session.StepUpStore
+}
 
-	// UpsertMFAEnrollment creates or replaces a user's TOTP enrollment.
-	UpsertMFAEnrollment(ctx context.Context, e *MFAEnrollment) error
-	// GetMFAEnrollment returns a user's TOTP enrollment, or ErrNotFound.
-	GetMFAEnrollment(ctx context.Context, username string) (*MFAEnrollment, error)
-	// ListMFAEnrollments returns all TOTP enrollments.
-	ListMFAEnrollments(ctx context.Context) ([]MFAEnrollment, error)
-	// DeleteMFAEnrollment removes a user's enrollment (and recovery codes), or ErrNotFound.
-	DeleteMFAEnrollment(ctx context.Context, username string) error
-	// ConsumeTOTPStep atomically records step as the user's last-used TOTP
-	// time-step, returning true if step is newer than the last recorded one
-	// (accept) and false if it was already used (a replay to reject).
-	ConsumeTOTPStep(ctx context.Context, username string, step int64) (bool, error)
-
-	// ReplaceMFARecoveryCodes stores a fresh set of recovery-code hashes for a
-	// user, discarding any previous set.
-	ReplaceMFARecoveryCodes(ctx context.Context, username string, codeHashes []string) error
-	// ConsumeMFARecoveryCode removes a matching unused recovery code and reports
-	// whether one was consumed.
-	ConsumeMFARecoveryCode(ctx context.Context, username, codeHash string) (bool, error)
-	// CountMFARecoveryCodes returns how many recovery codes remain.
-	CountMFARecoveryCodes(ctx context.Context, username string) (int, error)
-
-	// OIDC login PKCE/nonce state, shared across replicas so the auth-code
-	// callback can land on any instance (HA).
-	PutOIDCState(ctx context.Context, state, verifier, nonce string, expiresAt time.Time) error
-	// TakeOIDCState atomically fetches and deletes an unexpired state; ok is false
-	// if it is missing or expired.
-	TakeOIDCState(ctx context.Context, state string, now time.Time) (verifier, nonce string, ok bool, err error)
-
+// SystemStore is the backend itself — reachability, leader election and
+// shutdown.
+type SystemStore interface {
 	// Ping reports whether the backend is reachable (readiness probe).
 	Ping(ctx context.Context) error
 
@@ -1078,4 +1164,27 @@ type Store interface {
 
 	// Close releases the backend's resources.
 	Close()
+}
+
+// Store is the whole persistence surface: every role above, in one interface,
+// so existing callers and both implementations are untouched.
+type Store interface {
+	TargetStore
+	CredentialStore
+	GrantStore
+	CertificationStore
+	ApprovalStore
+	CheckoutStore
+	AuditStore
+	UserStore
+	LoginSessionStore
+	MFAStore
+	BrokerStore
+	AppSecretStore
+	VendorStore
+	SSHCertStore
+	KeyMaterialStore
+	SettingStore
+	SessionBusStore
+	SystemStore
 }

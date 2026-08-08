@@ -35,7 +35,33 @@ import (
 // the audit trail and the recording hash chain — destroying the tamper evidence
 // the recordings exist to provide. The old KEK must therefore be retained for as
 // long as sealed recordings are kept; the caller warns about this.
-func RotateVaultKEK(ctx context.Context, st store.Store, from, to *vault.Vault) (int, error) {
+// VaultRotationStore is the slice of the store -rotate-kek needs: every place a
+// KEK-wrapped value is persisted, listed as four explicit pairs rather than
+// taken as the whole 149-method store.Store.
+//
+// The list is the point. The bug this function shipped once was OMISSION — key
+// custody was added in Phase 42 and the rotation was never taught about it, so
+// the documented procedure re-wrapped three kinds, reported success, and left
+// the server unable to start because the fourth was still sealed under the old
+// KEK. Naming the four in the signature puts the exhaustive set where a reviewer
+// reads it, instead of leaving them to reconstruct it from the body.
+type VaultRotationStore interface {
+	// Credentials — the vaulted secrets themselves.
+	ListCredentials(ctx context.Context, targetID int64, limit int, afterID int64) ([]store.Credential, error)
+	UpdateCredentialSecretEnc(ctx context.Context, id int64, secretEnc string) error
+	// MFA enrollments — each TOTP secret is wrapped too.
+	ListMFAEnrollments(ctx context.Context) ([]store.MFAEnrollment, error)
+	UpsertMFAEnrollment(ctx context.Context, e *store.MFAEnrollment) error
+	// Settings — a stored configuration override may hold a secret.
+	ListSettings(ctx context.Context) ([]store.Setting, error)
+	PutSetting(ctx context.Context, s *store.Setting) error
+	// Key custody — the SSH host key, the ZSP CA, the broker and bus keys. The
+	// kind that was missed.
+	ListKeyMaterial(ctx context.Context) ([]store.KeyMaterial, error)
+	UpdateKeyMaterial(ctx context.Context, name, value string) error
+}
+
+func RotateVaultKEK(ctx context.Context, st VaultRotationStore, from, to *vault.Vault) (int, error) {
 	n := 0
 
 	creds, err := st.ListCredentials(ctx, 0, 0, 0)
