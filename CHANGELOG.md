@@ -11,6 +11,18 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Security
+
+- **The threat-analytics automated responses could be aimed at any account by an
+  unauthenticated attacker.** The risk score counts auth failures, and a failed
+  login records the *presented* username as the actor — so failing login under a
+  victim's name scored *them* high/critical, and with `PAM_ANALYTICS_AUTO_KILL`
+  (shipped since the analytics engine) or `PAM_ANALYTICS_AUTO_STEPUP` (new,
+  unreleased) enabled, their live sessions were killed or their logins revoked.
+  The responses now act only on risk from the actor's own authenticated
+  behaviour; auth failures still **alert** (a human should know an account is
+  being brute-forced) but drive no automated action against the named account.
+
 ### Added
 
 - **Threat analytics gains two signals that need history**: `new_target` (this

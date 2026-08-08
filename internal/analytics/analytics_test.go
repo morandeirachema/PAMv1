@@ -278,3 +278,46 @@ func TestTargetOfParsesTheAuditDetail(t *testing.T) {
 		}
 	}
 }
+
+// TestResponseScoreExcludesAuthFailures pins the fix for the session-DoS: risk
+// from auth failures — which carry an attacker-CHOSEN, unauthenticated name — is
+// visible in Level (so it alerts) but excluded from ResponseLevel (so it drives
+// no automated action against the named account).
+func TestResponseScoreExcludesAuthFailures(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	e := New(DefaultConfig())
+
+	// Pure failed logins under a victim's name, enough to peg the full score.
+	var evs []store.AuditEvent
+	for range 15 {
+		evs = append(evs, ev("victim", "login.failed", now))
+	}
+	f := find(e.Score(evs), "victim")
+	if f.Level != LevelCritical {
+		t.Fatalf("full level = %s, want critical (the alert must still fire)", f.Level)
+	}
+	if f.ResponseLevel != LevelLow {
+		t.Fatalf("response level = %s, want low — auth failures under a name the actor "+
+			"did not choose must not drive a response against them", f.ResponseLevel)
+	}
+
+	// A genuinely authenticated bad actor: response level tracks the full level,
+	// so the response still fires for someone who actually did something.
+	bg := []store.AuditEvent{ev("mallory", "breakglass.access", now), ev("mallory", "breakglass.access", now)}
+	fb := find(e.Score(bg), "mallory")
+	if fb.Level != LevelCritical || fb.ResponseLevel != LevelCritical {
+		t.Fatalf("an authenticated critical actor must keep a critical response level, got level=%s response=%s",
+			fb.Level, fb.ResponseLevel)
+	}
+
+	// Mixed: an attacker cannot PUSH a legitimately-active actor over the response
+	// threshold by adding failed logins under their name.
+	mixed := []store.AuditEvent{evT("dana", "web-01", now)} // one ordinary session
+	for range 15 {
+		mixed = append(mixed, ev("dana", "login.failed", now))
+	}
+	fm := find(e.Score(mixed), "dana")
+	if fm.ResponseLevel == LevelCritical || fm.ResponseLevel == LevelHigh {
+		t.Fatalf("failed logins pushed a legitimate actor's RESPONSE level to %s", fm.ResponseLevel)
+	}
+}
