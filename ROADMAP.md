@@ -2357,7 +2357,13 @@ Phases 86 (analytics depth) and 87 (its review) unreleased. Phase 87 fixed a way
 the automated responses could be turned on a bystander, and auto-kill has shipped
 since Phase 23 — a fix to released behaviour, so the pin-currency rule applies.
 
-- [x] **v0.17.0** through the test-gated pipeline, rehearsed on `main` first
+- [x] **v0.17.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-09 as `ghcr.io/morandeirachema/pamv1:0.17.0` (also `latest`),
+  digest
+  `sha256:7d6f374f764c2d718b9def28566c14b73624dcef4256e270347b5e3b39e29cc6`,
+  **public** — an anonymous manifest pull returns 200. Keyless-signed with the
+  SBOM and SLSA provenance as OCI referrers; the GitHub Release carries
+  `sbom.spdx.json`
 - [x] All five pins, via the sweep (grep every version reference under `deploy/`,
   require exactly one release) rather than the list
 - [x] Helm chart `version` 0.7.0 -> **0.8.0** alongside `appVersion`
