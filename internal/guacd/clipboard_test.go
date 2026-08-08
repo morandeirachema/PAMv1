@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -255,5 +256,53 @@ func TestGuacdDecodeAllStopsCleanly(t *testing.T) {
 		if got := DecodeAll([]byte(bad)); len(got) != 0 {
 			t.Fatalf("DecodeAll(%q) = %+v, want none", bad, got)
 		}
+	}
+}
+
+// quotedSpan matches one Go-quoted string, so a test can strip the spans a
+// quoting-aware reader would never parse fields out of.
+var quotedSpan = regexp.MustCompile(`"(\\.|[^"\\])*"`)
+
+// TestClipDetailResistsMimetypeForgery pins the sanitisation of the one field in
+// a clipboard record that comes off the wire.
+//
+// The mimetype is `clipboard,<stream>,<mimetype>` — chosen by whoever is at the
+// other end of the tunnel, which is the operator's browser or a compromised RDP
+// host. It was interpolated raw, and it is the SECOND field of the detail, so a
+// mimetype of `text/plain bytes:0 sha256:00…` put a forged byte count and digest
+// AHEAD of the real ones. To a first-wins reader a megabyte of exfiltrated
+// clipboard data then read as an empty transfer — in the single record whose
+// entire purpose is to evidence that the copy happened.
+func TestClipDetailResistsMimetypeForgery(t *testing.T) {
+	const zero = "0000000000000000000000000000000000000000000000000000000000000000"
+	w := NewClipWatcher(ClipAuditMeta)
+	got := observeAll(w, "out", clipFrames("1", "text/plain bytes:0 sha256:"+zero, "secrets"))
+	if len(got) != 1 {
+		t.Fatalf("got %d transfers, want 1", len(got))
+	}
+	d := got[0].Detail()
+	// Read it the way a quoting-aware consumer does: outside the quoted spans,
+	// none of the forged text may survive as a field.
+	outside := quotedSpan.ReplaceAllString(d, `""`)
+	if strings.Contains(outside, "bytes:0 ") || strings.Contains(outside, zero) {
+		t.Fatalf("a wire-supplied mimetype forged fields into the clipboard audit detail: %q", d)
+	}
+	// The truth still has to be there — the record is evidence, not just safe.
+	if !strings.Contains(d, "bytes:7") {
+		t.Fatalf("the real byte count is missing: %q", d)
+	}
+}
+
+// TestClipDetailBoundsTheMimetype keeps a hostile client from choosing the size
+// of an audit row. Clipboard transfers are repeatable at will, so an unbounded
+// field here is an audit-flooding primitive.
+func TestClipDetailBoundsTheMimetype(t *testing.T) {
+	w := NewClipWatcher(ClipAuditMeta)
+	got := observeAll(w, "out", clipFrames("1", strings.Repeat("A", 64*1024), "x"))
+	if len(got) != 1 {
+		t.Fatalf("got %d transfers, want 1", len(got))
+	}
+	if d := got[0].Detail(); len(d) > 512 {
+		t.Fatalf("a 64KiB mimetype produced a %d-byte audit detail; it must be bounded", len(d))
 	}
 }

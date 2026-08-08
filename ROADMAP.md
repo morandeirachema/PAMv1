@@ -2351,6 +2351,59 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 76 — One sanitiser, and the three places that needed it ✅
+
+The sweep over phases 66–75. Ten phases, never read as a whole, and the newest
+production code in the repo. The authorization surface held — the new campaign
+routes are scoped like the rest of the API, `GET /api/campaigns/mine` reads only
+the caller's queue, reviewer assignment is advisory by design and says so in three
+places, and the store's split into nineteen role interfaces is pinned at 149
+methods by test. What the sweep found was **one class in three unrelated places**,
+and the structural reason it kept recurring.
+
+- [x] **The structural fix first.** `auditField` existed as **two byte-identical
+  copies** — `internal/api` and `internal/proxy` — and not at all in
+  `internal/guacd`, which also writes audit details. That is why the clipboard
+  record was never sanitised: the function was not there to call. New
+  `internal/auditfmt` holds the one implementation; api and proxy keep their
+  package-local `auditField` name (it is used on nearly every handler) delegating
+  to it, so no call site moved
+- [x] **A hostile agent identity forged the actor in the delegation record**
+  (finding AY). `broker.token.exchanged` was assembled unquoted and quoted as ONE
+  string by the handler. That stops a value breaking *out* of the record and not
+  one forging fields *inside* it: the console un-quotes, then splits on spaces,
+  and takes last-wins. Reproduced against the shipped console script — an
+  `on_behalf_of` of `ops-team actor:spiffe://trusted/root` made the screen report
+  an actor the token was never minted for. Every field is now quoted at the
+  source, matching the refusal path three lines above it
+- [x] **A clipboard mimetype off the wire went raw into the record that evidences
+  a copy** (finding AZ). It is the *second* field, so a mimetype of
+  `text/plain bytes:0 sha256:00…` put a forged byte count and digest ahead of the
+  real ones — a large exfiltration reading as an empty transfer — and unbounded it
+  was an audit-flooding primitive, since clipboard transfers repeat at will
+- [x] **A reviewer name forged fields into a certification reminder**
+  (finding BA), one phase after the assignment event three lines away got this
+  right. Names quoted and bounded, the list capped at 8 with a `+N_more` tail, and
+  the campaign name bounded at both sites where it was quoted-but-unbounded
+- [x] **A failing store opened a new campaign every hour, forever** (finding BB).
+  `spawnDueCampaigns` advanced the schedule **last**, so any failure after the
+  insert left the anchor still due and the next tick created another campaign. The
+  period is now claimed first: a failure to claim creates nothing, and a failure
+  after it costs at most one skipped period, logged at `Error`. A missed review is
+  bounded and loud; an unbounded run of duplicates is neither
+- [x] **`PAM_CERT_REMIND_DAYS` gets the range check every comparable knob has**
+  (finding BC): `0`–`366`, fail-loud at startup
+- [x] Regression tests for all three injections, **each verified to fail against
+  the pre-fix code** — `agentid.TestExchangeAuditResistsFieldForgery` through the
+  real `Exchange` call, `guacd.TestClipDetailResistsMimetypeForgery` +
+  `TestClipDetailBoundsTheMimetype`, `api.TestCampaignReminderResistsAuditInjection`
+- [ ] **Left open and recorded as finding BD**: names are validated non-empty
+  only, so roughly 145 `target:%s`-style sinks stay forgeable by whoever can name
+  a target, user or safe. Quoting the sinks would rewrite the format every audit
+  assertion greps for; the proportionate fix is boundary validation — reject
+  control characters and colons in names — which closes the class in four places
+  and changes no record format. Its own phase, not a footnote to this one
+
 ## Phase 71 — The console gets a safety net ✅
 
 The first of five improvements from the 2026-08-08 repo audit, and the one with

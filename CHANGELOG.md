@@ -11,6 +11,39 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Security
+
+- **The delegation record in `broker.token.exchanged` could name the wrong
+  agent.** The detail was assembled unquoted and quoted as one string by the
+  handler, which stops a value breaking out of the record but not one forging
+  fields inside it — the console un-quotes, splits on spaces and takes last-wins.
+  An `on_behalf_of` of `ops-team actor:spiffe://trusted/root` made the console
+  display an actor the token was never minted for. Every field is now quoted at
+  the source. Reachable as a broker key's `Owner` or an SVID chain tail.
+- **A clipboard mimetype off the wire went raw into `rdp.clipboard`.** It is the
+  second field, so `text/plain bytes:0 sha256:00…` put a forged byte count and
+  digest ahead of the real ones, making a large transfer read as empty; unbounded,
+  it also let a repeatable action flood the audit trail. Quoted and bounded.
+- **A reviewer name forged fields into `certification.reminder`**, and campaign
+  names were quoted but unbounded at two sites. Names are quoted and bounded and
+  the reviewer list is capped at 8 with a `+N_more` tail.
+- **A failing store could open a recurring campaign every hour without limit.**
+  The scheduler advanced `next_run` last, so any failure after the insert left the
+  anchor due and the next tick created another campaign. The period is now claimed
+  first; the worst case is one skipped period, logged at `Error`.
+
+### Added
+
+- `internal/auditfmt` — the single sanitiser for untrusted values in audit
+  details. It replaces two byte-identical copies of `auditField` and, more to the
+  point, was missing entirely from `internal/guacd`, which is why the clipboard
+  record was never sanitised.
+
+### Changed
+
+- `PAM_CERT_REMIND_DAYS` is range-checked (`0`–`366`) and fails loudly at startup,
+  like every comparable numeric setting.
+
 ## [0.14.1] — 2026-08-08
 
 The five improvements from the 2026-08-08 repo audit. A **patch**: no feature, no

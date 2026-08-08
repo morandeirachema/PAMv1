@@ -58,7 +58,10 @@ func (s *Server) exchangeToken(w http.ResponseWriter, r *http.Request, id *agent
 	// exists with no record of who delegated it to whom is precisely the gap this
 	// endpoint was built to close — the same rule the SSH certificate issue path
 	// and every secret-delivery path already follow (invariant §6.4).
-	if !s.mustAudit(w, r.Context(), "broker.token.exchanged", auditField(issued.Audit, 512)) {
+	// Not auditField: Audit is already per-field quoted and bounded by
+	// construction. Quoting it again would nest quotes the console has to strip
+	// twice, and quoting the whole string is what let an inner field forge.
+	if !s.mustAudit(w, r.Context(), "broker.token.exchanged", issued.Audit) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

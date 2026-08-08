@@ -22,6 +22,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"github.com/morandeirachema/pamv1/internal/auditfmt"
 	"strings"
 	"sync"
 )
@@ -101,7 +102,14 @@ type ClipTransfer struct {
 // content is included with newlines flattened, so one transfer stays one audit
 // line and cannot forge a second.
 func (t ClipTransfer) Detail() string {
-	d := fmt.Sprintf("direction:%s mimetype:%s bytes:%d sha256:%s", t.Direction, t.Mimetype, t.Bytes, t.SHA256)
+	// The mimetype is whatever the client put in the `clipboard` instruction, so
+	// it is quoted and bounded like any other untrusted value. Unquoted, a
+	// mimetype of `text/plain bytes:0 sha256:00…` prepended its own bytes and
+	// digest to this record — and because it is the SECOND field, a first-wins
+	// reader believed the forgery, making a large exfiltration read as an empty
+	// transfer in the one record that exists to evidence it.
+	d := fmt.Sprintf("direction:%s mimetype:%s bytes:%d sha256:%s",
+		t.Direction, auditfmt.Field(t.Mimetype, 128), t.Bytes, t.SHA256)
 	if t.Truncated {
 		d += " truncated:true"
 	}

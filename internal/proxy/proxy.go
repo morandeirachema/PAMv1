@@ -18,10 +18,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/morandeirachema/pamv1/internal/auditfmt"
 	"io"
 	"log/slog"
 	"net"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1309,12 +1309,7 @@ func auditCmd(command string) string { return auditField(command, 400) }
 // invent fields — a login of `alice target:prod-db action:approved` reads as
 // three legitimate keys. Every current consumer sanitizes on the way out, so
 // this is defence for the raw column, which is the copy an investigator reads.
-func auditField(s string, limit int) string {
-	if len(s) > limit {
-		s = s[:limit] + "…"
-	}
-	return strconv.Quote(s)
-}
+func auditField(s string, limit int) string { return auditfmt.Field(s, limit) }
 
 // syncWriter serializes concurrent writes to one destination.
 //
