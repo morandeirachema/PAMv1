@@ -11,6 +11,22 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Added
+
+- **First-class ServiceNow and Jira ticket connectors** (`PAM_TICKET_PROVIDER`).
+  A generic webhook can only answer *"does this ticket exist"*; the connectors
+  check the change's **state**, its **approved window**, and **whether the ticket
+  names the operator**.
+
+### Security
+
+- **A valid ticket number used to admit anyone who knew it.** The ticket gate
+  never received the actor, so it could prove a ticket was valid but not that it
+  was yours — a change number quoted from a colleague's queue passed. The actor
+  is now threaded through both gates, and binding it to the ticket is on by
+  default (`PAM_TICKET_BIND_ACTOR`). The generic webhook payload gains an
+  `"actor"` field; an endpoint that ignores it behaves exactly as before.
+
 ## [0.15.0] — 2026-08-08
 
 A **minor**: one new feature with two new environment variables, the deploy

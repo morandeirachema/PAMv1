@@ -963,9 +963,17 @@ func run() error {
 		}, nil
 	}
 
-	ticketValidator, err := ticket.New(cfg.TicketPattern, cfg.TicketValidateURL)
+	ticketProvider, err := buildTicketProvider(cfg)
 	if err != nil {
 		return err
+	}
+	ticketValidator, err := ticket.New(cfg.TicketPattern, ticketProvider)
+	if err != nil {
+		return err
+	}
+	if name := ticketValidator.Provider(); name != "" {
+		log.Info("ITSM ticket gate enabled", "provider", name,
+			"binds_actor", cfg.TicketBindActor, "enforces_window", cfg.TicketRequireWindow)
 	}
 
 	// Connect-time ticket re-check (Phase 60). Resolved to a single value here
@@ -1623,4 +1631,50 @@ func pinnedSecrets(appliers map[string]conjur.SecretApplier) []string {
 		}
 	}
 	return out
+}
+
+// buildTicketProvider selects the ITSM connector from PAM_TICKET_PROVIDER.
+//
+// The default is the generic webhook when only PAM_TICKET_VALIDATE_URL is set,
+// so an existing deployment keeps working untouched. The first-class connectors
+// exist because a 2xx webhook can only answer "does this ticket exist" — it
+// cannot check the change's state, its approved window, or whether the ticket
+// names the person connecting, and without that last one a valid change number
+// is a password shared with everyone in the change queue.
+func buildTicketProvider(cfg *config.Config) (ticket.Provider, error) {
+	pc := ticket.ProviderConfig{
+		BaseURL:       cfg.TicketURL,
+		User:          cfg.TicketUser,
+		Token:         cfg.TicketToken,
+		AllowedStates: cfg.TicketStates,
+		ActorFields:   cfg.TicketActorFields,
+		RequireWindow: cfg.TicketRequireWindow,
+		BindActor:     cfg.TicketBindActor,
+	}
+	switch cfg.TicketProvider {
+	case "servicenow":
+		if cfg.TicketURL == "" {
+			return nil, errors.New("PAM_TICKET_PROVIDER=servicenow requires PAM_TICKET_URL (e.g. https://acme.service-now.com)")
+		}
+		return ticket.NewServiceNow(pc), nil
+	case "jira":
+		if cfg.TicketURL == "" {
+			return nil, errors.New("PAM_TICKET_PROVIDER=jira requires PAM_TICKET_URL (e.g. https://acme.atlassian.net)")
+		}
+		return ticket.NewJira(pc), nil
+	case "webhook":
+		if cfg.TicketValidateURL == "" {
+			return nil, errors.New("PAM_TICKET_PROVIDER=webhook requires PAM_TICKET_VALIDATE_URL")
+		}
+		return ticket.NewWebhook(cfg.TicketValidateURL, nil), nil
+	case "":
+		// Unset: the webhook if one is configured, otherwise format-only (or
+		// nothing). This is the pre-Phase-84 behaviour, unchanged.
+		if cfg.TicketValidateURL != "" {
+			return ticket.NewWebhook(cfg.TicketValidateURL, nil), nil
+		}
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("PAM_TICKET_PROVIDER must be webhook, servicenow or jira (got %q)", cfg.TicketProvider)
+	}
 }

@@ -52,7 +52,7 @@ func (s *Server) createAccessRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Ticket != "" && s.ticketValidator.Enabled() {
-		if err := s.ticketValidator.Validate(r.Context(), in.Ticket); err != nil {
+		if err := s.ticketValidator.Validate(r.Context(), in.Ticket, actorFrom(r.Context())); err != nil {
 			s.audit(r.Context(), "access.ticket_rejected", fmt.Sprintf("target:%d ticket:%q reason:%v", in.TargetID, in.Ticket, err))
 			writeError(w, http.StatusUnprocessableEntity, "ticket rejected: "+err.Error())
 			return

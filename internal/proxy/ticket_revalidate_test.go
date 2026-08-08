@@ -41,7 +41,7 @@ func TestProxyRevalidatesTicketAtConnect(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	t.Cleanup(itsm.Close)
-	tv, err := ticket.New(`^CHG[0-9]{3,}$`, itsm.URL)
+	tv, err := ticket.New(`^CHG[0-9]{3,}$`, ticket.NewWebhook(itsm.URL, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestProxyUnreachableITSMRefusesConnect(t *testing.T) {
 	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	url := dead.URL
 	dead.Close() // nothing is listening any more
-	tv, err := ticket.New("", url)
+	tv, err := ticket.New("", ticket.NewWebhook(url, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
