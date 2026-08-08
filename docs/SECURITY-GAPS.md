@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-08-08 · Reflects: Phases 0–80 + the 2026-07 hardening
+> Last updated: 2026-08-08 · Reflects: Phases 0–82 + the 2026-07 hardening
 > passes, including the **post-beta sweep of 2026-07-27** (thirty findings, all
 > closed), the **sweep of 2026-08-07** over phases 56–61a (nine findings: two
 > closed by Phase 62, six by Phase 63, half of one withdrawn as a false
@@ -182,6 +182,37 @@ roadmap is the plan.
 | ~~F~~ | ~~**Certification decisions have no separation of duties.**~~ | Was: only `CapManageUsers` (i.e. an admin) could certify or revoke, so the principal who grants access was the only one who could attest to it. | **Fixed in Phases 39 + 46** — Phase 39 moved the decision to `CapApprove`, so a dedicated `approver` runs the recertification without holding the access-granting capability (creating/closing a campaign stay `CapManageUsers`). Phase 46 closed the remaining hole with **per-item four-eyes**: every grant records its creator (`target_grants.created_by`, `safe_members.created_by`, migration `0023`), the campaign snapshot carries it (`campaign_items.granted_by`, shown as "granted by X" in the item detail), and certifying an item you granted yourself is refused 403 + audited `certification.decision_denied`. Self-revoke stays allowed (it reduces access); pre-migration rows with no recorded creator are not blocked retroactively. Tests: `api.TestCertificationAuthz`, `api.TestCertificationFourEyes`, the store contract. |
 | ~~G~~ | ~~**Console parity has drifted since Phase 25.**~~ | Was: nine capabilities had no screen. Two of them — a parked agent tool call and a paused SQL statement — are human decisions **with a deadline**, which is what made curl-only actually cost something. | **Fixed across Phases 43 + 45** — Phase 43 shipped the two time-critical screens (*Approve AI-agent tool calls*, menu 20, showing the arguments the policy matched on; *In-session step-up decisions*, menu 21). Phase 45 shipped the other seven: vendors & contract grants (22), operator SSH certificates (23), identity blast radius (24), login-session revocation (25), agent keys (26), credential dependencies (option 9 on a credential), and the audit chain verify / signed head / OCSF export on the audit screen. One deliberate new route: `GET /api/ca/ssh/certs` (CapReadInventory) — the issued-cert serials a revocation needs were listable in the store but invisible over HTTP. All verified against a running server; the console is back at **full parity**. |
 | ~~H~~ | ~~**No update endpoints and no pagination.**~~ | Was: the `Store` interface had create/delete but no update for targets, safes, users or vendors — fixing a target's port meant delete + recreate, cascading away its credentials, grants, dependencies and safe assignment — and no list method except the audit reads was bounded (an authenticated memory-exhaustion vector). | **Fixed in Phase 44** — `UpdateTarget`/`UpdateSafe`/`UpdateUserRole`/`UpdateVendorOrg` + `PUT` routes with create-equivalent validation and authorization (the user edit re-runs the privilege-escalation guard; tokens survive a role change), audited `*.update`; the seven top-level list reads take an id-ascending `(limit, afterID)` window and every list endpoint clamps `?limit=&after=` to 1..500 (default 100) the way `listAudit` already did. Grants and safe members deliberately stay create + delete (no dependents to lose; two audited events beat one mutated row), and usernames stay immutable (they are the subject key in grants/sessions/vendor rows). Console: cursor-draining fetches + 2=Change screens. Tests: the store contract (both stores, live PostgreSQL in CI) + `api/update_test.go`. |
+
+## The 2026-08-08 review of Phases 79–81 — a fix that reintroduced its own finding
+
+Three findings, and the first is the interesting one: **Phase 80's fix for
+finding BM reintroduced BM, one layer down, inside the fix itself.**
+
+BM was "the startup log promises rotations that every tick then skips". Phase 80
+fixed the *ownership* definition — from "Conjur filled this at boot" to "Conjur
+manages this" — and added a warning for the genuinely ambiguous case, a secret
+both pinned in the environment and managed in Conjur: *"enabling refresh means
+Conjur wins for it."* Then it seeded the change-detection digest from **what
+Conjur held**, so the opening tick compared Conjur against Conjur, found no
+change, and skipped. Forever. The promise in the log was false in exactly the
+configuration the log was printed for — which is every shipped deployment, since
+docker-compose hard-requires `PAM_API_KEY`, the Kubernetes secret ships it and
+the OVA generates it.
+
+The lesson is narrow and reusable: **a fix that adds a claim to a log has to be
+checked against the claim, not against the bug it replaced.** Both halves were
+implemented and neither was run against the other.
+
+| # | Finding | Why it matters | Status |
+|---|---|---|---|
+| ~~BT~~ | ~~**A secret pinned in the environment and managed in Conjur was never refreshed**, while the startup log said Conjur wins.~~ `NewRefresher` seeded `applied` from Conjur's value rather than the running process's. | **The feature silently did nothing in every shipped deployment** — the same outcome as BM, reached by a different route, and now with a log line actively asserting the opposite. An operator rotating the key in Conjur would see a successful tick and a server still accepting the retired key. Reproduced: `changed=[] applied=""` with the environment on one value and Conjur on another. | **Fixed in Phase 82**: seeded from `os.Getenv` at construction — a single read of what the process booted with, which is not the finding-BH mistake of using the environment as the *last-applied store* across ticks. Test: `conjur.TestRefreshAdoptsConjurWhenTheEnvironmentDiverges`, verified to fail against the old seeding. |
+| ~~BU~~ | ~~**Two comments in `config.Load`'s validation had drifted from the statements they document.**~~ Three explanatory blocks had stacked with no code between them. | A reader reasoning about the 1 PiB SFTP bound found that reasoning sitting above the *Conjur refresh interval* check. Each insertion (Phase 76, then 78) landed between a comment and its `if`. Cosmetic, but this repo's comments carry the reasoning, so a misattributed one is a wrong explanation rather than a missing one. | **Fixed in Phase 82**: each comment re-paired with its statement. |
+| ~~BV~~ | ~~**An applier keyed on a name that is not a sourceable secret was a silent no-op.**~~ The probe iterates `bootstrapSecrets`, so a typo'd key was never visited. | Never fetched, never applied, never audited — and indistinguishable from "Conjur does not manage it". The applier map is *the* definition of what is refreshable (finding BK), so a typo in it silently shrinks that definition. | **Fixed in Phase 82**: refused at wiring time, naming the sourceable secrets. Test: `conjur.TestRefresherRefusesAnApplierItWouldNeverCall`. |
+
+**Phase 79 and Phase 81 came through clean.** The deploy examples were verified
+by building both kustomize bases and round-tripping all three sealed files, and
+the end-to-end test's six assertions were each checked against a deliberately
+broken build before it landed.
 
 ## The 2026-08-08 review of Phase 78 — a feature that did not work where it was aimed
 
