@@ -2356,7 +2356,14 @@ two did.
 Five phases unreleased (78–82): a feature with two new environment variables, the
 deploy examples, and the end-to-end test. A **minor**, not a patch.
 
-- [x] **v0.15.0** through the test-gated pipeline, rehearsed on `main` first
+- [x] **v0.15.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-08 as `ghcr.io/morandeirachema/pamv1:0.15.0` (also `latest`),
+  digest
+  `sha256:0606933965a2da7049d7eb66fa4ed516132baef1ccdc3534b82dfbeca68c69bf`,
+  **public** — an anonymous manifest pull returns 200. Keyless-signed with the
+  SBOM and SLSA provenance attached as OCI referrers (not the legacy
+  `.sig`/`.att` tags — see Phase 76a), and the GitHub Release carries
+  `sbom.spdx.json`
 - [x] **The release checklist was wrong, and its own check caught it.** It has
   always said "all four pins together"; Phase 79 added a **fifth** —
   `deploy/k8s/flux/gitrepository.yaml`, which pins the git *tag* Flux reconciles
