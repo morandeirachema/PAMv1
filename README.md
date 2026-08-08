@@ -507,10 +507,12 @@ docker compose up --build
 
 > ⚠️ **One thing to know before you run this:**
 > `deploy/k8s/postgres-cnpg.yaml` declares a **CloudNativePG** `Cluster`, so
-> `kubectl apply -f deploy/k8s/` fails on an unknown kind unless the
+> `kubectl apply -k deploy/k8s/` fails on an unknown kind unless the
 > [CloudNativePG operator](https://cloudnative-pg.io/) is installed first.
 > Install it, or apply the individual manifests you want and bring your own
-> PostgreSQL. (The image the manifests pin,
+> PostgreSQL. Use **`-k`**, not `-f`: `-f` on the directory sweeps up
+> `secret.example.yaml`, which declares `pam-secrets` with `CHANGE_ME` values and
+> would overwrite the secret you just created. (The image the manifests pin,
 > `ghcr.io/morandeirachema/pamv1:0.14.3`, is published and public.)
 
 ```bash
@@ -520,7 +522,7 @@ kubectl -n pamv1 create secret generic pam-secrets \
   --from-literal=PAM_API_KEY=... \
   --from-literal=PAM_BREAK_GLASS_KEY_HASH=... \
   --from-literal=PAM_DATABASE_URL=postgres://...
-kubectl apply -f deploy/k8s/
+kubectl apply -k deploy/k8s/
 ```
 
 Or with Helm (readiness/metrics wired, configurable replicas, optional ServiceMonitor):

@@ -1,0 +1,16 @@
+# The sealed secrets, as their own kustomize base (Phase 79).
+#
+# Separate from ../kustomization.yaml on purpose: this one is only meaningful
+# behind something that DECRYPTS it (Flux's `.spec.decryption`, or `sops -d`).
+# Applying it directly would create Secrets whose values are the literal
+# ENC[AES256_GCM,...] ciphertext -- which is why the workload base does not
+# include it, and why this is not wired into `kubectl apply -k deploy/k8s/`.
+#
+# The *.example files below are sealed to the throwaway demo key. Replace them
+# with your own (see README.md in this directory) before deploying anything real.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - secrets.sops.example.yaml     # pamv1's own bootstrap secrets  <-- replace
+  - pg-app.sops.example.yaml      # CloudNativePG app credentials  <-- replace

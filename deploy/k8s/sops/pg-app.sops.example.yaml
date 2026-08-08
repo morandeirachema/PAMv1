@@ -1,0 +1,44 @@
+# The CloudNativePG application credentials, sealed (Phase 79).
+#
+# Why this file exists: deploy/k8s/postgres-cnpg.yaml lets CNPG GENERATE the app
+# password into a secret it manages. That works, and it puts a manual step in the
+# middle of a deployment that is otherwise IaC end to end -- somebody has to read
+# the generated password out of the running cluster and paste it into pamv1's own
+# PAM_DATABASE_URL. Two copies of one password, kept in step by hand.
+#
+# Supplying the secret instead makes the password an input rather than an output:
+# it is sealed here, CNPG is pointed at it (see postgres-cnpg.yaml), and pamv1's
+# PAM_DATABASE_URL uses the same value. Nothing is read back out of the cluster.
+#
+# The `username` and `password` keys are the shape CNPG's bootstrap.initdb.secret
+# expects (kubernetes.io/basic-auth).
+#
+# >>> Sealed to the THROWAWAY demo key deploy/k8s/sops/age-example.key. Nothing
+#     here is secret. Copy to pg-app.sops.yaml, put a real password in, and seal
+#     it to your own recipient before using it.
+apiVersion: v1
+kind: Secret
+metadata:
+    name: pamv1-pg-app
+    namespace: pamv1
+    labels:
+        cnpg.io/reload: "true"
+type: kubernetes.io/basic-auth
+stringData:
+    username: ENC[AES256_GCM,data:Othp,iv:O9omZ+GjWZejJ9lafKfvIDuUWERiEkJKEh9k5SqX3oo=,tag:ZT28bHZl2qot2hLRUQH7sA==,type:str]
+    password: ENC[AES256_GCM,data:i9ClQGii0c/b4ONAA+AJ2EGXphJhVorA,iv:cdL+OzgYYxsFQwQLXkm8xuRm7Szgn33sBc4J9lrlVfc=,tag:b+brFBwh8LLpyb4kFxmirQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBaUTZ0Z1B5VzFncjBvTlF0
+            OTA1aGI5ZVVFMWJaTG9PanJQOFdJbU82U1FRCjR4eklhUk5DYWgrRmJLY3RTcjlz
+            NzFLeHlTUy9rb3I2UTR4RUwxWkZ6dFEKLS0tIFpLazlRY2EwTnhrLzRWOWNRRVlW
+            RmFYYlllU05nbGlhazdLS282MWxHc00KcSeHUEpwcjvsv5fxrNPVWxaQ9GfTqwGH
+            +/xr0BIXhFtgcsTcUESm6Wl4rM/2wo5JRPOvl/wGwhzjV1YfHRoxzQ==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1pfn57mnl9gg6c5tu05tgaym2jk8kzgxnwf20hd008lzghsp6vyrqetlmny
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-08-08T19:00:47Z"
+    mac: ENC[AES256_GCM,data:pEcop946QorWi2llmCddFoK6gEniJjWGDomQ8HuYqLD1kfHEF9dXc1YV6gizrQCPVbf8KT4On87Hyodc6Ed8vUeAi6JPlMn5W/4kbP1XLhtBIFhMu03ZGVgUzQmpRUGgKQE72DRzZo5F+XYUZ+j8q2SOfBYTOyoTkcz+J7MrwKE=,iv:FceP8yhV6GFdMUy6FJWKLVH6gM3WPIKrdgkLyo58uWE=,tag:vpVwJxc0b33w5h1w4v12Uw==,type:str]
+    version: 3.13.2

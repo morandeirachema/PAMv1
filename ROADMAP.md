@@ -2351,6 +2351,52 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 79 — Deploy examples, and the wholesale apply that overwrote your secret ✅
+
+Closes the Phase 14 deferral. Three things the docs described and never shipped —
+plus a bug found by trying to build what they described.
+
+- [x] **`kubectl apply -f deploy/k8s/` overwrote the secret you had just
+  created.** `secret.example.yaml` declares `metadata.name: pam-secrets` with
+  `PAM_MASTER_KEY: "CHANGE_ME"`, and the README's quickstart told you to
+  `kubectl create secret generic pam-secrets` with the real values **and then**
+  apply the whole directory. `docs/REQUIREMENTS.md` already warned against
+  exactly this ("do NOT `kubectl apply -f deploy/k8s/` wholesale"), so the two
+  documents contradicted each other and the more prominent one was wrong. Both
+  READMEs now use **`-k`**, which resolves a curated `kustomization.yaml`
+  carrying no secret material at all — and CI asserts that base contains neither
+  `CHANGE_ME` nor ciphertext, so it cannot regain one
+- [x] **A working Flux example** (`deploy/k8s/flux/`): a `GitRepository` pinned to
+  a **tag** rather than a branch — a controller following `main` deploys whatever
+  lands there, which is the supply-chain problem the signed releases exist to
+  avoid — and **two** `Kustomization`s. Two rather than one because only the
+  secrets need `.spec.decryption`, and the workload must not start before its
+  secret exists, which `dependsOn` says directly
+- [x] **A working `helm secrets` values file**
+  (`deploy/helm/pamv1/secrets.example.sops.yaml`), really sealed and verified in
+  CI. The SOPS README had advertised this flow, and `.sops.yaml` had carried a
+  creation rule for it, with nothing behind either
+- [x] **Cloud-KMS recipients** documented in `.sops.yaml` for AWS KMS, GCP KMS,
+  Azure Key Vault and Vault Transit. The reasoning is the pluggable KEK's: an
+  `age` private key is itself a secret somebody must distribute, which is the
+  problem it was meant to solve one level down. SOPS encrypts the data key to
+  *every* recipient and any one decrypts, so adding a KMS beside `age` is
+  additive — and is also the migration path
+- [x] **The CloudNativePG password becomes an input, not an output.** CNPG
+  generates it into a secret it manages, which leaves a human reading it out of
+  the running cluster and pasting it into `PAM_DATABASE_URL` — two copies of one
+  password kept in step by hand. `pg-app.sops.example.yaml` seals it and
+  `bootstrap.initdb.secret` consumes it. Left **commented** in the shipped
+  manifest on purpose: uncommenting it without creating the secret makes the
+  cluster fail to bootstrap
+- [x] `verify.sh` covers all three sealed files now, not one — they would
+  otherwise have been the only committed sealed material nothing checked, and a
+  plaintext commit is the accident that script exists to catch. CI additionally
+  builds both kustomize bases, so a broken resource list fails in CI rather than
+  at reconcile time
+- [x] Both new sealed paths are gitignored like the original: a safety default
+  against committing a half-finished file, lifted with `git add -f`
+
 ## Phase 78 — Config depth: secrets that can be rotated without a restart ✅
 
 Closes the Phase 12 deferral. Sourcing was one-shot at boot, so rotating the
@@ -3158,9 +3204,14 @@ Buildable without external infrastructure, each deferred by the phase named.
 - ~~**Console screen for token exchange** (57)~~ — ✅ closed 2026-08-07
   (Phase 67): menu 27 shows the signing key's `kid` and the delegation chains
   from the audit trail, which is the only record a stateless minted SVID leaves.
-- **Deploy examples** (14) — cloud-KMS recipients wired into the Helm chart, a
-  Flux `Kustomization` example, and sealing the CloudNativePG app-secret. The
-  SOPS README advertises a `helm secrets` flow with no example behind it.
+- ~~**Deploy examples** (14)~~ — ✅ closed 2026-08-08 in **Phase 79**: cloud-KMS
+  recipients documented in `.sops.yaml`, a working Flux example in
+  `deploy/k8s/flux/` (two `Kustomization`s, since only the secrets need the
+  decryption key), a really-sealed `helm secrets` values file, and the
+  CloudNativePG app password sealed so it is an input rather than something read
+  back out of the cluster. Building what the docs described also turned up the
+  quickstart bug where `kubectl apply -f deploy/k8s/` overwrote the secret you
+  had just created with `CHANGE_ME`.
 
 #### 4. Repo furniture — ✅ closed 2026-07-28
 
