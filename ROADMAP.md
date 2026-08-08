@@ -2351,6 +2351,18 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 88 — v0.17.0 ✅
+
+Phases 86 (analytics depth) and 87 (its review) unreleased. Phase 87 fixed a way
+the automated responses could be turned on a bystander, and auto-kill has shipped
+since Phase 23 — a fix to released behaviour, so the pin-currency rule applies.
+
+- [x] **v0.17.0** through the test-gated pipeline, rehearsed on `main` first
+- [x] All five pins, via the sweep (grep every version reference under `deploy/`,
+  require exactly one release) rather than the list
+- [x] Helm chart `version` 0.7.0 -> **0.8.0** alongside `appVersion`
+- [x] Both READMEs restated; label-vs-URL equality re-checked (0 mismatches)
+
 ## Phase 87 — The review of Phase 86 ✅
 
 One finding, and it is the shape a review is for: a security feature an
