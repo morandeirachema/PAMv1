@@ -11,6 +11,12 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-08-08
+
+A **minor**: the ITSM ticket gate becomes a real control rather than an existence
+check. No schema change; upgrading from 0.15.x needs nothing, and the generic
+webhook keeps working untouched.
+
 ### Added
 
 - **First-class ServiceNow and Jira ticket connectors** (`PAM_TICKET_PROVIDER`).
@@ -648,7 +654,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.16.0
 [0.15.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.15.0
 [0.14.3]: https://github.com/morandeirachema/pamv1/releases/tag/v0.14.3
 [0.14.2]: https://github.com/morandeirachema/pamv1/releases/tag/v0.14.2
