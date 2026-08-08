@@ -11,92 +11,71 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
-### Fixed
+## [0.15.0] — 2026-08-08
 
-- **Runtime secret refresh did nothing when the secret was also set in the
-  environment** — which is every shipped deployment, since docker-compose,
-  the Kubernetes secret and the OVA all set `PAM_API_KEY`. The change-detection
-  digest was seeded from Conjur's own value, so the first tick compared Conjur
-  against Conjur and skipped forever, while the startup log said "enabling
-  refresh means Conjur wins for it". Never released.
-- An applier registered for a name that is not a sourceable bootstrap secret is
-  now refused at startup instead of silently never running.
+A **minor**: one new feature with two new environment variables, the deploy
+examples the docs had been promising, and an end-to-end test that proves the
+central privileged-access property in CI. No schema change; upgrading from 0.14.x
+needs nothing.
 
 ### Added
 
-- **An end-to-end test of the server as shipped.** It boots the real server
+- **Bootstrap secrets can be rotated without a restart.** Set
+  `PAM_CONJUR_REFRESH_MIN` and every replica re-reads the secrets Conjur
+  *manages* on that interval, adopting a change in place — audited
+  `config.secret_refreshed` (actor `system-conjur`), which names the key and
+  never the value. **Only `PAM_API_KEY` and `PAM_BREAK_GLASS_KEY_HASH` are
+  refreshable**, because they are pure comparison values. `PAM_MASTER_KEY` (the
+  KEK — changing it does not rotate the vault, it makes it undecryptable; use
+  `pam-server -rotate-kek` offline), `PAM_DATABASE_URL` and the two broker audit
+  keys need a restart, are **not fetched** on the refresh tick, and are named in
+  the startup log so you know before you rotate. Two conditions decide whether a
+  rotation lands, and the log states both: Conjur must manage the variable, and
+  enabling refresh means Conjur wins over a value also set in the environment.
+  **Deleting a variable in Conjur is not a revocation** — it keeps the running
+  value and warns. A failing refresh logs at `Error`, increments
+  `pam_secret_refresh_failures_total` and fires a `config.secret_refresh_failed`
+  alert.
+- **`PAM_CONJUR_VARS`** maps individual bootstrap secrets to arbitrary Conjur
+  variable ids (`PAM_API_KEY=prod/keys/api`), for policies that do not follow the
+  `<prefix>/<name>` convention. Unknown names, malformed ids and duplicates are
+  all fail-loud.
+- **A working Flux example** (`deploy/k8s/flux/`) — a `GitRepository` pinned to a
+  tag rather than a branch, and two `Kustomization`s, since only the sealed
+  secrets need `.spec.decryption` and the workload must not start before them.
+- **A really-sealed `helm secrets` values file**
+  (`deploy/helm/pamv1/secrets.example.sops.yaml`) for a flow the SOPS README had
+  advertised with no example behind it.
+- **The CloudNativePG app password can be sealed**
+  (`deploy/k8s/sops/pg-app.sops.example.yaml`) instead of being generated and
+  read back out of the running cluster by hand.
+- **Cloud-KMS recipients** documented in `deploy/.sops.yaml` (AWS KMS, GCP KMS,
+  Azure Key Vault, Vault Transit) — additive to `age`, and the migration path.
+- **An end-to-end test of the server as shipped**: it boots the real server
   against a live SSH upstream that accepts *only* the vaulted credential, then
-  drives it over the REST API and the SSH proxy, asserting the six properties
-  that make this a PAM: just-in-time injection, the secret never appearing in the
-  recording/chain/audit, RBAC, the approval gate on both connect and reveal,
-  recording-tamper detection in both directions, and command control. Every
-  assertion was verified against a deliberately broken build.
-
-### Security
-
-- **Rotating `PAM_BREAK_GLASS_KEY_HASH` inverted the quorum-unseal path.** The
-  runtime refresh added in the previous unreleased change updated the resolver
-  only, while the Shamir `POST /api/breakglass/unseal` endpoint compared against
-  a second copy taken at startup — so after a rotation the **retired** emergency
-  key still minted full-admin sessions and the new one was rejected. The hash now
-  lives in one place. (Never released; introduced and fixed between tags.)
-- **A refreshed `PAM_API_KEY` skipped the strength check**, so a running server
-  could adopt a bootstrap key the next restart refuses to boot with.
-- **The refresh audit is now fail-closed** and written before the change, so a
-  secret rotation cannot outlive the record of it.
-
-### Fixed
-
-- **Runtime secret refresh could never work on Kubernetes**: the projected
-  service-account JWT was read once at startup and re-sent forever, while the
-  kubelet rotates it every ten minutes. It is now re-read on every authenticate.
-- **Refresh applied to nothing in every shipped deployment.** It only refreshed
-  secrets Conjur had *filled* at boot, and sourcing skips anything already set in
-  the environment — which docker-compose, the Kubernetes secret and the OVA all
-  do for `PAM_API_KEY`. It now refreshes what Conjur *manages*, and the startup
-  log names the real list instead of a static one.
-- One malformed value no longer blocks the other secret's rotation; a deleted
-  Conjur variable is warned about rather than silently ignored (deleting is not
-  revoking); a failing refresh increments `pam_secret_refresh_failures_total`,
-  fires an alert and logs at `Error`; `PAM_CONJUR_VARS` validates the variable id
-  and refuses duplicates.
+  drives it over the REST API and the SSH proxy, asserting just-in-time
+  injection, the secret never appearing in the recording/chain/audit, RBAC, the
+  approval gate on both connect and reveal, recording-tamper detection in both
+  directions, and command control. Every assertion was verified against a
+  deliberately broken build.
 
 ### Fixed
 
 - **`kubectl apply -f deploy/k8s/` overwrote the secret you had just created.**
   `secret.example.yaml` declares `pam-secrets` with `CHANGE_ME` values, and the
-  quickstart said to create the real secret and then apply the whole directory.
-  Both READMEs now use **`kubectl apply -k deploy/k8s/`**, which resolves a
-  curated base containing no secret material; CI fails if that base ever gains
-  any.
+  quickstart told you to create the real secret and *then* apply the whole
+  directory. Both READMEs now use **`kubectl apply -k deploy/k8s/`**, which
+  resolves a curated base carrying no secret material; CI fails if that base ever
+  gains any. This one had been shipping for many releases.
 
-### Added
+### Development note
 
-- **A working Flux example** (`deploy/k8s/flux/`) — a `GitRepository` pinned to a
-  tag and two `Kustomization`s, since only the sealed secrets need
-  `.spec.decryption` and the workload must not start before them.
-- **A really-sealed `helm secrets` values file**
-  (`deploy/helm/pamv1/secrets.example.sops.yaml`) for a flow the SOPS README had
-  advertised with no example behind it.
-- **The CloudNativePG app password can be sealed** rather than generated and read
-  back out of the cluster by hand (`deploy/k8s/sops/pg-app.sops.example.yaml`).
-- **Cloud-KMS recipients** documented in `deploy/.sops.yaml` (AWS KMS, GCP KMS,
-  Azure Key Vault, Vault Transit) — additive to `age`, and the migration path.
-
-### Added
-
-- **Bootstrap secrets can be rotated without a restart.** Set
-  `PAM_CONJUR_REFRESH_MIN` and every replica re-reads the refreshable secrets on
-  that interval, adopting a change immediately — audited
-  `config.secret_refreshed`, which names the keys and never the values. **Only
-  `PAM_API_KEY` and `PAM_BREAK_GLASS_KEY_HASH` are refreshable**: they are pure
-  comparison values. `PAM_MASTER_KEY` (the KEK — changing it makes the vault
-  undecryptable; rotate offline with `-rotate-kek`), `PAM_DATABASE_URL`, and the
-  two broker audit keys still need a restart, are **not** read on the refresh
-  tick, and are named in the startup log so you know before you rotate.
-- **`PAM_CONJUR_VARS`** maps individual bootstrap secrets to arbitrary Conjur
-  variable ids (`PAM_API_KEY=prod/keys/api`), for policies that do not follow the
-  `<prefix>/<name>` convention. An unknown name is fail-loud.
+The secret-refresh feature was reviewed twice while it was still unreleased, and
+those reviews found fourteen and then three defects — including a rotation that
+inverted the break-glass quorum path, a Kubernetes JWT frozen at boot, and a fix
+that reintroduced the finding it was written to close. **None of them ever
+reached a tagged release**; they are recorded in `docs/SECURITY-GAPS.md` because
+the reasoning is worth keeping, not because any released version was affected.
 
 ## [0.14.3] — 2026-08-08
 
@@ -653,7 +632,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.14.3...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.15.0
 [0.14.3]: https://github.com/morandeirachema/pamv1/releases/tag/v0.14.3
 [0.14.2]: https://github.com/morandeirachema/pamv1/releases/tag/v0.14.2
 [0.14.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.14.1
