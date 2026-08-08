@@ -2,6 +2,7 @@ package maint
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -238,5 +239,63 @@ func TestRotateVaultKEKKeyMaterial(t *testing.T) {
 	// Rotation is resumable: a second run is a no-op rather than a failure.
 	if n, err := RotateVaultKEK(ctx, st, from, to); err != nil || n != 0 {
 		t.Fatalf("second run rotated %d with err %v; want 0, nil (idempotent)", n, err)
+	}
+}
+
+// TestRotateVaultKEKCoversEveryCredentialPastOnePage pins a completeness
+// property of KEK rotation that today rests on an unstated convention two
+// packages away: RotateVaultKEK reads every credential with
+// ListCredentials(ctx, 0, 0, 0), where limit=0 means "no limit". A future
+// refactor that made limit=0 mean a default page size would silently re-wrap
+// only the first page and report success — the omission-class outage the
+// four-kinds interface was written to prevent, arriving through a different
+// door. This seeds well past any plausible default page and asserts EVERY
+// credential rotates.
+func TestRotateVaultKEKCoversEveryCredentialPastOnePage(t *testing.T) {
+	ctx := context.Background()
+	st := memstore.New()
+	from, to := newVault(t), newVault(t)
+	target := &store.Target{Name: "web", Host: "h", Port: 22, OSType: "linux", Protocol: "ssh"}
+	if err := st.CreateTarget(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+
+	const count = 250 // past the 100 default / 500 max page sizes used elsewhere
+	want := make(map[int64]string, count)
+	for i := range count {
+		cred := &store.Credential{TargetID: target.ID, Username: fmt.Sprintf("u%03d", i), SecretType: "password"}
+		if err := st.CreateCredential(ctx, cred); err != nil {
+			t.Fatal(err)
+		}
+		plain := fmt.Sprintf("secret-%03d", i)
+		enc, err := from.Encrypt(ctx, plain, store.CredentialAAD(target.ID, cred.ID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.UpdateCredentialSecretEnc(ctx, cred.ID, enc); err != nil {
+			t.Fatal(err)
+		}
+		want[cred.ID] = plain
+	}
+
+	n, err := RotateVaultKEK(ctx, st, from, to)
+	if err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	if n != count {
+		t.Fatalf("rotated %d of %d credentials — rotation stopped short of the full set", n, count)
+	}
+	// Every single one must now decrypt under the new KEK and not the old.
+	for id, plain := range want {
+		got, err := st.GetCredential(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pt, err := to.Decrypt(ctx, got.SecretEnc, store.CredentialAAD(target.ID, id)); err != nil || pt != plain {
+			t.Fatalf("credential %d not rotated under the new KEK: %q %v", id, pt, err)
+		}
+		if _, err := from.Decrypt(ctx, got.SecretEnc, store.CredentialAAD(target.ID, id)); err == nil {
+			t.Fatalf("credential %d still decrypts under the OLD KEK", id)
+		}
 	}
 }

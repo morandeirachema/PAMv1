@@ -64,6 +64,13 @@ type VaultRotationStore interface {
 func RotateVaultKEK(ctx context.Context, st VaultRotationStore, from, to *vault.Vault) (int, error) {
 	n := 0
 
+	// limit=0 means UNLIMITED here (pgstore → LIMIT NULL, memstore → no
+	// truncation), so this reads EVERY credential in one call. Rotation must be
+	// complete: a first-page-only rewrite would report success and strand the
+	// rest under the old KEK — the omission-class outage the four-kinds interface
+	// exists to prevent, back through a different door. That the completeness
+	// rests on this convention two packages away is pinned by
+	// TestRotateVaultKEKCoversEveryCredentialPastOnePage.
 	creds, err := st.ListCredentials(ctx, 0, 0, 0)
 	if err != nil {
 		return n, fmt.Errorf("list credentials: %w", err)

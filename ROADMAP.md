@@ -2351,6 +2351,31 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 91 — Pin KEK-rotation completeness ✅
+
+An adversarial review of the vault crown jewels (`internal/vault` + the AAD-parity
+coupling) found the crypto sound — `crypto/rand` throughout, a fresh data key per
+message so the random GCM nonce is safe, AAD bound on every seal, uniform
+`ErrInvalidToken` on every failure, `SecretEnc` `json:"-"`, no plaintext logged,
+and the reveal path fail-closed with `mustAudit`. One **latent fragility** was
+worth locking in.
+
+- [x] **KEK-rotation completeness rested on an unstated convention two packages
+  away.** `RotateVaultKEK` re-wraps every credential via
+  `ListCredentials(ctx, 0, 0, 0)`, relying on `limit=0` meaning *unlimited*
+  (pgstore → `LIMIT NULL`, memstore → no truncation). Correct today — verified —
+  but a plausible future refactor making `limit=0` a default page size would
+  silently re-wrap only the first page and **report success**, stranding the rest
+  under the old KEK. That is the omission-class outage the four-kinds interface
+  was written to prevent, arriving through a different door
+- [x] **Pinned with a test, not a rewrite.** `RotateVaultKEK` is a working
+  crown-jewel path; the proportionate fix is a completeness test that seeds 250
+  credentials (past the 100 default / 500 max page sizes) and asserts **every**
+  one re-wraps under the new KEK and no longer decrypts under the old — plus a
+  comment at the call site making the dependency explicit. Verified to fail
+  against a simulated first-page-only refactor (`rotated 100 of 250`)
+- [x] Test-only; no production behaviour change, no release needed
+
 ## Phase 90 — v0.18.0 ✅
 
 Phase 89 is an audit-integrity fix (false four-eyes records on a failed step-up
