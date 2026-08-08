@@ -3,7 +3,6 @@ package api
 import (
 	"bytes"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
 	"sync"
@@ -86,7 +85,7 @@ type unsealIn struct {
 // configured hash, and issues a short-lived break-glass session. Public (it is
 // itself an emergency authentication path) but rate-limited and loudly alerted.
 func (s *Server) breakGlassUnseal(w http.ResponseWriter, r *http.Request) {
-	if len(s.breakGlassHash) == 0 || s.bgThreshold < 2 {
+	if !s.resolver.BreakGlassEnabled() || s.bgThreshold < 2 {
 		writeError(w, http.StatusNotFound, "break-glass quorum is not configured")
 		return
 	}
@@ -115,7 +114,7 @@ func (s *Server) breakGlassUnseal(w http.ResponseWriter, r *http.Request) {
 	key, err := shamir.Combine(collected)
 	if err == nil {
 		sum := sha256.Sum256(key)
-		if subtle.ConstantTimeCompare(sum[:], s.breakGlassHash) == 1 {
+		if s.resolver.MatchesBreakGlass(sum[:]) {
 			s.unseal.reset()
 			principal := &auth.Principal{Name: "break-glass", Role: auth.RoleAdmin, BreakGlass: true}
 			token, sess, ierr := s.issueSessionTTL(r.Context(), principal, auth.SessionScopeBreakGlass, s.bgTTL)
