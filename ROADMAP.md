@@ -2351,6 +2351,44 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 81 — Proving it is a PAM, in CI ✅
+
+The question "is this actually a functional PAM?" was answered by hand: an SSH
+target that accepts *only* the vaulted password, an operator connecting with
+nothing but the API key, and the credential never crossing to the operator. That
+proof lived in a terminal and died with it.
+
+- [x] **`cmd/pam-server/e2e_test.go`** boots the real server — `run()`, so the
+  binary's own body, through `config.Load` and every listener — against a live
+  SSH upstream, then drives it over the REST API and the SSH proxy exactly as an
+  operator and an administrator would. It asserts the six properties that make
+  this a PAM rather than a bastion with a database:
+  **JIT injection** (the upstream accepts only the vaulted secret, so arriving
+  proves it was injected); **the secret leaks nowhere** (zero occurrences in the
+  recording, the hash chain, and the whole audit trail); **RBAC** (a `user`
+  connects but cannot manage or reveal; no key is 401); **the approval gate on
+  every path to the secret** (connect *and* reveal refused, self-approval 403,
+  then permitted after an admin approves); **tamper detection in both
+  directions**; and **command control**
+- [x] **Every assertion was verified against a deliberately broken build** —
+  six mutations, each reverted: send the operator's key upstream instead of the
+  vaulted secret; leak the secret into an audit detail; weaken `authz`'s
+  capability; make the approval gate always pass; make the denylist match
+  nothing; and force the recording-audited verdict to `false` **and** to `true`,
+  because a tamper check asserted in one direction only passes against a control
+  that always says "tampered"
+- [x] **The harness is faithful, which the scratch one was not.** The throwaway
+  target used during the manual run answered `exit 0` to *every* command, which
+  made a failed credential rotation look successful and nearly produced a
+  reported defect that did not exist. This upstream refuses commands it does not
+  know. An upstream that cannot fail makes the test that uses it unable to fail
+- [x] No CI change: it needs no external tool, so it runs inside
+  `go test -race ./...` and **cannot silently skip**. Runtime ~0.12s
+- [x] Two gaps the manual run exposed are now encoded: the env var is
+  `PAM_SSH_ADDR` (setting the plausible-looking `PAM_SSH_LISTEN_ADDR` is silently
+  ignored and the proxy binds its default port), and `POST /api/discovery/scan`
+  takes `hosts`, not a CIDR
+
 ## Phase 80 — The review of Phase 78 ✅
 
 Fourteen defects in one phase — the worst return of any review in this repo. The
