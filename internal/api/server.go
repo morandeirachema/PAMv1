@@ -22,6 +22,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/broker"
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
+	"github.com/morandeirachema/pamv1/internal/guacd"
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/metrics"
 	"github.com/morandeirachema/pamv1/internal/oidc"
@@ -518,7 +519,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		cmdGuard:           opts.CommandGuard,
 		recKey:             apiRecKey(opts.EncryptRecordings, v),
 		opaqueRecNames:     opts.OpaqueRecordingNames,
-		rdpClipAudit:       normalizeClipAudit(opts.RDPClipboardAudit),
+		rdpClipAudit:       guacd.NormalizeClipAudit(opts.RDPClipboardAudit),
 		trustedProxyHops:   opts.TrustedProxyHops,
 		sessions:           opts.Sessions,
 		live:               opts.Live,
