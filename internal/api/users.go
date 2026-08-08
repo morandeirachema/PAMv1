@@ -37,8 +37,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "cannot assign a role or profile with capabilities you do not hold")
 		return
 	}
-	if in.Username == "" {
-		writeError(w, http.StatusUnprocessableEntity, "username is required")
+	if !checkName(w, "username", in.Username) {
 		return
 	}
 	token, err := generateToken()
@@ -146,8 +145,7 @@ func (s *Server) revokeLoginSessions(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if in.Username == "" {
-		writeError(w, http.StatusUnprocessableEntity, "username is required")
+	if !checkName(w, "username", in.Username) {
 		return
 	}
 	n, err := s.store.DeleteSessionsByUsername(r.Context(), in.Username)

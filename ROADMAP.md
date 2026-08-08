@@ -2351,6 +2351,43 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 77 — A name cannot forge a field ✅
+
+Closes finding **BD**, the residual Phase 76 recorded and deliberately left. The
+audit trail is evidence against insiders — which is the whole reason four-eyes and
+break-glass exist — so *"only an admin can forge it"* was the wrong resting place
+for a PAM. An admin who names a target `prod-db action:approved reason:emergency`
+puts forged fields into the record of **every operator's** session on that target,
+not just their own.
+
+- [x] **Fixed at the boundary, not at the ~145 sinks.** Quoting the sinks would
+  rewrite the format every audit assertion in the suite greps for. `validName`
+  refuses **exactly two things** — control characters (a newline splits one record
+  into what reads as two) and **the colon** (the field separator) — plus a
+  128-byte bound, because a value whose length the submitter chooses is an audit
+  row whose size they choose
+- [x] **Deliberately permissive.** Spaces, dots, slashes, `@`, accents and CJK all
+  still work: a name with a space but no colon cannot forge a `key:value` pair, so
+  there is no reason to forbid `Prod DB 01`. `TestOrdinaryNamesStillWork` is the
+  half that decides whether this survives — a validator that rejects real names
+  gets removed, and then the class is back
+- [x] Applied to every create/update taking a human-chosen name: targets, users,
+  safes, campaigns (name **and** reviewer), profiles, app secrets, agent keys
+  (name **and** the owner the broker's four-eyes refusal is keyed on), vendors,
+  credentials, and the `subject` of a target grant and a safe membership
+- [x] **What validation cannot cover is quoted at the sink instead.** An IPv6
+  literal legitimately contains colons, so hosts are not charset-checked; the six
+  `host:%s` sinks now use `auditField`, which also fixes `host:2001:db8::1:22`
+  being ambiguous with nobody attacking it. SPIFFE IDs stay quoted as Phase 76
+  left them
+- [x] Tests: `TestNamesAreValidatedAtEveryBoundary` walks seven boundaries with
+  six hostile forms each — **42 values, every one of them accepted before this
+  phase**, verified by disabling the validator and counting
+- [x] **Residual, deliberate:** names already stored are not rejected
+  retroactively — the same call Phase 46 made for grants with no recorded creator.
+  A name that predates this phase keeps working; only a create or update is held
+  to the rule
+
 ## Phase 76a — v0.14.2 ✅
 
 Phase 76 fixed three audit-integrity defects, and `v0.14.1` predated all of them

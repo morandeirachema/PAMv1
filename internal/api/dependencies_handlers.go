@@ -143,7 +143,7 @@ func (s *Server) gateManagementCredential(w http.ResponseWriter, r *http.Request
 	// use this endpoint to map which credential ids exist.
 	if !principalFrom(ctx).Can(auth.CapRevealSecret) {
 		s.audit(ctx, "dependency.create_denied",
-			fmt.Sprintf("management_credential:%d host:%s reason:reveal-secret-required", credID, host))
+			fmt.Sprintf("management_credential:%d host:%s reason:reveal-secret-required", credID, auditField(host, 255)))
 		writeError(w, http.StatusForbidden,
 			"naming a management credential presents its secret to the consumer's host, which requires reveal_secret")
 		return false
@@ -177,7 +177,7 @@ func (s *Server) gateManagementCredential(w http.ResponseWriter, r *http.Request
 		return false
 	} else if !ok {
 		s.audit(ctx, "dependency.create_denied",
-			fmt.Sprintf("management_credential:%d target:%s host:%s reason:target-policy", credID, mt.Name, host))
+			fmt.Sprintf("management_credential:%d target:%s host:%s reason:target-policy", credID, mt.Name, auditField(host, 255)))
 		writeError(w, http.StatusForbidden, "not authorized for the management credential's target")
 		return false
 	}
@@ -195,7 +195,7 @@ func (s *Server) gateManagementCredential(w http.ResponseWriter, r *http.Request
 			}
 			if !held {
 				s.audit(ctx, "dependency.create_denied",
-					fmt.Sprintf("management_credential:%d target:%s host:%s reason:approval-required", credID, mt.Name, host))
+					fmt.Sprintf("management_credential:%d target:%s host:%s reason:approval-required", credID, mt.Name, auditField(host, 255)))
 				writeError(w, http.StatusForbidden,
 					"the management credential's target requires an approved access request")
 				return false

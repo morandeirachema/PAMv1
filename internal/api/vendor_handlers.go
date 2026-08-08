@@ -30,8 +30,7 @@ func (s *Server) createVendor(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if in.Username == "" {
-		writeError(w, http.StatusUnprocessableEntity, "username is required")
+	if !checkName(w, "username", in.Username) {
 		return
 	}
 	// Same privilege-escalation guard as createUser: you cannot mint an identity

@@ -109,8 +109,7 @@ func (s *Server) createAppKey(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if in.Name == "" {
-		writeError(w, http.StatusUnprocessableEntity, "name is required")
+	if !checkName(w, "name", in.Name) {
 		return
 	}
 	token, err := generateToken()

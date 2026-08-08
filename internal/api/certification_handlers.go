@@ -43,11 +43,13 @@ func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if in.Name == "" {
-		writeError(w, http.StatusUnprocessableEntity, "name is required")
+	if !checkName(w, "name", in.Name) {
 		return
 	}
 	ctx := r.Context()
+	if !checkOptionalName(w, "reviewer", strings.TrimSpace(in.Reviewer)) {
+		return
+	}
 	c := store.Campaign{
 		Name: in.Name, CreatedBy: actorFrom(ctx), DueAt: in.DueAt, Status: "open",
 		ScopeKind: in.ScopeKind, ScopeSafeID: in.ScopeSafeID, ScopeSubject: in.ScopeSubject,
@@ -197,7 +199,11 @@ func (s *Server) assignCampaignItem(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no such item in this campaign")
 		return
 	}
+	// Empty is meaningful here — it unassigns — so the optional form.
 	reviewer := strings.TrimSpace(in.Reviewer)
+	if !checkOptionalName(w, "reviewer", reviewer) {
+		return
+	}
 	if err := s.store.SetCampaignItemReviewer(ctx, itemID, reviewer); err != nil {
 		storeError(w, err)
 		return

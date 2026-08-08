@@ -45,8 +45,7 @@ func (s *Server) createSafe(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if in.Name == "" {
-		writeError(w, http.StatusUnprocessableEntity, "name is required")
+	if !checkName(w, "name", in.Name) {
 		return
 	}
 	if !validSafePolicy(w, in) {
@@ -85,8 +84,7 @@ func (s *Server) updateSafe(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	if in.Name == "" {
-		writeError(w, http.StatusUnprocessableEntity, "name is required")
+	if !checkName(w, "name", in.Name) {
 		return
 	}
 	if !validSafePolicy(w, in) {
@@ -147,8 +145,8 @@ func (s *Server) addSafeMember(w http.ResponseWriter, r *http.Request) {
 	case in.SubjectType != "user" && in.SubjectType != "role":
 		writeError(w, http.StatusUnprocessableEntity, `subject_type must be "user" or "role"`)
 		return
-	case in.Subject == "":
-		writeError(w, http.StatusUnprocessableEntity, "subject is required")
+	case validName(in.Subject) != nil:
+		writeError(w, http.StatusUnprocessableEntity, "subject "+validName(in.Subject).Error())
 		return
 	}
 	if in.SubjectType == "role" {

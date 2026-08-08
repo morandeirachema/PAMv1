@@ -11,6 +11,25 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Security
+
+- **A name could forge fields in other people's audit records.** Target, user and
+  safe names were validated non-empty only, so an admin who named a target
+  `prod-db action:approved reason:emergency` put forged `key:value` pairs into the
+  record of **every operator's** session on that target. Names are now refused if
+  they contain a colon or a control character, and are bounded at 128 bytes,
+  at every create/update that takes one. Hosts are **not** charset-checked — an
+  IPv6 literal legitimately contains colons — and are quoted in audit details
+  instead, which also settles `host:2001:db8::1:22` being ambiguous.
+
+### Changed
+
+- **Names are validated on create and update.** `Prod DB 01`, `sûreté`,
+  `データベース`, `svc@corp` and `a/b` are all still accepted — only colons,
+  control characters and lengths over 128 bytes are refused, with a 422 naming
+  the field. **Names already stored are not rejected retroactively**; only a
+  create or an update is held to the rule.
+
 ## [0.14.2] — 2026-08-08
 
 The 2026-08-08 sweep over phases 66–75. A **patch**: no schema change, no new
