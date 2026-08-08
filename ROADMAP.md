@@ -2191,6 +2191,20 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 70b — v0.14.0 ✅
+
+Minor, and it carries **two** migrations (`0030`, `0031`) — both additive, both
+rollback-safe on the grounds already checked for `0029`.
+
+- [x] **v0.14.0** through the test-gated pipeline, rehearsed first on `main`
+- [x] **All four pins move together** (both k8s deployments, terraform, Helm
+  `appVersion` + chart `0.5.0`), both READMEs restate the current release, and
+  every release link passes the label/URL agreement check
+- [x] **Both new audit actions and the new environment variable are called out in
+  the release notes** rather than left in a phase bullet: `PAM_CERT_REMIND_DAYS`
+  changes behaviour on upgrade (reminders start firing for campaigns that already
+  have due dates), and a SIEM consumer needs to know two action names appeared
+
 ## Phase 70a — Documentation currency pass ✅
 
 The living-docs rule says a doc is updated in the same change as the code. Nine

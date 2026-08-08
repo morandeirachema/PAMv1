@@ -11,6 +11,47 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-08-08
+
+Certification campaigns are complete: **scoped** so a review is finishable,
+**scheduled** so it recurs, **assigned** so each item has an owner, and
+**reminded** so a lapse is visible instead of silent. That closes the Phase 19
+deferral entirely.
+
+**Minor, and it carries two migrations** (`0030`, `0031`). Both are additive with
+defaults that reproduce the old behaviour, applied at startup. **Rolling back to
+0.13.0 is safe** on the same grounds checked for `0029`: the added columns are
+`NOT NULL DEFAULT` or nullable, 0.13.0 names its columns explicitly in every
+campaign read and write, and the migration runner applies only what it is missing
+and never objects to a database ahead of it.
+
+- **An item has an owner** (Phase 69) — a campaign names a default reviewer
+  stamped onto every item it snapshots; a single item can be reassigned; and
+  `GET /api/campaigns/mine` is a reviewer's queue (pending items in open
+  campaigns). **Assignment is advisory**: it routes work and makes a queue
+  visible, it is not an authorization gate — anyone with `approve` can still
+  decide any item, and the trail records who did. Console: a reviewer column,
+  `7=Assign reviewer`, and a My Review Queue screen (F7 from menu 17).
+  **Also fixes a pre-existing console bug**: the item screen gated deciding on
+  `manage_users` while the API has gated it on `approve` since Phase 39, so the
+  dedicated approver role saw a read-only screen.
+
+- **A campaign nudges before it lapses** (Phase 70) — the first reminder fires
+  `PAM_CERT_REMIND_DAYS` (default 7, `0` disables) before the due date and repeats
+  daily while items are pending, through the same alert channel as break-glass,
+  carrying the pending count, how overdue it is, and **which reviewer is holding
+  it up**. It stops when the campaign is closed, or when nothing is left pending —
+  the second cancels rather than repeats, because nagging about finished work is
+  how an alert channel gets muted.
+
+- **A documentation currency pass** (Phase 70a) — all 18 doc status markers
+  brought to 0–70, saying explicitly where a phase changed nothing; the §4 config
+  table completed; and `SECURITY-GAPS.md` finally recording the Phase 66 review
+  (findings AV–AX).
+
+**New audit actions**: `certification.item_assigned`, `certification.reminder`.
+**New environment variable**: `PAM_CERT_REMIND_DAYS`.
+
 - **A campaign nudges before it lapses** (Phase 70) — the last item of the
   Phase 19 deferral. The first reminder fires `PAM_CERT_REMIND_DAYS` (default 7)
   before a campaign's due date and repeats daily while items are pending, through
@@ -375,7 +416,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.14.0
 [0.13.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.13.0
 [0.12.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.12.0
 [0.11.2]: https://github.com/morandeirachema/pamv1/releases/tag/v0.11.2
