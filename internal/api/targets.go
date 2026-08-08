@@ -57,8 +57,10 @@ func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
 		in.Port = 22
 	}
 	switch {
-	case in.Name == "" || in.Host == "":
+	case in.Host == "":
 		writeError(w, http.StatusUnprocessableEntity, "name and host are required")
+	case validName(in.Name) != nil:
+		writeError(w, http.StatusUnprocessableEntity, "name "+validName(in.Name).Error())
 	case in.Port < 1 || in.Port > 65535:
 		writeError(w, http.StatusUnprocessableEntity, "port must be 1-65535")
 	case !validOS[in.OSType]:
@@ -149,7 +151,7 @@ func (s *Server) updateTarget(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "target.update", fmt.Sprintf("target:%d name:%s host:%s:%d %s", t.ID, t.Name, t.Host, t.Port, clipDetail(t)))
+	s.audit(r.Context(), "target.update", fmt.Sprintf("target:%d name:%s host:%s:%d %s", t.ID, t.Name, auditField(t.Host, 255), t.Port, clipDetail(t)))
 	writeJSON(w, http.StatusOK, t)
 }
 
@@ -204,8 +206,8 @@ func (s *Server) createTargetGrant(w http.ResponseWriter, r *http.Request) {
 	case in.SubjectType != "user" && in.SubjectType != "role":
 		writeError(w, http.StatusUnprocessableEntity, `subject_type must be "user" or "role"`)
 		return
-	case in.Subject == "":
-		writeError(w, http.StatusUnprocessableEntity, "subject is required")
+	case validName(in.Subject) != nil:
+		writeError(w, http.StatusUnprocessableEntity, "subject "+validName(in.Subject).Error())
 		return
 	}
 	if in.SubjectType == "role" {
