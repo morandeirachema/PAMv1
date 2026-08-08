@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -127,6 +128,16 @@ func NewRefresher(ctx context.Context, c *Client, opts RefreshOptions) (*Refresh
 		appliers: opts.Appliers, audit: opts.Audit, onError: opts.OnError, log: log,
 		owned: map[string]bool{}, applied: map[string]string{},
 	}
+	// An applier keyed on a name that is not sourceable would never be visited by
+	// the loop below: never fetched, never applied, never audited. Silent, and
+	// indistinguishable from "Conjur does not manage it". Refuse it at wiring
+	// time instead.
+	for name := range opts.Appliers {
+		if !isBootstrapSecret(name) {
+			return nil, fmt.Errorf("conjur: %q has an applier but is not a sourceable bootstrap secret (%s)",
+				name, strings.Join(AllSecrets(), ", "))
+		}
+	}
 	token, err := c.Authenticate(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("conjur: probing which secrets are managed: %w", err)
@@ -143,11 +154,23 @@ func NewRefresher(ctx context.Context, c *Client, opts RefreshOptions) (*Refresh
 			continue
 		}
 		r.owned[s.env] = true
-		// Seed from what Conjur holds now, not from the environment: if the two
-		// already differ, the operator pinned a value and enabling refresh means
-		// choosing Conjur — say so once, loudly, rather than surprising them on
-		// the first tick.
-		r.applied[s.env] = digest(strings.TrimSpace(val))
+		// Seed from what the process is RUNNING with, NOT from what Conjur holds.
+		//
+		// Seeding from Conjur (as this first did) makes the opening tick a no-op
+		// precisely when the two already differ — which is the case the startup
+		// warning describes, "set in the environment AND managed in Conjur, so
+		// Conjur wins". It did not win: the server kept the environment value
+		// forever while the log said otherwise. That is finding BM reintroduced
+		// by its own fix, one layer down.
+		//
+		// Reading the environment here is not the mistake finding BH was about.
+		// That was using os.Getenv as the *last-applied store*, re-read every
+		// tick and written back, so a failed write reinstated a retired key. This
+		// is a single read at construction to learn what the process booted with,
+		// which is the only authoritative answer to "what is running right now".
+		// From here on `applied` belongs to the Refresher.
+		_ = val
+		r.applied[s.env] = digest(strings.TrimSpace(os.Getenv(s.env)))
 	}
 	if len(r.owned) == 0 {
 		return nil, nil

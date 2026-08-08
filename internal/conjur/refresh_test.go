@@ -183,6 +183,12 @@ func TestRefreshNeverFetchesAPinnedSecret(t *testing.T) {
 func TestRefreshAppliesAChangedKey(t *testing.T) {
 	asked := map[string]bool{}
 	vars := map[string]string{"pamv1/api-key": "old-key", "pamv1/break-glass-key-hash": bgHashA}
+	// The process is running with what Conjur holds — i.e. Conjur filled these at
+	// boot. Without this the refresher correctly sees a divergence on the first
+	// tick and adopts Conjur's value; see
+	// TestRefreshAdoptsConjurWhenTheEnvironmentDiverges.
+	t.Setenv("PAM_API_KEY", "old-key")
+	t.Setenv("PAM_BREAK_GLASS_KEY_HASH", bgHashA)
 	r, rec := build(t, vars, asked)
 
 	// Nothing changed since the probe.
@@ -389,4 +395,52 @@ func fakeConjurRecording(t *testing.T, vars map[string]string, asked map[string]
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// TestRefreshAdoptsConjurWhenTheEnvironmentDiverges is the regression for the
+// defect Phase 80 introduced while fixing finding BM, and Phase 82 fixed.
+//
+// Every shipped deployment SETS PAM_API_KEY — docker-compose hard-requires it,
+// the Kubernetes secret ships it, the OVA generates it — so sourcing never fills
+// it and the process runs with the environment's value. Conjur may still manage
+// it, and the startup log tells the operator exactly that: "set in the
+// environment AND managed in Conjur; enabling refresh means Conjur wins for it".
+//
+// It did not win. `applied` was seeded from what CONJUR held, so the opening
+// tick compared Conjur against Conjur, found no change, and skipped — forever.
+// The server kept authenticating with the environment value while the log
+// promised the opposite: finding BM one layer down, inside its own fix.
+//
+// Seeding from what the process is RUNNING with is what makes the promise true.
+func TestRefreshAdoptsConjurWhenTheEnvironmentDiverges(t *testing.T) {
+	t.Setenv("PAM_API_KEY", "env-pinned-value-the-server-booted-with")
+	vars := map[string]string{"pamv1/api-key": "the-value-conjur-manages"}
+	r, rec := build(t, vars, map[string]bool{})
+
+	changed, err := r.RefreshOnce(context.Background())
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if len(changed) != 1 || changed[0] != "PAM_API_KEY" {
+		t.Fatalf("changed = %v; Conjur did not win, so the startup log lies", changed)
+	}
+	if rec.applied["PAM_API_KEY"] != "the-value-conjur-manages" {
+		t.Fatalf("applied %q, want Conjur's value", rec.applied["PAM_API_KEY"])
+	}
+}
+
+// TestRefresherRefusesAnApplierItWouldNeverCall closes the other silent no-op: an
+// applier keyed on a name that is not sourceable is never visited by the probe,
+// so it would be indistinguishable from "Conjur does not manage it".
+func TestRefresherRefusesAnApplierItWouldNeverCall(t *testing.T) {
+	srv := fakeConjurRecording(t, map[string]string{"pamv1/api-key": "k"}, map[string]bool{})
+	c, _ := conjur.New(conjur.Config{URL: srv.URL, Account: "default", Login: "host/x", APIKey: "k"})
+	_, err := conjur.NewRefresher(context.Background(), c, conjur.RefreshOptions{
+		Prefix:   "pamv1",
+		Appliers: map[string]conjur.SecretApplier{"PAM_API_KEYS": func(string) error { return nil }},
+		Audit:    func(context.Context, string, string) error { return nil },
+	})
+	if err == nil {
+		t.Fatal("an applier for a non-sourceable secret must be refused at wiring time")
+	}
 }
