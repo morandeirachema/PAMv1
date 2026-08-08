@@ -2191,6 +2191,24 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 68a — v0.13.0 ✅
+
+Minor, and the first release since 0.10.0 to carry a **migration**, so the
+upgrade note is the point of the release rather than a footnote.
+
+- [x] **v0.13.0** through the test-gated pipeline, rehearsed first on `main`
+- [x] **Migration `0029` is additive and its rollback was checked, not assumed.**
+  The added columns are `NOT NULL DEFAULT` or nullable; 0.12.0 names its columns
+  explicitly in every campaign read and write; and the migration runner applies
+  only what it is missing, never objecting to a database ahead of it. So a
+  0.12.0 binary starts unchanged against the migrated schema and ignores the new
+  fields — which is the difference between "should be fine" and a rollback an
+  operator can actually perform at 3am
+- [x] **All four pins move together** (both k8s deployments, terraform, Helm
+  `appVersion` + chart `0.4.0`), both READMEs restate the current release, and
+  every release link passes the label/URL agreement check that caught two broken
+  ones last time
+
 ## Phase 68 — Campaigns you can scope and schedule ✅
 
 Closes the first half of the Phase 19 deferral. A campaign snapshotted **every**

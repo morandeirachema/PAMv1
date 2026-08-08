@@ -11,6 +11,41 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-08-08
+
+Certification campaigns become something an organisation can actually run: scoped
+so a review is finishable, and scheduled so it does not depend on somebody
+remembering.
+
+**Minor, and it carries a migration** (`0029`). It is additive with defaults that
+reproduce the old behaviour, applied automatically at startup, and every existing
+campaign keeps meaning exactly what it meant. **Rolling back to 0.12.0 is safe**,
+and checked rather than assumed: the added columns are `NOT NULL DEFAULT` or
+nullable, 0.12.0 names its columns explicitly in every campaign read and write,
+and the migration runner applies only what it is missing — it never objects to a
+database ahead of it. A 0.12.0 binary therefore starts unchanged against the
+migrated schema and simply ignores the scope and the schedule.
+
+- **Campaigns you can scope and schedule** (Phase 68) — a campaign snapshotted
+  *every* grant and safe member, which past a demo is a list nobody completes. It
+  can now be scoped to **one safe** (its members *and* the grants on every target
+  assigned to it) or **one subject** (everything a person or role holds, anywhere
+  — the leaver review), and `recur_days` makes it the anchor of a recurring
+  series that opens the next campaign on schedule with the same scope. **Closing
+  the anchor stops the series.** An unknown scope is refused with 422 rather than
+  silently widened to "everything". The scheduler is leader-locked and always on,
+  and advances the anchor *after* a successful spawn, so a crash repeats a review
+  rather than skipping a period. Console menu 17 gains both, and names a
+  campaign's scope by safe name.
+
+- **The token-exchange screen fits its terminal** (Phase 67b) — Phase 67's table
+  put a full SPIFFE ID in every cell, so a row overflowed the 980px terminal and
+  pushed the last column off screen; on a refused row that column is the *reason*.
+
+**Audit-detail change**: `certification.campaign_created` gains `scope:`,
+`safe:`, `subject:`, `recur_days:` and `recurring_from:`. No vocabulary change and
+no new environment variable.
+
 - **Campaigns you can scope and schedule** (Phase 68) — a certification campaign
   snapshotted *every* grant and safe member, which past a demo is a list nobody
   completes. It can now be scoped to **one safe** (its members and the grants on
@@ -318,7 +353,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.13.0
 [0.12.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.12.0
 [0.11.2]: https://github.com/morandeirachema/pamv1/releases/tag/v0.11.2
 [0.11.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.11.1
