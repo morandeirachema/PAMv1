@@ -11,6 +11,13 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **The coverage number stops understating itself** (Phase 73) — the `test` job
+  has no database, so `internal/store/pgstore` was measured as ~0 and dragged the
+  published figure down about four points, while the job that does exercise it
+  reported nothing. CI now prints three numbers from the same tool — total,
+  excluding pgstore (**77.5%**), and pgstore alone — and the pgstore job reports
+  its own. Still printed, not gated.
+
 - **`store.Store` is composed from role interfaces** (Phase 72) — one flat
   149-method interface became 19 named roles (`TargetStore`, `CredentialStore`,
   `AuditStore`, …) that `Store` embeds, so both implementations and every caller

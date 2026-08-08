@@ -71,7 +71,27 @@ jobs:
       - name: coverage summary
         # Printed, not gated. A threshold picked today would be arbitrary; the
         # first useful thing is that a slide is visible in the log.
+        #
+        # THREE numbers, because one was misleading. This job has no database, so
+        # internal/store/pgstore's ~900 statements are measured here as ~0 and
+        # drag the headline down by about four points — while the pgstore job
+        # actually exercises them and its coverage was never reported anywhere.
+        # A reader comparing "73%" against another project's number was comparing
+        # against a figure depressed by a package this repo tests deliberately
+        # elsewhere. This codebase has been bitten by a coverage-measurement
+        # artifact before (per-package accounting once sent a review after the
+        # wrong problem), which is why the split is spelled out rather than left
+        # to be rediscovered.
+        #
+        # All three come from `go tool cover` on filtered copies of the same
+        # profile, so they are the same measurement and cannot disagree by method.
         run: |
+          grep -v '/store/pgstore/' coverage.out > coverage-nopg.out
+          grep -E '^(mode:|.*/store/pgstore/)' coverage.out > coverage-pg.out
+          printf 'total, as measured here       : %s\n' "$(go tool cover -func=coverage.out    | tail -1 | awk '{print $NF}')"
+          printf 'excluding internal/store/pgstore: %s   <- what this job exercises\n' "$(go tool cover -func=coverage-nopg.out | tail -1 | awk '{print $NF}')"
+          printf 'internal/store/pgstore alone  : %s   <- needs a database; see the pgstore job\n' "$(go tool cover -func=coverage-pg.out   | tail -1 | awk '{print $NF}')"
+          echo "--- full function report tail ---"
           go tool cover -func=coverage.out | tail -1
           echo "--- lowest-covered packages ---"
           go tool cover -func=coverage.out \
@@ -143,7 +163,15 @@ jobs:
       - name: store tests (live Postgres)
         env:
           PAM_TEST_DATABASE_URL: postgres://pam:pam@localhost:5432/pam?sslmode=disable
-        run: go test -p 1 ./internal/store/pgstore/ ./cmd/pam-server/ -race -count=1 -v
+        run: |
+          go test -p 1 ./internal/store/pgstore/ ./cmd/pam-server/ -race -count=1 -v \
+            -coverpkg=./internal/store/pgstore/ -coverprofile=coverage-pgstore.out
+      - name: coverage (the half the test job cannot measure)
+        # The other side of the split printed by the `test` job: pgstore's real
+        # coverage, from the one job that has a database. Without this the
+        # package looked untested in every report, because the only job that
+        # measured it could not run it.
+        run: go tool cover -func=coverage-pgstore.out | tail -1
 
   # Both images are built, not just the default one: the PKCS#11 flavour has its
   # own base, its own cgo build and its own build args, so it can break on its

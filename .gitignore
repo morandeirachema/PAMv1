@@ -1,6 +1,6 @@
 /pam-server
 *.test
-coverage.out
+coverage*.out
 dist/
 .env
 .terraform/
