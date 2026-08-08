@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-07-28 · Reflects: Phases 0–52g + the 2026-07 hardening passes.
+> Last updated: 2026-08-08 · Reflects: Phases 0–70 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -216,7 +216,7 @@ flowchart TD
   G --> H["buildAuthenticator / buildOIDC — password + SSO backends"]
   H --> I["build alerter, host-key callback, broker, SVID verifier,<br/>ssh CA (Phase 22), analytics engine (Phase 23)"]
   I --> J["api.New — the HTTP handler (routes + middleware)"]
-  J --> K["start background workers — lifecycle, broker-token GC, analytics"]
+  J --> K["start background workers — lifecycle, GC, analytics, vendor sweep, certification"]
   K --> L["start listeners — SSH proxy, DB proxy, HTTP(S) server"]
   L --> M["block on ctx.Done() / errc — then drain proxies, close store"]
 ```

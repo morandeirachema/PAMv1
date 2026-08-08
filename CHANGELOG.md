@@ -11,6 +11,16 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+- **A campaign nudges before it lapses** (Phase 70) — the last item of the
+  Phase 19 deferral. The first reminder fires `PAM_CERT_REMIND_DAYS` (default 7)
+  before a campaign's due date and repeats daily while items are pending, through
+  the same alert channel as break-glass, carrying the pending count, how overdue
+  it is, and **which reviewer is holding it up**. It stops on the two conditions
+  that mean the work is over: a closed campaign, or nothing left pending — the
+  second cancels rather than repeats, because nagging about finished work is how
+  an alert channel gets muted. Migration `0031` is additive; new audit action
+  `certification.reminder`.
+
 - **An item has an owner** (Phase 69) — a campaign can name a default reviewer,
   stamped onto every item it snapshots; a single item can be reassigned; and
   `GET /api/campaigns/mine` is a reviewer's queue (pending items in open

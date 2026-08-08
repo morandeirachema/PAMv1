@@ -450,17 +450,17 @@ func (s *PGStore) CreateCampaign(ctx context.Context, c *store.Campaign) error {
 		c.Status = "open"
 	}
 	return s.pool.QueryRow(ctx,
-		`INSERT INTO campaigns (name, created_by, due_at, status, scope_kind, scope_safe_id, scope_subject, recur_days, next_run_at, reviewer)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, created_at`,
+		`INSERT INTO campaigns (name, created_by, due_at, status, scope_kind, scope_safe_id, scope_subject, recur_days, next_run_at, reviewer, remind_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, created_at`,
 		c.Name, c.CreatedBy, c.DueAt, c.Status,
-		string(c.ScopeKind), c.ScopeSafeID, c.ScopeSubject, c.RecurDays, c.NextRunAt, c.Reviewer,
+		string(c.ScopeKind), c.ScopeSafeID, c.ScopeSubject, c.RecurDays, c.NextRunAt, c.Reviewer, c.RemindAt,
 	).Scan(&c.ID, &c.CreatedAt)
 }
 
 // campaignCols is the one column list every campaign read uses, so a field
 // cannot reach some reads and quietly miss others.
 const campaignCols = `id, name, created_by, created_at, due_at, status, closed_at,
-	scope_kind, scope_safe_id, scope_subject, recur_days, next_run_at, reviewer`
+	scope_kind, scope_safe_id, scope_subject, recur_days, next_run_at, reviewer, remind_at`
 
 // ListCampaigns returns all campaigns, newest first.
 func (s *PGStore) ListCampaigns(ctx context.Context) ([]store.Campaign, error) {
@@ -492,6 +492,22 @@ func (s *PGStore) ListDueCampaigns(ctx context.Context, now time.Time) ([]store.
 		return nil, err
 	}
 	return pgx.CollectRows(rows, scanCampaign)
+}
+
+// ListCampaignsToRemind returns the open campaigns whose reminder has come due.
+func (s *PGStore) ListCampaignsToRemind(ctx context.Context, now time.Time) ([]store.Campaign, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+campaignCols+` FROM campaigns
+		WHERE status = 'open' AND remind_at IS NOT NULL AND remind_at <= $1
+		ORDER BY remind_at, id`, now)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanCampaign)
+}
+
+// SetCampaignRemindAt schedules or cancels a campaign's next reminder.
+func (s *PGStore) SetCampaignRemindAt(ctx context.Context, id int64, at *time.Time) error {
+	return execExpectingRow(ctx, s.pool, `UPDATE campaigns SET remind_at = $2 WHERE id = $1`, id, at)
 }
 
 // SetCampaignNextRun moves an anchor's next occurrence.
@@ -571,7 +587,7 @@ func scanCampaign(row pgx.CollectableRow) (store.Campaign, error) {
 	var c store.Campaign
 	var scope string
 	err := row.Scan(&c.ID, &c.Name, &c.CreatedBy, &c.CreatedAt, &c.DueAt, &c.Status, &c.ClosedAt,
-		&scope, &c.ScopeSafeID, &c.ScopeSubject, &c.RecurDays, &c.NextRunAt, &c.Reviewer)
+		&scope, &c.ScopeSafeID, &c.ScopeSubject, &c.RecurDays, &c.NextRunAt, &c.Reviewer, &c.RemindAt)
 	c.ScopeKind = store.CampaignScope(scope)
 	return c, err
 }

@@ -287,8 +287,13 @@ type Config struct {
 	BrokerAuditKey      string        // PAM_BROKER_AUDIT_KEY — base64 32-byte HMAC chain key (unset = shared custody)
 	BrokerAuditSignSeed string        // PAM_BROKER_AUDIT_SIGN_SEED — base64 32-byte ed25519 seed (unset = shared custody)
 	BrokerTokenTTL      time.Duration // PAM_BROKER_TOKEN_TTL_MIN — approval resume-token lifetime (default 15m)
-	BrokerMaxArgBytes   int           // PAM_BROKER_MAX_ARG_BYTES — cap on a tool call's serialized args (0 = off)
-	BrokerRatePerMin    int           // PAM_BROKER_RATE_PER_MIN — per-agent tool-call rate limit (0 = off)
+	// CertRemindDays is how many days before a certification campaign's due date
+	// the first reminder fires (PAM_CERT_REMIND_DAYS, default 7; 0 disables
+	// reminders entirely). After the first, a campaign with pending items is
+	// nudged daily until it is closed or emptied.
+	CertRemindDays    int
+	BrokerMaxArgBytes int // PAM_BROKER_MAX_ARG_BYTES — cap on a tool call's serialized args (0 = off)
+	BrokerRatePerMin  int // PAM_BROKER_RATE_PER_MIN — per-agent tool-call rate limit (0 = off)
 	// Audit-chain checkpoints + signing-key rotation (Phase 27).
 	BrokerCheckpointEvery int    // PAM_BROKER_AUDIT_CHECKPOINT_EVERY — emit a signed in-chain checkpoint every N events (0 = off)
 	BrokerAuditSignPrev   string // PAM_BROKER_AUDIT_SIGN_PREV — comma-separated base64 ed25519 PUBLIC keys still trusted after a signing-key rotation (overlap window)
@@ -517,6 +522,7 @@ func Load() (*Config, error) {
 		BrokerAuditKey:         os.Getenv("PAM_BROKER_AUDIT_KEY"),
 		BrokerAuditSignSeed:    os.Getenv("PAM_BROKER_AUDIT_SIGN_SEED"),
 		BrokerTokenTTL:         time.Duration(integer("PAM_BROKER_TOKEN_TTL_MIN", 15)) * time.Minute,
+		CertRemindDays:         integer("PAM_CERT_REMIND_DAYS", 7),
 		BrokerMaxArgBytes:      integer("PAM_BROKER_MAX_ARG_BYTES", 16384),
 		BrokerRatePerMin:       integer("PAM_BROKER_RATE_PER_MIN", 0),
 		BrokerCheckpointEvery:  integer("PAM_BROKER_AUDIT_CHECKPOINT_EVERY", 0),

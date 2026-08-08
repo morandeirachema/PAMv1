@@ -10,7 +10,7 @@
 > live. This is the operator's checklist of what you must stand up (and what to
 > re-verify) before relying on each capability in production.
 >
-> Last updated: 2026-07-31 · Reflects: Phases 0–57.
+> Last updated: 2026-08-08 · Reflects: Phases 0–70 (58–70 needed no external infrastructure, so nothing here was added or closed by them).
 > (Phases 25–28, 30 and 31 — console parity, recording playback + one-time
 > access, broker completion, operator SSH certificates, in-session step-up and the
 > CIEM blast-radius engine — are fully in-process and add no

@@ -2,7 +2,7 @@
 
 > **Living document.** Update when an OT-relevant control or flow changes.
 >
-> Last updated: 2026-07-28 · Reflects: Phases 0–52g (introduced Phase 8).
+> Last updated: 2026-08-08 · Reflects: Phases 0–70 (53–70 add nothing OT-specific; the certification reminders use the existing alert channel, which `PAM_OT_AIRGAP` already governs). (introduced Phase 8).
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** This guide
 > describes how pamv1 is *designed* to fit an OT architecture; validate every

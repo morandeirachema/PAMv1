@@ -3,7 +3,7 @@
 > **Living document.** Update when the data model or deployment changes. See the
 > [change log](#change-log).
 >
-> Last updated: 2026-07-28 · Reflects: Phases 0–52g.
+> Last updated: 2026-08-08 · Reflects: Phases 0–70. The procedure is unchanged: migrations `0025`–`0031` are additive and applied at startup, and the new columns live in tables this runbook already covers..
 
 > ⚠️ **Beta · for learning purposes.** pamv1 is feature-complete against its
 > [roadmap](../ROADMAP.md) and has closed every finding of its own security

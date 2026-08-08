@@ -2191,6 +2191,75 @@ Multi-arch (`TARGETOS`/`TARGETARCH` + a buildx platform matrix) is a real gap bu
 a deliberate one: nothing has asked for arm64, and building it under emulation
 would cost more release time than it currently buys.
 
+## Phase 70a — Documentation currency pass ✅
+
+The living-docs rule says a doc is updated in the same change as the code. Nine
+phases had shipped since the last sweep of the whole set, so this is the audit of
+that rule rather than an application of it — and it found three things.
+
+- [x] **`PAM_CERT_REMIND_DAYS` was missing from the §4 config table.** Found by a
+  check scoped to §4 itself; a first attempt searched the whole document and
+  passed, because the change-log entry mentions the variable. A currency check
+  that reads the wrong section reports currency it has not verified — the same
+  shape as the drift check that manufactured drift in Phase 63.
+- [x] **`SECURITY-GAPS.md` had never recorded the Phase 66 review** — three
+  findings in the code that closed the 2026-08-07 sweep. This is the Phase 65
+  currency gap recurring one phase later, so the three are now written up as
+  findings AV–AX with what each cost.
+- [x] **A process finding recorded**, because it invalidated reporting rather
+  than code: three low-level change-log entries (65b, 67b, 68) were written by a
+  build script using `str.replace` with an anchor that did not match, and
+  `replace` is a silent no-op, so the docs were reported updated when they were
+  not. Every replacement now asserts its anchor first.
+- [x] **All 18 doc status markers moved to 0–70** — and where phases 62–70 did
+  not touch a document's subject, the marker **says so** (ports and flows add
+  nothing; external-infra gaps needed no infrastructure; the agent threat model
+  is unchanged; the RDP/VNC recipes and the backup runbook are unaffected). A
+  marker bumped without that check is worth less than a stale one, because it
+  claims a review that did not happen.
+- [x] **Content updated where the subject did change**: the high-level
+  architecture's certification row and change log, the NIS2 Art. 21(2)(f) and (i)
+  rows (a recurring campaign *is* the periodic re-assessment, and its reminders
+  make a lapse visible), the user guide's menu-17 section (scope, the F7 queue,
+  reminders, and that assignment is not a permission), and the code guide's
+  startup-worker list.
+
+## Phase 70 — A campaign nudges before it lapses ✅
+
+Closes the **last** item of the Phase 19 deferral. Recertification lapses
+quietly: the campaign stays open, the items stay pending, and nothing happens
+until an auditor asks. Phase 69 gave every item an owner; this is what tells them.
+
+- [x] **The first nudge is `PAM_CERT_REMIND_DAYS` before the due date** (default
+  7; 0 disables). A campaign created with a due date already inside the window —
+  or past it — reminds on the next tick rather than being skipped: "you gave me
+  two days" is exactly when a nudge is worth most, and silently declining because
+  the ideal moment had gone would be this feature's own failure mode
+- [x] **The nudge is actionable.** It carries the pending count, an
+  `overdue_by_Nd` / `in_Nd` phrase — said in words, because a human is deciding
+  whether to care today — and a **per-reviewer breakdown** naming who is holding
+  it up, which is what assignment bought. Sorted, so an unchanged state renders
+  an unchanged string rather than looking like a change
+- [x] **It repeats daily** while items are pending, so an overdue review stays
+  visible instead of scrolling past once
+- [x] **It stops on the two conditions that mean the work is over.** A closed
+  campaign never reminds (the store predicate). And a campaign with **nothing
+  pending has its reminder cancelled**, even though nobody closed it — nagging
+  about finished work is how an alert channel gets muted, and a muted channel is
+  where the next lapse hides. Closing it stays a human's call
+- [x] **On the existing seam**: the hourly leader-locked campaign tick, the same
+  `alert.Notifier` break-glass and analytics use, and an audit event
+  (`certification.reminder`) so the trail shows the nudge went out
+- [x] **Recurring children inherit it** — a spawned campaign gets its own due
+  date and its own reminder, so a quarterly series nudges every quarter
+- [x] **Tests**: the nudge and its content, that it reschedules rather than
+  firing twice in a window, that it fires again a day later, both stop conditions
+  (decided-out and closed), the window arithmetic including the clamp and the
+  disable switch, and the store contract on both implementations
+
+**Migration `0031`**, additive (NULL = no reminder). **New audit action**
+`certification.reminder`. **The Phase 19 deferral is now closed entirely.**
+
 ## Phase 69 — An item has an owner ✅
 
 Closes the assignment half of the Phase 19 deferral. A campaign's items were a
@@ -2647,10 +2716,9 @@ Buildable without external infrastructure, each deferred by the phase named.
   (Phase 61): a dependency can name the credential pamv1 connects with, so
   propagation no longer logs in as the account it is rotating — and, since
   Phase 61a, naming one takes the same authorization as revealing it.
-- **Campaign depth** (19) — ~~scheduled/recurring campaigns, safe- or
-  owner-scoped campaigns~~ ✅ Phase 68; ~~reviewer assignment~~ ✅ Phase 69.
-  **Reminders remain**: nudging a reviewer before the due date. With assignment
-  in place there is finally somebody to nudge.
+- ~~**Campaign depth** (19)~~ — ✅ **closed entirely**: scheduled/recurring and
+  safe/subject-scoped campaigns (Phase 68), reviewer assignment (69) and
+  reminders (70).
 - **Ticket gate depth** (20) — a first-class ServiceNow/Jira connector remains
   (the generic webhook ships). ~~Gating the *connect* path on a live ticket
   lookup rather than validating at request time~~ — ✅ closed 2026-08-02
