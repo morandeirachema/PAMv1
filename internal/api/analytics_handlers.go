@@ -111,6 +111,19 @@ func (s *Server) analyticsPass(ctx context.Context, now time.Time) {
 		s.log.Error("analytics: audit export failed", "err", err)
 		return
 	}
+	// History for the novelty signal (Phase 86): what these actors were already
+	// doing BEFORE the scored window. Read separately and deliberately — a nil
+	// baseline scores exactly as before, so a failed read degrades the pass
+	// rather than skipping it. Losing one signal is better than losing the run.
+	var baseline *analytics.Baseline
+	if s.analyticsBaseline > 0 {
+		hist, herr := s.store.ExportAudit(ctx, since.Add(-s.analyticsBaseline), since)
+		if herr != nil {
+			s.log.Warn("analytics: baseline read failed; scoring without novelty", "err", herr)
+		} else {
+			baseline = analytics.BuildBaseline(hist)
+		}
+	}
 	// Evict actors whose last alert has passed the cooldown. This bounds the map
 	// (actor names from auth-failure events are attacker-controlled, so they must
 	// not accumulate forever) and lets a sustained or recurring incident re-alert
@@ -123,7 +136,7 @@ func (s *Server) analyticsPass(ctx context.Context, now time.Time) {
 	}
 	s.analyticsMu.Unlock()
 
-	for _, f := range s.analytics.Score(events) {
+	for _, f := range s.analytics.ScoreWithBaseline(events, baseline) {
 		if analytics.LevelRank(f.Level) < analytics.LevelRank(analytics.LevelHigh) {
 			continue // only high/critical are actionable
 		}
@@ -149,6 +162,30 @@ func (s *Server) analyticsPass(ctx context.Context, now time.Time) {
 		s.alerter.Notify(ctx, alert.Event{
 			Type: "analytics.risk_flagged", Actor: f.Actor, Detail: detail, Time: now,
 		})
+
+		// Automated response, gentler rung (Phase 86): make an elevated actor
+		// prove who they are again. Revoking their portal logins means the next
+		// action needs a fresh authentication — which, where MFA is enrolled, is a
+		// second factor. It exists because kill-or-nothing is a bad menu: killing
+		// a high-risk-but-legitimate operator mid-change is itself an incident, so
+		// the response that fits most findings is "prove it", not "get out".
+		//
+		// It runs BELOW the kill threshold, so a critical actor is killed rather
+		// than merely challenged.
+		if s.analyticsAutoStepUp && f.Level == analytics.LevelHigh {
+			revoked, rerr := s.store.DeleteSessionsByUsername(ctx, f.Actor)
+			resp := fmt.Sprintf("actor:%s action:require-reauth revoked:%d score:%d", f.Actor, revoked, f.Score)
+			if rerr != nil {
+				resp = fmt.Sprintf("actor:%s action:require-reauth error:%v score:%d", f.Actor, rerr, f.Score)
+				s.log.Error("threat analytics could not require re-authentication", "actor", f.Actor, "err", rerr)
+			} else {
+				s.log.Warn("threat analytics required re-authentication", "actor", f.Actor, "revoked", revoked)
+			}
+			s.auditAs(ctx, "system-analytics", "analytics.auto_response", resp)
+			s.alerter.Notify(ctx, alert.Event{
+				Type: "analytics.auto_response", Actor: f.Actor, Detail: resp, Time: now,
+			})
+		}
 
 		// Automated response: cut off a critical-risk actor's live sessions.
 		if s.analyticsAutoKill && f.Level == analytics.LevelCritical && s.sessions != nil {

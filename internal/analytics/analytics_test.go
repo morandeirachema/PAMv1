@@ -136,3 +136,145 @@ func TestPerSignalCap(t *testing.T) {
 		}
 	}
 }
+
+// evT builds an activity event carrying a target, which is what the novelty
+// signal reads.
+func evT(actor, target string, ts time.Time) store.AuditEvent {
+	return store.AuditEvent{Actor: actor, Action: "session.start", TS: ts,
+		Detail: "target:" + target + " cred_user:svc"}
+}
+
+// signal returns a finding's named signal, or nil.
+func signal(f Finding, name string) *Signal {
+	for i := range f.Signals {
+		if f.Signals[i].Name == name {
+			return &f.Signals[i]
+		}
+	}
+	return nil
+}
+
+// find returns the finding for one actor, or a zero Finding.
+func find(fs []Finding, actor string) Finding {
+	for _, f := range fs {
+		if f.Actor == actor {
+			return f
+		}
+	}
+	return Finding{}
+}
+
+// TestNoveltyNeedsHistoryToMeanAnything is the whole point of the baseline: the
+// same event is unremarkable for someone who works on that host every day and
+// interesting for someone who has never touched it.
+func TestNoveltyScoresOnlyUnfamiliarTargets(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC) // a Monday, in hours
+	past := now.Add(-72 * time.Hour)
+	base := BuildBaseline([]store.AuditEvent{
+		evT("alice", "web-01", past),
+		evT("alice", "web-02", past),
+	})
+	e := New(DefaultConfig())
+
+	// Familiar target: no novelty.
+	f := find(e.ScoreWithBaseline([]store.AuditEvent{evT("alice", "web-01", now)}, base), "alice")
+	if s := signal(f, "new_target"); s != nil {
+		t.Fatalf("a target alice uses every day scored as novel: %+v", s)
+	}
+	// Unfamiliar target: novelty, counted once however many sessions.
+	f = find(e.ScoreWithBaseline([]store.AuditEvent{
+		evT("alice", "dc-01", now), evT("alice", "dc-01", now), evT("alice", "vault-01", now),
+	}, base), "alice")
+	s := signal(f, "new_target")
+	if s == nil {
+		t.Fatal("access to two never-before-used targets scored no novelty")
+	}
+	if s.Count != 2 {
+		t.Fatalf("new_target count = %d, want 2 (distinct targets, not sessions)", s.Count)
+	}
+}
+
+// TestNoveltyIsSilentWithoutHistory guards the failure mode that would get this
+// signal switched off: on the first run, and for every new joiner, EVERY target
+// is unfamiliar. Scoring that is an alert storm, and an alert storm is how
+// people learn to ignore alerts.
+func TestNoveltyIsSilentWithoutHistory(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	e := New(DefaultConfig())
+	for _, tc := range []struct {
+		name string
+		base *Baseline
+	}{
+		{"no baseline at all", nil},
+		{"baseline that does not know this actor", BuildBaseline([]store.AuditEvent{evT("bob", "web-01", now.Add(-time.Hour))})},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := find(e.ScoreWithBaseline([]store.AuditEvent{evT("newjoiner", "dc-01", now)}, tc.base), "newjoiner")
+			if s := signal(f, "new_target"); s != nil {
+				t.Fatalf("scored novelty with nothing to compare against: %+v", s)
+			}
+		})
+	}
+}
+
+// TestPeerOutlierFlagsTheOutlierAndNotThePeers proves what this fixture can
+// actually show: an actor well above the group is flagged and the group is not.
+//
+// It deliberately does NOT claim to prove "median, not mean". With a single
+// outlier both statistics reach the same verdict here, so a test named for that
+// distinction would be asserting something it cannot see. The median is still
+// the right choice — it is the one that stays put when several actors are
+// extreme — but that is a design argument recorded in peerVolumes, not a claim
+// this test earns.
+func TestPeerOutlierFlagsTheOutlierAndNotThePeers(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	var events []store.AuditEvent
+	// Five peers with two sessions each: median 2, threshold 2*3 = 6.
+	for _, who := range []string{"a", "b", "c", "d", "e"} {
+		events = append(events, evT(who, "web-01", now), evT(who, "web-01", now))
+	}
+	// One actor far above them.
+	for range 12 {
+		events = append(events, evT("mallory", "web-01", now))
+	}
+	fs := New(DefaultConfig()).ScoreWithBaseline(events, nil)
+	if s := signal(find(fs, "mallory"), "peer_outlier"); s == nil {
+		t.Fatal("an actor with 6x the peer median was not flagged as an outlier")
+	}
+	for _, who := range []string{"a", "b", "c", "d", "e"} {
+		if s := signal(find(fs, who), "peer_outlier"); s != nil {
+			t.Fatalf("ordinary actor %s was flagged as a peer outlier: %+v", who, s)
+		}
+	}
+}
+
+// TestPeerOutlierNeedsAPeerGroup: two people are not a distribution, and
+// flagging one of them teaches nobody anything.
+func TestPeerOutlierNeedsAPeerGroup(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	events := []store.AuditEvent{evT("a", "web-01", now)}
+	for range 20 {
+		events = append(events, evT("busy", "web-01", now))
+	}
+	fs := New(DefaultConfig()).ScoreWithBaseline(events, nil)
+	if s := signal(find(fs, "busy"), "peer_outlier"); s != nil {
+		t.Fatalf("flagged an outlier against a peer group of two: %+v", s)
+	}
+}
+
+// TestTargetOfParsesTheAuditDetail covers the extraction the novelty signal
+// depends on, including the quoted form auditField produces.
+func TestTargetOfParsesTheAuditDetail(t *testing.T) {
+	for detail, want := range map[string]string{
+		"target:web-01 cred_user:svc":       "web-01",
+		`target:"Prod DB 01" cred_user:svc`: "Prod DB 01",
+		"cred_user:svc target:db-02":        "db-02",
+		"target:db-03":                      "db-03",
+		"user:alice action:login":           "",
+		"":                                  "",
+	} {
+		if got := targetOf(store.AuditEvent{Detail: detail}); got != want {
+			t.Errorf("targetOf(%q) = %q, want %q", detail, got, want)
+		}
+	}
+}
