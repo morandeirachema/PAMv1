@@ -283,6 +283,11 @@ type Options struct {
 	Analytics         *analytics.Engine
 	AnalyticsWindow   time.Duration
 	AnalyticsAutoKill bool
+	// AnalyticsBaseline is how far back to read history for the novelty signal
+	// (0 disables it). AnalyticsAutoStepUp revokes a HIGH-risk actor's logins so
+	// their next action re-authenticates — the rung below killing them.
+	AnalyticsBaseline   time.Duration
+	AnalyticsAutoStepUp bool
 	// AppSecretsEnabled turns on the application-secrets API (Phase 24): the app
 	// identity + secret-grant admin routes and the /v1/app-secrets fetch path.
 	AppSecretsEnabled bool
@@ -340,13 +345,18 @@ type Server struct {
 	analyticsWindow    time.Duration
 	analyticsCooldown  time.Duration
 	analyticsAutoKill  bool
-	analyticsMu        sync.Mutex
-	analyticsAlerted   map[string]analyticsAlert // actor → last alert (score + time)
-	appSecretsEnabled  bool
-	metrics            *metrics.Metrics
-	log                *slog.Logger
-	mux                *http.ServeMux
-	handler            http.Handler
+	// analyticsBaseline is how far back to read history for the novelty signal
+	// (0 = off). analyticsAutoStepUp requires an elevated actor to
+	// re-authenticate rather than killing them (Phase 86).
+	analyticsBaseline   time.Duration
+	analyticsAutoStepUp bool
+	analyticsMu         sync.Mutex
+	analyticsAlerted    map[string]analyticsAlert // actor → last alert (score + time)
+	appSecretsEnabled   bool
+	metrics             *metrics.Metrics
+	log                 *slog.Logger
+	mux                 *http.ServeMux
+	handler             http.Handler
 	// rtc is the atomically-swappable snapshot of runtime-overridable settings
 	// (identity backends + operational policy). PUT /api/config rebuilds it via
 	// reconfigure without a restart (Phase 12). Read it through s.rt().
@@ -497,58 +507,60 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		}
 	}
 	s := &Server{
-		store:              st,
-		vault:              v,
-		resolver:           resolver,
-		winrm:              runner,
-		ticketValidator:    opts.TicketValidator,
-		requireTicket:      opts.RequireTicket,
-		revalidateTicket:   opts.RevalidateTicket,
-		approvalsRequired:  opts.ApprovalsRequired,
-		requireReason:      opts.RequireReason,
-		oneTimeAccess:      opts.OneTimeAccess,
-		recordingDir:       opts.RecordingDir,
-		certRemindDays:     opts.CertRemindDays,
-		requireRecording:   opts.RequireRecording,
-		portalURL:          portalURL,
-		guacdAddr:          opts.GuacdAddr,
-		guacdRecordingPath: opts.GuacdRecordingPath,
-		guacdRDPSecurity:   opts.GuacdRDPSecurity,
-		guacdIgnoreCert:    opts.GuacdIgnoreCert,
-		rdpClipboard:       rdpClipboardMode(opts.RDPClipboard),
-		authLimiter:        ratelimit.New(opts.AuthRatePerMin),
-		keyFailLimiter:     ratelimit.New(opts.AuthRatePerMin),
-		cmdGuard:           opts.CommandGuard,
-		recKey:             apiRecKey(opts.EncryptRecordings, v),
-		opaqueRecNames:     opts.OpaqueRecordingNames,
-		rdpClipAudit:       guacd.NormalizeClipAudit(opts.RDPClipboardAudit),
-		trustedProxyHops:   opts.TrustedProxyHops,
-		sessions:           opts.Sessions,
-		live:               opts.Live,
-		cluster:            opts.Cluster,
-		stepup:             opts.StepUp,
-		bgThreshold:        opts.BreakGlassThreshold,
-		bgTTL:              bgTTL,
-		unseal:             newUnsealState(),
-		alerter:            alerter,
-		rotators:           rotators,
-		verifiers:          verifiers,
-		sshConnector:       sshConn,
-		airGap:             opts.AirGap,
-		discoveryDial:      opts.DiscoveryDial,
-		reconfigure:        opts.Reconfigure,
-		auditSignKey:       opts.AuditSignKey,
-		sshCA:              opts.CA,
-		sshOperatorCertTTL: opts.SSHOperatorCertTTL,
-		vendorAttestor:     opts.VendorAttestor,
-		analytics:          opts.Analytics,
-		analyticsWindow:    opts.AnalyticsWindow,
-		analyticsAutoKill:  opts.AnalyticsAutoKill,
-		analyticsAlerted:   make(map[string]analyticsAlert),
-		appSecretsEnabled:  opts.AppSecretsEnabled,
-		metrics:            metrics.New(),
-		log:                logging.Component("api"),
-		mux:                http.NewServeMux(),
+		store:               st,
+		vault:               v,
+		resolver:            resolver,
+		winrm:               runner,
+		ticketValidator:     opts.TicketValidator,
+		requireTicket:       opts.RequireTicket,
+		revalidateTicket:    opts.RevalidateTicket,
+		approvalsRequired:   opts.ApprovalsRequired,
+		requireReason:       opts.RequireReason,
+		oneTimeAccess:       opts.OneTimeAccess,
+		recordingDir:        opts.RecordingDir,
+		certRemindDays:      opts.CertRemindDays,
+		requireRecording:    opts.RequireRecording,
+		portalURL:           portalURL,
+		guacdAddr:           opts.GuacdAddr,
+		guacdRecordingPath:  opts.GuacdRecordingPath,
+		guacdRDPSecurity:    opts.GuacdRDPSecurity,
+		guacdIgnoreCert:     opts.GuacdIgnoreCert,
+		rdpClipboard:        rdpClipboardMode(opts.RDPClipboard),
+		authLimiter:         ratelimit.New(opts.AuthRatePerMin),
+		keyFailLimiter:      ratelimit.New(opts.AuthRatePerMin),
+		cmdGuard:            opts.CommandGuard,
+		recKey:              apiRecKey(opts.EncryptRecordings, v),
+		opaqueRecNames:      opts.OpaqueRecordingNames,
+		rdpClipAudit:        guacd.NormalizeClipAudit(opts.RDPClipboardAudit),
+		trustedProxyHops:    opts.TrustedProxyHops,
+		sessions:            opts.Sessions,
+		live:                opts.Live,
+		cluster:             opts.Cluster,
+		stepup:              opts.StepUp,
+		bgThreshold:         opts.BreakGlassThreshold,
+		bgTTL:               bgTTL,
+		unseal:              newUnsealState(),
+		alerter:             alerter,
+		rotators:            rotators,
+		verifiers:           verifiers,
+		sshConnector:        sshConn,
+		airGap:              opts.AirGap,
+		discoveryDial:       opts.DiscoveryDial,
+		reconfigure:         opts.Reconfigure,
+		auditSignKey:        opts.AuditSignKey,
+		sshCA:               opts.CA,
+		sshOperatorCertTTL:  opts.SSHOperatorCertTTL,
+		vendorAttestor:      opts.VendorAttestor,
+		analytics:           opts.Analytics,
+		analyticsWindow:     opts.AnalyticsWindow,
+		analyticsAutoKill:   opts.AnalyticsAutoKill,
+		analyticsBaseline:   opts.AnalyticsBaseline,
+		analyticsAutoStepUp: opts.AnalyticsAutoStepUp,
+		analyticsAlerted:    make(map[string]analyticsAlert),
+		appSecretsEnabled:   opts.AppSecretsEnabled,
+		metrics:             metrics.New(),
+		log:                 logging.Component("api"),
+		mux:                 http.NewServeMux(),
 	}
 	// The initial runtime snapshot comes from opts (built by main from the base
 	// env config + stored overrides); PUT /api/config later swaps it via

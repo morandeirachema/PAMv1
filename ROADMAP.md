@@ -2351,6 +2351,46 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 86 — Analytics that need history ✅
+
+Closes the Phase 23 deferral. The six original signals all answer "is this event
+itself suspicious?" — a break-glass use, a blocked command, a failed decrypt.
+That catches the loud things and misses the quiet one an insider actually does:
+ordinary, well-formed access to somewhere they have no business being.
+
+- [x] **Novelty** — this actor has never used this target before. Nothing about
+  the event looks wrong in isolation, which is exactly why it needs history.
+  `analytics.Baseline` is built from the audit window *preceding* the scored one,
+  so it needs no new storage — only a wider read
+- [x] **Silent without history, deliberately.** A nil baseline scores exactly as
+  before, and an actor the baseline does not know scores no novelty at all.
+  Otherwise the first run after deployment, and every new joiner's first week,
+  reads as a stream of anomalies — which is how a signal teaches people to
+  ignore it. A new joiner and an account takeover look identical on day one; the
+  difference only exists once there is something to deviate from
+- [x] **Peer outlier** — an actor far above the volume of their peers in the same
+  window. Compared against the **median**, which stays put when several actors
+  are extreme, and skipped entirely below `PeerMinActors`: two people are not a
+  distribution
+- [x] **Step-up as an automated response** (`PAM_ANALYTICS_AUTO_STEPUP`): a
+  **high**-risk actor's portal logins are revoked, so their next action needs a
+  fresh authentication — a second factor where MFA is enrolled. It sits *below*
+  the kill threshold, because kill-or-nothing is a bad menu: killing a
+  high-risk-but-legitimate operator mid-change is itself an incident, and the
+  response that fits most findings is "prove it", not "get out"
+- [x] **A zero-value trap caught by an existing test.** A zero `PeerFactor` makes
+  the threshold `median × 0` = 0 and a zero `PeerMinActors` removes the
+  peer-group guard, so every actor in every window scored as an outlier —
+  `New` now defaults both and `peerVolumes` refuses the nonsense configuration
+  outright. A zero value that silently means "flag everything" is the worst kind,
+  because it looks like the feature working
+- [x] **One test renamed rather than left overclaiming.** It was called
+  "ComparesAgainstTheMedian"; with a single outlier the mean and the median reach
+  the same verdict on that fixture, so the name asserted something the test
+  cannot see. It now claims what it proves, and the median argument lives in
+  `peerVolumes` as the design note it is
+- [x] Both novelty checks verified against a deliberately broken build
+
 ## Phase 85 — v0.16.0 ✅
 
 Phase 84 closed finding **BW** — a valid ticket number worked as a shared
@@ -3412,8 +3452,13 @@ Buildable without external infrastructure, each deferred by the phase named.
   shared custody (KEK-sealed in `key_material`, converged on by every replica,
   re-wrapped by `-rotate-kek`), exactly like the SSH host/CA keys. An explicit
   env value still wins — that remains the signer-rotation path.
-- **Analytics depth** (23) — peer-baseline and new-target novelty scoring (needs
-  a longer history model), and step-up-MFA as an automated response.
+- ~~**Analytics depth** (23)~~ — ✅ closed 2026-08-09 in **Phase 86**:
+  `analytics.Baseline` (built from the window preceding the scored one — no new
+  storage), a **new-target novelty** signal that stays silent without history so
+  a new joiner is not an anomaly, a **peer-outlier** signal measured against the
+  median and skipped below a real peer group, and
+  `PAM_ANALYTICS_AUTO_STEPUP` — revoke a high-risk actor's logins so their next
+  action re-authenticates, the rung below killing them.
 - ~~**Console screen for token exchange** (57)~~ — ✅ closed 2026-08-07
   (Phase 67): menu 27 shows the signing key's `kid` and the delegation chains
   from the audit trail, which is the only record a stateless minted SVID leaves.

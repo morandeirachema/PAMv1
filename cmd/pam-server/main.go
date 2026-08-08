@@ -1093,6 +1093,8 @@ func run() error {
 		Analytics:               analyticsEngine,
 		AnalyticsWindow:         cfg.AnalyticsWindow,
 		AnalyticsAutoKill:       cfg.AnalyticsAutoKill,
+		AnalyticsBaseline:       time.Duration(cfg.AnalyticsBaselineDays) * 24 * time.Hour,
+		AnalyticsAutoStepUp:     cfg.AnalyticsAutoStepUp,
 		AppSecretsEnabled:       cfg.AppSecretsEnabled,
 	})
 	if err != nil {
