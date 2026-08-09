@@ -954,6 +954,10 @@ func (s *Server) NoteBreakGlassSignal(ctx context.Context, actor, detail string)
 	})
 }
 
+// noteBreakGlass loudly records a request served under the emergency break-glass
+// key: it bumps the break-glass metric, logs a warning, appends an audit event
+// and fires an alert. It is a no-op for a normally-authenticated principal, so
+// callers can invoke it unconditionally on every request.
 func (s *Server) noteBreakGlass(ctx context.Context, p *auth.Principal, r *http.Request) {
 	if !p.BreakGlass {
 		return

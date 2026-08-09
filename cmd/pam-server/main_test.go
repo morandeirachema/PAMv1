@@ -258,22 +258,23 @@ func TestSplitAndTrim(t *testing.T) {
 	}
 }
 
-// TestGetenvInt checks the tolerant integer reader behind the Shamir share
-// counts: unset and unparsable values fall back to the default instead of
-// failing, because -split-key runs interactively where a loud default beats a
-// refusal.
+// TestGetenvInt checks the integer reader behind the Shamir share counts: unset
+// falls back to the default, a valid value parses, and an unparsable value is an
+// ERROR rather than a silent fallback — a typo in the -split-key key ceremony
+// must not quietly produce a share set with a different quorum than the operator
+// asked for (the same value config.Load would refuse when the server starts).
 func TestGetenvInt(t *testing.T) {
 	t.Setenv("PAM_TEST_GETENV_INT", "")
-	if got := getenvInt("PAM_TEST_GETENV_INT", 5); got != 5 {
-		t.Fatalf("unset: got %d, want 5", got)
+	if got, err := getenvInt("PAM_TEST_GETENV_INT", 5); err != nil || got != 5 {
+		t.Fatalf("unset: got %d, err %v, want 5, nil", got, err)
 	}
 	t.Setenv("PAM_TEST_GETENV_INT", "7")
-	if got := getenvInt("PAM_TEST_GETENV_INT", 5); got != 7 {
-		t.Fatalf("set: got %d, want 7", got)
+	if got, err := getenvInt("PAM_TEST_GETENV_INT", 5); err != nil || got != 7 {
+		t.Fatalf("set: got %d, err %v, want 7, nil", got, err)
 	}
 	t.Setenv("PAM_TEST_GETENV_INT", "seven")
-	if got := getenvInt("PAM_TEST_GETENV_INT", 5); got != 5 {
-		t.Fatalf("unparsable: got %d, want 5", got)
+	if _, err := getenvInt("PAM_TEST_GETENV_INT", 5); err == nil {
+		t.Fatal("unparsable: want an error, got nil")
 	}
 }
 

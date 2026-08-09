@@ -459,6 +459,11 @@ func ValidateBootstrapAPIKey(key, databaseURL string) error {
 	return nil
 }
 
+// Load reads the full configuration from PAM_* environment variables into a
+// Config, validating as it goes. It accumulates every problem rather than
+// stopping at the first, so a misconfigured deployment surfaces all of its
+// errors in one startup failure. A security toggle with a garbage value fails
+// loud here rather than defaulting to a fail-open state.
 func Load() (*Config, error) {
 	var errs []string
 	// boolean parses a strict bool (true/false/1/0/t/f/…) and records an error for

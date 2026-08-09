@@ -88,6 +88,11 @@ type limitedBuffer struct {
 	truncated bool
 }
 
+// Write appends p up to the buffer's byte cap, marking the buffer truncated
+// once the cap is reached. It always reports the full len(p) as written so the
+// caller's copy loop runs to completion — the excess is dropped, not an error,
+// because a transcript that says it was truncated is better evidence than a
+// stalled command.
 func (b *limitedBuffer) Write(p []byte) (int, error) {
 	if room := b.max - b.buf.Len(); room > 0 {
 		if len(p) <= room {
