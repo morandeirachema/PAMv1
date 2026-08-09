@@ -22,6 +22,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/proxy"
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/store/memstore"
+	"github.com/morandeirachema/pamv1/internal/testutil"
 	"github.com/morandeirachema/pamv1/internal/vault"
 )
 
@@ -333,32 +334,29 @@ func TestSpecificCredentialSelector(t *testing.T) {
 // out), returning the set of seen actions and the session.record detail.
 func waitForAudit(t *testing.T, st store.Store, want ...string) (map[string]bool, string) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for {
+	var seen map[string]bool
+	var recDetail string
+	testutil.WaitFor(t, 3*time.Second, func() bool {
 		events, err := st.ListAudit(context.Background(), 50)
 		if err != nil {
 			t.Fatal(err)
 		}
-		seen := map[string]bool{}
-		recDetail := ""
+		seen = map[string]bool{}
+		recDetail = ""
 		for _, e := range events {
 			seen[e.Action] = true
 			if e.Action == "session.record" {
 				recDetail = e.Detail
 			}
 		}
-		all := true
 		for _, w := range want {
 			if !seen[w] {
-				all = false
-				break
+				return false
 			}
 		}
-		if all || time.Now().After(deadline) {
-			return seen, recDetail
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+		return true
+	})
+	return seen, recDetail
 }
 
 // TestAuditorCannotConnect verifies the RBAC gate on the proxy: an auditor
