@@ -2351,6 +2351,57 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 96 — Refactor pass: cross-path security parity + convention hygiene ✅
+
+A structural review of the session-proxy family and the shared helpers, acting on
+what it found. The theme is **the same control, enforced the same way on every
+path**: a fix that had landed on one entry point but not its siblings is a latent
+gap, and the review turned three of them into closed gaps with tests.
+
+- [x] **The agent broker's exec/credential tools now pass the vendor-contract
+  gate.** Every other target-reaching path — SSH, PostgreSQL, SQL Server, the
+  in-portal RDP/VNC viewer — refuses a vendor identity outside its approved,
+  in-window contract (Phase 29). The broker's `ssh_exec`, `winrm_exec`,
+  `reveal_credential` and `rotate_credential` did not, so a vendor holding
+  `CapCallTool` (or `reveal_credential`) could reach a target account the same
+  vendor was refused everywhere else. The gate is account-scoped, so each tool
+  applies it (`vendorGateAgent`) the moment it resolves the credential — always
+  before any secret exists. New `internal/api` test drives all four tools before
+  and after an approved grant
+- [x] **A vendor-contract refusal on the SSH proxy now audits as
+  `access.denied`, not `session.denied`.** The SQL listeners, the viewer tunnel
+  and the REST paths already recorded it under `access.denied`, and the OCSF
+  exporter and the risk-analytics engine key off that vocabulary — so the lone
+  `session.denied` on the SSH path had been silently excluding every SSH vendor
+  refusal from SIEM export and risk scoring. Pinned by a proxy test
+- [x] **The PostgreSQL and SSH deny paths now bound the operator-supplied login
+  with `auditField`,** matching the SQL Server listener. The startup username is
+  attacker-controlled bytes; interpolated raw into a `db.session.denied` /
+  `session.denied` detail it could inject newlines or forge `key:value` pairs
+  into the audit trail. The bounding-and-quoting the MSSQL sibling already did is
+  now on all three. New test feeds a hostile login and asserts no audit row
+  carries a raw newline or an escaped forged field
+- [x] **The proxy's WinRM command loop fails closed on the `winrm.run` audit.**
+  The REST WinRM endpoint has always withheld output when the durable audit
+  cannot land (nobody acts on output the system of record never accounted for);
+  its proxy twin audited best-effort *after* streaming. Now it audits first and
+  withholds on failure, the same contract on both paths. New fail-closed test
+- [x] **`-split-key` refuses an unparsable `PAM_BREAK_GLASS_SHARES` /
+  `PAM_BREAK_GLASS_THRESHOLD`** instead of silently falling back to a default —
+  a typo in the key ceremony could otherwise mint a share set with a different
+  quorum than the same value `config.Load` refuses at server start
+- [x] **Convention hygiene** (the repo's own stated invariants, made true again):
+  nine functions regained the doc comment the project requires — three had been
+  orphaned by a `const` inserted between the comment and its function, so godoc
+  bound the text to the wrong declaration; four `//nolint:` directives (a
+  golangci-lint syntax nothing in CI reads, so they suppressed nothing) became
+  real `#nosec Gxxx -- reason` annotations or plain comments; two hand-rolled
+  `contains` helpers became `slices.Contains`; and the dead, superseded
+  `sshca.LoadOrCreate` (zero callers, an unannotated file read) was deleted
+- [x] No schema, route, wire-format or env-var change; `archgen` output
+  unchanged. All CI gates green (`go test -race`, staticcheck, govulncheck,
+  gosec, the diagram drift check)
+
 ## Phase 95 — Documentation currency pass ✅
 
 The second full currency pass (the first was 70a). Phase 94's release work

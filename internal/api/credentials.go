@@ -396,7 +396,8 @@ func (s *Server) execWinRM(ctx context.Context, target *store.Target, cred *stor
 	// target. This was one of two paths the flag never reached, despite being a
 	// way to run a privileged command on a machine.
 	if s.recordingRequired(s.recordingDir) {
-		s.auditAs(ctx, actor, "winrm.refused", "target:"+target.Name+" reason:recording-required") //nolint:errcheck // refusal already returned below
+		// Best-effort: the command is refused below regardless of this write.
+		_ = s.auditAs(ctx, actor, "winrm.refused", "target:"+target.Name+" reason:recording-required")
 		s.live.Publish(sid, []byte("pamv1: recording is required but unavailable; command refused\r\n"))
 		return winrm.Result{}, errRecordingRequired
 	}

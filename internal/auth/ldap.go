@@ -81,18 +81,18 @@ func NewLDAPAuthenticator(cfg LDAPConfig) (*LDAPAuthenticator, error) {
 	return a, nil
 }
 
-// realDial opens the real LDAP connection, using TLS (with the configured verify
-// policy) for ldaps:// URLs.
 // ldapRequestTimeout bounds a single LDAP request (bind or search). Generous
 // enough for a slow directory over a WAN, short enough that a stalled one cannot
 // accumulate goroutines from an unauthenticated endpoint.
 const ldapRequestTimeout = 15 * time.Second
 
+// realDial opens the real LDAP connection, using TLS (with the configured verify
+// policy) for ldaps:// URLs.
 func (a *LDAPAuthenticator) realDial(ctx context.Context) (ldapConn, error) {
 	var opts []ldap.DialOpt
 	if strings.HasPrefix(strings.ToLower(a.cfg.URL), "ldaps://") {
 		opts = append(opts, ldap.DialWithTLSConfig(&tls.Config{
-			InsecureSkipVerify: a.cfg.InsecureSkipVerify, //nolint:gosec // dev-only toggle
+			InsecureSkipVerify: a.cfg.InsecureSkipVerify, // #nosec G402 -- operator-controlled dev-only toggle (PAM_LDAP_INSECURE_SKIP_VERIFY); production sets a real CA
 			MinVersion:         tls.VersionTLS12,
 		}))
 	}

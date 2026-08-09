@@ -61,6 +61,12 @@ type VaultRotationStore interface {
 	UpdateKeyMaterial(ctx context.Context, name, value string) error
 }
 
+// RotateVaultKEK re-encrypts every KEK-wrapped secret in the store — vaulted
+// credentials, MFA enrollments, secret-bearing settings and custody key
+// material — from the `from` vault to the `to` vault, and returns how many
+// items were rewritten. It reads each kind with an unlimited list so the
+// rotation is complete: a partial rewrite would report success yet leave the
+// server unable to start on a secret still sealed under the old KEK.
 func RotateVaultKEK(ctx context.Context, st VaultRotationStore, from, to *vault.Vault) (int, error) {
 	n := 0
 

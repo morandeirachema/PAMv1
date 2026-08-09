@@ -395,7 +395,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	}
 	principal, err := d.resolver.Resolve(ctx, pw.Password)
 	if err != nil {
-		d.log.Warn("db authentication failed", "login", login, "remote", remote)
+		d.log.Warn("db authentication failed", "login", auditField(login, 64), "remote", remote)
 		d.audit(ctx, auditField(login, 64), "proxy.auth_failed", "proto:postgres remote:"+remote)
 		d.fail(backend, "28P01", "pamv1: authentication failed")
 		return
@@ -416,13 +416,13 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	// must not open a database session. The HTTP middleware refuses it; so must a
 	// listener that resolves its own principal.
 	if principal.TunnelOnly {
-		d.audit(ctx, actor, "db.session.denied", "login:"+login+" reason:tunnel-only-token")
+		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:tunnel-only-token")
 		d.deny(ctx, backend, actor, login, "this token may only be used by the in-portal viewer")
 		return
 	}
-	d.noteBreakGlass(ctx, principal, "postgres login:"+login)
+	d.noteBreakGlass(ctx, principal, "postgres login:"+auditField(login, 64))
 	if principal.EnrollOnly {
-		d.audit(ctx, actor, "db.session.denied", "login:"+login+" reason:mfa-enrollment-incomplete")
+		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
 		d.deny(ctx, backend, actor, login, "complete MFA enrollment first")
 		return
 	}
@@ -815,10 +815,13 @@ func (d *DBProxy) fail(backend *pgproto3.Backend, code, msg string) {
 	_ = backend.Flush()
 }
 
-// deny audits a refused session and reports it to the client.
+// deny audits a refused session and reports it to the client. login is the
+// operator-supplied startup username — attacker-controlled bytes — so it is
+// bounded and quoted (auditField) before it reaches a log line or an audit
+// row, exactly as the SSH and SQL Server listeners bound it.
 func (d *DBProxy) deny(ctx context.Context, backend *pgproto3.Backend, actor, login, reason string) {
-	d.log.Warn("db session denied", "actor", actor, "login", login, "reason", reason)
-	d.audit(ctx, actor, "db.session.denied", "login:"+login+" reason:"+reason)
+	d.log.Warn("db session denied", "actor", actor, "login", auditField(login, 64), "reason", reason)
+	d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:"+reason)
 	d.fail(backend, "28000", "pamv1: "+reason)
 }
 

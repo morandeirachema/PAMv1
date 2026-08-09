@@ -56,9 +56,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/morandeirachema/pamv1/internal/auditfmt"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/morandeirachema/pamv1/internal/auditfmt"
 )
 
 // ExchangeGrantType is RFC 8693's grant_type URN.
@@ -66,7 +68,7 @@ const ExchangeGrantType = "urn:ietf:params:oauth:grant-type:token-exchange"
 
 // TokenTypeJWT is RFC 8693's JWT token-type URN. It is a public identifier, not
 // a credential.
-const TokenTypeJWT = "urn:ietf:params:oauth:token-type:jwt" //nolint:gosec // G101: an RFC URN, not a secret
+const TokenTypeJWT = "urn:ietf:params:oauth:token-type:jwt" // #nosec G101 -- an RFC 8693 URN identifier, not a credential
 
 // ExchangeError is an RFC 6749 §5.2-shaped refusal: a stable machine-readable
 // code plus a description. Per RFC 8693 §2.2.2 an unacceptable subject or actor
@@ -293,7 +295,7 @@ func (x *Exchanger) Exchange(ctx context.Context, req *ExchangeRequest, delegato
 	}
 	// RFC 8693 §4.4: the delegator's own token may pin who is allowed to act for
 	// it. Absent means unpinned, not "anyone is named".
-	if len(delegator.MayAct) > 0 && !contains(delegator.MayAct, actor.SPIFFEID) {
+	if len(delegator.MayAct) > 0 && !slices.Contains(delegator.MayAct, actor.SPIFFEID) {
 		return nil, exchangeErr("invalid_request", "the delegating token's may_act claim does not name this actor")
 	}
 
@@ -375,16 +377,6 @@ func nestAct(chain []string) map[string]any {
 		act = map[string]any{"sub": chain[i], "act": act}
 	}
 	return act
-}
-
-// contains reports whether s is in list.
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 // signJWT builds a compact EdDSA JWT. Ed25519 signs the signing input directly
