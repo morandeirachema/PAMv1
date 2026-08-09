@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-08 · Reflects: Phases 0–84 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-09 · Reflects: Phases 0–93 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -1804,6 +1804,20 @@ Interactive SSH **shells** stream a raw terminal and are *not* parsed, so this i
 **not a containment boundary**: use read-only observer sessions
 (`ssh <cred>@<target>+observe@pam`) or restrict shell access where you need that
 guarantee.
+
+**The discrete-command paths above (SSH `exec`, WinRM, both database proxies) are
+best-effort too, not a hard boundary.** The guard matches your regexes against
+the raw statement text with no normalization, so a determined operator can evade
+a pattern by obfuscating the statement: SQL comments (`DROP/**/TABLE users`) and
+odd whitespace defeat `(?i)drop\s+table`, and on the simple-query path a pattern
+anchored to the start (`^drop`) misses a statement smuggled after a benign one
+(`SELECT 1; DROP TABLE users`). Write patterns **unanchored and case-insensitive
+(`(?i)`)**, and treat the guard as defense-in-depth plus an audit trail — **the
+same caveat applies to the step-up (four-eyes) gate**, so a hard guarantee that a
+sensitive statement cannot run without supervisor approval must come from
+**database-side roles and permissions**, not from `PAM_DB_STEPUP_FILE` alone. The
+proxy deliberately embeds no SQL parser — that is a fixed design decision, and it
+is why the gate is regex-over-text rather than statement-aware.
 
 **SFTP file-transfer control (Phase 32).** SFTP is not caught by the command
 denylist — it rides its own SSH *subsystem* channel carrying a binary protocol.

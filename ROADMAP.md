@@ -2351,6 +2351,34 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 93 — The command/step-up gate is best-effort, and the docs now say so ✅
+
+Finishing the adversarial review of the database proxies (Phases 91–92 were vault
+and SFTP). The proxies came through **sound** — the review's value here was
+confirming that and closing one honesty gap.
+
+- [x] **Confirmed sound**: both `Query` and `Parse` are gated on postgres (a
+  prepared statement cannot slip past the supervisor); `mssql` gates every call
+  and every SQL-bearing parameter in a multi-call RPC and **fails closed** on an
+  unparseable request (more thorough than postgres); statement text is quoted
+  into audit details with `auditCmd`; step-up is fail-closed on timeout/denial;
+  and the `sid==""` step-up skip is unreachable in the shipped binary because
+  `main` always wires a session Registry (`session.NewRegistry()`), so it is a
+  defensive clause, not a bypass
+- [x] **Finding BZ, fixed (docs only)**: `cmdguard.Guard.Blocked` matches each
+  regex against the raw statement text with no comment-stripping or case-folding,
+  so `DROP/**/TABLE` and odd whitespace evade `(?i)drop\s+table`, and an anchored
+  pattern misses a statement smuggled after a benign one. The docs disclaimed
+  only interactive **shells** as "not a containment boundary" while presenting the
+  discrete-command and database-statement paths — and the step-up (four-eyes)
+  gate — as reliable. §9.4 now extends the caveat to every discrete-command path
+  and the step-up gate, recommends unanchored `(?i)` patterns, and states plainly
+  that a hard guarantee must come from database-side roles, not the regex gate
+- [x] **No code change, deliberately**: stripping SQL comments correctly needs
+  the parser the design omits on purpose; a fragile stripper would break
+  legitimate queries or manufacture false matches. The honest fix is disclosure,
+  the same call the shell disclaimer already made
+
 ## Phase 92 — SFTP read-only closes the native-op door ✅
 
 Continuing the adversarial review (Phase 91 was the vault). One finding, in a
