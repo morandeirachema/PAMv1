@@ -2351,6 +2351,34 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 92 — SFTP read-only closes the native-op door ✅
+
+Continuing the adversarial review (Phase 91 was the vault). One finding, in a
+control whose whole job is containment.
+
+- [x] **Read-only SFTP forwarded a native mutating op as a read** (finding BY).
+  `handlePacket`'s request switch enumerated the mutating packets and sent
+  everything else to `default: return true`. `SSH_FXP_LINK` (21, the v6
+  hard/symlink op) and `BLOCK`/`UNBLOCK` (22/23) were not enumerated, so they were
+  forwarded — a write in a read-only session against any SFTP server that speaks
+  the native op. The openssh EXTENDED twin `hardlink@openssh.com` was already
+  refused by `handleExtended`; the two default arms had **opposite postures**,
+  and the native one was fail-open
+- [x] **Fixed to match `handleExtended`.** The native default now fails closed in
+  read-only mode: it forwards only the read family (LSTAT/FSTAT/OPENDIR/READDIR/
+  REALPATH/STAT/READLINK) and refuses anything else with a synthesized
+  `SSH_FX_PERMISSION_DENIED`. This is fail-closed by construction — a future or
+  vendor native op is refused, not forwarded — the property a containment control
+  needs, rather than an enumerate-every-mutation list that missed LINK once
+- [x] **Allow mode unchanged, but LINK is now audited** (`sftp.modify op:link`):
+  the explicit cases audit their mutations; LINK had no case, so an allow-mode
+  hard/symlink was invisible in the trail the guard promises records every file
+  operation
+- [x] Tests: `TestSFTPReadOnlyRefusesNativeMutations` (LINK/BLOCK/UNBLOCK
+  refused; the read family still forwarded, so legitimate browsing/download is
+  not broken) and `TestSFTPAllowForwardsNativeLink` (forwarded and audited),
+  verified to fail against the pre-fix fail-open default
+
 ## Phase 91 — Pin KEK-rotation completeness ✅
 
 An adversarial review of the vault crown jewels (`internal/vault` + the AAD-parity
