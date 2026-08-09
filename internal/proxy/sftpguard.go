@@ -69,13 +69,27 @@ const (
 	fxpClose    = 4
 	fxpRead     = 5
 	fxpWrite    = 6
+	fxpLstat    = 7
+	fxpFstat    = 8
 	fxpSetstat  = 9
 	fxpFsetstat = 10
+	fxpOpendir  = 11
+	fxpReaddir  = 12
 	fxpRemove   = 13
 	fxpMkdir    = 14
 	fxpRmdir    = 15
+	fxpRealpath = 16
+	fxpStat     = 17
 	fxpRename   = 18
+	fxpReadlink = 19
 	fxpSymlink  = 20
+	// The native mutating/state-changing request types the switch must not let
+	// slip past as "reads". SSH_FXP_LINK is the v6 twin of the openssh
+	// `hardlink@openssh.com` extension (which handleExtended already governs);
+	// BLOCK/UNBLOCK are v6 byte-range locks.
+	fxpLink     = 21
+	fxpBlock    = 22
+	fxpUnblock  = 23
 	fxpExtended = 200
 	fxpStatus   = 101
 )
@@ -91,6 +105,33 @@ const (
 	fxfExcl      = 0x00000020
 	fxfWriteMask = fxfWrite | fxfAppend | fxfCreat | fxfTrunc | fxfExcl
 )
+
+// sftpReadOnlyForwardable is the set of request types that are pure reads, so
+// they may reach the upstream via the default arm even in read-only mode. Every
+// other type that reaches default there — a native mutating op the switch does
+// not enumerate (SSH_FXP_LINK, BLOCK, UNBLOCK) or a future/vendor type — is
+// refused, the same fail-closed posture handleExtended already takes for an
+// ungoverned EXTENDED op. The read/write and explicit mutating ops have their
+// own cases and never reach default.
+var sftpReadOnlyForwardable = map[byte]bool{
+	fxpLstat: true, fxpFstat: true, fxpOpendir: true, fxpReaddir: true,
+	fxpRealpath: true, fxpStat: true, fxpReadlink: true,
+}
+
+// sftpOpLabel names a request type for an audit detail, so a refused
+// unenumerated op is legible rather than a bare number.
+func sftpOpLabel(typ byte) string {
+	switch typ {
+	case fxpLink:
+		return "link"
+	case fxpBlock:
+		return "block"
+	case fxpUnblock:
+		return "unblock"
+	default:
+		return fmt.Sprintf("type-%d", typ)
+	}
+}
 
 // SSH_FX_PERMISSION_DENIED is the SFTP status code returned for a refused op.
 const fxPermissionDenied = 3
@@ -335,7 +376,22 @@ func (s *sftpInspector) handlePacket(body []byte, reply io.Writer) (forward bool
 	case fxpExtended:
 		return s.handleExtended(body[1:], reply)
 	default:
-		return true // read-family op (opendir/readdir/stat/realpath/…)
+		// Fail closed in read-only mode. The read family above is forwarded; a
+		// native op the switch does not enumerate must be REFUSED here, not passed
+		// through as if it were a read — SSH_FXP_LINK creates a hard/symlink and
+		// BLOCK/UNBLOCK take server-side locks, and against any SFTP server that
+		// speaks the native op (v6) that would be a write in a read-only session.
+		// handleExtended already refuses an ungoverned EXTENDED op this way; this
+		// closes the same door for native requests. Allow mode forwards, as before.
+		if s.mode == SFTPReadOnly && !sftpReadOnlyForwardable[body[0]] {
+			return !s.refuse(reply, body[1:], sftpOpLabel(body[0]), "")
+		}
+		if body[0] == fxpLink {
+			// Allow mode: a hard/symlink is a mutation the explicit cases do not
+			// cover, so audit it here or the trail would miss it entirely.
+			s.audit("sftp.modify", "op:link")
+		}
+		return true // read-family op (opendir/readdir/stat/realpath/…), or allow mode
 	}
 }
 
