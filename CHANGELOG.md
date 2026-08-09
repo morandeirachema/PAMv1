@@ -11,6 +11,17 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Security
+
+- **Read-only SFTP forwarded a native mutating operation as if it were a read.**
+  The request inspector enumerated the mutating packets and forwarded everything
+  else, so `SSH_FXP_LINK` (the SFTP v6 hard/symlink op) and the `BLOCK`/`UNBLOCK`
+  locks slipped through read-only mode against any SFTP server that speaks them —
+  a write in a session meant to permit none. (The openssh `hardlink@openssh.com`
+  extension twin was already refused.) Read-only now forwards only the read
+  family and refuses any other request type, matching the extension handler.
+  Allow mode is unchanged, except a native `LINK` is now audited.
+
 ## [0.18.0] — 2026-08-09
 
 A **patch**-level audit-integrity fix, released as a minor for the pin currency:

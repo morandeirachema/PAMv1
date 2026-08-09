@@ -3,7 +3,7 @@
 > Every protocol pamv1 speaks or brokers, and every cryptographic mechanism it
 > relies on — with the file that implements each one.
 >
-> Last updated: 2026-08-08 · Reflects: Phases 0–80 (Phase 62 changed the step-up decision seal's AAD; 63–75 introduce no protocol or cryptography; Phase 76 changes no protocol or key, only how untrusted values are quoted inside three audit details — see [SECURITY-GAPS](SECURITY-GAPS.md) findings AY–BA; 77 adds input validation, no cryptography; 78 changes **when** two key-derived comparison values are read, not how).
+> Last updated: 2026-08-09 · Reflects: Phases 0–92 (Phase 92 closes an SFTP read-only containment gap — native SSH_FXP_LINK was forwarded where the EXTENDED twin was refused; Phase 62 changed the step-up decision seal's AAD; 63–75 introduce no protocol or cryptography; Phase 76 changes no protocol or key, only how untrusted values are quoted inside three audit details — see [SECURITY-GAPS](SECURITY-GAPS.md) findings AY–BA; 77 adds input validation, no cryptography; 78 changes **when** two key-derived comparison values are read, not how).
 
 **Phase 78 note, because it looks like cryptography and is not.** The Conjur
 refresher fingerprints each secret as the first 8 bytes of its SHA-256 to notice
@@ -294,7 +294,12 @@ per-statement audit and command control possible.
   capture, since it copies inside the server where no `WRITE` or `DATA` crosses
   the proxy; the benign ones (statvfs, fsync, limits, path lookups) pass; and
   anything unrecognized is refused under read-only or capture rather than
-  forwarded because it is unfamiliar.
+  forwarded because it is unfamiliar. **The same fail-closed rule now covers the
+  NATIVE request switch** (Phase 92): read-only forwards only the read family
+  (stat/dir/realpath/readlink) and refuses any other packet type, so
+  `SSH_FXP_LINK` (the v6 twin of `hardlink@openssh.com`) and the `BLOCK`/`UNBLOCK`
+  locks cannot slip past as reads against a v6-speaking target — previously the
+  native default was fail-open while the EXTENDED default was fail-closed.
   **Without content capture this inspector is fail-open**, and deliberately
   differs from the TDS proxy: a stream it cannot frame is audited once
   (`sftp.parse_error`) and then forwarded **un-inspected** — after that point
