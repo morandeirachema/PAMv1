@@ -3,6 +3,7 @@ package proxy
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -43,7 +44,7 @@ func LoadOrCreateHostKey(path string) (ssh.Signer, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(path, encodePEM(block), 0o600); err != nil {
+	if err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
 		return nil, fmt.Errorf("write host key: %w", err)
 	}
 	return ssh.NewSignerFromKey(priv)
@@ -60,7 +61,7 @@ func GenerateHostKeyPEM() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return encodePEM(block), nil
+	return pem.EncodeToMemory(block), nil
 }
 
 // HostKeyFromPEM parses a host key that a custodian handed back.

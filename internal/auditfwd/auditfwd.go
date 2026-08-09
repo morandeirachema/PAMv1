@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/morandeirachema/pamv1/internal/auditfmt"
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
@@ -276,8 +277,8 @@ func (fm Format) render(e store.AuditEvent, tag, host string) string {
 // extra syslog records.
 func renderRFC5424(e store.AuditEvent, tag, host string) string {
 	return fmt.Sprintf("<110>1 %s %s %s - %s - actor=%s detail=%q",
-		e.TS.UTC().Format(time.RFC3339), oneLine(host), oneLine(tag),
-		oneLine(e.Action), oneLine(e.Actor), oneLine(e.Detail))
+		e.TS.UTC().Format(time.RFC3339), auditfmt.OneLine(host), auditfmt.OneLine(tag),
+		auditfmt.OneLine(e.Action), auditfmt.OneLine(e.Actor), auditfmt.OneLine(e.Detail))
 }
 
 // renderCEF formats an event as an ArcSight CEF record. Header fields escape '|'
@@ -308,11 +309,6 @@ func leefHeader(s string) string {
 // leefAttr strips the attribute delimiter and record terminators from a value.
 func leefAttr(s string) string {
 	return strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(s)
-}
-
-// oneLine strips CR/LF so an attacker-controlled field cannot inject a new record.
-func oneLine(s string) string {
-	return strings.NewReplacer("\r", " ", "\n", " ").Replace(s)
 }
 
 // cefHeader escapes the CEF header-field metacharacters (\ and |).

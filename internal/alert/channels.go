@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/morandeirachema/pamv1/internal/auditfmt"
 	"github.com/morandeirachema/pamv1/internal/logging"
 )
 
@@ -16,13 +17,6 @@ import (
 // blackholed syslog/SMTP endpoint cannot park the fire-and-forget goroutine
 // indefinitely — matching the Webhook notifier's 10s budget.
 const alertTimeout = 10 * time.Second
-
-// oneLine replaces CR and LF with spaces so an untrusted field (an actor name
-// from a directory claim) cannot inject extra lines into a syslog record or SMTP
-// header.
-func oneLine(s string) string {
-	return strings.NewReplacer("\r", " ", "\n", " ").Replace(s)
-}
 
 // Multi fans an alert out to several notifiers (e.g. webhook + syslog + email).
 type Multi []Notifier
@@ -68,7 +62,7 @@ func (s *Syslog) Notify(_ context.Context, e Event) {
 	// actor/type/remote (which can come from LDAP/OIDC claims) so a crafted name
 	// cannot forge extra syslog records.
 	msg := fmt.Sprintf("<81>1 %s - %s - %s - actor=%s detail=%q remote=%s",
-		stamp(e.Time), s.tag, oneLine(e.Type), oneLine(e.Actor), e.Detail, oneLine(e.Remote))
+		stamp(e.Time), s.tag, auditfmt.OneLine(e.Type), auditfmt.OneLine(e.Actor), e.Detail, auditfmt.OneLine(e.Remote))
 	go func() {
 		conn, err := s.dial(s.network, s.addr)
 		if err != nil {
@@ -161,7 +155,7 @@ func sendMailBounded(addr string, a smtp.Auth, from string, to []string, msg []b
 func (m *Email) Notify(_ context.Context, e Event) {
 	// Strip CR/LF so an actor/type from a directory claim cannot inject SMTP
 	// headers via the Subject line.
-	subject := fmt.Sprintf("[pamv1] %s by %s", oneLine(e.Type), oneLine(e.Actor))
+	subject := fmt.Sprintf("[pamv1] %s by %s", auditfmt.OneLine(e.Type), auditfmt.OneLine(e.Actor))
 	body := fmt.Sprintf("Type: %s\r\nActor: %s\r\nDetail: %s\r\nRemote: %s\r\nTime: %s\r\n",
 		e.Type, e.Actor, e.Detail, e.Remote, stamp(e.Time))
 	msg := []byte(fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n%s",

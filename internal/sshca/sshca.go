@@ -31,9 +31,6 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// encodePEM serializes a PEM block to its textual encoding.
-func encodePEM(b *pem.Block) []byte { return pem.EncodeToMemory(b) }
-
 // clockSkew is how far before "now" a minted certificate becomes valid, to
 // tolerate small clock differences between pamv1 and the target.
 const clockSkew = 1 * time.Minute
@@ -318,7 +315,7 @@ func GenerateKeyPEM() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return encodePEM(block), nil
+	return pem.EncodeToMemory(block), nil
 }
 
 // FromPEM builds a CertAuthority from a CA key a custodian handed back.

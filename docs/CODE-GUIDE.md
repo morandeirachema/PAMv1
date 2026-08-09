@@ -183,7 +183,8 @@ flowchart TB
     vendor["vendor — third-party access gate"]
     recording["recording — sealed session recordings"]
     tds["tds — SQL Server (TDS) parsing"]
-    auditfmt["auditfmt — audit-detail sanitiser"]
+    auditfmt["auditfmt — audit-detail sanitiser (Field, OneLine)"]
+    jwtutil["jwtutil — shared JWT/JWKS primitives (oidc + agentid)"]
     auditfwd["auditfwd — audit→SIEM forwarder"]
     ocsf["ocsf — OCSF audit export"]
     ratelimit["ratelimit — per-IP auth throttling"]
@@ -1018,6 +1019,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-10 | Phase 98 (shared-helper consolidation): one token-hash definition (`auth.TokenHash`); a new leaf `internal/jwtutil` shared by `oidc` and `agentid` (JWT segment decode, audience check with the empty-claim guard, JWK/RSA reconstruction); `remoteHost` → `ratelimit.Host`; `oneLine` → `auditfmt.OneLine`; `encodePEM` inlined. New `jwtutil` in the package map. |
 | 2026-08-10 | Phase 97 (observability parity): `internal/session` (Registry/Cluster/StepUp) now holds a `service=session` logger instead of calling package-level `slog`, so its cross-replica auth-refusal lines are SIEM-filterable; `api.storeError` logs `service=api`; and `alert.Event.Time`/`session.Info.Started` are normalized to UTC at `Webhook.Notify` and `Registry.Register`. No package moved (one new `session → logging` import edge). |
 | 2026-08-09 | Phase 96 (refactor pass): cross-path security parity — the agent broker's tools now pass the same vendor-contract gate as every other target path (`Server.vendorGateAgent`), the SSH proxy's vendor refusal uses the shared `access.denied` audit action, the PostgreSQL/SSH deny paths bound the untrusted login with `auditField`, the proxy WinRM loop audits `winrm.run` fail-closed, and `-split-key` rejects an unparsable quorum. Convention hygiene: nine restored doc comments, four `//nolint:` → real `#nosec`/plain comments, `contains` → `slices.Contains`, dead `sshca.LoadOrCreate` removed. No package moved. |
 | 2026-08-09 | Phase 95 (documentation currency pass): the package map gains the ten packages that had shipped without a node (`keycustody`, `cmdguard`, `blast`, `vendor`, `recording`, `tds`, `auditfmt`, `auditfwd`, `ocsf`, `ratelimit`); the ITSM gate paragraph covers the Phase 84 ServiceNow/Jira connectors and the Phase 60 use-time re-check; the CI-gate list adds the manifests job (helm lint + render + kubeconform); header 0–80 → 0–94. |

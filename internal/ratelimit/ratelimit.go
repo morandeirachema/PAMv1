@@ -4,9 +4,22 @@
 package ratelimit
 
 import (
+	"net"
 	"sync"
 	"time"
 )
+
+// Host extracts the host portion of a "host:port" remote address for use as a
+// limiter key (source IP), falling back to the raw value when it has no port.
+// It is the one definition shared by the API middleware and the session proxies,
+// which key this limiter by source IP from an http.Request and a net.Addr
+// respectively.
+func Host(addr string) string {
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
+}
 
 // Limiter allows perMin events per key per minute (a fixed window). It is safe for
 // concurrent use and periodically evicts expired keys so the map can't grow

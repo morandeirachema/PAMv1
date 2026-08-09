@@ -16,19 +16,9 @@ import (
 	"os"
 	"strings"
 	"time"
-)
 
-// jwk is a JSON Web Key covering the SPIFFE-relevant key types: RSA (n,e), EC
-// (crv,x,y), and OKP/Ed25519 (crv,x).
-type jwk struct {
-	Kty string `json:"kty"`
-	Kid string `json:"kid"`
-	Crv string `json:"crv"`
-	N   string `json:"n"`
-	E   string `json:"e"`
-	X   string `json:"x"`
-	Y   string `json:"y"`
-}
+	"github.com/morandeirachema/pamv1/internal/jwtutil"
+)
 
 // actClaim is an RFC 8693 "act" (actor) claim, optionally nested to express a
 // delegation chain (the current actor acting on behalf of an inner actor).
@@ -99,7 +89,7 @@ func NewSVIDVerifier(jwksPath, trustDomain, audience string, maxDepth int) (*SVI
 		return nil, fmt.Errorf("agentid: read svid jwks: %w", err)
 	}
 	var set struct {
-		Keys []jwk `json:"keys"`
+		Keys []jwtutil.JWK `json:"keys"`
 	}
 	if err := json.Unmarshal(data, &set); err != nil {
 		return nil, fmt.Errorf("agentid: parse svid jwks: %w", err)
@@ -157,7 +147,7 @@ func (v *SVIDVerifier) Verify(_ context.Context, bearer string) (*Identity, erro
 		Alg string `json:"alg"`
 		Kid string `json:"kid"`
 	}
-	if err := decodeSegment(parts[0], &hdr); err != nil {
+	if err := jwtutil.DecodeSegment(parts[0], &hdr); err != nil {
 		return nil, ErrUnauthenticated
 	}
 	pub, ok := v.keys[hdr.Kid]
@@ -182,14 +172,14 @@ func (v *SVIDVerifier) Verify(_ context.Context, bearer string) (*Identity, erro
 		// (exchange.go); absent means unpinned, never "anyone is named".
 		MayAct *mayActClaim `json:"may_act"`
 	}
-	if err := decodeSegment(parts[1], &claims); err != nil {
+	if err := jwtutil.DecodeSegment(parts[1], &claims); err != nil {
 		return nil, ErrUnauthenticated
 	}
 	// Expiry is mandatory and enforced with a small leeway (fail closed).
 	if claims.Exp == 0 || time.Now().After(time.Unix(claims.Exp, 0).Add(60*time.Second)) {
 		return nil, ErrUnauthenticated
 	}
-	if v.audience != "" && !audienceContains(claims.Aud, v.audience) {
+	if v.audience != "" && !jwtutil.AudienceContains(claims.Aud, v.audience) {
 		return nil, ErrUnauthenticated
 	}
 	// The subject must be a SPIFFE ID in our trust domain.
@@ -271,22 +261,10 @@ func verifySignature(alg string, pub crypto.PublicKey, signingInput string, sig 
 
 // publicKeyFromJWK reconstructs a public key from a JWK (RSA, EC P-256, or
 // Ed25519 OKP).
-func publicKeyFromJWK(k jwk) (crypto.PublicKey, error) {
+func publicKeyFromJWK(k jwtutil.JWK) (crypto.PublicKey, error) {
 	switch k.Kty {
 	case "RSA":
-		nb, err := base64.RawURLEncoding.DecodeString(k.N)
-		if err != nil {
-			return nil, err
-		}
-		eb, err := base64.RawURLEncoding.DecodeString(k.E)
-		if err != nil {
-			return nil, err
-		}
-		e := 0
-		for _, b := range eb {
-			e = e<<8 | int(b)
-		}
-		return &rsa.PublicKey{N: new(big.Int).SetBytes(nb), E: e}, nil
+		return jwtutil.RSAKeyFromJWK(k)
 	case "EC":
 		if k.Crv != "P-256" {
 			return nil, fmt.Errorf("agentid: unsupported EC curve %q", k.Crv)
@@ -315,36 +293,6 @@ func publicKeyFromJWK(k jwk) (crypto.PublicKey, error) {
 	default:
 		return nil, fmt.Errorf("agentid: unsupported key type %q", k.Kty)
 	}
-}
-
-// decodeSegment base64url-decodes a JWT segment and unmarshals its JSON into v.
-func decodeSegment(seg string, v any) error {
-	b, err := base64.RawURLEncoding.DecodeString(seg)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(b, v)
-}
-
-// audienceContains reports whether the "aud" claim (a string or array of strings)
-// includes want.
-func audienceContains(raw json.RawMessage, want string) bool {
-	if len(raw) == 0 {
-		return false
-	}
-	var one string
-	if json.Unmarshal(raw, &one) == nil {
-		return one == want
-	}
-	var many []string
-	if json.Unmarshal(raw, &many) == nil {
-		for _, a := range many {
-			if a == want {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // MultiVerifier tries each verifier in order and returns the first success, so a

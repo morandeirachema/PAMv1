@@ -1,10 +1,11 @@
 package api
 
 import (
-	"github.com/morandeirachema/pamv1/internal/auditfmt"
-	"net"
 	"net/http"
 	"strings"
+
+	"github.com/morandeirachema/pamv1/internal/auditfmt"
+	"github.com/morandeirachema/pamv1/internal/ratelimit"
 )
 
 // withSecurityHeaders sets baseline hardening headers on every response.
@@ -81,7 +82,7 @@ func auditField(s string, limit int) string { return auditfmt.Field(s, limit) }
 // outermost hop WE control — so per-IP throttling still works behind a
 // TLS-terminating reverse proxy without trusting attacker-supplied header entries.
 func (s *Server) clientIP(r *http.Request) string {
-	direct := remoteHost(r.RemoteAddr)
+	direct := ratelimit.Host(r.RemoteAddr)
 	if s.trustedProxyHops <= 0 {
 		return direct
 	}
@@ -104,13 +105,4 @@ func (s *Server) clientIP(r *http.Request) string {
 		return ip
 	}
 	return direct
-}
-
-// remoteHost extracts the host portion of a remote address, falling back to the
-// raw value when it has no port.
-func remoteHost(addr string) string {
-	if host, _, err := net.SplitHostPort(addr); err == nil {
-		return host
-	}
-	return addr
 }

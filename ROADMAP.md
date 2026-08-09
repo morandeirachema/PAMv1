@@ -2351,6 +2351,47 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 98 — Shared-helper consolidation ✅
+
+The de-duplication half of the refactor review. Each item is a primitive that
+existed in two or more packages; the security-relevant ones (token hashing, the
+JWT audience check) are the point — a second copy of a security comparison is the
+bug waiting to happen, as the break-glass-hash duplication (Phase 80) and the
+audit-field sanitiser both taught. The repo's own `internal/auditfmt` package is
+the precedent this follows.
+
+- [x] **Token hashing has one definition, `auth.TokenHash`.** Four copies derived
+  the hex SHA-256 that becomes a stored token-lookup key — `api.hashHex`,
+  `broker.hashToken`, and inline in `agentid` and `auth` — and three of them feed
+  a `*ByTokenHash` store lookup, so a drift between the site that writes a hash
+  and the site that reads one is an auth bypass or a lockout. `api.hashHex` and
+  `broker.hashToken` now delegate (their many call sites unchanged); `agentid`
+  calls it directly
+- [x] **JWT/JWKS primitives live in a new leaf `internal/jwtutil`.** The two
+  independent verifiers — `oidc` (OIDC id_tokens) and `agentid` (SPIFFE
+  JWT-SVIDs) — each had their own `decodeSegment`, `audienceContains`, `jwk` type
+  and RSA-from-JWK. The **audience check had already diverged** (one copy guarded
+  an empty claim, the other did not — not yet a live bug, exactly the kind that
+  becomes one). Now `jwtutil.DecodeSegment` / `AudienceContains` (with the guard)
+  / `JWK` / `RSAKeyFromJWK` are shared, with the package's first tests
+- [x] **`remoteHost` → `ratelimit.Host`.** The rate-limit key derivation existed
+  in `api` (string) and `proxy` (net.Addr + nil guard), both feeding the same
+  `ratelimit.Limiter`; one definition now, the proxy keeping only its nil guard
+- [x] **`oneLine` → `auditfmt.OneLine`.** The CR/LF log-injection sanitiser was
+  byte-identical in `alert` and `auditfwd`; it joins `Field` in the package that
+  exists precisely so this sanitiser is not re-typed per package
+- [x] **`encodePEM` inlined** in `proxy` and `sshca` — an identity wrapper over
+  `pem.EncodeToMemory` in each, adding nothing
+- [x] Tests: `jwtutil` (audience/segment/RSA-key round-trip) and `auditfmt`
+  (quoting+bounding, one-line) — the latter had **no test file** despite being
+  the canonical audit-injection sanitiser. New `agentid → jwtutil`,
+  `oidc → jwtutil`, `alert → auditfmt`, `auditfwd → auditfmt` edges in the
+  archgen diagram; no schema, route, wire-format or env-var change
+- [x] Deferred to a later, focused pass (each larger than it looks): tightening
+  the gosec exclude list so `G304`/`G101` become enforced (needs ~17 file-read
+  sites annotated first), and the `crypto/rand.Read` dead-error-branch cleanup
+  (changes exported signatures)
+
 ## Phase 97 — Observability parity: the audit trail's operational twin ✅
 
 Phase 96 made the security *audit* trail consistent across paths; this does the
