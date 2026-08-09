@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"hash"
 	"io"
@@ -22,9 +21,6 @@ import (
 // reached its configured byte cap, so the caller tears the session down rather
 // than continue it unrecorded (a runaway session can't fill the recording disk).
 var errRecordingLimit = errors.New("proxy: session recording size limit reached")
-
-// encodePEM serializes a PEM block to its textual (memory) encoding.
-func encodePEM(b *pem.Block) []byte { return pem.EncodeToMemory(b) }
 
 // recordChain links session recordings into a tamper-evident hash chain: each
 // recording's chain hash is SHA-256(previousChainHash || fileHash). To alter one

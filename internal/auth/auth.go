@@ -529,6 +529,18 @@ func NewResolver(dir Directory, apiKey, breakGlassHashHex string) (*Resolver, er
 // BreakGlassEnabled reports whether a break-glass hash is currently configured.
 func (r *Resolver) BreakGlassEnabled() bool { return len(r.keys.Load().breakGlassHash) != 0 }
 
+// TokenHash returns the hex-encoded SHA-256 of a bearer secret. It is the single
+// definition of how pamv1 derives the stored lookup key for every kind of token
+// — per-user access tokens, agent keys, application keys, session tokens,
+// recovery codes and the broker's resume JTIs — so the plaintext is never
+// persisted and the hashing cannot drift between the places that write a hash
+// and the places that look one up. A drift here would be an authentication
+// bypass or a lockout, which is why it lives in exactly one place.
+func TokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
 // MatchesBreakGlass reports, in constant time, whether sum is the SHA-256 of the
 // CURRENT break-glass key.
 //

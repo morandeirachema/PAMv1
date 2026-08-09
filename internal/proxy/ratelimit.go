@@ -1,15 +1,18 @@
 package proxy
 
-import "net"
+import (
+	"net"
 
-// remoteHost extracts the host portion of a net.Addr, for keying the shared
-// auth rate limiter (internal/ratelimit) by source IP.
+	"github.com/morandeirachema/pamv1/internal/ratelimit"
+)
+
+// remoteHost extracts the host portion of a net.Addr, for keying the shared auth
+// rate limiter (internal/ratelimit) by source IP. It delegates to ratelimit.Host
+// — the one definition shared with the API middleware — adding only the nil
+// guard a net.Addr needs.
 func remoteHost(addr net.Addr) string {
 	if addr == nil {
 		return ""
 	}
-	if host, _, err := net.SplitHostPort(addr.String()); err == nil {
-		return host
-	}
-	return addr.String()
+	return ratelimit.Host(addr.String())
 }

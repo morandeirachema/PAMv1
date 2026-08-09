@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -174,10 +172,9 @@ func (s *Server) checkSecondFactor(ctx context.Context, username string, enr *st
 
 // hashHex returns the hex-encoded SHA-256 of s. Used to derive the lookup hashes
 // stored for session/user tokens and recovery codes (plaintext is never stored).
-func hashHex(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
-}
+// It delegates to auth.TokenHash so every token-hashing site shares one
+// definition — see the rationale there.
+func hashHex(s string) string { return auth.TokenHash(s) }
 
 // logout revokes the caller's own session token.
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
