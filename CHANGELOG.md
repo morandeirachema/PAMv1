@@ -11,6 +11,12 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.18.1] — 2026-08-09
+
+Findings from an adversarial review of the crown-jewel subsystems (vault, the SFTP
+guard, the database proxies, the broker four-eyes). A **patch**: one security fix,
+plus test and documentation hardening. No schema, route or API change.
+
 ### Security
 
 - **Read-only SFTP forwarded a native mutating operation as if it were a read.**
@@ -719,7 +725,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.18.1...HEAD
+[0.18.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.18.1
 [0.18.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.18.0
 [0.17.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.17.0
 [0.16.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.16.0

@@ -2351,6 +2351,18 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 94 — v0.18.1 ✅
+
+Batched release of the adversarial-review pass: Phase 92 (the SFTP read-only
+containment fix — a real security fix) with Phase 91 (KEK-rotation completeness
+test) and Phase 93 (the command-gate honesty docs). The review that produced them
+also confirmed the vault, the database proxies and the broker four-eyes **sound**
+— two clean subsystems in a row, the honest signal to stop looking.
+
+- [x] **v0.18.1** through the test-gated pipeline, rehearsed on `main` first
+- [x] All five pins via the sweep; Helm chart `version` 0.9.0 -> **0.9.1**
+- [x] Both READMEs restated; label-vs-URL equality re-checked (0 mismatches)
+
 ## Phase 93 — The command/step-up gate is best-effort, and the docs now say so ✅
 
 Finishing the adversarial review of the database proxies (Phases 91–92 were vault
