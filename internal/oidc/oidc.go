@@ -16,11 +16,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/morandeirachema/pamv1/internal/jwtutil"
 )
 
 // GeneratePKCE returns a PKCE code_verifier and its S256 code_challenge.
@@ -164,7 +165,7 @@ func (p *Provider) verifyIDToken(ctx context.Context, idToken, nonce string) (*C
 		Alg string `json:"alg"`
 		Kid string `json:"kid"`
 	}
-	if err := decodeSegment(parts[0], &hdr); err != nil {
+	if err := jwtutil.DecodeSegment(parts[0], &hdr); err != nil {
 		return nil, err
 	}
 	if hdr.Alg != "RS256" {
@@ -193,13 +194,13 @@ func (p *Provider) verifyIDToken(ctx context.Context, idToken, nonce string) (*C
 		Roles             []string        `json:"roles"`
 		Groups            []string        `json:"groups"`
 	}
-	if err := decodeSegment(parts[1], &c); err != nil {
+	if err := jwtutil.DecodeSegment(parts[1], &c); err != nil {
 		return nil, err
 	}
 	switch {
 	case c.Iss != p.cfg.Issuer:
 		return nil, errors.New("oidc: issuer mismatch")
-	case !audienceContains(c.Aud, p.cfg.ClientID):
+	case !jwtutil.AudienceContains(c.Aud, p.cfg.ClientID):
 		return nil, errors.New("oidc: audience mismatch")
 	case c.Nonce != nonce:
 		return nil, errors.New("oidc: nonce mismatch")
@@ -207,13 +208,6 @@ func (p *Provider) verifyIDToken(ctx context.Context, idToken, nonce string) (*C
 		return nil, errors.New("oidc: id_token expired")
 	}
 	return &Claims{Subject: c.Sub, PreferredUsername: c.PreferredUsername, Roles: c.Roles, Groups: c.Groups}, nil
-}
-
-type jwk struct {
-	Kid string `json:"kid"`
-	Kty string `json:"kty"`
-	N   string `json:"n"`
-	E   string `json:"e"`
 }
 
 // publicKey fetches the provider's JWKS and returns the RSA public key whose kid
@@ -235,14 +229,14 @@ func keyFromJWKS(ctx context.Context, hc *http.Client, jwksURL, kid string) (*rs
 	}
 	defer resp.Body.Close()
 	var set struct {
-		Keys []jwk `json:"keys"`
+		Keys []jwtutil.JWK `json:"keys"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxMetadataBytes)).Decode(&set); err != nil {
 		return nil, err
 	}
 	for _, k := range set.Keys {
 		if k.Kid == kid && k.Kty == "RSA" {
-			return rsaKeyFromJWK(k)
+			return jwtutil.RSAKeyFromJWK(k)
 		}
 	}
 	return nil, fmt.Errorf("oidc: no JWKS key for kid %q", kid)
@@ -265,7 +259,7 @@ func VerifyRS256(ctx context.Context, hc *http.Client, jwksURL, token, wantAudie
 		Alg string `json:"alg"`
 		Kid string `json:"kid"`
 	}
-	if err := decodeSegment(parts[0], &hdr); err != nil {
+	if err := jwtutil.DecodeSegment(parts[0], &hdr); err != nil {
 		return err
 	}
 	if hdr.Alg != "RS256" {
@@ -287,7 +281,7 @@ func VerifyRS256(ctx context.Context, hc *http.Client, jwksURL, token, wantAudie
 		Exp int64           `json:"exp"`
 		Aud json.RawMessage `json:"aud"`
 	}
-	if err := decodeSegment(parts[1], &std); err != nil {
+	if err := jwtutil.DecodeSegment(parts[1], &std); err != nil {
 		return err
 	}
 	// Require an expiry and enforce it: a token with no exp must not be treated as
@@ -298,58 +292,13 @@ func VerifyRS256(ctx context.Context, hc *http.Client, jwksURL, token, wantAudie
 	if time.Now().After(time.Unix(std.Exp, 0).Add(60 * time.Second)) {
 		return errors.New("oidc: token expired")
 	}
-	if wantAudience != "" && !audienceContains(std.Aud, wantAudience) {
+	if wantAudience != "" && !jwtutil.AudienceContains(std.Aud, wantAudience) {
 		return errors.New("oidc: audience mismatch")
 	}
 	if out != nil {
-		return decodeSegment(parts[1], out)
+		return jwtutil.DecodeSegment(parts[1], out)
 	}
 	return nil
-}
-
-// rsaKeyFromJWK reconstructs an RSA public key from a JWK's base64url modulus (n)
-// and exponent (e).
-func rsaKeyFromJWK(k jwk) (*rsa.PublicKey, error) {
-	nb, err := base64.RawURLEncoding.DecodeString(k.N)
-	if err != nil {
-		return nil, err
-	}
-	eb, err := base64.RawURLEncoding.DecodeString(k.E)
-	if err != nil {
-		return nil, err
-	}
-	e := 0
-	for _, b := range eb {
-		e = e<<8 | int(b)
-	}
-	return &rsa.PublicKey{N: new(big.Int).SetBytes(nb), E: e}, nil
-}
-
-// decodeSegment base64url-decodes a JWT segment and unmarshals its JSON into v.
-func decodeSegment(seg string, v any) error {
-	b, err := base64.RawURLEncoding.DecodeString(seg)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(b, v)
-}
-
-// audienceContains reports whether the "aud" claim (a single string or an array)
-// contains want.
-func audienceContains(raw json.RawMessage, want string) bool {
-	var one string
-	if json.Unmarshal(raw, &one) == nil {
-		return one == want
-	}
-	var many []string
-	if json.Unmarshal(raw, &many) == nil {
-		for _, a := range many {
-			if a == want {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // Discover fetches the OIDC well-known configuration and returns the authorize,

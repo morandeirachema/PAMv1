@@ -8,7 +8,6 @@ package broker
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -685,11 +684,9 @@ func newOpaqueToken() string {
 }
 
 // hashToken returns the hex SHA-256 of a resume token, used as its stored JTI so
-// the plaintext token is never persisted.
-func hashToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
+// the plaintext token is never persisted. It delegates to auth.TokenHash, the
+// single definition shared by every token-hashing site.
+func hashToken(token string) string { return auth.TokenHash(token) }
 
 // chainApproval records a human approval decision in the tamper-evident chain,
 // attributed to the approver, over the agent's parked call.

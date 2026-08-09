@@ -15,7 +15,20 @@
 // missing from the next one.
 package auditfmt
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
+
+// OneLine replaces CR and LF with spaces so an untrusted field cannot inject an
+// extra line into a line-oriented sink — a syslog record, an SMTP header, a CEF
+// or LEEF event. It is the flattening twin of Field: Field quotes a value going
+// into pamv1's own audit detail, OneLine flattens one going out to an external
+// line protocol. Callers that also need metacharacter escaping (CEF's \ and |)
+// layer it on top.
+func OneLine(s string) string {
+	return strings.NewReplacer("\r", " ", "\n", " ").Replace(s)
+}
 
 // Field makes an untrusted string safe to place in an audit detail or actor:
 // bounded in length and quoted, so embedded newlines, quotes and forged

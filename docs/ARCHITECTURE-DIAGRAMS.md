@@ -70,6 +70,7 @@ flowchart LR
     n_blast[blast]
     n_cmdguard[cmdguard]
     n_conjur[conjur]
+    n_jwtutil[jwtutil]
     n_keycustody[keycustody]
     n_ocsf[ocsf]
     n_ratelimit[ratelimit]
@@ -80,7 +81,9 @@ flowchart LR
   end
   n_agentid --> n_auditfmt
   n_agentid --> n_auth
+  n_agentid --> n_jwtutil
   n_agentid --> n_store
+  n_alert --> n_auditfmt
   n_alert --> n_logging
   n_analytics --> n_store
   n_api --> n_agentid
@@ -116,6 +119,7 @@ flowchart LR
   n_api --> n_web
   n_api --> n_winrm
   n_auditchain --> n_store
+  n_auditfwd --> n_auditfmt
   n_auditfwd --> n_logging
   n_auditfwd --> n_store
   n_auth --> n_oidc
@@ -135,6 +139,7 @@ flowchart LR
   n_memstore --> n_session
   n_memstore --> n_store
   n_ocsf --> n_store
+  n_oidc --> n_jwtutil
   n_pam_server --> n_agentid
   n_pam_server --> n_alert
   n_pam_server --> n_analytics

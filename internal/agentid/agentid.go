@@ -7,8 +7,6 @@ package agentid
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -65,8 +63,7 @@ func (v *StaticVerifier) Verify(ctx context.Context, bearer string) (*Identity, 
 	if bearer == "" {
 		return nil, ErrUnauthenticated
 	}
-	sum := sha256.Sum256([]byte(bearer))
-	k, err := v.st.GetAgentKeyByTokenHash(ctx, hex.EncodeToString(sum[:]))
+	k, err := v.st.GetAgentKeyByTokenHash(ctx, auth.TokenHash(bearer))
 	if err != nil {
 		return nil, ErrUnauthenticated
 	}
