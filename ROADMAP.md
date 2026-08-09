@@ -2351,6 +2351,38 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 99 — Store & API ergonomics ✅
+
+Mechanical de-duplication and one determinism fix in the persistence and REST
+layers, all behind the store conformance suite (`storetest`, which exercises
+131/137 interface methods against both implementations, live Postgres in CI) and
+the API tests.
+
+- [x] **`ListSessions` now has a deterministic tie-break in both stores.**
+  memstore used a non-stable `sort.Slice` on `CreatedAt`; pgstore had `ORDER BY
+  created_at DESC` with no tiebreaker — so two sessions created in the same
+  instant ordered arbitrarily, and differently in each. Both now break the tie on
+  `id DESC`, so the two implementations cannot disagree
+- [x] **memstore: two generic helpers replace fourteen hand-written bodies.**
+  `getRow[K,V]` (lock → map lookup → `ErrNotFound` → pointer to a copy) covers
+  six identical `Get*`; `deleteRow[K,V]` covers eight identical non-cascading
+  `Delete*`. Package-level functions taking the receiver, since Go forbids type
+  parameters on methods (the pattern the existing `window[T]` already set).
+  Cascading deletes keep their own bodies
+- [x] **pgstore: the three anonymous audit-event scanners become one
+  `scanAuditEvent`.** `ListAudit`, `ExportAudit` and `AuditSince` each inlined
+  the identical `(id, ts, actor, action, detail)` scan — the shape most likely to
+  drift silently when a column is added
+- [x] **API: `pagedList[T]` collapses the four plain list handlers** (targets,
+  safes, users, vendors) into the route table. It fits only the handlers whose
+  store method takes just the `(limit, after)` window; the ones with a filter (a
+  target id, a status, an active flag) keep their bodies
+- [x] Deferred as lower-value-than-they-looked: a `deleteByID` factory (the six
+  delete handlers diverge in audit-detail format, so one factory would need a
+  per-call formatter or an audit-detail change), and wrapping the 1,900-line
+  `storetest` in `t.Run` subtests (a large churn for better failure isolation)
+- [x] No schema, route, wire-format or env-var change; `archgen` output unchanged
+
 ## Phase 98 — Shared-helper consolidation ✅
 
 The de-duplication half of the refactor review. Each item is a primitive that

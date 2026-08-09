@@ -119,15 +119,6 @@ func (s *Server) createTarget(w http.ResponseWriter, r *http.Request) {
 }
 
 // listTargets returns a page of the target inventory (?limit=&after= cursor).
-func (s *Server) listTargets(w http.ResponseWriter, r *http.Request) {
-	limit, after := listWindow(r)
-	targets, err := s.store.ListTargets(r.Context(), limit, after)
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, targets)
-}
 
 // updateTarget edits a target in place — the same validation and authorization
 // as create, without the delete + recreate that would cascade away its

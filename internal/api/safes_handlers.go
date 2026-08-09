@@ -63,15 +63,6 @@ func (s *Server) createSafe(w http.ResponseWriter, r *http.Request) {
 }
 
 // listSafes returns a page of the safes (CapReadInventory; ?limit=&after=).
-func (s *Server) listSafes(w http.ResponseWriter, r *http.Request) {
-	limit, after := listWindow(r)
-	safes, err := s.store.ListSafes(r.Context(), limit, after)
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, safes)
-}
 
 // updateSafe renames a safe / edits its description in place (CapManageTargets,
 // like create). Membership and target assignment are untouched.

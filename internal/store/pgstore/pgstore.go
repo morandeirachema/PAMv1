@@ -891,11 +891,7 @@ func (s *PGStore) ListAudit(ctx context.Context, limit int) ([]store.AuditEvent,
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.AuditEvent, error) {
-		var e store.AuditEvent
-		err := row.Scan(&e.ID, &e.TS, &e.Actor, &e.Action, &e.Detail)
-		return e, err
-	})
+	return pgx.CollectRows(rows, scanAuditEvent)
 }
 
 // CreateCheckout leases a credential within a transaction; ErrConflict if it
@@ -987,11 +983,7 @@ func (s *PGStore) ExportAudit(ctx context.Context, since, until time.Time) ([]st
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.AuditEvent, error) {
-		var e store.AuditEvent
-		err := row.Scan(&e.ID, &e.TS, &e.Actor, &e.Action, &e.Detail)
-		return e, err
-	})
+	return pgx.CollectRows(rows, scanAuditEvent)
 }
 
 // LatestAuditByAction returns the most recent event with the given action, or
@@ -1031,11 +1023,7 @@ func (s *PGStore) AuditSince(ctx context.Context, afterID int64, limit int) ([]s
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.AuditEvent, error) {
-		var e store.AuditEvent
-		err := row.Scan(&e.ID, &e.TS, &e.Actor, &e.Action, &e.Detail)
-		return e, err
-	})
+	return pgx.CollectRows(rows, scanAuditEvent)
 }
 
 // PruneAuditBefore deletes audit events with ts < cutoff, returning the count.
@@ -1733,7 +1721,7 @@ func (s *PGStore) DeleteSession(ctx context.Context, tokenHashHex string) error 
 func (s *PGStore) ListSessions(ctx context.Context) ([]store.Session, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, username, role, roles, scope, token_hash, created_at, expires_at
-		 FROM sessions WHERE expires_at > now() ORDER BY created_at DESC`)
+		 FROM sessions WHERE expires_at > now() ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -1994,6 +1982,16 @@ func scanSetting(row pgx.CollectableRow) (store.Setting, error) {
 	var s store.Setting
 	err := row.Scan(&s.Key, &s.Value, &s.Secret, &s.UpdatedAt)
 	return s, err
+}
+
+// scanAuditEvent maps one result row into a store.AuditEvent, for the read paths
+// that project (id, ts, actor, action, detail). It is one definition so that the
+// three list/export/tail closures that used to each inline this scan cannot drift
+// when a column is added — the exact shape the review flagged as most at risk.
+func scanAuditEvent(row pgx.CollectableRow) (store.AuditEvent, error) {
+	var e store.AuditEvent
+	err := row.Scan(&e.ID, &e.TS, &e.Actor, &e.Action, &e.Detail)
+	return e, err
 }
 
 // scanBrokerAudit maps one result row into a store.BrokerAuditEvent.

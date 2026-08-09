@@ -61,15 +61,6 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 
 // listUsers returns a page of the local users (?limit=&after=); token hashes
 // are never serialized.
-func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
-	limit, after := listWindow(r)
-	users, err := s.store.ListUsers(r.Context(), limit, after)
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, users)
-}
 
 // updateUser changes a user's role or profile in place, so a promotion or
 // demotion no longer means delete + re-mint (which would revoke the token).

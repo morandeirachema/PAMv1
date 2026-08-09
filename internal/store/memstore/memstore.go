@@ -111,6 +111,34 @@ func (m *Memstore) id() int64 {
 
 // window applies the shared list-cursor semantics to an id-ascending slice:
 // rows with id > afterID, capped at limit rows when limit > 0 (Phase 44).
+// getRow is the shared body of every by-id lookup that returns a copy of the
+// stored value or ErrNotFound. It takes the receiver so it can hold the one
+// mutex (Go does not allow type parameters on methods). Returning &v yields a
+// pointer to a fresh copy, never into the map, so a caller cannot mutate stored
+// state — the same guarantee each hand-written Get gave.
+func getRow[K comparable, V any](m *Memstore, rows map[K]V, k K) (*V, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := rows[k]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return &v, nil
+}
+
+// deleteRow is the shared body of every non-cascading delete: ErrNotFound if the
+// key is absent, otherwise remove it. Cascading deletes keep their own bodies —
+// this covers only the leaf rows.
+func deleteRow[K comparable, V any](m *Memstore, rows map[K]V, k K) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := rows[k]; !ok {
+		return store.ErrNotFound
+	}
+	delete(rows, k)
+	return nil
+}
+
 func window[T any](rows []T, id func(T) int64, limit int, afterID int64) []T {
 	if afterID > 0 {
 		i := sort.Search(len(rows), func(i int) bool { return id(rows[i]) > afterID })
@@ -151,13 +179,7 @@ func (m *Memstore) ListTargets(_ context.Context, limit int, afterID int64) ([]s
 
 // GetTarget returns the target with the given ID, or ErrNotFound.
 func (m *Memstore) GetTarget(_ context.Context, id int64) (*store.Target, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	t, ok := m.targets[id]
-	if !ok {
-		return nil, store.ErrNotFound
-	}
-	return &t, nil
+	return getRow(m, m.targets, id)
 }
 
 // UpdateTarget replaces a target's editable fields, preserving its safe
@@ -249,13 +271,7 @@ func (m *Memstore) ListTargetGrants(_ context.Context, targetID int64) ([]store.
 
 // DeleteTargetGrant removes a grant by ID; ErrNotFound if absent.
 func (m *Memstore) DeleteTargetGrant(_ context.Context, id int64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.grants[id]; !ok {
-		return store.ErrNotFound
-	}
-	delete(m.grants, id)
-	return nil
+	return deleteRow(m, m.grants, id)
 }
 
 // EffectiveTargetGrants unions a target's direct grants with grants derived from
@@ -329,13 +345,7 @@ func (m *Memstore) UpdateSafe(_ context.Context, sf *store.Safe) error {
 
 // GetSafe returns a safe by ID, or ErrNotFound.
 func (m *Memstore) GetSafe(_ context.Context, id int64) (*store.Safe, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	sf, ok := m.safes[id]
-	if !ok {
-		return nil, store.ErrNotFound
-	}
-	return &sf, nil
+	return getRow(m, m.safes, id)
 }
 
 // DeleteSafe removes a safe, cascading its members and unassigning its targets.
@@ -393,13 +403,7 @@ func (m *Memstore) ListSafeMembers(_ context.Context, safeID int64) ([]store.Saf
 
 // DeleteSafeMember removes a safe member by ID, or ErrNotFound.
 func (m *Memstore) DeleteSafeMember(_ context.Context, id int64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.safeMembers[id]; !ok {
-		return store.ErrNotFound
-	}
-	delete(m.safeMembers, id)
-	return nil
+	return deleteRow(m, m.safeMembers, id)
 }
 
 // AssignTargetSafe sets (or clears, when safeID is nil) a target's safe.
@@ -451,13 +455,7 @@ func (m *Memstore) ListCredentialDependencies(_ context.Context, credentialID in
 
 // DeleteCredentialDependency removes a dependency by ID, or ErrNotFound.
 func (m *Memstore) DeleteCredentialDependency(_ context.Context, id int64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.credDeps[id]; !ok {
-		return store.ErrNotFound
-	}
-	delete(m.credDeps, id)
-	return nil
+	return deleteRow(m, m.credDeps, id)
 }
 
 // CreateCampaign inserts a certification campaign, assigning ID and CreatedAt.
@@ -487,13 +485,7 @@ func (m *Memstore) ListCampaigns(_ context.Context) ([]store.Campaign, error) {
 
 // GetCampaign returns a campaign by ID, or ErrNotFound.
 func (m *Memstore) GetCampaign(_ context.Context, id int64) (*store.Campaign, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	c, ok := m.campaigns[id]
-	if !ok {
-		return nil, store.ErrNotFound
-	}
-	return &c, nil
+	return getRow(m, m.campaigns, id)
 }
 
 // CloseCampaign marks a campaign closed at the given time.
@@ -648,13 +640,7 @@ func (m *Memstore) ListCampaignItems(_ context.Context, campaignID int64) ([]sto
 
 // GetCampaignItem returns one item by ID, or ErrNotFound.
 func (m *Memstore) GetCampaignItem(_ context.Context, id int64) (*store.CampaignItem, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	it, ok := m.campaignItems[id]
-	if !ok {
-		return nil, store.ErrNotFound
-	}
-	return &it, nil
+	return getRow(m, m.campaignItems, id)
 }
 
 // DecideCampaignItem records a certify/revoke decision on an item.
@@ -1241,13 +1227,7 @@ func (m *Memstore) ListUsers(_ context.Context, limit int, afterID int64) ([]sto
 
 // GetUser returns the user with the given ID, or ErrNotFound.
 func (m *Memstore) GetUser(_ context.Context, id int64) (*store.User, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	u, ok := m.users[id]
-	if !ok {
-		return nil, store.ErrNotFound
-	}
-	return &u, nil
+	return getRow(m, m.users, id)
 }
 
 // UpdateUserRole changes a user's role, leaving username and token untouched;
@@ -1278,13 +1258,7 @@ func (m *Memstore) GetUserByTokenHash(_ context.Context, tokenHashHex string) (*
 
 // DeleteUser removes a user by ID; ErrNotFound if absent.
 func (m *Memstore) DeleteUser(_ context.Context, id int64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.users[id]; !ok {
-		return store.ErrNotFound
-	}
-	delete(m.users, id)
-	return nil
+	return deleteRow(m, m.users, id)
 }
 
 // CreateAgentKey inserts an agent key, assigning its ID and CreatedAt; ErrConflict
@@ -1331,13 +1305,7 @@ func (m *Memstore) ListAgentKeys(_ context.Context) ([]store.AgentKey, error) {
 
 // DeleteAgentKey removes an agent key by ID; ErrNotFound if absent.
 func (m *Memstore) DeleteAgentKey(_ context.Context, id int64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.agentKeys[id]; !ok {
-		return store.ErrNotFound
-	}
-	delete(m.agentKeys, id)
-	return nil
+	return deleteRow(m, m.agentKeys, id)
 }
 
 // RecordSSHCert stores an issued operator SSH certificate (Phase 28); ErrConflict
@@ -1617,13 +1585,7 @@ func vendorGrantActive(g store.VendorGrant, now time.Time) bool {
 
 // GetAgentKey returns an agent key by ID (regardless of disabled), or ErrNotFound.
 func (m *Memstore) GetAgentKey(_ context.Context, id int64) (*store.AgentKey, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	k, ok := m.agentKeys[id]
-	if !ok {
-		return nil, store.ErrNotFound
-	}
-	return &k, nil
+	return getRow(m, m.agentKeys, id)
 }
 
 // CreateAppKey inserts an application key; ErrConflict if the token hash is taken.
@@ -1722,13 +1684,7 @@ func (m *Memstore) ListAppSecretGrants(_ context.Context, appID int64) ([]store.
 
 // DeleteAppSecretGrant removes a grant by ID, or ErrNotFound.
 func (m *Memstore) DeleteAppSecretGrant(_ context.Context, id int64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.appGrants[id]; !ok {
-		return store.ErrNotFound
-	}
-	delete(m.appGrants, id)
-	return nil
+	return deleteRow(m, m.appGrants, id)
 }
 
 // AppMayAccessCredential reports whether app appID has a grant for credentialID.
@@ -1865,13 +1821,7 @@ func (m *Memstore) ListSettings(_ context.Context) ([]store.Setting, error) {
 
 // DeleteSetting removes the override for key; ErrNotFound if absent.
 func (m *Memstore) DeleteSetting(_ context.Context, key string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.settings[key]; !ok {
-		return store.ErrNotFound
-	}
-	delete(m.settings, key)
-	return nil
+	return deleteRow(m, m.settings, key)
 }
 
 // CreateProfile inserts a custom permission profile; ErrConflict on a duplicate name.
@@ -1916,13 +1866,7 @@ func (m *Memstore) ListProfiles(_ context.Context) ([]store.Profile, error) {
 
 // DeleteProfile removes a profile by ID; ErrNotFound if absent.
 func (m *Memstore) DeleteProfile(_ context.Context, id int64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.profiles[id]; !ok {
-		return store.ErrNotFound
-	}
-	delete(m.profiles, id)
-	return nil
+	return deleteRow(m, m.profiles, id)
 }
 
 // AppendBrokerAuditLinked links the event to the current head and appends it
@@ -2035,7 +1979,15 @@ func (m *Memstore) ListSessions(_ context.Context) ([]store.Session, error) {
 		}
 		out = append(out, s)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	// Newest first, with a stable id tiebreak so two sessions created in the same
+	// instant order deterministically — matching pgstore's ORDER BY, so the two
+	// implementations cannot disagree on an ordering the contract test can compare.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID > out[j].ID
+	})
 	return out, nil
 }
 

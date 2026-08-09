@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -214,6 +215,24 @@ func listWindow(r *http.Request) (limit int, after int64) {
 		}
 	}
 	return limit, after
+}
+
+// pagedList builds a GET handler for a store list method that takes only the
+// (limit, after) window — the plainest listing shape, with no filter parameters.
+// It reads the window, calls list, maps a store error to its status, and writes
+// the page as JSON. A free function, not a method, because Go does not allow type
+// parameters on methods. Handlers whose store method takes a filter (a target id,
+// a status, an active flag) keep their own bodies.
+func pagedList[T any](s *Server, list func(context.Context, int, int64) ([]T, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		limit, after := listWindow(r)
+		items, err := list(r.Context(), limit, after)
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, items)
+	}
 }
 
 // maxAuditResponsePage bounds how many audit events one HTTP response may carry.
