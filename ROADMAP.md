@@ -2359,7 +2359,12 @@ test) and Phase 93 (the command-gate honesty docs). The review that produced the
 also confirmed the vault, the database proxies and the broker four-eyes **sound**
 — two clean subsystems in a row, the honest signal to stop looking.
 
-- [x] **v0.18.1** through the test-gated pipeline, rehearsed on `main` first
+- [x] **v0.18.1** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-09 as `ghcr.io/morandeirachema/pamv1:0.18.1` (also `latest`),
+  digest
+  `sha256:d1c1bc870b81d7d6497b4be28095f0a3e337f68da407ab62d267abaf3de24184`,
+  **public** (anonymous pull 200). Keyless-signed with the SBOM and SLSA
+  provenance as OCI referrers; the Release carries `sbom.spdx.json`
 - [x] All five pins via the sweep; Helm chart `version` 0.9.0 -> **0.9.1**
 - [x] Both READMEs restated; label-vs-URL equality re-checked (0 mismatches)
 
