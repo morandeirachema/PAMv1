@@ -2351,6 +2351,38 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 97 — Observability parity: the audit trail's operational twin ✅
+
+Phase 96 made the security *audit* trail consistent across paths; this does the
+same for the *operational* logs and the timestamps that reach a SIEM. Found in
+the same review.
+
+- [x] **`internal/session` now logs under `service=session`.** The package
+  (2,260 LoC) had twenty-one log lines calling package-level `slog` directly —
+  including the cross-replica authentication refusals (*"REJECTED an
+  unauthenticated cross-replica session kill"*, *"REJECTED unauthenticated bus
+  payloads"*, *"REJECTED an unauthenticated cross-replica step-up decision"*) —
+  so they landed on the untagged default logger while every other subsystem
+  carried a `service` tag. A `*slog.Logger` is now held on `Registry`, `Cluster`
+  and `StepUp`, resolved at construction (never at package scope, because
+  `logging.Component` binds `slog.Default()`, which `main` replaces in `Setup`
+  after the package loads). The `storeError` 500-path in `internal/api` gets the
+  same `service=api` tag (resolved at call time, since it is a package function
+  with no `*Server` to reach `s.log`)
+- [x] **Two externally-serialized timestamps normalized to UTC.** The webhook
+  alert channel marshalled `alert.Event.Time` in whatever zone the caller
+  stamped (the syslog and email channels already forced UTC via `stamp`), and
+  `session.Info.Started` was a bare `time.Now()` at all six proxy/viewer/broker
+  call sites while the store rows around it were UTC. Both are now normalized at
+  their one choke point — `Webhook.Notify` before it marshals, and
+  `Registry.Register` as every session enters — so a SIEM reading webhook alerts
+  or the cross-replica live inventory never sees a mixed zone, and a new caller
+  cannot reintroduce the drift
+- [x] Tests: `session.TestRegisterNormalizesStartedToUTC`,
+  `session.TestRegistryLoggerTagged`, `alert.TestWebhookSerializesTimeInUTC`
+- [x] No schema, route, wire-format or env-var change. `archgen` picks up the
+  one new `session → logging` dependency edge (regenerated in this change)
+
 ## Phase 96 — Refactor pass: cross-path security parity + convention hygiene ✅
 
 A structural review of the session-proxy family and the shared helpers, acting on

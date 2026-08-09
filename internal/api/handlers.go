@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/auditchain"
+	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
@@ -333,7 +333,11 @@ func storeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrConflict):
 		writeError(w, http.StatusConflict, "already exists")
 	default:
-		slog.Error("store error", "err", err)
+		// storeError is a package function (no *Server receiver), so it cannot
+		// reach s.log; logging.Component is resolved here at call time — a request
+		// path, long after logging.Setup — so it carries service=api and the
+		// configured format, matching every other line the api package emits.
+		logging.Component("api").Error("store error", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 	}
 }

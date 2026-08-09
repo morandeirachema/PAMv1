@@ -42,6 +42,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/morandeirachema/pamv1/internal/logging"
 )
 
 // Kinds of LiveFrame carried on the cross-replica bus.
@@ -180,6 +182,8 @@ type Cluster struct {
 	// audit records relay-visible security events. Optional: nil disables it, which
 	// is what the in-process tests use.
 	audit func(ctx context.Context, action, detail string)
+	// log is the operational logger, tagged service=session.
+	log *slog.Logger
 }
 
 // ClusterConfig is what StartCluster needs. BusKey is mandatory: it is the
@@ -220,12 +224,13 @@ func StartCluster(ctx context.Context, cfg ClusterConfig) (*Cluster, error) {
 	if replica == "" {
 		replica = randID()
 	}
+	log := logging.Component("session")
 	// A previous run of this replica may have crashed without deleting its
 	// rows; they would age out of listings anyway, but purging now means a
 	// restart never shows ghosts even briefly.
 	purgeCtx, cancel := context.WithTimeout(ctx, busOpTimeout)
 	if err := st.DeleteReplicaLiveSessions(purgeCtx, replica); err != nil {
-		slog.Warn("live inventory: purging previous rows failed; stale rows will age out", "replica", replica, "err", err)
+		log.Warn("live inventory: purging previous rows failed; stale rows will age out", "replica", replica, "err", err)
 	}
 	cancel()
 
@@ -248,6 +253,7 @@ func StartCluster(ctx context.Context, cfg ClusterConfig) (*Cluster, error) {
 		removed:       make(map[string]time.Time),
 		watched:       make(map[string]int),
 		frames:        make(chan LiveFrame, forwardQueueSize),
+		log:           log,
 	}
 	reg.attachCluster(c)
 	hub.setRelay(c)
@@ -336,7 +342,7 @@ func (c *Cluster) WatchRemote(ctx context.Context, id string) (bool, error) {
 	actx, cancel := context.WithTimeout(ctx, busOpTimeout)
 	defer cancel()
 	if err := c.announceInterest(actx, id); err != nil {
-		slog.Warn("live watch: interest announcement failed; retrying on the next tick", "session", id, "err", err)
+		c.log.Warn("live watch: interest announcement failed; retrying on the next tick", "session", id, "err", err)
 	}
 	return true, nil
 }
@@ -416,7 +422,7 @@ func (c *Cluster) sessionRegistered(info Info) {
 	ctx, cancel := context.WithTimeout(context.Background(), busOpTimeout)
 	defer cancel()
 	if err := c.st.PutLiveSession(ctx, info); err != nil {
-		slog.Warn("live inventory: session upsert failed; the heartbeat will retry", "session", info.ID, "err", err)
+		c.log.Warn("live inventory: session upsert failed; the heartbeat will retry", "session", info.ID, "err", err)
 	}
 }
 
@@ -435,7 +441,7 @@ func (c *Cluster) sessionRemoved(id string) {
 	ctx, cancel := context.WithTimeout(context.Background(), busOpTimeout)
 	defer cancel()
 	if err := c.st.DeleteLiveSession(ctx, id); err != nil {
-		slog.Warn("live inventory: session delete failed; the row will age out", "session", id, "err", err)
+		c.log.Warn("live inventory: session delete failed; the row will age out", "session", id, "err", err)
 	}
 	// The end marker goes through the SAME queue as the data frames, not straight
 	// to the bus. Publishing it directly raced the queue: an exec-shaped run
@@ -448,7 +454,7 @@ func (c *Cluster) sessionRemoved(id string) {
 	select {
 	case c.frames <- LiveFrame{ID: id, Kind: LiveFrameEnd}:
 	case <-time.After(endMarkerEnqueueWait):
-		slog.Warn("live relay: end marker could not be queued; remote watchers will close on staleness",
+		c.log.Warn("live relay: end marker could not be queued; remote watchers will close on staleness",
 			"session", id)
 	}
 }
@@ -467,7 +473,7 @@ func (c *Cluster) runPublisher(ctx context.Context) {
 		case f := <-c.frames:
 			sealed, serr := c.sealer.sealFrame(f)
 			if serr != nil {
-				slog.Error("live relay: sealing a frame failed; dropping it", "session", f.ID, "err", serr)
+				c.log.Error("live relay: sealing a frame failed; dropping it", "session", f.ID, "err", serr)
 				continue
 			}
 			pctx, cancel := context.WithTimeout(ctx, busOpTimeout)
@@ -475,7 +481,7 @@ func (c *Cluster) runPublisher(ctx context.Context) {
 			cancel()
 			if err != nil {
 				if !warned && ctx.Err() == nil {
-					slog.Warn("live relay: frame publish failed; remote watchers are missing output", "err", err)
+					c.log.Warn("live relay: frame publish failed; remote watchers are missing output", "err", err)
 					warned = true
 				}
 			} else {
@@ -597,7 +603,7 @@ func (c *Cluster) runAnnouncer(ctx context.Context) {
 					continue
 				}
 				if perr := c.announceInterest(actx, id); perr != nil {
-					slog.Warn("live watch: interest re-announcement failed", "session", id, "err", perr)
+					c.log.Warn("live watch: interest re-announcement failed", "session", id, "err", perr)
 					break // one failure means the bus is down; do not warn per id
 				}
 			}
@@ -621,13 +627,13 @@ func (c *Cluster) runAnnouncer(ctx context.Context) {
 		}
 		c.rmu.Unlock()
 		if n := c.dropped.Swap(0); n > 0 {
-			slog.Warn("live relay: forward queue overflowed; remote watchers missed output frames", "dropped", n)
+			c.log.Warn("live relay: forward queue overflowed; remote watchers missed output frames", "dropped", n)
 		}
 		if nf, ni := c.rejFrames.Swap(0), c.rejInterest.Swap(0); nf > 0 || ni > 0 {
 			// Someone is putting payloads on the bus that this cluster's key does not
 			// vouch for. Benign causes exist (a replica still holding an old key
 			// during a rotation), but so does the one this seal was added for.
-			slog.Warn("live relay: REJECTED unauthenticated bus payloads",
+			c.log.Warn("live relay: REJECTED unauthenticated bus payloads",
 				"frames", nf, "interest", ni, "replica", c.replica)
 		}
 	}
@@ -672,7 +678,7 @@ func (c *Cluster) heartbeatOnce(ctx context.Context) {
 		info.Replica = c.replica
 		if err := c.st.PutLiveSession(hctx, info); err != nil {
 			if ctx.Err() == nil {
-				slog.Warn("live inventory: heartbeat upsert failed", "err", err)
+				c.log.Warn("live inventory: heartbeat upsert failed", "err", err)
 			}
 			return // one failure means the store is down; retry next beat
 		}
