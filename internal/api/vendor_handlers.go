@@ -72,15 +72,6 @@ func (s *Server) createVendor(w http.ResponseWriter, r *http.Request) {
 
 // listVendors returns a page of the registered vendors (?limit=&after=).
 // Requires CapReadInventory.
-func (s *Server) listVendors(w http.ResponseWriter, r *http.Request) {
-	limit, after := listWindow(r)
-	vendors, err := s.store.ListVendors(r.Context(), limit, after)
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, vendors)
-}
 
 // updateVendor edits a vendor's organization label in place. The username is
 // immutable (it links the vendor to its login identity); disabling is the
