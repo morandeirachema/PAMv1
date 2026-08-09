@@ -74,7 +74,7 @@ func startFakeMSSQL(t *testing.T, wantPass string) *fakeMSSQL {
 // keeps the fixture free of certificate plumbing), LOGIN7 accepting only
 // wantPass, then a request loop answering each with DONE.
 func (f *fakeMSSQL) serve(conn net.Conn, wantPass string) {
-	defer conn.Close() //nolint:staticcheck // the TLS wrapper below closes the same socket
+	defer conn.Close() // the TLS wrapper below closes the same socket; a double Close is harmless
 	c := tds.NewConn(conn)
 
 	typ, _, _, err := c.ReadMessage(1 << 20)

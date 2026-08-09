@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/broker"
@@ -36,11 +37,13 @@ func (s *Server) targetByName(ctx context.Context, name string) (*store.Target, 
 	return nil, fmt.Errorf("target %q not found", name)
 }
 
-// authorizeAgentTarget resolves a named target and enforces, in one place, every
-// gate an agent tool must pass before touching it: an optional expected protocol,
-// the protocol allowlist, the agent's target grants, and the four-eyes approval
-// gate (skipped only when the call was itself human-approved). It centralizes the
-// checks winrm_exec and ssh_exec share.
+// authorizeAgentTarget resolves a named target and enforces, in one place, the
+// target-scoped gates an agent tool must pass before touching it: an optional
+// expected protocol, the protocol allowlist, the agent's target grants, and the
+// four-eyes approval gate (skipped only when the call was itself human-approved).
+// It centralizes the checks winrm_exec and ssh_exec share. One gate cannot live
+// here: the vendor-contract gate is scoped to the login *account*, so each tool
+// applies vendorGateAgent as soon as it has resolved the credential.
 func (s *Server) authorizeAgentTarget(ctx context.Context, p *auth.Principal, name, wantProto string) (*store.Target, error) {
 	target, err := s.targetByName(ctx, name)
 	if err != nil {
@@ -81,9 +84,10 @@ func (s *Server) firstCredential(ctx context.Context, target *store.Target) (*st
 	return &creds[0], nil
 }
 
-// authorizeAgentCredential resolves a credential by id and applies the SAME two
-// gates the connect tools apply — the target grant and, unless the call already
-// carries an approval, the four-eyes/maintenance-window requirement.
+// authorizeAgentCredential resolves a credential by id and applies the SAME
+// gates the connect tools apply — the target grant, then (unless the call
+// already carries an approval) the four-eyes/maintenance-window requirement,
+// and finally the vendor-contract gate on the credential's account.
 //
 // The approval half used to be missing here, which meant the least-trusted actor
 // in the system had the weakest gate: with `require_approval` set on a target, a
@@ -116,7 +120,32 @@ func (s *Server) authorizeAgentCredential(ctx context.Context, p *auth.Principal
 			return nil, nil, fmt.Errorf("target %q requires an approved access request", target.Name)
 		}
 	}
+	if err := s.vendorGateAgent(ctx, p, target, cred.Username); err != nil {
+		return nil, nil, err
+	}
 	return cred, target, nil
+}
+
+// vendorGateAgent enforces the vendor-contract gate (Phase 29) on an agent
+// tool's access to a target account, exactly as every operator path enforces
+// it: a vendor identity reaches a target account only while an approved,
+// in-window contract grant covers that account. Non-vendor principals pass
+// untouched. The gate needs the login account, so it runs after the tool has
+// resolved the credential — always before any secret exists. A refusal is
+// audited under the same access.denied/vendor-contract vocabulary the proxies
+// and the REST paths use, so SIEM export and risk analytics see broker
+// refusals like every other kind, on top of the broker's own chained record
+// of the failed call.
+func (s *Server) vendorGateAgent(ctx context.Context, p *auth.Principal, target *store.Target, account string) error {
+	isVendor, allowed, err := s.store.VendorSessionAllowed(ctx, p.Name, target.Name, account, time.Now())
+	if err != nil {
+		return err
+	}
+	if isVendor && !allowed {
+		s.auditAs(ctx, p.Name, "access.denied", "target:"+target.Name+" reason:vendor-contract")
+		return fmt.Errorf("vendor access requires an approved, in-window contract grant for this account")
+	}
+	return nil
 }
 
 // argInt64 reads a numeric argument (JSON numbers decode to float64).
@@ -165,6 +194,11 @@ func (t *winrmExecTool) Execute(ctx context.Context, p *auth.Principal, args bro
 	}
 	cred, err := t.s.firstCredential(ctx, target)
 	if err != nil {
+		return broker.Result{}, err
+	}
+	// Vendor contract gate (Phase 29): account-scoped, so it runs once the
+	// credential — and with it the login account — is known.
+	if err := t.s.vendorGateAgent(ctx, p, target, cred.Username); err != nil {
 		return broker.Result{}, err
 	}
 	// An agent's execution is a supervised session too: capped, listed and killable
@@ -227,6 +261,11 @@ func (t *sshExecTool) Execute(ctx context.Context, p *auth.Principal, args broke
 	}
 	cred, err := t.s.firstCredential(ctx, target)
 	if err != nil {
+		return broker.Result{}, err
+	}
+	// Vendor contract gate (Phase 29): account-scoped, so it runs once the
+	// credential — and with it the login account — is known.
+	if err := t.s.vendorGateAgent(ctx, p, target, cred.Username); err != nil {
 		return broker.Result{}, err
 	}
 	if cred.SecretType == "ssh_ca" {

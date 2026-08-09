@@ -1018,6 +1018,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-09 | Phase 96 (refactor pass): cross-path security parity — the agent broker's tools now pass the same vendor-contract gate as every other target path (`Server.vendorGateAgent`), the SSH proxy's vendor refusal uses the shared `access.denied` audit action, the PostgreSQL/SSH deny paths bound the untrusted login with `auditField`, the proxy WinRM loop audits `winrm.run` fail-closed, and `-split-key` rejects an unparsable quorum. Convention hygiene: nine restored doc comments, four `//nolint:` → real `#nosec`/plain comments, `contains` → `slices.Contains`, dead `sshca.LoadOrCreate` removed. No package moved. |
 | 2026-08-09 | Phase 95 (documentation currency pass): the package map gains the ten packages that had shipped without a node (`keycustody`, `cmdguard`, `blast`, `vendor`, `recording`, `tds`, `auditfmt`, `auditfwd`, `ocsf`, `ratelimit`); the ITSM gate paragraph covers the Phase 84 ServiceNow/Jira connectors and the Phase 60 use-time re-check; the CI-gate list adds the manifests job (helm lint + render + kubeconform); header 0–80 → 0–94. |
 | 2026-07-24 | Phase 25 (console parity): §4.3 notes the new portal screens (safes, campaigns, risk, live watch pane) and the fetch-based SSE reader. Portal-only change — no Go surface moved. |
 | 2026-07-23 | Doc-quality pass: current CI-gate list (`staticcheck`/`govulncheck`/`gosec` + live-Postgres/PKCS#11/sops); current migration high-water mark; header currency. |

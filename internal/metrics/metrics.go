@@ -83,6 +83,10 @@ func (m *Metrics) SetBuildInfo(version, commit string) {
 	m.buildVersion, m.buildCommit = version, commit
 }
 
+// SetActiveSessionsSource registers a callback the metrics endpoint calls to
+// report the current number of live sessions. It is wired after the session
+// registry exists, so the gauge reflects the registry without the metrics
+// package importing it.
 func (m *Metrics) SetActiveSessionsSource(fn func() int) {
 	m.mu.Lock()
 	m.activeSessions = fn

@@ -495,8 +495,14 @@ func runSplitKey() error {
 	if len(key) == 0 {
 		return fmt.Errorf("no key on stdin")
 	}
-	n := getenvInt("PAM_BREAK_GLASS_SHARES", 5)
-	m := getenvInt("PAM_BREAK_GLASS_THRESHOLD", 3)
+	n, err := getenvInt("PAM_BREAK_GLASS_SHARES", 5)
+	if err != nil {
+		return err
+	}
+	m, err := getenvInt("PAM_BREAK_GLASS_THRESHOLD", 3)
+	if err != nil {
+		return err
+	}
 	shares, err := shamir.Split(key, n, m)
 	if err != nil {
 		return err
@@ -509,14 +515,21 @@ func runSplitKey() error {
 }
 
 // getenvInt returns the integer value of the named environment variable, or def
-// when the variable is unset or does not parse as an integer.
-func getenvInt(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
+// when the variable is unset. A set-but-unparseable value is an error rather
+// than a silent fallback to the default: the caller is the -split-key key
+// ceremony, and a typo must not quietly produce a share set with a different
+// quorum than the operator asked for. (config.Load refuses bad values for the
+// same variables the same way when the server starts.)
+func getenvInt(key string, def int) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
 	}
-	return def
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer, got %q", key, v)
+	}
+	return n, nil
 }
 
 // buildAuthenticator wires the enabled password identity sources (on-prem AD via

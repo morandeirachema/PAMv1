@@ -807,6 +807,25 @@ func TestVendorContractGateProxy(t *testing.T) {
 	}
 	client.Close()
 
+	// The refusal is recorded under the same access.denied/vendor-contract
+	// vocabulary the SQL listeners, the viewer tunnel and the REST paths use —
+	// the OCSF exporter and risk analytics key off it, so a divergent name here
+	// would silently exclude SSH refusals from SIEM export and risk scoring.
+	events, err := st.ListAudit(context.Background(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Action == "access.denied" && strings.Contains(e.Detail, "reason:vendor-contract") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("vendor refusal not audited as access.denied/vendor-contract: %+v", events)
+	}
+
 	// A customer-approved, in-window grant admits the vendor.
 	grant := &store.VendorGrant{VendorID: vendor.ID, TargetID: target.ID, Principal: upstreamUser, NotAfter: time.Now().Add(time.Hour)}
 	if err := st.CreateVendorGrant(context.Background(), grant); err != nil {

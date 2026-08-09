@@ -16,13 +16,13 @@ type discoveryIn struct {
 	Create bool     `json:"create"` // auto-create targets for new candidates
 }
 
+// maxDiscoveryScan bounds a single discovery request end to end.
+const maxDiscoveryScan = 2 * time.Minute
+
 // discoveryScan probes the given hosts for reachable management ports (SSH,
 // WinRM, RDP) and returns candidates. With create=true it onboards new ones as
 // targets (skipping hosts already inventoried for that protocol). It only checks
 // reachability — no credentials are used.
-// maxDiscoveryScan bounds a single discovery request end to end.
-const maxDiscoveryScan = 2 * time.Minute
-
 func (s *Server) discoveryScan(w http.ResponseWriter, r *http.Request) {
 	var in discoveryIn
 	if !readJSON(w, r, &in) {

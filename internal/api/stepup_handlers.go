@@ -75,6 +75,11 @@ func (s *Server) voidStepUpDecision(ctx context.Context, id string, approve bool
 	}
 }
 
+// decideStepUp handles an approver's decision on a paused, step-up-gated
+// session statement (POST /api/sessions/{id}/stepup): it verifies the decider
+// may act — a paused operator may not release their own statement — then
+// applies the approval or refusal across replicas, fail-closed audited so the
+// four-eyes trail records who released what.
 func (s *Server) decideStepUp(w http.ResponseWriter, r *http.Request) {
 	if s.stepup == nil {
 		writeError(w, http.StatusNotFound, "in-session step-up is not enabled")

@@ -23,7 +23,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -57,43 +56,6 @@ func New(signer ssh.Signer) *CertAuthority {
 	// is only for audit correlation, not security.
 	ca.serial.Store(uint64(time.Now().UnixNano()))
 	return ca
-}
-
-// LoadOrCreate parses an OpenSSH CA private key from path, generating and
-// persisting a fresh ed25519 key (0600) when the file does not yet exist — so
-// the CA public key stays stable across restarts (targets pin it). An empty
-// path is an error: a ZSP CA must be persistent to be useful.
-func LoadOrCreate(path string) (*CertAuthority, error) {
-	if path == "" {
-		return nil, errors.New("sshca: a persistent key path is required")
-	}
-	data, err := os.ReadFile(path)
-	if err == nil {
-		signer, perr := ssh.ParsePrivateKey(data)
-		if perr != nil {
-			return nil, fmt.Errorf("sshca: parse CA key %q: %w", path, perr)
-		}
-		return New(signer), nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	block, err := ssh.MarshalPrivateKey(priv, "")
-	if err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(path, encodePEM(block), 0o600); err != nil {
-		return nil, fmt.Errorf("sshca: write CA key: %w", err)
-	}
-	signer, err := ssh.NewSignerFromKey(priv)
-	if err != nil {
-		return nil, err
-	}
-	return New(signer), nil
 }
 
 // PublicKey returns the CA's SSH public key (what a target trusts).
@@ -212,7 +174,7 @@ func (ca *CertAuthority) IssueForKey(pub ssh.PublicKey, opts IssueOpts) (*ssh.Ce
 
 // challengeMACKey derives a stable, secret HMAC key for proof-of-possession
 // challenges from the CA private key (a signature over a fixed label). For the
-// ed25519 CA key LoadOrCreate generates by default — and any deterministic signer
+// ed25519 CA key the server generates by default — and any deterministic signer
 // (ed25519, RSA PKCS#1v1.5) — every replica sharing the CA key derives the SAME
 // key, so a challenge minted on one replica verifies on another. A randomized
 // signer (ECDSA) would derive a per-process key, so multi-replica deployments on

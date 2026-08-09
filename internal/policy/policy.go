@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -122,9 +123,9 @@ func (c Condition) match(val string, present bool) bool {
 	case c.Not != nil:
 		return !present || val != *c.Not
 	case c.In != nil:
-		return present && contains(c.In, val)
+		return present && slices.Contains(c.In, val)
 	case c.NotIn != nil:
-		return !present || !contains(c.NotIn, val)
+		return !present || !slices.Contains(c.NotIn, val)
 	case c.Gte != nil:
 		n, ok := numeric(val, present)
 		return ok && n >= *c.Gte
@@ -304,14 +305,4 @@ func stringify(v any) string {
 	default:
 		return fmt.Sprintf("%v", t)
 	}
-}
-
-// contains reports whether xs includes s.
-func contains(xs []string, s string) bool {
-	for _, x := range xs {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }

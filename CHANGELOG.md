@@ -11,6 +11,35 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Security
+
+- **The AI-agent broker's tools now pass the vendor-contract gate.** A vendor
+  identity is refused an out-of-contract target on the SSH, PostgreSQL, SQL
+  Server and RDP/VNC-viewer paths, but the broker's `ssh_exec`, `winrm_exec`,
+  `reveal_credential` and `rotate_credential` tools did not check it — so a
+  vendor holding the broker capability could reach an account it was refused
+  everywhere else. The account-scoped gate now runs in every tool once the
+  credential is resolved (Phase 96, Phase 29).
+- **A vendor-contract refusal on the SSH proxy is now audited as
+  `access.denied`,** matching the SQL proxies, the viewer tunnel and the REST
+  paths. It had been `session.denied`, a name the OCSF exporter and the risk
+  analytics do not key on — so SSH vendor refusals had been silently excluded
+  from SIEM export and risk scoring.
+- **The PostgreSQL and SSH session-deny paths bound the operator-supplied login
+  before it reaches an audit row** (quoted and length-capped, as the SQL Server
+  listener already did), closing an audit-detail injection vector on an
+  attacker-controlled startup username.
+
+### Fixed
+
+- **The proxy's WinRM command loop withholds output when its `winrm.run` audit
+  cannot be written,** the same fail-closed contract the REST WinRM endpoint has
+  always had.
+- **`pam-server -split-key` refuses an unparsable `PAM_BREAK_GLASS_SHARES` /
+  `PAM_BREAK_GLASS_THRESHOLD`** instead of silently falling back to a default,
+  so a typo cannot mint a share set with a different quorum than the server
+  would accept at startup.
+
 ## [0.18.1] — 2026-08-09
 
 Findings from an adversarial review of the crown-jewel subsystems (vault, the SFTP

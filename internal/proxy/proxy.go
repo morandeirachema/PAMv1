@@ -543,12 +543,16 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	role := auth.Role(ext["role"])
 	remote := sconn.RemoteAddr().String()
 	p.log.Info("connection authenticated", "actor", actor, "role", string(role),
-		"login", login, "remote", remote)
+		"login", auditField(login, 64), "remote", remote)
+
+	// The operator picked login at their client, so every use below is bounded
+	// and quoted (auditField) before it reaches a log line or an audit row —
+	// exactly as authenticate and the two SQL listeners bound it.
 
 	// An enrollment-only session (MFA setup pending) may not open sessions.
 	if ext["enroll_only"] == "true" {
 		p.log.Warn("session denied: mfa enrollment incomplete", "actor", actor, "remote", remote)
-		p.audit(ctx, actor, "session.denied", "login:"+login+" reason:mfa-enrollment-incomplete")
+		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
 		rejectAll(chans, ssh.Prohibited, "pamv1: complete MFA enrollment first")
 		return
 	}
@@ -558,15 +562,15 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	if ext["can_connect"] != "true" {
 		p.log.Warn("session denied by role", "actor", actor, "role", string(role), "remote", remote)
 		p.audit(ctx, actor, "session.denied",
-			fmt.Sprintf("login:%s role:%s reason:role may not connect", login, role))
+			fmt.Sprintf("login:%s role:%s reason:role may not connect", auditField(login, 64), role))
 		rejectAll(chans, ssh.Prohibited, "pamv1: your role may not open sessions")
 		return
 	}
 
 	target, cred, err := p.resolveTarget(ctx, ext["target"], ext["cred_user"])
 	if err != nil {
-		p.log.Warn("session denied", "actor", actor, "login", login, "reason", err.Error(), "remote", remote)
-		p.audit(ctx, actor, "session.denied", fmt.Sprintf("login:%s reason:%v", login, err))
+		p.log.Warn("session denied", "actor", actor, "login", auditField(login, 64), "reason", err.Error(), "remote", remote)
+		p.audit(ctx, actor, "session.denied", fmt.Sprintf("login:%s reason:%v", auditField(login, 64), err))
 		rejectAll(chans, ssh.Prohibited, "pamv1: "+err.Error())
 		return
 	}
@@ -631,7 +635,11 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		return
 	} else if isVendor && !allowed {
 		p.log.Warn("session denied: vendor contract", "actor", actor, "target", target.Name, "remote", remote)
-		p.audit(ctx, actor, "session.denied", "target:"+target.Name+" reason:vendor-contract")
+		// access.denied, not session.denied: the SQL listeners, the viewer tunnel
+		// and the REST paths all record a vendor-contract refusal under
+		// access.denied, and the OCSF exporter and risk analytics key off that
+		// vocabulary — a second name would silently exclude SSH refusals.
+		p.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:vendor-contract")
 		rejectAll(chans, ssh.Prohibited, "pamv1: vendor access requires an approved, in-window contract grant")
 		return
 	}
@@ -1265,9 +1273,11 @@ func (p *Proxy) winrmShellLoop(ctx context.Context, ch ssh.Channel, out io.Write
 	}
 }
 
-// winrmRun executes one WinRM command, streams its output through out (client +
-// recording + live hub) and audits it, returning the remote exit code. In
-// observer mode it refuses to run.
+// winrmRun executes one WinRM command, durably audits it, and only then streams
+// its output through out (client + recording + live hub), returning the remote
+// exit code. If the audit store is unavailable the output is withheld — the
+// fail-closed contract the REST WinRM endpoint has always had. In observer mode
+// it refuses to run.
 func (p *Proxy) winrmRun(ctx context.Context, out io.Writer, target *store.Target, cred *store.Credential, secret, actor string, observe bool, command string) int {
 	// Echo the command into the recording (WinRM output doesn't echo the input the
 	// way an interactive SSH shell does) so the .cast is a faithful record of what
@@ -1289,13 +1299,21 @@ func (p *Proxy) winrmRun(ctx context.Context, out io.Writer, target *store.Targe
 		p.audit(ctx, actor, "winrm.error", fmt.Sprintf("target:%s via:proxy error:%v", target.Name, err))
 		return 1
 	}
+	// Durable audit BEFORE the operator sees the output — the same withheld-result
+	// contract as the REST WinRM endpoint (execWinRM): nobody acts on output that
+	// the system of record never accounted for. The command has already run on the
+	// target either way; what fails closed is the evidence reaching the operator.
+	if aerr := appendAuditErr(ctx, p.store, p.log, actor, "winrm.run",
+		fmt.Sprintf("target:%s cred_user:%s via:proxy exit:%d cmd:%s", target.Name, cred.Username, res.ExitCode, auditCmd(command))); aerr != nil {
+		fmt.Fprint(out, "pamv1: audit log unavailable; output withheld\r\n")
+		return 1
+	}
 	if res.Stdout != "" {
 		io.WriteString(out, crlf(res.Stdout))
 	}
 	if res.Stderr != "" {
 		io.WriteString(out, crlf(res.Stderr))
 	}
-	p.audit(ctx, actor, "winrm.run", fmt.Sprintf("target:%s cred_user:%s via:proxy exit:%d cmd:%s", target.Name, cred.Username, res.ExitCode, auditCmd(command)))
 	return res.ExitCode
 }
 
@@ -1501,8 +1519,6 @@ func pumpRequestsObserver(in <-chan *ssh.Request, dst ssh.Channel, done <-chan s
 	}
 }
 
-// rejectAll rejects every pending channel with reason and msg, used to refuse a
-// connection after authentication once a policy gate fails.
 // protocolSet turns a protocol list into a lookup set; an empty list returns nil
 // (meaning "allow all protocols").
 func protocolSet(ps []string) map[string]bool {
