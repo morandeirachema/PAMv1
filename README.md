@@ -37,9 +37,9 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
-runs 0–75 and **every phase has shipped**, and the current
+runs 0–94 and **every phase has shipped**, and the current
 tagged, cosign-signed release is
-**[v0.18.1](https://github.com/morandeirachema/pamv1/releases/tag/v0.18.1)** (2026-08-08;
+**[v0.18.1](https://github.com/morandeirachema/pamv1/releases/tag/v0.18.1)** (2026-08-09;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
 brokering** for SSH, PostgreSQL, WinRM and in-portal RDP; **RBAC + custom profiles** with
 AD/Entra/OIDC login and TOTP MFA; **break-glass** with M-of-N quorum unseal; **safes** and
@@ -147,7 +147,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–55, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–94, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 
@@ -210,19 +210,20 @@ PAM for AI agents — the same chokepoint, extended to autonomous tools. Opt-in 
 
 ### OT / industrial & compliance
 
-- **OT session approval (4-eyes)** — gate a target behind an **approved access request**: a user files it, a *different* approver approves (self-approval refused), and only then may the user connect — enforced on the SSH proxy, WinRM **and** RDP, with break-glass as the bypass. Per-target (`require_approval`) or global (`PAM_REQUIRE_APPROVAL`), time-boxed for maintenance windows.
+- **OT session approval (4-eyes)** — gate a target behind an **approved access request**: a user files it, a *different* approver approves (self-approval refused), and only then may the user connect — enforced on the SSH proxy, WinRM **and** RDP, with break-glass as the bypass. Per-target (`require_approval`) or global (`PAM_REQUIRE_APPROVAL`), time-boxed for maintenance windows. A request can also require a **change ticket**: format + webhook validation (Phase 20), re-checked at the moment access is used (`PAM_TICKET_REVALIDATE`, Phase 60), and — since Phase 84 — validated **first-class against [ServiceNow](https://www.servicenow.com/) or [Jira](https://www.atlassian.com/software/jira)**: the ticket's state, its change window, and that it **names the operator**, none of which a 2xx webhook could express.
 - **Third-party vendor access gate** — a vendor reaches a target only inside a **time-boxed contract grant** a *customer* approved (never the vendor), with live employment attestation; an offboard revokes every grant and cuts live sessions instantly, a sweeper ends sessions the moment the window closes, and per-vendor evidence exports carry a SHA-256 digest.
-- **Access certification with real separation of duties** — periodic campaigns snapshot who has access to what; a dedicated `approver` certifies or revokes each item **without** holding any access-granting capability, and the principal who *created* a grant cannot certify it themselves (revoking your own grant stays allowed — it only reduces access).
+- **Access certification with real separation of duties** — periodic campaigns snapshot who has access to what; a dedicated `approver` certifies or revokes each item **without** holding any access-granting capability, and the principal who *created* a grant cannot certify it themselves (revoking your own grant stays allowed — it only reduces access). Campaigns can be **scoped** (by safe or subject) and **scheduled/recurring**, items carry a per-item **reviewer assignment**, and reviewers are **nudged before a campaign lapses** (Phases 68–70).
 - **Identity blast radius (CIEM)** — a read-only AWS IAM effective-permission evaluator over a normalized identity graph: escalation-path traversal, toxic-combination findings, and remediation-as-code that names the earliest edge to cut.
+- **Privileged threat analytics** — an explainable behavioral risk scorer over the audit trail (named signals, per-signal caps, re-alert cooldown), **history-aware** since Phase 86: a baseline built from the window preceding the scored one powers a **new-target novelty** signal that stays silent without history (a new joiner is not an anomaly) and a **peer-outlier** signal measured against the group median. The automated response acts only on the actor's own activity and has two rungs: **revoke logins** so the next action re-authenticates (`PAM_ANALYTICS_AUTO_STEPUP`) and **kill live sessions** (`PAM_ANALYTICS_AUTO_KILL`).
 - **OT hardening** — per-zone **protocol allowlists** (`PAM_ALLOWED_PROTOCOLS`), read-only **observer** sessions, and an **air-gap mode** (`PAM_OT_AIRGAP`) that makes zero outbound calls. See the [OT Deployment Guide](docs/OT-DEPLOYMENT.md) and the [NIS2 Compliance Pack](docs/NIS2-COMPLIANCE.md).
 
 ### Storage & operations
 
 - **PostgreSQL storage** via [pgx](https://github.com/jackc/pgx) with embedded, versioned migrations; an in-memory store for tests and demos; optional **[CloudNativePG](https://cloudnative-pg.io/) HA**.
 - **Observability** — a dependency-free [Prometheus](https://prometheus.io/) `/metrics` endpoint (request counts by status, audit volume, break-glass use, rotations, active-sessions gauge), plus a health/readiness split (`/healthz` liveness, `/readyz` checks the database).
-- **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. The release pipeline builds by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance** — see [Verifying a release](#verifying-a-release). *Current release: **[v0.18.1](https://github.com/morandeirachema/pamv1/releases/tag/v0.18.1)** (2026-08-08; first was v0.10.0) — the signed image is public at `ghcr.io/morandeirachema/pamv1:0.18.1`, which is what every manifest here pins, so the published-artifact paths below work.*
+- **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. The release pipeline builds by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance** — see [Verifying a release](#verifying-a-release). *Current release: **[v0.18.1](https://github.com/morandeirachema/pamv1/releases/tag/v0.18.1)** (2026-08-09; first was v0.10.0) — the signed image is public at `ghcr.io/morandeirachema/pamv1:0.18.1`, which is what every manifest here pins, so the published-artifact paths below work.*
 - **Encrypted secrets in git** — the Kubernetes secret manifest can be sealed with **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: values are encrypted while `kind`/`metadata` stay reviewable, decrypted at deploy time (`sops -d | kubectl apply -f -`, plaintext never on disk) or natively by Flux / Argo / helm-secrets — so secrets live in the **same IaC repo** without leaking. See **[deploy/k8s/sops/](deploy/k8s/sops/)**.
-- **Or source secrets from CyberArk Conjur** — as a runtime alternative to SOPS, set `PAM_CONJUR_URL` and pamv1 fetches its own bootstrap secrets (master key, API key, DB URL, …) from **[Conjur](https://www.conjur.org/)** at startup, authenticating with a host API key or a **Kubernetes `authn-jwt`** projected token — so no bootstrap secret lives in Git at all. Both mechanisms ship; SOPS stays the zero-dependency default. See **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
+- **Or source secrets from CyberArk Conjur** — as a runtime alternative to SOPS, set `PAM_CONJUR_URL` and pamv1 fetches its own bootstrap secrets (master key, API key, DB URL, …) from **[Conjur](https://www.conjur.org/)** at startup, authenticating with a host API key or a **Kubernetes `authn-jwt`** projected token — so no bootstrap secret lives in Git at all. With `PAM_CONJUR_REFRESH_MIN` (Phase 78), the secrets that can honestly change on a running server (`PAM_API_KEY`, `PAM_BREAK_GLASS_KEY_HASH`) are **re-read periodically without a restart**; the KEK, database URL and audit-chain keys stay pinned to a restart by design. Both mechanisms ship; SOPS stays the zero-dependency default. See **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
 
 ## Roles, users & profiles
 
@@ -269,7 +270,7 @@ disable the proxy with `PAM_SSH_ADDR=off`.
 
 ## Roadmap
 
-Every phase (0–55) has shipped — full per-phase detail in **[ROADMAP.md](ROADMAP.md)**:
+Every phase (0–94) has shipped — full per-phase detail in **[ROADMAP.md](ROADMAP.md)**:
 
 | Phase | Theme | Status |
 |---|---|---|
@@ -344,14 +345,22 @@ Every phase (0–55) has shipped — full per-phase detail in **[ROADMAP.md](ROA
 | 60 | The ticket gate holds at connect time (the change ticket is re-checked when access is used, at all five gates) | ✅ shipped |
 | 61 | A dependent account names the credential that manages it (propagation stops logging in as the account it rotates) | ✅ shipped |
 
-Since 52g the work has been **release and consolidation**: v0.10.0 (the first signed,
-attested release) and v0.11.0 (which brings the pinned image back in step with the tree —
-0.10.0 predated the ten fixes from the 2026-07-30 sweep), tests for the
-one package that had none (`cmd/pam-server`, the startup wiring), the broker audit keys
-moved into KEK-sealed shared custody, WinRM sessions joined the live monitor, the RDP
-clipboard became tightenable per target, watch streams now end with their session, and a
-max-effort review of that whole wave closed fifteen further findings. Releases are
-recorded in **[CHANGELOG.md](CHANGELOG.md)**; the honest remainder lives in
+The table stops at 61 to stay readable; **phases 62–94 shipped just as
+completely** (each has its own section in [ROADMAP.md](ROADMAP.md)): the first
+release wave and its reviews (62–66), the token-exchange console screen (67),
+certification-campaign depth — scoping, scheduling, per-item reviewers,
+reminders (68–70), a console safety net (71), the store recomposed on role
+interfaces (72), honest CI coverage (73), database-proxy policy parity pinned
+by a drift gate (74), an `internal/api` decomposition (75), one shared audit
+sanitiser + strict input validation (76–77), bootstrap secrets refreshable at
+runtime (78), working GitOps deploy examples and the quickstart bug they
+uncovered (79–80), an end-to-end "prove it is a PAM" CI job (81–82),
+first-class ServiceNow/Jira ticket connectors (84), history-aware analytics
+with a revoke-logins response rung (86–87), the open-findings backlog closed
+(89), and an adversarial review of the crown jewels (91–93) that fixed one
+SFTP read-only containment gap and confirmed the vault, database proxies and
+broker four-eyes sound — released steadily as **v0.10.0 → v0.18.1**. Releases
+are recorded in **[CHANGELOG.md](CHANGELOG.md)**; the honest remainder lives in
 **[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**.
 
 ## Coverage vs. commercial PAM (CyberArk, Wallix, …)

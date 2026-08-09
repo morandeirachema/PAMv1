@@ -2,7 +2,7 @@
 
 > **Living document.** Update when an OT-relevant control or flow changes.
 >
-> Last updated: 2026-08-08 · Reflects: Phases 0–70 (53–70 add nothing OT-specific; the certification reminders use the existing alert channel, which `PAM_OT_AIRGAP` already governs). (introduced Phase 8).
+> Last updated: 2026-08-09 · Reflects: Phases 0–94 (53–94 add nothing OT-specific; the certification reminders use the existing alert channel, which `PAM_OT_AIRGAP` already governs, and Phase 92 made read-only SFTP fail closed on native link/lock operations — a containment tightening OT sites get automatically). (introduced Phase 8).
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** This guide
 > describes how pamv1 is *designed* to fit an OT architecture; validate every

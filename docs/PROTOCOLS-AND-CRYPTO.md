@@ -3,7 +3,7 @@
 > Every protocol pamv1 speaks or brokers, and every cryptographic mechanism it
 > relies on — with the file that implements each one.
 >
-> Last updated: 2026-08-09 · Reflects: Phases 0–92 (Phase 92 closes an SFTP read-only containment gap — native SSH_FXP_LINK was forwarded where the EXTENDED twin was refused; Phase 62 changed the step-up decision seal's AAD; 63–75 introduce no protocol or cryptography; Phase 76 changes no protocol or key, only how untrusted values are quoted inside three audit details — see [SECURITY-GAPS](SECURITY-GAPS.md) findings AY–BA; 77 adds input validation, no cryptography; 78 changes **when** two key-derived comparison values are read, not how).
+> Last updated: 2026-08-09 · Reflects: Phases 0–94 (Phase 93 is docs-only — the regex command gate is best-effort, and §9.4 of the ADMIN-GUIDE now says so — and 94 is the v0.18.1 release; Phase 92 closes an SFTP read-only containment gap — native SSH_FXP_LINK was forwarded where the EXTENDED twin was refused; Phase 62 changed the step-up decision seal's AAD; 63–75 introduce no protocol or cryptography; Phase 76 changes no protocol or key, only how untrusted values are quoted inside three audit details — see [SECURITY-GAPS](SECURITY-GAPS.md) findings AY–BA; 77 adds input validation, no cryptography; 78 changes **when** two key-derived comparison values are read, not how).
 
 **Phase 78 note, because it looks like cryptography and is not.** The Conjur
 refresher fingerprints each secret as the first 8 bytes of its SHA-256 to notice

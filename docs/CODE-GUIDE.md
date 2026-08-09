@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-08 · Reflects: Phases 0–80 + the 2026-07 hardening passes.
+> Last updated: 2026-08-09 · Reflects: Phases 0–94 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -142,6 +142,8 @@ flowchart TB
     vault["vault — envelope encryption + pluggable KEK"]
     store["store — persistence interface + domain types<br/>(memstore, pgstore)"]
     auth["auth — roles, capabilities, Principal, Resolver"]
+    keycustody["keycustody — shared custody of generated keys"]
+    cmdguard["cmdguard — command denylist (all discrete-command paths)"]
   end
   subgraph front["Front doors"]
     api["api — REST handlers + authz middleware + portal wiring"]
@@ -168,6 +170,7 @@ flowchart TB
   subgraph zsp["Zero Standing Privilege / analytics"]
     sshca["sshca — SSH cert authority"]
     analytics["analytics — risk scoring"]
+    blast["blast — identity blast radius (CIEM)"]
   end
   subgraph support["Supporting"]
     session["session — registry + live hub"]
@@ -176,14 +179,21 @@ flowchart TB
     alert["alert"]
     shamir["shamir (break-glass)"]
     conjur["conjur"]
-    ticket["ticket"]
+    ticket["ticket — ITSM gate (webhook · ServiceNow · Jira)"]
+    vendor["vendor — third-party access gate"]
+    recording["recording — sealed session recordings"]
+    tds["tds — SQL Server (TDS) parsing"]
+    auditfmt["auditfmt — audit-detail sanitiser"]
+    auditfwd["auditfwd — audit→SIEM forwarder"]
+    ocsf["ocsf — OCSF audit export"]
+    ratelimit["ratelimit — per-IP auth throttling"]
     metrics["metrics"]
     config["config"]
     logging["logging"]
   end
   main --> core & front & identity & lifecycle & agents & zsp & support
-  api --> core & identity & lifecycle & agents & zsp & session & winrm & guacd & alert & ticket
-  proxy --> core & session & sshca & winrm
+  api --> core & identity & lifecycle & agents & zsp & session & winrm & guacd & alert & ticket & vendor & recording & ocsf & auditfwd
+  proxy --> core & session & sshca & winrm & tds & recording
 ```
 
 The two most load-bearing cross-package couplings — memorize these:
@@ -926,8 +936,12 @@ Which secrets need a real external system to *verify* is catalogued in
   current access (target grants + safe members) into reviewable items; a **revoke**
   decision deletes the underlying grant, a certify attests. Management needs
   `CapManageUsers`, reading needs `CapReadAudit`.
-- **ITSM ticket gate** (Phase 20, `internal/ticket`) — an access request can
-  require a change/incident ticket, validated by a regex and/or a webhook, then
+- **ITSM ticket gate** (Phases 20/60/84, `internal/ticket`) — an access request
+  can require a change/incident ticket, validated by a regex and/or a webhook —
+  or, since Phase 84, **first-class against ServiceNow or Jira**
+  (`PAM_TICKET_PROVIDER`): the connector checks the ticket's state, its change
+  window and that it **names the operator**, and with `PAM_TICKET_REVALIDATE`
+  (Phase 60) the check runs again at the moment access is used — then
   stamped into the audit trail.
 - **Richer approval workflows** (Phase 21) — multi-tier **N-of-M** chains
   (`PAM_APPROVALS_REQUIRED`), scheduled windows (`not_before`/`not_after`), and
@@ -948,9 +962,10 @@ Tests exercise **real behavior on the security-critical path**, not mocks of it:
 - The analytics engine is a pure function, so its tests are deterministic.
 - CI (`.github/workflows/ci.yml`) gates on `gofmt -l`, `go vet`, `staticcheck`,
   `govulncheck`, `gosec`, `go build`, `go test -race`, a Docker image build, the
-  live-Postgres store contract, the PKCS#11/SoftHSM2 build, and the `sops`
-  round-trip. `cmd/archgen` regenerates the architecture diagrams and CI fails if
-  they drift.
+  live-Postgres store contract, the PKCS#11/SoftHSM2 build, a manifests job
+  (`helm lint`, a default **and** everything-on chart render, `kubeconform`), and
+  the `sops` round-trip. `cmd/archgen` regenerates the architecture diagrams and
+  CI fails if they drift.
 
 ---
 
@@ -1003,6 +1018,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-09 | Phase 95 (documentation currency pass): the package map gains the ten packages that had shipped without a node (`keycustody`, `cmdguard`, `blast`, `vendor`, `recording`, `tds`, `auditfmt`, `auditfwd`, `ocsf`, `ratelimit`); the ITSM gate paragraph covers the Phase 84 ServiceNow/Jira connectors and the Phase 60 use-time re-check; the CI-gate list adds the manifests job (helm lint + render + kubeconform); header 0–80 → 0–94. |
 | 2026-07-24 | Phase 25 (console parity): §4.3 notes the new portal screens (safes, campaigns, risk, live watch pane) and the fetch-based SSE reader. Portal-only change — no Go surface moved. |
 | 2026-07-23 | Doc-quality pass: current CI-gate list (`staticcheck`/`govulncheck`/`gosec` + live-Postgres/PKCS#11/sops); current migration high-water mark; header currency. |
 | 2026-07-21 | Initial code guide covering Phases 0–24 (vault, store, auth, api, proxy, identity, lifecycle, ZSP, analytics, broker, break-glass, governance). |
