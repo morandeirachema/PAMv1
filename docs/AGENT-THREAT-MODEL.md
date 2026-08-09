@@ -2,7 +2,7 @@
 
 > 🟢 **Living document** — updated in the same change as the broker code (see the [docs hub](README.md)).
 >
-> Last updated: 2026-08-08 · Reflects: Phases 0–70. Phases 58–70 change nothing in the agent trust model: Phase 67 added a read-only console view of the delegations this document describes, and the rest is certification and session-proxy work..
+> Last updated: 2026-08-09 · Reflects: Phases 0–94. Phases 58–94 change nothing in the agent trust model: Phase 67 added a read-only console view of the delegations this document describes, the Phase 91–94 adversarial review **confirmed the broker four-eyes path sound**, and the rest is certification, session-proxy, deploy and release work.
 >
 > Scope: the **AI-agent access broker** (Phases 13, 27, 30, 38, 39, 40, 43, 52c, 52d) — `internal/broker`,
 > `internal/policy`, `internal/agentid`, `internal/auditchain`, `internal/mcp`,

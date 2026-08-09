@@ -5,9 +5,18 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-08-08 · Reflects: Phases 0–80 (60–70 add no port, listener or egress: the certification scheduler and reminders reuse the database and the existing alert channel) (55–59 add no port and no new flow — the live-monitor relay and the step-up decision bus ride the existing server ↔ PostgreSQL store connection, flow E1; token exchange (57), safe policy (58) and SFTP content capture (59) live inside existing listeners and flows). **Phase 53 added the first new
-> listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; everything from
-> 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
+> Last updated: 2026-08-09 · Reflects: Phases 0–94. **Phase 53 added the first new
+> listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; nothing after
+> it adds a port or listener (55–94 ride the existing listeners and flows: the
+> live-monitor relay and the step-up decision bus ride the server ↔ PostgreSQL
+> store connection, flow E1; token exchange (57), safe policy (58), SFTP content
+> capture (59), the certification scheduler and reminders (68–70) and everything
+> through the Phase 91–94 adversarial review reuse the database and the existing
+> channels). The 2026-08-09 currency pass records a flow this matrix had omitted
+> since Phase 20: **E14, the outbound ITSM ticket-validation call** — a generic
+> webhook (Phase 20), first-class ServiceNow/Jira REST lookups since Phase 84,
+> re-checked at the moment access is used with `PAM_TICKET_REVALIDATE` (Phase 60).
+> Everything from 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
 > **no new listeners**: certification/ticketing/approvals (19–21), threat analytics
 > (23) and the application-secrets API (24) all ride the existing HTTP control plane
@@ -77,6 +86,7 @@ add `5433 → 5433` and/or `1433 → 1433` when the database proxies are enabled
 | E13 | pam-server (mssql proxy) | SQL Server target (target zone) | 1433 | TDS/TLS | JIT-injected brokered database session (`:1433` ingress); upstream certificate verified via `PAM_DB_UPSTREAM_CA` / `_TLS_VERIFY` | ✅ P53 |
 | E11 | pam-server | CyberArk Conjur (identity/secrets zone) | 443 | HTTPS | Source bootstrap secrets at startup, and — with `PAM_CONJUR_REFRESH_MIN` — re-read the refreshable ones every N minutes from **every replica** (optional) | ✅ P18, P78 |
 | E12 | pam-server | KMS / HSM (Vault-Transit / AWS-KMS / PKCS#11) | 443 / — | HTTPS / PKCS#11 | Envelope-encryption KEK (wrap/unwrap), when not `local` | ✅ P5 |
+| E14 | pam-server | ITSM (mgmt zone: ServiceNow / Jira / generic webhook) | 443 | HTTPS | Change-ticket validation on access requests — generic 2xx webhook (P20) or **first-class ServiceNow/Jira lookup** (P84: ticket state, change window, ticket **names the operator**); with `PAM_TICKET_REVALIDATE`, checked again at the moment access is used (P60) | ✅ P20/P60/P84 |
 
 ## 4. Internal / data-plane
 
@@ -109,6 +119,7 @@ flowchart LR
     end
     ID["AD / Entra / OIDC<br/>:636 / :443 / :88"]
     CJ["CyberArk Conjur<br/>:443 (optional)"]
+    TK["ITSM: ServiceNow / Jira / webhook<br/>:443 (optional)"]
 
     A -->|"I1 443"| S
     U -->|"I2 2222 ssh"| S
@@ -125,6 +136,7 @@ flowchart LR
     S -->|"E13 1433"| MS
     S -->|"E5 636/443"| ID
     S -->|"E11 443"| CJ
+    S -->|"E14 443"| TK
 ```
 
 Solid = implemented · dashed = planned.
@@ -157,6 +169,7 @@ allow  pam-server -> <idp-cidr>:636,443,88     tcp   # AD/Entra/OIDC (+ Conjur:4
 allow  pam-server -> <siem>:514                 udp   # audit forwarding (DEFAULT proto)
 allow  pam-server -> <siem>:514,6514           tcp   # audit forwarding over TCP/TLS; syslog alerts
 allow  pam-server -> <smtp/webhook>:587,443    tcp   # alerts (if enabled)
+allow  pam-server -> <itsm>:443                tcp   # change-ticket validation (if enabled)
 deny   pam-server -> any                              # default deny
 
 # Database is never reachable from operator or target zones
@@ -198,6 +211,7 @@ specific target hosts and protocols, and default-deny everything else across the
 
 | Date | Change |
 |---|---|
+| 2026-08-09 | **Phase 95 — documentation currency pass.** Header brought from 0–80 to 0–94 (no port or listener changed in 81–94), and the egress matrix gains **E14 — the outbound ITSM ticket-validation call** it had omitted since Phase 20: generic webhook (P20), first-class ServiceNow/Jira connectors (P84), use-time re-check (P60). Diagram and firewall summary updated with it |
 | 2026-07-31 | **Phase 56 — cross-replica step-up decisions.** No new port, listener or flow: the sealed decision channel (`pam_stepup_decision`) rides the existing pam-server ↔ PostgreSQL store connection (flow E1) as a third `LISTEN/NOTIFY` bus beside the kill and live-monitor buses, and the shared pending-pause inventory is a table (statements stored sealed). A supervisor's `GET /api/sessions/stepups` / `POST /api/sessions/{id}/stepup` may land on any replica; replicas still never talk to each other directly, so no pod-to-pod firewall rule exists to add |
 | 2026-07-29 | **Phase 55 — cross-replica live monitoring.** No new port, listener or flow: the session-frame relay and watch-interest announcements ride the existing pam-server ↔ PostgreSQL store connection (flow E1) as `LISTEN/NOTIFY` channels beside the Phase 34 kill bus, and the shared session inventory is a table. In a multi-replica deployment the supervisor's `GET /api/sessions[/{id}/stream]` may land on any replica; the inter-replica hop is always through the store — replicas never talk to each other directly, so no pod-to-pod firewall rule exists to add |
 | 2026-07-29 | **Phase 54 — VNC connector.** No new listener: the in-portal VNC viewer rides the existing `:8080`/443 control plane (a WebSocket upgrade of `GET /api/targets/{id}/vnc`, preceded by `POST /api/vnc-token`), exactly as the RDP viewer does. New egress **E4c**: guacd → VNC target on **5900**, plaintext RFB with no server authentication, so that hop belongs inside a trusted segment. Diagram and firewall summary updated (guacd's own egress is now stated separately); discovery probes 5900 |

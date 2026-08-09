@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–61 are shipped.** The narrative that follows traces the arc through
+**Phases 0–95 are shipped.** The narrative that follows traces the arc through
 Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2350,6 +2350,45 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 95 — Documentation currency pass ✅
+
+The second full currency pass (the first was 70a). Phase 94's release work
+restated the READMEs' release facts but not their story; the rest of the doc set
+had drifted header by header — accurate in body, understating in claim. Found by
+reading the docs against the code, the config surface and the release page, not
+by trusting the headers.
+
+- [x] **Every `Reflects:` header now says 0–94 / v0.18.1.** They ranged from
+  0–70 to 0–93; the docs hub still claimed release v0.13.0, NIS2 cited v0.10.0
+  as *the* published release, and both READMEs dated v0.18.1 to 2026-08-08 (the
+  GitHub release page says 2026-08-09)
+- [x] **The READMEs' story no longer stops in July.** The intro claimed the
+  roadmap "runs 0–75", "What works today" claimed 0–55, and the phase table's
+  closing paragraph still narrated the v0.11 era. Now: intro and section
+  headers say 0–94, the closing paragraph carries 62–94 (both languages), the
+  Spanish table gains the rows 56–61 the English one already had, and the
+  feature bullets absorb what shipped since — the ticket gate's Phase 60/84
+  depth, campaign scoping/scheduling/reminders (68–70), runtime secret refresh
+  (78), and a **threat-analytics bullet that had never existed** despite being
+  a Tier-3 headline (23/86)
+- [x] **PORTS-AND-FLOWS gains E14** — the outbound ITSM ticket-validation call,
+  an egress the matrix had omitted since Phase 20 and Phase 84 made
+  first-class. Table, diagram and firewall summary: a reader building a
+  NetworkPolicy from that doc would have blocked their own ticket gate
+- [x] **EXTERNAL-INFRA-GAPS' ITSM row caught up with Phase 84**: the connectors
+  are in-process now; what stays external is interop against a real
+  ServiceNow/Jira instance (the same honest status as SQL Server)
+- [x] **CODE-GUIDE**: the package map gains the ten shipped packages it lacked
+  (`keycustody`, `cmdguard`, `blast`, `vendor`, `recording`, `tds`, `auditfmt`,
+  `auditfwd`, `ocsf`, `ratelimit`), the ITSM paragraph covers 84/60, and the
+  CI-gate list adds the manifests job (helm lint + render + kubeconform)
+- [x] **Guides**: USER-GUIDE tells operators a ticket must now **name them**
+  (84), a high risk score can sign them out (86), and read-only SFTP refuses
+  link ops (92); SYSADMIN-GUIDE names the 84/86 knob families; HIGH-LEVEL
+  carries the 71–94 arc and the 84/86 capability-row depth
+- [x] Docs-only; no code, schema or route change, so the `archgen` output is
+  untouched and no release is needed
 
 ## Phase 94 — v0.18.1 ✅
 

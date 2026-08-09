@@ -38,9 +38,9 @@ de fósforo verde** sin concesiones, porque tocar un PAM debe *sentirse* serio.
 
 Construido fase a fase con una regla: **cada fase es funcional de principio a fin** — arranca,
 pasa los tests y se despliega como Infraestructura-como-Código. El **[roadmap](ROADMAP.md)**
-abarca de la 0 a la 75, **se han entregado todas las fases**, y la release etiquetada y
+abarca de la 0 a la 94, **se han entregado todas las fases**, y la release etiquetada y
 firmada con cosign vigente es la
-**[v0.18.1](https://github.com/morandeirachema/pamv1/releases/tag/v0.18.1)** (2026-08-08;
+**[v0.18.1](https://github.com/morandeirachema/pamv1/releases/tag/v0.18.1)** (2026-08-09;
 la primera fue la v0.10.0, el 2026-07-28). Lo que eso suma:
 **intermediación de sesiones JIT** para SSH, PostgreSQL, WinRM y RDP en el portal;
 **RBAC + perfiles a medida** con login AD/Entra/OIDC y MFA TOTP; **break-glass** con quórum
@@ -151,7 +151,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–55, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–94, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -214,19 +214,20 @@ Opcional vía `PAM_BROKER_POLICY_FILE`.
 
 ### OT / industrial y cumplimiento
 
-- **Aprobación de sesión OT (cuatro ojos)** — protege un objetivo tras una solicitud de acceso aprobada: un usuario la crea, un aprobador *distinto* la aprueba (se rechaza la auto-aprobación), y solo entonces puede conectar — aplicado en el proxy SSH, WinRM **y** RDP, con break-glass como bypass. Por objetivo (`require_approval`) o global (`PAM_REQUIRE_APPROVAL`), con ventana temporal para mantenimientos.
+- **Aprobación de sesión OT (cuatro ojos)** — protege un objetivo tras una solicitud de acceso aprobada: un usuario la crea, un aprobador *distinto* la aprueba (se rechaza la auto-aprobación), y solo entonces puede conectar — aplicado en el proxy SSH, WinRM **y** RDP, con break-glass como bypass. Por objetivo (`require_approval`) o global (`PAM_REQUIRE_APPROVAL`), con ventana temporal para mantenimientos. Una solicitud puede además exigir un **ticket de cambio**: validación por formato + webhook (Fase 20), re-comprobado en el momento de usar el acceso (`PAM_TICKET_REVALIDATE`, Fase 60) y — desde la Fase 84 — validado **de primera clase contra [ServiceNow](https://www.servicenow.com/) o [Jira](https://www.atlassian.com/software/jira)**: el estado del ticket, su ventana de cambio y que **nombre al operador**, nada de lo cual podía expresar un webhook 2xx.
 - **Endurecimiento OT** — **listas blancas de protocolos** por zona (`PAM_ALLOWED_PROTOCOLS`), sesiones **observador** de solo lectura y un **modo air-gap** (`PAM_OT_AIRGAP`) sin llamadas salientes. Ver la [guía de despliegue OT](docs/OT-DEPLOYMENT.md) y el [pack NIS2](docs/NIS2-COMPLIANCE.md).
 - **Puerta de acceso para terceros (proveedores)** — el acceso de un proveedor externo se rige por **concesiones de contrato acotadas en el tiempo y aprobadas por el cliente**, con atestación de empleo en vivo: si el proveedor deja de emplear a esa persona, el acceso cae. Dar de baja a un proveedor desencadena una **cascada instantánea** — se revocan las concesiones y se cortan las sesiones vivas — y hay exportación de evidencias por proveedor para SOC 2 / DORA.
-- **Campañas de certificación de accesos con separación de funciones** — un revisor recorre quién tiene acceso a qué y certifica o revoca cada elemento; **nadie puede certificar un acceso que él mismo concedió**, y revocar corta también las sesiones vivas de esa persona a los objetivos afectados, no solo la concesión.
+- **Campañas de certificación de accesos con separación de funciones** — un revisor recorre quién tiene acceso a qué y certifica o revoca cada elemento; **nadie puede certificar un acceso que él mismo concedió**, y revocar corta también las sesiones vivas de esa persona a los objetivos afectados, no solo la concesión. Las campañas pueden **acotarse** (por safe o por sujeto) y **programarse** (recurrentes), cada elemento lleva su **revisor asignado**, y se **avisa a los revisores antes de que la campaña caduque** (Fases 68–70).
 - **Radio de impacto de identidad (CIEM)** — `internal/blast` evalúa permisos efectivos de AWS IAM y recorre rutas de escalada sobre un grafo de identidad normalizado (`POST /api/blast/analyze`), señalando combinaciones tóxicas y proponiendo la remediación como código. Solo análisis de lectura: no toca credenciales de nube ni guarda estado.
+- **Analítica de amenazas privilegiadas** — un puntuador de riesgo conductual y explicable sobre el registro de auditoría (señales con nombre, topes por señal, enfriamiento entre alertas), **consciente del histórico** desde la Fase 86: una línea base construida con la ventana anterior a la puntuada alimenta una señal de **novedad de objetivo** que calla sin histórico (un recién llegado no es una anomalía) y una señal de **atípico entre pares** medida contra la mediana del grupo. La respuesta automática actúa solo sobre la actividad del propio actor y tiene dos peldaños: **revocar los inicios de sesión** para que la siguiente acción vuelva a autenticarse (`PAM_ANALYTICS_AUTO_STEPUP`) y **matar las sesiones vivas** (`PAM_ANALYTICS_AUTO_KILL`).
 
 ### Almacenamiento y operaciones
 
 - **Almacenamiento PostgreSQL** con [pgx](https://github.com/jackc/pgx) y migraciones embebidas y versionadas; un almacén en memoria para tests y demos; **alta disponibilidad con [CloudNativePG](https://cloudnative-pg.io/)** opcional.
 - **Observabilidad** — un endpoint [Prometheus](https://prometheus.io/) `/metrics` sin dependencias (conteos por estado, volumen de auditoría, uso de break-glass, rotaciones, gauge de sesiones activas), más una separación liveness/readiness (`/healthz`, `/readyz` que comprueba la BD).
-- **Despliegue como código** — [Docker](https://docs.docker.com/) (distroless, sin root), [docker-compose](https://docs.docker.com/compose/) con Postgres endurecida, manifiestos [Kubernetes](https://kubernetes.io/) bajo el PSS restringido, un **[chart de Helm](deploy/helm/pamv1)** y un módulo de [Terraform](https://developer.hashicorp.com/terraform). El pipeline de release construye por digest con **[SBOM](https://www.cisa.gov/sbom), firma keyless [cosign](https://docs.sigstore.dev/) y procedencia SLSA**. *Release vigente: **[v0.18.1](https://github.com/morandeirachema/pamv1/releases/tag/v0.18.1)** (2026-08-08; la primera fue la v0.10.0) — la imagen firmada es pública en `ghcr.io/morandeirachema/pamv1:0.18.1`, que es la que fijan todos los manifiestos, así que las rutas de instalación por artefacto publicado ya funcionan.*
+- **Despliegue como código** — [Docker](https://docs.docker.com/) (distroless, sin root), [docker-compose](https://docs.docker.com/compose/) con Postgres endurecida, manifiestos [Kubernetes](https://kubernetes.io/) bajo el PSS restringido, un **[chart de Helm](deploy/helm/pamv1)** y un módulo de [Terraform](https://developer.hashicorp.com/terraform). El pipeline de release construye por digest con **[SBOM](https://www.cisa.gov/sbom), firma keyless [cosign](https://docs.sigstore.dev/) y procedencia SLSA**. *Release vigente: **[v0.18.1](https://github.com/morandeirachema/pamv1/releases/tag/v0.18.1)** (2026-08-09; la primera fue la v0.10.0) — la imagen firmada es pública en `ghcr.io/morandeirachema/pamv1:0.18.1`, que es la que fijan todos los manifiestos, así que las rutas de instalación por artefacto publicado ya funcionan.*
 - **Secretos cifrados en git** — el manifiesto de Secret de Kubernetes puede sellarse con **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: los valores se cifran mientras `kind`/`metadata` quedan legibles, y se descifra al desplegar (`sops -d | kubectl apply -f -`, el texto plano nunca toca el disco) o de forma nativa con Flux / Argo / helm-secrets — así los secretos viven en el **mismo repo de IaC** sin filtrarse. Ver **[deploy/k8s/sops/](deploy/k8s/sops/)**.
-- **O aprovisiona los secretos desde CyberArk Conjur** — como alternativa en tiempo de ejecución a SOPS, define `PAM_CONJUR_URL` y pamv1 obtiene sus secretos de arranque (clave maestra, clave de API, URL de la BD, …) de **[Conjur](https://www.conjur.org/)** al arrancar, autenticándose con una clave de API de host o un token proyectado de Kubernetes (**`authn-jwt`**) — de modo que ningún secreto de arranque vive en Git. Ambos mecanismos se entregan; SOPS sigue siendo el predeterminado sin dependencias. Ver **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
+- **O aprovisiona los secretos desde CyberArk Conjur** — como alternativa en tiempo de ejecución a SOPS, define `PAM_CONJUR_URL` y pamv1 obtiene sus secretos de arranque (clave maestra, clave de API, URL de la BD, …) de **[Conjur](https://www.conjur.org/)** al arrancar, autenticándose con una clave de API de host o un token proyectado de Kubernetes (**`authn-jwt`**) — de modo que ningún secreto de arranque vive en Git. Con `PAM_CONJUR_REFRESH_MIN` (Fase 78), los secretos que honestamente pueden cambiar con el servidor en marcha (`PAM_API_KEY`, `PAM_BREAK_GLASS_KEY_HASH`) se **releen periódicamente sin reiniciar**; la KEK, la URL de la base de datos y las claves de la cadena de auditoría quedan ancladas a un reinicio por diseño. Ambos mecanismos se entregan; SOPS sigue siendo el predeterminado sin dependencias. Ver **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
 
 ## Roles, usuarios y perfiles
 
@@ -273,7 +274,7 @@ ves la credencial. Las grabaciones van a `PAM_RECORDING_DIR`; desactiva el proxy
 
 ## Hoja de ruta
 
-Se han entregado todas las fases (0–55) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
+Se han entregado todas las fases (0–94) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
 
 | Fase | Tema | Estado |
 |---|---|---|
@@ -340,16 +341,35 @@ Se han entregado todas las fases (0–55) — detalle por fase en **[ROADMAP.md]
 | 53 | Proxy de sesión SQL Server (TDS) — inyección JIT y auditoría por sentencia | ✅ entregada |
 | 54 | Conector VNC (intermediado por guacd, visor en el portal, mismas puertas que RDP) | ✅ entregada |
 | 55 | Monitorización en vivo entre réplicas (listado de sesiones de todo el clúster + visualización SSE mediante un relé sobre el almacén activado por interés) | ✅ entregada |
+| 56 | Decisiones de step-up entre réplicas (lista pendiente de todo el clúster, sellada en reposo; la decisión se envía a la réplica que aloja la pausa) | ✅ entregada |
+| 57 | Emisión por intercambio de tokens RFC 8693 + remediación como Terraform (el bróker emite los SVID delegados; el corte CIEM se representa como HCL) | ✅ entregada |
+| 58 | Política a nivel de safe (un safe lleva `require_approval` + un suelo de doble control; gana el más estricto en las cinco puertas) | ✅ entregada |
+| 59 | Grabación del contenido por fichero en SFTP (artefactos chunk-log sellados y encadenados por hash; reproducibles; el tope hace también de límite de tamaño) | ✅ entregada |
+| 59a | Cierre de la revisión de la 59 (tres elusiones de captura, contención del nombre del artefacto, `lsetstat`, falsificación de campos de auditoría, un panic alcanzable) | ✅ entregada |
+| 60 | La puerta de tickets aguanta al conectar (el ticket de cambio se re-comprueba al usar el acceso, en las cinco puertas) | ✅ entregada |
+| 61 | Una cuenta dependiente nombra la credencial que la gestiona (la propagación deja de iniciar sesión como la cuenta que rota) | ✅ entregada |
 
-Desde la 52g el trabajo ha sido **release y consolidación**: la v0.10.0 (la primera
-release firmada y con atestaciones), y luego la v0.11.0 y la v0.11.1 (que devolvieron la
-imagen fijada al día del árbol y la mantienen ahí — la 0.10.0 era anterior a las diez
-correcciones del barrido del 2026-07-30), tests para el único paquete que no tenía (`cmd/pam-server`, el cableado
-de arranque), las claves de auditoría del bróker pasaron a custodia compartida sellada
-por la KEK, las sesiones WinRM se unieron al monitor en vivo, el portapapeles RDP se
-volvió endurecible por objetivo, los streams de observación ahora terminan con su
-sesión, y una revisión a fondo de toda esa ola cerró quince hallazgos más. Las releases
-quedan registradas en **[CHANGELOG.md](CHANGELOG.md)**; el resto honesto vive en
+La tabla se detiene en la 61 para seguir siendo legible; **las fases 62–94 se
+entregaron igual de completas** (cada una tiene su sección en
+[ROADMAP.md](ROADMAP.md)): la primera ola de releases y sus revisiones (62–66),
+la pantalla de consola del intercambio de tokens (67), profundidad en las
+campañas de certificación — acotado, programación, revisores por elemento,
+recordatorios (68–70), una red de seguridad para la consola (71), el almacén
+recompuesto sobre interfaces de rol (72), una cobertura de CI honesta (73), la
+paridad de políticas entre los proxies de base de datos fijada por una puerta
+de deriva (74), una descomposición de `internal/api` (75), un único
+sanitizador de auditoría + validación estricta de entradas (76–77), secretos
+de arranque refrescables en caliente (78), ejemplos de despliegue GitOps que
+funcionan y el bug del quickstart que destaparon (79–80), un job de CI que
+"demuestra que es un PAM" de extremo a extremo (81–82), conectores de tickets
+de primera clase para ServiceNow/Jira (84), analítica consciente del histórico
+con un peldaño de respuesta que revoca inicios de sesión (86–87), el cierre
+del backlog de hallazgos abiertos (89), y una revisión adversarial de las
+joyas de la corona (91–93) que corrigió una brecha de contención en el SFTP de
+solo lectura y confirmó sólidos el vault, los proxies de base de datos y los
+cuatro ojos del bróker — publicado de forma continua como **v0.10.0 →
+v0.18.1**. Las releases quedan registradas en **[CHANGELOG.md](CHANGELOG.md)**;
+el resto honesto vive en
 **[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**.
 
 ## Cobertura frente al PAM comercial (CyberArk, Wallix, …)

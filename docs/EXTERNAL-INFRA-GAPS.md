@@ -10,7 +10,7 @@
 > live. This is the operator's checklist of what you must stand up (and what to
 > re-verify) before relying on each capability in production.
 >
-> Last updated: 2026-08-08 · Reflects: Phases 0–70 (58–70 needed no external infrastructure, so nothing here was added or closed by them).
+> Last updated: 2026-08-09 · Reflects: Phases 0–94 (58–94 needed no external infrastructure, so nothing here was added or closed by them; Phase 84 moved the ITSM gate's *depth* in-process with first-class ServiceNow/Jira connectors, leaving only live-instance interop verification external — see the ITSM row).
 > (Phases 25–28, 30 and 31 — console parity, recording playback + one-time
 > access, broker completion, operator SSH certificates, in-session step-up and the
 > CIEM blast-radius engine — are fully in-process and add no
@@ -110,7 +110,7 @@ to exercise fully:
 | **Audit → SIEM push forwarding** | `PAM_AUDIT_FORWARD_ADDR`/`_PROTO`/`_FORMAT`/`_CA`, `internal/auditfwd` (Phases 35, 47); in-process fake collector in CI | A syslog/SIEM collector on udp, tcp or **TLS** (`:514`/`:6514`) speaking RFC 5424, ArcSight **CEF** or QRadar **LEEF 2.0** | Events arrive in order from a durable cursor, resume after a restart with no gap or replay, one forwarder per cluster under the Postgres leader lock; with `proto=tls`, `PAM_AUDIT_FORWARD_CA` verifies fail-closed |
 | **Audit / log collection** | JSON logs on stdout (Phase 9); OCSF at `GET /api/audit/ocsf` (Phase 27) | A log collector / SIEM | The append-only audit trail and JSON logs are ingested for detection |
 | **Vendor employment attestation** | `PAM_VENDOR_ATTEST_URL`, `internal/vendor` (Phase 29); CI proves it against an `httptest` fake | A vendor-management or HR system that answers 2xx for a currently-employed technician | An offboarded technician's contract grant is refused at approval, audited `vendor.attestation_failed` |
-| **ITSM ticket gate** | `PAM_TICKET_VALIDATE_URL` + `PAM_TICKET_PATTERN`, `internal/ticket` (Phase 20) | A ServiceNow/Jira-style validation endpoint | An access request without a valid change ticket is refused, audited `access.ticket_rejected` |
+| **ITSM ticket gate** | `PAM_TICKET_VALIDATE_URL` + `PAM_TICKET_PATTERN` (Phase 20 webhook); **first-class ServiceNow/Jira connectors** via `PAM_TICKET_PROVIDER`/`_URL`/`_USER`/`_TOKEN` (Phase 84: ticket state, change window, ticket names the operator); use-time re-check with `PAM_TICKET_REVALIDATE` (Phase 60) — all in `internal/ticket`, proven in CI against in-process fakes speaking the documented REST shapes | A **real** ServiceNow or Jira instance — like SQL Server, the connector ships tested against the documented protocol but its interop with a live instance is unverified | An access request without a valid change ticket — or one whose ticket is in the wrong state, outside its window or not naming the requester — is refused, audited `access.ticket_rejected` |
 | **WORM archive storage** | `PAM_RETENTION_ARCHIVE_DIR`, `internal/api/archive.go` (Phase 49) | Genuinely write-once storage mounted at that path (S3 Object Lock, a WORM NAS) — the code writes digest-stamped exports and moves recordings, it cannot itself enforce immutability | The `audit.archived` SHA-256 matches a re-hash of the file, and a failed archive leaves the rows unpruned |
 
 `PAM_OT_AIRGAP` disables the alert channels **and refuses to start** alongside
