@@ -7,9 +7,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/morandeirachema/pamv1/internal/logging"
 )
 
 // Info describes a live session (safe to serialize to auditors).
@@ -41,10 +44,18 @@ type Registry struct {
 	cluster     *Cluster    // cross-replica inventory + live relay (nil = single-replica)
 	sealer      *liveSealer // authenticates cross-replica kills (nil = bus disabled)
 	killAudit   func(ctx context.Context, action, detail string)
+	log         *slog.Logger // operational logger, tagged service=session
 }
 
 // NewRegistry returns an empty, ready-to-use session registry.
-func NewRegistry() *Registry { return &Registry{m: make(map[string]entry)} }
+//
+// The logger is resolved here rather than at package scope on purpose:
+// logging.Component binds slog.Default(), which main replaces in logging.Setup
+// after this package is loaded — a package-level logger would capture the
+// pre-Setup default. Every NewRegistry call is at runtime, after Setup.
+func NewRegistry() *Registry {
+	return &Registry{m: make(map[string]entry), log: logging.Component("session")}
+}
 
 // SetLimits configures the concurrent-session caps: at most perActor live
 // sessions for a single actor and maxTotal across all actors (0 = unlimited).
@@ -87,6 +98,12 @@ func (r *Registry) AllowNew(actor string) bool {
 func (r *Registry) Register(info Info, kill func()) string {
 	id := randID()
 	info.ID = id
+	// Normalize the start time to UTC at the one choke point every session
+	// enters through (the SSH/DB/MSSQL proxies, the RDP/VNC viewer and the
+	// broker all call Register with a bare time.Now()). The Info is serialized
+	// into the cross-replica inventory, so a mixed local/UTC zone would reach a
+	// SIEM reading the listing; fixing it here covers every caller.
+	info.Started = info.Started.UTC()
 	r.mu.Lock()
 	r.m[id] = entry{info: info, kill: kill}
 	c := r.cluster

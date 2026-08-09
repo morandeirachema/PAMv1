@@ -11,6 +11,16 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Changed
+
+- **Operational logs from the session subsystem now carry `service=session`,**
+  including the cross-replica authentication-refusal lines — previously they
+  landed on the untagged default logger, invisible to a SIEM rule that filters
+  by service. The API's internal-error log path likewise carries `service=api`.
+- **Webhook alert timestamps and the live-session inventory are serialized in
+  UTC,** matching the syslog and email channels, so a SIEM never receives a
+  mixed local/UTC zone.
+
 ### Security
 
 - **The AI-agent broker's tools now pass the vendor-contract gate.** A vendor

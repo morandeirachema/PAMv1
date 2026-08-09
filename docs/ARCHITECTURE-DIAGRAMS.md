@@ -179,6 +179,7 @@ flowchart LR
   n_proxy --> n_winrm
   n_rotate --> n_store
   n_rotate --> n_winrm
+  n_session --> n_logging
   n_storetest --> n_session
   n_storetest --> n_store
   n_store --> n_session

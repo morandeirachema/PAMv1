@@ -36,7 +36,6 @@ package session
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"sort"
 	"time"
 )
@@ -188,7 +187,7 @@ func (s *StepUp) putRow(p *pendingStepUp, ttl time.Duration) {
 	s.mu.Unlock()
 	sealed, err := sealer.sealStepUpStatement(p.sessionID, p.actor, replica, p.statement)
 	if err != nil {
-		slog.Warn("step-up inventory: sealing the statement failed; the pause stays replica-local", "session", p.sessionID, "err", err)
+		s.log.Warn("step-up inventory: sealing the statement failed; the pause stays replica-local", "session", p.sessionID, "err", err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), busOpTimeout)
@@ -196,7 +195,7 @@ func (s *StepUp) putRow(p *pendingStepUp, ttl time.Duration) {
 	row := PendingStepUp{SessionID: p.sessionID, Actor: p.actor, Statement: sealed,
 		Requested: p.requested, Replica: replica}
 	if err := st.PutStepUp(ctx, row, ttl); err != nil {
-		slog.Warn("step-up inventory: row upsert failed; remote supervisors will not see this pause", "session", p.sessionID, "err", err)
+		s.log.Warn("step-up inventory: row upsert failed; remote supervisors will not see this pause", "session", p.sessionID, "err", err)
 	}
 }
 
@@ -211,7 +210,7 @@ func (s *StepUp) deleteRow(sessionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), busOpTimeout)
 	defer cancel()
 	if err := st.DeleteStepUp(ctx, sessionID); err != nil {
-		slog.Warn("step-up inventory: row delete failed; it will expire on its TTL", "session", sessionID, "err", err)
+		s.log.Warn("step-up inventory: row delete failed; it will expire on its TTL", "session", sessionID, "err", err)
 	}
 }
 
@@ -249,7 +248,7 @@ func (s *StepUp) PendingCluster(ctx context.Context) ([]PendingStepUp, error) {
 		// Benign causes exist (a replica still sealing under an old key mid-swap),
 		// but so does the one the seal was added for: fabricated rows luring a
 		// supervisor into an approval.
-		slog.Warn("step-up inventory: REJECTED rows that did not authenticate under the bus key", "rows", rejected)
+		s.log.Warn("step-up inventory: REJECTED rows that did not authenticate under the bus key", "rows", rejected)
 	}
 	for _, p := range local {
 		merged[p.SessionID] = p
@@ -375,13 +374,13 @@ func (s *StepUp) applyDecision(d StepUpDecision) {
 		return
 	}
 	if err := sealer.openStepUpDecision(d, time.Now()); err != nil {
-		slog.Warn("REJECTED an unauthenticated cross-replica step-up decision",
+		s.log.Warn("REJECTED an unauthenticated cross-replica step-up decision",
 			"session", d.SessionID, "decider", d.Decider)
 		return
 	}
 	outcome := s.claim(d.SessionID, d.Pause, d.Approve, d.Decider)
 	if outcome == stepUpClaimStale {
-		slog.Warn("REFUSED a cross-replica step-up decision naming a pause this replica has already resolved; "+
+		s.log.Warn("REFUSED a cross-replica step-up decision naming a pause this replica has already resolved; "+
 			"the session is paused again, so this is a stale or replayed message and a supervisor must decide the current pause",
 			"session", d.SessionID, "decider", d.Decider, "pause", d.Pause)
 		return

@@ -1,9 +1,41 @@
 package session
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
+
+// TestRegisterNormalizesStartedToUTC proves Register stamps the session start
+// time in UTC regardless of the zone the caller passed, so the cross-replica
+// inventory a SIEM reads never carries a mixed local/UTC zone.
+func TestRegisterNormalizesStartedToUTC(t *testing.T) {
+	r := NewRegistry()
+	loc := time.FixedZone("IST", 5*3600+1800)
+	id := r.Register(Info{Actor: "alice", Started: time.Unix(1, 0).In(loc)}, nil)
+	for _, in := range r.List() {
+		if in.ID == id && in.Started.Location() != time.UTC {
+			t.Fatalf("Started not normalized to UTC: %v", in.Started.Location())
+		}
+	}
+}
+
+// TestRegistryLoggerTagged proves the session registry logs under
+// service=session — the tag a SIEM rule keys on for the cross-replica
+// authentication refusals this package emits. It captures the logger the
+// registry resolves at construction.
+func TestRegistryLoggerTagged(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+	NewRegistry().log.Warn("probe")
+	if !strings.Contains(buf.String(), `"service":"session"`) {
+		t.Fatalf("session log not tagged service=session: %s", buf.String())
+	}
+}
 
 // TestRegistry covers register, list, kill (found and unknown id) and remove.
 func TestRegistry(t *testing.T) {
