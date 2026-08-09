@@ -477,6 +477,123 @@ func kekOptionsFromEnv(prefix string) vault.KEKOptions {
 	}
 }
 
+// buildVault constructs the vault from the loaded config: it opens the pluggable
+// KEK (local / Vault-Transit / AWS-KMS / PKCS#11) and wraps it. Split out of run
+// so the startup sequence reads as a list of steps rather than a wall of KEK
+// options.
+func buildVault(cfg *config.Config, log *slog.Logger) (*vault.Vault, error) {
+	kek, err := vault.NewKEK(vault.KEKOptions{
+		Provider:         cfg.KEKProvider,
+		MasterKey:        cfg.MasterKey,
+		TransitAddr:      cfg.TransitAddr,
+		TransitToken:     cfg.TransitToken,
+		TransitKey:       cfg.TransitKey,
+		AWSRegion:        cfg.AWSRegion,
+		AWSKMSKeyID:      cfg.AWSKMSKeyID,
+		PKCS11Module:     cfg.PKCS11Module,
+		PKCS11Pin:        cfg.PKCS11Pin,
+		PKCS11KeyLabel:   cfg.PKCS11KeyLabel,
+		PKCS11TokenLabel: cfg.PKCS11TokenLabel,
+	})
+	if err != nil {
+		return nil, err
+	}
+	log.Info("vault ready", "kek", kek.ID())
+	return vault.NewWithKEK(kek), nil
+}
+
+// enableAuditChain wires optional tamper-evidence onto the primary audit trail:
+// an HMAC key chains every event, and an ed25519 seed additionally signs the
+// truncation-detecting checkpoints. Both keys are validated to their exact size —
+// fail loud rather than silently run unchained — and the sign seed requires the
+// HMAC key (a checkpoint needs a chain). It returns the parsed signing key (nil
+// when unconfigured).
+func enableAuditChain(cfg *config.Config, st store.Store, log *slog.Logger) (ed25519.PrivateKey, error) {
+	if cfg.AuditHMACKey == "" {
+		if cfg.AuditSignSeed != "" {
+			return nil, fmt.Errorf("PAM_AUDIT_SIGN_SEED requires PAM_AUDIT_HMAC_KEY (checkpoints need the chain)")
+		}
+		return nil, nil
+	}
+	ak, derr := base64.StdEncoding.DecodeString(cfg.AuditHMACKey)
+	if derr != nil || len(ak) != auditchain.KeySize {
+		return nil, fmt.Errorf("PAM_AUDIT_HMAC_KEY must be base64 of %d bytes", auditchain.KeySize)
+	}
+	st.EnableAuditChain(ak)
+	log.Info("primary audit trail is tamper-evident (HMAC-chained)")
+	if cfg.AuditSignSeed == "" {
+		return nil, nil
+	}
+	seed, serr := base64.StdEncoding.DecodeString(cfg.AuditSignSeed)
+	if serr != nil || len(seed) != ed25519.SeedSize {
+		return nil, fmt.Errorf("PAM_AUDIT_SIGN_SEED must be base64 of %d bytes", ed25519.SeedSize)
+	}
+	log.Info("audit-chain checkpoints are signed (GET /api/audit/head)")
+	return ed25519.NewKeyFromSeed(seed), nil
+}
+
+// startSessionBuses wires the three cross-replica buses that share one custody
+// key — the kill bus (Phase 34), the live-monitoring relay (Phase 55) and the
+// step-up decision bus (Phase 56) — and returns the live Cluster, or nil when
+// the shared key is unavailable, which leaves every bus replica-local. Every
+// failure is best-effort and logged: single-replica degradation is the designed
+// fallback, not an error that should stop startup. The key lives in shared
+// custody (KEK-sealed in the store, converged on by every replica, re-wrapped by
+// -rotate-kek); it is deliberately not configurable, because the transport has
+// no access control and relaying session content without it would put live
+// privileged output on a channel any database session can read.
+func startSessionBuses(ctx context.Context, st store.Store, v *vault.Vault, log *slog.Logger,
+	sessions *session.Registry, liveHub *session.Hub, stepUp *session.StepUp, replicaName string) *session.Cluster {
+	startKillBus := func(busKey []byte, audit func(context.Context, string, string)) {
+		if err := sessions.StartKillBus(ctx, st, session.KillBusConfig{BusKey: busKey, Audit: audit}); err != nil {
+			log.Warn("session kill bus unavailable; kill-switch is replica-local", "err", err)
+		}
+	}
+	busKey, _, bkerr := keycustody.Ensure(ctx, st, v, keycustody.NameLiveBusKey, "", func() ([]byte, error) {
+		k := make([]byte, session.LiveBusKeySize)
+		if _, rerr := rand.Read(k); rerr != nil {
+			return nil, rerr
+		}
+		return []byte(base64.StdEncoding.EncodeToString(k)), nil
+	})
+	if bkerr != nil {
+		log.Warn("live-bus key custody failed; the kill-switch, session listing and live watch all stay replica-local", "err", bkerr)
+		return nil
+	}
+	relayAudit := func(actx context.Context, action, detail string) {
+		if aerr := st.AppendAudit(actx, &store.AuditEvent{
+			Actor: "relay", Action: action, Detail: detail, TS: time.Now().UTC(),
+		}); aerr != nil {
+			log.Error("relay audit append failed", "action", action, "err", aerr)
+		}
+	}
+	rawBusKey, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(string(busKey)))
+	if derr != nil || len(rawBusKey) != session.LiveBusKeySize {
+		log.Warn("live-bus key in custody is malformed; session listing and live watch stay replica-local")
+		return nil
+	}
+	var cluster *session.Cluster
+	c, cerr := session.StartCluster(ctx, session.ClusterConfig{
+		Store: st, Registry: sessions, Hub: liveHub, Replica: replicaName, BusKey: rawBusKey,
+		Audit: relayAudit,
+	})
+	if cerr != nil {
+		log.Warn("session live bus unavailable; session listing and live watch are replica-local", "err", cerr)
+	} else {
+		cluster = c
+	}
+	// The kill bus shares the key: an unsealed one is a remote session-termination
+	// primitive with nothing authenticating it. It and the step-up bus start even
+	// if StartCluster failed — they degrade independently.
+	startKillBus(rawBusKey, relayAudit)
+	if serr := stepUp.StartBus(ctx, st, session.StepUpBusConfig{
+		BusKey: rawBusKey, Replica: replicaName, Audit: relayAudit,
+	}); serr != nil {
+		log.Warn("step-up decision bus unavailable; step-up listing and decisions are replica-local", "err", serr)
+	}
+	return cluster
+}
+
 // fatal prints err to stderr prefixed with "pam-server:" and exits with status 1.
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "pam-server:", err)
@@ -645,25 +762,10 @@ func run() error {
 	logging.Setup(cfg.LogLevel, cfg.LogFormat)
 	log := logging.Component("server")
 
-	kek, err := vault.NewKEK(vault.KEKOptions{
-		Provider:     cfg.KEKProvider,
-		MasterKey:    cfg.MasterKey,
-		TransitAddr:  cfg.TransitAddr,
-		TransitToken: cfg.TransitToken,
-		TransitKey:   cfg.TransitKey,
-		AWSRegion:    cfg.AWSRegion,
-		AWSKMSKeyID:  cfg.AWSKMSKeyID,
-
-		PKCS11Module:     cfg.PKCS11Module,
-		PKCS11Pin:        cfg.PKCS11Pin,
-		PKCS11KeyLabel:   cfg.PKCS11KeyLabel,
-		PKCS11TokenLabel: cfg.PKCS11TokenLabel,
-	})
+	v, err := buildVault(cfg, log)
 	if err != nil {
 		return err
 	}
-	v := vault.NewWithKEK(kek)
-	log.Info("vault ready", "kek", kek.ID())
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -680,28 +782,11 @@ func run() error {
 	}
 	defer st.Close()
 
-	// Optional tamper-evident chaining of the primary audit trail. When set, the
-	// key must decode to exactly KeySize bytes — fail loud rather than silently run
-	// unchained.
-	var auditSignKey ed25519.PrivateKey
-	if cfg.AuditHMACKey != "" {
-		ak, derr := base64.StdEncoding.DecodeString(cfg.AuditHMACKey)
-		if derr != nil || len(ak) != auditchain.KeySize {
-			return fmt.Errorf("PAM_AUDIT_HMAC_KEY must be base64 of %d bytes", auditchain.KeySize)
-		}
-		st.EnableAuditChain(ak)
-		log.Info("primary audit trail is tamper-evident (HMAC-chained)")
-		// Optional ed25519 signing key for truncation-detecting checkpoints.
-		if cfg.AuditSignSeed != "" {
-			seed, serr := base64.StdEncoding.DecodeString(cfg.AuditSignSeed)
-			if serr != nil || len(seed) != ed25519.SeedSize {
-				return fmt.Errorf("PAM_AUDIT_SIGN_SEED must be base64 of %d bytes", ed25519.SeedSize)
-			}
-			auditSignKey = ed25519.NewKeyFromSeed(seed)
-			log.Info("audit-chain checkpoints are signed (GET /api/audit/head)")
-		}
-	} else if cfg.AuditSignSeed != "" {
-		return fmt.Errorf("PAM_AUDIT_SIGN_SEED requires PAM_AUDIT_HMAC_KEY (checkpoints need the chain)")
+	// Optional tamper-evidence on the primary audit trail (HMAC chain + signed
+	// checkpoints); nil signing key when unconfigured.
+	auditSignKey, err := enableAuditChain(cfg, st, log)
+	if err != nil {
+		return err
 	}
 
 	// Phase 12: overlay DB-persisted configuration onto the env-derived config
@@ -732,80 +817,19 @@ func run() error {
 
 	sessions := session.NewRegistry()
 	sessions.SetLimits(cfg.MaxSessionsPerUser, cfg.MaxSessionsTotal)
-	// Cross-replica kill bus (Phase 34): broadcast session kills over the store so
-	// the kill-switch terminates a session on whichever replica hosts it. Postgres
-	// uses LISTEN/NOTIFY; the memory store fans out in-process. Best-effort — a
-	// subscribe failure logs and leaves the kill-switch replica-local.
-	// Wired after the live-bus key is derived, since both buses share it.
-	startKillBus := func(busKey []byte, audit func(context.Context, string, string)) {
-		if err := sessions.StartKillBus(ctx, st, session.KillBusConfig{BusKey: busKey, Audit: audit}); err != nil {
-			log.Warn("session kill bus unavailable; kill-switch is replica-local", "err", err)
-		}
-	}
 	maxRecBytes := int64(cfg.MaxRecordingMB) * 1024 * 1024
 	liveHub := session.NewHub()
 	// Removing a session from the registry ends its live watch streams, so a
 	// supervisor's SSE pane reports the end instead of going silent forever.
 	sessions.AttachHub(liveHub)
-	// Cross-replica live monitoring (Phase 55): shared session inventory (so
-	// GET /api/sessions lists the whole cluster) and an interest-gated relay
-	// that forwards a watched session's output over the store bus to the
-	// replica whose supervisor is watching. Best-effort like the kill bus — a
-	// subscribe failure logs and leaves listing + watching replica-local.
 	replicaName, _ := os.Hostname()
-	// The bus key lives in shared custody (KEK-sealed in the store, converged on by
-	// every replica, re-wrapped by -rotate-kek) like the SSH host key and the
-	// broker's audit keys. It is not configurable: the transport has no access
-	// control, so relaying session content without it would put live privileged
-	// output on a channel any database session can read.
-	// The step-up coordinator exists early because the decision bus below shares
-	// the custody key; its guard file is compiled further down with the others.
+	// The step-up coordinator exists before the buses because the decision bus
+	// shares their custody key; its guard file is compiled further down with the
+	// others.
 	stepUp := session.NewStepUp()
-	var cluster *session.Cluster
-	busKey, _, bkerr := keycustody.Ensure(ctx, st, v, keycustody.NameLiveBusKey, "", func() ([]byte, error) {
-		k := make([]byte, session.LiveBusKeySize)
-		if _, rerr := rand.Read(k); rerr != nil {
-			return nil, rerr
-		}
-		return []byte(base64.StdEncoding.EncodeToString(k)), nil
-	})
-	if bkerr != nil {
-		log.Warn("live-bus key custody failed; the kill-switch, session listing and live watch all stay replica-local", "err", bkerr)
-	} else {
-		relayAudit := func(actx context.Context, action, detail string) {
-			if aerr := st.AppendAudit(actx, &store.AuditEvent{
-				Actor: "relay", Action: action, Detail: detail, TS: time.Now().UTC(),
-			}); aerr != nil {
-				log.Error("relay audit append failed", "action", action, "err", aerr)
-			}
-		}
-		rawBusKey, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(string(busKey)))
-		if derr != nil || len(rawBusKey) != session.LiveBusKeySize {
-			log.Warn("live-bus key in custody is malformed; session listing and live watch stay replica-local")
-		} else {
-			c, cerr := session.StartCluster(ctx, session.ClusterConfig{
-				Store: st, Registry: sessions, Hub: liveHub, Replica: replicaName, BusKey: rawBusKey,
-				Audit: relayAudit,
-			})
-			if cerr != nil {
-				log.Warn("session live bus unavailable; session listing and live watch are replica-local", "err", cerr)
-			} else {
-				cluster = c
-			}
-			// The kill bus shares the key: an unsealed one is a remote
-			// session-termination primitive with nothing authenticating it.
-			startKillBus(rawBusKey, relayAudit)
-			// Cross-replica step-up decisions (Phase 56): pauses are mirrored
-			// into a shared inventory and a sealed decision published on any
-			// replica is applied by the one hosting the pause. Best-effort like
-			// its two siblings.
-			if serr := stepUp.StartBus(ctx, st, session.StepUpBusConfig{
-				BusKey: rawBusKey, Replica: replicaName, Audit: relayAudit,
-			}); serr != nil {
-				log.Warn("step-up decision bus unavailable; step-up listing and decisions are replica-local", "err", serr)
-			}
-		}
-	}
+	// Cross-replica kill bus (34), live-monitoring relay (55) and step-up decision
+	// bus (56) — all sharing one custody key; nil cluster leaves them replica-local.
+	cluster := startSessionBuses(ctx, st, v, log, sessions, liveHub, stepUp, replicaName)
 
 	// Command control (Phase 16): compile the deny file, if configured, into ONE
 	// guard shared by the SSH proxy, the database proxy and the API server — so the

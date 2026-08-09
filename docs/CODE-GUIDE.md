@@ -1019,6 +1019,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-10 | Phase 100 (wiring readability): `run()` in `cmd/pam-server/main.go` split into `buildVault`, `enableAuditChain` and `startSessionBuses` (the three custody-key-sharing buses, degradation ladder flattened to early returns). ~790 → ~675 lines, behavior-identical. |
 | 2026-08-10 | Phase 99 (store & API ergonomics): `ListSessions` deterministic tie-break in both stores; memstore generic `getRow`/`deleteRow`; pgstore `scanAuditEvent` (one definition for the three list/export/tail reads); API `pagedList` for the plain list handlers. No package moved. |
 | 2026-08-10 | Phase 98 (shared-helper consolidation): one token-hash definition (`auth.TokenHash`); a new leaf `internal/jwtutil` shared by `oidc` and `agentid` (JWT segment decode, audience check with the empty-claim guard, JWK/RSA reconstruction); `remoteHost` → `ratelimit.Host`; `oneLine` → `auditfmt.OneLine`; `encodePEM` inlined. New `jwtutil` in the package map. |
 | 2026-08-10 | Phase 97 (observability parity): `internal/session` (Registry/Cluster/StepUp) now holds a `service=session` logger instead of calling package-level `slog`, so its cross-replica auth-refusal lines are SIEM-filterable; `api.storeError` logs `service=api`; and `alert.Event.Time`/`session.Info.Started` are normalized to UTC at `Webhook.Notify` and `Registry.Register`. No package moved (one new `session → logging` import edge). |

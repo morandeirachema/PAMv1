@@ -2351,6 +2351,31 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 100 — Wiring readability: extracting builders from run() ✅
+
+`cmd/pam-server`'s `run()` was ~790 lines of dense startup wiring. This lifts the
+self-contained, defer-free blocks into named builders so the startup sequence
+reads as a list of steps. Behavior-identical — the same steps in the same order,
+just named — and covered end to end by `cmd/pam-server/e2e_test.go` (which boots
+the real `run()` over both the REST and SSH surfaces) plus the graceful-shutdown
+test.
+
+- [x] **`buildVault(cfg, log)`** — the KEK-options wall (local / Vault-Transit /
+  AWS-KMS / PKCS#11) and the vault wrap
+- [x] **`enableAuditChain(cfg, st, log)`** — the optional HMAC chain + signed
+  checkpoint setup, with the same fail-loud key-size validation and the
+  sign-seed-requires-HMAC rule, returning the parsed signing key
+- [x] **`startSessionBuses(...)`** — the three cross-replica buses that share one
+  custody key (kill / live relay / step-up decision). The nested `if/else`
+  degradation ladder is flattened to early returns, preserving each best-effort
+  fallback exactly (a failed `StartCluster` still starts the kill and step-up
+  buses, as before)
+- [x] `run()` drops to ~675 lines; the remaining wiring (guards, the API options
+  literal, the background workers, the proxies) is left inline — those blocks
+  share too many locals to extract without threading a long parameter list,
+  which would trade one kind of density for another
+- [x] No schema, route, wire-format or env-var change; `archgen` output unchanged
+
 ## Phase 99 — Store & API ergonomics ✅
 
 Mechanical de-duplication and one determinism fix in the persistence and REST
