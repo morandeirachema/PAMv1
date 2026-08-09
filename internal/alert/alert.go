@@ -48,6 +48,12 @@ func NewWebhook(url string) *Webhook {
 // background goroutine, so it never blocks the caller; delivery errors are
 // logged but not returned.
 func (w *Webhook) Notify(_ context.Context, e Event) {
+	// Serialize the timestamp in UTC, matching the syslog and email channels
+	// (which force it through stamp). Callers construct the Event in whatever
+	// zone time.Now() gave them, so normalizing here — the one place the raw
+	// struct reaches JSON — keeps a SIEM from receiving mixed zones no matter
+	// which caller fired the alert.
+	e.Time = e.Time.UTC()
 	body, err := json.Marshal(e)
 	if err != nil {
 		return

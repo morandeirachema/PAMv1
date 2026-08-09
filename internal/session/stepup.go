@@ -2,8 +2,11 @@ package session
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/morandeirachema/pamv1/internal/logging"
 )
 
 // StepUp coordinates in-session step-up approvals (Phase 30): when a session
@@ -20,6 +23,7 @@ import (
 type StepUp struct {
 	mu      sync.Mutex
 	pending map[string]*pendingStepUp // keyed by session id: at most one at a time
+	log     *slog.Logger              // operational logger, tagged service=session
 
 	// Cross-replica machinery (Phase 56), attached once by StartBus and nil in a
 	// deployment (or test) that never wires it — every path below degrades to the
@@ -63,7 +67,9 @@ type PendingStepUp struct {
 }
 
 // NewStepUp returns an empty step-up coordinator.
-func NewStepUp() *StepUp { return &StepUp{pending: map[string]*pendingStepUp{}} }
+func NewStepUp() *StepUp {
+	return &StepUp{pending: map[string]*pendingStepUp{}, log: logging.Component("session")}
+}
 
 // Await registers a pending step-up for a session and blocks until a supervisor
 // Decides, or timeout/ctx fires (either of which is a denial — fail closed).

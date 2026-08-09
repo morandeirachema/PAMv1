@@ -12,7 +12,6 @@ package session
 
 import (
 	"context"
-	"log/slog"
 	"time"
 )
 
@@ -119,7 +118,7 @@ func (r *Registry) applyKill(sel KillSelector) {
 		return
 	}
 	if err := sealer.openKill(sel, time.Now()); err != nil {
-		slog.Warn("REJECTED an unauthenticated cross-replica session kill",
+		r.log.Warn("REJECTED an unauthenticated cross-replica session kill",
 			"selector_id", sel.ID, "selector_actor", sel.Actor, "selector_target", sel.Target)
 		return
 	}
@@ -170,12 +169,12 @@ func (r *Registry) publish(sel KillSelector) (hasBus, published bool) {
 		return false, false
 	}
 	if sealer == nil {
-		slog.Error("session kill not broadcast: the kill bus has no key")
+		r.log.Error("session kill not broadcast: the kill bus has no key")
 		return true, false
 	}
 	sealed, serr := sealer.sealKill(sel, time.Now())
 	if serr != nil {
-		slog.Error("session kill not broadcast: sealing the selector failed", "err", serr)
+		r.log.Error("session kill not broadcast: sealing the selector failed", "err", serr)
 		return true, false
 	}
 	sel = sealed
@@ -186,7 +185,7 @@ func (r *Registry) publish(sel KillSelector) (hasBus, published bool) {
 		// to a caller, so a log line is all they can offer — but a silent failure
 		// here means a revoked operator keeps a live session on another replica,
 		// which is worth an operator noticing.
-		slog.Error("session kill broadcast failed; other replicas were not told",
+		r.log.Error("session kill broadcast failed; other replicas were not told",
 			"selector_id", sel.ID, "selector_actor", sel.Actor, "selector_target", sel.Target, "err", err)
 		return true, false
 	}
