@@ -13,6 +13,7 @@ import (
 
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store/memstore"
+	"github.com/morandeirachema/pamv1/internal/testutil"
 )
 
 // TestClusterEndMarkerDoesNotOvertakeOutput proves a remote watcher receives a
@@ -45,14 +46,10 @@ func TestClusterEndMarkerDoesNotOvertakeOutput(t *testing.T) {
 		}
 		// Wait for the interest announcement to open the hosting replica's gate,
 		// otherwise the output is legitimately not forwarded at all.
-		deadline := time.Now().Add(5 * time.Second)
-		for !hubA.HasSubscribers(id) {
-			if time.Now().After(deadline) {
-				unsub()
-				cB.UnwatchRemote(id)
-				t.Fatal("the hosting replica never saw the remote watcher's interest")
-			}
-			time.Sleep(time.Millisecond)
+		if !testutil.WaitFor(t, 5*time.Second, func() bool { return hubA.HasSubscribers(id) }) {
+			unsub()
+			cB.UnwatchRemote(id)
+			t.Fatal("the hosting replica never saw the remote watcher's interest")
 		}
 
 		// The shape that broke: publish the whole output, then end the session

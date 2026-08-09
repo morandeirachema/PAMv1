@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/morandeirachema/pamv1/internal/testutil"
+
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store/memstore"
 )
@@ -187,12 +189,8 @@ func TestClusterInterestGatesTheBus(t *testing.T) {
 	if ok, err := cB.WatchRemote(ctx, id); err != nil || !ok {
 		t.Fatalf("WatchRemote = %v, %v; want true, nil", ok, err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for !cA.TestingWants(id) {
-		if time.Now().After(deadline) {
-			t.Fatal("hosting replica never learned of the watcher's interest")
-		}
-		time.Sleep(5 * time.Millisecond)
+	if !testutil.WaitFor(t, 5*time.Second, func() bool { return cA.TestingWants(id) }) {
+		t.Fatal("hosting replica never learned of the watcher's interest")
 	}
 	const secret = "watched output"
 	hubA.Publish(id, []byte(secret))
@@ -218,10 +216,7 @@ func TestClusterInterestGatesTheBus(t *testing.T) {
 	// ...and leaving closes it again by silence: announcements stop, interest
 	// expires, and the hosting replica stops forwarding.
 	cB.UnwatchRemote(id)
-	for time.Now().Before(deadline) && cA.TestingWants(id) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if cA.TestingWants(id) {
+	if !testutil.WaitFor(t, 5*time.Second, func() bool { return !cA.TestingWants(id) }) {
 		t.Fatal("interest never expired after the last watcher left")
 	}
 	for len(busFrames) > 0 {
