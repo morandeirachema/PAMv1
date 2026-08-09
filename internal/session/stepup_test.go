@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/morandeirachema/pamv1/internal/testutil"
 )
 
 // TestStepUpApproveDeny proves an awaited step-up resolves to the supervisor's
@@ -51,15 +53,17 @@ func TestStepUpApproveDeny(t *testing.T) {
 // waitPending blocks until a step-up for sid is registered.
 func waitPending(t *testing.T, su *StepUp, sid string) {
 	t.Helper()
-	for i := 0; i < 200; i++ {
+	ok := testutil.WaitFor(t, time.Second, func() bool {
 		for _, p := range su.Pending() {
 			if p.SessionID == sid {
-				return
+				return true
 			}
 		}
-		time.Sleep(5 * time.Millisecond)
+		return false
+	})
+	if !ok {
+		t.Fatalf("step-up for %q never registered", sid)
 	}
-	t.Fatalf("step-up for %q never registered", sid)
 }
 
 // TestStepUpRefusesSelfApproval proves the operator whose session is paused

@@ -2351,6 +2351,33 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 101 — Test hygiene: a bounded poll helper ✅
+
+The recurring shape across the suites is a hand-rolled `deadline := time.Now();
+for !cond { if After(deadline) { t.Fatal }; time.Sleep(…) }`. This gives it one
+home so a poll can no longer be written without a bound.
+
+- [x] **New `internal/testutil.WaitFor(t, timeout, cond) bool`** — polls every
+  ~5ms until cond holds or the timeout elapses; the caller supplies its own
+  failure message. Imported only by test files, so its `testing` dependency never
+  reaches a production binary
+- [x] **The highest-traffic poll loops now use it**: `proxy`'s `waitForAudit`
+  (shared by many session tests), `session`'s `waitPending`, and the
+  cross-replica interest/expiry loops in the live-bus tests. Each keeps its exact
+  timeout and failure message — the behavior is identical, only the boilerplate
+  is gone
+- [x] Left as-is on purpose: the fixed-count repetitions that are *not* waits
+  (e.g. "publish five forged announcements, then assert the gate stayed shut")
+  and the channel `select { …; case <-time.After(…) }` waits, which are already
+  bounded and are not the poll shape
+- [x] `t.Parallel` was considered and **not** rolled out: the leaf packages are
+  already sub-second (parallelising within them saves nothing, since packages run
+  concurrently already), and the two suites that would benefit — `internal/api`
+  and `internal/proxy` — share `httptest` servers and fixtures that need a
+  per-test audit before they can run in parallel safely. A larger, separate pass
+- [x] New `testutil` node in the archgen diagram (test-only package); no schema,
+  route, wire-format or env-var change
+
 ## Phase 100 — Wiring readability: extracting builders from run() ✅
 
 `cmd/pam-server`'s `run()` was ~790 lines of dense startup wiring. This lifts the
