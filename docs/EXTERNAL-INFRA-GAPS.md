@@ -10,7 +10,7 @@
 > live. This is the operator's checklist of what you must stand up (and what to
 > re-verify) before relying on each capability in production.
 >
-> Last updated: 2026-08-10 · Reflects: Phases 0–106 (58–94 needed no external infrastructure, so nothing here was added or closed by them; Phase 84 moved the ITSM gate's *depth* in-process with first-class ServiceNow/Jira connectors, leaving only live-instance interop verification external — see the ITSM row).
+> Last updated: 2026-08-10 · Reflects: Phases 0–107 (58–94 needed no external infrastructure, so nothing here was added or closed by them; Phase 84 moved the ITSM gate's *depth* in-process with first-class ServiceNow/Jira connectors, leaving only live-instance interop verification external — see the ITSM row).
 > (Phases 25–28, 30 and 31 — console parity, recording playback + one-time
 > access, broker completion, operator SSH certificates, in-session step-up and the
 > CIEM blast-radius engine — are fully in-process and add no

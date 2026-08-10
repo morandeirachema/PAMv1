@@ -3,7 +3,7 @@
 > **Living document.** Update when the data model or deployment changes. See the
 > [change log](#change-log).
 >
-> Last updated: 2026-08-10 · Reflects: Phases 0–106. The procedure is unchanged: the migration high-water mark is still `0031` (phases 71–94 added none), migrations `0025`–`0031` are additive and applied at startup, and the new columns live in tables this runbook already covers.
+> Last updated: 2026-08-10 · Reflects: Phases 0–107. The procedure is unchanged: the migration high-water mark is still `0031` (phases 71–94 added none), migrations `0025`–`0031` are additive and applied at startup, and the new columns live in tables this runbook already covers.
 
 > ⚠️ **Beta · for learning purposes.** pamv1 is feature-complete against its
 > [roadmap](../ROADMAP.md) and has closed every finding of its own security
