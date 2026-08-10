@@ -217,7 +217,7 @@ func Load(r io.Reader) (*Engine, error) {
 
 // LoadFile reads and parses a policy file from path.
 func LoadFile(path string) (*Engine, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- operator-configured broker policy file path
 	if err != nil {
 		return nil, fmt.Errorf("policy: read %s: %w", path, err)
 	}

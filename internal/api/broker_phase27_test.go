@@ -224,7 +224,7 @@ func TestMCPSSEElicitation(t *testing.T) {
 
 	// Decline the elicitation.
 	if code, _ := doBearer(t, srv, http.MethodPost, msgPath, tok, map[string]any{
-		"jsonrpc": "2.0", "id": json.RawMessage(srvReq.ID), "result": map[string]any{"action": "decline"},
+		"jsonrpc": "2.0", "id": srvReq.ID, "result": map[string]any{"action": "decline"},
 	}); code != http.StatusAccepted {
 		t.Fatalf("elicitation response: want 202, got %d", code)
 	}

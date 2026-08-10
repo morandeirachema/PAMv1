@@ -146,7 +146,7 @@ func Converge(ctx context.Context, st Store, v Vault, name string, value []byte)
 // mirror is already up to date.
 func candidateKey(path string, generate func() ([]byte, error)) (key []byte, fromFile bool, err error) {
 	if path != "" {
-		data, rerr := os.ReadFile(path)
+		data, rerr := os.ReadFile(path) // #nosec G304 -- operator-configured key-material path (seeds shared custody)
 		if rerr == nil && len(data) > 0 {
 			return data, true, nil
 		}

@@ -2351,6 +2351,33 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 104 — Enforcement tooling: gosec tightened, golangci-lint evaluated ✅
+
+Turn suppression back into enforcement, and evaluate a broader linter honestly
+rather than bolt on noise.
+
+- [x] **`G304` (tainted file path) and `G101` (hardcoded credential) are now
+  enforced** — dropped from the gosec exclude list in CI and `CLAUDE.md`. The
+  nine real `G304` file-read sites gained a per-site `#nosec G304 -- <reason>`
+  (all operator-configured paths, build-tool paths, or a validated-then-joined
+  recording name); `G101` fired nothing new. The value is forward-looking: a
+  *new* read of an attacker-controlled path — say a filename straight off an
+  HTTP request — now fails the build instead of passing silently
+- [x] **golangci-lint evaluated, deliberately not adopted as a gate.** Installed
+  v2 and ran a curated value-add set (`ineffassign`, `bodyclose`, `noctx`,
+  `unconvert`, `nilerr`, `misspell`, `rowserrcheck`, `sqlclosecheck`). It surfaced
+  39 findings; **every one was verified to be test-file noise or a deliberate,
+  well-commented pattern** — all ten `nilerr` hits are correct idioms
+  (graceful-shutdown-returns-nil, copy-loop-on-EOF, an error converted to a
+  domain result), `bodyclose` was tests only, `noctx` mostly tests plus
+  intentional context-free dials. Adopting it as a CI gate would mean annotating
+  ~40 intentional sites for **zero** defect-catching benefit over the existing
+  `staticcheck`/`gosec`/`govulncheck`/`vet` gates, because the codebase is already
+  clean under them. The one actionable output — two unnecessary type conversions
+  (`unconvert`) — is fixed directly
+- [x] No schema, route, wire-format or env-var change; behaviour unchanged
+  (annotations + two no-op conversion removals); archgen unchanged
+
 ## Phase 103 — Fuzzing the wire parsers ✅
 
 The proxies parse ~2,900 lines of attacker-influenced bytes straight off an

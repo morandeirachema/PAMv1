@@ -1,7 +1,6 @@
 package api
 
 import (
-	"crypto/ed25519"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -115,7 +114,7 @@ func (s *Server) tokenJWKS(w http.ResponseWriter, r *http.Request) {
 		"keys": []map[string]string{{
 			"kty": "OKP", "crv": "Ed25519", "alg": "EdDSA", "use": "sig",
 			"kid": s.exchanger.KeyID(),
-			"x":   base64.RawURLEncoding.EncodeToString(ed25519.PublicKey(pub)),
+			"x":   base64.RawURLEncoding.EncodeToString(pub),
 		}},
 	})
 }
