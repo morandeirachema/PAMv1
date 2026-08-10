@@ -2351,6 +2351,29 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 105 — Config-validation test hardening ✅
+
+`internal/config` is the sole validator of the ~200 `PAM_*` environment
+variables and their cross-field rules, at a 0.35 test ratio — a rule that
+silently stopped rejecting a bad value would let a fat-fingered setting disable a
+security control (throttling off, retention deleting, an enum falling back to its
+permissive default), invisibly.
+
+- [x] **`TestLoadRejectsBadValues`** — a table of seventeen cases covering the
+  validation rules the existing tests did not reach: the SFTP/RDP/audit-forward
+  enums, the analytics/conjur/cert/retention bounds, the session/broker rate
+  floors, the SVID token-exchange dependency chain, the inverted business-hours
+  window, and the too-short ZSP certificate TTL. Each sets the minimal valid
+  baseline plus one bad variable and asserts `Load` reports it
+- [x] **`TestLoadAcceptsRichValidConfig`** — the positive guard a purely negative
+  suite cannot give: a configuration that drives the enums and bounds at
+  non-default values and turns on the enable-gated blocks (audit forwarding, the
+  full SVID chain) must pass, so a rule that starts *false-rejecting* a valid
+  setting is caught
+- [x] Test-only; no production code, schema, route or env-var change; archgen
+  unchanged. (The `internal/session` cross-replica step-up audit flake this pass
+  surfaced was fixed alongside Phase 104.)
+
 ## Phase 104 — Enforcement tooling: gosec tightened, golangci-lint evaluated ✅
 
 Turn suppression back into enforcement, and evaluate a broader linter honestly

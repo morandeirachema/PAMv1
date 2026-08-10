@@ -1019,6 +1019,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-10 | Phase 105 (config-validation test hardening): `TestLoadRejectsBadValues` (17 cases over the previously-untested `config.Load` rules — enums, bounds, cross-field deps) and `TestLoadAcceptsRichValidConfig` (a positive guard against false-rejects). Test-only. |
 | 2026-08-10 | Phase 104 (enforcement tooling): gosec `G304`/`G101` moved out of the exclude list (now enforced; nine file-read sites annotated). golangci-lint v2 evaluated on a curated set — all 39 findings were test-noise or deliberate idioms, so not adopted as a gate; the two `unconvert` no-ops fixed directly. |
 | 2026-08-10 | Phase 103 (fuzzing the wire parsers): Go native fuzz targets for the untrusted-input parsers — `internal/tds` (`FuzzParsePreLogin`/`FuzzParseSQLBatch`/`FuzzParseRPC`) and `internal/proxy` (`FuzzSFTPInspector`). Seeds replay as normal tests (regression guard); a `fuzz smoke` CI step fuzzes each ~20s. ~2M execs found nothing — the parsers hold. |
 | 2026-08-10 | Phase 102 (proxy-family structural unification): §5 — the three proxies now share one admission-gate sequence (`gates.go` `admit()`), one embedded listener lifecycle (`listener.go`), and one DB statement pipeline (`sqlproxy.go` `sqlPolicy`/`sqlClient`); each proxy contributes only its protocol's refusal wording and a few narrow hooks. The security decision path is written once. |
