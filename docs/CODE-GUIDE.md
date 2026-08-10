@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-09 · Reflects: Phases 0–94 + the 2026-07 hardening passes.
+> Last updated: 2026-08-10 · Reflects: Phases 0–106 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -962,11 +962,13 @@ Tests exercise **real behavior on the security-critical path**, not mocks of it:
   memstore and, in CI, a live PostgreSQL.
 - The analytics engine is a pure function, so its tests are deterministic.
 - CI (`.github/workflows/ci.yml`) gates on `gofmt -l`, `go vet`, `staticcheck`,
-  `govulncheck`, `gosec`, `go build`, `go test -race`, a Docker image build, the
-  live-Postgres store contract, the PKCS#11/SoftHSM2 build, a manifests job
-  (`helm lint`, a default **and** everything-on chart render, `kubeconform`), and
-  the `sops` round-trip. `cmd/archgen` regenerates the architecture diagrams and
-  CI fails if they drift.
+  `govulncheck`, `gosec` (with `G304`/`G101` enforced — deliberate exceptions
+  carry a `#nosec Gxxx -- reason`), `go build`, a **`fuzz smoke`** step that
+  fuzzes the TDS and SFTP wire parsers ~20s each (their seed corpus also runs as
+  a normal test), `go test -race`, a Docker image build, the live-Postgres store
+  contract, the PKCS#11/SoftHSM2 build, a manifests job (`helm lint`, a default
+  **and** everything-on chart render, `kubeconform`), and the `sops` round-trip.
+  `cmd/archgen` regenerates the architecture diagrams and CI fails if they drift.
 
 ---
 
@@ -1019,6 +1021,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-10 | Phase 107 (documentation currency pass): all 18 `Reflects: Phases 0–N` headers bumped to 0–106; HIGH-LEVEL log gained the five missing phases; this CI-gate list gained the fuzz step + enforced gosec; SECURITY-GAPS recorded the Phase 102 leak finding + 103/104 hardening. Docs-only. |
 | 2026-08-10 | Phase 106 (deferred-cleanup backlog): the `"ssh_ca"` magic string → `store.SecretTypeSSHCA` + `Credential.IsZSP()` (13 secret-path guards de-stringified). The rest of the backlog (deleteByID, credAndTarget, single-use pgstore scanners, the vendor N+1, storetest subtests) was evaluated and skipped as churn-with-wrinkles — see ROADMAP Phase 106. |
 | 2026-08-10 | Phase 105 (config-validation test hardening): `TestLoadRejectsBadValues` (17 cases over the previously-untested `config.Load` rules — enums, bounds, cross-field deps) and `TestLoadAcceptsRichValidConfig` (a positive guard against false-rejects). Test-only. |
 | 2026-08-10 | Phase 104 (enforcement tooling): gosec `G304`/`G101` moved out of the exclude list (now enforced; nine file-read sites annotated). golangci-lint v2 evaluated on a curated set — all 39 findings were test-noise or deliberate idioms, so not adopted as a gate; the two `unconvert` no-ops fixed directly. |

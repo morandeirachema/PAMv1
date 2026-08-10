@@ -2351,6 +2351,27 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 107 — Documentation currency pass ✅
+
+The refactor/hardening arc (96–106) kept the per-phase change-log tables current
+in the docs it touched but let the cross-doc currency markers drift — the same
+lag Phase 95 corrected for the 71–94 arc, caught here by a doc-vs-code audit.
+
+- [x] **Every `Reflects: Phases 0–N` header now says 0–106 / 2026-08-10.**
+  Eighteen docs still read 0–94 (SECURITY-GAPS read 0–96); their bodies were
+  accurate — 96–106 were internal refactors, tests and tooling that changed no
+  user-facing behaviour, protocol, port or env var — but the markers asserting
+  currency had not been bumped
+- [x] **ARCHITECTURE-HIGH-LEVEL's change log gained the five missing phases**
+  (101, 103, 104, 105, 106); the low-level log and CODE-GUIDE were already complete
+- [x] **CODE-GUIDE's CI-gate list now names the `fuzz smoke` step and the
+  enforced `gosec` `G304`/`G101`** added in 103–104
+- [x] **SECURITY-GAPS records the two security findings from the sweep**: the
+  Phase 102 per-connection-map leak a hand review caught (finding CF), and the
+  103/104 fuzzing + gosec-enforcement hardening — and its header caught up to 0–106
+- [x] Docs-only; no code, schema, route or env-var change, so the `archgen`
+  output is untouched and no release is needed
+
 ## Phase 106 — Deferred-cleanup backlog: the one that earned its keep ✅
 
 Working through the "deferred cleanups" backlog and being honest about which

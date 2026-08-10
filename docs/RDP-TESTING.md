@@ -3,7 +3,7 @@
 > **Living document.** Update whenever the RDP path (guacd handshake, the tunnel
 > prelude, the token endpoint, or the in-portal viewer) changes.
 >
-> Last updated: 2026-08-09 · Reflects: Phases 0–94 (nothing since 52g changes the RDP path or how it is exercised). — RDP has changed in Phases 33
+> Last updated: 2026-08-10 · Reflects: Phases 0–106 (nothing since 52g changes the RDP path or how it is exercised). — RDP has changed in Phases 33
 > (clipboard control), 40 (brokered runs are supervised sessions), 50 (clipboard
 > auditing), 52c (recording-required, throttled tunnel auth) and 52e.
 
