@@ -306,11 +306,27 @@ type Credential struct {
 	ID         int64      `json:"id"`
 	TargetID   int64      `json:"target_id"`
 	Username   string     `json:"username"`
-	SecretType string     `json:"secret_type"` // password | ssh_key
+	SecretType string     `json:"secret_type"` // one of the SecretType* constants
 	SecretEnc  string     `json:"-"`
 	CreatedAt  time.Time  `json:"created_at"`
 	RotatedAt  *time.Time `json:"rotated_at,omitempty"`
 }
+
+// The secret types a Credential may hold. SecretTypeSSHCA is Zero Standing
+// Privilege (Phase 22): it stores NO secret — the proxy mints a short-lived SSH
+// certificate at dial time instead — so every path that would decrypt, reveal,
+// rotate or check out a secret must special-case it. Naming the value (and the
+// IsZSP predicate) means a new such path cannot silently skip the guard by
+// mistyping the string literal — the failure mode a bare "ssh_ca" invites.
+const (
+	SecretTypePassword = "password"
+	SecretTypeSSHKey   = "ssh_key"
+	SecretTypeSSHCA    = "ssh_ca"
+)
+
+// IsZSP reports whether this is a Zero Standing Privilege credential
+// (SecretTypeSSHCA), which carries no stored secret to decrypt or reveal.
+func (c Credential) IsZSP() bool { return c.SecretType == SecretTypeSSHCA }
 
 // TargetGrant authorizes a subject (a specific user, or a whole role) to connect
 // to a target. A target with no grants is open to any connect-capable principal;

@@ -268,7 +268,7 @@ func (t *sshExecTool) Execute(ctx context.Context, p *auth.Principal, args broke
 	if err := t.s.vendorGateAgent(ctx, p, target, cred.Username); err != nil {
 		return broker.Result{}, err
 	}
-	if cred.SecretType == "ssh_ca" {
+	if cred.IsZSP() {
 		// Zero Standing Privilege credentials have no stored secret; the ephemeral
 		// certificate path is the interactive proxy, not this one-shot exec.
 		return broker.Result{}, fmt.Errorf("ssh_exec does not support zero-standing-privilege (ssh_ca) credentials")
@@ -466,7 +466,7 @@ func (t *revealCredentialTool) Execute(ctx context.Context, p *auth.Principal, a
 	if err != nil {
 		return broker.Result{}, err
 	}
-	if cred.SecretType == "ssh_ca" {
+	if cred.IsZSP() {
 		return broker.Result{}, fmt.Errorf("this credential has no stored secret (zero standing privilege)")
 	}
 	secret, err := t.s.vault.Decrypt(ctx, cred.SecretEnc, store.CredentialAAD(target.ID, cred.ID))

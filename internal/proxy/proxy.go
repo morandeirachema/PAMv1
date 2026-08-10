@@ -511,7 +511,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		// A Zero Standing Privilege ("ssh_ca") credential has no stored secret;
 		// the proxy mints a short-lived certificate at dial time (dialUpstream)
 		// instead, so admit must not try to decrypt one.
-		skipDecrypt: func(c *store.Credential) bool { return c.SecretType == "ssh_ca" },
+		skipDecrypt: func(c *store.Credential) bool { return c.IsZSP() },
 		startAudit: func(t *store.Target, c *store.Credential) (string, string) {
 			mode := "interactive"
 			if observe {
@@ -537,7 +537,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	// otherwise have happened (after admit's fail-closed session.start audit).
 	// admit left the secret empty for this credential type; dialUpstream needs the
 	// CA to mint the certificate.
-	if cred.SecretType == "ssh_ca" && p.ca == nil {
+	if cred.IsZSP() && p.ca == nil {
 		p.log.Error("zero-standing-privilege credential but no SSH CA configured", "actor", actor, "target", target.Name)
 		p.audit(ctx, actor, "session.error",
 			fmt.Sprintf("target:%s cred_user:%s reason:no-ssh-ca", target.Name, cred.Username))
@@ -700,7 +700,7 @@ func (p *Proxy) refuse(ctx context.Context, chans <-chan ssh.NewChannel, res adm
 func (p *Proxy) dialUpstream(ctx context.Context, target *store.Target, cred *store.Credential, secret, actor string) (*ssh.Client, error) {
 	var authMethod ssh.AuthMethod
 	switch cred.SecretType {
-	case "ssh_ca":
+	case store.SecretTypeSSHCA:
 		if p.ca == nil {
 			return nil, errors.New("zero-standing-privilege credential but no SSH CA configured")
 		}

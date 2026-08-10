@@ -1019,6 +1019,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-10 | Phase 106 (deferred-cleanup backlog): the `"ssh_ca"` magic string → `store.SecretTypeSSHCA` + `Credential.IsZSP()` (13 secret-path guards de-stringified). The rest of the backlog (deleteByID, credAndTarget, single-use pgstore scanners, the vendor N+1, storetest subtests) was evaluated and skipped as churn-with-wrinkles — see ROADMAP Phase 106. |
 | 2026-08-10 | Phase 105 (config-validation test hardening): `TestLoadRejectsBadValues` (17 cases over the previously-untested `config.Load` rules — enums, bounds, cross-field deps) and `TestLoadAcceptsRichValidConfig` (a positive guard against false-rejects). Test-only. |
 | 2026-08-10 | Phase 104 (enforcement tooling): gosec `G304`/`G101` moved out of the exclude list (now enforced; nine file-read sites annotated). golangci-lint v2 evaluated on a curated set — all 39 findings were test-noise or deliberate idioms, so not adopted as a gate; the two `unconvert` no-ops fixed directly. |
 | 2026-08-10 | Phase 103 (fuzzing the wire parsers): Go native fuzz targets for the untrusted-input parsers — `internal/tds` (`FuzzParsePreLogin`/`FuzzParseSQLBatch`/`FuzzParseRPC`) and `internal/proxy` (`FuzzSFTPInspector`). Seeds replay as normal tests (regression guard); a `fuzz smoke` CI step fuzzes each ~20s. ~2M execs found nothing — the parsers hold. |
