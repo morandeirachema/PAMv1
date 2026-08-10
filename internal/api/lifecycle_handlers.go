@@ -306,7 +306,7 @@ func (s *Server) checkoutCredential(w http.ResponseWriter, r *http.Request) {
 	// A Zero Standing Privilege credential has no stored secret to lease. Refuse
 	// before creating a lease (which we'd then have to roll back after a decrypt of
 	// the empty SecretEnc failed, emitting a misleading credential.decrypt_failed).
-	if cred.SecretType == "ssh_ca" {
+	if cred.IsZSP() {
 		writeError(w, http.StatusUnprocessableEntity, "this credential has no stored secret (zero standing privilege); connect through the proxy")
 		return
 	}
@@ -508,7 +508,7 @@ func (s *Server) reconcileOne(ctx context.Context, cred *store.Credential, targe
 	}
 	// A Zero Standing Privilege credential holds no stored secret — there is
 	// nothing to reconcile (each certificate is minted JIT and already expired).
-	if cred.SecretType == "ssh_ca" {
+	if cred.IsZSP() {
 		res.Status = "unsupported"
 		res.Detail = "zero standing privilege (no stored secret to reconcile)"
 		return res

@@ -51,7 +51,7 @@ func (s *Server) RotateCredentialByID(ctx context.Context, credentialID int64) {
 	}
 	// A Zero Standing Privilege credential has no stored secret to rotate: the
 	// certificate used in the session was ephemeral and has already expired.
-	if cred.SecretType == "ssh_ca" {
+	if cred.IsZSP() {
 		s.log.Debug("post-session rotation skipped for zero-standing-privilege credential", "credential", credentialID)
 		return
 	}

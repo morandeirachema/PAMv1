@@ -36,7 +36,7 @@ func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 	if in.SecretType == "" {
 		in.SecretType = "password"
 	}
-	zsp := in.SecretType == "ssh_ca"
+	zsp := in.SecretType == store.SecretTypeSSHCA
 	switch {
 	case validName(in.Username) != nil:
 		writeError(w, http.StatusUnprocessableEntity, "username "+validName(in.Username).Error())
@@ -142,7 +142,7 @@ func (s *Server) revealCredential(w http.ResponseWriter, r *http.Request) {
 	// A Zero Standing Privilege credential stores no secret — there is nothing to
 	// reveal. Refuse cleanly rather than trying to decrypt an empty SecretEnc
 	// (which would 500 and log a misleading credential.decrypt_failed).
-	if c.SecretType == "ssh_ca" {
+	if c.IsZSP() {
 		writeError(w, http.StatusUnprocessableEntity, "this credential has no stored secret (zero standing privilege); connect through the proxy")
 		return
 	}

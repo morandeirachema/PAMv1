@@ -25,7 +25,7 @@ func (s *Server) sshCAPublicKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"type":        "ssh_ca",
+		"type":        store.SecretTypeSSHCA,
 		"public_key":  s.sshCA.AuthorizedKey(),
 		"fingerprint": s.sshCA.Fingerprint(),
 		"install_hint": "Install on each target: write this line to /etc/ssh/pamv1_ca.pub, " +
