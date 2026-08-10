@@ -2351,6 +2351,30 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 103 — Fuzzing the wire parsers ✅
+
+The proxies parse ~2,900 lines of attacker-influenced bytes straight off an
+operator's connection, and the tree had **zero fuzz tests**. A parser that panics
+or hangs on a malformed packet is a denial of service on the gateway — and the
+SFTP inspector is a *containment* control that must not be evadable by a
+malformed packet. This adds Go native fuzzing for those paths.
+
+- [x] **`internal/tds`**: `FuzzParsePreLogin`, `FuzzParseSQLBatch`, `FuzzParseRPC`
+  — the three byte-slice entry points (the PRELOGIN option table with its
+  attacker-chosen offsets/lengths, the SQL-batch UCS-2 text, and the RPC parser
+  that walks batched calls and recovers SQL from typed parameters). PreLogin also
+  asserts an encode round-trip
+- [x] **`internal/proxy`**: `FuzzSFTPInspector` drives `sftpInspector.handlePacket`
+  across both read-only and allow modes (capture and the path guard nil, so no
+  filesystem side effects)
+- [x] **Result: the parsers held.** ~2M executions across the four targets found
+  no panic and no hang — the existing bounds-checks and forward-progress guards
+  are sound. No production code changed; this is coverage, not a fix
+- [x] The seed corpus runs as a normal test in the existing `go test` job (the
+  regression guard — a reintroduced crasher fails the build), and a new
+  **fuzz-smoke CI step** additionally fuzzes each target ~20s per run to hunt for
+  new ones. `archgen` unchanged; no schema, route or env-var change
+
 ## Phase 102 — Proxy-family structural unification ✅
 
 The three session proxies (SSH `proxy.go`, PostgreSQL `dbproxy.go`, SQL Server
