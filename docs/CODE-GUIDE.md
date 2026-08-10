@@ -1019,6 +1019,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-10 | Phase 102 (proxy-family structural unification): §5 — the three proxies now share one admission-gate sequence (`gates.go` `admit()`), one embedded listener lifecycle (`listener.go`), and one DB statement pipeline (`sqlproxy.go` `sqlPolicy`/`sqlClient`); each proxy contributes only its protocol's refusal wording and a few narrow hooks. The security decision path is written once. |
 | 2026-08-10 | Phase 101 (test hygiene): new `internal/testutil.WaitFor(t, timeout, cond)` bounded poll helper; the highest-traffic hand-rolled poll loops (`proxy.waitForAudit`, `session.waitPending`, the live-bus interest loops) adopt it. Test-only `testutil` package. |
 | 2026-08-10 | Phase 100 (wiring readability): `run()` in `cmd/pam-server/main.go` split into `buildVault`, `enableAuditChain` and `startSessionBuses` (the three custody-key-sharing buses, degradation ladder flattened to early returns). ~790 → ~675 lines, behavior-identical. |
 | 2026-08-10 | Phase 99 (store & API ergonomics): `ListSessions` deterministic tie-break in both stores; memstore generic `getRow`/`deleteRow`; pgstore `scanAuditEvent` (one definition for the three list/export/tail reads); API `pagedList` for the plain list handlers. No package moved. |

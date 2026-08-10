@@ -22,8 +22,10 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -138,12 +140,12 @@ type JumpConfig struct {
 }
 
 type Proxy struct {
-	store        store.Store
+	listener // shared accept/drain lifecycle: log, store, conns, bg, onSessionEnd, ln, Addr, audit
+
 	vault        *vault.Vault
 	recKey       recording.KeyWrapper // non-nil = seal recordings at rest
 	opaqueNames  bool                 // name recordings by timestamp+hex, not target/actor
 	resolver     *auth.Resolver
-	log          *slog.Logger
 	sshCfg       *ssh.ServerConfig
 	hostKey      ssh.Signer
 	recordingDir string
@@ -151,7 +153,6 @@ type Proxy struct {
 	sessions     *session.Registry
 	requireApprv bool
 	upstreamHKCB ssh.HostKeyCallback
-	onSessionEnd func(credentialID int64)
 	onBreakGlass func(ctx context.Context, actor, detail string)
 	allowedProto map[string]bool
 	winrm        winrm.Runner
@@ -169,13 +170,26 @@ type Proxy struct {
 	sftpCapture  SFTPCaptureMode
 	sftpCapMax   int64
 	ticketCheck  store.TicketChecker
+	gate         *gates // the shared admission-gate sequence (gates.go)
 
-	bg sync.WaitGroup // background tasks (post-session rotation) to drain on shutdown
+	// pending carries the resolved *auth.Principal from authenticate (where the
+	// SSH password is available) to handleConn (which runs the gates), keyed by a
+	// per-connection token stashed in the SSH permissions. It exists so the real
+	// principal reaches the gates — CanConnectTarget must see the actual roles and
+	// capabilities, not a partial reconstruction that a future field could
+	// silently outgrow. Entries are removed by handleConn (LoadAndDelete); a
+	// stale-entry sweep in authenticate bounds the map against the rare
+	// post-auth handshake failure where handleConn never runs to remove one.
+	pending  sync.Map // token(string) -> pendingPrincipal
+	princSeq atomic.Uint64
+}
 
-	mu      sync.Mutex
-	ln      net.Listener
-	conns   map[net.Conn]struct{} // accepted client connections, for shutdown force-close
-	closing bool                  // set once shutdown has begun force-closing connections
+// pendingPrincipal is a principal awaiting handoff from authenticate to
+// handleConn, stamped with its store time so a stale entry (one whose handshake
+// failed after authentication) can be swept.
+type pendingPrincipal struct {
+	principal *auth.Principal
+	at        time.Time
 }
 
 // New constructs a Proxy from the store, vault, auth resolver and cfg. It
@@ -196,19 +210,23 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		cfg.DialTimeout = 10 * time.Second
 	}
 	p := &Proxy{
-		store:        st,
+		listener: listener{
+			log:          logging.Component("proxy"),
+			store:        st,
+			component:    "proxy",
+			onSessionEnd: cfg.OnSessionEnd,
+			conns:        make(map[net.Conn]struct{}),
+		},
 		vault:        v,
 		recKey:       recKeyFor(cfg.EncryptRecordings, v),
 		opaqueNames:  cfg.OpaqueRecordingNames,
 		resolver:     resolver,
-		log:          logging.Component("proxy"),
 		hostKey:      cfg.HostKey,
 		recordingDir: cfg.RecordingDir,
 		dialTimeout:  cfg.DialTimeout,
 		sessions:     cfg.Sessions,
 		requireApprv: cfg.RequireApproval,
 		upstreamHKCB: cfg.UpstreamHostKey,
-		onSessionEnd: cfg.OnSessionEnd,
 		onBreakGlass: cfg.OnBreakGlass,
 		allowedProto: protocolSet(cfg.AllowedProtocols),
 		winrm:        cfg.WinRMRunner,
@@ -225,7 +243,15 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		sftpCapture:  cfg.SFTPCapture,
 		sftpCapMax:   cfg.SFTPCaptureMaxBytes,
 		ticketCheck:  cfg.TicketCheck,
-		conns:        make(map[net.Conn]struct{}),
+	}
+	p.gate = &gates{
+		store:        st,
+		vault:        v,
+		log:          p.log,
+		allowedProto: p.allowedProto,
+		requireApprv: p.requireApprv,
+		ticketCheck:  p.ticketCheck,
+		sessions:     p.sessions,
 	}
 	if p.certTTL <= 0 {
 		p.certTTL = 2 * time.Minute
@@ -339,6 +365,25 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 	if principal.Can(auth.CapConnect) {
 		ext["can_connect"] = "true"
 	}
+	// Carry the REAL principal to handleConn (which runs the gates) rather than a
+	// reconstruction: the SSH password is available only here, and CanConnectTarget
+	// must see the actual roles/capabilities. The token is a per-connection map key;
+	// handleConn removes the entry with LoadAndDelete once the handshake completes.
+	//
+	// Sweep stale entries first: handleConn consumes a token within one handshake
+	// of it being stored, so any entry older than that is one whose NewServerConn
+	// failed AFTER this callback succeeded (handleConn never ran to delete it).
+	// Without this the map would grow without bound over such post-auth failures.
+	now := time.Now()
+	p.pending.Range(func(k, v any) bool {
+		if pp, ok := v.(pendingPrincipal); ok && now.Sub(pp.at) > time.Minute {
+			p.pending.Delete(k)
+		}
+		return true
+	})
+	token := strconv.FormatUint(p.princSeq.Add(1), 36)
+	p.pending.Store(token, pendingPrincipal{principal: principal, at: now})
+	ext["princ"] = token
 	return &ssh.Permissions{Extensions: ext}, nil
 }
 
@@ -366,133 +411,14 @@ func (p *Proxy) ListenAndServe(ctx context.Context, addr string) error {
 // not wait for operators to voluntarily disconnect) and no handler goroutine
 // outlives Serve. A fatal Accept error (not caused by cancellation) is returned
 // promptly without waiting on active handlers. Exposed separately so tests can
-// supply a 127.0.0.1:0 listener and read the address back.
+// supply a 127.0.0.1:0 listener and read the address back. The accept/drain
+// lifecycle lives in the embedded listener; this only logs the SSH-specific
+// startup line (with the host-key fingerprint) and dispatches handleConn.
 func (p *Proxy) Serve(ctx context.Context, ln net.Listener) error {
-	p.mu.Lock()
-	p.ln = ln
-	p.closing = false // reset in case this Proxy is served again
-	p.mu.Unlock()
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-		p.closeActiveConns() // unblock in-flight handlers so the drain is bounded
-	}()
-
 	p.log.Info("ssh proxy listening",
 		"addr", ln.Addr().String(),
 		"hostkey_fp", ssh.FingerprintSHA256(p.hostKey.PublicKey()))
-	var wg sync.WaitGroup
-	var tempDelay time.Duration
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				wg.Wait() // graceful shutdown: active conns already force-closed
-				p.bg.Wait()
-				return nil
-			}
-			// Retry a transient accept error (e.g. fd exhaustion, EMFILE) with
-			// capped exponential backoff instead of tearing the listener down —
-			// the same policy net/http's Server uses.
-			//lint:ignore SA1019 Temporary() is the only portable transient-accept signal; matches net/http's Serve backoff
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
-				if tempDelay == 0 {
-					tempDelay = 5 * time.Millisecond
-				} else {
-					tempDelay *= 2
-				}
-				if tempDelay > time.Second {
-					tempDelay = time.Second
-				}
-				p.log.Warn("ssh proxy accept error; retrying", "err", err, "retry_in", tempDelay)
-				select {
-				case <-time.After(tempDelay):
-				case <-ctx.Done():
-					wg.Wait()
-					p.bg.Wait()
-					return nil
-				}
-				continue
-			}
-			return err // fatal listener error: report it without blocking on sessions
-		}
-		tempDelay = 0
-		p.trackConn(conn)
-		wg.Add(1)
-		go func(c net.Conn) {
-			defer wg.Done()
-			defer p.untrackConn(c)
-			defer p.recoverPanic("connection")
-			p.handleConn(ctx, c)
-		}(conn)
-	}
-}
-
-// trackConn records an accepted client connection so shutdown can force-close it.
-func (p *Proxy) trackConn(c net.Conn) {
-	p.mu.Lock()
-	if p.closing {
-		// Shutdown already force-closed the tracked set; close this straggler too
-		// so it cannot slip past the drain and block Serve's wg.Wait.
-		p.mu.Unlock()
-		c.Close()
-		return
-	}
-	p.conns[c] = struct{}{}
-	p.mu.Unlock()
-}
-
-// untrackConn drops a client connection once its handler has returned.
-func (p *Proxy) untrackConn(c net.Conn) {
-	p.mu.Lock()
-	delete(p.conns, c)
-	p.mu.Unlock()
-}
-
-// fireSessionEnd runs the post-session credential-rotation callback (if any) as
-// a tracked background task, so a graceful shutdown drains in-flight rotations
-// instead of killing the process mid-rotation (which could leave a target's
-// password changed but the vault stale). It must not block the caller.
-func (p *Proxy) fireSessionEnd(credID int64) {
-	if p.onSessionEnd == nil {
-		return
-	}
-	p.bg.Add(1)
-	go func() {
-		defer p.bg.Done()
-		p.onSessionEnd(credID)
-	}()
-}
-
-// recoverPanic logs and swallows a panic in a per-connection or per-session
-// goroutine, so one malformed session can't crash the whole proxy — and every
-// other operator's live session (and their unflushed recording) with it.
-func (p *Proxy) recoverPanic(where string) {
-	recoverPanicLog(p.log, where)
-}
-
-// closeActiveConns force-closes every tracked client connection. Closing the
-// client transport tears down its SSH mux, which ends the handler's channel loop
-// and unblocks the session copies — bounding Serve's shutdown drain.
-func (p *Proxy) closeActiveConns() {
-	p.mu.Lock()
-	p.closing = true // any connection tracked after this point closes itself
-	conns := make([]net.Conn, 0, len(p.conns))
-	for c := range p.conns {
-		conns = append(conns, c)
-	}
-	p.mu.Unlock()
-	for _, c := range conns {
-		c.Close()
-	}
-}
-
-// Addr returns the bound address (useful once Serve is running).
-func (p *Proxy) Addr() net.Addr {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.ln.Addr()
+	return p.serve(ctx, ln, p.handleConn, "ssh proxy accept error; retrying", "connection")
 }
 
 // handshakeTimeout bounds the pre-authentication phase of a proxied connection:
@@ -549,157 +475,69 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	// and quoted (auditField) before it reaches a log line or an audit row —
 	// exactly as authenticate and the two SQL listeners bound it.
 
-	// An enrollment-only session (MFA setup pending) may not open sessions.
-	if ext["enroll_only"] == "true" {
-		p.log.Warn("session denied: mfa enrollment incomplete", "actor", actor, "remote", remote)
-		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
-		rejectAll(chans, ssh.Prohibited, "pamv1: complete MFA enrollment first")
+	// Every authorization gate now lives in the shared admission sequence
+	// (gates.go, admit) so a gate cannot be fixed on one proxy and forgotten on
+	// the others. admit runs the fixed order — enrollment, role CapConnect,
+	// target/credential resolution, protocol allowlist, per-target grants,
+	// approval, vendor contract, "can this gateway broker it", the concurrent
+	// cap and the fail-closed session-start audit — and, only if all pass,
+	// decrypts the secret just-in-time. It emits the audits that are identical on
+	// all three proxies; refuse() below maps whatever it returns to the SSH
+	// transport's own refusal wording.
+
+	// Carry the REAL principal resolved in authenticate (where the SSH password
+	// is available) through to the gates, rather than reconstructing a partial
+	// one — CanConnectTarget must see the actual roles/capabilities. Fail closed
+	// if it is somehow absent (it is stored on every successful authentication).
+	principal, ok := p.loadPrincipal(ext["princ"])
+	if !ok {
+		p.log.Error("authenticated connection without a resolved principal", "actor", actor, "remote", remote)
+		rejectAll(chans, ssh.Prohibited, "pamv1: internal authorization error")
 		return
 	}
 
-	// auditor (and any role without CapConnect) may authenticate but not open
-	// sessions through the proxy.
-	if ext["can_connect"] != "true" {
-		p.log.Warn("session denied by role", "actor", actor, "role", string(role), "remote", remote)
-		p.audit(ctx, actor, "session.denied",
-			fmt.Sprintf("login:%s role:%s reason:role may not connect", auditField(login, 64), role))
-		rejectAll(chans, ssh.Prohibited, "pamv1: your role may not open sessions")
+	observe := ext["observe"] == "true"
+	res := p.gate.admit(ctx, admitRequest{
+		principal:  principal,
+		targetName: ext["target"],
+		credUser:   ext["cred_user"],
+		// The SSH gateway brokers ssh always and winrm only with a runner
+		// configured, so it has no single expected protocol; it uses proxyable
+		// rather than expectProtocol (which the DB proxies use). serveWinRM
+		// re-checks defensively.
+		proxyable: func(t *store.Target) bool {
+			return t.Protocol == "ssh" || (t.Protocol == "winrm" && p.winrm != nil)
+		},
+		// A Zero Standing Privilege ("ssh_ca") credential has no stored secret;
+		// the proxy mints a short-lived certificate at dial time (dialUpstream)
+		// instead, so admit must not try to decrypt one.
+		skipDecrypt: func(c *store.Credential) bool { return c.SecretType == "ssh_ca" },
+		startAudit: func(t *store.Target, c *store.Credential) (string, string) {
+			mode := "interactive"
+			if observe {
+				mode = "observer"
+			}
+			// The host is quoted rather than charset-validated: an IPv6 literal
+			// legitimately contains colons, so `host:2001:db8::1:22` is ambiguous
+			// even with nobody attacking it.
+			detail := fmt.Sprintf("target:%s host:%s:%d cred_user:%s mode:%s", t.Name, auditField(t.Host, 255), t.Port, c.Username, mode)
+			if t.Protocol != "ssh" {
+				detail += " protocol:" + t.Protocol
+			}
+			return "session.start", detail
+		},
+	})
+	if res.outcome != admitOK {
+		p.refuse(ctx, chans, res, actor, login, role, remote)
 		return
 	}
+	target, cred, secret := res.target, res.cred, res.secret
 
-	target, cred, err := p.resolveTarget(ctx, ext["target"], ext["cred_user"])
-	if err != nil {
-		p.log.Warn("session denied", "actor", actor, "login", auditField(login, 64), "reason", err.Error(), "remote", remote)
-		p.audit(ctx, actor, "session.denied", fmt.Sprintf("login:%s reason:%v", auditField(login, 64), err))
-		rejectAll(chans, ssh.Prohibited, "pamv1: "+err.Error())
-		return
-	}
-
-	// Protocol allowlist (OT policy): refuse forbidden protocols.
-	if p.allowedProto != nil && !p.allowedProto[target.Protocol] {
-		p.log.Warn("session denied: protocol not allowed", "actor", actor, "target", target.Name, "protocol", target.Protocol)
-		p.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:protocol-not-allowed")
-		rejectAll(chans, ssh.Prohibited, "pamv1: this protocol is not allowed by policy")
-		return
-	}
-
-	// Per-target authorization: honor the target's access grants.
-	grants, err := p.store.EffectiveTargetGrants(ctx, target.ID)
-	if err != nil {
-		p.log.Error("target grants lookup failed", "target", target.Name, "err", err)
-		rejectAll(chans, ssh.Prohibited, "pamv1: authorization check failed")
-		return
-	}
-	if !auth.CanConnectTarget(&auth.Principal{Name: actor, Role: role, Roles: auth.SplitRoles(ext["roles"])}, grants, target.SafeID != nil) {
-		p.log.Warn("session denied: target policy", "actor", actor, "target", target.Name, "remote", remote)
-		p.audit(ctx, actor, "session.denied", "target:"+target.Name+" reason:target-policy")
-		rejectAll(chans, ssh.Prohibited, "pamv1: not authorized for this target")
-		return
-	}
-
-	// Approval gate (4-eyes / OT maintenance window). Break-glass bypasses.
-	// This is the consume-on-connect hook (Phase 26): a single-use approval is
-	// burned by the connection it admits — even one that later fails upstream —
-	// so it can never authorize a second session.
-	// The policy is the strictest of the global flag, the target's own flag and
-	// the safe the target belongs to (Phase 58) — folded in ONE place
-	// (store.EffectiveApprovalPolicy) so the proxies and the API cannot drift.
-	approvalPolicy, aperr := store.EffectiveApprovalPolicy(ctx, p.store, target, p.requireApprv)
-	if aperr != nil {
-		p.log.Error("approval policy lookup failed", "target", target.Name, "err", aperr)
-		rejectAll(chans, ssh.Prohibited, "pamv1: approval check failed")
-		return
-	}
-	if approvalPolicy.Required && ext["break_glass"] != "true" {
-		ok, reason, aerr := claimApproval(ctx, p.store, p.ticketCheck, actor, target,
-			func(action, detail string) { p.audit(ctx, actor, action, detail) })
-		if aerr != nil {
-			p.log.Error("approval check failed", "target", target.Name, "err", aerr)
-			rejectAll(chans, ssh.Prohibited, "pamv1: approval check failed")
-			return
-		}
-		if !ok {
-			p.log.Warn("session denied", "actor", actor, "target", target.Name, "remote", remote, "reason", reason)
-			p.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:"+reason)
-			rejectAll(chans, ssh.Prohibited, "pamv1: connection requires an approved access request")
-			return
-		}
-	}
-
-	// Vendor contract gate (Phase 29): a third-party vendor may reach a target
-	// only while an approved, in-window contract grant is active. Non-vendors are
-	// unaffected (isVendor=false).
-	if isVendor, allowed, verr := p.store.VendorSessionAllowed(ctx, actor, target.Name, cred.Username, time.Now()); verr != nil {
-		p.log.Error("vendor gate check failed", "target", target.Name, "err", verr)
-		rejectAll(chans, ssh.Prohibited, "pamv1: authorization check failed")
-		return
-	} else if isVendor && !allowed {
-		p.log.Warn("session denied: vendor contract", "actor", actor, "target", target.Name, "remote", remote)
-		// access.denied, not session.denied: the SQL listeners, the viewer tunnel
-		// and the REST paths all record a vendor-contract refusal under
-		// access.denied, and the OCSF exporter and risk analytics key off that
-		// vocabulary — a second name would silently exclude SSH refusals.
-		p.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:vendor-contract")
-		rejectAll(chans, ssh.Prohibited, "pamv1: vendor access requires an approved, in-window contract grant")
-		return
-	}
-
-	// Refuse protocols this gateway cannot broker (ssh always; winrm only with a
-	// runner configured) before decrypting, so plaintext never materializes for a
-	// session that is about to be denied. serveWinRM re-checks defensively.
-	if target.Protocol != "ssh" && !(target.Protocol == "winrm" && p.winrm != nil) {
-		p.log.Warn("session denied: protocol not proxyable", "actor", actor, "target", target.Name, "protocol", target.Protocol)
-		p.audit(ctx, actor, "session.denied", "target:"+target.Name+" reason:protocol-not-proxyable")
-		rejectAll(chans, ssh.Prohibited, "pamv1: this target's protocol is not available through the proxy")
-		return
-	}
-
-	// Concurrent-session cap: refuse a new session that would exceed the per-user
-	// or global limit, BEFORE any secret is decrypted, so a single (or compromised)
-	// identity can't exhaust connections/goroutines/recording disk.
-	if p.sessions != nil && !p.sessions.AllowNew(actor) {
-		p.log.Warn("session denied: concurrent-session limit", "actor", actor, "target", target.Name)
-		p.audit(ctx, actor, "session.denied", "target:"+target.Name+" reason:session-limit")
-		rejectAll(chans, ssh.Prohibited, "pamv1: too many concurrent sessions")
-		return
-	}
-
-	// Every authorization gate has passed — obtain the upstream credential
-	// Fail closed: durably audit the session start BEFORE any secret is decrypted
-	// or a ZSP certificate is minted. If the audit store is unavailable we refuse
-	// rather than open an unaudited privileged session (the audit analogue of the
-	// fail-closed recording policy).
-	startMode := "interactive"
-	if ext["observe"] == "true" {
-		startMode = "observer"
-	}
-	// The host is quoted rather than charset-validated: an IPv6 literal
-	// legitimately contains colons, so `host:2001:db8::1:22` is ambiguous even
-	// with nobody attacking it.
-	startDetail := fmt.Sprintf("target:%s host:%s:%d cred_user:%s mode:%s", target.Name, auditField(target.Host, 255), target.Port, cred.Username, startMode)
-	if target.Protocol != "ssh" {
-		startDetail += " protocol:" + target.Protocol
-	}
-	if err := appendAuditErr(ctx, p.store, p.log, actor, "session.start", startDetail); err != nil {
-		rejectAll(chans, ssh.ConnectionFailed, "pamv1: audit log unavailable; session refused")
-		return
-	}
-
-	// just-in-time. A Zero Standing Privilege ("ssh_ca") credential has no stored
-	// secret: the proxy mints a short-lived certificate at dial time instead
-	// (dialUpstream). Every other credential's secret is decrypted here — plaintext
-	// exists only from this point, never for a session that was denied.
-	var secret string
-	if cred.SecretType != "ssh_ca" {
-		secret, err = p.decryptSecret(ctx, target, cred)
-		if err != nil {
-			p.log.Error("credential decryption failed", "actor", actor, "target", target.Name, "err", err)
-			p.audit(ctx, actor, "credential.decrypt_failed",
-				fmt.Sprintf("target:%s cred_user:%s op:connect", target.Name, cred.Username))
-			rejectAll(chans, ssh.ConnectionFailed, "pamv1: credential unavailable")
-			return
-		}
-	} else if p.ca == nil {
+	// Zero Standing Privilege but no CA configured: refuse where decryption would
+	// otherwise have happened (after admit's fail-closed session.start audit).
+	// admit left the secret empty for this credential type; dialUpstream needs the
+	// CA to mint the certificate.
+	if cred.SecretType == "ssh_ca" && p.ca == nil {
 		p.log.Error("zero-standing-privilege credential but no SSH CA configured", "actor", actor, "target", target.Name)
 		p.audit(ctx, actor, "session.error",
 			fmt.Sprintf("target:%s cred_user:%s reason:no-ssh-ca", target.Name, cred.Username))
@@ -727,7 +565,6 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	}
 	defer upstream.Close()
 
-	observe := ext["observe"] == "true"
 	mode := "interactive"
 	if observe {
 		mode = "observer"
@@ -758,7 +595,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		wg.Add(1)
 		go func(nc ssh.NewChannel) {
 			defer wg.Done()
-			defer p.recoverPanic("session")
+			defer recoverPanicLog(p.log, "session")
 			p.handleSession(ctx, nc, upstream, target, cred, actor, observe, sid)
 		}(nc)
 	}
@@ -770,19 +607,89 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	wg.Wait()
 }
 
-// resolveTarget looks up the target and the credential to inject WITHOUT
-// decrypting the secret, so every authorization gate can run before any
-// plaintext exists. The just-in-time decryption is a separate step
-// (decryptSecret) taken only once the session is authorized.
-func (p *Proxy) resolveTarget(ctx context.Context, targetName, credUser string) (*store.Target, *store.Credential, error) {
-	return lookupTargetCred(ctx, p.store, targetName, credUser)
+// loadPrincipal retrieves (and removes) the *auth.Principal that authenticate
+// stashed under token, so handleConn runs the gates against the REAL principal
+// resolved from the SSH password rather than a partial reconstruction. Returns
+// false when the token is unknown (which should not happen — a principal is
+// stored on every successful authentication — and is treated as fail-closed).
+func (p *Proxy) loadPrincipal(token string) (*auth.Principal, bool) {
+	v, ok := p.pending.LoadAndDelete(token)
+	if !ok {
+		return nil, false
+	}
+	pp, ok := v.(pendingPrincipal)
+	return pp.principal, ok
 }
 
-// decryptSecret performs the just-in-time decryption of a credential's secret.
-// It must be called only after every authorization gate has passed — plaintext
-// must never be materialized for a session that will be denied.
-func (p *Proxy) decryptSecret(ctx context.Context, target *store.Target, cred *store.Credential) (string, error) {
-	return jitDecrypt(ctx, p.vault, target, cred)
+// refuse maps an admit() refusal to the SSH proxy's wire refusal and audit,
+// preserving the exact action names, details and SSH rejection reasons each gate
+// has always used. admit already emitted the audits identical across all three
+// proxies (access.denied for the approval and vendor denials, and
+// credential.decrypt_failed) and the shared check-failed error logs; this adds
+// only the SSH-transport-specific wording. The switch is exhaustive over the
+// gates reachable on the SSH path; gateTunnelOnly (refused at authentication)
+// and gateProtocolMatch (a DB-only gate) fall to the fail-closed default.
+func (p *Proxy) refuse(ctx context.Context, chans <-chan ssh.NewChannel, res admitResult, actor, login string, role auth.Role, remote string) {
+	switch res.gate {
+	case gateEnrollOnly:
+		p.log.Warn("session denied: mfa enrollment incomplete", "actor", actor, "remote", remote)
+		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
+		rejectAll(chans, ssh.Prohibited, "pamv1: complete MFA enrollment first")
+	case gateRoleConnect:
+		p.log.Warn("session denied by role", "actor", actor, "role", string(role), "remote", remote)
+		p.audit(ctx, actor, "session.denied",
+			fmt.Sprintf("login:%s role:%s reason:role may not connect", auditField(login, 64), role))
+		rejectAll(chans, ssh.Prohibited, "pamv1: your role may not open sessions")
+	case gateResolve:
+		p.log.Warn("session denied", "actor", actor, "login", auditField(login, 64), "reason", res.reason, "remote", remote)
+		p.audit(ctx, actor, "session.denied", fmt.Sprintf("login:%s reason:%s", auditField(login, 64), res.reason))
+		rejectAll(chans, ssh.Prohibited, "pamv1: "+res.reason)
+	case gateProtocolAllowed:
+		p.log.Warn("session denied: protocol not allowed", "actor", actor, "target", res.target.Name, "protocol", res.target.Protocol)
+		p.audit(ctx, actor, "access.denied", "target:"+res.target.Name+" reason:protocol-not-allowed")
+		rejectAll(chans, ssh.Prohibited, "pamv1: this protocol is not allowed by policy")
+	case gateTargetGrants:
+		// admit logged "target grants lookup failed"; fail closed on the wire.
+		rejectAll(chans, ssh.Prohibited, "pamv1: authorization check failed")
+	case gateTargetPolicy:
+		p.log.Warn("session denied: target policy", "actor", actor, "target", res.target.Name, "remote", remote)
+		p.audit(ctx, actor, "session.denied", "target:"+res.target.Name+" reason:target-policy")
+		rejectAll(chans, ssh.Prohibited, "pamv1: not authorized for this target")
+	case gateApprovalPolicy, gateApprovalClaim:
+		// admit logged the specific approval error; fail closed on the wire.
+		rejectAll(chans, ssh.Prohibited, "pamv1: approval check failed")
+	case gateApproval:
+		// admit already audited access.denied with the reason.
+		p.log.Warn("session denied", "actor", actor, "target", res.target.Name, "remote", remote, "reason", res.reason)
+		rejectAll(chans, ssh.Prohibited, "pamv1: connection requires an approved access request")
+	case gateVendorCheck:
+		// admit logged "vendor gate check failed"; fail closed on the wire.
+		rejectAll(chans, ssh.Prohibited, "pamv1: authorization check failed")
+	case gateVendor:
+		// admit already audited access.denied reason:vendor-contract. access.denied,
+		// not session.denied: the SQL listeners, the viewer tunnel and the REST
+		// paths all record a vendor-contract refusal under access.denied, and the
+		// OCSF exporter and risk analytics key off that vocabulary.
+		p.log.Warn("session denied: vendor contract", "actor", actor, "target", res.target.Name, "remote", remote)
+		rejectAll(chans, ssh.Prohibited, "pamv1: vendor access requires an approved, in-window contract grant")
+	case gateProtocolProxyable:
+		p.log.Warn("session denied: protocol not proxyable", "actor", actor, "target", res.target.Name, "protocol", res.target.Protocol)
+		p.audit(ctx, actor, "session.denied", "target:"+res.target.Name+" reason:protocol-not-proxyable")
+		rejectAll(chans, ssh.Prohibited, "pamv1: this target's protocol is not available through the proxy")
+	case gateSessionLimit:
+		p.log.Warn("session denied: concurrent-session limit", "actor", actor, "target", res.target.Name)
+		p.audit(ctx, actor, "session.denied", "target:"+res.target.Name+" reason:session-limit")
+		rejectAll(chans, ssh.Prohibited, "pamv1: too many concurrent sessions")
+	case gateAudit:
+		// admit's fail-closed session.start write did not land; refuse unaudited.
+		rejectAll(chans, ssh.ConnectionFailed, "pamv1: audit log unavailable; session refused")
+	case gateDecrypt:
+		// admit already audited credential.decrypt_failed and logged the error.
+		rejectAll(chans, ssh.ConnectionFailed, "pamv1: credential unavailable")
+	default:
+		p.log.Error("unhandled admit refusal on the SSH proxy", "gate", int(res.gate), "actor", actor, "remote", remote)
+		rejectAll(chans, ssh.Prohibited, "pamv1: not authorized")
+	}
 }
 
 // dialUpstream opens an SSH client to the target. For a Zero Standing Privilege
@@ -1542,15 +1449,6 @@ func rejectAll(chans <-chan ssh.NewChannel, reason ssh.RejectionReason, msg stri
 	}
 }
 
-// audit appends an audit event, defaulting an empty actor to "proxy" and logging
-// (rather than returning) any append failure.
-func (p *Proxy) audit(ctx context.Context, actor, action, detail string) {
-	if actor == "" {
-		actor = "proxy"
-	}
-	appendAudit(ctx, p.store, p.log, actor, action, detail)
-}
-
 // noteBreakGlass raises the emergency-access signal for a principal resolved by a
 // proxy. It is the proxies' twin of the API's Server.noteBreakGlass, and exists
 // for the same stated reason: every entry point that resolves its own principal
@@ -1596,15 +1494,6 @@ func noteBreakGlass(ctx context.Context, st store.Store, log *slog.Logger,
 	if hook != nil {
 		hook(ctx, principal.Name, detail)
 	}
-}
-
-// auditClosing writes a session-teardown audit event that must survive graceful
-// shutdown. It detaches from ctx so a shutdown-cancelled context does not drop
-// the event, and bounds the write so a hung store cannot stall the drain.
-func (p *Proxy) auditClosing(ctx context.Context, actor, action, detail string) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	p.audit(ctx, actor, action, detail)
 }
 
 // claimApproval runs the use-time approval gate for one connection and audits
