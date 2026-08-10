@@ -6,8 +6,16 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–95 are shipped.** The narrative that follows traces the arc through
-Phase 43 — the CyberArk/Wallix-style console, the AI-agent
+**Phases 0–107 are shipped.** Phases 96–107 are a refactor, security-hardening
+and documentation-currency arc that sits on top of the feature work below:
+cross-path security-parity fixes (96), observability parity (97), shared-helper
+consolidation (98), store/API ergonomics (99), wiring readability (100), test
+hygiene (101), the proxy-family structural unification behind one `admit()` gate
+sequence (102), fuzzing the wire parsers (103), gosec enforcement + a
+golangci-lint evaluation (104), config-validation test hardening (105), the
+`IsZSP` cleanup (106), and this currency pass (107). They changed no user-facing
+behaviour, protocol, port or env var. The narrative that follows traces the
+feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
 with command control, safes, dependent-account propagation), optional CyberArk Conjur
@@ -2357,18 +2365,22 @@ The refactor/hardening arc (96–106) kept the per-phase change-log tables curre
 in the docs it touched but let the cross-doc currency markers drift — the same
 lag Phase 95 corrected for the 71–94 arc, caught here by a doc-vs-code audit.
 
-- [x] **Every `Reflects: Phases 0–N` header now says 0–106 / 2026-08-10.**
+- [x] **Every `Reflects: Phases 0–N` header now says 0–107 / 2026-08-10.**
   Eighteen docs still read 0–94 (SECURITY-GAPS read 0–96); their bodies were
-  accurate — 96–106 were internal refactors, tests and tooling that changed no
-  user-facing behaviour, protocol, port or env var — but the markers asserting
+  accurate — 96–107 were internal refactors, tests, tooling and docs that changed
+  no user-facing behaviour, protocol, port or env var — but the markers asserting
   currency had not been bumped
+- [x] **The summary narratives caught up too**: the ROADMAP header ("Phases 0–107
+  are shipped", with a one-paragraph gloss of the 96–107 arc) and both READMEs'
+  phase counts (`0–94` → `0–107`, EN and ES), which the per-phase change-log
+  tables had outpaced
 - [x] **ARCHITECTURE-HIGH-LEVEL's change log gained the five missing phases**
   (101, 103, 104, 105, 106); the low-level log and CODE-GUIDE were already complete
 - [x] **CODE-GUIDE's CI-gate list now names the `fuzz smoke` step and the
   enforced `gosec` `G304`/`G101`** added in 103–104
 - [x] **SECURITY-GAPS records the two security findings from the sweep**: the
   Phase 102 per-connection-map leak a hand review caught (finding CF), and the
-  103/104 fuzzing + gosec-enforcement hardening — and its header caught up to 0–106
+  103/104 fuzzing + gosec-enforcement hardening — and its header caught up to 0–107
 - [x] Docs-only; no code, schema, route or env-var change, so the `archgen`
   output is untouched and no release is needed
 
@@ -3923,9 +3935,13 @@ one by the fixes of 2026-07-30/31, and the 2026-08-06 read of the two newest
 phases by 60a and 61a. The **2026-08-07 sweep** (the first over phases 56–61a as
 a whole) closed across phases 62, 63 and 65 — see §0 below and
 [docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md). **Every read-only sweep is
-closed**, so nothing here is a known defect. Everything after §0 is the
-honest remainder, grouped by what it would take to close, with each item
-recorded against the phase that deferred it.
+closed**, so nothing here is a known defect. The **2026-08-10 refactor,
+hardening and documentation-currency arc (phases 96–107)** — cross-path
+security-parity, the proxy-family structural unification, parser fuzzing, gosec
+enforcement, config-validation and docs — is likewise complete and adds no
+backlog; it is recorded per-phase above. Everything after §0 is the honest
+remainder, grouped by what it would take to close, with each item recorded
+against the phase that deferred it.
 
 #### 0. The 2026-08-07 sweep — closed
 
