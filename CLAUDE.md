@@ -21,7 +21,7 @@ gofmt -l .                                       # must print nothing (CI fails 
 go vet ./...
 staticcheck ./...                                # CI gate (go install honnef.co/go/tools/cmd/staticcheck@latest)
 govulncheck ./...                                # CI gate (go install golang.org/x/vuln/cmd/govulncheck@latest)
-gosec -confidence high -exclude=G104,G115,G304,G306,G101 ./...   # CI gate; deliberate findings carry `#nosec Gxxx -- reason`
+gosec -confidence high -exclude=G104,G115,G306 ./...             # CI gate; deliberate findings carry `#nosec Gxxx -- reason` (G304 file reads + G101 are enforced, annotated per-site)
 go run ./cmd/archgen                             # regenerates docs/ARCHITECTURE-DIAGRAMS.md; CI diffs it — run after route/store/schema changes
 go mod tidy                                      # after changing imports
 ```

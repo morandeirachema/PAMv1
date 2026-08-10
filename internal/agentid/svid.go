@@ -84,7 +84,7 @@ func NewSVIDVerifier(jwksPath, trustDomain, audience string, maxDepth int) (*SVI
 	if trustDomain == "" {
 		return nil, errors.New("agentid: svid trust domain is required")
 	}
-	data, err := os.ReadFile(jwksPath)
+	data, err := os.ReadFile(jwksPath) // #nosec G304 -- operator-configured SVID trust-domain JWKS path
 	if err != nil {
 		return nil, fmt.Errorf("agentid: read svid jwks: %w", err)
 	}

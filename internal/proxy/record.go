@@ -93,7 +93,7 @@ func newRecording(ctx context.Context, dir, title string, now time.Time, maxByte
 		return nil, err
 	}
 	path := filepath.Join(dir, sanitize(title)+".cast")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304 -- path is the recording dir joined with a sanitized title, not caller-supplied
 	if err != nil {
 		return nil, err
 	}

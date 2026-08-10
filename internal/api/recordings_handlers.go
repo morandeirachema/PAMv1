@@ -200,7 +200,7 @@ func (s *Server) playRecording(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "not a recording name")
 		return
 	}
-	f, err := os.Open(filepath.Join(s.recordingDir, name))
+	f, err := os.Open(filepath.Join(s.recordingDir, name)) // #nosec G304 -- name is validated against recordingNameRe above and joined under the recording dir
 	if err != nil {
 		writeError(w, http.StatusNotFound, "no such recording")
 		return

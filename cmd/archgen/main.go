@@ -70,7 +70,7 @@ func moduleRoot() (root, module string, err error) {
 	}
 	for {
 		gomod := filepath.Join(dir, "go.mod")
-		if data, e := os.ReadFile(gomod); e == nil {
+		if data, e := os.ReadFile(gomod); e == nil { // #nosec G304 -- build-time doc generator walking up to the repo go.mod
 			for _, line := range strings.Split(string(data), "\n") {
 				if strings.HasPrefix(line, "module ") {
 					return dir, strings.TrimSpace(strings.TrimPrefix(line, "module ")), nil
@@ -404,7 +404,7 @@ var (
 // writeRouteMap parses the mux wiring in internal/api/server.go into a table of
 // method, path, and the capability (or guard) each route enforces.
 func writeRouteMap(b *strings.Builder, root string) error {
-	data, err := os.ReadFile(filepath.Join(root, "internal", "api", "server.go"))
+	data, err := os.ReadFile(filepath.Join(root, "internal", "api", "server.go")) // #nosec G304 -- build-time doc generator reading a fixed repo source path
 	if err != nil {
 		return err
 	}

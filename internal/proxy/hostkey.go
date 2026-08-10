@@ -29,7 +29,7 @@ func LoadOrCreateHostKey(path string) (ssh.Signer, error) {
 	if path == "" {
 		return GenerateHostKey()
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- operator-configured host-key path (PAM_SSH_HOST_KEY)
 	if err == nil {
 		return ssh.ParsePrivateKey(data)
 	}

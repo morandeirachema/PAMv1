@@ -17,6 +17,7 @@ import (
 
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store/memstore"
+	"github.com/morandeirachema/pamv1/internal/testutil"
 )
 
 // stepUpReplica builds one simulated replica's coordinator, bus attached under
@@ -108,12 +109,20 @@ func TestStepUpBusRemoteDecisionEndToEnd(t *testing.T) {
 		t.Fatal("Await still blocked after the remote approval")
 	}
 	// The claim removed the shared row, and A audited the bus-applied decision.
+	// The audit is appended by the bus-apply goroutine on the hosting replica,
+	// which is not synchronized with the verdict channel above — so poll for it
+	// with a bound rather than reading once and racing the append.
 	pendingFrom(t, b, 0)
-	mu.Lock()
-	joined := strings.Join(audits, "\n")
-	mu.Unlock()
-	if !strings.Contains(joined, "session.stepup_decided session:sess-1 approve:true decider:boss via:bus") {
-		t.Fatalf("hosting replica did not audit the bus-applied decision; got:\n%s", joined)
+	const want = "session.stepup_decided session:sess-1 approve:true decider:boss via:bus"
+	if !testutil.WaitFor(t, 2*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return strings.Contains(strings.Join(audits, "\n"), want)
+	}) {
+		mu.Lock()
+		joined := strings.Join(audits, "\n")
+		mu.Unlock()
+		t.Fatalf("hosting replica did not audit the bus-applied decision within the deadline; got:\n%s", joined)
 	}
 }
 

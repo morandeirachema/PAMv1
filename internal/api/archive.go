@@ -41,7 +41,7 @@ func writeArchiveFile(dir, name string, data []byte) (string, string, error) {
 		return "", "", err
 	}
 	path := filepath.Join(dir, name)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o400)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o400) // #nosec G304 -- internally-built archive path under a fixed dir; O_EXCL create
 	if err != nil {
 		if os.IsExist(err) {
 			return "", "", fmt.Errorf("%w: %s", errArchiveExists, path)
