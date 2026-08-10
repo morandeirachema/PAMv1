@@ -2351,6 +2351,40 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 106 — Deferred-cleanup backlog: the one that earned its keep ✅
+
+Working through the "deferred cleanups" backlog and being honest about which
+were worth doing. One was; the rest, on inspection, were churn with wrinkles.
+
+- [x] **`"ssh_ca"` magic string → `store.SecretTypeSSHCA` + `Credential.IsZSP()`.**
+  The Zero Standing Privilege type was compared as a bare string literal at
+  thirteen behavioural sites across the proxy and the API — and every one guards
+  a **secret-delivering path** (decrypt, reveal, rotate, check-out, dial). A
+  typo (`"sshca"`) in a new such path would silently read as *not* ZSP and try to
+  decrypt an empty secret. Now a named constant and predicate: `SecretTypePassword`
+  / `SecretTypeSSHKey` / `SecretTypeSSHCA`, and `c.IsZSP()`. Test
+  `store.TestCredentialIsZSP` pins the predicate and that a near-miss is not ZSP
+- [x] **Evaluated and deliberately skipped** (each a wash or worse on inspection,
+  not left on a wishlist):
+  - a `deleteByID` handler factory — the six delete handlers **diverge in
+    audit-detail format** (three write a bare id, three `entity:id`), so a
+    factory needs a per-route formatter closure that is as much code as it removes
+  - a `credAndTarget` helper — the `GetCredential` sites are **not uniform**
+    (several fetch a *management* credential, not a target), so it does not apply
+    cleanly
+  - extracting the remaining pgstore anonymous scanners — they are **single-use**
+    (naming adds nothing), and the one apparent duplicate (`TargetGrant`)
+    legitimately differs in projection (`EffectiveTargetGrants` omits
+    `CreatedBy`); the real duplicate, `AuditEvent` ×3, was unified in Phase 99
+  - the vendor lookup N+1 — a real inefficiency, but on a **low-frequency
+    admin-list path**, and fixing it means adding `GetVendor`/`GetVendorGrant` to
+    the store interface + both implementations + the conformance suite: a
+    disproportionate change, left as a noted follow-on
+  - wrapping the 1,900-line `storetest` in `t.Run` subtests — high churn for
+    failure-isolation only
+- [x] Behaviour-preserving (a named constant/predicate for the same stored
+  value); no schema, route, wire-format or env-var change; archgen unchanged
+
 ## Phase 105 — Config-validation test hardening ✅
 
 `internal/config` is the sole validator of the ~200 `PAM_*` environment

@@ -68,7 +68,7 @@ func (s *Server) fetchAppSecret(w http.ResponseWriter, r *http.Request, app *sto
 		return
 	}
 	// A Zero Standing Privilege credential has no stored secret to deliver.
-	if cred.SecretType == "ssh_ca" {
+	if cred.IsZSP() {
 		writeError(w, http.StatusUnprocessableEntity, "this credential has no stored secret (zero standing privilege)")
 		return
 	}

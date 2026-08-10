@@ -15,7 +15,7 @@ var (
 	validProtocol = map[string]bool{"ssh": true, "winrm": true, "rdp": true, "vnc": true, "postgres": true, "mssql": true}
 	// "ssh_ca" is a Zero Standing Privilege credential (Phase 22): it stores no
 	// secret — the proxy mints a short-lived certificate just-in-time instead.
-	validSecret = map[string]bool{"password": true, "ssh_key": true, "ssh_ca": true}
+	validSecret = map[string]bool{store.SecretTypePassword: true, store.SecretTypeSSHKey: true, store.SecretTypeSSHCA: true}
 )
 
 // validOverride reports whether v is "" (inherit) or a mode the rank map knows.
