@@ -95,12 +95,12 @@ type DBConfig struct {
 
 // DBProxy brokers PostgreSQL sessions with just-in-time credential injection.
 type DBProxy struct {
-	store        store.Store
+	listener // shared accept/drain lifecycle: log, store, conns, bg, onSessionEnd, ln, Addr, audit
+
 	vault        *vault.Vault
 	recKey       recording.KeyWrapper
 	opaqueNames  bool
 	resolver     *auth.Resolver
-	log          *slog.Logger
 	recordingDir string
 	sessions     *session.Registry
 	requireApprv bool
@@ -110,7 +110,6 @@ type DBProxy struct {
 	requireRec   bool
 	dialTimeout  time.Duration
 	clientTLS    *tls.Config
-	onSessionEnd func(int64)
 	guard        *cmdguard.Guard
 	live         *session.Hub
 	chain        *recordChain
@@ -120,12 +119,10 @@ type DBProxy struct {
 	stepupGuard  *cmdguard.Guard
 	stepup       *session.StepUp
 	stepupTTL    time.Duration
-
-	bg sync.WaitGroup // background tasks (post-session rotation) drained on shutdown
-
-	mu      sync.Mutex
-	conns   map[net.Conn]struct{}
-	closing bool
+	gate         *gates // the shared admission-gate sequence (gates.go)
+	// pol is the protocol-independent per-statement policy shared with the SQL
+	// Server proxy (see sqlproxy.go), built once at construction.
+	pol sqlPolicy
 }
 
 // NewDB constructs a DBProxy from the store, vault, auth resolver and cfg. It
@@ -142,12 +139,17 @@ func NewDB(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg DBConfig
 		cfg.DialTimeout = 10 * time.Second
 	}
 	d := &DBProxy{
-		store:        st,
+		listener: listener{
+			log:          logging.Component("dbproxy"),
+			store:        st,
+			component:    "dbproxy",
+			onSessionEnd: cfg.OnSessionEnd,
+			conns:        make(map[net.Conn]struct{}),
+		},
 		vault:        v,
 		recKey:       recKeyFor(cfg.EncryptRecordings, v),
 		opaqueNames:  cfg.OpaqueRecordingNames,
 		resolver:     resolver,
-		log:          logging.Component("dbproxy"),
 		recordingDir: cfg.RecordingDir,
 		sessions:     cfg.Sessions,
 		requireApprv: cfg.RequireApproval,
@@ -157,7 +159,6 @@ func NewDB(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg DBConfig
 		requireRec:   cfg.RequireRecording,
 		dialTimeout:  cfg.DialTimeout,
 		clientTLS:    cfg.ClientTLS,
-		onSessionEnd: cfg.OnSessionEnd,
 		guard:        cfg.CommandGuard,
 		live:         cfg.Live,
 		chain:        newRecordChain(cfg.RecordingDir),
@@ -167,10 +168,28 @@ func NewDB(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg DBConfig
 		stepupGuard:  cfg.StepUpGuard,
 		stepup:       cfg.StepUp,
 		stepupTTL:    cfg.StepUpTTL,
-		conns:        make(map[net.Conn]struct{}),
 	}
 	if d.stepupTTL <= 0 {
 		d.stepupTTL = 2 * time.Minute
+	}
+	d.gate = &gates{
+		store:        st,
+		vault:        v,
+		log:          d.log,
+		allowedProto: d.allowedProto,
+		requireApprv: d.requireApprv,
+		ticketCheck:  d.ticketCheck,
+		sessions:     d.sessions,
+	}
+	d.pol = sqlPolicy{
+		guard:       d.guard,
+		stepupGuard: d.stepupGuard,
+		stepup:      d.stepup,
+		stepupTTL:   d.stepupTTL,
+		live:        d.live,
+		prompt:      "psql> ",
+		via:         "postgres",
+		viaInQuery:  false, // PostgreSQL omits the via tag from db.query/step-up/deny details
 	}
 	if d.clientTLS == nil {
 		d.log.Warn("database proxy operator leg is NOT encrypted (set PAM_TLS_CERT/KEY or terminate TLS at the ingress)")
@@ -191,124 +210,12 @@ func (d *DBProxy) ListenAndServe(ctx context.Context, addr string) error {
 }
 
 // Serve accepts connections until ctx is cancelled, then closes the listener and
-// force-closes active connections so the drain is bounded. Modeled on
-// Proxy.Serve (the SSH proxy), including the transient-accept backoff.
+// force-closes active connections so the drain is bounded. The accept/drain
+// lifecycle lives in the embedded listener; this only logs the PostgreSQL
+// startup line and dispatches handleConn.
 func (d *DBProxy) Serve(ctx context.Context, ln net.Listener) error {
-	d.mu.Lock()
-	d.closing = false
-	d.mu.Unlock()
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-		d.closeActiveConns()
-	}()
-
 	d.log.Info("database proxy listening", "addr", ln.Addr().String(), "protocol", "postgres")
-	var wg sync.WaitGroup
-	var tempDelay time.Duration
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				wg.Wait()
-				d.bg.Wait()
-				return nil
-			}
-			//lint:ignore SA1019 Temporary() is the only portable transient-accept signal; matches net/http's Serve backoff
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
-				if tempDelay == 0 {
-					tempDelay = 5 * time.Millisecond
-				} else {
-					tempDelay *= 2
-				}
-				if tempDelay > time.Second {
-					tempDelay = time.Second
-				}
-				d.log.Warn("db proxy accept error; retrying", "err", err, "retry_in", tempDelay)
-				select {
-				case <-time.After(tempDelay):
-				case <-ctx.Done():
-					wg.Wait()
-					d.bg.Wait()
-					return nil
-				}
-				continue
-			}
-			return err
-		}
-		tempDelay = 0
-		d.trackConn(conn)
-		wg.Add(1)
-		go func(c net.Conn) {
-			defer wg.Done()
-			defer d.untrackConn(c)
-			defer recoverPanicLog(d.log, "db-connection")
-			d.handleConn(ctx, c)
-		}(conn)
-	}
-}
-
-// trackConn records an accepted connection so shutdown can force-close it.
-func (d *DBProxy) trackConn(c net.Conn) {
-	d.mu.Lock()
-	if d.closing {
-		d.mu.Unlock()
-		c.Close()
-		return
-	}
-	d.conns[c] = struct{}{}
-	d.mu.Unlock()
-}
-
-// untrackConn drops a connection once its handler returns.
-func (d *DBProxy) untrackConn(c net.Conn) {
-	d.mu.Lock()
-	delete(d.conns, c)
-	d.mu.Unlock()
-}
-
-// closeActiveConns force-closes every tracked connection to bound the drain.
-func (d *DBProxy) closeActiveConns() {
-	d.mu.Lock()
-	d.closing = true
-	conns := make([]net.Conn, 0, len(d.conns))
-	for c := range d.conns {
-		conns = append(conns, c)
-	}
-	d.mu.Unlock()
-	for _, c := range conns {
-		c.Close()
-	}
-}
-
-// fireSessionEnd runs the post-session rotation callback as a tracked background
-// task (drained on shutdown), mirroring the SSH proxy.
-func (d *DBProxy) fireSessionEnd(credID int64) {
-	if d.onSessionEnd == nil {
-		return
-	}
-	d.bg.Add(1)
-	go func() {
-		defer d.bg.Done()
-		d.onSessionEnd(credID)
-	}()
-}
-
-// audit appends an audit event, defaulting an empty actor to "dbproxy".
-func (d *DBProxy) audit(ctx context.Context, actor, action, detail string) {
-	if actor == "" {
-		actor = "dbproxy"
-	}
-	appendAudit(ctx, d.store, d.log, actor, action, detail)
-}
-
-// auditClosing writes a teardown audit event that must survive graceful shutdown
-// (detached from a cancelled ctx, bounded so a hung store cannot stall the drain).
-func (d *DBProxy) auditClosing(ctx context.Context, actor, action, detail string) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	d.audit(ctx, actor, action, detail)
+	return d.serve(ctx, ln, d.handleConn, "db proxy accept error; retrying", "db-connection")
 }
 
 // handleConn brokers one PostgreSQL connection end to end: startup + SSL
@@ -407,113 +314,35 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	// set on the socket beneath.
 	_ = nConn.SetDeadline(time.Time{})
 
-	// --- Authorization gates (mirror the SSH proxy; decrypt only after all pass) ---
-	// An enrollment-only session (MFA setup pending under PAM_MFA_REQUIRED) may not
-	// open sessions — mirror the SSH proxy and the HTTP authz middleware, so the
-	// mandatory-MFA policy is not bypassable via the database proxy.
-	// A tunnel-scoped token (the in-portal RDP/VNC viewer) authenticates ONLY at
-	// its viewer tunnel: it rides a WebSocket URL, so a copy from an access log
-	// must not open a database session. The HTTP middleware refuses it; so must a
-	// listener that resolves its own principal.
-	if principal.TunnelOnly {
-		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:tunnel-only-token")
-		d.deny(ctx, backend, actor, login, "this token may only be used by the in-portal viewer")
-		return
-	}
+	// --- Authorization gates ---
+	// Break-glass is noted here (it is not itself a gate): every entry point that
+	// resolves its own principal must raise the emergency-access signal. It runs
+	// just before admit — admit's first gate (tunnel-only) can never fire for a
+	// break-glass principal, since the two token types are mutually exclusive, so
+	// the pre-admit position is behaviour-identical to the old post-tunnel one.
 	d.noteBreakGlass(ctx, principal, "postgres login:"+auditField(login, 64))
-	if principal.EnrollOnly {
-		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
-		d.deny(ctx, backend, actor, login, "complete MFA enrollment first")
-		return
-	}
-	if !principal.Can(auth.CapConnect) {
-		d.deny(ctx, backend, actor, login, "your role may not open sessions")
-		return
-	}
+
+	// The shared admission sequence (gates.go, admit) runs every gate — tunnel-only
+	// and enrollment refusals, role CapConnect, target/credential resolution, the
+	// exact-protocol match, the protocol allowlist, per-target grants, the approval
+	// and vendor-contract gates, the concurrent cap and the fail-closed
+	// session-start audit — and decrypts just-in-time only if all pass. refuse()
+	// maps whatever it returns to PostgreSQL's own refusal wording.
 	credUser, targetName := splitLogin(login)
-	target, cred, err := lookupTargetCred(ctx, d.store, targetName, credUser)
-	if err != nil {
-		d.deny(ctx, backend, actor, login, err.Error())
+	res := d.gate.admit(ctx, admitRequest{
+		principal:      principal,
+		targetName:     targetName,
+		credUser:       credUser,
+		expectProtocol: "postgres",
+		startAudit: func(t *store.Target, c *store.Credential) (string, string) {
+			return "db.session.start", fmt.Sprintf("target:%s db:%s cred_user:%s", t.Name, database, c.Username)
+		},
+	})
+	if res.outcome != admitOK {
+		d.refuse(ctx, backend, res, actor, login)
 		return
 	}
-	if target.Protocol != "postgres" {
-		d.deny(ctx, backend, actor, login, "target is not a postgres target")
-		return
-	}
-	if d.allowedProto != nil && !d.allowedProto[target.Protocol] {
-		d.deny(ctx, backend, actor, login, "protocol not allowed by policy")
-		return
-	}
-	grants, err := d.store.EffectiveTargetGrants(ctx, target.ID)
-	if err != nil {
-		d.log.Error("target grants lookup failed", "target", target.Name, "err", err)
-		d.fail(backend, "58000", "pamv1: authorization check failed")
-		return
-	}
-	if !auth.CanConnectTarget(principal, grants, target.SafeID != nil) {
-		d.deny(ctx, backend, actor, login, "not authorized for this target")
-		return
-	}
-	// Consume-on-connect (Phase 26): a single-use approval is burned by the
-	// connection it admits and cannot authorize a second session. The policy
-	// itself is the strictest of global, per-target and the target's safe
-	// (Phase 58), folded in one place so this path cannot drift from the others.
-	approvalPolicy, aperr := store.EffectiveApprovalPolicy(ctx, d.store, target, d.requireApprv)
-	if aperr != nil {
-		d.log.Error("approval policy lookup failed", "target", target.Name, "err", aperr)
-		d.fail(backend, "58000", "pamv1: approval check failed")
-		return
-	}
-	if approvalPolicy.Required && !principal.BreakGlass {
-		ok, reason, aerr := claimApproval(ctx, d.store, d.ticketCheck, actor, target,
-			func(action, detail string) { d.audit(ctx, actor, action, detail) })
-		if aerr != nil {
-			d.log.Error("approval check failed", "target", target.Name, "err", aerr)
-			d.fail(backend, "58000", "pamv1: approval check failed")
-			return
-		}
-		if !ok {
-			d.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:"+reason)
-			d.fail(backend, "28000", "pamv1: connection requires an approved access request")
-			return
-		}
-	}
-
-	// Vendor contract gate (Phase 29): a vendor may reach a target only within an
-	// active contract grant; non-vendors are unaffected.
-	if isVendor, allowed, verr := d.store.VendorSessionAllowed(ctx, actor, target.Name, cred.Username, time.Now()); verr != nil {
-		d.log.Error("vendor gate check failed", "target", target.Name, "err", verr)
-		d.fail(backend, "58000", "pamv1: authorization check failed")
-		return
-	} else if isVendor && !allowed {
-		d.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:vendor-contract")
-		d.fail(backend, "28000", "pamv1: vendor access requires an approved, in-window contract grant")
-		return
-	}
-
-	// Concurrent-session cap: refuse before decrypting any secret.
-	if d.sessions != nil && !d.sessions.AllowNew(actor) {
-		d.audit(ctx, actor, "db.session.denied", "target:"+target.Name+" reason:session-limit")
-		d.fail(backend, "53300", "pamv1: too many concurrent sessions")
-		return
-	}
-
-	// Fail closed: durably audit the session before any secret is decrypted or
-	// injected upstream. If the audit store is unavailable we refuse the session
-	// rather than open an unaudited privileged connection.
-	if err := appendAuditErr(ctx, d.store, d.log, actor, "db.session.start", fmt.Sprintf("target:%s db:%s cred_user:%s", target.Name, database, cred.Username)); err != nil {
-		d.fail(backend, "58000", "pamv1: audit log unavailable; session refused")
-		return
-	}
-
-	// Every gate passed — decrypt just-in-time. Plaintext exists only from here.
-	secret, err := jitDecrypt(ctx, d.vault, target, cred)
-	if err != nil {
-		d.log.Error("credential decryption failed", "actor", actor, "target", target.Name, "err", err)
-		d.audit(ctx, actor, "credential.decrypt_failed", "target:"+target.Name+" cred_user:"+cred.Username+" op:connect")
-		d.fail(backend, "58000", "pamv1: credential unavailable")
-		return
-	}
+	target, cred, secret := res.target, res.cred, res.secret
 
 	up, err := d.dialUpstream(ctx, target, cred.Username, secret, database)
 	if err != nil {
@@ -644,6 +473,9 @@ func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgpr
 		}
 		return backend.Flush()
 	}
+	// cl adapts the mutex-guarded sendClient to the shared per-statement pipeline's
+	// sqlClient interface (see sqlproxy.go).
+	cl := pgSQLClient{send: sendClient}
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() { // client → upstream
@@ -657,32 +489,32 @@ func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgpr
 			}
 			switch m := msg.(type) {
 			case *pgproto3.Query:
-				if d.blockedStatement(ctx, sendClient, actor, target, m.String, false) {
+				if sqlBlockedStatement(ctx, &d.listener, &d.pol, cl, actor, target, m.String, false) {
 					continue // refused by policy; session stays usable
 				}
-				if d.stepUpRefused(relayCtx, sendClient, actor, target, m.String, sid, false) {
+				if sqlStepUpRefused(relayCtx, &d.listener, &d.pol, cl, actor, target, m.String, sid, false) {
 					continue // paused for a supervisor and denied/timed out; session stays usable
 				}
-				if d.recordQuery(ctx, rec, actor, target, m.String, sid) {
+				if sqlRecordQuery(ctx, &d.listener, &d.pol, rec, actor, target, m.String, sid) {
 					return // recording cap reached: end the session rather than run it unrecorded
 				}
 			case *pgproto3.Parse:
-				if d.blockedStatement(ctx, sendClient, actor, target, m.Query, true) {
+				if sqlBlockedStatement(ctx, &d.listener, &d.pol, cl, actor, target, m.Query, true) {
 					return // fail-closed: end the extended-protocol session
 				}
 				// Step-up covers the extended protocol too, so a client can't dodge a
 				// supervisor by sending a guarded statement as Parse+Bind+Execute.
-				if d.stepUpRefused(relayCtx, sendClient, actor, target, m.Query, sid, true) {
+				if sqlStepUpRefused(relayCtx, &d.listener, &d.pol, cl, actor, target, m.Query, sid, true) {
 					return // denied/timed out: fail-closed, end the extended-protocol session
 				}
-				if d.recordQuery(ctx, rec, actor, target, m.Query, sid) {
+				if sqlRecordQuery(ctx, &d.listener, &d.pol, rec, actor, target, m.Query, sid) {
 					return
 				}
 			case *pgproto3.FunctionCall:
 				// The deprecated fast-path call carries no SQL text, so it can't be
 				// command-filtered — but audit it so it can't silently evade the
 				// per-statement trail the Query/Parse paths provide.
-				if d.recordQuery(ctx, rec, actor, target, fmt.Sprintf("[fastpath function_call oid=%d]", m.Function), sid) {
+				if sqlRecordQuery(ctx, &d.listener, &d.pol, rec, actor, target, fmt.Sprintf("[fastpath function_call oid=%d]", m.Function), sid) {
 					return
 				}
 			case *pgproto3.Terminate:
@@ -713,100 +545,30 @@ func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgpr
 	wg.Wait()
 }
 
-// recordQuery audits and records a single SQL statement, and publishes it to the
-// live hub so a supervisor can watch the session. It reports whether the
-// recording size cap was reached, in which case the caller must END the session.
-//
-// The write error used to be discarded. Recording.Write LATCHES errRecordingLimit,
-// so past PAM_MAX_RECORDING_MB every subsequent statement was silently dropped and
-// the session carried on UNRECORDED, indefinitely, with no session.record_limit
-// audit — while the SSH path tore the session down. SECURITY-GAPS finding 23 says
-// the flag "terminates a session that exceeds the recording cap … rather than run
-// it unrecorded"; that was true only of SSH. Discarding this error also swallowed
-// a mid-session disk-full or IO failure.
-func (d *DBProxy) recordQuery(ctx context.Context, rec *Recording, actor string, target *store.Target, sql, sid string) (limitReached bool) {
-	trimmed := strings.TrimSpace(sql)
-	if trimmed == "" {
-		return false
-	}
-	d.audit(ctx, actor, "db.query", "target:"+target.Name+" sql:"+auditCmd(trimmed))
-	line := []byte("psql> " + trimmed + "\r\n")
-	if rec != nil {
-		if _, werr := rec.Write(line); werr != nil {
-			if errors.Is(werr, errRecordingLimit) {
-				d.audit(ctx, actor, "session.record_limit",
-					"target:"+target.Name+" via:postgres reason:recording-size-cap")
-				d.log.Warn("ending session: recording size cap reached", "target", target.Name, "actor", actor)
-				return true
-			}
-			d.log.Error("session recording write failed", "target", target.Name, "err", werr)
-		}
-	}
-	d.live.Publish(sid, line)
-	return false
+// pgSQLClient adapts the mutex-guarded client writer to the shared per-statement
+// pipeline's sqlClient interface (see sqlproxy.go). It encodes a refusal in the
+// PostgreSQL frontend/backend protocol: a graceful ERROR + a fresh
+// ReadyForQuery keeps the session usable, while a FATAL error (the
+// extended-protocol case) leaves the caller to end the session. SQLSTATE 42501
+// is "insufficient_privilege", the closest standard code for a policy refusal.
+type pgSQLClient struct {
+	send func(...pgproto3.BackendMessage) error
 }
 
-// stepUpRefused reports whether a statement matched the step-up guard and its
-// supervisor decision was a denial (or timeout) — in which case the caller
-// refuses the statement but keeps the session open. A match pauses the session
-// (audited db.stepup_required, surfaced on the live hub) and blocks on a
-// supervisor's decision via session.StepUp; an approval returns false so the
-// statement proceeds (audited db.stepup_approved). No step-up configured, or no
-// match, returns false immediately.
-func (d *DBProxy) stepUpRefused(ctx context.Context, sendClient func(...pgproto3.BackendMessage) error, actor string, target *store.Target, sql, sid string, extended bool) bool {
-	if d.stepupGuard == nil || d.stepup == nil || sid == "" {
-		return false
-	}
-	pat, match := d.stepupGuard.Blocked(sql)
-	if !match {
-		return false
-	}
-	d.audit(ctx, actor, "db.stepup_required", fmt.Sprintf("target:%s pattern:%s sql:%s", target.Name, pat, auditCmd(sql)))
-	if d.live != nil {
-		d.live.Publish(sid, []byte("psql> [step-up: awaiting supervisor approval] "+strings.TrimSpace(sql)+"\r\n"))
-	}
-	if d.stepup.Await(ctx, sid, actor, strings.TrimSpace(sql), d.stepupTTL) {
-		d.audit(ctx, actor, "db.stepup_approved", fmt.Sprintf("target:%s sql:%s", target.Name, auditCmd(sql)))
-		return false // approved — the statement proceeds
-	}
-	d.audit(ctx, actor, "db.stepup_denied", fmt.Sprintf("target:%s sql:%s", target.Name, auditCmd(sql)))
-	// Mirror blockedStatement's per-protocol refusal: a simple query gets an
-	// ErrorResponse + a fresh ReadyForQuery (session stays usable); an
-	// extended-protocol Parse gets a FATAL error and the caller ends the session.
-	if extended {
-		_ = sendClient(&pgproto3.ErrorResponse{Severity: "FATAL", Code: "42501", Message: "pamv1: statement requires supervisor approval (denied or timed out)"})
-	} else {
-		_ = sendClient(
-			&pgproto3.ErrorResponse{Severity: "ERROR", Code: "42501", Message: "pamv1: statement requires supervisor approval (denied or timed out)"},
-			&pgproto3.ReadyForQuery{TxStatus: 'I'},
-		)
-	}
-	return true
+// refuse sends an ERROR ErrorResponse followed by a fresh ReadyForQuery, so the
+// operator's client reports the refusal and the session stays usable.
+func (c pgSQLClient) refuse(msg string) {
+	_ = c.send(
+		&pgproto3.ErrorResponse{Severity: "ERROR", Code: "42501", Message: msg},
+		&pgproto3.ReadyForQuery{TxStatus: 'I'},
+	)
 }
 
-// blockedStatement reports whether sql is blocked by command control. When it is,
-// it audits command.blocked and sends the client an error: a graceful
-// ErrorResponse+ReadyForQuery for a simple query (extended=false, session stays
-// usable) or a FATAL error for an extended-protocol Parse (the caller ends it).
-func (d *DBProxy) blockedStatement(ctx context.Context, sendClient func(...pgproto3.BackendMessage) error, actor string, target *store.Target, sql string, extended bool) bool {
-	pat, blocked := d.guard.Blocked(sql)
-	if !blocked {
-		return false
-	}
-	d.audit(ctx, actor, "command.blocked", fmt.Sprintf("target:%s via:postgres pattern:%s sql:%s", target.Name, pat, auditCmd(sql)))
-	sev := "ERROR"
-	if extended {
-		sev = "FATAL"
-	}
-	errResp := &pgproto3.ErrorResponse{Severity: sev, Code: "42501", Message: "pamv1: command blocked by policy"}
-	if extended {
-		_ = sendClient(errResp)
-	} else {
-		// A simple query: report the error and a fresh ReadyForQuery so the
-		// session stays usable after the refusal.
-		_ = sendClient(errResp, &pgproto3.ReadyForQuery{TxStatus: 'I'})
-	}
-	return true
+// refuseFatal sends a FATAL ErrorResponse with no ReadyForQuery, the
+// extended-protocol (Parse) case where answering gracefully would desync the
+// Parse/Bind/Execute stream; the caller ends the session afterwards.
+func (c pgSQLClient) refuseFatal(msg string) {
+	_ = c.send(&pgproto3.ErrorResponse{Severity: "FATAL", Code: "42501", Message: msg})
 }
 
 // fail sends a FATAL ErrorResponse to the operator's client.
@@ -821,8 +583,62 @@ func (d *DBProxy) fail(backend *pgproto3.Backend, code, msg string) {
 // row, exactly as the SSH and SQL Server listeners bound it.
 func (d *DBProxy) deny(ctx context.Context, backend *pgproto3.Backend, actor, login, reason string) {
 	d.log.Warn("db session denied", "actor", actor, "login", auditField(login, 64), "reason", reason)
-	d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:"+reason)
-	d.fail(backend, "28000", "pamv1: "+reason)
+	sqlDeny(ctx, &d.listener, &d.pol, actor, login, reason, func(msg string) { d.fail(backend, "28000", msg) })
+}
+
+// refuse maps an admit() refusal to PostgreSQL's wire refusal and audit,
+// preserving the exact SQLSTATE codes, audit action names and details each gate
+// has always used. admit already emitted the audits identical across all three
+// proxies (access.denied for the approval and vendor denials, and
+// credential.decrypt_failed) and the shared check-failed error logs; this adds
+// only what is specific to the PostgreSQL transport. gateProtocolProxyable is
+// an SSH-only gate and never occurs here (this proxy sets no proxyable hook).
+func (d *DBProxy) refuse(ctx context.Context, backend *pgproto3.Backend, res admitResult, actor, login string) {
+	switch res.gate {
+	case gateTunnelOnly:
+		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:tunnel-only-token")
+		d.deny(ctx, backend, actor, login, "this token may only be used by the in-portal viewer")
+	case gateEnrollOnly:
+		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
+		d.deny(ctx, backend, actor, login, "complete MFA enrollment first")
+	case gateRoleConnect:
+		d.deny(ctx, backend, actor, login, "your role may not open sessions")
+	case gateResolve:
+		d.deny(ctx, backend, actor, login, res.reason)
+	case gateProtocolMatch:
+		d.deny(ctx, backend, actor, login, "target is not a postgres target")
+	case gateProtocolAllowed:
+		d.deny(ctx, backend, actor, login, "protocol not allowed by policy")
+	case gateTargetGrants:
+		// admit logged "target grants lookup failed"; fail closed on the wire.
+		d.fail(backend, "58000", "pamv1: authorization check failed")
+	case gateTargetPolicy:
+		d.deny(ctx, backend, actor, login, "not authorized for this target")
+	case gateApprovalPolicy, gateApprovalClaim:
+		// admit logged the specific approval error; fail closed on the wire.
+		d.fail(backend, "58000", "pamv1: approval check failed")
+	case gateApproval:
+		// admit already audited access.denied with the reason.
+		d.fail(backend, "28000", "pamv1: connection requires an approved access request")
+	case gateVendorCheck:
+		// admit logged "vendor gate check failed"; fail closed on the wire.
+		d.fail(backend, "58000", "pamv1: authorization check failed")
+	case gateVendor:
+		// admit already audited access.denied reason:vendor-contract.
+		d.fail(backend, "28000", "pamv1: vendor access requires an approved, in-window contract grant")
+	case gateSessionLimit:
+		d.audit(ctx, actor, "db.session.denied", "target:"+res.target.Name+" reason:session-limit")
+		d.fail(backend, "53300", "pamv1: too many concurrent sessions")
+	case gateAudit:
+		// admit's fail-closed db.session.start write did not land; refuse.
+		d.fail(backend, "58000", "pamv1: audit log unavailable; session refused")
+	case gateDecrypt:
+		// admit already audited credential.decrypt_failed and logged the error.
+		d.fail(backend, "58000", "pamv1: credential unavailable")
+	default:
+		d.log.Error("unhandled admit refusal on the PostgreSQL proxy", "gate", int(res.gate), "actor", actor)
+		d.fail(backend, "58000", "pamv1: authorization check failed")
+	}
 }
 
 // maybeUpstreamTLS offers SSL to the upstream PostgreSQL. If the server accepts

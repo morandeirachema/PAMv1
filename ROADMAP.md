@@ -2351,6 +2351,54 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 102 — Proxy-family structural unification ✅
+
+The three session proxies (SSH `proxy.go`, PostgreSQL `dbproxy.go`, SQL Server
+`mssqlproxy.go`) had three large blocks of near-verbatim triplication: the
+listener lifecycle, the per-statement pipeline (the DB pair), and the
+admission-gate sequence. Each proxy said the same thing three ways and differed
+only in how it said no — the exact shape that produced the Phase 96 bugs. This
+writes each once. Behavior is preserved exactly; the only intended change is the
+one latent divergence noted below. Net **−488 lines**. Built with a multi-agent
+workflow (implement → adversarial-verify each step) and then reviewed by hand,
+which is how the leak below was caught.
+
+- [x] **Listener lifecycle → one embedded `listener`** (`listener.go`): the
+  verbatim `serve`/`trackConn`/`untrackConn`/`closeActiveConns`/`fireSessionEnd`/
+  `audit`/`auditClosing` (accept-backoff, bounded drain, straggler-close) now
+  live once and are embedded in all three proxies; each keeps only its own
+  "listening"/"accept error" log strings, its default audit actor
+  (`proxy`/`dbproxy`/`mssqlproxy`, via a `component` field) and — for SSH — the
+  bound-listener `Addr()`. Pinned by the existing `teardown_test`/`hardening_test`
+- [x] **DB per-statement pipeline → `sqlPolicy` + `sqlClient`** (`sqlproxy.go`):
+  the record/audit/live + step-up + blocked + deny logic is shared; each proxy
+  supplies only its wire refusal encoder (pgproto3 vs `tds.Refusal`) and prompt.
+  Every audit action, the `auditCmd`/`auditField` bounding, and PostgreSQL's
+  extended-protocol fail-closed branch are preserved unchanged
+- [x] **Admission gates → one `admit()`** (`gates.go`): the fixed thirteen-gate
+  sequence (tunnel-only → MFA → CapConnect → resolve → exact-protocol → allowlist
+  → per-target grants → approval → vendor → proxyable → session cap → fail-closed
+  session-start audit → JIT decrypt) runs once and returns a typed
+  outcome/gate/reason; each proxy maps it to its own refusal wording. The three
+  genuine per-proxy variations are narrow hooks (`expectProtocol`, `proxyable`,
+  `skipDecrypt`, `startAudit`). The grep-based `dbproxy_parity_test.go` drift
+  alarm is replaced by behavioral coverage: `TestAdmitDeniesEachGate` drives
+  every gate's denial, and `TestDBRelayGatesStayInSync` (now comment-stripped, so
+  a gate merely mentioned cannot stand in for one enforced) keeps the DB pair honest
+- [x] **Latent divergence fixed** (behavior-identical today): the SSH path now
+  passes the **real** `*auth.Principal` to `CanConnectTarget` instead of a partial
+  `{Name, Role, Roles}` reconstruction, plumbed from `authenticate` to
+  `handleConn` through a per-connection token. Should a grant check ever become
+  capability-aware, SSH no longer silently diverges from the other paths
+- [x] **Found in hand review** (not by the verifiers): that per-connection token
+  map could leak an entry when authentication succeeded but the SSH handshake
+  then failed before `handleConn` consumed it. A stale-entry sweep in
+  `authenticate` now bounds the map to in-flight handshakes — the original code
+  had no such map, so this closes the growth vector the mechanism introduced
+- [x] All gates green (gofmt, vet, staticcheck, govulncheck, gosec, `go test
+  -race`, archgen — no drift); no schema, route, wire-format or env-var change,
+  and no audit-action or refusal-encoding change
+
 ## Phase 101 — Test hygiene: a bounded poll helper ✅
 
 The recurring shape across the suites is a hand-rolled `deadline := time.Now();

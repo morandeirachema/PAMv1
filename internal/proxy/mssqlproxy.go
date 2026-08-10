@@ -17,11 +17,9 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -106,12 +104,12 @@ type MSSQLConfig struct {
 
 // MSSQLProxy brokers SQL Server sessions with just-in-time credential injection.
 type MSSQLProxy struct {
-	store        store.Store
+	listener // shared accept/drain lifecycle: log, store, conns, bg, onSessionEnd, ln, Addr, audit
+
 	vault        *vault.Vault
 	recKey       recording.KeyWrapper
 	opaqueNames  bool
 	resolver     *auth.Resolver
-	log          *slog.Logger
 	recordingDir string
 	sessions     *session.Registry
 	requireApprv bool
@@ -121,7 +119,6 @@ type MSSQLProxy struct {
 	requireRec   bool
 	dialTimeout  time.Duration
 	clientTLS    *tls.Config
-	onSessionEnd func(int64)
 	guard        *cmdguard.Guard
 	live         *session.Hub
 	chain        *recordChain
@@ -131,12 +128,10 @@ type MSSQLProxy struct {
 	stepupGuard  *cmdguard.Guard
 	stepup       *session.StepUp
 	stepupTTL    time.Duration
-
-	bg sync.WaitGroup // background tasks (post-session rotation) drained on shutdown
-
-	mu      sync.Mutex
-	conns   map[net.Conn]struct{}
-	closing bool
+	gate         *gates // the shared admission-gate sequence (gates.go)
+	// pol is the protocol-independent per-statement policy shared with the
+	// PostgreSQL proxy (see sqlproxy.go), built once at construction.
+	pol sqlPolicy
 }
 
 // NewMSSQL constructs an MSSQLProxy from the store, vault, auth resolver and
@@ -152,12 +147,17 @@ func NewMSSQL(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg MSSQL
 		cfg.DialTimeout = 10 * time.Second
 	}
 	m := &MSSQLProxy{
-		store:        st,
+		listener: listener{
+			log:          logging.Component("mssqlproxy"),
+			store:        st,
+			component:    "mssqlproxy",
+			onSessionEnd: cfg.OnSessionEnd,
+			conns:        make(map[net.Conn]struct{}),
+		},
 		vault:        v,
 		recKey:       recKeyFor(cfg.EncryptRecordings, v),
 		opaqueNames:  cfg.OpaqueRecordingNames,
 		resolver:     resolver,
-		log:          logging.Component("mssqlproxy"),
 		recordingDir: cfg.RecordingDir,
 		sessions:     cfg.Sessions,
 		requireApprv: cfg.RequireApproval,
@@ -167,7 +167,6 @@ func NewMSSQL(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg MSSQL
 		requireRec:   cfg.RequireRecording,
 		dialTimeout:  cfg.DialTimeout,
 		clientTLS:    cfg.ClientTLS,
-		onSessionEnd: cfg.OnSessionEnd,
 		guard:        cfg.CommandGuard,
 		live:         cfg.Live,
 		chain:        newRecordChain(cfg.RecordingDir),
@@ -177,10 +176,28 @@ func NewMSSQL(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg MSSQL
 		stepupGuard:  cfg.StepUpGuard,
 		stepup:       cfg.StepUp,
 		stepupTTL:    cfg.StepUpTTL,
-		conns:        make(map[net.Conn]struct{}),
 	}
 	if m.stepupTTL <= 0 {
 		m.stepupTTL = 2 * time.Minute
+	}
+	m.gate = &gates{
+		store:        st,
+		vault:        v,
+		log:          m.log,
+		allowedProto: m.allowedProto,
+		requireApprv: m.requireApprv,
+		ticketCheck:  m.ticketCheck,
+		sessions:     m.sessions,
+	}
+	m.pol = sqlPolicy{
+		guard:       m.guard,
+		stepupGuard: m.stepupGuard,
+		stepup:      m.stepup,
+		stepupTTL:   m.stepupTTL,
+		live:        m.live,
+		prompt:      "mssql> ",
+		via:         "mssql",
+		viaInQuery:  true, // SQL Server tags db.query/step-up/deny details with via:mssql
 	}
 	if m.clientTLS == nil {
 		m.log.Warn("SQL Server proxy operator leg is NOT encrypted (set PAM_TLS_CERT/KEY); modern TDS clients require encryption and will refuse to connect")
@@ -201,124 +218,12 @@ func (m *MSSQLProxy) ListenAndServe(ctx context.Context, addr string) error {
 }
 
 // Serve accepts connections until ctx is cancelled, then closes the listener
-// and force-closes active connections so the drain is bounded.
+// and force-closes active connections so the drain is bounded. The accept/drain
+// lifecycle lives in the embedded listener; this only logs the SQL Server
+// startup line and dispatches handleConn.
 func (m *MSSQLProxy) Serve(ctx context.Context, ln net.Listener) error {
-	m.mu.Lock()
-	m.closing = false
-	m.mu.Unlock()
-
-	go func() {
-		<-ctx.Done()
-		ln.Close()
-		m.closeActiveConns()
-	}()
-
 	m.log.Info("database proxy listening", "addr", ln.Addr().String(), "protocol", "mssql")
-	var wg sync.WaitGroup
-	var tempDelay time.Duration
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				wg.Wait()
-				m.bg.Wait()
-				return nil
-			}
-			//lint:ignore SA1019 Temporary() is the only portable transient-accept signal; matches net/http's Serve backoff
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
-				if tempDelay == 0 {
-					tempDelay = 5 * time.Millisecond
-				} else {
-					tempDelay *= 2
-				}
-				if tempDelay > time.Second {
-					tempDelay = time.Second
-				}
-				m.log.Warn("mssql proxy accept error; retrying", "err", err, "retry_in", tempDelay)
-				select {
-				case <-time.After(tempDelay):
-				case <-ctx.Done():
-					wg.Wait()
-					m.bg.Wait()
-					return nil
-				}
-				continue
-			}
-			return err
-		}
-		tempDelay = 0
-		m.trackConn(conn)
-		wg.Add(1)
-		go func(c net.Conn) {
-			defer wg.Done()
-			defer m.untrackConn(c)
-			defer recoverPanicLog(m.log, "mssql-connection")
-			m.handleConn(ctx, c)
-		}(conn)
-	}
-}
-
-// trackConn records an accepted connection so shutdown can force-close it.
-func (m *MSSQLProxy) trackConn(c net.Conn) {
-	m.mu.Lock()
-	if m.closing {
-		m.mu.Unlock()
-		c.Close()
-		return
-	}
-	m.conns[c] = struct{}{}
-	m.mu.Unlock()
-}
-
-// untrackConn drops a connection once its handler returns.
-func (m *MSSQLProxy) untrackConn(c net.Conn) {
-	m.mu.Lock()
-	delete(m.conns, c)
-	m.mu.Unlock()
-}
-
-// closeActiveConns force-closes every tracked connection to bound the drain.
-func (m *MSSQLProxy) closeActiveConns() {
-	m.mu.Lock()
-	m.closing = true
-	conns := make([]net.Conn, 0, len(m.conns))
-	for c := range m.conns {
-		conns = append(conns, c)
-	}
-	m.mu.Unlock()
-	for _, c := range conns {
-		c.Close()
-	}
-}
-
-// fireSessionEnd runs the post-session rotation callback as a tracked
-// background task (drained on shutdown).
-func (m *MSSQLProxy) fireSessionEnd(credID int64) {
-	if m.onSessionEnd == nil {
-		return
-	}
-	m.bg.Add(1)
-	go func() {
-		defer m.bg.Done()
-		m.onSessionEnd(credID)
-	}()
-}
-
-// audit appends an audit event, defaulting an empty actor to "mssqlproxy".
-func (m *MSSQLProxy) audit(ctx context.Context, actor, action, detail string) {
-	if actor == "" {
-		actor = "mssqlproxy"
-	}
-	appendAudit(ctx, m.store, m.log, actor, action, detail)
-}
-
-// auditClosing writes a teardown audit event that must survive graceful
-// shutdown (detached from a cancelled ctx, bounded so a hung store cannot
-// stall the drain).
-func (m *MSSQLProxy) auditClosing(ctx context.Context, actor, action, detail string) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	m.audit(ctx, actor, action, detail)
+	return m.serve(ctx, ln, m.handleConn, "mssql proxy accept error; retrying", "mssql-connection")
 }
 
 // handleConn brokers one SQL Server connection end to end: PRELOGIN + optional
@@ -405,106 +310,34 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	// wrapper around it.
 	_ = nConn.SetDeadline(time.Time{})
 
-	// --- Authorization gates (identical order to dbproxy; decrypt only after all pass) ---
-	if principal.TunnelOnly {
-		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(loginName, 64)+" reason:tunnel-only-token")
-		m.deny(ctx, c, actor, loginName, "this token may only be used by the in-portal viewer", tds72)
-		return
-	}
+	// --- Authorization gates ---
+	// Break-glass is noted here (it is not itself a gate): every entry point that
+	// resolves its own principal must raise the emergency-access signal. It runs
+	// just before admit — admit's first gate (tunnel-only) can never fire for a
+	// break-glass principal, since the two token types are mutually exclusive, so
+	// the pre-admit position is behaviour-identical to the old post-tunnel one.
 	m.noteBreakGlass(ctx, principal, "mssql login:"+auditField(loginName, 64))
-	if principal.EnrollOnly {
-		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(loginName, 64)+" reason:mfa-enrollment-incomplete")
-		m.deny(ctx, c, actor, loginName, "complete MFA enrollment first", tds72)
-		return
-	}
-	if !principal.Can(auth.CapConnect) {
-		m.deny(ctx, c, actor, loginName, "your role may not open sessions", tds72)
-		return
-	}
-	credUser, targetName := splitLogin(loginName)
-	target, cred, err := lookupTargetCred(ctx, m.store, targetName, credUser)
-	if err != nil {
-		m.deny(ctx, c, actor, loginName, err.Error(), tds72)
-		return
-	}
-	if target.Protocol != "mssql" {
-		m.deny(ctx, c, actor, loginName, "target is not a mssql target", tds72)
-		return
-	}
-	if m.allowedProto != nil && !m.allowedProto[target.Protocol] {
-		m.deny(ctx, c, actor, loginName, "protocol not allowed by policy", tds72)
-		return
-	}
-	grants, err := m.store.EffectiveTargetGrants(ctx, target.ID)
-	if err != nil {
-		m.log.Error("target grants lookup failed", "target", target.Name, "err", err)
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: authorization check failed", tds72)
-		return
-	}
-	if !auth.CanConnectTarget(principal, grants, target.SafeID != nil) {
-		m.deny(ctx, c, actor, loginName, "not authorized for this target", tds72)
-		return
-	}
-	// Consume-on-connect (Phase 26): a single-use approval is burned by the
-	// connection it admits and cannot authorize a second session. The policy
-	// itself is the strictest of global, per-target and the target's safe
-	// (Phase 58), folded in one place so this path cannot drift from the others.
-	approvalPolicy, aperr := store.EffectiveApprovalPolicy(ctx, m.store, target, m.requireApprv)
-	if aperr != nil {
-		m.log.Error("approval policy lookup failed", "target", target.Name, "err", aperr)
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: approval check failed", tds72)
-		return
-	}
-	if approvalPolicy.Required && !principal.BreakGlass {
-		ok, reason, aerr := claimApproval(ctx, m.store, m.ticketCheck, actor, target,
-			func(action, detail string) { m.audit(ctx, actor, action, detail) })
-		if aerr != nil {
-			m.log.Error("approval check failed", "target", target.Name, "err", aerr)
-			m.fail(c, mssqlErrLoginFailed, 14, "pamv1: approval check failed", tds72)
-			return
-		}
-		if !ok {
-			m.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:"+reason)
-			m.fail(c, mssqlErrLoginFailed, 14, "pamv1: connection requires an approved access request", tds72)
-			return
-		}
-	}
-
-	// Vendor contract gate (Phase 29).
-	if isVendor, allowed, verr := m.store.VendorSessionAllowed(ctx, actor, target.Name, cred.Username, time.Now()); verr != nil {
-		m.log.Error("vendor gate check failed", "target", target.Name, "err", verr)
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: authorization check failed", tds72)
-		return
-	} else if isVendor && !allowed {
-		m.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:vendor-contract")
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: vendor access requires an approved, in-window contract grant", tds72)
-		return
-	}
-
-	// Concurrent-session cap: refuse before decrypting any secret.
-	if m.sessions != nil && !m.sessions.AllowNew(actor) {
-		m.audit(ctx, actor, "db.session.denied", "target:"+target.Name+" reason:session-limit")
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: too many concurrent sessions", tds72)
-		return
-	}
 
 	database := login.Database
-	// Fail closed: durably audit the session before any secret is decrypted or
-	// injected upstream.
-	if err := appendAuditErr(ctx, m.store, m.log, actor, "db.session.start",
-		fmt.Sprintf("target:%s db:%s cred_user:%s via:mssql", target.Name, database, cred.Username)); err != nil {
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: audit log unavailable; session refused", tds72)
+	// The shared admission sequence (gates.go, admit) runs every gate in the fixed
+	// order — identical to the PostgreSQL proxy, since anything that differs between
+	// the two is the transport, never the policy — and decrypts just-in-time only
+	// if all pass. refuse() maps whatever it returns to SQL Server's own refusal.
+	credUser, targetName := splitLogin(loginName)
+	res := m.gate.admit(ctx, admitRequest{
+		principal:      principal,
+		targetName:     targetName,
+		credUser:       credUser,
+		expectProtocol: "mssql",
+		startAudit: func(t *store.Target, cr *store.Credential) (string, string) {
+			return "db.session.start", fmt.Sprintf("target:%s db:%s cred_user:%s via:mssql", t.Name, database, cr.Username)
+		},
+	})
+	if res.outcome != admitOK {
+		m.refuse(ctx, c, res, actor, loginName, tds72)
 		return
 	}
-
-	// Every gate passed — decrypt just-in-time. Plaintext exists only from here.
-	secret, err := jitDecrypt(ctx, m.vault, target, cred)
-	if err != nil {
-		m.log.Error("credential decryption failed", "actor", actor, "target", target.Name, "err", err)
-		m.audit(ctx, actor, "credential.decrypt_failed", "target:"+target.Name+" cred_user:"+cred.Username+" op:connect")
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: credential unavailable", tds72)
-		return
-	}
+	target, cred, secret := res.target, res.cred, res.secret
 
 	up, loginResp, err := m.dialUpstream(ctx, target, cred.Username, secret, login)
 	if err != nil {
@@ -789,7 +622,7 @@ func (m *MSSQLProxy) relay(ctx context.Context, client *tds.Conn, up *upstreamMS
 							"pamv1: request could not be parsed for policy inspection", typ, tds72))
 						continue
 					}
-					if m.recordStatement(ctx, rec, actor, target, "[unparsed "+tdsKind(typ)+" request]", sid) {
+					if sqlRecordQuery(ctx, &m.listener, &m.pol, rec, actor, target, "[unparsed "+tdsKind(typ)+" request]", sid) {
 						return // recording cap reached: end the session, do not run it unrecorded
 					}
 					break
@@ -802,7 +635,7 @@ func (m *MSSQLProxy) relay(ctx context.Context, client *tds.Conn, up *upstreamMS
 				}
 				capped := false
 				for _, req := range reqs {
-					if m.recordStatement(ctx, rec, actor, target, req.AuditText, sid) {
+					if sqlRecordQuery(ctx, &m.listener, &m.pol, rec, actor, target, req.AuditText, sid) {
 						capped = true
 						break
 					}
@@ -853,6 +686,11 @@ func parseTDSRequest(typ byte, data []byte) ([]tds.Request, error) {
 // recovered is refused when a guard is configured — an unreadable statement is
 // exactly the shape a bypass takes, so it fails closed rather than through.
 func (m *MSSQLProxy) refuseRequests(ctx, relayCtx context.Context, sendClient func(byte, []byte) error, actor string, target *store.Target, reqs []tds.Request, sid string, reqType byte, tds72 bool) bool {
+	// cl adapts this message's TDS framing (reqType/tds72 vary per message) to the
+	// shared per-statement pipeline's sqlClient interface (see sqlproxy.go). TDS
+	// refusals never end the session — with MARS off there is no pipelining to
+	// desync — so the shared calls always pass extended=false.
+	cl := mssqlSQLClient{send: sendClient, reqType: reqType, tds72: tds72}
 	for _, req := range reqs {
 		if !req.Recovered && m.guard != nil {
 			m.audit(ctx, actor, "command.blocked",
@@ -864,15 +702,15 @@ func (m *MSSQLProxy) refuseRequests(ctx, relayCtx context.Context, sendClient fu
 		// Guard EVERY recovered character parameter, not only the one believed
 		// to be the statement: which parameter carries SQL varies by procedure.
 		for _, text := range req.GuardTexts() {
-			if m.blockedStatement(ctx, sendClient, actor, target, text, reqType, tds72) {
+			if sqlBlockedStatement(ctx, &m.listener, &m.pol, cl, actor, target, text, false) {
 				return true
 			}
-			if m.stepUpRefused(relayCtx, sendClient, actor, target, text, sid, reqType, tds72) {
+			if sqlStepUpRefused(relayCtx, &m.listener, &m.pol, cl, actor, target, text, sid, false) {
 				return true
 			}
 		}
 		if len(req.GuardTexts()) == 0 {
-			if m.blockedStatement(ctx, sendClient, actor, target, req.AuditText, reqType, tds72) {
+			if sqlBlockedStatement(ctx, &m.listener, &m.pol, cl, actor, target, req.AuditText, false) {
 				return true
 			}
 		}
@@ -888,81 +726,34 @@ func tdsKind(typ byte) string {
 	return "batch"
 }
 
-// recordStatement audits and records a single statement, and publishes it to
-// the live hub so a supervisor can watch the session. The audit action is the
-// same `db.query` the PostgreSQL proxy uses — disambiguated by via:mssql —
-// because the OCSF exporter and the analytics engine key off that vocabulary,
-// and a fresh one would silently exclude every SQL Server session from SIEM
-// export and risk scoring.
-// It reports whether the recording size cap was reached, in which case the caller
-// must END the session: Recording.Write latches errRecordingLimit, so a discarded
-// error meant every statement past PAM_MAX_RECORDING_MB was dropped and the
-// session continued UNRECORDED with no session.record_limit audit — the same
-// defect as the PostgreSQL proxy, fixed with it.
-func (m *MSSQLProxy) recordStatement(ctx context.Context, rec *Recording, actor string, target *store.Target, sql, sid string) (limitReached bool) {
-	trimmed := strings.TrimSpace(sql)
-	if trimmed == "" {
-		return false
-	}
-	m.audit(ctx, actor, "db.query", "target:"+target.Name+" via:mssql sql:"+auditCmd(trimmed))
-	line := []byte("mssql> " + trimmed + "\r\n")
-	if rec != nil {
-		if _, werr := rec.Write(line); werr != nil {
-			if errors.Is(werr, errRecordingLimit) {
-				m.audit(ctx, actor, "session.record_limit",
-					"target:"+target.Name+" via:mssql reason:recording-size-cap")
-				m.log.Warn("ending session: recording size cap reached", "target", target.Name, "actor", actor)
-				return true
-			}
-			m.log.Error("session recording write failed", "target", target.Name, "err", werr)
-		}
-	}
-	m.live.Publish(sid, line)
-	return false
-}
-
-// stepUpRefused reports whether a statement matched the step-up guard and its
-// supervisor decision was a denial (or timeout) — in which case the caller
-// refuses the statement but keeps the session open.
-func (m *MSSQLProxy) stepUpRefused(ctx context.Context, sendClient func(byte, []byte) error, actor string, target *store.Target, sql, sid string, reqType byte, tds72 bool) bool {
-	if m.stepupGuard == nil || m.stepup == nil || sid == "" {
-		return false
-	}
-	pat, match := m.stepupGuard.Blocked(sql)
-	if !match {
-		return false
-	}
-	m.audit(ctx, actor, "db.stepup_required", fmt.Sprintf("target:%s via:mssql pattern:%s sql:%s", target.Name, pat, auditCmd(sql)))
-	if m.live != nil {
-		m.live.Publish(sid, []byte("mssql> [step-up: awaiting supervisor approval] "+strings.TrimSpace(sql)+"\r\n"))
-	}
-	if m.stepup.Await(ctx, sid, actor, strings.TrimSpace(sql), m.stepupTTL) {
-		m.audit(ctx, actor, "db.stepup_approved", fmt.Sprintf("target:%s via:mssql sql:%s", target.Name, auditCmd(sql)))
-		return false // approved — the statement proceeds
-	}
-	m.audit(ctx, actor, "db.stepup_denied", fmt.Sprintf("target:%s via:mssql sql:%s", target.Name, auditCmd(sql)))
-	_ = sendClient(tds.PacketTabularResult,
-		tds.Refusal(mssqlErrPolicy, 16, "pamv1: statement requires supervisor approval (denied or timed out)", reqType, tds72))
-	return true
-}
-
-// blockedStatement reports whether sql is blocked by command control. When it
-// is, it audits command.blocked and sends the client an error token.
+// mssqlSQLClient adapts this message's TDS framing to the shared per-statement
+// pipeline's sqlClient interface (see sqlproxy.go). A refused request is never
+// forwarded, and with MARS disabled there is no pipelining, so the upstream
+// cannot desync and the session always stays usable — there is no TDS analogue
+// of the PostgreSQL extended-protocol fail-closed branch, so refuseFatal is
+// never reached and behaves the same as refuse. reqType/tds72 come from the
+// message being refused, so a fresh client is built per message.
 //
-// The refused request is never forwarded, and with MARS disabled there is no
-// pipelining, so the upstream cannot desync and the session always stays
-// usable — there is no TDS analogue of the PostgreSQL extended-protocol
-// fail-closed branch.
-func (m *MSSQLProxy) blockedStatement(ctx context.Context, sendClient func(byte, []byte) error, actor string, target *store.Target, sql string, reqType byte, tds72 bool) bool {
-	pat, blocked := m.guard.Blocked(sql)
-	if !blocked {
-		return false
-	}
-	m.audit(ctx, actor, "command.blocked", fmt.Sprintf("target:%s via:mssql pattern:%s sql:%s", target.Name, pat, auditCmd(sql)))
-	_ = sendClient(tds.PacketTabularResult,
-		tds.Refusal(mssqlErrPolicy, 16, "pamv1: command blocked by policy", reqType, tds72))
-	return true
+// The shared db.query / command.blocked / db.stepup_* vocabulary is reused (tagged
+// via:mssql) deliberately: the OCSF exporter and the analytics engine key off
+// that vocabulary, and a fresh action name would silently exclude every SQL
+// Server session from SIEM export and risk scoring.
+type mssqlSQLClient struct {
+	send    func(byte, []byte) error
+	reqType byte
+	tds72   bool
 }
+
+// refuse sends a TDS error token (user-defined number 50000, class 16), leaving
+// the session usable.
+func (c mssqlSQLClient) refuse(msg string) {
+	_ = c.send(tds.PacketTabularResult, tds.Refusal(mssqlErrPolicy, 16, msg, c.reqType, c.tds72))
+}
+
+// refuseFatal has no distinct TDS encoding (no extended-protocol desync to
+// guard against), so it refuses exactly as refuse does; the shared pipeline
+// never asks the SQL Server proxy for a fatal refusal.
+func (c mssqlSQLClient) refuseFatal(msg string) { c.refuse(msg) }
 
 // fail sends an error token to the operator's client and ends the exchange.
 func (m *MSSQLProxy) fail(c *tds.Conn, number uint32, class byte, msg string, tds72 bool) {
@@ -972,8 +763,63 @@ func (m *MSSQLProxy) fail(c *tds.Conn, number uint32, class byte, msg string, td
 // deny audits a refused session and reports it to the client.
 func (m *MSSQLProxy) deny(ctx context.Context, c *tds.Conn, actor, login, reason string, tds72 bool) {
 	m.log.Warn("db session denied", "actor", actor, "login", auditField(login, 64), "reason", reason, "protocol", "mssql")
-	m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" via:mssql reason:"+reason)
-	m.fail(c, mssqlErrLoginFailed, 14, "pamv1: "+reason, tds72)
+	sqlDeny(ctx, &m.listener, &m.pol, actor, login, reason, func(msg string) { m.fail(c, mssqlErrLoginFailed, 14, msg, tds72) })
+}
+
+// refuse maps an admit() refusal to SQL Server's wire refusal and audit,
+// preserving the exact error numbers/classes, audit action names and details
+// each gate has always used — the transport twin of the PostgreSQL proxy's
+// refuse. admit already emitted the audits identical across all three proxies
+// (access.denied for the approval and vendor denials, and
+// credential.decrypt_failed) and the shared check-failed error logs; this adds
+// only what is specific to the TDS transport. gateProtocolProxyable is an
+// SSH-only gate and never occurs here (this proxy sets no proxyable hook).
+func (m *MSSQLProxy) refuse(ctx context.Context, c *tds.Conn, res admitResult, actor, login string, tds72 bool) {
+	switch res.gate {
+	case gateTunnelOnly:
+		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:tunnel-only-token")
+		m.deny(ctx, c, actor, login, "this token may only be used by the in-portal viewer", tds72)
+	case gateEnrollOnly:
+		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
+		m.deny(ctx, c, actor, login, "complete MFA enrollment first", tds72)
+	case gateRoleConnect:
+		m.deny(ctx, c, actor, login, "your role may not open sessions", tds72)
+	case gateResolve:
+		m.deny(ctx, c, actor, login, res.reason, tds72)
+	case gateProtocolMatch:
+		m.deny(ctx, c, actor, login, "target is not a mssql target", tds72)
+	case gateProtocolAllowed:
+		m.deny(ctx, c, actor, login, "protocol not allowed by policy", tds72)
+	case gateTargetGrants:
+		// admit logged "target grants lookup failed"; fail closed on the wire.
+		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: authorization check failed", tds72)
+	case gateTargetPolicy:
+		m.deny(ctx, c, actor, login, "not authorized for this target", tds72)
+	case gateApprovalPolicy, gateApprovalClaim:
+		// admit logged the specific approval error; fail closed on the wire.
+		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: approval check failed", tds72)
+	case gateApproval:
+		// admit already audited access.denied with the reason.
+		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: connection requires an approved access request", tds72)
+	case gateVendorCheck:
+		// admit logged "vendor gate check failed"; fail closed on the wire.
+		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: authorization check failed", tds72)
+	case gateVendor:
+		// admit already audited access.denied reason:vendor-contract.
+		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: vendor access requires an approved, in-window contract grant", tds72)
+	case gateSessionLimit:
+		m.audit(ctx, actor, "db.session.denied", "target:"+res.target.Name+" reason:session-limit")
+		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: too many concurrent sessions", tds72)
+	case gateAudit:
+		// admit's fail-closed db.session.start write did not land; refuse.
+		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: audit log unavailable; session refused", tds72)
+	case gateDecrypt:
+		// admit already audited credential.decrypt_failed and logged the error.
+		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: credential unavailable", tds72)
+	default:
+		m.log.Error("unhandled admit refusal on the SQL Server proxy", "gate", int(res.gate), "actor", actor)
+		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: authorization check failed", tds72)
+	}
 }
 
 // noteBreakGlass raises the emergency-access signal for this listener; see the
