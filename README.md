@@ -37,7 +37,7 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
-runs 0–109 and **every phase has shipped**, and the current
+runs 0–110 and **every phase has shipped**, and the current
 tagged, cosign-signed release is
 **[v0.18.2](https://github.com/morandeirachema/pamv1/releases/tag/v0.18.2)** (2026-08-12;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
@@ -147,7 +147,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–109, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–110, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 
@@ -428,6 +428,31 @@ catalogued in **[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)**.
   scale (a real host fleet) · thick-app connection components (auto-login into SSMS /
   Toad / vSphere via RDP RemoteApp — Windows RemoteApp hosts). See
   [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
+
+### Tier 5 — audit & session depth (2026-08-12 gap research)
+
+Two independent research passes against CyberArk PAM and Wallix Bastion — each
+fact-checked against this repo before being reported, not taken from marketing
+copy — converged separately on the same top finding. Buildable-without-infra
+items only; each notes what closing it would take.
+
+| Gap | Leaders | pamv1 today |
+|---|---|---|
+| ~~**Searchable session recordings**~~ **✅ shipped (Phase 110)** | CyberArk OCR/text-indexes PSM recordings; Wallix does the same for its DVR-style capture — neither leaves an auditor scrubbing a session to find something | `GET /api/recordings/search?q=` reconstructs an SSH recording's output stream (a query can span more than one recorded write, since a terminal echoes in whatever chunks arrive) and returns each hit's snippet **and the playback time to seek to**. RDP/VNC (no text layer) and WinRM (plain text, but deferred) are not yet covered |
+| **Real compliance reporting** | Canned, control-mapped reports (PCI-DSS/ISO27001/NIS2/SOX-shaped), not just raw exports | The audit chain + OCSF export (Phase 27) hold the data; `GET /api/audit` takes no filters and there is no report *template* layer — a query/formatting problem, not new instrumentation |
+| **Mandatory live-supervision gate** | A session can be required to have an **actively-connected** supervisor before it proceeds, not just after-the-fact watching | Both halves already exist separately — the watch stream (`GET /api/sessions/{id}/stream`) and the DB-only step-up pause (`internal/session/stepup.go`) — gating session *start* on a connected watcher is a policy flag over existing plumbing, not new plumbing |
+| **FIDO2/WebAuthn MFA** | Passwordless hardware-key second factor alongside TOTP/push | TOTP only (`internal/mfa`) — already flagged as a gap in [docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md); this research independently confirms it |
+| **Authenticated post-login discovery** | Enumerate local/service accounts and flag credential exposure on hosts already reached (CyberArk DNA) | `internal/discovery` only TCP-probes for open ports pre-auth — distinct from the infra-bound "SSH-key fleet discovery at scale" above: this is a missing *capability*, not a scale problem |
+| **CIDR/network-based connect authorization** | Gate a connection by the operator's source network | No IP-based authorization logic exists in `internal/auth` today — the one CIDR-shaped field (SSH cert `SourceAddress`) is enforced by the target's own `sshd`, not by pamv1 |
+| **Live session sharing** | A host in a live session generates an expiring link letting a second party join, watch and optionally control it, fully audited (a genuine Wallix differentiator) | The live stream (Phase 16) is one-way (supervisor watches operator); no invite/join mechanism |
+| **Suspend a live session** | Freeze operator input without ending the session, as a rung below killing it | `internal/session`'s kill bus only terminates |
+| Recurring / configurable-complexity policy | Repeating access windows (vs. one-shot date ranges); password history/reuse prevention (vs. a fixed generator) | Smaller, real, lower priority than the above |
+
+A general-purpose X.509 certificate lifecycle manager (CyberArk's Venafi-driven
+"machine identity" push) is a bigger question than a gap: pamv1 already runs a
+local CA for Zero Standing Privilege (Phase 22), and a full cert
+issuance/renewal/expiry-alerting product is closer to a scope decision (PAM vs.
+PKI) than a phase-sized item.
 
 ### Deliberate non-goal
 

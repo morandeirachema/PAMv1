@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–109 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–110 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -20,8 +20,11 @@ doc-currency gaps, and deleted two functions dead since Phase 96/42. None of
 96–108 changed user-facing behaviour, protocol, port or env var except 108's
 two behavioral fixes (one denial now audits once instead of twice; a target
 update that would strand a Zero Standing Privilege credential is refused).
-**Phase 109 cuts that whole arc as v0.18.2**, so it stops banking unreleased.
-The narrative that follows traces the
+**Phase 109 cuts that whole arc as v0.18.2**, so it stops banking unreleased,
+and **Phase 110 makes SSH session recordings searchable by content** — the
+first genuinely new capability since the 96–108 arc began, closing the
+strongest finding from a fresh competitive-research pass against CyberArk and
+Wallix. The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2365,6 +2368,65 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 110 — Searchable SSH session recordings ✅
+
+Closes the strongest finding from a 2026-08-12 competitive-research pass
+against CyberArk PAM and Wallix Bastion (two independent research passes,
+each fact-checked against this repo, converged on it separately): neither
+leaves an auditor scrubbing through a session to find something — CyberArk
+OCR/text-indexes recordings, Wallix does the same for its DVR-style capture.
+pamv1's SSH recordings were already the easy half of that gap, since
+asciicast is plain text on disk; this phase is that half, done honestly. The
+other eight findings from the same research pass are recorded as new open
+rows in [README.md's competitive-coverage table](README.md#coverage-vs-commercial-pam-cyberark-wallix-)
+rather than built speculatively.
+
+- [x] **`recording.SearchASCIICast`** reconstructs an asciicast recording's
+  output stream (bounded, so one long session cannot make a query hold
+  unbounded memory) and searches it case-insensitively — reconstructed, not
+  grepped line by line, because interactive terminal output arrives in
+  whatever chunks the network and the target's own echo produce, often a
+  handful of bytes at a time, so a query spanning more than one such chunk
+  would never match within a single asciicast event's data field. Works
+  transparently over a sealed (Phase 41) recording via the existing `Open`
+  entry point, with no crypto awareness of its own. A read error other than a
+  clean or torn-tail EOF — in particular a sealed recording that fails AEAD
+  authentication — is returned rather than swallowed, so a tampered file
+  reports as an integrity failure, never silently as "no matches"
+- [x] **`GET /api/recordings/search?q=`** (`CapReadAudit`, the same capability
+  that already lists and plays back every stored recording, so search
+  discloses nothing new — only finds it faster) scans the newest 500 `.cast`
+  files, reports each match's count, a sanitized snippet (ANSI escapes and
+  control bytes stripped) and — the part that makes a hit actionable rather
+  than informational — the asciicast time the match starts at, resolved from
+  a table of event-boundary timestamps built during reconstruction. Owning
+  target/actor resolve from the audit trail exactly as the plain listing
+  already does. Audited `session.search` with the query itself (the sensitive
+  fact, independent of whether it hit anything) — fail-closed per invariant
+  §6.4, audited immediately before the results are disclosed rather than
+  before scanning, so the one row also carries what the query found
+- [x] **Console**: F4 from *Session Recordings* opens a search screen; a hit's
+  option 5 replays the recording seeked to the match (`replaySeekTo` fast-
+  forwards synchronously through frames to that time, landing paused with the
+  match already in view, then Space resumes ordinary playback from there —
+  no new player primitive, the existing frame-accumulation loop run without
+  its per-frame delay)
+- [x] **A real, unrelated bug found while extending the console's own
+  safety-net test** (`console_check.js`, Phase 71) **to cover the new
+  screen**: `pad()` only adds padding, it never truncates, so the *existing*
+  recordings list's target/actor columns were unbounded despite looking
+  bounded — the exact failure class that test exists to catch, just never
+  pointed at this screen. Both the list and the new search screen now use
+  `cell()` (truncate-then-pad), which the test enforces. Also fixed in the
+  same pass: the test's detail-cell exclusion regex required an exact
+  `class="detail"` match, silently failing to exclude the `class="detail
+  amber"` / `class="detail cyan"` cells already in use elsewhere — widened to
+  `class="detail[^"]*"`
+- [x] Scope, stated rather than implied: RDP/VNC (guacd's native binary
+  protocol, no text layer — OCR is a real follow-on) and WinRM transcripts
+  (plain text, but out of scope for this pass) are not searched. No schema,
+  env-var or existing-route change; `archgen`'s route count moves 129 → 130
 
 ## Phase 109 — v0.18.2 ✅
 

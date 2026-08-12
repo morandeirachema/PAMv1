@@ -11,6 +11,18 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Added
+
+- **SSH session recordings are now searchable by content.** `GET
+  /api/recordings/search?q=` finds text anywhere in a stored recording's
+  output, even split across several separate writes (the shape interactive
+  terminal echo actually takes), and reports each match's snippet plus the
+  playback time to jump to. The 5250 console gains a search screen (F4 from
+  *Session Recordings*) that seeks a replay straight to a hit. Requires
+  `read_audit`, the same capability that already lists and plays back every
+  recording; every search is itself audited (`session.search`) with the
+  query. RDP/VNC and WinRM recordings are not covered by this pass.
+
 ## [0.18.2] — 2026-08-12
 
 A patch: audit-fidelity and access-control fixes surfaced by two review passes
