@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–108 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–109 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -19,8 +19,9 @@ target/credential invariant gap, hardened three untested fail paths and two
 doc-currency gaps, and deleted two functions dead since Phase 96/42. None of
 96–108 changed user-facing behaviour, protocol, port or env var except 108's
 two behavioral fixes (one denial now audits once instead of twice; a target
-update that would strand a Zero Standing Privilege credential is refused). The
-narrative that follows traces the
+update that would strand a Zero Standing Privilege credential is refused).
+**Phase 109 cuts that whole arc as v0.18.2**, so it stops banking unreleased.
+The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2364,6 +2365,22 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 109 — v0.18.2 ✅
+
+Releases the 96–108 refactor/hardening/docs arc — thirteen phases that had sat
+on `main` unreleased since v0.18.1 (2026-08-09) — plus four routine dependency
+bumps merged alongside it (a GitHub Action, the two distroless base images, and
+an `aws-sdk-go-v2` patch group). Two real fixes travel in this release, both
+from Phase 108: the PostgreSQL/SQL Server proxies no longer double-audit a
+refused connection, and `PUT /api/targets/{id}` can no longer strand a Zero
+Standing Privilege credential. Everything else in 96–108 is refactor, test,
+tooling and documentation work that changed no user-facing behaviour,
+protocol, port or env var.
+
+- [x] **v0.18.2** through the test-gated pipeline, rehearsed on `main` first
+- [x] All five pins via the sweep; Helm chart `version` 0.9.1 -> **0.9.2**
+- [x] Both READMEs restated
 
 ## Phase 108 — The 2026-08-12 audit sweep ✅
 
