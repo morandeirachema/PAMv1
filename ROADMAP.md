@@ -2378,9 +2378,19 @@ Standing Privilege credential. Everything else in 96–108 is refactor, test,
 tooling and documentation work that changed no user-facing behaviour,
 protocol, port or env var.
 
-- [x] **v0.18.2** through the test-gated pipeline, rehearsed on `main` first
+- [x] **v0.18.2** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-12 as `ghcr.io/morandeirachema/pamv1:0.18.2` (also
+  `latest`), digest
+  `sha256:8f93a6769e604824327ee31743afcb5f30c024df0b2e1ee63da1ca00e2759e00`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow). Keyless-signed with the SBOM and SLSA provenance as
+  OCI referrers; the Release carries `sbom.spdx.json`
 - [x] All five pins via the sweep; Helm chart `version` 0.9.1 -> **0.9.2**
 - [x] Both READMEs restated
+- [x] Fixed a stale-digest bug this pass turned up: `README.md`'s "Verifying a
+  release" section had been carrying `v0.14.1`'s digest under whatever version
+  label was current since at least v0.15.0 — every digest-recording commit
+  before this one updated `ROADMAP.md` only, never that section
 
 ## Phase 108 — The 2026-08-12 audit sweep ✅
 
