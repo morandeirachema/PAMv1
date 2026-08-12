@@ -111,3 +111,21 @@ func TestTransitKEKAuthError(t *testing.T) {
 		t.Fatal("wrong vault token should produce an error")
 	}
 }
+
+// TestNewTransitKEKRequiresHTTPS proves the constructor rejects a non-loopback
+// plaintext PAM_KEK_TRANSIT_ADDR — this address carries the Vault token and
+// plaintext data keys, so every test above using srv.URL (http://127.0.0.1:…)
+// only ever exercises the loopback EXEMPTION; nothing had driven the rejection
+// branch itself.
+func TestNewTransitKEKRequiresHTTPS(t *testing.T) {
+	if _, err := NewTransitKEK("http://vault.example.com:8200", "s.token", "pam"); err == nil {
+		t.Fatal("a non-loopback http:// PAM_KEK_TRANSIT_ADDR should be rejected")
+	} else if !strings.Contains(err.Error(), "https") {
+		t.Fatalf("error should explain the https requirement, got: %v", err)
+	}
+	// A loopback address is exempt even over plain http — every other test in
+	// this file relies on that; pinned here explicitly.
+	if _, err := NewTransitKEK("http://127.0.0.1:8200", "s.token", "pam"); err != nil {
+		t.Fatalf("a loopback PAM_KEK_TRANSIT_ADDR should be exempt from the https requirement: %v", err)
+	}
+}

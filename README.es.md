@@ -151,7 +151,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–107, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–108, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -274,7 +274,7 @@ ves la credencial. Las grabaciones van a `PAM_RECORDING_DIR`; desactiva el proxy
 
 ## Hoja de ruta
 
-Se han entregado todas las fases (0–107) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
+Se han entregado todas las fases (0–108) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
 
 | Fase | Tema | Estado |
 |---|---|---|

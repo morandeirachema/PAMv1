@@ -9,12 +9,13 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-08-10 · Reflects: Phases 0–107 + the 2026-07 hardening
+> Last updated: 2026-08-12 · Reflects: Phases 0–108 + the 2026-07 hardening
 > passes, including the **post-beta sweep of 2026-07-27** (thirty findings, all
 > closed), the **sweep of 2026-08-07** over phases 56–61a (nine findings: two
 > closed by Phase 62, six by Phase 63, half of one withdrawn as a false
-> positive), and the **per-phase reviews of 56–61a**, which are the section
-> immediately below.
+> positive), the **per-phase reviews of 56–61a**, and the **2026-08-12 audit
+> sweep** (two findings, both closed by Phase 108) — the section immediately
+> below.
 
 ## How the review was run
 
@@ -182,6 +183,21 @@ roadmap is the plan.
 | ~~F~~ | ~~**Certification decisions have no separation of duties.**~~ | Was: only `CapManageUsers` (i.e. an admin) could certify or revoke, so the principal who grants access was the only one who could attest to it. | **Fixed in Phases 39 + 46** — Phase 39 moved the decision to `CapApprove`, so a dedicated `approver` runs the recertification without holding the access-granting capability (creating/closing a campaign stay `CapManageUsers`). Phase 46 closed the remaining hole with **per-item four-eyes**: every grant records its creator (`target_grants.created_by`, `safe_members.created_by`, migration `0023`), the campaign snapshot carries it (`campaign_items.granted_by`, shown as "granted by X" in the item detail), and certifying an item you granted yourself is refused 403 + audited `certification.decision_denied`. Self-revoke stays allowed (it reduces access); pre-migration rows with no recorded creator are not blocked retroactively. Tests: `api.TestCertificationAuthz`, `api.TestCertificationFourEyes`, the store contract. |
 | ~~G~~ | ~~**Console parity has drifted since Phase 25.**~~ | Was: nine capabilities had no screen. Two of them — a parked agent tool call and a paused SQL statement — are human decisions **with a deadline**, which is what made curl-only actually cost something. | **Fixed across Phases 43 + 45** — Phase 43 shipped the two time-critical screens (*Approve AI-agent tool calls*, menu 20, showing the arguments the policy matched on; *In-session step-up decisions*, menu 21). Phase 45 shipped the other seven: vendors & contract grants (22), operator SSH certificates (23), identity blast radius (24), login-session revocation (25), agent keys (26), credential dependencies (option 9 on a credential), and the audit chain verify / signed head / OCSF export on the audit screen. One deliberate new route: `GET /api/ca/ssh/certs` (CapReadInventory) — the issued-cert serials a revocation needs were listable in the store but invisible over HTTP. All verified against a running server; the console is back at **full parity**. |
 | ~~H~~ | ~~**No update endpoints and no pagination.**~~ | Was: the `Store` interface had create/delete but no update for targets, safes, users or vendors — fixing a target's port meant delete + recreate, cascading away its credentials, grants, dependencies and safe assignment — and no list method except the audit reads was bounded (an authenticated memory-exhaustion vector). | **Fixed in Phase 44** — `UpdateTarget`/`UpdateSafe`/`UpdateUserRole`/`UpdateVendorOrg` + `PUT` routes with create-equivalent validation and authorization (the user edit re-runs the privilege-escalation guard; tokens survive a role change), audited `*.update`; the seven top-level list reads take an id-ascending `(limit, afterID)` window and every list endpoint clamps `?limit=&after=` to 1..500 (default 100) the way `listAudit` already did. Grants and safe members deliberately stay create + delete (no dependents to lose; two audited events beat one mutated row), and usernames stay immutable (they are the subject key in grants/sessions/vendor rows). Console: cursor-draining fetches + 2=Change screens. Tests: the store contract (both stores, live PostgreSQL in CI) + `api/update_test.go`. |
+
+## The 2026-08-12 audit sweep (Phase 108)
+
+Four independent read-only passes over the tree as it stood after Phase 107 —
+cross-path control parity, test coverage in security-critical code, a security
+self-audit, and doc-vs-code currency. Two genuine findings; three coverage
+gaps recorded as hardening. The dead-code removal and the two doc-drift items
+the same sweep found are recorded in the [ROADMAP entry](../ROADMAP.md) rather
+than repeated here, since neither is a security finding.
+
+| # | Finding | Why it matters | Status |
+|---|---|---|---|
+| ~~CG~~ | ~~**The PostgreSQL and SQL Server proxies wrote two contradictory `db.session.denied` rows for one refused connection**, on the `gateTunnelOnly`/`gateEnrollOnly` gates only.~~ `refuse()` audited the denial explicitly, then called `deny()`, which independently audits the same action via `sqlDeny` — two rows, two different `reason:` strings (the explicit call omitted `queryTag()`). Predates Phase 102, which preserved it faithfully from both proxies' pre-refactor code. | **Audit fidelity.** `db.session.denied` feeds the risk-analytics `authFailActions` signal and is OCSF-classified for SIEM export; a doubled count skews both, and a self-contradictory trail (two reasons for one event) is the defect class this document treats as first-class. | **Fixed in Phase 108.** Audited once (the short reason slug already shared by the SSH proxy and the HTTP authz middleware for the same two conditions), failing the wire directly instead of through `deny()`. Tests: row-count assertions on `TestDBProxyRefusesTunnelOnlyToken`, `TestDBProxyEnrollOnlyRejected`, `TestMSSQLProxyEnrollOnlyRejected`, and a new `TestMSSQLProxyRefusesTunnelOnlyToken` (the SQL Server proxy had no tunnel-only test at all). |
+| ~~CH~~ | ~~**An `ssh_ca` (Zero Standing Privilege) credential could be stranded on a target retargeted away from `ssh`.**~~ `POST /api/credentials` refuses to create one unless the target's protocol is `ssh`; `PUT /api/targets/{id}` never re-checked the invariant. | **A state a JIT-injection PAM should never reach.** The credential's `SecretEnc` is empty by design (ZSP mints a certificate JIT instead of storing a secret); reaching it through a WinRM path — no certificate to mint, no secret to inject — is silent breakage with no audit distinguishing it from an ordinary session, on an endpoint gated only by `CapManageTargets`, not `CapManageCredentials`. | **Fixed in Phase 108.** `updateTarget` refuses a protocol change away from `ssh` while any `ssh_ca` credential exists on the target (`hasZSPCredential`), mirroring the create-time check. Test: `api.TestZSPCredentialBlocksProtocolChange`. |
+| — | **Hardening: three untested fail paths in security-critical code** — `mfaVerify`'s own OTP-rejection branch, `vault.NewTransitKEK`'s non-loopback-HTTP rejection, and PostgreSQL MD5 upstream auth (`md5Password`) had never been exercised by a test (the first two had only ever seen their *passing* branch; the third had none at all). | A regression in any of the three would ship silently: code that lets any string confirm an MFA enrollment, a weakened Vault Transit HTTPS guard, or a broken MD5 hash. | **Phase 108** added `TestMFAEnrollmentAndLogin`'s wrong-OTP-at-verify step, `vault.TestNewTransitKEKRequiresHTTPS`, and `proxy.TestMD5Password` (three independently-computed vectors, plus a salt-is-mixed-in check). |
 
 ## The 2026-08-10 refactor-hardening pass (Phases 97–106)
 

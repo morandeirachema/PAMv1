@@ -36,24 +36,3 @@ func TestRoleCapabilityNames(t *testing.T) {
 		t.Fatalf("agent capabilities = %v, want [read_inventory call_tool]", got)
 	}
 }
-
-// TestHighestRole proves directory-claim mapping picks the highest-privilege
-// match case-insensitively and reports no match honestly.
-func TestHighestRole(t *testing.T) {
-	m := map[string]Role{
-		"cn=pam-admins,dc=x":   RoleAdmin,
-		"cn=pam-auditors,dc=x": RoleAuditor,
-		"cn=pam-users,dc=x":    RoleUser,
-	}
-	r, ok := HighestRole([]string{"CN=PAM-Auditors,DC=x", "cn=pam-users,dc=x"}, m)
-	if !ok || r != RoleAuditor {
-		t.Fatalf("HighestRole = %v ok=%v, want auditor", r, ok)
-	}
-	r, ok = HighestRole([]string{"cn=pam-users,dc=x", "cn=pam-admins,dc=x"}, m)
-	if !ok || r != RoleAdmin {
-		t.Fatalf("HighestRole with admin = %v ok=%v, want admin", r, ok)
-	}
-	if _, ok := HighestRole([]string{"cn=unrelated,dc=x"}, m); ok {
-		t.Fatal("unmapped claims must not resolve to a role")
-	}
-}

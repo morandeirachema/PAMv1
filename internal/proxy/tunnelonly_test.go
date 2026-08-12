@@ -61,6 +61,24 @@ func hasAuditReason(t *testing.T, st store.Store, action, reason string) bool {
 	return false
 }
 
+// countAudit returns how many audit events carry the given action — a denial
+// that lands twice is as much a bug as one that never lands, so callers pin
+// the count, not just presence.
+func countAudit(t *testing.T, st store.Store, action string) int {
+	t.Helper()
+	events, err := st.ListAudit(context.Background(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range events {
+		if e.Action == action {
+			n++
+		}
+	}
+	return n
+}
+
 // TestSSHProxyRefusesTunnelOnlyToken proves an RDP viewer token cannot open an
 // SSH session, and that the refusal is audited.
 //
@@ -88,6 +106,9 @@ func TestSSHProxyRefusesTunnelOnlyToken(t *testing.T) {
 	}
 	if !hasAuditReason(t, st, "session.denied", "reason:tunnel-only-token") {
 		t.Fatal("the refusal was not audited as session.denied … reason:tunnel-only-token")
+	}
+	if n := countAudit(t, st, "session.denied"); n != 1 {
+		t.Fatalf("one refused connection wrote %d session.denied rows, want 1", n)
 	}
 }
 
@@ -140,6 +161,37 @@ func TestDBProxyRefusesTunnelOnlyToken(t *testing.T) {
 	}
 	if !hasAuditReason(t, st, "db.session.denied", "reason:tunnel-only-token") {
 		t.Fatal("the refusal was not audited as db.session.denied … reason:tunnel-only-token")
+	}
+	// Regression pin: refuse() used to audit this gate explicitly AND via deny(),
+	// which independently audits db.session.denied a second time — two
+	// contradictory rows (differing by queryTag) for one refused connection.
+	if n := countAudit(t, st, "db.session.denied"); n != 1 {
+		t.Fatalf("one refused connection wrote %d db.session.denied rows, want 1", n)
+	}
+}
+
+// TestMSSQLProxyRefusesTunnelOnlyToken proves the same for the SQL Server
+// proxy, mirroring TestDBProxyRefusesTunnelOnlyToken.
+func TestMSSQLProxyRefusesTunnelOnlyToken(t *testing.T) {
+	st := memstore.New()
+	v := mustVault(t)
+	fake := startFakeMSSQL(t, upstreamSecret)
+	seedMSSQLTarget(t, st, v, fake.addr)
+
+	token := seedViewerToken(t, st, auth.SessionScopeRDP)
+	addr := serveMSSQLProxy(t, newMSSQLProxy(t, st, v, proxy.MSSQLConfig{}))
+
+	if _, _, err := dialMSSQLProxy(t, addr, "sql_svc@sql-01", token, "orders"); err == nil {
+		t.Fatal("a tunnel-only viewer token opened a SQL Server session")
+	}
+	if fake.password() != "" {
+		t.Fatal("the upstream was contacted for a tunnel-only token")
+	}
+	if !hasAuditReason(t, st, "db.session.denied", "reason:tunnel-only-token") {
+		t.Fatal("the refusal was not audited as db.session.denied … reason:tunnel-only-token")
+	}
+	if n := countAudit(t, st, "db.session.denied"); n != 1 {
+		t.Fatalf("one refused connection wrote %d db.session.denied rows, want 1", n)
 	}
 }
 

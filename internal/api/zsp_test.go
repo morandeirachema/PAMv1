@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -82,6 +83,61 @@ func TestZSPCredentialValidation(t *testing.T) {
 	}
 	if strings.Contains(string(data), `"secret"`) || strings.Contains(string(data), `"secret_enc"`) {
 		t.Fatalf("credential listing leaked a secret field: %s", data)
+	}
+}
+
+// TestZSPCredentialBlocksProtocolChange proves PUT /api/targets/{id} cannot
+// strand an ssh_ca (ZSP) credential on a target it no longer fits: POST
+// /api/credentials refuses to CREATE one on a non-ssh target, but nothing
+// stopped an ssh target already carrying one from being retargeted to winrm —
+// after which the credential's empty SecretEnc would reach the WinRM path,
+// which has no certificate to mint and no secret to inject.
+func TestZSPCredentialBlocksProtocolChange(t *testing.T) {
+	srv, _ := newTestServerStore(t)
+
+	status, data := do(t, srv, http.MethodPost, "/api/targets", testAPIKey, map[string]any{
+		"name": "web-zsp-2", "host": "10.0.0.11", "port": 22, "os_type": "linux", "protocol": "ssh",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create target: %d %s", status, data)
+	}
+	id := int64(jsonMap(t, data)["id"].(float64))
+
+	status, data = do(t, srv, http.MethodPost, "/api/credentials", testAPIKey, map[string]any{
+		"target_id": id, "username": "root", "secret_type": "ssh_ca",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create ssh_ca credential: %d %s", status, data)
+	}
+	cid := itoa(int64(jsonMap(t, data)["id"].(float64)))
+
+	// Retargeting the ssh target to winrm must be refused while the ZSP
+	// credential exists.
+	status, data = do(t, srv, http.MethodPut, fmt.Sprintf("/api/targets/%d", id), testAPIKey, map[string]any{
+		"name": "web-zsp-2", "host": "10.0.0.11", "port": 5985, "os_type": "windows", "protocol": "winrm",
+	})
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("protocol change with a live ssh_ca credential should be 422, got %d %s", status, data)
+	}
+
+	// The target must still be ssh — the refused update did not partially apply.
+	status, data = do(t, srv, http.MethodGet, fmt.Sprintf("/api/targets/%d", id), testAPIKey, nil)
+	if status != http.StatusOK {
+		t.Fatalf("get target: %d %s", status, data)
+	}
+	if got := jsonMap(t, data)["protocol"]; got != "ssh" {
+		t.Fatalf("target protocol = %v, want ssh (refused update must not apply)", got)
+	}
+
+	// Deleting the credential first, an ordinary (non-ZSP) target update, still
+	// works — this isn't a blanket freeze on the target.
+	if status, data := do(t, srv, http.MethodDelete, "/api/credentials/"+cid, testAPIKey, nil); status != http.StatusNoContent {
+		t.Fatalf("delete credential: %d %s", status, data)
+	}
+	if status, data := do(t, srv, http.MethodPut, fmt.Sprintf("/api/targets/%d", id), testAPIKey, map[string]any{
+		"name": "web-zsp-2", "host": "10.0.0.11", "port": 5985, "os_type": "windows", "protocol": "winrm",
+	}); status != http.StatusOK {
+		t.Fatalf("protocol change without a ZSP credential should succeed: %d %s", status, data)
 	}
 }
 
