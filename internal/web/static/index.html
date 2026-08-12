@@ -100,6 +100,8 @@
   let watchSess = null, watchAbort = null, watchText = "";
   let liveTimer = null;
   let recordings = [], replay = null; // replay = one loaded recording + player state
+  let recSearchQuery = "", recSearchHits = null, recSearchErr = ""; // null = no search run yet
+  let replaySource = "recordings"; // where F12 returns from recplay: the list, or a search that led here
   let tokenKeys = null, tokenEvents = []; // RFC 8693 signing key + delegation history
 
   // The Apache Guacamole client (vendored) powers the in-portal RDP viewer. It is
@@ -507,7 +509,10 @@
   // A captured SFTP file (kind "file", Phase 59) has nothing to replay in a
   // terminal pane: the server reconstructs the transferred bytes and they are
   // downloaded instead — audited (session.playback) and hash-checked the same.
-  async function openReplay(rec) {
+  // seekSeconds (Phase 110, from a content-search hit) lands the player
+  // paused at that time with everything up to it already on screen, instead
+  // of starting playback from the beginning.
+  async function openReplay(rec, seekSeconds) {
     if (rec.kind === "file") return downloadCaptured(rec);
     const res = await fetch(`/api/recordings/${encodeURIComponent(rec.name)}`, { headers: { "X-API-Key": apiKey } });
     if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error((d.error || res.statusText).toUpperCase()); }
@@ -534,8 +539,24 @@
       audited: res.headers.get("X-PAM-Recording-Audited") === "true",
       i: 0, pos: 0, speed: 1, playing: false, timer: null, text: "",
     };
+    replaySource = seekSeconds != null ? "recsearch" : "recordings";
     go("recplay");
-    replayPlay();
+    if (seekSeconds != null) replaySeekTo(seekSeconds); else replayPlay();
+  }
+
+  // openRecSearch opens the content-search screen. It does not load anything
+  // up front — a search only runs once the operator submits a query, since
+  // the server has to open and (if sealed) decrypt every candidate recording,
+  // unlike the plain listing.
+  function openRecSearch() { recSearchErr = ""; go("recsearch"); }
+
+  // runRecSearch submits a content search and stores the results (or the
+  // error) for the recsearch screen to render.
+  async function runRecSearch(q) {
+    recSearchQuery = q;
+    try { recSearchHits = await api("GET", "/api/recordings/search?q=" + encodeURIComponent(q)); recSearchErr = ""; }
+    catch (e) { recSearchHits = null; recSearchErr = e.message; }
+    render();
   }
 
   // downloadCaptured saves the reconstructed content of a captured SFTP file
@@ -607,6 +628,25 @@
     const speeds = [1, 2, 4, 8, "MAX"];
     replay.speed = speeds[(speeds.indexOf(replay.speed) + 1) % speeds.length];
     if (replay.speed === "MAX" && replay.playing) { clearTimeout(replay.timer); replayStep(); }
+    replayStatus();
+  }
+
+  // replaySeekTo (Phase 110) fast-forwards synchronously — no per-frame
+  // delay, unlike normal playback — through every frame up to and including
+  // seconds, then stops there paused. The pane ends up showing everything up
+  // to the jump point, so a search hit lands with the match already visible
+  // in context rather than the operator having to scrub for it. Space
+  // resumes ordinary timed playback from there, exactly as if it had played
+  // there normally.
+  function replaySeekTo(seconds) {
+    if (!replay) return;
+    clearTimeout(replay.timer);
+    replay.i = 0; replay.pos = 0; replay.text = ""; replay.playing = false;
+    while (replay.i < replay.frames.length && replay.frames[replay.i].t <= seconds) {
+      const f = replay.frames[replay.i++];
+      replay.text = (replay.text + stripCtl(f.text)).slice(-65536);
+      replay.pos = f.t;
+    }
     replayStatus();
   }
 
@@ -2496,13 +2536,14 @@ Stored recordings, newest first. Type options, press Enter.
   <span class="cyan">5=Replay (a "file" entry is captured SFTP content: 5 downloads the transferred bytes)</span>
   <span class="cyan">Every replay is audited (session.playback) and hash-checked against the audit trail.</span>
   <span class="cyan">Target and actor come from the audit trail, so they show even when file names are opaque.</span>
+  <span class="cyan">F4=Search recording content (SSH only — finds a match even split across several writes)</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>Recording</th><th>Target</th><th>Actor</th><th>Kind</th><th>Size</th><th>Recorded</th></tr>
-${recordings.map((c) => `<tr><td>${opt(c.name)}</td><td class="detail">${esc(c.name)}</td><td class="white">${pad(c.target || "-", 14)}</td><td>${pad(c.actor || "-", 12)}</td><td>${pad(c.kind, 10)}</td><td>${pad(kb(c.size), 7)}</td><td class="cyan">${fmtTime(c.modified)}</td></tr>`).join("")}
+${recordings.map((c) => `<tr><td>${opt(c.name)}</td><td class="detail">${esc(c.name)}</td><td class="white">${cell(c.target || "-", 14)}</td><td>${cell(c.actor || "-", 12)}</td><td>${pad(c.kind, 10)}</td><td>${pad(kb(c.size), 7)}</td><td class="cyan">${fmtTime(c.modified)}</td></tr>`).join("")}
 </table>${recordings.length ? "" : `<div class="cyan indent">(No recordings on disk yet — proxied sessions write asciicasts as they run.)</div>`}
 <input type="submit" hidden></form>
-${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
+${fkeys("F3=Exit   F4=Search   F5=Refresh   F12=Cancel")}`;
         document.getElementById("f-list").onsubmit = async (ev) => {
           ev.preventDefault();
           try {
@@ -2516,8 +2557,39 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         };
       },
 
-      recplay() {
+      recsearch() {
         back = "recordings";
+        const mmss = (s) => { const v = Math.max(0, Math.round(s)); return `${String(Math.floor(v / 60)).padStart(2, "0")}:${String(v % 60).padStart(2, "0")}`; };
+        term.innerHTML = `${head("PAMSRCREC", "Search Recording Content")}
+Searches stored SSH session recordings for text, case-insensitively — even
+text a slow terminal echoed a few bytes at a time, which a plain file search
+would miss. RDP/VNC and WinRM are not covered by this pass.
+  <span class="cyan">5=Replay, seeked to the first match. Every search is itself audited (session.search) — the query is the sensitive part, whether or not it hits.</span>
+
+<form id="f-q"><label>Search . . . . . . :  <input name="q" size="40" minlength="3" maxlength="200" value="${esc(recSearchQuery)}" autofocus required autocomplete="off"></label>  <span class="cyan">Enter=Search (min 3 characters)</span></form>
+${recSearchErr ? `<div class="red indent">CPF9999: ${esc(recSearchErr.toUpperCase())}</div>` : ""}
+${recSearchHits === null ? "" : `<form id="f-hits"><table>
+<tr><th>Opt</th><th>Recording</th><th>Target</th><th>Actor</th><th>Hits</th><th>At</th><th>Snippet</th></tr>
+${recSearchHits.map((h) => `<tr><td>${opt(h.name)}</td><td class="detail">${esc(h.name)}</td><td class="white">${cell(h.target || "-", 14)}</td><td>${cell(h.actor || "-", 12)}</td><td>${esc(h.matches)}${h.truncated ? "*" : ""}</td><td class="cyan">${mmss(h.match_seconds)}</td><td class="detail amber">${esc(h.snippet)}</td></tr>`).join("")}
+</table>${recSearchHits.length ? "" : `<div class="cyan indent">(No matches.)</div>`}${recSearchHits.some((h) => h.truncated) ? `<div class="cyan indent">* recording exceeds the search size bound; searched only the leading portion.</div>` : ""}<input type="submit" hidden></form>`}
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-q").onsubmit = (ev) => { ev.preventDefault(); runRecSearch(ev.target.q.value.trim()); };
+        const fh = document.getElementById("f-hits");
+        if (fh) fh.onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const h of recSearchHits) {
+              const o = optVal(ev.target, h.name);
+              if (o === "5") { return openReplay({ name: h.name, kind: "asciicast" }, h.match_seconds); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            render();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      recplay() {
+        back = replaySource;
         const rp = replay || { name: "", kind: "", sha: "", audited: false, text: "" };
         term.innerHTML = `${head("PAMPLYREC", "Replay Recording")}
 Recording <span class="white">${esc(rp.name)}</span>  (${esc(rp.kind)})
@@ -2593,11 +2665,12 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
       go(back);
       return;
     }
-    if (!["F3", "F5", "F6", "F7", "F8", "F9", "F10", "F12"].includes(k)) return;
+    if (!["F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F12"].includes(k)) return;
     ev.preventDefault();
     if (screen === "signon") return;
     try {
       if (k === "F3") { screen === "main" ? signoff() : go("main"); }
+      else if (k === "F4") { if (screen === "recordings") openRecSearch(); }
       else if (k === "F5") { const r = refreshers[screen]; if (r) await r(); else render(); }
       else if (k === "F6") { if (screen === "effective") await exportIaC("env"); else if (screen === "audit") await verifyChain(); else { const a = adders[screen]; if (a) a(); } }
       else if (k === "F7") { if (screen === "effective") await exportIaC("helm"); else if (screen === "audit") await fetchAuditHead(); else if (screen === "campaigns" && can("approve")) await openMyQueue(); }

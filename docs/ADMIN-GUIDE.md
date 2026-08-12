@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-12 · Reflects: Phases 0–108 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-12 · Reflects: Phases 0–110 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -1722,6 +1722,25 @@ Both need `read_audit` (auditor+). A recording flagged `false` was tampered with
 truncated, or written outside the audited path — treat it as evidence of a
 problem, not as evidence of the session.
 
+**Content search (Phase 110).** `GET /api/recordings/search?q=<text>` finds a
+string anywhere in the newest 500 SSH recordings' output, case-insensitively —
+even text a slow terminal echoed a few bytes at a time, which grepping the raw
+`.cast` file would miss, since the search reconstructs the concatenated output
+before matching. Each hit reports a sanitized snippet and the playback time
+the match starts at; the console's search screen (**F4** from *Session
+Recordings*, menu 19) jumps a replay straight there instead of making you
+scrub for it. Works over encrypted-at-rest recordings transparently. Same
+`read_audit` gate as playback — search discloses nothing a holder could not
+already reach by opening each recording in turn — and is itself audited
+(`session.search`) with the query, fail-closed: the query is the sensitive
+fact here, independent of whether it matched anything. RDP/VNC recordings
+(guacd's binary protocol has no text layer) and WinRM transcripts (plain
+text, but out of scope for this pass) are not covered.
+
+```bash
+curl -s "https://pam.example/api/recordings/search?q=aws_secret_access_key" -H "X-API-Key: $PAM_API_KEY"
+```
+
 ### 9.4 Supervising live sessions & command control (Phase 16)
 
 Beyond after-the-fact recordings, a supervisor can **watch a session as it
@@ -2265,6 +2284,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-12 | **Phase 110 — SSH session recordings are searchable by content.** `GET /api/recordings/search?q=` finds text anywhere in a recording's output, even split across several writes, and reports each hit's snippet plus the playback time to jump to. Console: **F4** from *Session Recordings* (menu 19). Same `read_audit` gate as playback; the search itself is audited (`session.search`) with the query. RDP/VNC and WinRM are not covered. See §9.3 |
 | 2026-08-06 | **Phase 60a — the ticket re-check no longer misfires when you hold more than one approval.** With `PAM_TICKET_REVALIDATE=true`, each live approval for the target is now checked in turn and the one admitted is the one whose ticket passed. Before, a second concurrent connection could be let in on an approval whose change had been cancelled (its ticket was never put to the ITSM at all), and one cancelled change could block a valid approval behind it for the rest of the window. Up to 8 approvals are considered and the whole walk shares the same 5-second ITSM budget. Nothing to configure. See §9.5 |
 | 2026-08-06 | **Phase 61a — naming a management credential now takes the same authorization as revealing it.** Declaring a dependent account with `management_credential_id` makes pamv1 present that password to the host on the same request, so it now requires `reveal_secret`, a grant on that credential's **own** target, an approved access request where that target needs one, and an in-contract vendor grant for a vendor — refusals audited as `dependency.create_denied`. It also must be a **password**: an SSH key or a zero-standing-privilege credential is refused, at declaration and again at use. Nothing changes for an administrator who was already entitled to the credential they name. See §7 |
 | 2026-08-02 | **Phase 61 — say which account updates a dependent service.** Declaring a dependent account (a Windows service, scheduled task or app pool) now takes an optional **management credential**: the account pamv1 logs into that host as in order to reconfigure the consumer. Until now it logged in as the service account it was rotating, which needs administrator rights on the host — and hardened service accounts usually cannot log on remotely at all, so propagation failed there. *Work with Dependent Accounts* shows a **Managed via** column; anything reading `this account` in amber is still on the old path. If the credential you name is later deleted, the update fails closed and says so rather than falling back. See §7 |

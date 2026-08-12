@@ -101,6 +101,28 @@ const screens = [
                   subject_type: "user", subject: long ? LONGNAME : "alice", detail: "grant on target x" }],
     }),
   },
+  {
+    name: "recsearch",
+    src: /\n {6}recsearch\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      recSearchQuery: long ? LONGNAME : "secret",
+      recSearchErr: "",
+      // matches/match_seconds/truncated stay constant across short and long:
+      // they are never pathologically long (a small int, an mm:ss string, a
+      // one-character flag), so varying them would widen the row for a
+      // reason unrelated to what this fixture exists to prove. name and
+      // snippet vary instead — both class="detail" (free-flowing by design,
+      // excluded from the measurement) — and target/actor vary through
+      // pad(), the columns actually under test.
+      recSearchHits: [{
+        name: (long ? LONGNAME : "100_web-01_alice") + ".cast",
+        target: long ? LONGNAME : "web-01",
+        actor: long ? LONGNAME : "alice",
+        matches: 3, match_seconds: 12.5, truncated: false,
+        snippet: long ? `${LONG} ${LONG} ${LONG}` : "export TOKEN=topsecret123",
+      }],
+    }),
+  },
 ];
 
 // --- render ------------------------------------------------------------------
@@ -114,7 +136,12 @@ const screens = [
 function rowWidths(htmlOut) {
   const rows = [];
   for (const row of htmlOut.match(/<tr>[\s\S]*?<\/tr>/g) || []) {
-    const measured = row.replace(/<td class="detail">[\s\S]*?<\/td>/g, "");
+    // class="detail" combines with a color class in several screens (e.g.
+    // class="detail amber"), so this must not require an exact match — a
+    // literal `class="detail"` alone silently stopped excluding those cells,
+    // which is the same "looks bounded, is not" failure mode this file
+    // exists to catch, just in the harness instead of the console.
+    const measured = row.replace(/<td class="detail[^"]*">[\s\S]*?<\/td>/g, "");
     rows.push(measured.replace(/<[^>]+>/g, "").length);
   }
   return rows;
