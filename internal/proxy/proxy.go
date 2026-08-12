@@ -79,6 +79,14 @@ type Config struct {
 	// RequireRecording refuses a session when its recording cannot be created,
 	// rather than proceeding unrecorded (fail-closed session auditing).
 	RequireRecording bool
+	// RequireSupervision refuses an interactive session to proceed until a
+	// supervisor actively watches it (the live hub reports a subscriber) or
+	// SupervisionTimeout elapses. Observer sessions and break-glass access are
+	// exempt.
+	RequireSupervision bool
+	// SupervisionTimeout bounds the wait RequireSupervision imposes. Zero means
+	// no grace period: a session is refused unless already watched.
+	SupervisionTimeout time.Duration
 	// EncryptRecordings seals session recordings at rest with a per-recording
 	// data key wrapped by the vault KEK (PAM_RECORDING_ENCRYPT).
 	EncryptRecordings bool
@@ -159,6 +167,8 @@ type Proxy struct {
 	upstreamDial func(addr string) (net.Conn, error)
 	chain        *recordChain
 	requireRec   bool
+	requireSup   bool
+	supTimeout   time.Duration
 	guard        *cmdguard.Guard
 	live         *session.Hub
 	ca           *sshca.CertAuthority
@@ -232,6 +242,8 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		winrm:        cfg.WinRMRunner,
 		chain:        newRecordChain(cfg.RecordingDir),
 		requireRec:   cfg.RequireRecording,
+		requireSup:   cfg.RequireSupervision,
+		supTimeout:   cfg.SupervisionTimeout,
 		guard:        cfg.CommandGuard,
 		live:         cfg.Live,
 		ca:           cfg.CA,
@@ -596,7 +608,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		go func(nc ssh.NewChannel) {
 			defer wg.Done()
 			defer recoverPanicLog(p.log, "session")
-			p.handleSession(ctx, nc, upstream, target, cred, actor, observe, sid)
+			p.handleSession(ctx, nc, upstream, target, cred, actor, observe, principal.BreakGlass, sid)
 		}(nc)
 	}
 	// The chans range ends when the client connection closes — the true
@@ -815,12 +827,27 @@ func (j *jumpConn) Close() error {
 // channel, forwarding channel requests and stdin/stdout/stderr both directions
 // and tee'ing the target's output into an asciicast recording. On close the
 // recording's SHA-256 and its position in the tamper-evident chain are audited.
-func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *ssh.Client, target *store.Target, cred *store.Credential, actor string, observe bool, sid string) {
+func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *ssh.Client, target *store.Target, cred *store.Credential, actor string, observe, breakGlass bool, sid string) {
 	clientChan, clientReqs, err := nc.Accept()
 	if err != nil {
 		return
 	}
 	defer clientChan.Close()
+
+	// Mandatory live supervision (Phase 112): refuse the channel — before the
+	// upstream channel even opens, so nothing is relayed to the target — until
+	// a supervisor is actively watching. An observer session already IS the
+	// watching role, and break-glass exists precisely for when no supervisor
+	// is reachable, so both are exempt. HasSubscribers is already true on the
+	// common case (a supervisor attached before or immediately after this
+	// channel opens, including cross-replica via Phase 55's relay), so this
+	// only actually waits the first time a session goes unwatched.
+	if p.requireSup && !observe && !breakGlass && !p.awaitSupervision(ctx, sid) {
+		p.audit(ctx, actor, "session.unsupervised",
+			fmt.Sprintf("target:%s cred_user:%s timeout:%s", target.Name, cred.Username, p.supTimeout))
+		fmt.Fprintln(clientChan.Stderr(), "pamv1: no supervisor attached to watch this session; refused")
+		return
+	}
 
 	upChan, upReqs, err := upstream.OpenChannel("session", nil)
 	if err != nil {
@@ -1335,6 +1362,44 @@ func (p *Proxy) teeLive(w io.Writer, sid string) io.Writer {
 		return w
 	}
 	return io.MultiWriter(w, liveWriter{hub: p.live, id: sid})
+}
+
+// supervisionPoll is how often awaitSupervision re-checks for a watcher. Short
+// enough that a supervisor who just attached is noticed promptly, cheap enough
+// (an in-memory map lookup, or the relay's already-maintained TTL flag on a
+// remote replica) that polling it costs nothing worth avoiding with a proper
+// wake-up channel.
+const supervisionPoll = 500 * time.Millisecond
+
+// awaitSupervision blocks until session sid has an attached watcher — locally
+// or, via the Phase 55 relay, on another replica — or p.supTimeout elapses,
+// whichever comes first. It returns false on timeout or context cancellation.
+// A nil live hub (monitoring not wired) or an empty sid can never gain a
+// watcher, so it fails fast rather than waiting out the full timeout for a
+// condition that can never become true.
+func (p *Proxy) awaitSupervision(ctx context.Context, sid string) bool {
+	if p.live == nil || sid == "" {
+		return false
+	}
+	if p.live.HasSubscribers(sid) {
+		return true
+	}
+	deadline := time.NewTimer(p.supTimeout)
+	defer deadline.Stop()
+	poll := time.NewTicker(supervisionPoll)
+	defer poll.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-deadline.C:
+			return false
+		case <-poll.C:
+			if p.live.HasSubscribers(sid) {
+				return true
+			}
+		}
+	}
 }
 
 // crlf normalizes bare LF line endings to CRLF for terminal display.
