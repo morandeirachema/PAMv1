@@ -11,6 +11,12 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.18.2] — 2026-08-12
+
+A patch: audit-fidelity and access-control fixes surfaced by two review passes
+(Phase 96, Phase 108), plus operational-logging and audit-timestamp
+consistency. No schema, route or API change.
+
 ### Changed
 
 - **Operational logs from the session subsystem now carry `service=session`,**
@@ -773,7 +779,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.18.2...HEAD
+[0.18.2]: https://github.com/morandeirachema/pamv1/releases/tag/v0.18.2
 [0.18.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.18.1
 [0.18.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.18.0
 [0.17.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.17.0
