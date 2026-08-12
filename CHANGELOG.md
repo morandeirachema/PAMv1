@@ -11,6 +11,10 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-08-12
+
+A minor: one new capability. No schema or env-var change.
+
 ### Added
 
 - **SSH session recordings are now searchable by content.** `GET
@@ -791,7 +795,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.18.2...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.19.0
 [0.18.2]: https://github.com/morandeirachema/pamv1/releases/tag/v0.18.2
 [0.18.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.18.1
 [0.18.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.18.0
