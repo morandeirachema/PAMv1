@@ -151,7 +151,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–109, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–110, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -274,7 +274,7 @@ ves la credencial. Las grabaciones van a `PAM_RECORDING_DIR`; desactiva el proxy
 
 ## Hoja de ruta
 
-Se han entregado todas las fases (0–109) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
+Se han entregado todas las fases (0–110) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
 
 | Fase | Tema | Estado |
 |---|---|---|
@@ -440,6 +440,33 @@ una cuenta para construirlos con honestidad, catalogados en
   parque de hosts real) · componentes de conexión para apps de escritorio (auto-login en
   SSMS / Toad / vSphere vía RDP RemoteApp — hosts Windows RemoteApp). Ver
   [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md).
+
+### Nivel 5 — profundidad de auditoría y sesión (investigación de brechas, 2026-08-12)
+
+Dos investigaciones independientes frente a CyberArk PAM y Wallix Bastion —
+cada hallazgo verificado contra este repositorio antes de reportarlo, no
+tomado de material de marketing — coincidieron por separado en el mismo
+hallazgo principal. Solo elementos construibles sin infraestructura externa;
+cada uno indica qué haría falta para cerrarlo.
+
+| Brecha | Líderes | pamv1 hoy |
+|---|---|---|
+| ~~**Búsqueda de contenido en grabaciones de sesión**~~ **✅ entregado (Fase 110)** | CyberArk indexa por OCR/texto las grabaciones de PSM; Wallix hace lo mismo con su captura estilo DVR — ninguno obliga a un auditor a repasar una sesión entera para encontrar algo | `GET /api/recordings/search?q=` reconstruye el flujo de salida de una grabación SSH (una búsqueda puede abarcar más de una escritura grabada, porque una terminal ecoa en los fragmentos que van llegando) y devuelve el fragmento de cada coincidencia **junto con el instante de reproducción al que saltar**. RDP/VNC (sin capa de texto) y WinRM (texto plano, pero pospuesto) aún no están cubiertos |
+| **Informes de cumplimiento reales** | Informes predefinidos y mapeados a controles (PCI-DSS/ISO27001/NIS2/SOX), no solo exportaciones en crudo | La cadena de auditoría + exportación OCSF (Fase 27) ya tienen los datos; `GET /api/audit` no admite filtros y no existe una capa de *plantillas* de informe — un problema de consulta/formato, no de nueva instrumentación |
+| **Supervisión en vivo obligatoria** | Una sesión puede exigir un supervisor **conectado activamente** antes de proceder, no solo observación a posteriori | Las dos mitades ya existen por separado — el flujo de observación (`GET /api/sessions/{id}/stream`) y la pausa de step-up solo para BD (`internal/session/stepup.go`) — condicionar el *inicio* de la sesión a un observador conectado es una bandera de política sobre lo ya existente |
+| **MFA FIDO2/WebAuthn** | Segundo factor sin contraseña por llave de hardware, junto a TOTP/push | Solo TOTP (`internal/mfa`) — ya señalado como brecha en [docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md); esta investigación lo confirma de forma independiente |
+| **Descubrimiento autenticado tras el login** | Enumerar cuentas locales/de servicio y señalar exposición de credenciales en hosts ya alcanzados (CyberArk DNA) | `internal/discovery` solo sondea puertos TCP abiertos antes de autenticar — distinto del ítem, ya catalogado, de "descubrimiento de claves SSH del parque a escala" (aquel necesita un parque real; este es una capacidad ausente, no un problema de escala) |
+| **Autorización de conexión por red/CIDR** | Condicionar una conexión a la red de origen del operador | Hoy no existe lógica de autorización por IP en `internal/auth` — el único campo con forma de CIDR (`SourceAddress` del certificado SSH) lo aplica el propio `sshd` del objetivo, no pamv1 |
+| **Compartir una sesión en vivo** | Quien aloja una sesión en vivo genera un enlace temporal para que un segundo participante se una, observe y opcionalmente controle, todo auditado (un diferenciador genuino de Wallix) | El flujo en vivo (Fase 16) es unidireccional (el supervisor observa al operador); no hay mecanismo de invitación/unión |
+| **Suspender una sesión en vivo** | Congelar la entrada del operador sin terminar la sesión, un escalón por debajo de matarla | El bus de terminación de `internal/session` solo termina |
+| Política de ventanas recurrentes / complejidad configurable | Ventanas de acceso repetidas (frente a un rango de fechas único); histórico/no-reutilización de contraseñas (frente a un generador fijo) | Menor y real, prioridad más baja que lo anterior |
+
+Un gestor de ciclo de vida de certificados X.509 de propósito general (el
+empuje de "identidad de máquina" de CyberArk, impulsado por su adquisición de
+Venafi) es más una pregunta de alcance que una brecha: pamv1 ya opera una CA
+local para Privilegio Cero Permanente (Fase 22), y un producto completo de
+emisión/renovación/alerta de expiración se acerca más a una decisión de
+alcance (PAM frente a PKI) que a un ítem del tamaño de una fase.
 
 ### No-objetivo deliberado
 

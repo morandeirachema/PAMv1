@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -286,6 +287,152 @@ func (s *Server) playRecording(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeContent(w, r, "", fi.ModTime(), io.NewSectionReader(f, 0, fi.Size()))
+}
+
+// recordingSearchMaxBytes bounds how much reconstructed output text one
+// recording contributes to a search — long enough for a realistic
+// interactive session, far smaller than the SFTP reconstruction bound
+// (terminal text is orders of magnitude less dense than a transferred file).
+// A recording longer than this is searched up to the bound and reported
+// truncated (recording.SearchASCIICast), never silently.
+const recordingSearchMaxBytes = 8 << 20 // 8 MiB
+
+// recordingSearchQueryMin/Max bound the query itself: long enough to avoid a
+// one- or two-character query matching almost everything and costing a
+// snippet computation per hit, short enough that a search cannot smuggle an
+// oversized string into the audit trail.
+const recordingSearchQueryMin = 3
+const recordingSearchQueryMax = 200
+
+// recordingSearchHit is one matching recording in a search response.
+// MatchSeconds is the asciicast player time of the first match — the console
+// seeks playback there directly rather than making an auditor scrub for it.
+type recordingSearchHit struct {
+	Name         string    `json:"name"`
+	Target       string    `json:"target,omitempty"`
+	Actor        string    `json:"actor,omitempty"`
+	Modified     time.Time `json:"modified"`
+	Matches      int       `json:"matches"`
+	Snippet      string    `json:"snippet"`
+	MatchSeconds float64   `json:"match_seconds"`
+	Truncated    bool      `json:"truncated"`
+}
+
+// searchRecordings searches stored SSH session recordings (asciicast) for a
+// text query and returns the matching ones, newest first. Scope is
+// deliberately narrow: RDP/VNC recordings have no text layer to search
+// (guacd's native binary protocol — an OCR pass is a follow-on), and WinRM
+// transcripts, though plain text, are out of scope for this pass too.
+// Requires CapReadAudit — the same capability that already lets a holder
+// list and play back every stored recording, so search discloses nothing a
+// holder could not already reach by opening each recording in turn; it only
+// makes finding it faster.
+func (s *Server) searchRecordings(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(query) < recordingSearchQueryMin {
+		writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("q must be at least %d characters", recordingSearchQueryMin))
+		return
+	}
+	if len(query) > recordingSearchQueryMax {
+		writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("q must be at most %d characters", recordingSearchQueryMax))
+		return
+	}
+
+	entries, err := os.ReadDir(s.recordingDir)
+	if err != nil {
+		if !(s.recordingDir == "" || os.IsNotExist(err)) {
+			writeError(w, http.StatusInternalServerError, "recordings unavailable")
+			return
+		}
+		entries = nil
+	}
+	type candidate struct {
+		name string
+		mod  time.Time
+	}
+	var cands []candidate
+	for _, e := range entries {
+		// asciicast only (see the doc comment above) — a name that also
+		// satisfies the general recording-name allowlist, defense in depth
+		// against a stray same-suffixed file that is not one of ours.
+		if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), ".cast") || !recordingNameRe.MatchString(e.Name()) {
+			continue
+		}
+		fi, ferr := e.Info()
+		if ferr != nil {
+			continue
+		}
+		cands = append(cands, candidate{e.Name(), fi.ModTime()})
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].mod.After(cands[j].mod) })
+	if len(cands) > recordingMaxList {
+		cands = cands[:recordingMaxList]
+	}
+
+	hits := []recordingSearchHit{}
+	want := map[string]bool{}
+	for _, c := range cands {
+		res, ok := s.searchOneRecording(r.Context(), c.name, query)
+		if !ok {
+			continue
+		}
+		hits = append(hits, recordingSearchHit{
+			Name: c.name, Modified: c.mod.UTC(), Matches: res.Matches, Snippet: res.Snippet,
+			MatchSeconds: res.MatchSeconds, Truncated: res.Truncated,
+		})
+		want[c.name] = true
+	}
+	owners := s.recordingOwners(r, want)
+	for i := range hits {
+		who := owners[hits[i].Name]
+		hits[i].Target, hits[i].Actor = who[0], who[1]
+	}
+
+	// Fail CLOSED, immediately before the results are disclosed — computed
+	// first rather than audited first so the one audit row can also carry
+	// what the query found. The query itself is the sensitive fact (a search
+	// for "aws_secret_access_key" across every stored session is a signal
+	// worth an auditor seeing in its own right, independent of whether it hit
+	// anything), the same invariant playback holds for the content it
+	// discloses (§6.4): an audit outage must not make the whole recording
+	// archive searchable with no durable record of who searched for what.
+	if !s.mustAudit(w, r.Context(), "session.search",
+		fmt.Sprintf("query:%s scanned:%d matched:%d", auditField(query, recordingSearchQueryMax), len(cands), len(hits))) {
+		return
+	}
+	writeJSON(w, http.StatusOK, hits)
+}
+
+// searchOneRecording opens one candidate recording (decrypting it first if it
+// is sealed, exactly as playback does — recording.Open handles both formats
+// transparently) and searches its reconstructed output. A recording that
+// cannot be opened, decrypted or parsed is logged and skipped rather than
+// failing the whole search — one corrupt or foreign file must not hide every
+// other recording's results — except for the tamper-evidence question
+// itself, which recording.SearchASCIICast already refuses to swallow: a
+// sealed recording that fails authentication surfaces as an error here too,
+// and is logged rather than silently reported as "no matches".
+func (s *Server) searchOneRecording(ctx context.Context, name, query string) (recording.SearchResult, bool) {
+	f, err := os.Open(filepath.Join(s.recordingDir, name)) // #nosec G304 -- name is validated against recordingNameRe by the caller
+	if err != nil {
+		return recording.SearchResult{}, false
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || !fi.Mode().IsRegular() {
+		return recording.SearchResult{}, false
+	}
+	pr, err := recording.Open(ctx, io.NewSectionReader(f, 0, fi.Size()), s.vault, name)
+	if err != nil {
+		s.log.Warn("recording search: skip unreadable recording", "file", name, "err", err)
+		return recording.SearchResult{}, false
+	}
+	res, err := recording.SearchASCIICast(pr, recordingSearchMaxBytes, query)
+	if err != nil {
+		s.log.Warn("recording search: skip", "file", name, "err", err)
+		return recording.SearchResult{}, false
+	}
+	return res, res.Matches > 0
 }
 
 // truthyParam reads an affirmative query-string flag. Deliberately explicit:

@@ -798,8 +798,12 @@ func (s *Server) routes() {
 	s.mux.Handle("DELETE /api/sessions/{id}", s.authz(auth.CapManageTargets, s.killSession))
 
 	// Session-recording playback (Phase 26): list stored recordings and serve one
-	// for replay, hash-verified against the audit trail.
+	// for replay, hash-verified against the audit trail. Content search over
+	// stored SSH recordings (Phase 110) is a literal route, not a path value,
+	// so it takes precedence over {name} at the same segment without any
+	// recording ever being named "search" (recordingNameRe would refuse it).
 	s.mux.Handle("GET /api/recordings", s.authz(auth.CapReadAudit, s.listRecordings))
+	s.mux.Handle("GET /api/recordings/search", s.authz(auth.CapReadAudit, s.searchRecordings))
 	s.mux.Handle("GET /api/recordings/{name}", s.authz(auth.CapReadAudit, s.playRecording))
 
 	// Privileged threat analytics (Phase 23): behavioral risk scores over the
