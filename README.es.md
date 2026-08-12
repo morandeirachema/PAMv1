@@ -151,7 +151,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–110, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–112, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -274,7 +274,7 @@ ves la credencial. Las grabaciones van a `PAM_RECORDING_DIR`; desactiva el proxy
 
 ## Hoja de ruta
 
-Se han entregado todas las fases (0–110) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
+Se han entregado todas las fases (0–112) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
 
 | Fase | Tema | Estado |
 |---|---|---|
@@ -453,7 +453,7 @@ cada uno indica qué haría falta para cerrarlo.
 |---|---|---|
 | ~~**Búsqueda de contenido en grabaciones de sesión**~~ **✅ entregado (Fase 110)** | CyberArk indexa por OCR/texto las grabaciones de PSM; Wallix hace lo mismo con su captura estilo DVR — ninguno obliga a un auditor a repasar una sesión entera para encontrar algo | `GET /api/recordings/search?q=` reconstruye el flujo de salida de una grabación SSH (una búsqueda puede abarcar más de una escritura grabada, porque una terminal ecoa en los fragmentos que van llegando) y devuelve el fragmento de cada coincidencia **junto con el instante de reproducción al que saltar**. RDP/VNC (sin capa de texto) y WinRM (texto plano, pero pospuesto) aún no están cubiertos |
 | **Informes de cumplimiento reales** | Informes predefinidos y mapeados a controles (PCI-DSS/ISO27001/NIS2/SOX), no solo exportaciones en crudo | La cadena de auditoría + exportación OCSF (Fase 27) ya tienen los datos; `GET /api/audit` no admite filtros y no existe una capa de *plantillas* de informe — un problema de consulta/formato, no de nueva instrumentación |
-| **Supervisión en vivo obligatoria** | Una sesión puede exigir un supervisor **conectado activamente** antes de proceder, no solo observación a posteriori | Las dos mitades ya existen por separado — el flujo de observación (`GET /api/sessions/{id}/stream`) y la pausa de step-up solo para BD (`internal/session/stepup.go`) — condicionar el *inicio* de la sesión a un observador conectado es una bandera de política sobre lo ya existente |
+| ~~**Supervisión en vivo obligatoria**~~ **✅ entregado (Fase 112, SSH)** | Una sesión puede exigir un supervisor **conectado activamente** antes de proceder, no solo observación a posteriori | `PAM_REQUIRE_LIVE_SUPERVISION` retiene un canal interactivo — antes de que se abra el canal hacia el objetivo — hasta que un supervisor esté observando (comprobado contra el hub entre réplicas de la Fase 55) o `PAM_LIVE_SUPERVISION_TIMEOUT_SEC` lo rechace. Las sesiones observadoras y el break-glass están exentos. PostgreSQL/SQL Server usan el mecanismo distinto de step-up por sentencia para la misma preocupación; extender esta puerta a ellos necesita un cambio estructural (el registro de la sesión ocurre después de que la credencial ya se conectó al objetivo), pospuesto |
 | **MFA FIDO2/WebAuthn** | Segundo factor sin contraseña por llave de hardware, junto a TOTP/push | Solo TOTP (`internal/mfa`) — ya señalado como brecha en [docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md); esta investigación lo confirma de forma independiente |
 | **Descubrimiento autenticado tras el login** | Enumerar cuentas locales/de servicio y señalar exposición de credenciales en hosts ya alcanzados (CyberArk DNA) | `internal/discovery` solo sondea puertos TCP abiertos antes de autenticar — distinto del ítem, ya catalogado, de "descubrimiento de claves SSH del parque a escala" (aquel necesita un parque real; este es una capacidad ausente, no un problema de escala) |
 | **Autorización de conexión por red/CIDR** | Condicionar una conexión a la red de origen del operador | Hoy no existe lógica de autorización por IP en `internal/auth` — el único campo con forma de CIDR (`SourceAddress` del certificado SSH) lo aplica el propio `sshd` del objetivo, no pamv1 |

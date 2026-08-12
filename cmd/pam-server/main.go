@@ -1263,6 +1263,8 @@ func run() error {
 			WinRMRunner:          proxyWinRM,
 			Jump:                 jump,
 			RequireRecording:     cfg.RequireRecording,
+			RequireSupervision:   cfg.RequireSupervision,
+			SupervisionTimeout:   cfg.SupervisionTimeout,
 			CommandGuard:         cmdGuard,
 			Live:                 liveHub,
 			CA:                   sshCA,

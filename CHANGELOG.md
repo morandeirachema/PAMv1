@@ -11,6 +11,16 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Added
+
+- **Interactive SSH sessions can now require an actively-watching supervisor.**
+  `PAM_REQUIRE_LIVE_SUPERVISION=true` holds a session's channel open — before it
+  dials the target — until a supervisor attaches `GET /api/sessions/{id}/stream`
+  or `PAM_LIVE_SUPERVISION_TIMEOUT_SEC` (default 120s) elapses, in which case the
+  session is refused and audited `session.unsupervised`. Observer sessions and
+  break-glass access are exempt. SSH only for now; the database and WinRM
+  proxies are left for a future phase.
+
 ## [0.19.0] — 2026-08-12
 
 A minor: one new capability. No schema or env-var change.

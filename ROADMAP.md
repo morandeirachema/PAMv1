@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–111 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–112 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -25,7 +25,10 @@ and **Phase 110 makes SSH session recordings searchable by content** — the
 first genuinely new capability since the 96–108 arc began, closing the
 strongest finding from a fresh competitive-research pass against CyberArk and
 Wallix — which **Phase 111 releases as v0.19.0** (a minor, since it is a real
-feature, not a fix). The narrative that follows traces the
+feature, not a fix), and **Phase 112 closes that research pass's second
+finding**: an interactive SSH session can require an actively-connected
+supervisor before it proceeds, not just after-the-fact review. The narrative
+that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2369,6 +2372,48 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 112 — Mandatory live-supervision gate (SSH) ✅
+
+The second Tier-5 finding from the 2026-08-12 CyberArk/Wallix research,
+closed the same day as Phase 110: a session can be required to have an
+**actively-connected** supervisor before it proceeds, not just after-the-fact
+review. Both halves already existed separately — the live watch hub (Phase
+16, cross-replica-aware since Phase 55) and the pattern for a global-plus
+fail-closed policy flag — so this is a gate over existing plumbing, not new
+plumbing, exactly as flagged when the finding was recorded.
+
+- [x] **`PAM_REQUIRE_LIVE_SUPERVISION`** (bool, default off) +
+  **`PAM_LIVE_SUPERVISION_TIMEOUT_SEC`** (default 120): when set, an
+  interactive SSH channel is held — *before* the upstream channel even opens,
+  so nothing reaches the target — until `session.Hub.HasSubscribers` reports
+  a watcher (polled every 500ms; the check is already cross-replica via the
+  Phase 55 relay, so a supervisor watching from a different pod counts) or
+  the timeout elapses. On timeout the channel is refused and the refusal is
+  audited `session.unsupervised`, with the operator told why over the same
+  channel rather than left to guess at a hang
+- [x] **Two deliberate exemptions**: an observer (`+observe`) session, since
+  it already **is** the watching role — requiring it to also be watched would
+  be circular — and break-glass, since an emergency key exists precisely for
+  when no supervisor is reachable and gating it on one would defeat the
+  purpose. Both are proven, not just asserted: dedicated tests confirm
+  neither waits
+- [x] **Scope, honestly bounded**: SSH only. PostgreSQL and SQL Server
+  sessions already have a different human-in-the-loop mechanism for the same
+  underlying concern — the in-session step-up pause (Phase 30/56), which
+  gates a *flagged statement* mid-session rather than the whole session at
+  connect time — and reusing that bus for "wait for ANY watcher to attach to
+  a session that doesn't exist yet" turned out to need a structural change
+  (registration happens after the credential already dials the real target)
+  with no existing precedent to build on safely in the same phase. A per-target
+  or per-safe override (matching `RequireApproval`'s strictest-wins shape) is
+  a natural follow-on, deferred rather than guessed at
+- [x] Tests: off-by-default (no regression for deployments that never set the
+  flag), timeout-refuses (+ audited), releases the moment a supervisor
+  subscribes (well before the timeout — the common case), and both
+  exemptions proven to never wait at all
+- [x] No schema or route change; `archgen` output unchanged (two new env vars
+  only)
 
 ## Phase 111 — v0.19.0 ✅
 

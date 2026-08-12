@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-12 · Reflects: Phases 0–110 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-12 · Reflects: Phases 0–112 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110) and mandatory live supervision (112, §9.4b) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -1940,6 +1940,41 @@ is refused (Phase 39). For the agent broker, policy rules can
 also gate on an **amount** with the numeric comparators `gte`/`gt`/`lte`/`lt`
 (e.g. `when: { args.amount: { gte: 5000 } }` → `require_approval`).
 
+### 9.4b Mandatory live supervision (Phase 112)
+
+Live monitoring (9.4) is opt-in: a supervisor *may* watch. `PAM_REQUIRE_LIVE_SUPERVISION`
+makes watching **mandatory** — an interactive SSH session will not proceed until
+someone is actually attached to `GET /api/sessions/{id}/stream`, not just
+reviewable afterward from the recording.
+
+```bash
+export PAM_REQUIRE_LIVE_SUPERVISION=true
+export PAM_LIVE_SUPERVISION_TIMEOUT_SEC=120   # default; how long a session waits
+```
+
+When set, the proxy holds the channel open — **before it dials the target**, so
+nothing is relayed anywhere in the meantime — polling `session.Hub.HasSubscribers`
+for up to the timeout. A supervisor attaching the live-monitor stream at any
+point during the wait (on any replica, per the cross-replica relay in 9.4)
+releases the session immediately; most sessions never notice the check, since a
+supervisor who is already watching the queue satisfies it before the channel
+even opens. A session that times out unwatched is refused
+(`pamv1: no supervisor attached to watch this session; refused`) and audited
+`session.unsupervised` with the target, credential username and configured
+timeout — nothing reaches the target.
+
+Two exemptions, both because the requirement would be meaningless against them:
+
+- **Observer sessions** (`ssh <cred>@<target>+observe@pam`) — an observer *is*
+  the watching role, not a session that needs one.
+- **Break-glass** — the emergency key exists precisely for when no supervisor
+  is reachable; gating it on supervision would defeat its purpose.
+
+Scope today is **SSH only** — the PostgreSQL and WinRM proxies register their
+live session *after* dialing the target (see `internal/proxy`), so gating
+before dial would need a larger rework; they are left for a future phase. There
+is no per-target override: the flag is global, like `PAM_REQUIRE_RECORDING`.
+
 ### 9.5 Metrics & probes
 
 - `GET /metrics` — a Prometheus exposition: `pam_http_requests_total{status}`,
@@ -2284,6 +2319,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-12 | **Phase 112 — mandatory live supervision.** `PAM_REQUIRE_LIVE_SUPERVISION=true` holds an interactive SSH channel — before it dials the target — until a supervisor is actually watching (`GET /api/sessions/{id}/stream`) or `PAM_LIVE_SUPERVISION_TIMEOUT_SEC` (default 120) elapses; a timeout refuses the session and is audited `session.unsupervised`. Observer sessions and break-glass are exempt. SSH only for now — the database/WinRM proxies register their live session after dialing, so they're left for a future phase. See §9.4b |
 | 2026-08-12 | **Phase 110 — SSH session recordings are searchable by content.** `GET /api/recordings/search?q=` finds text anywhere in a recording's output, even split across several writes, and reports each hit's snippet plus the playback time to jump to. Console: **F4** from *Session Recordings* (menu 19). Same `read_audit` gate as playback; the search itself is audited (`session.search`) with the query. RDP/VNC and WinRM are not covered. See §9.3 |
 | 2026-08-06 | **Phase 60a — the ticket re-check no longer misfires when you hold more than one approval.** With `PAM_TICKET_REVALIDATE=true`, each live approval for the target is now checked in turn and the one admitted is the one whose ticket passed. Before, a second concurrent connection could be let in on an approval whose change had been cancelled (its ticket was never put to the ITSM at all), and one cancelled change could block a valid approval behind it for the rest of the window. Up to 8 approvals are considered and the whole walk shares the same 5-second ITSM budget. Nothing to configure. See §9.5 |
 | 2026-08-06 | **Phase 61a — naming a management credential now takes the same authorization as revealing it.** Declaring a dependent account with `management_credential_id` makes pamv1 present that password to the host on the same request, so it now requires `reveal_secret`, a grant on that credential's **own** target, an approved access request where that target needs one, and an in-contract vendor grant for a vendor — refusals audited as `dependency.create_denied`. It also must be a **password**: an SSH key or a zero-standing-privilege credential is refused, at declaration and again at use. Nothing changes for an administrator who was already entitled to the credential they name. See §7 |
