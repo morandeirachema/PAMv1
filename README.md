@@ -37,7 +37,7 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
-runs 0–110 and **every phase has shipped**, and the current
+runs 0–112 and **every phase has shipped**, and the current
 tagged, cosign-signed release is
 **[v0.19.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.19.0)** (2026-08-12;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
@@ -147,7 +147,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–110, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–112, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 
@@ -440,7 +440,7 @@ items only; each notes what closing it would take.
 |---|---|---|
 | ~~**Searchable session recordings**~~ **✅ shipped (Phase 110)** | CyberArk OCR/text-indexes PSM recordings; Wallix does the same for its DVR-style capture — neither leaves an auditor scrubbing a session to find something | `GET /api/recordings/search?q=` reconstructs an SSH recording's output stream (a query can span more than one recorded write, since a terminal echoes in whatever chunks arrive) and returns each hit's snippet **and the playback time to seek to**. RDP/VNC (no text layer) and WinRM (plain text, but deferred) are not yet covered |
 | **Real compliance reporting** | Canned, control-mapped reports (PCI-DSS/ISO27001/NIS2/SOX-shaped), not just raw exports | The audit chain + OCSF export (Phase 27) hold the data; `GET /api/audit` takes no filters and there is no report *template* layer — a query/formatting problem, not new instrumentation |
-| **Mandatory live-supervision gate** | A session can be required to have an **actively-connected** supervisor before it proceeds, not just after-the-fact watching | Both halves already exist separately — the watch stream (`GET /api/sessions/{id}/stream`) and the DB-only step-up pause (`internal/session/stepup.go`) — gating session *start* on a connected watcher is a policy flag over existing plumbing, not new plumbing |
+| ~~**Mandatory live-supervision gate**~~ **✅ shipped (Phase 112, SSH)** | A session can be required to have an **actively-connected** supervisor before it proceeds, not just after-the-fact watching | `PAM_REQUIRE_LIVE_SUPERVISION` holds an interactive channel — before the upstream channel opens — until a supervisor is watching (polled against the Phase 55 cross-replica hub) or `PAM_LIVE_SUPERVISION_TIMEOUT_SEC` refuses it. Observer sessions and break-glass are exempt. PostgreSQL/SQL Server use the different per-statement step-up mechanism for the same concern; extending this gate to them needs a structural change (session registration happens after the credential already dials the target), deferred |
 | **FIDO2/WebAuthn MFA** | Passwordless hardware-key second factor alongside TOTP/push | TOTP only (`internal/mfa`) — already flagged as a gap in [docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md); this research independently confirms it |
 | **Authenticated post-login discovery** | Enumerate local/service accounts and flag credential exposure on hosts already reached (CyberArk DNA) | `internal/discovery` only TCP-probes for open ports pre-auth — distinct from the infra-bound "SSH-key fleet discovery at scale" above: this is a missing *capability*, not a scale problem |
 | **CIDR/network-based connect authorization** | Gate a connection by the operator's source network | No IP-based authorization logic exists in `internal/auth` today — the one CIDR-shaped field (SSH cert `SourceAddress`) is enforced by the target's own `sshd`, not by pamv1 |

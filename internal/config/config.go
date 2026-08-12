@@ -171,6 +171,16 @@ type Config struct {
 	// RequireRecording refuses a proxied session when its recording cannot be
 	// created, rather than proceeding unrecorded (fail-closed session auditing).
 	RequireRecording bool
+	// RequireSupervision refuses an interactive SSH session to proceed until a
+	// supervisor actively watches it (GET /api/sessions/{id}/stream) or
+	// SupervisionTimeout elapses — after-the-fact review isn't enough for a
+	// deployment that sets it. Observer sessions and break-glass access are
+	// exempt: an observer session already is the watching role, and an
+	// emergency key exists precisely for when no supervisor is reachable.
+	RequireSupervision bool
+	// SupervisionTimeout bounds how long an interactive session waits for a
+	// supervisor to attach before it is refused.
+	SupervisionTimeout time.Duration
 	// MaxSessionsPerUser / MaxSessionsTotal cap concurrent live proxied sessions
 	// per actor and across all actors (0 = unlimited), bounding resource use from
 	// a single (or compromised) identity. Per-replica in an HA deployment.
@@ -550,6 +560,8 @@ func Load() (*Config, error) {
 		RotateMaxAge:            time.Duration(integer("PAM_ROTATE_MAX_AGE_HOURS", 0)) * time.Hour,
 		RotateAfterSession:      boolean("PAM_ROTATE_AFTER_SESSION", false),
 		RequireRecording:        boolean("PAM_REQUIRE_RECORDING", false),
+		RequireSupervision:      boolean("PAM_REQUIRE_LIVE_SUPERVISION", false),
+		SupervisionTimeout:      time.Duration(integer("PAM_LIVE_SUPERVISION_TIMEOUT_SEC", 120)) * time.Second,
 		MaxSessionsPerUser:      integer("PAM_MAX_SESSIONS_PER_USER", 0),
 		MaxSessionsTotal:        integer("PAM_MAX_SESSIONS_TOTAL", 0),
 		EncryptRecordings:       boolean("PAM_RECORDING_ENCRYPT", false),
