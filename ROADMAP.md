@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–110 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–111 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -24,7 +24,8 @@ update that would strand a Zero Standing Privilege credential is refused).
 and **Phase 110 makes SSH session recordings searchable by content** — the
 first genuinely new capability since the 96–108 arc began, closing the
 strongest finding from a fresh competitive-research pass against CyberArk and
-Wallix. The narrative that follows traces the
+Wallix — which **Phase 111 releases as v0.19.0** (a minor, since it is a real
+feature, not a fix). The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2368,6 +2369,16 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 111 — v0.19.0 ✅
+
+Releases Phase 110 (searchable SSH session recordings) — a genuine new
+capability, so this is a **minor**, not a patch. No schema or env-var change.
+
+- [x] **v0.19.0** through the test-gated pipeline, rehearsed on `main` first
+- [x] All five pins via the sweep; Helm chart `version` 0.9.2 -> **0.10.0**
+  (minor, alongside the `appVersion` minor)
+- [x] Both READMEs restated
 
 ## Phase 110 — Searchable SSH session recordings ✅
 
