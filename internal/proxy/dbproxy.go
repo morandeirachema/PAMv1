@@ -596,11 +596,15 @@ func (d *DBProxy) deny(ctx context.Context, backend *pgproto3.Backend, actor, lo
 func (d *DBProxy) refuse(ctx context.Context, backend *pgproto3.Backend, res admitResult, actor, login string) {
 	switch res.gate {
 	case gateTunnelOnly:
+		// Audited here (with the short reason slug shared by the SSH proxy and the
+		// HTTP authz middleware) and failed directly — NOT via deny(), which would
+		// audit a second, differently-worded db.session.denied row for the same
+		// refusal.
 		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:tunnel-only-token")
-		d.deny(ctx, backend, actor, login, "this token may only be used by the in-portal viewer")
+		d.fail(backend, "28000", "pamv1: this token may only be used by the in-portal viewer")
 	case gateEnrollOnly:
 		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
-		d.deny(ctx, backend, actor, login, "complete MFA enrollment first")
+		d.fail(backend, "28000", "pamv1: complete MFA enrollment first")
 	case gateRoleConnect:
 		d.deny(ctx, backend, actor, login, "your role may not open sessions")
 	case gateResolve:

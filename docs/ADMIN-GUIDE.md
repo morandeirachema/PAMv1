@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-10 · Reflects: Phases 0–107 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-12 · Reflects: Phases 0–108 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54) and cluster-wide live monitoring (55) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -546,6 +546,10 @@ curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/credentials 
   -d '{"target_id":1,"username":"root","secret_type":"ssh_ca"}'
 # note: an ssh_ca credential must NOT carry a secret, and is only valid on ssh targets
 ```
+
+That also holds the other direction: `PUT /api/targets/{id}` refuses to change a
+target's protocol away from `ssh` while it still holds an `ssh_ca` credential
+(Phase 108) — delete the credential first if the target is being repurposed.
 
 **3. Connect as usual** — `ssh root@web-01@pam-host`. The proxy mints a
 certificate for `root`, valid for a couple of minutes, and authenticates with it;

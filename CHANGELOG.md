@@ -39,6 +39,15 @@ file records **releases**: the tagged, signed points you can actually deploy.
   before it reaches an audit row** (quoted and length-capped, as the SQL Server
   listener already did), closing an audit-detail injection vector on an
   attacker-controlled startup username.
+- **The PostgreSQL and SQL Server proxies no longer write two contradictory
+  `db.session.denied` rows for one refused connection** (a tunnel-scoped viewer
+  token or an MFA-enrollment-only session) — one audit row per refusal now,
+  matching every other admission gate.
+- **`PUT /api/targets/{id}` refuses to change a target's protocol away from
+  `ssh` while it still holds an `ssh_ca` (Zero Standing Privilege) credential**,
+  mirroring the check `POST /api/credentials` already made at creation time —
+  closing a gap where retargeting the target could strand the credential with
+  no secret and no certificate path (Phase 108).
 
 ### Fixed
 

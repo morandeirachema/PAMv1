@@ -73,4 +73,12 @@ func TestDBProxyEnrollOnlyRejected(t *testing.T) {
 	if fake.password() != "" {
 		t.Fatal("upstream was contacted for an enroll-only (MFA-pending) session")
 	}
+	if !hasAuditReason(t, st, "db.session.denied", "reason:mfa-enrollment-incomplete") {
+		t.Fatal("the refusal was not audited as db.session.denied … reason:mfa-enrollment-incomplete")
+	}
+	// Regression pin: refuse() used to audit this gate explicitly AND via deny(),
+	// which independently audits db.session.denied a second time.
+	if n := countAudit(t, st, "db.session.denied"); n != 1 {
+		t.Fatalf("one refused connection wrote %d db.session.denied rows, want 1", n)
+	}
 }

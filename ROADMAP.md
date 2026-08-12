@@ -6,15 +6,21 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–107 are shipped.** Phases 96–107 are a refactor, security-hardening
+**Phases 0–108 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
 hygiene (101), the proxy-family structural unification behind one `admit()` gate
 sequence (102), fuzzing the wire parsers (103), gosec enforcement + a
 golangci-lint evaluation (104), config-validation test hardening (105), the
-`IsZSP` cleanup (106), and this currency pass (107). They changed no user-facing
-behaviour, protocol, port or env var. The narrative that follows traces the
+`IsZSP` cleanup (106), a documentation currency pass (107), and a fresh audit
+sweep (108) that deduplicated a double-counted denial audit row, closed a
+target/credential invariant gap, hardened three untested fail paths and two
+doc-currency gaps, and deleted two functions dead since Phase 96/42. None of
+96–108 changed user-facing behaviour, protocol, port or env var except 108's
+two behavioral fixes (one denial now audits once instead of twice; a target
+update that would strand a Zero Standing Privilege credential is refused). The
+narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2358,6 +2364,98 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 108 — The 2026-08-12 audit sweep ✅
+
+Phase 107 closed the "What is left" backlog entirely, so this phase started
+from nothing: four independent read-only passes over the codebase — cross-path
+control parity, test coverage in security-critical code, a fresh security
+self-audit, and doc-vs-code currency — each instructed to report only
+verified, file:line findings and say so plainly if a slice was clean. All four
+came back with real findings; none were manufactured to have something to
+report. Closed in one pass, since all seven came out of the same sweep:
+
+- [x] **The PostgreSQL and SQL Server proxies wrote two contradictory
+  `db.session.denied` rows for one refused connection**, on exactly two of
+  fourteen admission gates (a tunnel-scoped viewer token, an MFA-enrollment-only
+  session). `refuse()`'s `gateTunnelOnly`/`gateEnrollOnly` cases audited the
+  denial explicitly and then called `deny()`, which independently audits the
+  same action via `sqlDeny` — so one refusal left two rows with two different
+  `reason:` strings (the explicit call omitted the per-statement `queryTag()`
+  the `deny()` path always includes). It predates Phase 102: the unification
+  preserved it faithfully from both proxies' pre-refactor code, so it is a
+  genuine, previously unrecorded defect, not a regression. It matters because
+  `db.session.denied` feeds the risk-analytics engine's `authFailActions`
+  signal and is OCSF-classified for SIEM export — a doubled count skews both,
+  and a self-contradictory trail is exactly the audit-fidelity defect class
+  `docs/SECURITY-GAPS.md` treats as first-class. Fixed by auditing once (with
+  the short reason slug already shared by the SSH proxy and the HTTP authz
+  middleware for the same two conditions) and failing the wire directly,
+  matching the pattern every other gate in the same switch already used to
+  avoid a double write. **Regression-pinned**: `TestDBProxyRefusesTunnelOnlyToken`
+  and `TestDBProxyEnrollOnlyRejected` now assert exactly one `db.session.denied`
+  row, and a new `TestMSSQLProxyRefusesTunnelOnlyToken` (the SQL Server proxy had
+  no tunnel-only test at all) joins `TestMSSQLProxyEnrollOnlyRejected` in the
+  same assertion. `TestSSHProxyRefusesTunnelOnlyToken` pins its sibling path was
+  never affected
+- [x] **An `ssh_ca` (Zero Standing Privilege) credential could be stranded on a
+  target retargeted away from ssh.** `POST /api/credentials` refuses to create
+  one unless the target's protocol is `ssh`; `PUT /api/targets/{id}` never
+  re-checked that invariant, so an admin could create the credential, then
+  change the same target's protocol to `winrm` — after which the credential's
+  empty `SecretEnc` (ZSP stores no secret; the SSH proxy mints a certificate
+  JIT) would reach a WinRM path with no certificate to mint and no secret to
+  inject. `updateTarget` now refuses the protocol change while any `ssh_ca`
+  credential exists on the target (`hasZSPCredential`, mirroring the create-time
+  check), the same plain-422 shape as every other `validateTargetIn` rule — not
+  an audited denial, since this is shape validation, not authorization. New
+  `TestZSPCredentialBlocksProtocolChange` proves the refusal, that the target's
+  protocol did not partially change, and that the same update succeeds once the
+  credential is gone
+- [x] **Three untested fail paths in security-critical code.** `mfaVerify`'s own
+  `mfa.Validate` rejection (confirming an MFA enrollment) had zero test
+  executions — both existing calls to `POST /api/mfa/verify` submitted a
+  correct code, so a regression here could let any string confirm a TOTP
+  secret. `vault.NewTransitKEK`'s HTTPS-enforcement guard had never seen its
+  rejection branch fire — every test server is `http://127.0.0.1`, which the
+  loopback exemption always allows, so the actual "reject a non-loopback
+  `http://` address" branch was unexercised. `internal/proxy`'s `md5Password`
+  (PostgreSQL MD5 upstream auth — still common in real `pg_hba.conf` configs)
+  had no test at all, unlike its cleartext and SCRAM-SHA-256 siblings. Closed
+  with `TestMFAEnrollmentAndLogin`'s new step (wrong OTP at `/api/mfa/verify`
+  must 401 and must not confirm the enrollment), `TestNewTransitKEKRequiresHTTPS`
+  (rejects a non-loopback `http://` addr, still exempts loopback), and
+  `TestMD5Password` (three vectors computed independently in Python, plus a
+  salt-is-mixed-in check)
+- [x] **Two functions dead since Phase 42, one dead since before the
+  multi-group-union work.** `proxy.GenerateHostKey`/`LoadOrCreateHostKey` (the
+  file-based host-key path Phase 42's `keycustody` replaced) had zero callers
+  for roughly 15 phases — Phase 96 deleted their exact sibling,
+  `sshca.LoadOrCreate`, in the same commit that introduced `keycustody`, and
+  missed this one. `auth.HighestRole` was a thin `MatchedRoles` wrapper with no
+  production caller (LDAP/Entra/OIDC all call `MatchedRoles` directly for the
+  union-of-roles behavior); its own test exercised only the wrapper, so
+  deleting it moved the case-insensitive-match assertion it uniquely covered
+  into `TestMatchedRoles` rather than losing it. Both doc comments had also
+  gone stale (one still described file persistence Phase 42 removed
+  operationally; the other named three callers that were never `HighestRole`'s)
+- [x] **Audit-vocabulary and config-doc drift**, the same class Phase 65 closed
+  for a different set of actions: `gateCredentialAccess` (the shared gate behind
+  reveal, checkout, rotate, reconcile, app grants and SSH cert issuance) audits
+  every denial as `<action>_denied`, but `docs/ARCHITECTURE-LOW-LEVEL.md` §5
+  listed only two of the six real strings — `ssh.cert_issue_denied`,
+  `app.grant_denied`, `credential.rotate_denied` and `credential.reconcile_denied`
+  were genuinely emitted and undocumented. §4's Conjur row used the table's
+  usual `X` / `_SUFFIX` shorthand for `PAM_CONJUR_AUTHN_LOGIN`/`_API_KEY` and
+  `PAM_CONJUR_AUTHN_JWT_SERVICE_ID`/`_JWT_FILE` — but the code reads
+  `PAM_CONJUR_API_KEY` and `PAM_CONJUR_JWT_FILE` (no `AUTHN`), so the shorthand
+  silently implied two variables the code never reads. An operator configuring
+  Conjur from the doc alone would set the wrong name and get silent non-sourcing
+  instead of an error
+- [x] No schema, route, wire-format or env-var change; behaviour is unchanged
+  except the two fixes above (one denial audited once instead of twice; a
+  protocol change refused while it would have stranded a ZSP credential).
+  `archgen` output unchanged
 
 ## Phase 107 — Documentation currency pass ✅
 

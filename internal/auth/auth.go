@@ -197,14 +197,6 @@ func SubjectMatches(p *Principal, subjectType, subject string) bool {
 	return false
 }
 
-// HighestRole maps directory claims (group DNs, group ids or app-role values) to
-// a role via m (keys compared lower-cased) and returns the highest-privilege
-// match. Shared by the LDAP, Entra and OIDC identity sources.
-func HighestRole(claims []string, m map[string]Role) (Role, bool) {
-	display, _, ok := MatchedRoles(claims, m)
-	return display, ok
-}
-
 // MatchedRoles maps directory claims to roles via m (keys lower-cased) and
 // returns the highest-privilege role (for display/audit) plus EVERY matched role
 // in precedence order, so an identity in multiple mapped groups gets the union of

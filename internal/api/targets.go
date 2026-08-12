@@ -136,6 +136,21 @@ func (s *Server) updateTarget(w http.ResponseWriter, r *http.Request) {
 	if !s.validateTargetIn(w, &in) {
 		return
 	}
+	// An ssh_ca (Zero Standing Privilege) credential is only ever created on an
+	// ssh target (createCredential enforces it); mirror that here so a protocol
+	// change can't strand one on a target that can no longer serve it — the SSH
+	// proxy is the only path that mints its certificate JIT.
+	if in.Protocol != "ssh" {
+		creds, err := s.store.ListCredentials(r.Context(), id, 0, 0)
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		if hasZSPCredential(creds) {
+			writeError(w, http.StatusUnprocessableEntity, "target has an ssh_ca (zero standing privilege) credential; it must stay an ssh target")
+			return
+		}
+	}
 	t := targetFromIn(in)
 	t.ID = id
 	if err := s.store.UpdateTarget(r.Context(), &t); err != nil {

@@ -8,7 +8,8 @@ import (
 )
 
 // TestMatchedRoles maps a multi-group membership to the highest role plus the
-// full matched set, in precedence order.
+// full matched set, in precedence order — case-insensitively, since directory
+// group DNs and app-role claims vary in case across identity sources.
 func TestMatchedRoles(t *testing.T) {
 	m := map[string]auth.Role{"g-users": auth.RoleUser, "g-auditors": auth.RoleAuditor}
 	display, all, ok := auth.MatchedRoles([]string{"g-users", "g-auditors"}, m)
@@ -20,6 +21,11 @@ func TestMatchedRoles(t *testing.T) {
 	}
 	if _, _, ok := auth.MatchedRoles([]string{"g-nothing"}, m); ok {
 		t.Fatal("no-match should return ok=false")
+	}
+	// Claim case must not matter: LDAP DNs and Entra/OIDC claims are not
+	// guaranteed lower-case, but the map's keys are compared lower-cased.
+	if display, _, ok := auth.MatchedRoles([]string{"G-Users", "G-AUDITORS"}, m); !ok || display != auth.RoleAuditor {
+		t.Fatalf("case-insensitive match: display = %q ok=%v; want auditor", display, ok)
 	}
 }
 

@@ -37,7 +37,7 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
-runs 0–107 and **every phase has shipped**, and the current
+runs 0–108 and **every phase has shipped**, and the current
 tagged, cosign-signed release is
 **[v0.18.1](https://github.com/morandeirachema/pamv1/releases/tag/v0.18.1)** (2026-08-09;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
@@ -147,7 +147,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–107, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–108, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 

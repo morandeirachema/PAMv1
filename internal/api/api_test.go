@@ -441,7 +441,18 @@ func TestMFAEnrollmentAndLogin(t *testing.T) {
 		t.Fatalf("no secret returned: %s", data)
 	}
 
-	// 3. Confirm enrollment with a valid code.
+	// 3. A wrong code must not confirm the enrollment. mfaVerify runs its own
+	// mfa.Validate check independent of the login path's checkSecondFactor, and
+	// nothing exercised its rejection branch — a regression here would let any
+	// string confirm a TOTP secret.
+	if status, _ := do(t, srv, http.MethodPost, "/api/mfa/verify", sessTok, map[string]any{"otp": "000000"}); status != http.StatusUnauthorized {
+		t.Fatalf("verify with wrong OTP should be 401, got %d", status)
+	}
+	if _, data := do(t, srv, http.MethodGet, "/api/mfa", sessTok, nil); jsonMap(t, data)["confirmed"] != false {
+		t.Fatalf("a wrong OTP must not confirm the enrollment: %s", data)
+	}
+
+	// 4. Confirm enrollment with a valid code.
 	code, err := mfa.Code(secret, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -450,20 +461,20 @@ func TestMFAEnrollmentAndLogin(t *testing.T) {
 		t.Fatalf("verify: %d %s", status, data)
 	}
 
-	// 4. Now login WITHOUT an OTP must be refused with mfa_required.
+	// 5. Now login WITHOUT an OTP must be refused with mfa_required.
 	status, data = do(t, srv, http.MethodPost, "/api/login", "", map[string]any{"username": "ad-alice", "password": "pw"})
 	if status != http.StatusUnauthorized || jsonMap(t, data)["mfa_required"] != true {
 		t.Fatalf("login without OTP should require MFA: %d %s", status, data)
 	}
 
-	// 5. Login WITH a valid OTP succeeds.
+	// 6. Login WITH a valid OTP succeeds.
 	code, _ = mfa.Code(secret, time.Now())
 	status, data = do(t, srv, http.MethodPost, "/api/login", "", map[string]any{"username": "ad-alice", "password": "pw", "otp": code})
 	if status != http.StatusCreated {
 		t.Fatalf("login with OTP should succeed: %d %s", status, data)
 	}
 
-	// 6. Wrong OTP is rejected.
+	// 7. Wrong OTP is rejected.
 	if status, _ := do(t, srv, http.MethodPost, "/api/login", "", map[string]any{"username": "ad-alice", "password": "pw", "otp": "000000"}); status != http.StatusUnauthorized {
 		t.Fatalf("login with wrong OTP should fail: %d", status)
 	}

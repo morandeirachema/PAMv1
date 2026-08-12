@@ -777,11 +777,15 @@ func (m *MSSQLProxy) deny(ctx context.Context, c *tds.Conn, actor, login, reason
 func (m *MSSQLProxy) refuse(ctx context.Context, c *tds.Conn, res admitResult, actor, login string, tds72 bool) {
 	switch res.gate {
 	case gateTunnelOnly:
+		// Audited here (with the short reason slug shared by the SSH proxy and the
+		// HTTP authz middleware) and failed directly — NOT via deny(), which would
+		// audit a second, differently-worded db.session.denied row for the same
+		// refusal.
 		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:tunnel-only-token")
-		m.deny(ctx, c, actor, login, "this token may only be used by the in-portal viewer", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: this token may only be used by the in-portal viewer", tds72)
 	case gateEnrollOnly:
 		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
-		m.deny(ctx, c, actor, login, "complete MFA enrollment first", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: complete MFA enrollment first", tds72)
 	case gateRoleConnect:
 		m.deny(ctx, c, actor, login, "your role may not open sessions", tds72)
 	case gateResolve:

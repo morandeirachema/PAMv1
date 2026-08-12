@@ -93,6 +93,17 @@ func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, c)
 }
 
+// hasZSPCredential reports whether any credential in the list is Zero Standing
+// Privilege (an ssh_ca credential — see Credential.IsZSP).
+func hasZSPCredential(creds []store.Credential) bool {
+	for _, c := range creds {
+		if c.IsZSP() {
+			return true
+		}
+	}
+	return false
+}
+
 // listCredentials returns credentials, optionally scoped to ?target_id=. Secret
 // material is never included in the response.
 func (s *Server) listCredentials(w http.ResponseWriter, r *http.Request) {
