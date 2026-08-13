@@ -785,6 +785,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/audit/ocsf", s.authz(auth.CapReadAudit, s.exportOCSF))
 	s.mux.Handle("GET /api/audit/verify", s.authz(auth.CapReadAudit, s.verifyAudit))
 	s.mux.Handle("GET /api/audit/head", s.authz(auth.CapReadAudit, s.auditHead))
+	s.mux.Handle("GET /api/compliance/nis2", s.authz(auth.CapReadAudit, s.nis2Report)) // Phase 114
 
 	s.mux.Handle("GET /api/sessions", s.authz(auth.CapReadAudit, s.listSessions))
 	s.mux.Handle("GET /api/sessions/{id}/stream", s.authz(auth.CapReadAudit, s.streamSession))

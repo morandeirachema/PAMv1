@@ -11,6 +11,18 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Added
+
+- **A live, control-mapped NIS2 compliance report.** `GET
+  /api/compliance/nis2?since=&until=` scores window-scoped audit activity
+  against the existing Art. 21(2) control matrix: each control's status is
+  architectural (same as docs/NIS2-COMPLIANCE.md), and controls with a
+  natural audit signal carry a count of matching events bucketed by action
+  family, plus (for incident handling) the audit chain's integrity result.
+  Same digest/determinism/self-audit conventions as the existing raw export.
+  Console: F8 from *Display Audit Trail*. NIS2 only — PCI-DSS/ISO27001/SOX
+  are not attempted.
+
 ## [0.20.0] — 2026-08-13
 
 A minor: one new capability. No schema change.

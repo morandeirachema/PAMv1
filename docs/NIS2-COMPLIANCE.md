@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a mapped control or endpoint changes.
 >
-> Last updated: 2026-08-10 · Reflects: Phases 0–107 (introduced Phase 9).
+> Last updated: 2026-08-13 · Reflects: Phases 0–114 (introduced Phase 9, live report added Phase 114).
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited, not legal advice.**
 > This maps pamv1 features to [Directive (EU) 2022/2555 (NIS2)](https://eur-lex.europa.eu/eli/dir/2022/2555/oj)
@@ -40,6 +40,14 @@ extends the audit trail under (b); **safes** (Phase 17 — delegated-access
 containers) sharpen least-privilege access control under (i); and optional
 **CyberArk Conjur** secret sourcing (Phase 18) adds machine-identity auth and
 central rotation of pamv1's own bootstrap secrets under (h)/(i).
+
+**A live version of this table** (Phase 114) is available at
+`GET /api/compliance/nis2?since=&until=` — the same ten controls, but scoped
+to a time window, with the controls that have a natural audit signal
+(supply-chain, policy effectiveness, access control, MFA, incident handling)
+carrying a live count of matching events instead of only the static prose
+above. Status stays architectural either way — a quiet window doesn't mean a
+control regressed. See [ADMIN-GUIDE.md §9.2b](ADMIN-GUIDE.md#92b-a-live-nis2-compliance-report-phase-114).
 
 ## 2. Incident reporting (Art. 23)
 
