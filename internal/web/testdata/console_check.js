@@ -123,6 +123,29 @@ const screens = [
       }],
     }),
   },
+  {
+    name: "nis2report",
+    src: /\n {6}nis2report\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      // title varies through cell() (the column actually under test); evidence
+      // is class="detail" (free-flowing by design — a variable-size family
+      // breakdown, unlike a single bounded string) and excluded, same shape as
+      // recsearch's snippet above. A huge digit count is the pathological case
+      // here, not a long string: counts are real event totals, not names.
+      nis2Since: "", nis2Until: "",
+      nis2Report: {
+        since: "2026-01-01T00:00:00Z", until: "2026-08-13T00:00:00Z", total_events: 4242,
+        controls: [
+          { letter: "a", title: long ? LONGNAME : "Risk analysis", status: "partial",
+            evidence: { type: "static" } },
+          { letter: "b", title: long ? LONGNAME : "Incident handling", status: "implemented",
+            evidence: { type: "window", count: long ? 9007199254740991 : 3,
+                        families: { breakglass: long ? 9007199254740991 : 2, analytics: long ? 9007199254740991 : 1 },
+                        chain: { enabled: true, intact: true } } },
+        ],
+      },
+    }),
+  },
 ];
 
 // --- render ------------------------------------------------------------------

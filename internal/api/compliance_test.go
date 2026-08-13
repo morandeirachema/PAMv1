@@ -129,3 +129,116 @@ func TestAuditExportRequiresReadAudit(t *testing.T) {
 		t.Fatalf("user export: want 403, got %d", status)
 	}
 }
+
+// nis2ReportBody is the shape TestNIS2Report* unmarshals into.
+type nis2ReportBody struct {
+	Framework   string `json:"framework"`
+	TotalEvents int    `json:"total_events"`
+	Controls    []struct {
+		Letter   string         `json:"letter"`
+		Status   string         `json:"status"`
+		Evidence map[string]any `json:"evidence"`
+	} `json:"controls"`
+}
+
+// TestNIS2ReportShape verifies the report carries all ten Art. 21(2) letters,
+// a matching digest header, and is deterministic over a fixed window — the
+// same three guarantees TestAuditExportJSON checks for the raw export.
+func TestNIS2ReportShape(t *testing.T) {
+	srv := newTestServer(t)
+	do(t, srv, http.MethodPost, "/api/targets", testAPIKey, map[string]any{
+		"name": "web-01", "host": "10.0.0.5", "port": 22, "os_type": "linux", "protocol": "ssh",
+	})
+
+	resp, body := getWithKey(t, srv, "/api/compliance/nis2", testAPIKey)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("nis2 report: %d %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(resp.Header.Get("Content-Disposition"), "attachment") {
+		t.Fatalf("missing attachment disposition: %q", resp.Header.Get("Content-Disposition"))
+	}
+	hdrDigest := resp.Header.Get("X-PAM-Export-SHA256")
+	if hdrDigest == "" {
+		t.Fatal("missing X-PAM-Export-SHA256 header")
+	}
+	sum := sha256.Sum256(body)
+	if hex.EncodeToString(sum[:]) != hdrDigest {
+		t.Fatalf("header digest %q != sha256(body)", hdrDigest)
+	}
+
+	var out nis2ReportBody
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Framework != "NIS2 Art. 21(2)" {
+		t.Fatalf("framework = %q", out.Framework)
+	}
+	wantLetters := "abcdefghij"
+	if len(out.Controls) != len(wantLetters) {
+		t.Fatalf("controls = %d, want %d", len(out.Controls), len(wantLetters))
+	}
+	for i, c := range out.Controls {
+		if want := string(wantLetters[i]); c.Letter != want {
+			t.Fatalf("control[%d].letter = %q, want %q", i, c.Letter, want)
+		}
+		if c.Status != "implemented" && c.Status != "partial" {
+			t.Fatalf("control %s: unexpected status %q", c.Letter, c.Status)
+		}
+	}
+
+	// Deterministic over a fixed historical range, like the raw export.
+	const window = "/api/compliance/nis2?since=2000-01-01T00:00:00Z&until=2000-01-02T00:00:00Z"
+	r1, _ := getWithKey(t, srv, window, testAPIKey)
+	r2, _ := getWithKey(t, srv, window, testAPIKey)
+	if r1.Header.Get("X-PAM-Export-SHA256") != r2.Header.Get("X-PAM-Export-SHA256") {
+		t.Fatal("nis2 report digest is not deterministic over a fixed range")
+	}
+}
+
+// TestNIS2ReportEvidenceCounts verifies a real event lands under the right
+// control's window evidence, bucketed by its action's family prefix.
+func TestNIS2ReportEvidenceCounts(t *testing.T) {
+	srv := newTestServer(t)
+	if status, body := do(t, srv, http.MethodPost, "/api/safes", testAPIKey,
+		map[string]any{"name": "nis2-test-safe"}); status != http.StatusCreated {
+		t.Fatalf("create safe: %d %s", status, body)
+	}
+
+	_, body := getWithKey(t, srv, "/api/compliance/nis2", testAPIKey)
+	var out nis2ReportBody
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatal(err)
+	}
+	// Control (i) tracks the "safe" family.
+	var found bool
+	for _, c := range out.Controls {
+		if c.Letter != "i" {
+			continue
+		}
+		found = true
+		families, _ := c.Evidence["families"].(map[string]any)
+		count, _ := families["safe"].(float64)
+		if count < 1 {
+			t.Fatalf("control i evidence.families.safe = %v, want >= 1 (evidence: %+v)", families["safe"], c.Evidence)
+		}
+	}
+	if !found {
+		t.Fatal("control i missing from report")
+	}
+}
+
+// TestNIS2ReportRequiresReadAudit verifies the report requires CapReadAudit
+// (auditor allowed, plain user forbidden) — the same gate as every other
+// audit-derived export.
+func TestNIS2ReportRequiresReadAudit(t *testing.T) {
+	srv := newTestServer(t)
+	auditor := seedUser(t, srv, "dave", "auditor")
+	user := seedUser(t, srv, "erin", "user")
+
+	if status, _ := do(t, srv, http.MethodGet, "/api/compliance/nis2", auditor, nil); status != http.StatusOK {
+		t.Fatalf("auditor report: want 200, got %d", status)
+	}
+	if status, _ := do(t, srv, http.MethodGet, "/api/compliance/nis2", user, nil); status != http.StatusForbidden {
+		t.Fatalf("user report: want 403, got %d", status)
+	}
+}

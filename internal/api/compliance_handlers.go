@@ -153,6 +153,133 @@ func (s *Server) exportOCSF(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// nis2Controls mirrors docs/NIS2-COMPLIANCE.md §1's Art. 21(2) control matrix —
+// keep the two in step: a control retitled, reclassified or added there needs
+// the same edit here. Families lists the audit-action-family prefixes (the
+// "family.verb" naming convention documented in ARCHITECTURE-LOW-LEVEL.md §5)
+// counted as window evidence for that control; nil means the control has no
+// natural audit signal and is reported as a static reference to the doc
+// instead (matching the doc's own "🟡 partial (docs)" framing for (a) and (g)).
+var nis2Controls = []struct {
+	Letter, Title, Status string
+	Families              []string
+}{
+	{"a", "Risk analysis & information-system security policies", "partial", nil},
+	{"b", "Incident handling", "implemented", []string{"breakglass", "analytics"}},
+	{"c", "Business continuity, backup, crisis mgmt", "implemented", nil},
+	{"d", "Supply-chain security", "implemented", []string{"vendor"}},
+	{"e", "Security in acquisition/development/maintenance, vuln handling", "implemented", nil},
+	{"f", "Policies to assess effectiveness", "implemented", []string{"certification"}},
+	{"g", "Basic cyber hygiene & training", "partial", nil},
+	{"h", "Cryptography & encryption policy", "implemented", nil},
+	{"i", "Human-resources security, access control, asset mgmt", "implemented", []string{"grant", "safe", "certification"}},
+	{"j", "MFA / continuous auth, secured comms, secured emergency comms", "implemented", []string{"mfa", "login"}},
+}
+
+// nis2Report produces a live, window-scoped evidence report against pamv1's
+// NIS2 Art. 21(2) control matrix — a canned, control-mapped report, not
+// another raw audit slice. Each control's status is architectural (whether
+// the capability exists, same as docs/NIS2-COMPLIANCE.md), not derived from
+// window activity — a quiet week doesn't mean incident handling broke;
+// controls with a natural audit signal additionally carry a count of matching
+// events in the requested window, bucketed by the action's family prefix
+// (e.g. "vendor.grant_create" counts under "vendor"). Chain integrity is
+// always whole-chain (bounded-range verification isn't supported yet, so the
+// report says so rather than implying a scoped check); an error from
+// VerifyAuditChain is treated as "not enabled," matching verifyAudit's own
+// convention, not as a report failure. Requires CapReadAudit. Only NIS2 is
+// covered — PCI-DSS/ISO27001/SOX would each need their own control mapping
+// authored from scratch, which this does not attempt.
+func (s *Server) nis2Report(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	since, err := parseTimeParam(q.Get("since"))
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "since must be RFC3339")
+		return
+	}
+	until, err := parseTimeParam(q.Get("until"))
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "until must be RFC3339")
+		return
+	}
+	if until.IsZero() {
+		until = time.Now().UTC()
+	}
+	if since.IsZero() {
+		since = until.Add(-defaultExportWindow)
+	}
+	events, err := s.store.ExportAudit(r.Context(), since, until)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+
+	counts := make(map[string]int, len(events))
+	for _, e := range events {
+		family := e.Action
+		if i := strings.IndexByte(e.Action, '.'); i >= 0 {
+			family = e.Action[:i]
+		}
+		counts[family]++
+	}
+
+	chainOK, brokeAtID, chainErr := s.store.VerifyAuditChain(r.Context())
+	chain := map[string]any{
+		"enabled": chainErr == nil,
+		"scope":   "whole-chain (bounded-range verification is not supported)",
+	}
+	if chainErr == nil {
+		chain["intact"] = chainOK
+		chain["broke_at_id"] = brokeAtID
+	}
+
+	controls := make([]map[string]any, 0, len(nis2Controls))
+	for _, c := range nis2Controls {
+		row := map[string]any{"letter": c.Letter, "title": c.Title, "status": c.Status}
+		if c.Families == nil {
+			row["evidence"] = map[string]any{
+				"type":      "static",
+				"reference": "docs/NIS2-COMPLIANCE.md#1-art-212-control-matrix",
+			}
+		} else {
+			families := make(map[string]int, len(c.Families))
+			total := 0
+			for _, f := range c.Families {
+				families[f] = counts[f]
+				total += counts[f]
+			}
+			evidence := map[string]any{"type": "window", "families": families, "count": total}
+			if c.Letter == "b" {
+				evidence["chain"] = chain
+			}
+			row["evidence"] = evidence
+		}
+		controls = append(controls, row)
+	}
+
+	// No wall-clock field beyond the requested window bounds, matching
+	// exportAudit's determinism discipline: the same closed window always
+	// yields the same digest, so a regulator re-running the report can confirm
+	// nothing changed.
+	body, _ := json.MarshalIndent(map[string]any{
+		"framework":    "NIS2 Art. 21(2)",
+		"since":        since.UTC().Format(time.RFC3339),
+		"until":        until.UTC().Format(time.RFC3339),
+		"total_events": len(events),
+		"controls":     controls,
+	}, "", "  ")
+	sum := sha256.Sum256(body)
+	digest := hex.EncodeToString(sum[:])
+
+	s.audit(r.Context(), "compliance.nis2_report", fmt.Sprintf(
+		"since:%s until:%s events:%d sha256:%s", q.Get("since"), q.Get("until"), len(events), digest))
+
+	w.Header().Set("X-PAM-Export-SHA256", digest)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=pamv1-nis2-report.json")
+	_, _ = w.Write(body)
+}
+
 // csvSafe defuses spreadsheet formula injection: a cell that a spreadsheet would
 // evaluate (leading =, +, -, @, tab or CR) is prefixed with a single quote, so a
 // target name or reason in this compliance export can't run as a formula.

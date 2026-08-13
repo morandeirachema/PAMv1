@@ -93,7 +93,8 @@
   // Phase 45: the remaining console screens.
   let vendors = [], vendorGrants = [], grantsVendor = 0, newVendor = null, editVendor = null;
   let sshCerts = [], caInfo = null, loginSessions = [], agents = [], newAgent = null;
-  let deps = [], depsCred = null, blastResult = null, auditHead = null;
+  let deps = [], depsCred = null, blastResult = null, auditHead = null, nis2Report = null;
+  let nis2Since = "", nis2Until = "";
   let campaigns = [], campView = null, risk = null, riskMin = "", riskWin = "";
   let assignItem = null, myQueue = [];
   let brokerApprovals = [], stepUps = [];
@@ -423,6 +424,14 @@
   }
   async function fetchAuditHead() {
     try { auditHead = await api("GET", "/api/audit/head"); go("auditheadview"); }
+    catch (e) { say("CPF9999: " + e.message, true); render(); }
+  }
+  function nis2Query() {
+    return [nis2Since && "since=" + encodeURIComponent(nis2Since), nis2Until && "until=" + encodeURIComponent(nis2Until)]
+      .filter(Boolean).join("&");
+  }
+  async function openNIS2Report() {
+    try { nis2Report = await api("GET", "/api/compliance/nis2" + (nis2Query() ? "?" + nis2Query() : "")); go("nis2report"); }
     catch (e) { say("CPF9999: " + e.message, true); render(); }
   }
 
@@ -1667,6 +1676,43 @@ Public key  . . . . :  <span class="detail">${esc(h.public_key)}</span>
 ${fkeys("F3=Exit   F12=Cancel")}`;
       },
 
+      nis2report() {
+        back = "audit";
+        const r = nis2Report || {};
+        const cs = r.controls || [];
+        const scls = { implemented: "green", partial: "amber" };
+        const evidenceCell = (c) => {
+          const ev = c.evidence || {};
+          if (ev.type === "static") return `<span class="cyan">static — see NIS2-COMPLIANCE.md §1</span>`;
+          const fams = ev.families || {};
+          const parts = Object.keys(fams).map((f) => `${f}:${fams[f]}`).join(" ");
+          const chain = ev.chain ? ` chain:${ev.chain.enabled ? (ev.chain.intact ? "intact" : "BROKEN") : "not enabled"}` : "";
+          return `<span class="white">${esc(ev.count ?? 0)}</span> <span class="detail">(${esc(parts)})</span>${chain ? `<span class="${ev.chain.enabled && !ev.chain.intact ? "red" : "cyan"}">${esc(chain)}</span>` : ""}`;
+        };
+        term.innerHTML = `${head("PAMNIS2", "NIS2 Compliance Report")}
+Live, window-scoped evidence against Art. 21(2) — control status is architectural (same
+as docs/NIS2-COMPLIANCE.md); families are activity counts in the window below, not a
+pass/fail. PCI-DSS/ISO27001/SOX are not covered — this maps NIS2 only.
+
+<form id="f-win" class="indent">
+<label>Since (RFC3339) . . :  <input name="since" size="24" value="${esc(nis2Since)}" placeholder="default: 90 days back"></label>
+<label>Until (RFC3339) . . :  <input name="until" size="24" value="${esc(nis2Until)}" placeholder="default: now"></label>
+<input type="submit" hidden>
+</form>
+${r.controls ? `<div class="white">Window: ${esc(r.since)} .. ${esc(r.until)}   Total events: ${esc(r.total_events)}</div>
+<table>
+<tr><th>Art</th><th>Control</th><th>Status</th><th>Window evidence</th></tr>
+${cs.map((c) => `<tr><td>${esc(c.letter)}</td><td>${cell(c.title, 42)}</td><td class="${scls[c.status] || "green"}">${esc(c.status)}</td><td class="detail">${evidenceCell(c)}</td></tr>`).join("")}
+</table>` : `<div class="cyan indent">(Press Enter to generate, or F5 to refresh.)</div>`}
+${fkeys("F3=Exit   F5=Refresh   F9=Download JSON   F12=Cancel")}`;
+        document.getElementById("f-win").onsubmit = async (ev) => {
+          ev.preventDefault();
+          nis2Since = ev.target.since.value.trim();
+          nis2Until = ev.target.until.value.trim();
+          await openNIS2Report();
+        };
+      },
+
       requests() {
         back = "main";
         const isApprover = can("approve");
@@ -2151,7 +2197,7 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
 <tr><th>Timestamp</th><th>Actor</th><th>Action</th><th>Detail</th></tr>
 ${auditRows(audit)}
 </table>${audit.length ? "" : `<div class="cyan indent">(Audit trail is empty.)</div>`}
-${fkeys("F3=Exit   F5=Refresh   F6=Verify chain   F7=Signed head   F9=Export CSV   F10=OCSF export   F12=Cancel")}`;
+${fkeys("F3=Exit   F5=Refresh   F6=Verify chain   F7=Signed head   F8=NIS2 report   F9=Export CSV   F10=OCSF export   F12=Cancel")}`;
         const fin = document.getElementById("in-filter");
         fin.oninput = () => {
           const q = fin.value.toLowerCase();
@@ -2630,7 +2676,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   }
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
-  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id) };
+  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report };
   const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), deps: () => go("depadd") };
 
   window.addEventListener("keydown", async (ev) => {
@@ -2674,8 +2720,8 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
       else if (k === "F5") { const r = refreshers[screen]; if (r) await r(); else render(); }
       else if (k === "F6") { if (screen === "effective") await exportIaC("env"); else if (screen === "audit") await verifyChain(); else { const a = adders[screen]; if (a) a(); } }
       else if (k === "F7") { if (screen === "effective") await exportIaC("helm"); else if (screen === "audit") await fetchAuditHead(); else if (screen === "campaigns" && can("approve")) await openMyQueue(); }
-      else if (k === "F8") { if (screen === "effective") await exportIaC("terraform"); }
-      else if (k === "F9") { if (screen === "audit") await exportAudit(); else if (screen === "users") await reconcileIdentities(); else if (screen === "sshcerts") await download("/api/ca/ssh/krl", "pamv1-revoked-certs.krl", "KRL"); }
+      else if (k === "F8") { if (screen === "effective") await exportIaC("terraform"); else if (screen === "audit") await openNIS2Report(); }
+      else if (k === "F9") { if (screen === "audit") await exportAudit(); else if (screen === "users") await reconcileIdentities(); else if (screen === "sshcerts") await download("/api/ca/ssh/krl", "pamv1-revoked-certs.krl", "KRL"); else if (screen === "nis2report") await download("/api/compliance/nis2" + (nis2Query() ? "?" + nis2Query() : ""), "pamv1-nis2-report.json", "NIS2 REPORT"); }
       else if (k === "F10") { if (screen === "audit") await download("/api/audit/ocsf", "pamv1-audit-ocsf.json", "OCSF"); }
       else if (k === "F12") { go(back); }
     } catch (e) { say("CPF9999: " + e.message, true); render(); }

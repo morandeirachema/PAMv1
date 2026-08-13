@@ -151,7 +151,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–113, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–114, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -274,7 +274,7 @@ ves la credencial. Las grabaciones van a `PAM_RECORDING_DIR`; desactiva el proxy
 
 ## Hoja de ruta
 
-Se han entregado todas las fases (0–113) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
+Se han entregado todas las fases (0–114) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
 
 | Fase | Tema | Estado |
 |---|---|---|
@@ -452,7 +452,7 @@ cada uno indica qué haría falta para cerrarlo.
 | Brecha | Líderes | pamv1 hoy |
 |---|---|---|
 | ~~**Búsqueda de contenido en grabaciones de sesión**~~ **✅ entregado (Fase 110)** | CyberArk indexa por OCR/texto las grabaciones de PSM; Wallix hace lo mismo con su captura estilo DVR — ninguno obliga a un auditor a repasar una sesión entera para encontrar algo | `GET /api/recordings/search?q=` reconstruye el flujo de salida de una grabación SSH (una búsqueda puede abarcar más de una escritura grabada, porque una terminal ecoa en los fragmentos que van llegando) y devuelve el fragmento de cada coincidencia **junto con el instante de reproducción al que saltar**. RDP/VNC (sin capa de texto) y WinRM (texto plano, pero pospuesto) aún no están cubiertos |
-| **Informes de cumplimiento reales** | Informes predefinidos y mapeados a controles (PCI-DSS/ISO27001/NIS2/SOX), no solo exportaciones en crudo | La cadena de auditoría + exportación OCSF (Fase 27) ya tienen los datos; `GET /api/audit` no admite filtros y no existe una capa de *plantillas* de informe — un problema de consulta/formato, no de nueva instrumentación |
+| ~~**Informes de cumplimiento reales**~~ **✅ entregado (Fase 114, solo NIS2)** | Informes predefinidos y mapeados a controles (PCI-DSS/ISO27001/NIS2/SOX), no solo exportaciones en crudo | `GET /api/compliance/nis2?since=&until=` proyecta la actividad de auditoría de una ventana temporal sobre la matriz Art. 21(2) ya existente: el estado es arquitectónico, y los controles con una señal de auditoría natural (cadena de suministro, eficacia de políticas, control de acceso, MFA, gestión de incidentes) llevan un recuento en vivo de eventos por familia de acción. Mismas convenciones de digest/auditoría que la exportación en crudo. Solo NIS2 — PCI-DSS/ISO27001/SOX necesitarían cada uno su propia taxonomía de controles, no abordada aquí |
 | ~~**Supervisión en vivo obligatoria**~~ **✅ entregado (Fase 112, SSH)** | Una sesión puede exigir un supervisor **conectado activamente** antes de proceder, no solo observación a posteriori | `PAM_REQUIRE_LIVE_SUPERVISION` retiene un canal interactivo — antes de que se abra el canal hacia el objetivo — hasta que un supervisor esté observando (comprobado contra el hub entre réplicas de la Fase 55) o `PAM_LIVE_SUPERVISION_TIMEOUT_SEC` lo rechace. Las sesiones observadoras y el break-glass están exentos. PostgreSQL/SQL Server usan el mecanismo distinto de step-up por sentencia para la misma preocupación; extender esta puerta a ellos necesita un cambio estructural (el registro de la sesión ocurre después de que la credencial ya se conectó al objetivo), pospuesto |
 | **MFA FIDO2/WebAuthn** | Segundo factor sin contraseña por llave de hardware, junto a TOTP/push | Solo TOTP (`internal/mfa`) — ya señalado como brecha en [docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md); esta investigación lo confirma de forma independiente |
 | **Descubrimiento autenticado tras el login** | Enumerar cuentas locales/de servicio y señalar exposición de credenciales en hosts ya alcanzados (CyberArk DNA) | `internal/discovery` solo sondea puertos TCP abiertos antes de autenticar — distinto del ítem, ya catalogado, de "descubrimiento de claves SSH del parque a escala" (aquel necesita un parque real; este es una capacidad ausente, no un problema de escala) |

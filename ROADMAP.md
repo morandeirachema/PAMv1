@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–113 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–114 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -28,7 +28,10 @@ Wallix — which **Phase 111 releases as v0.19.0** (a minor, since it is a real
 feature, not a fix), and **Phase 112 closes that research pass's second
 finding**: an interactive SSH session can require an actively-connected
 supervisor before it proceeds, not just after-the-fact review — released in
-turn as **v0.20.0 by Phase 113**. The narrative that follows traces the
+turn as **v0.20.0 by Phase 113**, and **Phase 114 closes the pass's third
+finding**: `GET /api/compliance/nis2` turns the doc-only Art. 21(2) control
+matrix into a live, window-scoped report with real audit evidence per
+control. The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2373,6 +2376,53 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 114 — A live NIS2 compliance report ✅
+
+The third Tier-5 finding from the 2026-08-12 CyberArk/Wallix research: "canned,
+control-mapped reports, not just raw exports" — the same finding both research
+passes rated tied for top priority with searchable recordings (Phase 110), and
+the one this session's earlier "next" picked over in favor of the
+live-supervision gate (Phase 112). Its own README description called it "a
+query/formatting problem, not new instrumentation," and that held: no new
+store method, no schema change.
+
+- [x] **`GET /api/compliance/nis2?since=&until=`** (`CapReadAudit`) composes a
+  report against the Art. 21(2) control matrix already documented in
+  `docs/NIS2-COMPLIANCE.md` §1. Each control's `status` is architectural —
+  whether the capability exists, mirroring the doc — not derived from window
+  activity, so a quiet week doesn't read as a regression
+- [x] **Evidence, not just status.** Controls with a natural audit signal
+  (supply-chain (d), policy effectiveness (f), access control (i), MFA (j),
+  incident handling (b)) additionally carry a count of matching events in the
+  requested window, bucketed by the action's `family.verb` prefix — computed
+  in Go from the existing `ExportAudit(since, until)` slice, not a new query
+  path. Control (b) also carries `VerifyAuditChain`'s result, labeled
+  `"whole-chain (bounded-range verification is not supported)"` rather than
+  implying a window-scoped check the codebase cannot actually do — an honest
+  limitation surfaced by the research (Q3 of the design investigation), not
+  papered over
+- [x] **Same conventions as every prior evidence export**: `X-PAM-Export-SHA256`
+  over the exact delivered bytes, deterministic over a fixed window (no
+  wall-clock field in the hashed body), self-audited (`compliance.nis2_report`),
+  same `CapReadAudit` gate as the raw export and playback
+- [x] **Deliberately narrow, not a PCI-DSS/ISO27001/SOX report generator.** The
+  Tier-5 gap description named all four frameworks; only NIS2 is mapped here,
+  because it is the one pamv1 already has a real, maintained control taxonomy
+  for — inventing the other three from scratch, without domain expertise, for
+  a security product, was judged the wrong tradeoff for an educational
+  project. The control table (`nis2Controls` in `compliance_handlers.go`)
+  mirrors `docs/NIS2-COMPLIANCE.md` §1 by hand, flagged in both places to keep
+  them in step, matching how the audit-vocabulary doc and the code's action
+  strings already relate
+- [x] **Console: F8** from *Display Audit Trail* opens the report screen
+  (since/until inputs default to the last 90 days); **F9** downloads the JSON.
+  Extended `console_check.js`'s row-boundedness fixture to the new screen
+  (Phase 110's own lesson applied again) — the evidence cell is marked
+  `class="detail"` since its width genuinely varies with a real event count,
+  not because it was assumed safe
+- [x] No schema or route-count surprise beyond the one new route (130 → 131,
+  confirmed by a clean `archgen` re-run)
+
 ## Phase 113 — v0.20.0 ✅
 
 Releases Phase 112 (mandatory live-supervision gate) — a genuine new
@@ -3720,12 +3770,13 @@ and the structural reason it kept recurring.
   the pre-fix code** — `agentid.TestExchangeAuditResistsFieldForgery` through the
   real `Exchange` call, `guacd.TestClipDetailResistsMimetypeForgery` +
   `TestClipDetailBoundsTheMimetype`, `api.TestCampaignReminderResistsAuditInjection`
-- [ ] **Left open and recorded as finding BD**: names are validated non-empty
+- [x] **Left open and recorded as finding BD**: names are validated non-empty
   only, so roughly 145 `target:%s`-style sinks stay forgeable by whoever can name
   a target, user or safe. Quoting the sinks would rewrite the format every audit
   assertion greps for; the proportionate fix is boundary validation — reject
   control characters and colons in names — which closes the class in four places
-  and changes no record format. Its own phase, not a footnote to this one
+  and changes no record format. Its own phase, not a footnote to this one —
+  ✅ closed by Phase 77
 
 ## Phase 71 — The console gets a safety net ✅
 
