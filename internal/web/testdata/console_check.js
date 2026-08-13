@@ -146,6 +146,24 @@ const screens = [
       },
     }),
   },
+  {
+    name: "shareinvites",
+    src: /\n {6}shareinvites\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      // mode/kind/status are enum-valued (this screen's own server-side
+      // validation constrains them to a handful of short fixed strings), so
+      // they stay constant across short/long — varying them would widen the
+      // row for a reason unrelated to what this fixture exists to prove.
+      // invitee/email (whichever is set) and requester are the genuinely
+      // free-text fields, both class="detail" and excluded from measurement.
+      shareInviteSid: "abc12345",
+      shareInvites: [{
+        id: 1, mode: "view_control", kind: "external", invitee: "",
+        email: long ? LONG : "vendor@example.com",
+        status: "pending", requester: long ? LONGNAME : "alice",
+      }],
+    }),
+  },
 ];
 
 // --- render ------------------------------------------------------------------

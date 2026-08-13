@@ -365,6 +365,22 @@ erDiagram
     time_Time CreatedAt
     time_Time ExpiresAt
   }
+  SessionShareInvite {
+    int64 ID
+    string SessionID
+    string Mode
+    string Kind
+    string Invitee
+    string Email
+    string Status
+    string Requester
+    string Approver
+    time_Time CreatedAt
+    ptr_time_Time DecidedAt
+    ptr_time_Time ExpiresAt
+    ptr_time_Time ConsumedAt
+    ptr_time_Time RevokedAt
+  }
   Setting {
     string Key
     string Value
@@ -401,6 +417,7 @@ erDiagram
     int64 ID
     string Username
     string Org
+    string Email
     bool Disabled
     time_Time CreatedAt
   }
@@ -423,6 +440,7 @@ erDiagram
   Credential ||--o{ CredentialDependency : "has"
   Safe ||--o{ SafeMember : "has"
   Safe ||--o{ Target : "has"
+  Session ||--o{ SessionShareInvite : "has"
   Target ||--o{ AccessRequest : "has"
   Target ||--o{ Checkout : "has"
   Target ||--o{ Credential : "has"
@@ -433,7 +451,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 131 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 142 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -512,8 +530,18 @@ The 131 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/sessions` | CapReadAudit |
 | GET | `/api/sessions/stepups` | CapReadAudit |
 | DELETE | `/api/sessions/{id}` | CapManageTargets |
+| GET | `/api/sessions/{id}/share` | CapReadAudit |
+| POST | `/api/sessions/{id}/share` | CapConnect |
+| POST | `/api/sessions/{id}/share/kick` | CapManageTargets |
+| GET | `/api/sessions/{id}/share/roster` | CapReadAudit |
 | POST | `/api/sessions/{id}/stepup` | CapApprove |
 | GET | `/api/sessions/{id}/stream` | CapReadAudit |
+| POST | `/api/share-invites/{id}/approve` | CapApprove |
+| POST | `/api/share-invites/{id}/deny` | CapApprove |
+| POST | `/api/share-invites/{id}/revoke` | CapManageTargets |
+| POST | `/api/share/input` | public |
+| POST | `/api/share/redeem/{token}` | public |
+| GET | `/api/share/stream` | public |
 | GET | `/api/targets` | CapReadInventory |
 | POST | `/api/targets` | CapManageTargets |
 | DELETE | `/api/targets/{id}` | CapManageTargets |
@@ -545,6 +573,7 @@ The 131 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/mcp` | public |
 | GET | `/metrics` | public |
 | GET | `/readyz` | public |
+| GET | `/share.html` | public |
 | GET | `/static/guacamole-common.min.js` | public |
 | GET | `/v1/agents` | CapManageUsers |
 | POST | `/v1/agents` | CapManageUsers |

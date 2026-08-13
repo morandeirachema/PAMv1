@@ -3,7 +3,7 @@
 > **Living document.** Update when the data model or deployment changes. See the
 > [change log](#change-log).
 >
-> Last updated: 2026-08-10 · Reflects: Phases 0–107. The procedure is unchanged: the migration high-water mark is still `0031` (phases 71–94 added none), migrations `0025`–`0031` are additive and applied at startup, and the new columns live in tables this runbook already covers.
+> Last updated: 2026-08-13 · Reflects: Phases 0–116. The procedure is unchanged: the migration high-water mark is now `0032` (Phase 116 added `session_share_invites` plus a `vendors.email` column; phases 71–115 otherwise added none beyond `0031`), migrations `0025`–`0032` are additive and applied at startup, and the new columns/tables live in tables this runbook already covers.
 
 > ⚠️ **Beta · for learning purposes.** pamv1 is feature-complete against its
 > [roadmap](../ROADMAP.md) and has closed every finding of its own security
@@ -162,5 +162,6 @@ the key matches, it works; if not, the vault key is wrong.
 
 | Date | Change |
 |---|---|
+| 2026-08-13 | Phase 116 (live session-sharing): migration high-water mark `0031` → `0032` (`session_share_invites`, plus a `vendors.email` column). Its `token_hash` column follows the existing hash-only pattern (like PAM tokens), never KEK-vaulted, so no new key-inventory bullet is needed — a plain database dump already covers it. The share invite's separate in-memory **guest key** is never persisted at all, so there is nothing there to back up or lose |
 | 2026-07-23 | Aligned with the doc set (standard header, change log); added the audit-chain keys and ZSP SSH-CA key to the backup inventory; corrected the CloudNativePG PITR note (ships in `deploy/k8s/postgres-cnpg.yaml`); fixed the NIS2 retention cross-link |
 | 2026-07-19 | Initial backup & restore runbook (Phase 5): separate DB and vault-key backup, restore procedure, key-loss scenarios, hardened Postgres |

@@ -14,6 +14,14 @@ import (
 //go:embed static/index.html
 var indexHTML []byte
 
+// shareHTML is the guest-viewer page a session-share invite's emailed
+// link/QR code opens (Phase 116) — a separate, deliberately minimal page,
+// not the management portal itself: its visitor has no pamv1 login, only the
+// invite token in the URL.
+//
+//go:embed static/share.html
+var shareHTML []byte
+
 // guacamoleJS is the vendored Apache Guacamole JavaScript client (an unmodified
 // ESM build of guacamole-common-js, Apache-2.0 — see the repo NOTICE). It powers
 // the in-portal RDP viewer, rendering guacd's protocol stream to a canvas. It is
@@ -71,6 +79,24 @@ func Index(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	page := bytes.Replace(indexHTML, noncePlaceholder, []byte(n), 1)
 	page = bytes.Replace(page, guacSrcPlaceholder, guacSrc, 1)
+	_, _ = w.Write(page)
+}
+
+// Share serves the guest-viewer page (Phase 116) under the same per-request
+// nonce-based CSP convention as Index, minus the RDP-viewer-only allowances
+// (no data:/blob: image or media sources — this page only ever renders text
+// and has no canvas). noindex/nofollow is set in the page itself, not here,
+// since a share invite's own 15-minute token TTL is the real defense; the
+// header just avoids it turning up in a crawl during that window.
+func Share(w http.ResponseWriter, _ *http.Request) {
+	n := nonce()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy",
+		"default-src 'self'; style-src 'unsafe-inline'; script-src 'nonce-"+n+"' 'self'; "+
+			"img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; "+
+			"frame-ancestors 'none'; object-src 'none'")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	page := bytes.Replace(shareHTML, noncePlaceholder, []byte(n), 1)
 	_, _ = w.Write(page)
 }
 

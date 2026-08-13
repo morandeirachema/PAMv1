@@ -357,6 +357,39 @@ type Checkout struct {
 	ReturnedAt   *time.Time `json:"returned_at,omitempty"`
 }
 
+// SessionShareInvite is a request to let a second party join a live SSH
+// session, view-only or view-control (Phase 116). It goes through the same
+// request-then-approve shape as an AccessRequest/VendorGrant — four eyes: the
+// Requester and the Approver must differ, and nothing is redeemable (no email
+// sent, no join: token valid) until Status=="approved". Kind distinguishes the
+// two invite surfaces: "internal" resolves Invitee as an existing pamv1
+// username, redeemed by an SSH login; "external" resolves Email as an
+// unauthenticated contact address, redeemed via a mailed link + QR code by a
+// browser. TokenHash and ExpiresAt are populated only once approved — ExpiresAt
+// is stamped from the approval instant, not the request instant, so the
+// redemption window is always the configured TTL from when the invite actually
+// became live, however long it sat pending. ConsumedAt marks single-use
+// redemption; a session can still be watched multiple times only by requesting
+// (and approving) a fresh invite per join, matching the codebase's existing
+// one-time-approval philosophy (Phase 26).
+type SessionShareInvite struct {
+	ID         int64      `json:"id"`
+	SessionID  string     `json:"session_id"`
+	Mode       string     `json:"mode"` // view_only | view_control
+	Kind       string     `json:"kind"` // internal | external
+	Invitee    string     `json:"invitee,omitempty"`
+	Email      string     `json:"email,omitempty"`
+	Status     string     `json:"status"` // pending | approved | denied | revoked
+	Requester  string     `json:"requester"`
+	Approver   string     `json:"approver,omitempty"`
+	TokenHash  string     `json:"-"`
+	CreatedAt  time.Time  `json:"created_at"`
+	DecidedAt  *time.Time `json:"decided_at,omitempty"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	ConsumedAt *time.Time `json:"consumed_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+}
+
 type AuditEvent struct {
 	ID     int64     `json:"id"`
 	TS     time.Time `json:"ts"`
@@ -439,9 +472,14 @@ type AppKey struct {
 // vendor's login). A disabled vendor is offboarded — every grant is revoked and
 // live sessions are cut.
 type Vendor struct {
-	ID        int64     `json:"id"`
-	Username  string    `json:"username"`
-	Org       string    `json:"org"`
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+	Org      string `json:"org"`
+	// Email is an optional on-file contact address (Phase 116), used to
+	// auto-fill a session-share invite issued in this vendor's context. Empty
+	// on rows that predate the field; unrelated to Username, which is the
+	// vendor's own login identity, not necessarily reachable by mail.
+	Email     string    `json:"email,omitempty"`
 	Disabled  bool      `json:"disabled"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -1061,6 +1099,9 @@ type VendorStore interface {
 	// username is immutable (it links the vendor to its users row); disabling is
 	// SetVendorDisabled / OffboardVendor, never an edit.
 	UpdateVendorOrg(ctx context.Context, id int64, org string) error
+	// UpdateVendorEmail sets the vendor's on-file contact address (Phase 116),
+	// or ErrNotFound. Empty clears it.
+	UpdateVendorEmail(ctx context.Context, id int64, email string) error
 	// CreateVendorGrant records a pending contract grant, populating ID/CreatedAt;
 	// ErrNotFound if the vendor or target is missing.
 	CreateVendorGrant(ctx context.Context, g *VendorGrant) error
@@ -1083,6 +1124,41 @@ type VendorStore interface {
 	// target". A non-vendor returns (isVendor=false, allowed=true) so non-vendor
 	// users are unaffected.
 	VendorSessionAllowed(ctx context.Context, username, targetName, account string, now time.Time) (isVendor, allowed bool, err error)
+}
+
+// ShareInviteStore is the request/approve/redeem lifecycle for session-sharing
+// invites (Phase 116). See SessionShareInvite's doc comment for the shape.
+type ShareInviteStore interface {
+	// CreateSessionShareInvite records a pending request, populating
+	// ID/CreatedAt. Nothing is redeemable yet — TokenHash/ExpiresAt are set
+	// only by DecideSessionShareInvite on approval.
+	CreateSessionShareInvite(ctx context.Context, inv *SessionShareInvite) error
+	// GetSessionShareInvite returns one invite by id, or ErrNotFound.
+	GetSessionShareInvite(ctx context.Context, id int64) (*SessionShareInvite, error)
+	// ListSessionShareInvites lists a session's invites (requested, active and
+	// ended), newest first — backs the console roster and the outstanding-invite
+	// screen.
+	ListSessionShareInvites(ctx context.Context, sessionID string) ([]SessionShareInvite, error)
+	// DecideSessionShareInvite records an approver's decision. Approving stamps
+	// tokenHash and expiresAt (the redemption window starts NOW, not at the
+	// original request time) and moves Status to "approved"; denying leaves
+	// them nil and moves Status to "denied". ErrNotFound if unknown. Matching
+	// DecideAccessRequest's own convention, the caller — not this method — is
+	// responsible for checking the invite is still pending and that approver
+	// differs from Requester before calling this.
+	DecideSessionShareInvite(ctx context.Context, id int64, status, approver string, at time.Time, tokenHash string, expiresAt *time.Time) error
+	// RevokeSessionShareInvite marks an approved-but-not-yet-consumed invite
+	// revoked, so a later redemption attempt fails even though the token and
+	// TTL would otherwise still be valid. ErrNotFound if unknown.
+	RevokeSessionShareInvite(ctx context.Context, id int64, at time.Time) error
+	// ConsumeSessionShareInviteByTokenHash atomically finds the invite matching
+	// tokenHash and, only if it is approved, unexpired (ExpiresAt > now),
+	// unrevoked and not already consumed, stamps ConsumedAt and returns it —
+	// single-use redemption. ErrNotFound covers every refusal reason (unknown
+	// hash, expired, revoked, already consumed): the caller does not get to
+	// distinguish "expired" from "wrong token" from the store layer, the same
+	// fail-closed shape TakeOIDCState/TakeWebAuthnChallenge use elsewhere.
+	ConsumeSessionShareInviteByTokenHash(ctx context.Context, tokenHash string, now time.Time) (*SessionShareInvite, error)
 }
 
 // SSHCertStore is operator-issued SSH certificates and their revocation list.
@@ -1198,6 +1274,7 @@ type Store interface {
 	BrokerStore
 	AppSecretStore
 	VendorStore
+	ShareInviteStore
 	SSHCertStore
 	KeyMaterialStore
 	SettingStore

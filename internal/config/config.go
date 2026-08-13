@@ -267,6 +267,17 @@ type Config struct {
 	VendorSweepInterval time.Duration
 	// CheckoutTTL is the lifetime of a credential checkout lease.
 	CheckoutTTL time.Duration
+	// ShareInviteTTL (Phase 116) is how long an approved session-share invite
+	// stays redeemable — 15 minutes by explicit product decision, not a
+	// tunable default to casually raise: short enough that an intercepted
+	// email (the external/vendor path) is a narrow window.
+	ShareInviteTTL time.Duration
+	// ShareGuestSessionTTL (Phase 116) bounds how long a web-redeemed external
+	// invite's guest key stays valid, separate from (and much longer than)
+	// ShareInviteTTL — the invite link itself is single-use and short-lived,
+	// but once redeemed the guest's browser needs to keep streaming/typing for
+	// the rest of the viewing, which the 15-minute window is not meant to cap.
+	ShareGuestSessionTTL time.Duration
 	// AllowedProtocols restricts which target protocols may be created and
 	// connected to (comma-separated, e.g. "ssh,winrm"); empty = all allowed. Used
 	// in OT zones to forbid protocols like RDP.
@@ -588,19 +599,21 @@ func Load() (*Config, error) {
 		// Binding the ticket to the person is the point of a first-class
 		// connector, so it is ON by default. Off, a ticket number works as a
 		// shared password.
-		TicketBindActor:     boolean("PAM_TICKET_BIND_ACTOR", true),
-		ApprovalsRequired:   integer("PAM_APPROVALS_REQUIRED", 1),
-		RequireReason:       boolean("PAM_REQUIRE_REASON", false),
-		OneTimeAccess:       boolean("PAM_ACCESS_ONE_TIME", false),
-		VendorAttestURL:     getenv("PAM_VENDOR_ATTEST_URL", ""),
-		VendorSweepInterval: time.Duration(integer("PAM_VENDOR_SWEEP_INTERVAL_MIN", 0)) * time.Minute,
-		AirGap:              boolean("PAM_OT_AIRGAP", false),
-		CheckoutTTL:         time.Duration(integer("PAM_CHECKOUT_TTL_MIN", 30)) * time.Minute,
-		AllowedProtocols:    os.Getenv("PAM_ALLOWED_PROTOCOLS"),
-		CommandDenyFile:     os.Getenv("PAM_COMMAND_DENY_FILE"),
-		SSHSFTPDenyFile:     os.Getenv("PAM_SSH_SFTP_DENY_FILE"),
-		DBStepUpFile:        os.Getenv("PAM_DB_STEPUP_FILE"),
-		DBStepUpTTL:         time.Duration(integer("PAM_DB_STEPUP_TTL_SEC", 120)) * time.Second,
+		TicketBindActor:      boolean("PAM_TICKET_BIND_ACTOR", true),
+		ApprovalsRequired:    integer("PAM_APPROVALS_REQUIRED", 1),
+		RequireReason:        boolean("PAM_REQUIRE_REASON", false),
+		OneTimeAccess:        boolean("PAM_ACCESS_ONE_TIME", false),
+		VendorAttestURL:      getenv("PAM_VENDOR_ATTEST_URL", ""),
+		VendorSweepInterval:  time.Duration(integer("PAM_VENDOR_SWEEP_INTERVAL_MIN", 0)) * time.Minute,
+		AirGap:               boolean("PAM_OT_AIRGAP", false),
+		CheckoutTTL:          time.Duration(integer("PAM_CHECKOUT_TTL_MIN", 30)) * time.Minute,
+		ShareInviteTTL:       time.Duration(integer("PAM_SESSION_SHARE_INVITE_TTL_SEC", 900)) * time.Second,
+		ShareGuestSessionTTL: time.Duration(integer("PAM_SESSION_SHARE_GUEST_TTL_MIN", 240)) * time.Minute,
+		AllowedProtocols:     os.Getenv("PAM_ALLOWED_PROTOCOLS"),
+		CommandDenyFile:      os.Getenv("PAM_COMMAND_DENY_FILE"),
+		SSHSFTPDenyFile:      os.Getenv("PAM_SSH_SFTP_DENY_FILE"),
+		DBStepUpFile:         os.Getenv("PAM_DB_STEPUP_FILE"),
+		DBStepUpTTL:          time.Duration(integer("PAM_DB_STEPUP_TTL_SEC", 120)) * time.Second,
 
 		AnalyticsInterval: time.Duration(integer("PAM_ANALYTICS_INTERVAL_MIN", 0)) * time.Minute,
 		AnalyticsWindow:   time.Duration(integer("PAM_ANALYTICS_WINDOW_MIN", 60)) * time.Minute,

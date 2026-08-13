@@ -100,6 +100,12 @@ type Config struct {
 	// Live, when set, receives a copy of every recorded output byte keyed by
 	// session id, so a supervisor can watch a session live (Phase 16).
 	Live *session.Hub
+	// Shares is the input-sharing mux for session-sharing joins (Phase 116) —
+	// the SAME instance passed to api.Options, since an external/vendor
+	// invite is redeemed over HTTP, not SSH, and must reach this proxy's mux
+	// through the shared object. nil disables session-sharing (every
+	// interactive SSH session behaves exactly as before this phase).
+	Shares *session.ShareRegistry
 	// CA, when set, enables Zero Standing Privilege (Phase 22): for a credential
 	// of type "ssh_ca" the proxy mints a short-lived SSH user certificate signed
 	// by this authority and authenticates upstream with it — no standing secret is
@@ -171,16 +177,22 @@ type Proxy struct {
 	supTimeout   time.Duration
 	guard        *cmdguard.Guard
 	live         *session.Hub
-	ca           *sshca.CertAuthority
-	certTTL      time.Duration
-	authLimiter  *ratelimit.Limiter
-	maxRecBytes  int64
-	sftpMode     SFTPMode
-	sftpPaths    *cmdguard.Guard
-	sftpCapture  SFTPCaptureMode
-	sftpCapMax   int64
-	ticketCheck  store.TicketChecker
-	gate         *gates // the shared admission-gate sequence (gates.go)
+	// shares is the SAME *session.ShareRegistry instance the API layer's
+	// external/vendor redemption path uses (wired once in main.go, like
+	// sessions/live) — an email+QR join is redeemed over HTTP, not SSH, so it
+	// must reach this proxy's mux through the shared object, not a
+	// proxy-private one the API could never see.
+	shares      *session.ShareRegistry
+	ca          *sshca.CertAuthority
+	certTTL     time.Duration
+	authLimiter *ratelimit.Limiter
+	maxRecBytes int64
+	sftpMode    SFTPMode
+	sftpPaths   *cmdguard.Guard
+	sftpCapture SFTPCaptureMode
+	sftpCapMax  int64
+	ticketCheck store.TicketChecker
+	gate        *gates // the shared admission-gate sequence (gates.go)
 
 	// pending carries the resolved *auth.Principal from authenticate (where the
 	// SSH password is available) to handleConn (which runs the gates), keyed by a
@@ -246,6 +258,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		supTimeout:   cfg.SupervisionTimeout,
 		guard:        cfg.CommandGuard,
 		live:         cfg.Live,
+		shares:       cfg.Shares,
 		ca:           cfg.CA,
 		certTTL:      cfg.CertTTL,
 		authLimiter:  ratelimit.New(cfg.AuthRatePerMin),
@@ -346,6 +359,39 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 		return nil, fmt.Errorf("pamv1: authentication failed")
 	}
 	p.noteBreakGlass(context.Background(), principal, "ssh login:"+auditField(c.User(), 64)+" remote:"+c.RemoteAddr().String())
+
+	// A session-share join (Phase 116): the ENTIRE username is "join:<token>",
+	// not a "creduser@target" login — a join has no target of its own, the
+	// already-approved invite names the session it attaches to. Checked before
+	// the +observe/splitLogin parsing below, which does not apply here. The
+	// joining principal authenticated with their OWN password above (the
+	// resolver call is unconditional), so ext["principal"] is their real
+	// identity, not a token-derived one — every action they take joined is
+	// attributed to a real, accountable actor. An enroll-only principal
+	// (MFA policy requires enrollment, not yet completed) is refused here,
+	// same as it would be refused doing anything else privileged.
+	if token, ok := strings.CutPrefix(c.User(), "join:"); ok {
+		if principal.EnrollOnly {
+			p.audit(context.Background(), principal.Name, "session.share_join_denied",
+				"reason:enrollment-incomplete")
+			return nil, fmt.Errorf("pamv1: authentication failed")
+		}
+		ext := map[string]string{
+			"login":      c.User(),
+			"principal":  principal.Name,
+			"role":       string(principal.Role),
+			"roles":      auth.JoinRoles(principal.Roles),
+			"join_token": token,
+		}
+		if principal.Can(auth.CapConnect) {
+			ext["can_connect"] = "true"
+		}
+		now := time.Now()
+		token36 := strconv.FormatUint(p.princSeq.Add(1), 36)
+		p.pending.Store(token36, pendingPrincipal{principal: principal, at: now})
+		ext["princ"] = token36
+		return &ssh.Permissions{Extensions: ext}, nil
+	}
 
 	// A "+observe" suffix requests a read-only (view-only) session: the operator
 	// sees output but their keystrokes and exec requests are dropped.
@@ -508,6 +554,17 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		return
 	}
 
+	// A session-share join (Phase 116) dispatches here, BEFORE admit() runs —
+	// deliberately: admit authorizes NEW access to a target (grants, approval,
+	// protocol allowlist, JIT decrypt), and a join creates none of that. It
+	// attaches to a session whose own admit() already ran when the primary
+	// operator connected; reusing admit for this would be a category error,
+	// checking authorization for access nobody is requesting.
+	if token := ext["join_token"]; token != "" {
+		p.handleJoinConn(ctx, chans, principal, token, remote)
+		return
+	}
+
 	observe := ext["observe"] == "true"
 	res := p.gate.admit(ctx, admitRequest{
 		principal:  principal,
@@ -589,6 +646,16 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 			Actor: actor, Target: target.Name, Protocol: "ssh", Remote: remote, Started: time.Now(),
 		}, func() { sconn.Close() })
 		defer p.sessions.Remove(sid)
+	}
+	// The input-sharing mux (Phase 116) is opened unconditionally alongside
+	// the session, whether or not anyone ever joins — matching how teeLive's
+	// output tee is likewise paid on every session regardless of watchers.
+	// p.shares is never nil (see New): a Proxy always has one, so every
+	// interactive SSH session gets share-join capability, not just ones a
+	// caller opted into.
+	if sid != "" {
+		p.shares.Open(sid)
+		defer p.shares.Close(sid)
 	}
 	defer func() {
 		p.log.Info("session ended", "actor", actor, "target", target.Name)
@@ -834,6 +901,13 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	}
 	defer clientChan.Close()
 
+	// Session-sharing (Phase 116): register how a join running in a separate
+	// goroutine/connection can reach THIS terminal with a Stderr banner —
+	// there is no other path from handleJoinSession back to clientChan.
+	if sid != "" {
+		p.shares.SetNotifier(sid, func(msg string) { fmt.Fprintln(clientChan.Stderr(), msg) })
+	}
+
 	// Mandatory live supervision (Phase 112): refuse the channel — before the
 	// upstream channel even opens, so nothing is relayed to the target — until
 	// a supervisor is actively watching. An observer session already IS the
@@ -987,11 +1061,26 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		// Read-only: drop operator keystrokes; never touch the upstream channel.
 		go io.Copy(io.Discard, clientChan)
 	} else {
+		// Session-share input mux (Phase 116): when sharing is active for this
+		// session (sid != ""), the primary operator's own keystrokes are fed
+		// into the mux — the SAME channel any attached view-control joiner's
+		// keystrokes also feed — and pump reads from the mux instead of
+		// clientChan directly. This is what lets a joiner's input reach the
+		// target at all without a second goroutine writing upChan directly
+		// (x/crypto/ssh forbids concurrent writes to one channel). With
+		// sharing inactive (sid == "", e.g. the session registry is disabled)
+		// this is a no-op indirection: keyIn stays clientChan, unchanged from
+		// before this phase.
+		var keyIn io.Reader = clientChan
+		if sid != "" {
+			go io.Copy(p.shares.Writer(sid), clientChan)
+			keyIn = p.shares.Reader(sid)
+		}
 		go func() {
 			// Operator keystrokes -> target. For an SFTP session the inspector parses
 			// this leg to audit + gate file operations; for a shell/exec session it is
 			// a transparent pass-through (the inspector stays inactive).
-			if err := insp.pump(upChan, clientChan, clientOut); errors.Is(err, errSFTPCaptureAbort) {
+			if err := insp.pump(upChan, keyIn, clientOut); errors.Is(err, errSFTPCaptureAbort) {
 				// Content capture failed the stream closed: tear the upstream
 				// channel down fully so the session unwinds now, rather than
 				// leave both sides waiting on packets that will never flow.
@@ -1053,6 +1142,180 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		p.auditClosing(ctx, actor, "session.record",
 			fmt.Sprintf("target:%s cred_user:%s file:%s bytes:%d sha256:%s chain:%s",
 				target.Name, cred.Username, path, n, sum, chain))
+	}
+}
+
+// handleJoinConn attaches an approved, internal (named-pamv1-user) session-
+// share redemption (Phase 116) to the session its invite names. It is
+// dispatched from handleConn BEFORE admit() runs and never calls it: admit
+// authorizes NEW access to a target, and a join creates none — it attaches to
+// a session whose own admit() already ran when the primary operator
+// connected. External/vendor invites (email + QR) are never redeemed here —
+// they are redeemed over HTTP by a different handler entirely, since the
+// recipient has no pamv1 login to present as an SSH password; an external
+// invite's token presented to this login path is refused, not silently
+// honored, so the "email address is the identity anchor" story for that path
+// cannot be sidestepped by an insider who learns the token.
+func (p *Proxy) handleJoinConn(ctx context.Context, chans <-chan ssh.NewChannel, principal *auth.Principal, token, remote string) {
+	if p.live == nil {
+		p.audit(ctx, principal.Name, "session.share_join_denied", "reason:live-monitoring-not-configured")
+		rejectAll(chans, ssh.Prohibited, "pamv1: session sharing is not configured on this server")
+		return
+	}
+	// Consume the token FIRST (atomically single-use), before any further
+	// validation — a token that fails a later check (wrong invitee, no
+	// CapConnect) is still burned, exactly like a single-use approval token
+	// elsewhere in this codebase: a rejected redemption attempt must not
+	// leave a still-valid token an attacker can keep retrying other things
+	// against.
+	inv, err := p.store.ConsumeSessionShareInviteByTokenHash(ctx, auth.TokenHash(token), time.Now())
+	if err != nil {
+		p.audit(ctx, principal.Name, "session.share_join_denied", "reason:invalid-expired-or-used-token")
+		rejectAll(chans, ssh.Prohibited, "pamv1: this invite is invalid, expired or already used")
+		return
+	}
+	if inv.Kind != "internal" {
+		p.audit(ctx, principal.Name, "session.share_join_denied",
+			fmt.Sprintf("invite:%d reason:wrong-redemption-path", inv.ID))
+		rejectAll(chans, ssh.Prohibited, "pamv1: this invite must be redeemed via its emailed link")
+		return
+	}
+	// The invite names WHO it was issued to; redeemed by a different pamv1
+	// user than named, even with the right token, is refused — a leaked
+	// token must not let a different user impersonate the invitee.
+	if !strings.EqualFold(inv.Invitee, principal.Name) {
+		p.audit(ctx, principal.Name, "session.share_join_denied",
+			fmt.Sprintf("invite:%d reason:invitee-mismatch", inv.ID))
+		rejectAll(chans, ssh.Prohibited, "pamv1: this invite was not issued to you")
+		return
+	}
+	if inv.Mode == "view_control" && !principal.Can(auth.CapConnect) {
+		p.audit(ctx, principal.Name, "session.share_join_denied",
+			fmt.Sprintf("invite:%d reason:no-connect-capability", inv.ID))
+		rejectAll(chans, ssh.Prohibited, "pamv1: view-control requires connect capability")
+		return
+	}
+	if p.sessions == nil || !p.sessions.Exists(inv.SessionID) {
+		p.audit(ctx, principal.Name, "session.share_join_denied",
+			fmt.Sprintf("invite:%d session:%s reason:not-live", inv.ID, inv.SessionID))
+		rejectAll(chans, ssh.Prohibited, "pamv1: this session is no longer live")
+		return
+	}
+
+	joinID := strconv.FormatInt(inv.ID, 10)
+	var wg sync.WaitGroup
+	for nc := range chans {
+		if nc.ChannelType() != "session" {
+			nc.Reject(ssh.UnknownChannelType, "pamv1: only session channels are proxied")
+			continue
+		}
+		wg.Add(1)
+		go func(nc ssh.NewChannel) {
+			defer wg.Done()
+			defer recoverPanicLog(p.log, "join")
+			p.handleJoinSession(ctx, nc, principal.Name, remote, inv, joinID)
+		}(nc)
+	}
+	wg.Wait()
+}
+
+// handleJoinSession bridges one join connection's channel to session sid's
+// existing live stream: output via the same Hub.Subscribe every watcher uses
+// (so a joiner sees exactly what a supervisor watching would, cross-replica
+// transparent via Phase 55's relay), and — for view_control only — input via
+// the SAME ShareRegistry mux the primary operator's own keystrokes feed.
+// Unlike handleSession, this never opens an upstream channel: a join attaches
+// to the primary's already-open PTY, it does not dial the target a second
+// time.
+func (p *Proxy) handleJoinSession(ctx context.Context, nc ssh.NewChannel, joinActor, remote string, inv *store.SessionShareInvite, joinID string) {
+	clientChan, clientReqs, err := nc.Accept()
+	if err != nil {
+		return
+	}
+	defer clientChan.Close()
+
+	sid := inv.SessionID
+	kicked := p.shares.Track(sid, joinID, joinActor, inv.Mode)
+	defer p.shares.Untrack(sid, joinID)
+	p.shares.Notify(sid, fmt.Sprintf("pamv1: %s joined this session (%s)", joinActor, inv.Mode))
+	defer p.shares.Notify(sid, fmt.Sprintf("pamv1: %s left this session", joinActor))
+
+	// Full trace of the connection: invite, session, mode and the redeeming
+	// connection's own source address — matching session.start's own detail
+	// shape one level up, best-effort like every other audit call in this
+	// file (session.start/session.record/session.end included).
+	p.audit(ctx, joinActor, "session.share_joined",
+		fmt.Sprintf("invite:%d session:%s mode:%s remote:%s", inv.ID, sid, inv.Mode, remote))
+	defer p.auditClosing(ctx, joinActor, "session.share_ended",
+		fmt.Sprintf("invite:%d session:%s", inv.ID, sid))
+
+	// Answer pty-req/shell/window-change LOCALLY (never forwarded — there is
+	// no upstream channel here to forward to) and refuse exec/subsystem,
+	// exactly like an observer session. SFTP is therefore unreachable to a
+	// joiner as a direct, automatic consequence of that refusal, with no
+	// special-case code needed.
+	reqDone := make(chan struct{})
+	var reqWG sync.WaitGroup
+	reqWG.Add(1)
+	go func() {
+		defer reqWG.Done()
+		answerJoinRequests(clientReqs, reqDone)
+	}()
+	defer func() { close(reqDone); reqWG.Wait() }()
+
+	frames, cancel := p.live.Subscribe(sid)
+	defer cancel()
+
+	if inv.Mode == "view_control" {
+		// This joiner's own keystrokes feed the SAME mux the primary's do —
+		// any number of simultaneous view-control joiners is supported, since
+		// the mux is a plain channel any number of senders can feed (Phase
+		// 116's multi-parallel requirement).
+		go io.Copy(p.shares.Writer(sid), clientChan)
+	} else {
+		go io.Copy(io.Discard, clientChan)
+	}
+
+	for {
+		select {
+		case b, ok := <-frames:
+			if !ok {
+				fmt.Fprintln(clientChan.Stderr(), "pamv1: session ended")
+				return
+			}
+			if _, werr := clientChan.Write(b); werr != nil {
+				return
+			}
+		case <-ctx.Done():
+			return
+		case <-kicked:
+			fmt.Fprintln(clientChan.Stderr(), "pamv1: you have been removed from this session")
+			return
+		}
+	}
+}
+
+// answerJoinRequests replies success to every channel request from in EXCEPT
+// exec/subsystem (refused, matching pumpRequestsObserver's restriction — a
+// join is never allowed to run a discrete command or open SFTP), without
+// forwarding anything anywhere: a join has no upstream channel of its own, it
+// is attached to the primary's already-open PTY, so pty-req/shell/
+// window-change are answered locally so an ordinary SSH client blocked
+// waiting for that reply does not hang.
+func answerJoinRequests(in <-chan *ssh.Request, done <-chan struct{}) {
+	for {
+		select {
+		case req, ok := <-in:
+			if !ok {
+				return
+			}
+			ok2 := req.Type != "exec" && req.Type != "subsystem"
+			if req.WantReply {
+				req.Reply(ok2, nil)
+			}
+		case <-done:
+			return
+		}
 	}
 }
 

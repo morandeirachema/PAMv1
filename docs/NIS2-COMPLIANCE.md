@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a mapped control or endpoint changes.
 >
-> Last updated: 2026-08-13 · Reflects: Phases 0–114 (introduced Phase 9, live report added Phase 114).
+> Last updated: 2026-08-13 · Reflects: Phases 0–116 (introduced Phase 9, live report added Phase 114; 116's session-sharing is still the same brokered, recorded, four-eyes-gated session underneath — no control mapping changes).
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited, not legal advice.**
 > This maps pamv1 features to [Directive (EU) 2022/2555 (NIS2)](https://eur-lex.europa.eu/eli/dir/2022/2555/oj)

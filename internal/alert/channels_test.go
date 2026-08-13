@@ -2,6 +2,7 @@ package alert
 
 import (
 	"context"
+	"encoding/base64"
 	"net"
 	"net/smtp"
 	"strings"
@@ -110,5 +111,142 @@ func TestMultiFansOut(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("Multi did not deliver to a notifier")
 		}
+	}
+}
+
+// TestBuildDirectMessagePlain proves a text-only (no inline image) message
+// carries the To/Subject/From headers and the HTML body verbatim, and that a
+// crafted recipient/subject cannot inject extra headers via CR/LF.
+func TestBuildDirectMessagePlain(t *testing.T) {
+	msg, err := buildDirectMessage("pam@example.com", "carol@example.com\r\nBcc: evil@example.com",
+		"you're invited\r\nX-Injected: yes", "<p>hello</p>", nil, "")
+	if err != nil {
+		t.Fatalf("buildDirectMessage: %v", err)
+	}
+	s := string(msg)
+	// auditfmt.OneLine replaces CR/LF with spaces rather than deleting them, so
+	// the injected text can still appear as inert content INSIDE the To:/
+	// Subject: header's own value — the property that actually matters is
+	// that it never starts a new header line (no literal \r\n before it).
+	if strings.Contains(s, "\r\nBcc:") || strings.Contains(s, "\r\nX-Injected:") {
+		t.Fatalf("CR/LF in To/Subject was not stripped, header injection possible: %q", s)
+	}
+	if !strings.Contains(s, "From: pam@example.com") {
+		t.Fatalf("missing From header: %q", s)
+	}
+	if !strings.Contains(s, "Content-Type: text/html; charset=utf-8") || !strings.Contains(s, "<p>hello</p>") {
+		t.Fatalf("missing HTML body: %q", s)
+	}
+	if strings.Contains(s, "image/png") {
+		t.Fatalf("no image was requested but the message has an image part: %q", s)
+	}
+}
+
+// TestBuildDirectMessageInlineImage proves an inline PNG is attached as a
+// base64 image/png part with a matching Content-ID the HTML body can
+// reference via cid:.
+func TestBuildDirectMessageInlineImage(t *testing.T) {
+	png := []byte{0x89, 'P', 'N', 'G', 0, 1, 2, 3}
+	msg, err := buildDirectMessage("pam@example.com", "carol@example.com", "subj",
+		`<img src="cid:qr">`, png, "qr")
+	if err != nil {
+		t.Fatalf("buildDirectMessage: %v", err)
+	}
+	s := string(msg)
+	if !strings.Contains(s, "Content-Type: multipart/related") {
+		t.Fatalf("expected a multipart/related message: %q", s)
+	}
+	if !strings.Contains(s, "Content-ID: <qr>") || !strings.Contains(s, "Content-Type: image/png") {
+		t.Fatalf("missing inline image part: %q", s)
+	}
+	wantB64 := base64.StdEncoding.EncodeToString(png)
+	if !strings.Contains(s, wantB64) {
+		t.Fatalf("base64 PNG payload not found in message: %q", s)
+	}
+}
+
+// fakeSMTP starts a minimal, single-connection SMTP server (no STARTTLS/AUTH
+// extensions offered, so SendMailBounded's client skips both branches) that
+// captures the DATA payload it receives, for an end-to-end SendDirect test
+// with no real mail relay.
+func fakeSMTP(t *testing.T) (addr string, got chan []byte) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = make(chan []byte, 1)
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		reply := func(s string) { conn.Write([]byte(s + "\r\n")) }
+		reply("220 fake.smtp ready")
+		buf := make([]byte, 65536)
+		var data strings.Builder
+		inData := false
+		for {
+			n, err := conn.Read(buf)
+			if err != nil {
+				return
+			}
+			chunk := string(buf[:n])
+			if inData {
+				data.WriteString(chunk)
+				if strings.HasSuffix(data.String(), "\r\n.\r\n") {
+					got <- []byte(strings.TrimSuffix(data.String(), "\r\n.\r\n"))
+					reply("250 OK")
+					inData = false
+				}
+				continue
+			}
+			for _, line := range strings.Split(strings.TrimRight(chunk, "\r\n"), "\r\n") {
+				up := strings.ToUpper(line)
+				switch {
+				case strings.HasPrefix(up, "EHLO"), strings.HasPrefix(up, "HELO"):
+					reply("250 fake.smtp")
+				case strings.HasPrefix(up, "MAIL FROM"):
+					reply("250 OK")
+				case strings.HasPrefix(up, "RCPT TO"):
+					reply("250 OK")
+				case strings.HasPrefix(up, "DATA"):
+					reply("354 go ahead")
+					inData = true
+					data.Reset()
+				case strings.HasPrefix(up, "QUIT"):
+					reply("221 bye")
+					return
+				}
+			}
+		}
+	}()
+	return ln.Addr().String(), got
+}
+
+// TestSendDirectEndToEnd proves SendDirect actually delivers a well-formed
+// message over the wire (no field injection here — a real, if minimal, SMTP
+// listener) — the one test in this file that exercises SendMailBounded
+// against a real connection rather than a stubbed send func.
+func TestSendDirectEndToEnd(t *testing.T) {
+	addr, got := fakeSMTP(t)
+	png := []byte{0x89, 'P', 'N', 'G'}
+	if err := SendDirect(addr, "pam@example.com", "carol@example.com", "", "",
+		"You're invited", `<img src="cid:qr">`, png, "qr"); err != nil {
+		t.Fatalf("SendDirect: %v", err)
+	}
+	select {
+	case msg := <-got:
+		s := string(msg)
+		if !strings.Contains(s, "Subject: You're invited") {
+			t.Fatalf("subject missing: %q", s)
+		}
+		if !strings.Contains(s, "Content-ID: <qr>") {
+			t.Fatalf("inline image missing: %q", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("fake SMTP server never received a DATA payload")
 	}
 }

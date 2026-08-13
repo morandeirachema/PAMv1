@@ -10,7 +10,7 @@
 > live. This is the operator's checklist of what you must stand up (and what to
 > re-verify) before relying on each capability in production.
 >
-> Last updated: 2026-08-10 · Reflects: Phases 0–107 (58–94 needed no external infrastructure, so nothing here was added or closed by them; Phase 84 moved the ITSM gate's *depth* in-process with first-class ServiceNow/Jira connectors, leaving only live-instance interop verification external — see the ITSM row).
+> Last updated: 2026-08-13 · Reflects: Phases 0–116 (58–94 needed no external infrastructure, so nothing here was added or closed by them; Phase 84 moved the ITSM gate's *depth* in-process with first-class ServiceNow/Jira connectors, leaving only live-instance interop verification external — see the ITSM row; **Phase 116** reuses the *existing* email-alerts requirement for its external session-share invites — see that row — so it adds nothing new here either).
 > (Phases 25–28, 30 and 31 — console parity, recording playback + one-time
 > access, broker completion, operator SSH certificates, in-session step-up and the
 > CIEM blast-radius engine — are fully in-process and add no
@@ -106,7 +106,7 @@ to exercise fully:
 |---|---|---|---|
 | **Webhook alerts** | `PAM_ALERT_WEBHOOK` | An HTTP endpoint (Slack/PagerDuty/etc.) | Break-glass and analytics events POST as JSON |
 | **Syslog alerts** | `PAM_ALERT_SYSLOG` | A syslog collector (udp/tcp) | Events arrive at the collector |
-| **Email alerts** | `PAM_ALERT_EMAIL_*` | An SMTP server + credentials | Alert email is delivered to the recipient list |
+| **Email alerts** | `PAM_ALERT_EMAIL_*` | An SMTP server + credentials | Alert email is delivered to the recipient list — since Phase 116 the same config also delivers external session-share invite emails (`alert.SendDirect`); same requirement, same CI-proof shape (an in-process fake SMTP server), nothing new to verify |
 | **Audit → SIEM push forwarding** | `PAM_AUDIT_FORWARD_ADDR`/`_PROTO`/`_FORMAT`/`_CA`, `internal/auditfwd` (Phases 35, 47); in-process fake collector in CI | A syslog/SIEM collector on udp, tcp or **TLS** (`:514`/`:6514`) speaking RFC 5424, ArcSight **CEF** or QRadar **LEEF 2.0** | Events arrive in order from a durable cursor, resume after a restart with no gap or replay, one forwarder per cluster under the Postgres leader lock; with `proto=tls`, `PAM_AUDIT_FORWARD_CA` verifies fail-closed |
 | **Audit / log collection** | JSON logs on stdout (Phase 9); OCSF at `GET /api/audit/ocsf` (Phase 27) | A log collector / SIEM | The append-only audit trail and JSON logs are ingested for detection |
 | **Vendor employment attestation** | `PAM_VENDOR_ATTEST_URL`, `internal/vendor` (Phase 29); CI proves it against an `httptest` fake | A vendor-management or HR system that answers 2xx for a currently-employed technician | An offboarded technician's contract grant is refused at approval, audited `vendor.attestation_failed` |

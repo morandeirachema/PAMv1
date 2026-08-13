@@ -8,7 +8,7 @@ review activity. If you deploy or administer pamv1, see the
 > user-facing behavior changes (portal, connecting, roles). Add a row to the
 > [change log](#8-change-log) with each update.
 >
-> Last updated: 2026-08-10 · Reflects: Phases 0–107 — the 5250 console (11, now keyboard-first and with full backend parity: safes, campaigns, risk analytics, live watch — Phase 25), custom permission profiles (12), the database session proxy you connect to with `psql` (15), supervised sessions (16: a supervisor may watch live, and a command can be blocked by policy), and Zero Standing Privilege on some targets (22: no stored password — pamv1 signs a short-lived certificate for your session). Since then, the things you are most likely to *notice*: a SQL statement can **pause mid-session** for a supervisor's decision (30) instead of the session dying; your session can be **refused outright** if recording is required but not configured (52c); certification and step-up decisions need the **approver** capability (39) and nobody may decide their own (46, 52c); recovery codes are now four groups of six (52e); and the **content of SFTP transfers may be recorded**, with a per-file size cap that refuses what crosses it (59). Newer still: where a first-class ITSM connector is configured, your change ticket must be in an accepted state, inside its change window, **and name you** (84); and a high risk score can **sign you out**, so your next action asks you to authenticate again (86). An admin revoking your access still ends your live sessions immediately. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-13 · Reflects: Phases 0–116 — the 5250 console (11, now keyboard-first and with full backend parity: safes, campaigns, risk analytics, live watch — Phase 25), custom permission profiles (12), the database session proxy you connect to with `psql` (15), supervised sessions (16: a supervisor may watch live, and a command can be blocked by policy), and Zero Standing Privilege on some targets (22: no stored password — pamv1 signs a short-lived certificate for your session). Since then, the things you are most likely to *notice*: a SQL statement can **pause mid-session** for a supervisor's decision (30) instead of the session dying; your session can be **refused outright** if recording is required but not configured (52c); certification and step-up decisions need the **approver** capability (39) and nobody may decide their own (46, 52c); recovery codes are now four groups of six (52e); and the **content of SFTP transfers may be recorded**, with a per-file size cap that refuses what crosses it (59). Newer still: where a first-class ITSM connector is configured, your change ticket must be in an accepted state, inside its change window, **and name you** (84); and a high risk score can **sign you out**, so your next action asks you to authenticate again (86). **Newest**: a live session can be **shared** with a second party — view-only or view-control — through the same two-person approval shape as an access request; join with a one-time token as your SSH username, or by an emailed QR link if you're outside the organization (116). An admin revoking your access still ends your live sessions immediately. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ Educational / pre-production project — see the [README](../README.md).
 
@@ -185,6 +185,11 @@ ssh -p 2222 root@web-01@PAM_HOST
 # Read-only / observer session: watch the output but cannot type or run commands
 ssh -p 2222 root@web-01+observe@PAM_HOST
 
+# Join a session someone shared with you (an invite naming you, already
+# approved) — the token IS your whole username; your own PAM token is still
+# the password
+ssh -p 2222 join:<token>@PAM_HOST
+
 # Windows target (if the admin enabled it): an interactive WinRM command loop —
 # each line you type runs as a separate command (not a stateful PowerShell)
 ssh -p 2222 Administrator@win-01@PAM_HOST
@@ -218,6 +223,14 @@ you.
 > **per-file size limit**: a transfer that hits it fails mid-file with
 > "permission denied". Ask your admin if you need to upload and can't, or if a
 > large transfer keeps failing at the same point.
+
+> **A live session can be shared with someone else.** Request it from your
+> session — view-only, or view-**control** if you want them typing too — and
+> a *different* person has to approve it before it goes live, the same
+> two-person shape as an access request. Another pamv1 user joins over SSH
+> with a one-time token as their username (above); someone outside your
+> organization is invited by email instead, with a QR code good for a short
+> window and no account of their own needed.
 
 ### Connecting to a database (PostgreSQL)
 
@@ -311,6 +324,13 @@ over. The same stream is available via the API —
 refused watch — is audited (`session.monitor`; a cross-replica watch is
 marked `via:relay`).
 
+From that same live-watch pane, **F6** requests to share the session you're
+watching — view-only or view-control — with someone else, and **F7** opens
+the list of pending share requests for you to approve or deny (you can't
+decide one you filed yourself — the same four-eyes rule as everywhere else).
+Once approved, the pane's roster shows who has actually joined, with an
+option to kick anyone who shouldn't be there anymore.
+
 Two more review screens (both need audit-read):
 
 - **Certification campaigns** (menu 17) — the periodic access review: each item
@@ -360,6 +380,7 @@ requests on their list.
 | `your role does not permit this action` (403) | Your role can't do that — expected. Ask an admin if you need more access. |
 | SSH: `your role may not open sessions` | You're an auditor/approver; only `user`/`admin` can connect. |
 | SSH: `unknown target "x"` | The target name in your SSH username doesn't exist — check spelling with your admin. |
+| SSH: `pamv1: this invite was not issued to you` / `pamv1: this invite must be redeemed via its emailed link` | The `join:<token>` you used names someone else, or is an **external** invite — those redeem only through the emailed web link, never SSH. |
 | SSH: `upstream connection failed` | pamv1 reached your token fine, but couldn't reach the target (down, or bad vaulted credential). Tell your admin. |
 | `too many attempts; try again shortly` | Repeated failed sign-ins from your address were rate-limited. Wait a minute and retry with the correct token. |
 | `command blocked by policy` (SSH exec / WinRM / SQL) | That specific command matched a command-control deny rule and was refused before reaching the target. The session continues; run something else or ask your admin. |
@@ -392,6 +413,7 @@ guard against connections that open and never authenticate, not a fault.
 
 | Date | Change |
 |---|---|
+| 2026-08-13 | **Phase 116 — share a live session with someone else.** Request it from your session (view-only or view-control); a *different* person approves it before it goes live — same two-person shape as an access request. Another pamv1 user joins over SSH as `join:<token>` (their own PAM token is still the password); someone outside your organization gets emailed a QR code instead, good for a short window, no account needed. **F6**/**F7** on the live-watch pane request/decide; its roster shows who's actually joined. §5, §6, §7 |
 | 2026-08-09 | **Phase 95 — documentation currency pass** (nothing changed in the product today; this row catches the guide up on what already had). Since Phase 84, a site using a ServiceNow/Jira connector accepts your ticket only if it is in an accepted state, inside its change window and **names you**. Since Phase 86, a high risk score can **sign you out** so your next action re-authenticates — less drastic than losing your live sessions. Since Phase 92, a read-only SFTP session also refuses link/lock operations. §7 |
 | 2026-08-02 | **Phase 60 — your change ticket is checked again when you connect.** If your site gates access on ITSM tickets, the ticket on your approved request is re-checked at the moment you use it, not only when you filed it. A change that has since been cancelled or closed means the connection is refused — ask for the change to be re-opened, or file a new request. Your approval is **not** used up by such a refusal. §7 |
 | 2026-08-01 | **Phase 59 — file transfers may be recorded in full, and may hit a size limit.** If your site enables content capture, the bytes of every file you move over SFTP are kept as encrypted evidence alongside your session recording, and auditors can download them from menu 19 (kind `file`). A per-file cap, when set, makes a transfer fail with "permission denied" partway — see §7. §3, §4 |

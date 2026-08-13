@@ -47,6 +47,7 @@ type Memstore struct {
 	credDeps      map[int64]store.CredentialDependency
 	campaigns     map[int64]store.Campaign
 	campaignItems map[int64]store.CampaignItem
+	shareInvites  map[int64]store.SessionShareInvite
 
 	killMu   sync.Mutex
 	killSubs map[chan session.KillSelector]struct{} // cross-replica kill fan-out
@@ -88,6 +89,7 @@ func New() *Memstore {
 		credDeps:      make(map[int64]store.CredentialDependency),
 		campaigns:     make(map[int64]store.Campaign),
 		campaignItems: make(map[int64]store.CampaignItem),
+		shareInvites:  make(map[int64]store.SessionShareInvite),
 		killSubs:      make(map[chan session.KillSelector]struct{}),
 		liveSessions:  make(map[string]liveRow),
 		frameSubs:     make(map[chan session.LiveFrame]struct{}),
@@ -1429,6 +1431,19 @@ func (m *Memstore) UpdateVendorOrg(_ context.Context, id int64, org string) erro
 	return nil
 }
 
+// UpdateVendorEmail sets the vendor's on-file contact address, or ErrNotFound.
+func (m *Memstore) UpdateVendorEmail(_ context.Context, id int64, email string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := m.vendors[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	v.Email = email
+	m.vendors[id] = v
+	return nil
+}
+
 // SetVendorDisabled enables/disables a vendor by id, or ErrNotFound.
 func (m *Memstore) SetVendorDisabled(_ context.Context, id int64, disabled bool) error {
 	m.mu.Lock()
@@ -1581,6 +1596,105 @@ func vendorGrantActive(g store.VendorGrant, now time.Time) bool {
 	return g.Status == "approved" && g.RevokedAt == nil &&
 		now.Before(g.NotAfter) &&
 		(g.NotBefore == nil || !now.Before(*g.NotBefore))
+}
+
+// CreateSessionShareInvite records a pending session-share request.
+func (m *Memstore) CreateSessionShareInvite(_ context.Context, inv *store.SessionShareInvite) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv.ID = m.id()
+	inv.CreatedAt = time.Now().UTC()
+	m.shareInvites[inv.ID] = *inv
+	return nil
+}
+
+// GetSessionShareInvite returns one invite by id, or ErrNotFound.
+func (m *Memstore) GetSessionShareInvite(_ context.Context, id int64) (*store.SessionShareInvite, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv, ok := m.shareInvites[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	out := inv
+	return &out, nil
+}
+
+// ListSessionShareInvites lists a session's invites, newest first.
+func (m *Memstore) ListSessionShareInvites(_ context.Context, sessionID string) ([]store.SessionShareInvite, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]store.SessionShareInvite, 0)
+	for _, inv := range m.shareInvites {
+		if inv.SessionID == sessionID {
+			out = append(out, inv)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+// DecideSessionShareInvite records an approve/deny decision; ErrNotFound if
+// unknown. The caller (matching DecideAccessRequest's own convention) is
+// responsible for checking the invite is still pending before calling this.
+func (m *Memstore) DecideSessionShareInvite(_ context.Context, id int64, status, approver string, at time.Time, tokenHash string, expiresAt *time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv, ok := m.shareInvites[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	inv.Status = status
+	inv.Approver = approver
+	decided := at.UTC()
+	inv.DecidedAt = &decided
+	if status == "approved" {
+		inv.TokenHash = tokenHash
+		if expiresAt != nil {
+			exp := expiresAt.UTC()
+			inv.ExpiresAt = &exp
+		}
+	}
+	m.shareInvites[id] = inv
+	return nil
+}
+
+// RevokeSessionShareInvite marks an invite revoked, or ErrNotFound.
+func (m *Memstore) RevokeSessionShareInvite(_ context.Context, id int64, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv, ok := m.shareInvites[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	revoked := at.UTC()
+	inv.RevokedAt = &revoked
+	m.shareInvites[id] = inv
+	return nil
+}
+
+// ConsumeSessionShareInviteByTokenHash atomically redeems an approved,
+// unexpired, unrevoked, not-yet-consumed invite matching tokenHash.
+func (m *Memstore) ConsumeSessionShareInviteByTokenHash(_ context.Context, tokenHash string, now time.Time) (*store.SessionShareInvite, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, inv := range m.shareInvites {
+		if inv.TokenHash == "" || inv.TokenHash != tokenHash {
+			continue
+		}
+		if inv.Status != "approved" || inv.RevokedAt != nil || inv.ConsumedAt != nil {
+			return nil, store.ErrNotFound
+		}
+		if inv.ExpiresAt == nil || !now.Before(*inv.ExpiresAt) {
+			return nil, store.ErrNotFound
+		}
+		consumed := now.UTC()
+		inv.ConsumedAt = &consumed
+		m.shareInvites[id] = inv
+		out := inv
+		return &out, nil
+	}
+	return nil, store.ErrNotFound
 }
 
 // GetAgentKey returns an agent key by ID (regardless of disabled), or ErrNotFound.

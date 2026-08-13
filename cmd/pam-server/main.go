@@ -822,6 +822,7 @@ func run() error {
 	// Removing a session from the registry ends its live watch streams, so a
 	// supervisor's SSE pane reports the end instead of going silent forever.
 	sessions.AttachHub(liveHub)
+	shares := session.NewShareRegistry() // Phase 116: live session-sharing input mux
 	replicaName, _ := os.Hostname()
 	// The step-up coordinator exists before the buses because the decision bus
 	// shares their custody key; its guard file is compiled further down with the
@@ -1069,6 +1070,13 @@ func run() error {
 	handler, err := api.New(st, v, resolver, authn, api.Options{
 		Sessions:                sessions,
 		Live:                    liveHub,
+		Shares:                  shares,
+		ShareInviteTTL:          cfg.ShareInviteTTL,
+		ShareGuestSessionTTL:    cfg.ShareGuestSessionTTL,
+		ShareSMTPAddr:           cfg.AlertEmailSMTP,
+		ShareSMTPFrom:           cfg.AlertEmailFrom,
+		ShareSMTPUser:           cfg.AlertEmailUser,
+		ShareSMTPPass:           cfg.AlertEmailPass,
 		Cluster:                 cluster,
 		StepUp:                  stepUp,
 		SSHHostKeyCallback:      upstreamHostKey,
@@ -1267,6 +1275,7 @@ func run() error {
 			SupervisionTimeout:   cfg.SupervisionTimeout,
 			CommandGuard:         cmdGuard,
 			Live:                 liveHub,
+			Shares:               shares,
 			CA:                   sshCA,
 			CertTTL:              cfg.SSHCertTTL,
 			AuthRatePerMin:       cfg.ProxyAuthRatePerMin,

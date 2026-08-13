@@ -100,6 +100,10 @@
   let brokerApprovals = [], stepUps = [];
   let watchSess = null, watchAbort = null, watchText = "";
   let liveTimer = null;
+  // Session-sharing (Phase 116): roster is the current watch session's joined
+  // parties; shareInvites/shareInviteSid back the per-session invite list;
+  // newShareToken holds a just-approved INTERNAL invite's one-time token.
+  let roster = [], shareInvites = [], shareInviteSid = null, newShareToken = null;
   let recordings = [], replay = null; // replay = one loaded recording + player state
   let recSearchQuery = "", recSearchHits = null, recSearchErr = ""; // null = no search run yet
   let replaySource = "recordings"; // where F12 returns from recplay: the list, or a search that led here
@@ -231,6 +235,19 @@
     stepUps = [];
     try { stepUps = await api("GET", "/api/sessions/stepups"); } catch (e) {}
     go("stepups");
+  }
+  // Session-sharing (Phase 116). refreshRoster is called both on a timer
+  // while sesswatch is showing and right after a kick, so it re-renders only
+  // when that screen is still the one showing (a stray late response after
+  // navigating away must not resurrect it).
+  async function refreshRoster(sid) {
+    try { roster = await api("GET", `/api/sessions/${sid}/share/roster`); } catch (e) { roster = []; }
+    if (screen === "sesswatch") render();
+  }
+  async function openShareInvites(sid) {
+    shareInviteSid = sid; shareInvites = [];
+    try { shareInvites = await api("GET", `/api/sessions/${sid}/share`); } catch (e) {}
+    go("shareinvites");
   }
   async function openRequests() {
     requests = [];
@@ -474,7 +491,9 @@
   async function watchSession(s) {
     stopWatch();
     watchSess = s;
+    roster = [];
     go("sesswatch");
+    refreshRoster(s.id);
     const ctrl = new AbortController();
     watchAbort = ctrl;
     try {
@@ -1157,13 +1176,129 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
       sesswatch() {
         back = "sessions";
         const s = watchSess || {};
+        const canManage = can("manage_targets");
         term.innerHTML = `${head("PAMWCHSSN", "Watch Session (live)")}
 Session <span class="white">${esc(String(s.id).slice(0, 8))}</span>  actor <span class="white">${esc(s.actor)}</span>  target <span class="white">${esc(s.target)}</span>  proto <span class="white">${esc(s.protocol)}</span>
 <span class="cyan">View-only supervision — keystrokes are not sent. This watch is audited (session.monitor).</span>
 <div id="watch-pane" class="watchpane">${esc(watchText)}</div>
-${fkeys("F3=Exit   F12=Stop watching")}`;
+
+Joined now:${canManage ? ` (type an option, press Enter — <span class="cyan">4=Kick</span>)` : ""}
+<form id="f-list"><table>
+<tr><th>Opt</th><th>Actor</th><th>Mode</th></tr>
+${roster.map((p) => `<tr><td>${canManage ? opt(p.join_id) : ""}</td><td class="white">${pad(p.actor, 24)}</td><td class="${p.mode === "view_control" ? "amber" : "cyan"}">${esc(p.mode)}</td></tr>`).join("")}
+</table>${roster.length ? "" : `<div class="cyan indent">(No one has joined this session.)</div>`}
+<input type="submit" hidden></form>
+${fkeys("F3=Exit   F5=Refresh   F6=Invite someone   F7=Session invites   F12=Stop watching")}`;
         const pane = document.getElementById("watch-pane");
         if (pane) pane.scrollTop = pane.scrollHeight;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          if (!canManage) return render();
+          try {
+            for (const p of roster) {
+              const o = optVal(ev.target, p.join_id);
+              if (o === "4") { await api("POST", `/api/sessions/${s.id}/share/kick`, { join_id: p.join_id }); say(`KICKED ${String(p.actor).toUpperCase()}.`); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await refreshRoster(s.id);
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+        // Live roster refresh while this screen is showing (same shared timer
+        // sessions() itself uses — go() already stops it on navigation away).
+        stopLive();
+        liveTimer = setInterval(() => {
+          if (screen !== "sesswatch") { stopLive(); return; }
+          refreshRoster(s.id);
+        }, 5000);
+      },
+
+      // shareinvitenew: a small create-request form (Phase 116), scoped to
+      // shareInviteSid. Filing a request sends nothing yet — see the four-eyes
+      // note — so this is deliberately just a form post, not a numbered-option
+      // list screen.
+      shareinvitenew() {
+        back = "sesswatch";
+        term.innerHTML = `${head("PAMSHRNEW", "Invite to Session")}
+Session <span class="white">${esc(String(shareInviteSid).slice(0, 8))}</span>. Filing a request sends nothing yet — a DIFFERENT principal holding the approve capability must decide it first.
+
+<form id="f-shrnew" class="indent">
+<label>Mode  . . . . . . . :  <select name="mode">
+  <option value="view_only">View only</option>
+  <option value="view_control">View + control (keyboard access)</option>
+</select></label>
+<label>Kind  . . . . . . . :  <select name="kind">
+  <option value="internal">Internal — a named pamv1 user</option>
+  <option value="external">External — email + QR (15-minute link)</option>
+</select></label>
+<label>Invitee / email . . :  <input name="who" size="30"></label>
+<input type="submit" hidden>
+</form>
+<div class="cyan indent">Internal: the invitee redeems it over SSH as their own login. External: pamv1 emails a one-time link + QR code, valid 15 minutes.</div>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-shrnew").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const mode = ev.target.mode.value, kind = ev.target.kind.value, who = ev.target.who.value.trim();
+          if (!who) { say("CPF0002: INVITEE / EMAIL IS REQUIRED.", true); return render(); }
+          try {
+            const body = { mode, kind, ...(kind === "internal" ? { invitee: who } : { email: who }) };
+            await api("POST", `/api/sessions/${shareInviteSid}/share`, body);
+            say("SHARE REQUEST FILED — AWAITING APPROVAL.");
+            await openShareInvites(shareInviteSid);
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      // shareinvites: outstanding/active/ended invites for one session
+      // (Phase 116) — the list-with-option-column shape stepups() uses.
+      // Approving an INTERNAL invite returns its one-time token, shown on a
+      // dedicated shareinvitetoken screen (the usercreated pattern) rather
+      // than folded into the one-line message bar.
+      shareinvites() {
+        back = "sesswatch";
+        const canDecide = can("approve"), canRevoke = can("manage_targets");
+        term.innerHTML = `${head("PAMSHRINV", "Session Share Invites")}
+Session <span class="white">${esc(String(shareInviteSid).slice(0, 8))}</span>. ${(canDecide || canRevoke) ? `Type options, press Enter.
+  <span class="cyan">${[canDecide ? "5=Approve   6=Deny" : "", canRevoke ? "7=Revoke" : ""].filter(Boolean).join("   ")}</span>` : `<span class="cyan">Read-only: deciding needs the approve or manage_targets capability.</span>`}
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>Mode</th><th>Kind</th><th>Invitee/Email</th><th>Status</th><th>Requester</th></tr>
+${shareInvites.map((v) => `<tr><td>${(canDecide || canRevoke) ? opt(v.id) : ""}</td><td>${pad(v.mode, 12)}</td><td>${pad(v.kind, 9)}</td><td class="detail white">${esc(v.invitee || v.email)}</td><td class="${v.status === "approved" ? "white" : (v.status === "denied" || v.status === "revoked") ? "red" : "amber"}">${esc(v.status)}</td><td class="detail">${esc(v.requester)}</td></tr>`).join("")}
+</table>${shareInvites.length ? "" : `<div class="cyan indent">(No invites for this session yet — F6 on the watch screen files one.)</div>`}
+<input type="submit" hidden></form>
+${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const v of shareInvites) {
+              const o = optVal(ev.target, v.id);
+              if (o === "5" && canDecide) {
+                const r = await api("POST", `/api/share-invites/${v.id}/approve`, {});
+                if (r && r.token) { newShareToken = r; return go("shareinvitetoken"); }
+                say("INVITE APPROVED.");
+              }
+              else if (o === "6" && canDecide) { await api("POST", `/api/share-invites/${v.id}/deny`, {}); say("INVITE DENIED."); }
+              else if (o === "7" && canRevoke) { await api("POST", `/api/share-invites/${v.id}/revoke`, {}); say("INVITE REVOKED."); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openShareInvites(shareInviteSid);
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      shareinvitetoken() {
+        back = "shareinvites";
+        const t = newShareToken || {};
+        term.innerHTML = `${head("PAMSHRTOK", "Session Share Token")}
+<span class="red blink">COPY THIS TOKEN NOW — IT IS SHOWN ONLY ONCE.</span>
+
+<div class="indent">
+Mode  . . . . . . . :  <span class="white">${esc(t.mode)}</span>
+Invitee . . . . . . :  <span class="white">${esc(t.invitee)}</span>
+
+Token . . . . . . . :  <span class="white">${esc(t.token)}</span>
+</div>
+<div class="cyan indent">Give it to ${esc(t.invitee || "the invitee")}; they redeem it over SSH as "join:&lt;token&gt;" using their OWN pamv1 password. It expires in 15 minutes and works once.</div>
+${fkeys("F3=Exit   F12=Cancel")}`;
       },
 
       // Broker approvals (Phase 43). A parked agent tool call shows what the agent
@@ -2669,6 +2804,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
     if (s !== "credview") viewCred = null;
     if (s !== "usercreated") newUser = null;
     if (s !== "appcreated") newApp = null;
+    if (s !== "shareinvitetoken") newShareToken = null;
     if (s !== "sesswatch") stopWatch();
     if (s !== "recplay") stopReplay();
     stopLive();
@@ -2676,8 +2812,8 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   }
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
-  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report };
-  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), deps: () => go("depadd") };
+  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid) };
+  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); } };
 
   window.addEventListener("keydown", async (ev) => {
     // While the RDP viewer is open it owns the keyboard (its own capture-phase
@@ -2719,7 +2855,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
       else if (k === "F4") { if (screen === "recordings") openRecSearch(); }
       else if (k === "F5") { const r = refreshers[screen]; if (r) await r(); else render(); }
       else if (k === "F6") { if (screen === "effective") await exportIaC("env"); else if (screen === "audit") await verifyChain(); else { const a = adders[screen]; if (a) a(); } }
-      else if (k === "F7") { if (screen === "effective") await exportIaC("helm"); else if (screen === "audit") await fetchAuditHead(); else if (screen === "campaigns" && can("approve")) await openMyQueue(); }
+      else if (k === "F7") { if (screen === "effective") await exportIaC("helm"); else if (screen === "audit") await fetchAuditHead(); else if (screen === "campaigns" && can("approve")) await openMyQueue(); else if (screen === "sesswatch" && watchSess) await openShareInvites(watchSess.id); }
       else if (k === "F8") { if (screen === "effective") await exportIaC("terraform"); else if (screen === "audit") await openNIS2Report(); }
       else if (k === "F9") { if (screen === "audit") await exportAudit(); else if (screen === "users") await reconcileIdentities(); else if (screen === "sshcerts") await download("/api/ca/ssh/krl", "pamv1-revoked-certs.krl", "KRL"); else if (screen === "nis2report") await download("/api/compliance/nis2" + (nis2Query() ? "?" + nis2Query() : ""), "pamv1-nis2-report.json", "NIS2 REPORT"); }
       else if (k === "F10") { if (screen === "audit") await download("/api/audit/ocsf", "pamv1-audit-ocsf.json", "OCSF"); }

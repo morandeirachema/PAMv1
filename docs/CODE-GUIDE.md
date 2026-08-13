@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-10 · Reflects: Phases 0–107 + the 2026-07 hardening passes.
+> Last updated: 2026-08-13 · Reflects: Phases 0–116 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -602,6 +602,47 @@ The live-session **registry** (`session/registry.go`) tracks active sessions for
 `GET /api/sessions` (list) and `DELETE /api/sessions/{id}` (kill); Phase 23 added
 `KillByActor` for automated response.
 
+### 5.6 Session sharing (Phase 116 — `session/share.go`)
+
+A `ShareRegistry` sits beside the Hub and Registry: one `shareSession` per
+shared live session, keyed by session id, guarded by its own mutex. Two
+mechanisms live there:
+
+- **The input mux** — `mux chan []byte` (buffered, capacity 64). Any writer
+  (the primary operator, or any `view_control` joiner) sends into it through a
+  `muxWriter`; one reader (`insp.pump`, driven from the proxy's per-session
+  goroutine) drains it. Concurrency safety comes from the channel itself — Go
+  channels accept any number of concurrent senders natively, so there is no
+  lock on the byte path (a `sync.Mutex` guards only the separate roster
+  bookkeeping).
+- **Guest keys** — `IssueGuestKey` mints 32 random bytes (`crypto/rand`),
+  hex-encoded, and stores them **in memory only** (`guests
+  map[string]guestBinding`) — never in the database, never hashed. That is a
+  deliberate departure from every other bearer credential in this codebase
+  (see §2.5 of [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md)), and it is
+  why sharing is **replica-local**: unlike `session.Hub`'s Phase 55
+  cross-replica relay, a join must land on whichever replica actually hosts
+  the session.
+
+Two front doors reach `ShareRegistry`, and neither authenticates the normal
+way:
+
+- `internal/proxy/proxy.go`'s SSH `PasswordCallback` recognizes the username
+  prefix `join:` — but only *after* its normal `resolver.Resolve(password)`
+  call already succeeded, so a join is a PAM login *plus* an invite match,
+  never the token alone (see §5.1 for the ordinary handshake this extends).
+- `internal/api/sessionshare_handlers.go` serves three routes with no
+  `authz(...)` wrapper at all — `POST /api/share/redeem/{token}`,
+  `GET /api/share/stream`, `POST /api/share/input` — the same pattern the
+  RDP/VNC tunnel routes already use, gated instead by the one-time invite
+  token and then the minted guest key.
+
+The store gains a sixth `ShareInviteStore` role (`SessionShareInvite`,
+migration `0032`) and eight new audit actions
+(`session.share_requested` … `_kicked`); see [ADMIN-GUIDE.md
+§9.4c](ADMIN-GUIDE.md#94c-sharing-a-live-session-phase-116) for the
+request→approve workflow itself.
+
 ---
 
 ## 6. Identity & authentication
@@ -1021,6 +1062,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-13 | Phase 116 (live session-sharing): new §5.6 — `session.ShareRegistry` (an input mux any number of concurrent `view_control` joiners can write to, in-memory-only guest keys, replica-local by design), the SSH `join:<token>` prefix dispatch in `proxy.go` (a PAM login *plus* an invite match, never the token alone), and three unauthenticated routes in the new `sessionshare_handlers.go` (the RDP/VNC tunnel's no-`authz` pattern, reused). New `ShareInviteStore` role (6 methods, store surface 149 → 156), migration `0032`. No package moved, no CI gate changed. |
 | 2026-08-10 | Phase 107 (documentation currency pass): all 18 `Reflects: Phases 0–N` headers bumped to 0–107; HIGH-LEVEL log gained the five missing phases; this CI-gate list gained the fuzz step + enforced gosec; SECURITY-GAPS recorded the Phase 102 leak finding + 103/104 hardening. Docs-only. |
 | 2026-08-10 | Phase 106 (deferred-cleanup backlog): the `"ssh_ca"` magic string → `store.SecretTypeSSHCA` + `Credential.IsZSP()` (13 secret-path guards de-stringified). The rest of the backlog (deleteByID, credAndTarget, single-use pgstore scanners, the vendor N+1, storetest subtests) was evaluated and skipped as churn-with-wrinkles — see ROADMAP Phase 106. |
 | 2026-08-10 | Phase 105 (config-validation test hardening): `TestLoadRejectsBadValues` (17 cases over the previously-untested `config.Load` rules — enums, bounds, cross-field deps) and `TestLoadAcceptsRichValidConfig` (a positive guard against false-rejects). Test-only. |
