@@ -297,6 +297,22 @@ type AccessRequest struct {
 	// admits nothing further. A consumed approval is not "active" anywhere.
 	OneTime    bool       `json:"one_time,omitempty"`
 	ConsumedAt *time.Time `json:"consumed_at,omitempty"`
+	// RecurDays makes an APPROVED request the ANCHOR of a recurring series
+	// (Phase 120), mirroring Campaign's RecurDays/NextRunAt exactly: every
+	// RecurDays a fresh, independently-approved child request is auto-filed
+	// with the same requester/target/reason, so a periodic access need does
+	// not depend on remembering to re-request it. The child is spawned
+	// PENDING, not pre-approved — recurrence automates the paperwork, never
+	// the four-eyes decision itself, so recurring access can never quietly
+	// become standing access nobody re-reviews. Zero is a one-off, which is
+	// what every request was before. StopAccessRequestRecurrence (RecurDays
+	// -> 0) is the anchor's stop button, campaign-style.
+	RecurDays int `json:"recur_days,omitempty"`
+	// NextRunAt is when the anchor next spawns a child. Set when the anchor
+	// is approved (not at creation, so an approval that takes days to arrive
+	// doesn't make the first recurrence fire immediately on approval). Nil on
+	// a one-off, a still-pending anchor, or a child (children never recur).
+	NextRunAt *time.Time `json:"next_run_at,omitempty"`
 }
 
 // Credential is a privileged account on a Target. SecretEnc is always an
@@ -838,6 +854,21 @@ type ApprovalStore interface {
 	// The requester and targetID are re-checked here and not taken on trust:
 	// an id alone must never be able to claim somebody else's approval.
 	ConsumeApprovalByID(ctx context.Context, id int64, requester string, targetID int64, now time.Time) (ok bool, err error)
+
+	// ListDueAccessRequests returns the approved recurring anchors whose next
+	// run has arrived, oldest first (Phase 120) — the AccessRequest analogue
+	// of ListDueCampaigns. Scoped narrowly on purpose: a denied or still-
+	// pending anchor is not a live series, and a request with no recurrence
+	// is not a schedule.
+	ListDueAccessRequests(ctx context.Context, now time.Time) ([]AccessRequest, error)
+	// SetAccessRequestNextRun moves an anchor's next occurrence, or sets it
+	// for the first time on approval. ErrNotFound if the request is absent.
+	SetAccessRequestNextRun(ctx context.Context, id int64, next time.Time) error
+	// StopAccessRequestRecurrence ends a recurring anchor's series (RecurDays
+	// -> 0, NextRunAt -> nil) — the stop button an operator reaches for first,
+	// so it has to just work. Idempotent: stopping an already one-off request
+	// succeeds without error. ErrNotFound if the request is absent.
+	StopAccessRequestRecurrence(ctx context.Context, id int64) error
 }
 
 // CheckoutStore is exclusive, time-boxed credential leases.
@@ -853,6 +884,38 @@ type CheckoutStore interface {
 	// ListCheckouts lists checkouts in the (limit, afterID) window,
 	// id-ascending; activeOnly limits to unreturned, unexpired ones.
 	ListCheckouts(ctx context.Context, activeOnly bool, now time.Time, limit int, afterID int64) ([]Checkout, error)
+	// GetCheckout returns one checkout by ID, or ErrNotFound (Phase 120) — the
+	// by-ID twin of GetActiveCheckout (which looks up by credential instead),
+	// needed so the extend handler can check the caller is the lease's own
+	// holder before extending it.
+	GetCheckout(ctx context.Context, id int64) (*Checkout, error)
+	// ExtendCheckout pushes an active (unreturned, unexpired as of now)
+	// checkout's expiry to newExpiresAt (Phase 120). ErrNotFound if the
+	// checkout is missing, already returned, or already expired — an
+	// extension is a continuation, not a resurrection: a lapsed lease must be
+	// checked out again fresh rather than revived past its own deadline. The
+	// caller (not the store) is responsible for validating newExpiresAt
+	// against any configured ceiling, matching how CreateCheckout's own
+	// expiry is entirely caller-computed.
+	ExtendCheckout(ctx context.Context, id int64, newExpiresAt, now time.Time) error
+}
+
+// PasswordHistoryStore is a credential's rotation history — SHA-256 hashes of
+// its past secrets, never the secrets themselves — checked at rotation time
+// to enforce PAM_PASSWORD_HISTORY_COUNT reuse prevention (Phase 120). A bare
+// SHA-256 is sufficient here (not HMAC-keyed like a bearer token hash) because
+// generated passwords are high-entropy random strings, not user-chosen
+// low-entropy ones — nothing a rainbow table gains purchase on.
+type PasswordHistoryStore interface {
+	// RecordPasswordHistory appends secretHash to credentialID's history and
+	// prunes anything beyond the most recent keep entries in the same call, so
+	// the table never grows unbounded relative to what reuse-prevention can
+	// actually check against. Callers gate this on keep > 0 themselves — a
+	// deployment with history checking off should not pay even the write.
+	RecordPasswordHistory(ctx context.Context, credentialID int64, secretHash string, at time.Time, keep int) error
+	// RecentPasswordHashes returns up to limit of a credential's most recent
+	// rotation hashes, newest first.
+	RecentPasswordHashes(ctx context.Context, credentialID int64, limit int) ([]string, error)
 }
 
 // AuditStore is the primary audit trail, its optional hash chain, and the
@@ -1281,6 +1344,7 @@ type Store interface {
 	CertificationStore
 	ApprovalStore
 	CheckoutStore
+	PasswordHistoryStore
 	AuditStore
 	UserStore
 	LoginSessionStore

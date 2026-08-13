@@ -53,6 +53,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/policy"
 	"github.com/morandeirachema/pamv1/internal/proxy"
 	"github.com/morandeirachema/pamv1/internal/recording"
+	"github.com/morandeirachema/pamv1/internal/rotate"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/shamir"
 	"github.com/morandeirachema/pamv1/internal/sshca"
@@ -1114,6 +1115,7 @@ func run() error {
 		OneTimeAccess:           cfg.OneTimeAccess,
 		AirGap:                  cfg.AirGap,
 		CheckoutTTL:             cfg.CheckoutTTL,
+		CheckoutMaxExtend:       cfg.CheckoutMaxExtend,
 		AllowedProtocols:        splitAndTrim(cfg.AllowedProtocols),
 		Directory:               directory,
 		Reconfigure:             reconfigure,
@@ -1131,16 +1133,21 @@ func run() error {
 		BrokerExchangeTTL:       cfg.BrokerExchangeTTL,
 		BrokerAudience:          cfg.BrokerAudience,
 		CertRemindDays:          cfg.CertRemindDays,
-		BrokerMaxDelegation:     cfg.BrokerMaxDelegation,
-		CA:                      sshCA,
-		SSHOperatorCertTTL:      cfg.SSHOperatorCertTTL,
-		VendorAttestor:          vendor.NewAttestor(cfg.VendorAttestURL),
-		Analytics:               analyticsEngine,
-		AnalyticsWindow:         cfg.AnalyticsWindow,
-		AnalyticsAutoKill:       cfg.AnalyticsAutoKill,
-		AnalyticsBaseline:       time.Duration(cfg.AnalyticsBaselineDays) * 24 * time.Hour,
-		AnalyticsAutoStepUp:     cfg.AnalyticsAutoStepUp,
-		AppSecretsEnabled:       cfg.AppSecretsEnabled,
+		PasswordPolicy: rotate.PasswordPolicy{
+			MinLength: cfg.PasswordMinLength, MinLower: cfg.PasswordMinLower,
+			MinUpper: cfg.PasswordMinUpper, MinDigit: cfg.PasswordMinDigit, MinSymbol: cfg.PasswordMinSymbol,
+		},
+		PasswordHistoryCount: cfg.PasswordHistoryCount,
+		BrokerMaxDelegation:  cfg.BrokerMaxDelegation,
+		CA:                   sshCA,
+		SSHOperatorCertTTL:   cfg.SSHOperatorCertTTL,
+		VendorAttestor:       vendor.NewAttestor(cfg.VendorAttestURL),
+		Analytics:            analyticsEngine,
+		AnalyticsWindow:      cfg.AnalyticsWindow,
+		AnalyticsAutoKill:    cfg.AnalyticsAutoKill,
+		AnalyticsBaseline:    time.Duration(cfg.AnalyticsBaselineDays) * 24 * time.Hour,
+		AnalyticsAutoStepUp:  cfg.AnalyticsAutoStepUp,
+		AppSecretsEnabled:    cfg.AppSecretsEnabled,
 	})
 	if err != nil {
 		return err
@@ -1166,6 +1173,10 @@ func run() error {
 	// second environment variable was also remembered is a control that lapses
 	// exactly where it matters. The leader lock keeps N replicas to one spawn.
 	go handler.RunCampaignScheduler(ctx)
+	// Recurring access requests (Phase 120) — same reasoning as the campaign
+	// scheduler above, its own worker: unconditional, no interval to
+	// configure, does nothing until a request is filed with recur_days set.
+	go handler.RunAccessRequestScheduler(ctx)
 	// Runtime secret refresh (Phase 78, rebuilt in Phase 80). Opt-in, and NOT
 	// leader-locked: every replica holds its own copy of these comparison values,
 	// so every replica has to re-read them itself — a leader-only refresh would

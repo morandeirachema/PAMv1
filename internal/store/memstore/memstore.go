@@ -48,6 +48,7 @@ type Memstore struct {
 	campaigns     map[int64]store.Campaign
 	campaignItems map[int64]store.CampaignItem
 	shareInvites  map[int64]store.SessionShareInvite
+	pwHistory     map[int64][]pwHistoryEntry // credentialID -> hashes, oldest first
 
 	killMu   sync.Mutex
 	killSubs map[chan session.KillSelector]struct{} // cross-replica kill fan-out
@@ -90,6 +91,7 @@ func New() *Memstore {
 		campaigns:     make(map[int64]store.Campaign),
 		campaignItems: make(map[int64]store.CampaignItem),
 		shareInvites:  make(map[int64]store.SessionShareInvite),
+		pwHistory:     make(map[int64][]pwHistoryEntry),
 		killSubs:      make(map[chan session.KillSelector]struct{}),
 		liveSessions:  make(map[string]liveRow),
 		frameSubs:     make(map[chan session.LiveFrame]struct{}),
@@ -710,6 +712,7 @@ func (m *Memstore) GetAccessRequest(_ context.Context, id int64) (*store.AccessR
 	}
 	ar.DecidedAt = cloneTimePtr(ar.DecidedAt)
 	ar.ConsumedAt = cloneTimePtr(ar.ConsumedAt)
+	ar.NextRunAt = cloneTimePtr(ar.NextRunAt)
 	return &ar, nil
 }
 
@@ -723,6 +726,7 @@ func (m *Memstore) ListAccessRequests(_ context.Context, status string, limit in
 		if status == "" || ar.Status == status {
 			ar.DecidedAt = cloneTimePtr(ar.DecidedAt)
 			ar.ConsumedAt = cloneTimePtr(ar.ConsumedAt)
+			ar.NextRunAt = cloneTimePtr(ar.NextRunAt)
 			out = append(out, ar)
 		}
 	}
@@ -743,6 +747,55 @@ func (m *Memstore) DecideAccessRequest(_ context.Context, id int64, status, appr
 	ar.Approver = approver
 	at := decidedAt.UTC()
 	ar.DecidedAt = &at
+	m.accessReq[id] = ar
+	return nil
+}
+
+// ListDueAccessRequests returns the approved recurring anchors whose next run
+// has arrived, oldest first (Phase 120).
+func (m *Memstore) ListDueAccessRequests(_ context.Context, now time.Time) ([]store.AccessRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []store.AccessRequest
+	for _, ar := range m.accessReq {
+		if ar.Status != "approved" || ar.RecurDays <= 0 || ar.NextRunAt == nil || ar.NextRunAt.After(now) {
+			continue
+		}
+		out = append(out, ar)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].NextRunAt.Equal(*out[j].NextRunAt) {
+			return out[i].NextRunAt.Before(*out[j].NextRunAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
+// SetAccessRequestNextRun moves an anchor's next occurrence.
+func (m *Memstore) SetAccessRequestNextRun(_ context.Context, id int64, next time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ar, ok := m.accessReq[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	t := next.UTC()
+	ar.NextRunAt = &t
+	m.accessReq[id] = ar
+	return nil
+}
+
+// StopAccessRequestRecurrence ends a recurring anchor's series.
+func (m *Memstore) StopAccessRequestRecurrence(_ context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ar, ok := m.accessReq[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	ar.RecurDays = 0
+	ar.NextRunAt = nil
 	m.accessReq[id] = ar
 	return nil
 }
@@ -925,6 +978,67 @@ func (m *Memstore) ListCheckouts(_ context.Context, activeOnly bool, now time.Ti
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return window(out, func(co store.Checkout) int64 { return co.ID }, limit, afterID), nil
+}
+
+// GetCheckout returns one checkout by ID, or ErrNotFound.
+func (m *Memstore) GetCheckout(_ context.Context, id int64) (*store.Checkout, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	co, ok := m.checkouts[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	co.ReturnedAt = cloneTimePtr(co.ReturnedAt)
+	return &co, nil
+}
+
+// ExtendCheckout pushes an active (unreturned, unexpired) checkout's expiry to
+// newExpiresAt; ErrNotFound if missing, already returned, or already expired.
+func (m *Memstore) ExtendCheckout(_ context.Context, id int64, newExpiresAt, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	co, ok := m.checkouts[id]
+	if !ok || co.ReturnedAt != nil || !now.Before(co.ExpiresAt) {
+		return store.ErrNotFound
+	}
+	co.ExpiresAt = newExpiresAt.UTC()
+	m.checkouts[id] = co
+	return nil
+}
+
+// pwHistoryEntry is one rotation's secret hash, in the order it was recorded.
+type pwHistoryEntry struct {
+	Hash string
+	At   time.Time
+}
+
+// RecordPasswordHistory appends secretHash to credentialID's history and
+// prunes anything beyond the most recent keep entries.
+func (m *Memstore) RecordPasswordHistory(_ context.Context, credentialID int64, secretHash string, at time.Time, keep int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	h := append(m.pwHistory[credentialID], pwHistoryEntry{Hash: secretHash, At: at.UTC()})
+	if keep < 0 {
+		keep = 0
+	}
+	if len(h) > keep {
+		h = h[len(h)-keep:]
+	}
+	m.pwHistory[credentialID] = h
+	return nil
+}
+
+// RecentPasswordHashes returns up to limit of a credential's most recent
+// rotation hashes, newest first.
+func (m *Memstore) RecentPasswordHashes(_ context.Context, credentialID int64, limit int) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	h := m.pwHistory[credentialID]
+	out := make([]string, 0, len(h))
+	for i := len(h) - 1; i >= 0 && (limit <= 0 || len(out) < limit); i-- {
+		out = append(out, h[i].Hash)
+	}
+	return out, nil
 }
 
 // CreateCredential inserts a credential for an existing target, assigning its ID

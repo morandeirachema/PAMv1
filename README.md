@@ -37,7 +37,7 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
-runs 0–119 and **every phase has shipped**, and the current
+runs 0–120 and **every phase has shipped**, and the current
 tagged, cosign-signed release is
 **[v0.23.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.23.0)** (2026-08-13;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
@@ -147,7 +147,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–119, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–120, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 
@@ -446,7 +446,7 @@ items only; each notes what closing it would take.
 | ~~**CIDR/network-based connect authorization**~~ **✅ shipped (Phase 118)** | Gate a connection by the operator's source network | A per-user, comma-separated CIDR allowlist (`store.User.IPAllowlist`) enforced at both the REST `authz` middleware and the session-proxy `admit()` gate (SSH/PostgreSQL/SQL Server), break-glass exempt. Empty is unrestricted; directory/OIDC principals are out of v1 scope (no backing `store.User` row) |
 | ~~**Live session sharing**~~ **✅ shipped (Phase 116)** | A host in a live session generates an expiring link letting a second party join, watch and optionally control it, fully audited (a genuine Wallix differentiator) | Four-eyes request→approve `SessionShareInvite`: an internal invite redeems over SSH as `join:<token>`; an external/vendor invite is emailed with a QR code, single-use, 15-minute TTL, redeemed through a new unauthenticated guest page — never the SSH path. Multi-parallel view-control joiners; a live joined-parties roster with kick |
 | **Suspend a live session** | Freeze operator input without ending the session, as a rung below killing it | `internal/session`'s kill bus only terminates |
-| Recurring / configurable-complexity policy | Repeating access windows (vs. one-shot date ranges); password history/reuse prevention (vs. a fixed generator) | Smaller, real, lower priority than the above |
+| ~~**Recurring / configurable-complexity policy**~~ **✅ shipped (Phase 120)** | Repeating access windows (vs. one-shot date ranges); password history/reuse prevention (vs. a fixed generator) | An approved access request with `recur_days` set auto-files a fresh (still-approval-needed) successor every N days on its own worker, reusing the certification-campaign scheduler's anchor shape; `rotate.PasswordPolicy` makes generated-password length and per-class minimums configurable, and `PAM_PASSWORD_HISTORY_COUNT` refuses to reissue one of a credential's last N rotated secrets (SHA-256 tracked, never the secret). Also closed the noted checkout-lease-extension gap: `POST /api/credentials/{id}/checkout/extend`, capped at a configured total-duration ceiling |
 
 A general-purpose X.509 certificate lifecycle manager (CyberArk's Venafi-driven
 "machine identity" push) is a bigger question than a gap: pamv1 already runs a

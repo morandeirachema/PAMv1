@@ -145,10 +145,11 @@ func (s *Server) invalidateExpiredCheckoutFor(ctx context.Context, credentialID 
 // runs each periodic job per tick (leader election). Distinct from the migration
 // ("pam_mig") and broker-chain ("pam_br") lock keys in pgstore.
 const (
-	lifecycleLockKey = int64(0x70616d5f6c6663) // "pam_lfc"
-	analyticsLockKey = int64(0x70616d5f616e61) // "pam_ana"
-	retentionLockKey = int64(0x70616d5f726574) // "pam_ret"
-	campaignLockKey  = int64(0x70616d5f636d70) // "pam_cmp"
+	lifecycleLockKey     = int64(0x70616d5f6c6663) // "pam_lfc"
+	analyticsLockKey     = int64(0x70616d5f616e61) // "pam_ana"
+	retentionLockKey     = int64(0x70616d5f726574) // "pam_ret"
+	campaignLockKey      = int64(0x70616d5f636d70) // "pam_cmp"
+	accessRequestLockKey = int64(0x70616d5f617271) // "pam_arq"
 )
 
 // RunLifecycleWorker runs the credential-lifecycle worker until ctx is cancelled:
@@ -223,6 +224,43 @@ func (s *Server) RunCampaignScheduler(ctx context.Context) {
 	}
 }
 
+// RunAccessRequestScheduler auto-files the next request in every recurring
+// access-request series whose turn has come, until ctx is cancelled (Phase
+// 120). A separate worker from RunCampaignScheduler, on its own lock key,
+// because the two are different domains that happen to share a shape — not
+// two jobs of the same feature the way campaign-spawn and campaign-remind
+// are.
+//
+// Under the leader lock, so N replicas do not each file the same request. The
+// anchor's schedule is advanced AFTER the spawn succeeds, matching the
+// campaign scheduler's own reasoning: a crash between the two repeats the
+// spawn next tick (a duplicate, recoverable) rather than silently skipping a
+// period (not recoverable, and invisible until someone notices access never
+// renewed).
+func (s *Server) RunAccessRequestScheduler(ctx context.Context) {
+	const interval = time.Hour
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			ran, err := s.store.WithLeaderLock(systemContext(ctx), accessRequestLockKey, func(c context.Context) error {
+				if n := s.spawnDueAccessRequests(c, time.Now()); n > 0 {
+					s.log.Info("recurring access requests filed", "count", n)
+				}
+				return nil
+			})
+			if err != nil {
+				s.log.Warn("access-request scheduler lock unavailable; skipping pass", "err", err)
+			} else if !ran {
+				s.log.Debug("access-request scheduler pass skipped (another replica is leader)")
+			}
+		}
+	}
+}
+
 // spawnDueCampaigns opens one successor per due anchor and returns how many were
 // opened. One anchor's failure does not stop the others: a broken series must
 // not take the rest of the schedule down with it.
@@ -276,6 +314,52 @@ func (s *Server) spawnDueCampaigns(ctx context.Context, now time.Time) int {
 		opened++
 	}
 	return opened
+}
+
+// spawnDueAccessRequests auto-files one fresh, independently-approved
+// successor per due recurring anchor and returns how many were filed (Phase
+// 120) — the AccessRequest analogue of spawnDueCampaigns, same claim-before-
+// create ordering and same "one anchor's failure does not stop the others."
+// The child is PENDING, never pre-approved: recurrence automates the
+// paperwork, not the four-eyes decision, so recurring access can never
+// quietly become standing access nobody re-reviews.
+func (s *Server) spawnDueAccessRequests(ctx context.Context, now time.Time) int {
+	due, err := s.store.ListDueAccessRequests(ctx, now)
+	if err != nil {
+		s.log.Warn("access-request scheduler: reading due requests failed", "err", err)
+		return 0
+	}
+	filed := 0
+	for _, anchor := range due {
+		next := now.UTC().AddDate(0, 0, anchor.RecurDays)
+		// Claim the period BEFORE creating anything, for the same reason
+		// spawnDueCampaigns does: every step below writes a row that cannot be
+		// un-written, so claiming last would let a failure after the insert
+		// file ANOTHER request every tick forever.
+		if err := s.store.SetAccessRequestNextRun(ctx, anchor.ID, next); err != nil {
+			s.log.Warn("access-request scheduler: claiming the period failed; retrying next pass", "anchor", anchor.ID, "err", err)
+			continue
+		}
+		child := store.AccessRequest{
+			Requester: anchor.Requester, TargetID: anchor.TargetID, Reason: anchor.Reason,
+			Status: "pending", Ticket: anchor.Ticket, RequiredApprovals: anchor.RequiredApprovals,
+			ExpiresAt: next, OneTime: anchor.OneTime,
+			// Children carry no schedule (RecurDays/NextRunAt left zero/nil):
+			// the anchor is the only row that spawns, so a series can never fork.
+		}
+		if err := s.store.CreateAccessRequest(ctx, &child); err != nil {
+			// The period is already claimed, so this one is skipped rather than
+			// retried — a missed period is bounded and loud, an unbounded run of
+			// duplicates is neither.
+			s.log.Error("access-request scheduler: filing the next request failed; THIS PERIOD IS SKIPPED",
+				"anchor", anchor.ID, "period_ending", next, "err", err)
+			continue
+		}
+		s.auditAs(ctx, anchor.Requester, "access.request_recurred",
+			fmt.Sprintf("request:%d target:%d recurring_from:%d", child.ID, child.TargetID, anchor.ID))
+		filed++
+	}
+	return filed
 }
 
 // campaignReminderEvery is how often a campaign is nudged again once its first

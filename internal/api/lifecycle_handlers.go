@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/rotate"
@@ -60,6 +61,37 @@ func (s *Server) rotateCredentialHandler(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// maxPasswordGenerationAttempts bounds generateUnusedPassword's retry loop.
+// Never realistically exhausted — a policy's random password space dwarfs any
+// configured history depth — but an unbounded retry loop is a worse failure
+// mode than a clear error naming the actual (implausible) cause.
+const maxPasswordGenerationAttempts = 10
+
+// generateUnusedPassword draws a candidate from s.passwordPolicy and, when
+// PAM_PASSWORD_HISTORY_COUNT is set, rejects one that collides with the
+// credential's recent rotation hashes (Phase 120) — retrying rather than
+// reusing, since a policy that promises no-reuse must not silently break that
+// promise the one time chance produces a repeat.
+func (s *Server) generateUnusedPassword(ctx context.Context, credentialID int64) (string, error) {
+	for attempt := 0; attempt < maxPasswordGenerationAttempts; attempt++ {
+		candidate, err := rotate.GeneratePassword(s.passwordPolicy)
+		if err != nil {
+			return "", fmt.Errorf("password generation failed")
+		}
+		if s.passwordHistoryCount <= 0 {
+			return candidate, nil
+		}
+		recent, err := s.store.RecentPasswordHashes(ctx, credentialID, s.passwordHistoryCount)
+		if err != nil {
+			return "", fmt.Errorf("password history lookup failed: %w", err)
+		}
+		if !slices.Contains(recent, hashHex(candidate)) {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("could not generate a password outside the reuse history after %d attempts", maxPasswordGenerationAttempts)
+}
+
 // rotateCredential performs the rotation and vault update. Shared by the manual
 // endpoint and reconciliation remediation.
 func (s *Server) rotateCredential(ctx context.Context, cred *store.Credential, target *store.Target) (time.Time, error) {
@@ -82,12 +114,21 @@ func (s *Server) rotateCredential(ctx context.Context, cred *store.Credential, t
 	var newSecret string
 	switch cred.SecretType {
 	case "password":
-		newSecret, err = rotate.GeneratePassword(24)
+		newSecret, err = s.generateUnusedPassword(ctx, cred.ID)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("password generation failed")
+			return time.Time{}, err
 		}
 		if err := rotator.Rotate(ctx, *target, cred.Username, oldSecret, newSecret); err != nil {
 			return time.Time{}, err
+		}
+		if s.passwordHistoryCount > 0 {
+			// Best-effort: the target's password is already changed and the vault
+			// is about to be updated below, so a history-write failure must not
+			// fail an otherwise-successful rotation. It only degrades the NEXT
+			// rotation's reuse check, not this one's correctness.
+			if herr := s.store.RecordPasswordHistory(ctx, cred.ID, hashHex(newSecret), time.Now(), s.passwordHistoryCount); herr != nil {
+				s.log.Warn("recording password history failed", "credential", cred.ID, "err", herr)
+			}
 		}
 	case "ssh_key":
 		kr, ok := rotator.(rotate.KeyRotator)
@@ -371,6 +412,65 @@ func (s *Server) checkoutCredential(w http.ResponseWriter, r *http.Request) {
 		"username": cred.Username, "secret": secret, "expires_at": co.ExpiresAt,
 		"note": "Returned automatically on check-in, which rotates this secret.",
 	})
+}
+
+// checkoutExtendIn is POST /api/credentials/{id}/checkout/extend's body: how
+// many more minutes the caller wants the active lease to run.
+type checkoutExtendIn struct {
+	Minutes int `json:"minutes"`
+}
+
+// extendCheckout pushes an active checkout's expiry out by Minutes, capped so
+// the lease's TOTAL duration (from CheckedOutAt) never exceeds
+// PAM_CHECKOUT_MAX_EXTEND_MIN (Phase 120) — extension prolongs a lease
+// already granted, it does not re-grant one, so only the holder (or an admin)
+// may call it, matching checkinCredential's own ownership rule exactly.
+func (s *Server) extendCheckout(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	cred, _, ok := s.loadCredentialTarget(w, r, id)
+	if !ok {
+		return
+	}
+	now := time.Now()
+	co, err := s.store.GetActiveCheckout(r.Context(), cred.ID, now)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusConflict, "credential is not checked out")
+			return
+		}
+		storeError(w, err)
+		return
+	}
+	p := principalFrom(r.Context())
+	if co.Holder != actorFrom(r.Context()) && !p.IsAdmin() {
+		s.audit(r.Context(), "credential.checkout_extend_denied", fmt.Sprintf("checkout:%d holder:%s reason:not-holder", co.ID, co.Holder))
+		writeError(w, http.StatusForbidden, "only the checkout holder may extend this lease")
+		return
+	}
+	var in checkoutExtendIn
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if in.Minutes <= 0 {
+		writeError(w, http.StatusUnprocessableEntity, "minutes must be positive")
+		return
+	}
+	newExpiresAt := now.Add(time.Duration(in.Minutes) * time.Minute).UTC()
+	if total := newExpiresAt.Sub(co.CheckedOutAt); total > s.checkoutMaxExtend {
+		writeError(w, http.StatusUnprocessableEntity,
+			fmt.Sprintf("extension would run the checkout %s from check-out; the maximum is %s", total.Round(time.Minute), s.checkoutMaxExtend))
+		return
+	}
+	if err := s.store.ExtendCheckout(r.Context(), co.ID, newExpiresAt, now); err != nil {
+		storeError(w, err)
+		return
+	}
+	s.audit(r.Context(), "credential.checkout_extended",
+		fmt.Sprintf("checkout:%d credential:%d until:%s", co.ID, cred.ID, newExpiresAt.Format(time.RFC3339)))
+	writeJSON(w, http.StatusOK, map[string]any{"checkout_id": co.ID, "credential_id": cred.ID, "expires_at": newExpiresAt})
 }
 
 // checkinCredential ends a checkout and rotates the credential so the revealed

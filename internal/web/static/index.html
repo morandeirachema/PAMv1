@@ -1110,11 +1110,11 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         const tn = Object.fromEntries(targets.map((t) => [t.id, t.name]));
         term.innerHTML = `${head("PAMWRKCO", "Credential Check-out / Check-in")}
 Active exclusive leases. Type options, press Enter.
-  <span class="cyan">4=Check in (rotates the secret)</span>
+  <span class="cyan">4=Check in (rotates the secret)   5=Extend (by one more lease period, up to the configured maximum)</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>Cred</th><th>Target</th><th>Holder</th><th>Reason</th><th>Expires</th></tr>
-${checkouts.map((c) => `<tr><td>${opt(c.id)}</td><td>${esc(c.credential_id)}</td><td>${pad(tn[c.target_id] || c.target_id, 16)}</td><td>${pad(c.holder, 12)}</td><td>${pad(c.reason || "-", 16)}</td><td class="amber">${fmtTime(c.expires_at)}</td></tr>`).join("")}
+${checkouts.map((c) => `<tr><td>${opt(c.id)}</td><td>${esc(c.credential_id)}</td><td>${cell(tn[c.target_id] || c.target_id, 16)}</td><td>${cell(c.holder, 12)}</td><td>${cell(c.reason || "-", 16)}</td><td class="amber">${fmtTime(c.expires_at)}</td></tr>`).join("")}
 </table>${checkouts.length ? "" : `<div class="cyan indent">(Nothing checked out. Check out a credential from menu 2, option 6.)</div>`}
 <input type="submit" hidden></form>
 ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
@@ -1124,6 +1124,11 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
             for (const c of checkouts) {
               const o = optVal(ev.target, c.id);
               if (o === "4") { const r = await api("POST", `/api/credentials/${c.credential_id}/checkin`, {}); say(`CHECKED IN — ${r.rotated ? "secret rotated." : "NOT rotated: " + (r.note || "")}`); }
+              else if (o === "5") {
+                const mins = Math.max(1, Math.round((new Date(c.expires_at) - new Date(c.checked_out_at)) / 60000));
+                const r = await api("POST", `/api/credentials/${c.credential_id}/checkout/extend`, { minutes: mins });
+                say(`CHECKOUT ${c.id} EXTENDED — now expires ${r.expires_at}.`);
+              }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
             await openCheckouts();
@@ -1854,13 +1859,14 @@ ${fkeys("F3=Exit   F5=Refresh   F9=Download JSON   F12=Cancel")}`;
         const tn = Object.fromEntries(targets.map((t) => [t.id, t.name]));
         term.innerHTML = `${head("PAMWRKREQ", "Work with Access Requests")}
 ${isApprover ? `Pending 4-eyes requests. Type options, press Enter.
-  <span class="cyan">5=Approve   6=Deny</span>   <span class="cyan">Apprv = approvals so far / required   Use: 1x = single-use, used = consumed</span>
+  <span class="cyan">5=Approve   6=Deny   7=Stop recur</span>   <span class="cyan">Apprv = approvals so far / required   Use: 1x = single-use, used = consumed</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Requester</th><th>Target</th><th>Reason</th><th>Ticket</th><th>Status</th><th>Apprv</th><th>Use</th><th>Active from</th><th>Expires</th></tr>
+<tr><th>Opt</th><th>ID</th><th>Requester</th><th>Target</th><th>Reason</th><th>Ticket</th><th>Status</th><th>Apprv</th><th>Use</th><th>Recur</th><th>Active from</th><th>Expires</th></tr>
 ${requests.map((r) => { const n = r.approved_by ? r.approved_by.split(",").filter(Boolean).length : 0;
   const use = r.one_time ? (r.consumed_at ? `<span class="cyan">used</span>` : `<span class="amber">1x</span>`) : "-";
-  return `<tr><td>${opt(r.id)}</td><td>${esc(r.id)}</td><td>${pad(r.requester, 10)}</td><td>${pad(tn[r.target_id] || r.target_id, 12)}</td><td>${pad(r.reason || "-", 12)}</td><td>${pad(r.ticket || "-", 10)}</td><td class="${r.status === "pending" ? "amber" : ""}">${esc(r.status)}</td><td>${n}/${esc(r.required_approvals || 1)}</td><td>${use}</td><td class="cyan">${fmtTime(r.not_before)}</td><td class="cyan">${fmtTime(r.expires_at)}</td></tr>`; }).join("")}
+  const recur = r.recur_days ? `<span class="cyan">${esc(r.recur_days)}d</span>` : "-";
+  return `<tr><td>${opt(r.id)}</td><td>${esc(r.id)}</td><td>${cell(r.requester, 10)}</td><td>${cell(tn[r.target_id] || r.target_id, 12)}</td><td>${cell(r.reason || "-", 12)}</td><td>${cell(r.ticket || "-", 10)}</td><td class="${r.status === "pending" ? "amber" : ""}">${esc(r.status)}</td><td>${n}/${esc(r.required_approvals || 1)}</td><td>${use}</td><td>${recur}</td><td class="cyan">${fmtTime(r.not_before)}</td><td class="cyan">${fmtTime(r.expires_at)}</td></tr>`; }).join("")}
 </table>${requests.length ? "" : `<div class="cyan indent">(No pending requests.)</div>`}
 <input type="submit" hidden></form>` : `<div class="cyan">You can file an access request for a target that requires approval.</div>`}
 ${fkeys(`F3=Exit   F5=Refresh   F6=File request   F12=Cancel`)}`;
@@ -1872,6 +1878,7 @@ ${fkeys(`F3=Exit   F5=Refresh   F6=File request   F12=Cancel`)}`;
                 const o = optVal(ev.target, r.id);
                 if (o === "5") { await api("POST", `/api/access-requests/${r.id}/approve`, {}); say(`REQUEST ${r.id} APPROVED.`); }
                 else if (o === "6") { await api("POST", `/api/access-requests/${r.id}/deny`, {}); say(`REQUEST ${r.id} DENIED.`); }
+                else if (o === "7") { await api("POST", `/api/access-requests/${r.id}/stop-recurrence`, {}); say(`REQUEST ${r.id} RECURRENCE STOPPED.`); }
                 else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
               }
               await openRequests();
@@ -1893,6 +1900,7 @@ Request approval to connect to a target (4-eyes / maintenance window).
 <label>Active from . . . . :  <input name="not_before" type="datetime-local">   <span class="cyan">optional — pre-approve a future maintenance window</span></label>
 <label>Active until  . . . :  <input name="not_after" type="datetime-local">   <span class="cyan">optional — end of the window (else the policy TTL)</span></label>
 <label>One-time  . . . . . :  <input name="one_time" type="checkbox">   <span class="cyan">single-use — the first connection consumes the approval</span></label>
+<label>Recur every . . . . :  <input name="recur_days" type="number" min="0" max="366" size="4"> days   <span class="cyan">blank/0 = one-off; else auto-files a fresh (still-approval-needed) request every N days once this one is approved</span></label>
 <input type="submit" hidden>
 </form>
 ${fkeys("F3=Exit   F12=Cancel")}`;
@@ -1905,6 +1913,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           if (f.not_before) body.not_before = new Date(f.not_before).toISOString();
           if (f.not_after) body.not_after = new Date(f.not_after).toISOString();
           if (f.one_time) body.one_time = true;
+          if (f.recur_days) body.recur_days = Number(f.recur_days);
           try { await api("POST", "/api/access-requests", body); say("ACCESS REQUEST FILED — awaiting approval."); await openRequests(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
