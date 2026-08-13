@@ -11,6 +11,10 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-08-13
+
+A minor: one new capability. Schema change (migration `0033`).
+
 ### Added
 
 - **CIDR/network-based connect & login authorization.** A per-user,
