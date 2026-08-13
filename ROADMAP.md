@@ -2376,6 +2376,126 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 116 — Live session-sharing ("Session Invite") ✅
+
+Wallix's strongest, most-differentiated finding from a 2026-08-13
+Wallix-weighted competitive-research pass (CyberArk secondary): a live
+session can be shared with a second party in **view-only** or
+**view-control** mode — MSSP/vendor-assist/training use cases Wallix markets
+explicitly. CyberArk has only an adjacent auditor-shadowing concept; this is
+a genuine Wallix-led capability. Mid-design, the user redirected the
+external/vendor path from "pre-provisioned pamv1 user only" to **email + QR,
+a hard 15-minute redemption window, mandatory fail-closed audit, and a
+four-eyes request→approve gate** — all four are locked product decisions
+reflected below, not tunable defaults.
+
+- [x] **Input mux (`internal/session/share.go`, new `ShareRegistry`)**: the
+  primary operator's own keystrokes and every attached `view_control`
+  joiner's feed one small buffered channel per session; `insp.pump` reads
+  from it instead of the raw client channel. **Multi-parallel `view_control`
+  is supported by construction** — the mux is a plain Go channel, which
+  accepts any number of concurrent senders. `view_only` joiners never touch
+  the mux, only `session.Hub.Subscribe` output. `Close` wakes every blocked
+  writer/reader via a `done` channel (never closing the mux itself, avoiding
+  a send-on-closed-channel race).
+- [x] **Two invite modes, one four-eyes workflow.** New
+  `store.SessionShareInvite` + `ShareInviteStore` (6 methods; store surface
+  149 → **156**, methodset test updated): `POST /api/sessions/{id}/share`
+  files a request (`CapConnect`); a *different* principal decides it (`POST
+  /api/share-invites/{id}/{approve,deny}`, `CapApprove`) — matching
+  `AccessRequest`/`VendorGrant`'s established requester≠approver convention.
+  **Internal** (named pamv1 user): approval mints a single-use token,
+  redeemed over SSH as `join:<token>` — the entire SSH username — checked in
+  `authenticate()` before normal target parsing and dispatched to
+  `handleJoinConn`, deliberately **before** `admit()`: a join attaches to a
+  session whose own admission already ran, so reusing admit would be a
+  category error. The raw token is returned **once** in the approve response
+  (same handling `POST /api/users` gives a new bearer token) — console: a
+  dedicated `shareinvitetoken` screen, the `usercreated` pattern. **External/
+  vendor** (per the user's redirect): approval instead emails a link +
+  embedded QR (`skip2/go-qrcode`, a new dependency) via `alert.SendDirect`
+  (factored out of `internal/alert/channels.go`, reusing
+  `PAM_ALERT_EMAIL_*` — no second SMTP config surface) and never returns the
+  token via the API. `PAM_SESSION_SHARE_INVITE_TTL_SEC=900` (**15 minutes,
+  locked** — not a default to casually raise). `revoke` needs
+  `CapManageTargets`, mirroring `revokeVendorGrant`.
+- [x] **Guest redemption, unauthenticated until a token is presented.** A new
+  guest-viewer page (`internal/web/static/share.html`, `web.Share`, the same
+  per-request-nonce CSP convention as the portal, minus the RDP allowances it
+  has no use for) opens from the emailed link/QR. `POST
+  /api/share/redeem/{token}` atomically consumes the invite
+  (`ConsumeSessionShareInviteByTokenHash`), refuses anything but
+  `Kind=="external"` (the SSH `join:` path refuses the mirror case,
+  `Kind!="internal"` — an insider who somehow learned a vendor's token cannot
+  redeem it under their own pamv1 credential instead of the intended
+  email-anchored flow), and — **fail-closed** (`mustAuditAs`,
+  `session.share_joined`, actor `guest:<email>`) — mints a *separate* guest
+  key (`ShareRegistry.IssueGuestKey`, `PAM_SESSION_SHARE_GUEST_TTL_MIN=240`)
+  the browser then uses repeatedly: `GET /api/share/stream?key=` (plain
+  `EventSource` — guest auth is a query param, unlike the portal's own
+  `fetch`-based workaround) and, `view_control` only, `POST
+  /api/share/input?key=` writes the raw body into the session's input mux.
+  Audit detail captures the invited email, source IP, user-agent, mode and
+  session — the full connection trace the user's "we need trace of that
+  connection" required.
+- [x] **Roster + kick.** `GET /api/sessions/{id}/share/roster`
+  (`CapReadAudit`) lists everyone attached; `POST
+  /api/sessions/{id}/share/kick` (`CapManageTargets`, `{join_id}`) closes the
+  channel `Track` handed that join at attach time — the SAME mechanism for
+  an SSH `join:` connection and a web guest's SSE stream, so kick actually
+  disconnects rather than merely deleting a roster row. Kicking a web guest
+  also revokes its guest key (join id and guest key are the same string),
+  closing the race where a request already in flight outlives the kick. New
+  audit action `session.share_kicked` — not in the original design pass,
+  added while building the console, which needed a real way to enforce a
+  kick, not just record intent.
+- [x] **Air-gap leak, found and closed during the doc-currency pass.**
+  `buildAlerter` already forces the security-alert channel to a no-op under
+  `PAM_OT_AIRGAP` — but `alert.SendDirect` (the new external-invite email
+  path) dials SMTP directly and has no air-gap awareness of its own, so an
+  air-gapped deployment with `PAM_ALERT_EMAIL_*` configured could still leak
+  an invite email out of the enclave, silently defeating the one guarantee
+  that flag exists to make. `shareEmailEnabled` now checks `!AirGap` first,
+  refusing an external invite at request time (503, same as unconfigured
+  SMTP) rather than only failing to send after approval.
+- [x] **Console** (`internal/web/static/index.html`): the live-watch pane
+  (*Work with Active Sessions* → option 5) gains a joined-parties roster
+  with a kick option; F6 opens a small create-invite form (mode/kind/
+  invitee-or-email); F7 opens the session's invite list (`stepups()`'s
+  list-with-option-column shape: 5=Approve, 6=Deny, 7=Revoke). Added to
+  `console_check.js`'s row-boundedness fixture (6 screens now).
+- [x] **New audit actions** (8, one more than originally planned):
+  `session.share_requested/approved/denied/revoked/joined/join_denied/ended/kicked`.
+  `session.share_approved` and `session.share_joined` are the two
+  fail-closed ones — an approval that is about to grant live access, and a
+  redemption that uses it, are exactly the class of event
+  audited-before-disclosure exists for.
+- [x] **Tests**: `internal/session/share_test.go` (mux concurrency under
+  `-race`, close-unblocks-writers, guest-key issue/resolve/expire/purge,
+  kick disconnect + guest-key revocation, nil-registry safety — 13 tests);
+  `internal/proxy/sessionshare_test.go` (JIT-style end-to-end against a real
+  in-process echo upstream: view_control keystrokes reach the target and
+  echo back through the primary's own stdout, view_only sees the primary's
+  output, wrong-invitee/single-use/wrong-kind refusals, kick actually ends
+  the joiner's SSH session — 6 tests); `internal/api/sessionshare_test.go`
+  (four-eyes, deny-is-final, revoke gate, external-invite-needs-email-config,
+  a full external flow against a real local fake SMTP server proving the
+  email actually sends with the token embedded, wrong-kind refusal, roster +
+  kick ending a live SSE stream, view-only input refusal, the web guest path
+  ringing the same primary-operator join/leave notice the SSH path uses,
+  `PAM_OT_AIRGAP` refusing an external invite even with SMTP fully configured
+  — 10 tests);
+  `internal/alert/channels_test.go` (MIME construction, header-injection
+  defense, a real-wire `SendDirect` round trip against a fake SMTP listener —
+  3 new tests). All green under `-race`; staticcheck/gosec/govulncheck clean;
+  `archgen` confirms 131 → **142** routes, no undocumented drift.
+
+**V1 scope, explicitly bounded**: SSH only (WinRM/PostgreSQL/RDP/VNC each
+have a structurally different I/O shape). Cross-replica view-control
+keystroke relay deferred, per-joiner (a same-replica-only refusal is honest,
+mirroring `streamSession`'s own wording); cross-replica force-kick is
+best-effort, mirroring session-kill's own pre-Phase-34 shape.
+
 ## Phase 115 — v0.21.0 ✅
 
 Releases Phase 114 (a live NIS2 compliance report) — a genuine new

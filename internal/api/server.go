@@ -154,6 +154,28 @@ type Options struct {
 	// Live is the live-session output hub (shared with the proxy) that backs the
 	// GET /api/sessions/{id}/stream monitoring endpoint (Phase 16).
 	Live *session.Hub
+	// Shares is the live-session input mux (shared with the SSH proxy) backing
+	// session-sharing (Phase 116): nil disables the feature's HTTP surface, same
+	// convention as Live/Sessions being nil.
+	Shares *session.ShareRegistry
+	// ShareInviteTTL is how long an approved session-share invite stays
+	// redeemable (Phase 116). Locked at 15 minutes by product decision — see
+	// config.Config.ShareInviteTTL's doc comment.
+	ShareInviteTTL time.Duration
+	// ShareGuestSessionTTL bounds how long a web-redeemed external invite's
+	// guest key stays valid once redeemed (Phase 116) — separate from, and
+	// much longer than, ShareInviteTTL.
+	ShareGuestSessionTTL time.Duration
+	// ShareSMTP{Addr,From,User,Pass} are the SMTP settings session-share
+	// invite emails send through (Phase 116) — reused verbatim from
+	// PAM_ALERT_EMAIL_* by main.go, so enabling security-alert email also
+	// enables external session-share invites with no second config surface.
+	// Empty ShareSMTPAddr/ShareSMTPFrom disables external (email+QR) invites;
+	// internal (named-pamv1-user) invites are unaffected either way.
+	ShareSMTPAddr string
+	ShareSMTPFrom string
+	ShareSMTPUser string
+	ShareSMTPPass string
 	// Cluster (optional) is the cross-replica live-monitoring coordinator
 	// (Phase 55): GET /api/sessions lists cluster-wide and the stream endpoint
 	// can watch a session hosted on another replica. nil = replica-local, the
@@ -321,6 +343,13 @@ type Server struct {
 	trustedProxyHops   int
 	sessions           *session.Registry
 	live               *session.Hub
+	shares             *session.ShareRegistry
+	shareInviteTTL     time.Duration
+	shareGuestTTL      time.Duration
+	shareSMTPAddr      string
+	shareSMTPFrom      string
+	shareSMTPUser      string
+	shareSMTPPass      string
 	cluster            *session.Cluster
 	stepup             *session.StepUp
 	bgThreshold        int
@@ -535,6 +564,13 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		trustedProxyHops:    opts.TrustedProxyHops,
 		sessions:            opts.Sessions,
 		live:                opts.Live,
+		shares:              opts.Shares,
+		shareInviteTTL:      opts.ShareInviteTTL,
+		shareGuestTTL:       opts.ShareGuestSessionTTL,
+		shareSMTPAddr:       opts.ShareSMTPAddr,
+		shareSMTPFrom:       opts.ShareSMTPFrom,
+		shareSMTPUser:       opts.ShareSMTPUser,
+		shareSMTPPass:       opts.ShareSMTPPass,
 		cluster:             opts.Cluster,
 		stepup:              opts.StepUp,
 		bgThreshold:         opts.BreakGlassThreshold,
@@ -699,6 +735,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /metrics", s.metricsHandler) // Prometheus exposition
 	s.mux.HandleFunc("GET /{$}", web.Index)
 	s.mux.HandleFunc("GET /static/guacamole-common.min.js", web.GuacamoleJS) // vendored RDP viewer client
+	s.mux.HandleFunc("GET /share.html", web.Share)                           // Phase 116 guest viewer, no pamv1 login
 
 	// Authentication endpoints are rate-limited per client IP.
 	s.mux.Handle("POST /api/login", s.rateLimit(http.HandlerFunc(s.login))) // public: this IS authentication
@@ -797,6 +834,35 @@ func (s *Server) routes() {
 	// grant it (Phase 39).
 	s.mux.Handle("POST /api/sessions/{id}/stepup", s.authz(auth.CapApprove, s.decideStepUp)) // Phase 30
 	s.mux.Handle("DELETE /api/sessions/{id}", s.authz(auth.CapManageTargets, s.killSession))
+
+	// Live session-sharing / "Session Invite" (Phase 116): four-eyes request →
+	// approve, same shape as access-requests above. Filing a request needs
+	// only CapConnect (the requester is inviting someone into a session they
+	// are themselves entitled to hold); reading a session's invite roster
+	// reuses CapReadAudit, the same gate the live stream itself uses (an
+	// approver's CapApprove already implies CapReadAudit — see auth.go's role
+	// matrix). Deciding and revoking mirror vendor-grants' split exactly:
+	// approve/deny is an approval decision (CapApprove), revoke is target/session
+	// administration (CapManageTargets).
+	s.mux.Handle("POST /api/sessions/{id}/share", s.authz(auth.CapConnect, s.createShareInvite))
+	s.mux.Handle("GET /api/sessions/{id}/share", s.authz(auth.CapReadAudit, s.listShareInvites))
+	s.mux.Handle("POST /api/share-invites/{id}/approve", s.authz(auth.CapApprove, s.approveShareInvite))
+	s.mux.Handle("POST /api/share-invites/{id}/deny", s.authz(auth.CapApprove, s.denyShareInvite))
+	s.mux.Handle("POST /api/share-invites/{id}/revoke", s.authz(auth.CapManageTargets, s.revokeShareInvite))
+	// Joined-parties roster + kick (Phase 116 console): CapReadAudit for the
+	// read, matching the live stream itself; CapManageTargets for kick,
+	// matching DELETE /api/sessions/{id}'s own gate — ending someone's live
+	// access is session/target administration, the same class of action.
+	s.mux.Handle("GET /api/sessions/{id}/share/roster", s.authz(auth.CapReadAudit, s.rosterShareInvite))
+	s.mux.Handle("POST /api/sessions/{id}/share/kick", s.authz(auth.CapManageTargets, s.kickShareJoin))
+	// The external/vendor guest surface is reached from the emailed link/QR's
+	// own unauthenticated page (internal/web's Share handler, registered
+	// below) — these three routes authenticate via their own token/guest-key
+	// query values, not X-API-Key, so — like the RDP/VNC viewer's tunnel
+	// routes — they are registered WITHOUT the s.authz(...) wrapper.
+	s.mux.HandleFunc("POST /api/share/redeem/{token}", s.redeemShareInvite)
+	s.mux.HandleFunc("GET /api/share/stream", s.streamShareGuest)
+	s.mux.HandleFunc("POST /api/share/input", s.inputShareGuest)
 
 	// Session-recording playback (Phase 26): list stored recordings and serve one
 	// for replay, hash-verified against the audit trail. Content search over

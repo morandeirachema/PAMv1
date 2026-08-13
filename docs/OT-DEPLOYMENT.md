@@ -2,7 +2,7 @@
 
 > **Living document.** Update when an OT-relevant control or flow changes.
 >
-> Last updated: 2026-08-10 · Reflects: Phases 0–107 (53–94 add nothing OT-specific; the certification reminders use the existing alert channel, which `PAM_OT_AIRGAP` already governs, and Phase 92 made read-only SFTP fail closed on native link/lock operations — a containment tightening OT sites get automatically). (introduced Phase 8).
+> Last updated: 2026-08-13 · Reflects: Phases 0–116 (53–94 add nothing OT-specific; the certification reminders use the existing alert channel, which `PAM_OT_AIRGAP` already governs, and Phase 92 made read-only SFTP fail closed on native link/lock operations — a containment tightening OT sites get automatically. **Phase 116 breaks that streak**: live session-sharing's external-invite email is *not* governed by `PAM_OT_AIRGAP` the way every other alert channel is, and its guest redemption page is a new unauthenticated surface — see §3). (introduced Phase 8).
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** This guide
 > describes how pamv1 is *designed* to fit an OT architecture; validate every
@@ -126,6 +126,22 @@ PAM_OT_AIRGAP=true
 
 - Disables the **alert channels** — webhook, syslog and email are replaced by a
   no-op (alerts still land in the audit trail and local logs).
+- **Session-share invite email (Phase 116) is a separate path this no-op does
+  not cover.** An external session-share invite's email — the guest's
+  QR-coded redemption link — is sent by a dedicated call that bypasses the
+  alert-channel abstraction the bullet above silences; it fires for real
+  under air-gap if `PAM_ALERT_EMAIL_*` and an absolute `PAM_PORTAL_URL` are
+  configured, which they may already be for other alerting. There is no
+  separate switch for it: the only way to guarantee no egress from this path
+  at an air-gapped site is to leave `PAM_ALERT_EMAIL_*` unset (external
+  invite creation then refuses loudly, at the API) or simply not use external
+  invites — **internal** invites (redeemed over the existing `:2222` SSH
+  ingress by a principal who already holds a PAM credential) carry no such
+  exposure, and the guest page it opens is reachable only from wherever an
+  invite was actually sent, not from this DMZ generally. See [ADMIN-GUIDE.md
+  §9.4c](ADMIN-GUIDE.md#94c-sharing-a-live-session-phase-116) and
+  [PROTOCOLS-AND-CRYPTO.md
+  §4](PROTOCOLS-AND-CRYPTO.md#4-where-verification-is-opt-in-read-this-before-deploying).
 - **It also refuses to start alongside anything that would egress.** The flag
   used to be read in exactly one place — choosing the alerter — so it silenced
   alerts and nothing else while the ITSM webhook, the vendor-attestation webhook,

@@ -5,14 +5,20 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-08-10 · Reflects: Phases 0–107. **Phase 53 added the first new
+> Last updated: 2026-08-13 · Reflects: Phases 0–116. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; nothing after
 > it adds a port or listener (55–94 ride the existing listeners and flows: the
 > live-monitor relay and the step-up decision bus ride the server ↔ PostgreSQL
 > store connection, flow E1; token exchange (57), safe policy (58), SFTP content
 > capture (59), the certification scheduler and reminders (68–70) and everything
 > through the Phase 91–94 adversarial review reuse the database and the existing
-> channels). The 2026-08-09 currency pass records a flow this matrix had omitted
+> channels). **Phase 116 adds no listener either** — live session-sharing rides
+> the existing `:8080` (a new unauthenticated guest surface, **I7**) and `:2222`
+> (the `join:<token>` SSH form, still ordinary PAM password auth, so no new
+> ingress row) — but it is the first phase since the 2026-08-09 pass to add a
+> **new egress purpose** on a port already in the matrix: **E9b**, session-share
+> invite email, alongside E9 on the same `:587`. The 2026-08-09 currency pass
+> records a flow this matrix had omitted
 > since Phase 20: **E14, the outbound ITSM ticket-validation call** — a generic
 > webhook (Phase 20), first-class ServiceNow/Jira REST lookups since Phase 84,
 > re-checked at the moment access is used with `PAM_TICKET_REVALIDATE` (Phase 60).
@@ -65,6 +71,7 @@ add `5433 → 5433` and/or `1433 → 1433` when the database proxies are enabled
 | I4 | Prometheus (mgmt) | pam-server | 8080 | HTTP | Scrape `/metrics` | ✅ P10 |
 | I5 | User (operator zone) | pam-server | 5433 | PostgreSQL | Brokered `psql` session to a `postgres` target | ✅ P15 |
 | I6 | User (operator zone) | pam-server | 1433 | TDS | Brokered SQL Server session to a `mssql` target (`sqlcmd`, SSMS, drivers) | ✅ P53 |
+| I7 | Session-share guest (**untrusted** — no zone; wherever the emailed link/QR reaches) | pam-server | 8080/443 | HTTPS | Redeem a session-share invite and stream/control the shared session it names — **unauthenticated** (`/share.html`, `POST /api/share/redeem/{token}`), then a minted guest key on every further call (`GET /api/share/stream`, `POST /api/share/input`), never `X-API-Key` | ✅ P116 |
 
 ## 3. Egress — what pamv1 connects **to**
 
@@ -82,6 +89,7 @@ add `5433 → 5433` and/or `1433 → 1433` when the database proxies are enabled
 | E8 | pam-server | SIEM / syslog collector (mgmt zone) | 514 / 6514 | Syslog **UDP** (default) / TCP / **TLS** | **Continuous** audit→SIEM forwarding from a durable cursor — RFC 5424, CEF or LEEF (`PAM_AUDIT_FORWARD_ADDR`, `_PROTO` default `udp`, `_FORMAT`, `_CA` pins the collector for TLS) | ✅ P35/P47 |
 | E8b | pam-server | syslog (mgmt zone) | 514 | Syslog | **Event-driven alerts** only (`PAM_ALERT_SYSLOG`) — a different feature from E8 | ✅ P9 |
 | E9 | pam-server | SMTP / webhook (mgmt zone) | 587 / 443 | SMTP / HTTPS | Break-glass & approval alerts | ✅ P6 |
+| E9b | pam-server | SMTP (mgmt zone) | 587 | SMTP | **Session-share invite email** (external/vendor invites only) — the QR-coded redemption link, to the invited **guest**, not an admin: a different recipient/purpose from E9. Same `PAM_ALERT_EMAIL_*` config and opportunistic-StartTLS posture; **not** covered by `PAM_OT_AIRGAP`'s alert no-op (§7) | ✅ P116 |
 | E10 | pam-server (DB proxy) | PostgreSQL target (target zone) | 5432 | PostgreSQL/TLS | JIT-injected brokered database session (`:5433` ingress) | ✅ P15 |
 | E13 | pam-server (mssql proxy) | SQL Server target (target zone) | 1433 | TDS/TLS | JIT-injected brokered database session (`:1433` ingress); upstream certificate verified via `PAM_DB_UPSTREAM_CA` / `_TLS_VERIFY` | ✅ P53 |
 | E11 | pam-server | CyberArk Conjur (identity/secrets zone) | 443 | HTTPS | Source bootstrap secrets at startup, and — with `PAM_CONJUR_REFRESH_MIN` — re-read the refreshable ones every N minutes from **every replica** (optional) | ✅ P18, P78 |
@@ -176,6 +184,15 @@ deny   pam-server -> any                              # default deny
 deny   <operator-cidr>,<target-cidr> -> db:5432
 ```
 
+**External session-share guests (I7) ride the same `:8080` allow-line as
+everyone else.** If you scope ingress to `<operator-cidr>` only, a guest — by
+definition outside it, wherever the emailed link reached — cannot open
+`/share.html` to redeem their invite. Either carve out a narrower, path-scoped
+allow at a reverse proxy or ingress controller (NetworkPolicy and
+security-group rules match on port, not path), or keep sharing
+**internal-only**: an internal invite redeems over the `:2222` SSH ingress
+operators already reach (I2), with no additional exposure.
+
 Kubernetes: pamv1 ships the pod-level restrictions (restricted PSS, non-root,
 read-only rootfs, dropped capabilities) **and** a default-deny `NetworkPolicy` —
 `deploy/k8s/networkpolicy.yaml` (raw manifest, applied by `kubectl apply -f deploy/k8s/`)
@@ -207,10 +224,27 @@ specific target hosts and protocols, and default-deny everything else across the
 > operator→target:22 rule out of the OT firewall so `:2222` remains the only way
 > in, and leave the feature off (`PAM_SSH_CA_KEY` unset) unless you want it.
 
+> ⚠️ **External session-share invites (Phase 116) reach the portal from
+> outside the operator zone, by design (I7).** The whole point of an external
+> invite is a guest with no pamv1 account and no presence in your network — the
+> emailed QR code has to be reachable from wherever they are, which for an OT
+> site usually means outside the 3.5 DMZ entirely. Keep sharing
+> **internal-only** at OT sites (`kind:"internal"` invites redeem over the
+> existing `:2222` SSH ingress, no new exposure), or front `/share.html` with
+> whatever perimeter already faces the outside world for this deployment — it
+> grants no more than the one invite names (view, or type into, a session
+> that was already legitimately opened), but it is unauthenticated by design,
+> unlike everything else on this port. See [ADMIN-GUIDE.md
+> §9.4c](ADMIN-GUIDE.md#94c-sharing-a-live-session-phase-116) and
+> [PROTOCOLS-AND-CRYPTO.md §4](PROTOCOLS-AND-CRYPTO.md#4-where-verification-is-opt-in-read-this-before-deploying)
+> for the email egress this same feature adds (E9b) and why air-gap mode does
+> not stop it.
+
 ## 8. Change log
 
 | Date | Change |
 |---|---|
+| 2026-08-13 | **Phase 116 — live session-sharing, no new listener.** Adds a new *ingress* row rather than a new port: **I7**, an unauthenticated external/vendor guest redeeming an emailed invite at `/share.html` and streaming/controlling the shared session with a minted guest key — reaches the existing `:8080`. Adds a new *egress* row too: **E9b**, the invite email itself — same `PAM_ALERT_EMAIL_*` SMTP config as E9 but a different recipient (the guest, not an admin) and, worth flagging for OT sites, **not** covered by `PAM_OT_AIRGAP`'s alert no-op, since it bypasses the alerter abstraction that gets silenced. The internal-invite `join:<token>` SSH form rides the existing I2 ingress with ordinary PAM password auth, so it gets no new row. §6 and §7 updated with the exposure this implies |
 | 2026-08-09 | **Phase 95 — documentation currency pass.** Header brought from 0–80 to 0–94 (no port or listener changed in 81–94), and the egress matrix gains **E14 — the outbound ITSM ticket-validation call** it had omitted since Phase 20: generic webhook (P20), first-class ServiceNow/Jira connectors (P84), use-time re-check (P60). Diagram and firewall summary updated with it |
 | 2026-07-31 | **Phase 56 — cross-replica step-up decisions.** No new port, listener or flow: the sealed decision channel (`pam_stepup_decision`) rides the existing pam-server ↔ PostgreSQL store connection (flow E1) as a third `LISTEN/NOTIFY` bus beside the kill and live-monitor buses, and the shared pending-pause inventory is a table (statements stored sealed). A supervisor's `GET /api/sessions/stepups` / `POST /api/sessions/{id}/stepup` may land on any replica; replicas still never talk to each other directly, so no pod-to-pod firewall rule exists to add |
 | 2026-07-29 | **Phase 55 — cross-replica live monitoring.** No new port, listener or flow: the session-frame relay and watch-interest announcements ride the existing pam-server ↔ PostgreSQL store connection (flow E1) as `LISTEN/NOTIFY` channels beside the Phase 34 kill bus, and the shared session inventory is a table. In a multi-replica deployment the supervisor's `GET /api/sessions[/{id}/stream]` may land on any replica; the inter-replica hop is always through the store — replicas never talk to each other directly, so no pod-to-pod firewall rule exists to add |

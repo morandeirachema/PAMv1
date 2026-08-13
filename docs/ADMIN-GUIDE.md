@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-13 · Reflects: Phases 0–114 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b) and a live NIS2 compliance report (114, §9.2b) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-13 · Reflects: Phases 0–116 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b) and live session-sharing (116, §9.4c) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -253,7 +253,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_DATABASE_URL` | ✅ | — | `postgres://…` (use `sslmode=verify-full`) or `memory` for demo. |
 | `PAM_BREAK_GLASS_KEY_HASH` | | (off) | Hex SHA-256 of the sealed emergency key. |
 | `PAM_LISTEN_ADDR` | | `:8080` | HTTP portal/API bind. |
-| `PAM_PORTAL_URL` | | `/` | Where the OIDC callback redirects the browser after a successful login (the session token rides the URL fragment). Set it when the portal is served from another origin than the callback. |
+| `PAM_PORTAL_URL` | | `/` | Where the OIDC callback redirects the browser after a successful login (the session token rides the URL fragment), and — since Phase 116 — the base URL an **external** session-share invite's emailed link and QR code are built from. Must be an absolute `http://`/`https://` URL for external invites to be creatable at all (the default `/` does not qualify); set it whenever the portal is served from another origin than the callback. |
 | `PAM_REQUIRE_HTTPS` | | `false` | Refuse to start over plaintext HTTP unless native TLS (`PAM_TLS_CERT/KEY`) is set. Leave off only behind a trusted TLS-terminating proxy. |
 | `PAM_TRUSTED_PROXY_HOPS` | | `0` | Number of trusted reverse-proxy hops; makes the auth rate limiter read the real client IP from `X-Forwarded-For` (0 = key on RemoteAddr, spoof-proof). |
 | `PAM_SSH_ADDR` | | `:2222` | SSH proxy bind; `off` disables the proxy. |
@@ -276,6 +276,8 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_RDP_CLIPBOARD_AUDIT` | | `off` | **Audit clipboard transfers** (Phase 50): `meta` records direction, mimetype, size and SHA-256; `full` also records the content (truncated). Content is opt-in because a privileged desktop's clipboard often holds a password the operator just copied. Emits `rdp.clipboard`. A target's `rdp_clipboard_audit` field can raise this per target (whichever records more wins). See §9.4. |
 | `PAM_DB_STEPUP_FILE` | | (off) | Regex file marking PostgreSQL statements that **pause for a supervisor's live approval** — in-session step-up (Phase 30). See §9.4. |
 | `PAM_DB_STEPUP_TTL_SEC` | | `120` | How long a paused statement waits for a decision before it is denied. |
+| `PAM_SESSION_SHARE_INVITE_TTL_SEC` | | `900` | **Session sharing** (Phase 116): how long an approved share invite stays redeemable, **once**, before it expires unused — internal (`join:<token>` over SSH) or external (emailed QR). See §9.4c. |
+| `PAM_SESSION_SHARE_GUEST_TTL_MIN` | | `240` | How long an **external** guest's minted viewing key keeps working *after* they redeem it — a separate window from the invite TTL above. See §9.4c. |
 | `PAM_ANALYTICS_INTERVAL_MIN` | | `0` (off) | Threat-analytics worker interval (Phase 23); `0` leaves the read-only `GET /api/analytics/risk` endpoint on. See §9.7. |
 | `PAM_ANALYTICS_WINDOW_MIN` / `_AUTO_KILL` / `_BUSINESS_START` / `_BUSINESS_END` | | `60` / `false` / `7` / `20` | Risk-scoring window (also the re-alert cooldown), auto-kill of critical actors' sessions, and business hours for the off-hours signal. |
 | `PAM_ANALYTICS_TIMEZONE` | | (UTC) | IANA timezone the business hours are interpreted in (audit timestamps are UTC). |
@@ -2019,6 +2021,110 @@ live session *after* dialing the target (see `internal/proxy`), so gating
 before dial would need a larger rework; they are left for a future phase. There
 is no per-target override: the flag is global, like `PAM_REQUIRE_RECORDING`.
 
+### 9.4c Sharing a live session (Phase 116)
+
+Live monitoring (9.4) lets a supervisor watch; **session sharing** lets the
+operator **in** the session bring a second party into it — view-only, or
+view-**control** where the joiner can type too — through the same four-eyes
+shape as an access request: one principal **requests**, a **different**
+principal **decides**.
+
+```bash
+# 1. Request a share on a live session (needs `connect` — the operator
+#    running it). mode: view_only | view_control. kind: internal (a named
+#    pamv1 user, by username) or external (an email address — no account
+#    needed).
+curl -sX POST https://pam.example/api/sessions/<id>/share -H "X-API-Key: $OPERATOR" \
+  -d '{"mode":"view_control","kind":"internal","invitee":"carol"}'
+# → {"id":9,"status":"pending",...}
+
+# 2. A DIFFERENT principal decides it (needs `approve`; deciding your own
+#    request is refused and audited, same four-eyes as certification).
+curl -sX POST https://pam.example/api/share-invites/9/approve -H "X-API-Key: $APPROVER"
+# → {"id":9,"status":"approved","token":"..."}   # internal: the token, shown ONCE, right here
+
+# List a session's invites, or see who has actually joined:
+curl -s https://pam.example/api/sessions/<id>/share        -H "X-API-Key: $KEY"  # read_audit
+curl -s https://pam.example/api/sessions/<id>/share/roster -H "X-API-Key: $KEY"  # read_audit
+```
+
+**Internal invite — redeemed over SSH, never the token alone.** Carol connects
+with the token as her **entire SSH username**, `join:<token>`, and her **own**
+PAM password exactly as any other connection:
+
+```bash
+ssh -p 2222 join:7f3a9c...@pam.example
+# Password: <Carol's own PAM token — not the invite token>
+```
+
+pamv1 authenticates that password first — the same resolution an ordinary
+connection goes through, so an enroll-only or tunnel-only principal is refused
+here too — and only then checks the invite: `invitee` must equal Carol
+(case-insensitive), and `kind` must be `internal` (an external invite redeemed
+this way is refused: *"pamv1: this invite must be redeemed via its emailed
+link"*). `view_control` additionally needs Carol to hold `connect` herself. A
+join skips the ordinary connect-admission gates (safe membership, grants,
+ticket, approval) by design — it "creates no new access," in the code's own
+words, only a seat on a session the primary operator already opened
+legitimately.
+
+**External invite — a QR code, redeemed on the web, never SSH.** With
+`kind:"external"` and an `email`, approval sends the guest a link **and an
+embedded QR code** pointing at `<PAM_PORTAL_URL>/share.html?token=...` — a
+page that needs no pamv1 account at all. It calls
+`POST /api/share/redeem/{token}` once, consuming the token, to mint a random
+256-bit **guest key**; from then on it authenticates with that key as a query
+parameter — `GET /api/share/stream?key=...` for the live output (SSE) and,
+for `view_control`, `POST /api/share/input?key=...` for keystrokes. Two
+windows govern this, deliberately different:
+
+| Window | Governs | Env var | Default |
+|---|---|---|---|
+| Invite redemption | How long the emailed link/QR works, **once**, before it expires unused | `PAM_SESSION_SHARE_INVITE_TTL_SEC` | `900` (15 min) |
+| Guest viewing session | How long the *minted guest key* keeps working after redemption | `PAM_SESSION_SHARE_GUEST_TTL_MIN` | `240` (4 h) |
+
+An external invite needs real infrastructure to reach the guest at all:
+`PAM_ALERT_EMAIL_SMTP`/`_FROM` (§4 — the same SMTP config your alert emails
+already use) **and** an absolute `PAM_PORTAL_URL` (`http://` or `https://` —
+the default `/` does not qualify). Missing either **refuses invite creation
+outright**, loudly (503: *"external session-share invites need
+PAM_ALERT_EMAIL_\* and an absolute PAM_PORTAL_URL configured"*) — never a
+silently broken link. Internal invites need neither.
+
+**Removing someone.** Revoking an invite
+(`POST /api/share-invites/{id}/revoke`, `manage_targets`) stops it being
+redeemed again; it does not reach into a session someone has already joined —
+that is what **kick** is for:
+
+```bash
+curl -sX POST https://pam.example/api/sessions/<id>/share/kick -H "X-API-Key: $ADMIN" \
+  -d '{"actor":"carol"}'   # manage_targets
+```
+
+In the console: **F6** on a live watch pane opens *Create share invite*; **F7**
+opens the invite-decision list for an approver.
+
+Three things worth knowing before you rely on this:
+
+- **`/share.html` is deliberately unauthenticated** — no `X-API-Key`, the same
+  posture as the RDP/VNC viewer's tunnel routes. What defends it is the
+  invite's single use and short default window, the guest key's 256 bits of
+  entropy, and `noindex, nofollow` on the page itself — not a login. Every
+  failure on it is still throttled per source IP (`PAM_AUTH_RATE_LIMIT`,
+  surface `share-guest`).
+- **The guest key lives in memory, not the database, and is per-replica.** In
+  a multi-replica deployment a join — internal **or** external — must land on
+  whichever replica actually hosts the session; unlike the Phase 55
+  live-monitor relay, sharing does not (yet) route across replicas. Behind a
+  non-sticky load balancer, a join that lands on the wrong pod should simply
+  be retried.
+- **Audit vocabulary:** `session.share_requested` · `session.share_approved`
+  (fail-closed) · `session.share_denied` (a real decision, or a refused
+  self-approval — `reason:self-approval` tells the two apart) ·
+  `session.share_revoked` · `session.share_joined` (fail-closed) ·
+  `session.share_join_denied` · `session.share_ended` ·
+  `session.share_kicked`.
+
 ### 9.5 Metrics & probes
 
 - `GET /metrics` — a Prometheus exposition: `pam_http_requests_total{status}`,
@@ -2363,6 +2469,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-13 | **Phase 116 — live session-sharing.** A live SSH session can be shared view-only or view-**control** with a second party through a four-eyes request→approve workflow (`POST /api/sessions/{id}/share`, decided by a *different* principal at `POST /api/share-invites/{id}/approve\|deny`). An **internal** invite redeems over SSH as `join:<token>` — the whole username — layered on the joiner's own PAM password, never the token alone; an **external**/vendor invite is emailed with a QR code instead, single-use, `PAM_SESSION_SHARE_INVITE_TTL_SEC` (default 900s), redeemed through a new **unauthenticated** page (`/share.html`) that mints a random 256-bit guest key good for `PAM_SESSION_SHARE_GUEST_TTL_MIN` (default 240 min). A roster + kick (`.../share/roster`, `.../share/kick`) close both. New migration `0032` (`session_share_invites`, plus a `vendors.email` column); new audit actions `session.share_{requested,approved,denied,revoked,joined,join_denied,ended,kicked}`. See §9.4c |
 | 2026-08-13 | **Phase 114 — a live NIS2 compliance report.** `GET /api/compliance/nis2?since=&until=` maps window-scoped audit activity onto the existing Art. 21(2) control matrix (docs/NIS2-COMPLIANCE.md §1): each control's status is architectural, and controls with a natural audit signal (supply-chain, policy effectiveness, access control, MFA, incident handling) carry a count of matching events bucketed by action family, plus (for incident handling) the whole-chain integrity result. Same digest/determinism/audit conventions as the raw export. Console: **F8** from *Display Audit Trail*. NIS2 only — PCI-DSS/ISO27001/SOX are not attempted. See §9.2b |
 | 2026-08-12 | **Phase 112 — mandatory live supervision.** `PAM_REQUIRE_LIVE_SUPERVISION=true` holds an interactive SSH channel — before it dials the target — until a supervisor is actually watching (`GET /api/sessions/{id}/stream`) or `PAM_LIVE_SUPERVISION_TIMEOUT_SEC` (default 120) elapses; a timeout refuses the session and is audited `session.unsupervised`. Observer sessions and break-glass are exempt. SSH only for now — the database/WinRM proxies register their live session after dialing, so they're left for a future phase. See §9.4b |
 | 2026-08-12 | **Phase 110 — SSH session recordings are searchable by content.** `GET /api/recordings/search?q=` finds text anywhere in a recording's output, even split across several writes, and reports each hit's snippet plus the playback time to jump to. Console: **F4** from *Session Recordings* (menu 19). Same `read_audit` gate as playback; the search itself is audited (`session.search`) with the query. RDP/VNC and WinRM are not covered. See §9.3 |

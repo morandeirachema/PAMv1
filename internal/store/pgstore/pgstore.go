@@ -1225,8 +1225,8 @@ func scanVendorGrant(row pgx.CollectableRow) (store.VendorGrant, error) {
 // CreateVendor registers a vendor (Phase 29); ErrConflict on a duplicate username.
 func (s *PGStore) CreateVendor(ctx context.Context, v *store.Vendor) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO vendors (username, org, disabled) VALUES ($1, $2, $3) RETURNING id, created_at`,
-		v.Username, v.Org, v.Disabled).Scan(&v.ID, &v.CreatedAt)
+		`INSERT INTO vendors (username, org, email, disabled) VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
+		v.Username, v.Org, v.Email, v.Disabled).Scan(&v.ID, &v.CreatedAt)
 	if pgCode(err) == pgUniqueViolation {
 		return store.ErrConflict
 	}
@@ -1237,22 +1237,22 @@ func (s *PGStore) CreateVendor(ctx context.Context, v *store.Vendor) error {
 func (s *PGStore) GetVendorByUsername(ctx context.Context, username string) (*store.Vendor, error) {
 	return getOne(ctx, s.pool, func(row pgx.CollectableRow) (store.Vendor, error) {
 		var v store.Vendor
-		err := row.Scan(&v.ID, &v.Username, &v.Org, &v.Disabled, &v.CreatedAt)
+		err := row.Scan(&v.ID, &v.Username, &v.Org, &v.Email, &v.Disabled, &v.CreatedAt)
 		return v, err
-	}, `SELECT id, username, org, disabled, created_at FROM vendors WHERE username = $1`, username)
+	}, `SELECT id, username, org, email, disabled, created_at FROM vendors WHERE username = $1`, username)
 }
 
 // ListVendors returns vendors in the (limit, afterID) window, ordered by ID.
 func (s *PGStore) ListVendors(ctx context.Context, limit int, afterID int64) ([]store.Vendor, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, username, org, disabled, created_at FROM vendors WHERE id > $1 ORDER BY id LIMIT $2`,
+		`SELECT id, username, org, email, disabled, created_at FROM vendors WHERE id > $1 ORDER BY id LIMIT $2`,
 		afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.Vendor, error) {
 		var v store.Vendor
-		err := row.Scan(&v.ID, &v.Username, &v.Org, &v.Disabled, &v.CreatedAt)
+		err := row.Scan(&v.ID, &v.Username, &v.Org, &v.Email, &v.Disabled, &v.CreatedAt)
 		return v, err
 	})
 }
@@ -1265,6 +1265,11 @@ func (s *PGStore) SetVendorDisabled(ctx context.Context, id int64, disabled bool
 // UpdateVendorOrg changes a vendor's organization label; ErrNotFound if absent.
 func (s *PGStore) UpdateVendorOrg(ctx context.Context, id int64, org string) error {
 	return execExpectingRow(ctx, s.pool, `UPDATE vendors SET org = $2 WHERE id = $1`, id, org)
+}
+
+// UpdateVendorEmail sets the vendor's on-file contact address, or ErrNotFound.
+func (s *PGStore) UpdateVendorEmail(ctx context.Context, id int64, email string) error {
+	return execExpectingRow(ctx, s.pool, `UPDATE vendors SET email = $2 WHERE id = $1`, id, email)
 }
 
 // CreateVendorGrant records a pending contract grant; ErrNotFound if the vendor
@@ -1897,6 +1902,90 @@ func (s *PGStore) TakeOIDCState(ctx context.Context, state string, now time.Time
 		return "", "", false, err
 	}
 	return verifier, nonce, true, nil
+}
+
+// scanSessionShareInvite maps one session_share_invites row into a
+// store.SessionShareInvite.
+func scanSessionShareInvite(row pgx.CollectableRow) (store.SessionShareInvite, error) {
+	var inv store.SessionShareInvite
+	err := row.Scan(&inv.ID, &inv.SessionID, &inv.Mode, &inv.Kind, &inv.Invitee, &inv.Email,
+		&inv.Status, &inv.Requester, &inv.Approver, &inv.TokenHash, &inv.CreatedAt,
+		&inv.DecidedAt, &inv.ExpiresAt, &inv.ConsumedAt, &inv.RevokedAt)
+	return inv, err
+}
+
+const sessionShareInviteCols = `id, session_id, mode, kind, invitee, email, status, requester, approver, token_hash, created_at, decided_at, expires_at, consumed_at, revoked_at`
+
+// CreateSessionShareInvite records a pending session-share request.
+func (s *PGStore) CreateSessionShareInvite(ctx context.Context, inv *store.SessionShareInvite) error {
+	return s.pool.QueryRow(ctx,
+		`INSERT INTO session_share_invites (session_id, mode, kind, invitee, email, status, requester)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
+		inv.SessionID, inv.Mode, inv.Kind, inv.Invitee, inv.Email, inv.Status, inv.Requester,
+	).Scan(&inv.ID, &inv.CreatedAt)
+}
+
+// GetSessionShareInvite returns one invite by id, or ErrNotFound.
+func (s *PGStore) GetSessionShareInvite(ctx context.Context, id int64) (*store.SessionShareInvite, error) {
+	return getOne(ctx, s.pool, scanSessionShareInvite,
+		`SELECT `+sessionShareInviteCols+` FROM session_share_invites WHERE id = $1`, id)
+}
+
+// ListSessionShareInvites lists a session's invites, newest first.
+func (s *PGStore) ListSessionShareInvites(ctx context.Context, sessionID string) ([]store.SessionShareInvite, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+sessionShareInviteCols+` FROM session_share_invites WHERE session_id = $1 ORDER BY created_at DESC`,
+		sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanSessionShareInvite)
+}
+
+// DecideSessionShareInvite records an approve/deny decision; ErrNotFound if
+// unknown. The caller (matching DecideAccessRequest's own convention) is
+// responsible for checking the invite is still pending before calling this —
+// the store layer here trusts that check rather than re-enforcing it, the
+// same division of responsibility the access-request approval flow already
+// uses.
+func (s *PGStore) DecideSessionShareInvite(ctx context.Context, id int64, status, approver string, at time.Time, tokenHash string, expiresAt *time.Time) error {
+	var exp *time.Time
+	if expiresAt != nil {
+		e := expiresAt.UTC()
+		exp = &e
+	}
+	return execExpectingRow(ctx, s.pool,
+		`UPDATE session_share_invites SET status = $2, approver = $3, decided_at = $4, token_hash = $5, expires_at = $6 WHERE id = $1`,
+		id, status, approver, at.UTC(), tokenHash, exp)
+}
+
+// RevokeSessionShareInvite marks an invite revoked, or ErrNotFound.
+func (s *PGStore) RevokeSessionShareInvite(ctx context.Context, id int64, at time.Time) error {
+	return execExpectingRow(ctx, s.pool, `UPDATE session_share_invites SET revoked_at = $2 WHERE id = $1`, id, at.UTC())
+}
+
+// ConsumeSessionShareInviteByTokenHash atomically redeems an approved,
+// unexpired, unrevoked, not-yet-consumed invite matching tokenHash — the
+// UPDATE...RETURNING is the single statement that makes this a genuine
+// single-use check-and-set rather than a read-then-write race.
+func (s *PGStore) ConsumeSessionShareInviteByTokenHash(ctx context.Context, tokenHash string, now time.Time) (*store.SessionShareInvite, error) {
+	rows, err := s.pool.Query(ctx,
+		`UPDATE session_share_invites SET consumed_at = $2
+		 WHERE token_hash = $1 AND status = 'approved' AND revoked_at IS NULL
+		   AND consumed_at IS NULL AND expires_at > $2
+		 RETURNING `+sessionShareInviteCols,
+		tokenHash, now.UTC())
+	if err != nil {
+		return nil, err
+	}
+	inv, err := pgx.CollectExactlyOneRow(rows, scanSessionShareInvite)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &inv, nil
 }
 
 // Ping reports whether the database is reachable (readiness probe).

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>pamv1 — shared session</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: #050705; color: #2eff7b; font: 14px/1.4 ui-monospace, "SF Mono", Consolas, monospace;
+    display: flex; flex-direction: column;
+  }
+  #status { padding: 10px 14px; border-bottom: 1px solid #123; white-space: pre-wrap; }
+  #status.err { color: #ff4d4d; }
+  #out {
+    flex: 1; margin: 0; padding: 10px 14px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+  }
+  #hint { padding: 6px 14px; color: #2f7d4a; font-size: 0.9em; border-top: 1px solid #123; }
+</style>
+</head>
+<body>
+<div id="status">Connecting&hellip;</div>
+<pre id="out" tabindex="0"></pre>
+<div id="hint"></div>
+<script nonce="__CSP_NONCE__">
+(function () {
+  "use strict";
+  var statusEl = document.getElementById("status");
+  var outEl = document.getElementById("out");
+  var hintEl = document.getElementById("hint");
+
+  function fail(msg) {
+    statusEl.textContent = msg;
+    statusEl.className = "err";
+  }
+
+  function append(text) {
+    // The stream escapes \r and \n as literal two-character sequences (SSE
+    // cannot carry a raw newline inside one data: field) — reverse that here.
+    outEl.textContent += text.replace(/\\r/g, "\r").replace(/\\n/g, "\n");
+    outEl.scrollTop = outEl.scrollHeight;
+  }
+
+  var params = new URLSearchParams(window.location.search);
+  var token = params.get("token");
+  if (!token) {
+    fail("No invite token in the link. Ask whoever invited you to resend it.");
+    return;
+  }
+
+  fetch("/api/share/redeem/" + encodeURIComponent(token), { method: "POST" })
+    .then(function (r) {
+      if (!r.ok) {
+        return r.json().then(function (b) { throw new Error(b.error || ("HTTP " + r.status)); });
+      }
+      return r.json();
+    })
+    .then(function (redeemed) {
+      statusEl.textContent = "Connected — " + (redeemed.mode === "view_control" ? "you may type into this session." : "view only.");
+      var es = new EventSource("/api/share/stream?key=" + encodeURIComponent(redeemed.key));
+      es.onmessage = function (ev) { append(ev.data); };
+      es.onerror = function () {
+        statusEl.textContent = "Session ended, or the connection was lost.";
+        es.close();
+      };
+      if (redeemed.mode === "view_control") {
+        hintEl.textContent = "This window is now sending your keystrokes to the shared session.";
+        outEl.focus();
+        outEl.addEventListener("keydown", function (e) {
+          var b = keyToBytes(e);
+          if (b === null) { return; }
+          e.preventDefault();
+          fetch("/api/share/input?key=" + encodeURIComponent(redeemed.key), { method: "POST", body: b });
+        });
+      } else {
+        hintEl.textContent = "View only — your keystrokes are not sent.";
+      }
+    })
+    .catch(function (err) { fail("Could not join: " + err.message); });
+
+  // keyToBytes translates a keydown event into the byte sequence a real
+  // terminal would send. This is a deliberately small, v1-scoped mapping
+  // (printable characters, Enter/Backspace/Tab/Escape, arrow keys, and a
+  // few common control combinations) — a full terminal-input emulator is out
+  // of scope; see the Phase 116 plan's documented v1 bound. Returns null for
+  // a key this page does not forward (so the browser's own default handling
+  // — e.g. Ctrl+C to copy selected text — still applies).
+  function keyToBytes(e) {
+    if (e.metaKey) { return null; }
+    if (e.ctrlKey && e.key.length === 1) {
+      var c = e.key.toUpperCase().charCodeAt(0);
+      if (c >= 65 && c <= 90) { return String.fromCharCode(c - 64); }
+      return null;
+    }
+    switch (e.key) {
+      case "Enter": return "\r";
+      case "Backspace": return "\x7f";
+      case "Tab": return "\t";
+      case "Escape": return "\x1b";
+      case "ArrowUp": return "\x1b[A";
+      case "ArrowDown": return "\x1b[B";
+      case "ArrowRight": return "\x1b[C";
+      case "ArrowLeft": return "\x1b[D";
+      default:
+        return e.key.length === 1 ? e.key : null;
+    }
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,11 +1,15 @@
 package alert
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
+	"mime/multipart"
 	"net"
 	"net/smtp"
+	"net/textproto"
 	"strings"
 	"time"
 
@@ -97,12 +101,16 @@ func NewEmail(addr, from string, to []string, username, password string) *Email 
 		}
 		a = smtp.PlainAuth("", username, password, host)
 	}
-	return &Email{addr: addr, from: from, to: to, auth: a, send: sendMailBounded}
+	return &Email{addr: addr, from: from, to: to, auth: a, send: SendMailBounded}
 }
 
-// sendMailBounded is smtp.SendMail with a connect timeout and an I/O deadline, so
+// SendMailBounded is smtp.SendMail with a connect timeout and an I/O deadline, so
 // a slow or blackholed relay cannot park the delivery goroutine indefinitely.
-func sendMailBounded(addr string, a smtp.Auth, from string, to []string, msg []byte) error {
+// Exported so other features that need to email a specific recipient outside
+// the alert-fanout path (e.g. Phase 116's session-share invites, via
+// SendDirect below) can reuse the same primitive rather than re-implementing
+// SMTP delivery.
+func SendMailBounded(addr string, a smtp.Auth, from string, to []string, msg []byte) error {
 	conn, err := net.DialTimeout("tcp", addr, alertTimeout)
 	if err != nil {
 		return err
@@ -165,4 +173,80 @@ func (m *Email) Notify(_ context.Context, e Event) {
 			logging.Component("alert").Warn("email alert failed", "type", e.Type, "err", err)
 		}
 	}()
+}
+
+// SendDirect sends one HTML email to one specific recipient, outside the
+// alert-fanout path (Multi/Notify) — used by features that need to reach a
+// named person rather than broadcast a security event, e.g. Phase 116's
+// session-share invites. It reuses the same PAM_ALERT_EMAIL_* SMTP settings
+// and the SendMailBounded primitive as the Email notifier, but is
+// synchronous: unlike an alert (best-effort, fine to lose), an invite email
+// IS the only delivery path for the recipient's access, so the caller needs
+// to know whether it actually went out rather than firing it and forgetting.
+// When inlinePNG is non-empty it is attached as a multipart/related inline
+// image the HTML body can reference via src="cid:<inlineCID>". to and
+// subject are stripped of CR/LF (same header-injection defense Notify
+// applies) since both can carry caller-supplied text.
+func SendDirect(addr, from, to, username, password, subject, htmlBody string, inlinePNG []byte, inlineCID string) error {
+	var auth smtp.Auth
+	if username != "" {
+		host := addr
+		if h, _, err := net.SplitHostPort(addr); err == nil {
+			host = h
+		}
+		auth = smtp.PlainAuth("", username, password, host)
+	}
+	msg, err := buildDirectMessage(from, to, subject, htmlBody, inlinePNG, inlineCID)
+	if err != nil {
+		return err
+	}
+	return SendMailBounded(addr, auth, from, []string{auditfmt.OneLine(to)}, msg)
+}
+
+// buildDirectMessage renders SendDirect's RFC822 message: a multipart/related
+// body (text/html plus, when inlinePNG is non-empty, a base64 image/png part
+// with Content-ID: <inlineCID>) under a MIME-Version/Content-Type header
+// pair. Split out from SendDirect as a pure function — no network I/O — so
+// the message construction (the actually novel, hand-rolled logic here) is
+// tested directly against its bytes rather than through a fake SMTP server.
+func buildDirectMessage(from, to, subject, htmlBody string, inlinePNG []byte, inlineCID string) ([]byte, error) {
+	to = auditfmt.OneLine(to)
+	subject = auditfmt.OneLine(subject)
+
+	var parts bytes.Buffer
+	mw := multipart.NewWriter(&parts)
+	hw, err := mw.CreatePart(textproto.MIMEHeader{"Content-Type": {"text/html; charset=utf-8"}})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := hw.Write([]byte(htmlBody)); err != nil {
+		return nil, err
+	}
+	if len(inlinePNG) > 0 {
+		iw, err := mw.CreatePart(textproto.MIMEHeader{
+			"Content-Type":              {"image/png"},
+			"Content-Transfer-Encoding": {"base64"},
+			"Content-ID":                {"<" + inlineCID + ">"},
+			"Content-Disposition":       {`inline; filename="invite-qr.png"`},
+		})
+		if err != nil {
+			return nil, err
+		}
+		enc := base64.NewEncoder(base64.StdEncoding, iw)
+		if _, err := enc.Write(inlinePNG); err != nil {
+			return nil, err
+		}
+		if err := enc.Close(); err != nil {
+			return nil, err
+		}
+	}
+	if err := mw.Close(); err != nil {
+		return nil, err
+	}
+
+	var msg bytes.Buffer
+	fmt.Fprintf(&msg, "From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: multipart/related; boundary=%q\r\n\r\n",
+		from, to, subject, mw.Boundary())
+	msg.Write(parts.Bytes())
+	return msg.Bytes(), nil
 }
