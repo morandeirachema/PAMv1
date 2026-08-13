@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–118 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–119 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -37,7 +37,8 @@ research pass then closed its own strongest finding — **live session-sharing**
 Phase 116) — released as **v0.22.0 by Phase 117**, and **Phase 118 closes that
 pass's second finding**: CIDR/network-based connect & login authorization, a
 per-user CIDR allowlist enforced at both the session-proxy `admit()` gate and
-the REST `authz` middleware, break-glass exempt. The narrative that follows traces the
+the REST `authz` middleware, break-glass exempt — released in turn as
+**v0.23.0 by Phase 119**. The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2381,6 +2382,20 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 119 — v0.23.0 ✅
+
+Releases Phase 118 (CIDR/network-based connect & login authorization) — a
+genuine new capability, so this is a **minor**, not a patch. Schema change:
+migration `0033` (`users.ip_allowlist`).
+
+- [x] **v0.23.0** through the test-gated pipeline, rehearsed on `main` first.
+- [x] All five pins via the sweep; Helm chart `version` 0.13.0 -> **0.14.0**
+  (minor, alongside the `appVersion` minor)
+- [x] Both READMEs restated
+- [x] `docs/README.md`'s currency line and `docs/NIS2-COMPLIANCE.md`'s
+  compliance-evidence row (a documented recurring staleness point) both
+  caught proactively
 
 ## Phase 118 — CIDR/network-based connect & login authorization ✅
 
