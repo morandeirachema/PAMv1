@@ -39,7 +39,7 @@ Built phase by phase with a single rule: **every phase is functional end to end*
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
 runs 0–115 and **every phase has shipped**, and the current
 tagged, cosign-signed release is
-**[v0.21.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.21.0)** (2026-08-13;
+**[v0.22.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.22.0)** (2026-08-13;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
 brokering** for SSH, PostgreSQL, WinRM and in-portal RDP; **RBAC + custom profiles** with
 AD/Entra/OIDC login and TOTP MFA; **break-glass** with M-of-N quorum unseal; **safes** and
@@ -221,7 +221,7 @@ PAM for AI agents — the same chokepoint, extended to autonomous tools. Opt-in 
 
 - **PostgreSQL storage** via [pgx](https://github.com/jackc/pgx) with embedded, versioned migrations; an in-memory store for tests and demos; optional **[CloudNativePG](https://cloudnative-pg.io/) HA**.
 - **Observability** — a dependency-free [Prometheus](https://prometheus.io/) `/metrics` endpoint (request counts by status, audit volume, break-glass use, rotations, active-sessions gauge), plus a health/readiness split (`/healthz` liveness, `/readyz` checks the database).
-- **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. The release pipeline builds by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance** — see [Verifying a release](#verifying-a-release). *Current release: **[v0.21.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.21.0)** (2026-08-13; first was v0.10.0) — the signed image is public at `ghcr.io/morandeirachema/pamv1:0.21.0`, which is what every manifest here pins, so the published-artifact paths below work.*
+- **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. The release pipeline builds by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance** — see [Verifying a release](#verifying-a-release). *Current release: **[v0.22.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.22.0)** (2026-08-13; first was v0.10.0) — the signed image is public at `ghcr.io/morandeirachema/pamv1:0.22.0`, which is what every manifest here pins, so the published-artifact paths below work.*
 - **Encrypted secrets in git** — the Kubernetes secret manifest can be sealed with **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: values are encrypted while `kind`/`metadata` stay reviewable, decrypted at deploy time (`sops -d | kubectl apply -f -`, plaintext never on disk) or natively by Flux / Argo / helm-secrets — so secrets live in the **same IaC repo** without leaking. See **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **Or source secrets from CyberArk Conjur** — as a runtime alternative to SOPS, set `PAM_CONJUR_URL` and pamv1 fetches its own bootstrap secrets (master key, API key, DB URL, …) from **[Conjur](https://www.conjur.org/)** at startup, authenticating with a host API key or a **Kubernetes `authn-jwt`** projected token — so no bootstrap secret lives in Git at all. With `PAM_CONJUR_REFRESH_MIN` (Phase 78), the secrets that can honestly change on a running server (`PAM_API_KEY`, `PAM_BREAK_GLASS_KEY_HASH`) are **re-read periodically without a restart**; the KEK, database URL and audit-chain keys stay pinned to a restart by design. Both mechanisms ship; SOPS stays the zero-dependency default. See **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
 
@@ -359,7 +359,7 @@ first-class ServiceNow/Jira ticket connectors (84), history-aware analytics
 with a revoke-logins response rung (86–87), the open-findings backlog closed
 (89), and an adversarial review of the crown jewels (91–93) that fixed one
 SFTP read-only containment gap and confirmed the vault, database proxies and
-broker four-eyes sound — released steadily as **v0.10.0 → v0.21.0**. Releases
+broker four-eyes sound — released steadily as **v0.10.0 → v0.22.0**. Releases
 are recorded in **[CHANGELOG.md](CHANGELOG.md)**; the honest remainder lives in
 **[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**.
 
@@ -474,7 +474,7 @@ pinned a build that predated them — and
 **[v0.11.2](https://github.com/morandeirachema/pamv1/releases/tag/v0.11.2)** and
 **every release since** has kept it there — each cut without letting fixes bank
 indefinitely on an unpinned `main`, most recently
-**[v0.21.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.21.0)**. The full list is in
+**[v0.22.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.22.0)**. The full list is in
 [CHANGELOG.md](CHANGELOG.md).
 
 What is left is consolidated in
@@ -547,7 +547,7 @@ docker compose up --build
 > PostgreSQL. Use **`-k`**, not `-f`: `-f` on the directory sweeps up
 > `secret.example.yaml`, which declares `pam-secrets` with `CHANGE_ME` values and
 > would overwrite the secret you just created. (The image the manifests pin,
-> `ghcr.io/morandeirachema/pamv1:0.21.0`, is published and public.)
+> `ghcr.io/morandeirachema/pamv1:0.22.0`, is published and public.)
 
 ```bash
 kubectl apply -f deploy/k8s/namespace.yaml
@@ -619,7 +619,7 @@ Once a release exists, every artifact is verifiable — and these are the comman
 to do it, because a signature nobody can check is decoration.
 
 ```bash
-TAG=v0.21.0                       # the released version
+TAG=v0.22.0                       # the released version
 IMAGE=ghcr.io/morandeirachema/pamv1
 
 # 1. The image was built by this repository's release workflow, not by someone else.
@@ -641,11 +641,11 @@ gh attestation verify "oci://$IMAGE:${TAG#v}" --repo morandeirachema/pamv1
 And to confirm what you are actually running:
 
 ```bash
-kubectl -n pamv1 exec deploy/pamv1 -- /pam-server -version   # → pam-server 0.21.0 (<full commit sha>)
+kubectl -n pamv1 exec deploy/pamv1 -- /pam-server -version   # → pam-server 0.22.0 (<full commit sha>)
 curl -s http://pamv1:8080/metrics | grep pam_build_info      # same, for monitoring
 ```
 
-**Status:** **[v0.21.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.21.0)
+**Status:** **[v0.22.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.22.0)
 was released on 2026-08-13** and is what every manifest here pins — image digest
 `sha256:31a727e2875268c3c69ea9a4e183b608718ccdeed8874d68e85d20cbc01cfcff`, public
 (anonymous pull verified). Each tag's own digest is on its release page. (`v0.11.1` is a source tag only: its pipeline failed
