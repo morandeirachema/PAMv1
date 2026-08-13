@@ -3,7 +3,7 @@
 > Every protocol pamv1 speaks or brokers, and every cryptographic mechanism it
 > relies on — with the file that implements each one.
 >
-> Last updated: 2026-08-10 · Reflects: Phases 0–107 (Phase 93 is docs-only — the regex command gate is best-effort, and §9.4 of the ADMIN-GUIDE now says so — and 94 is the v0.18.1 release; Phase 92 closes an SFTP read-only containment gap — native SSH_FXP_LINK was forwarded where the EXTENDED twin was refused; Phase 62 changed the step-up decision seal's AAD; 63–75 introduce no protocol or cryptography; Phase 76 changes no protocol or key, only how untrusted values are quoted inside three audit details — see [SECURITY-GAPS](SECURITY-GAPS.md) findings AY–BA; 77 adds input validation, no cryptography; 78 changes **when** two key-derived comparison values are read, not how).
+> Last updated: 2026-08-13 · Reflects: Phases 0–116 (Phase 93 is docs-only — the regex command gate is best-effort, and §9.4 of the ADMIN-GUIDE now says so — and 94 is the v0.18.1 release; Phase 92 closes an SFTP read-only containment gap — native SSH_FXP_LINK was forwarded where the EXTENDED twin was refused; Phase 62 changed the step-up decision seal's AAD; 63–75 introduce no protocol or cryptography; Phase 76 changes no protocol or key, only how untrusted values are quoted inside three audit details — see [SECURITY-GAPS](SECURITY-GAPS.md) findings AY–BA; 77 adds input validation, no cryptography; 78 changes **when** two key-derived comparison values are read, not how; **116 adds one new authentication shape — the `join:<token>` SSH form layered on ordinary password auth, §2.6 — and one new secret class — the session-share invite token + its in-memory guest key, §2.5 — no new port, no new primitive**).
 
 **Phase 78 note, because it looks like cryptography and is not.** The Conjur
 refresher fingerprints each secret as the first 8 bytes of its SHA-256 to notice
@@ -161,6 +161,7 @@ a mixed fleet — or a later boot without the variable — cannot fork the chain
 | Break-glass key | **only its SHA-256** (`PAM_BREAK_GLASS_KEY_HASH`) | constant time |
 | Per-user PAM tokens | `pamt_` + 24 random bytes; **only the SHA-256 is stored** | hash lookup |
 | Login sessions, agent keys, app keys, broker resume tokens | high-entropy random; only the SHA-256 stored; resume tokens single-use | hash lookup |
+| Session-share invite token / guest key (Phase 116) | Invite token: high-entropy random, **only the SHA-256 stored** (`auth.TokenHash`), single-use. Guest key (minted on redemption): 32 bytes from `crypto/rand`, hex-encoded — **not hashed, kept in memory only**, never written to the database, scoped to one replica | hash lookup (token) / in-memory map lookup (guest key) |
 
 Hashing before comparison is not decoration: comparing raw keys leaks length, and
 a fixed-size digest comparison does not.
@@ -197,6 +198,16 @@ produces the shares; `POST /api/breakglass/unseal` reassembles M of N.
 - **Upstream host keys**: verified against `PAM_SSH_KNOWN_HOSTS` when set. Unset,
   the proxy trusts any upstream key and says so loudly at startup — a documented
   gap, annotated `#nosec G106`, not an accident.
+- **Session-share join** (Phase 116, `internal/proxy/proxy.go`): the SSH
+  username `join:<token>` layers a **second** check on top of ordinary
+  password authentication — it does not replace it. The connecting principal
+  must still resolve from their own PAM password first (an enroll-only or
+  tunnel-only principal is refused here too, exactly as on any other
+  connection), and only then must the token's invite name them as `invitee`
+  (case-insensitive) and carry `kind:internal` — an external invite presented
+  this way is refused outright. A successful join skips the ordinary
+  connect-admission gates (grants, safe membership, ticket, approval): it
+  mints no new access, only a seat on a session already legitimately open.
 
 ### 2.7 Database authentication
 
@@ -249,6 +260,7 @@ attacker which check failed.
 | **HTTP/HTTPS** REST + 5250 portal | `PAM_LISTEN_ADDR`, `:8080` | HTTPS with `PAM_TLS_CERT/KEY`; `PAM_REQUIRE_HTTPS` fails closed | Auth: `X-API-Key`, or `Bearer` for broker/MCP and the app-secrets API |
 | **Server-Sent Events** | same port | follows the server | Live session monitoring (`/api/sessions/{id}/stream`) and the MCP stream |
 | **WebSocket** | same port | follows the server | In-portal RDP **and VNC** viewers; subprotocol `guacamole`. The token rides the URL because browsers cannot set headers on a WS handshake — so it is short-lived and **tunnel-scoped**: leaked from an access log it cannot call the API |
+| **Guest session-share surface** | same port | follows the server | `/share.html`, `POST /api/share/redeem/{token}`, `GET /api/share/stream`, `POST /api/share/input` — **unauthenticated**, no `X-API-Key`. A one-time redemption token (§2.5) mints a guest key that then rides as a `?key=` query parameter on every further call — the same token-in-the-URL trade-off as the WebSocket row above, but the guest key authenticates only that one session's stream/input, nothing else on the API |
 | **SSH** | `PAM_SSH_ADDR`, `:2222` | yes | Operators authenticate with their PAM key as the SSH password; only session channels are proxied; 120-second pre-auth deadline |
 | **PostgreSQL wire** | `PAM_DB_ADDR`, off (`:5433` by convention) | only with a cert | `SSLRequest` answered `S`/`N`; **GSSEnc always refused** |
 | **TDS (SQL Server)** | `PAM_MSSQL_ADDR`, off (`:1433` by convention) | `ENCRYPT_ON` with a cert, else `NOT_SUP` | See §3.4 |
@@ -435,12 +447,17 @@ whole set.
 egressing integrations they gate — the ITSM webhook, the vendor-attestation
 webhook, the SIEM forwarder, Conjur and the webhook alerter — and **hard-refuse**
 the AWS-KMS KEK and Entra outright. Name a variable in `PAM_OT_AIRGAP_ALLOW` to
-assert it resolves inside the enclave. Three caveats an auditor should know:
+assert it resolves inside the enclave. Four caveats an auditor should know:
 **alerting is disabled entirely** under air-gap regardless of the allow-list (the
 alerter is replaced with a no-op, so allow-listing the webhook does not bring it
-back); the syslog and SMTP alert channels are not in the gate list at all; and
+back); the syslog and SMTP alert channels are not in the gate list at all;
 `PAM_LDAP_URL` and `PAM_KEK_TRANSIT_ADDR` are **assumed in-enclave** — they are
-neither denied nor allow-listable. See [OT-DEPLOYMENT.md](OT-DEPLOYMENT.md).
+neither denied nor allow-listable; and, new in Phase 116, an **external
+session-share invite email is not silenced by the no-op above at all** —
+`alert.SendDirect` calls SMTP directly on the same `PAM_ALERT_EMAIL_*` config,
+**outside** the alerter abstraction air-gap replaces, so a site with SMTP
+configured for other alerting will really deliver an invite's QR-coded link
+off-enclave. See [OT-DEPLOYMENT.md](OT-DEPLOYMENT.md#3-air-gap--offline-mode).
 
 ---
 
@@ -488,6 +505,7 @@ For an auditor who wants the whole list on one screen.
 
 | Date | Change |
 |---|---|
+| 2026-08-13 | **Phase 116 — session sharing's two new secrets, no new primitive.** A share **invite token** follows the existing high-entropy-random-then-SHA-256 pattern every other bearer token here uses (§2.5); the **guest key** it mints for an external redemption does not — 32 bytes of `crypto/rand`, hex, kept in memory only, never hashed or persisted, scoped to one replica. SSH gains a second authentication *layer*, not a new one: `join:<token>` still requires the connecting principal's own PAM password first (§2.6). The new unauthenticated web surface (`/share.html`, `/api/share/*`) rides the existing HTTP(S) port with the same token-in-the-URL trade-off the WebSocket viewer already made (§3.1). Air-gap note: the invite email is the first alert-shaped egress that bypasses `PAM_OT_AIRGAP`'s no-op entirely, because it never goes through the alerter abstraction that gets replaced — see §4 |
 | 2026-08-07 | **Phase 62 — the step-up decision seal binds the pause, not just the session.** A **wire-format change** on `pam_stepup_decision`, no new key and no new primitive: `session.StepUpDecision` gains `pause` (the paused entry's registration time in **microseconds** — the precision a PostgreSQL `timestamptz` round trip survives), and `stepUpDecisionAAD` becomes `pamv1-stepup-decision\|<session>\|<pause>\|<verdict>\|<decider>`. Freshness (±2 min) bounds how long a captured message survives; the pause binding is what makes it apply to exactly one statement. Before it, a decision read off the NOTIFY channel — which needs no privilege on PostgreSQL — could be republished inside the window to release the operator's *next* flagged statement, since `pending` is keyed by session id and a session pauses once per flagged statement. The applying replica now refuses a decision naming a pause it has already resolved, and logs rather than audits the refusal (an attacker-triggerable append is an audit-trail amplifier). **Mixed-version clusters fail closed**: a 0.10.x and a 0.11.0 replica cannot authenticate each other's decisions, so a cross-replica decision is refused — never misapplied — until the roll completes |
 | 2026-08-02 | **Phase 59a — the review of the capture.** No cryptography changed; what changed is where it is applied and what it attests. An artifact's name is now `sanitize`d before it reaches `filepath.Join` (an unsanitized target name escaped the recording directory with `O_CREATE|O_TRUNC`), and `sanitize` also refuses to produce a leading `.`, since a dotfile artifact is one the archiver skips and the pruner preserves. The **audited path is colon-escaped**: `strconv.Quote` keeps colons inside the quotes, and a detail is matched as text, so a path named `evade sha256:<hash>` planted the exact substring playback's tamper check looks for — an operator could vouch for a recording they had altered. Each artifact's attestation is written through the session-teardown auditor, so a drained session cannot leave sealed files whose hash appears nowhere. The per-artifact KEK wrap is bounded and cancellable (`artifactWrapTimeout`), and it no longer runs the audit store under the mutex both SFTP legs share. Wire-level: whole packets only are forwarded on the response leg (a synthesized refusal could otherwise land inside a half-written `DATA`), request ids are single-use while outstanding, `pflags=0` counts as a read, and the `SSH_FXP_EXTENDED` family is governed from an explicit list — see §3.3 |
 | 2026-08-01 | **Phase 59 — SFTP content capture, and the inspector's posture split.** No new primitive: a captured file artifact (`internal/recording/sftpfile.go`, a JSON chunk log of every data movement) is sealed by the **same** `#pamrec1` scheme as a session recording — per-artifact data key wrapped by the vault KEK, chunked AES-256-GCM with the artifact name + chunk index as AAD — hashed as stored, and linked into the recordings' SHA-256 chain. Wire-protocol coverage grew on both legs: the request inspector now parses `SSH_FXP_CLOSE`/`READ`/`WRITE` bodies and a response watcher frames `HANDLE`/`DATA`/`STATUS` (forwarded byte-identical) to bind server handles to paths and downloads to offsets. **Posture**: the inspector stays fail-open *without* capture (§3.3), but with `PAM_SSH_SFTP_CAPTURE` on it is fail-closed — an unframable stream on either leg refuses the transfer, because a containment control that can be evaded by being unparsable is not one. Also closed while parsing the wire: OpenSSH's `posix-rename@openssh.com`/`hardlink@openssh.com` EXTENDED requests now obey rename policy (they previously bypassed the readonly refusal and the path denylist, which parsed only the classic packet) |

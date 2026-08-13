@@ -11,6 +11,26 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Added
+
+- **Live session-sharing ("Session Invite").** A running SSH session can be
+  shared with a second party, view-only or view-control, via a four-eyes
+  request→approve workflow (`POST /api/sessions/{id}/share`, decided by a
+  *different* principal). Internal invites (a named pamv1 user) redeem over
+  SSH as `join:<token>`; external/vendor invites are delivered by email with
+  an embedded QR code, valid 15 minutes, single-use, and redeemed through a
+  new unauthenticated guest page (`/share.html`) — never through the SSH
+  path. Multiple simultaneous view-control joiners are supported natively.
+  Console: the live-watch pane gains a joined-parties roster with a kick
+  action; F6/F7 file and manage invites. New audit actions
+  `session.share_{requested,approved,denied,revoked,joined,join_denied,ended,kicked}`,
+  two of them fail-closed. New env vars `PAM_SESSION_SHARE_INVITE_TTL_SEC`
+  (default 900) and `PAM_SESSION_SHARE_GUEST_TTL_MIN` (default 240); reuses
+  `PAM_ALERT_EMAIL_*` for the invite email. New migration `0032` (Postgres);
+  store surface 149 → 156 methods. `PAM_OT_AIRGAP` now also disables the
+  external/vendor invite email path (it dials SMTP directly and was not
+  previously covered by the alerter's own air-gap no-op).
+
 ## [0.21.0] — 2026-08-13
 
 A minor: one new capability. No schema change.

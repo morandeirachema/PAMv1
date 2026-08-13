@@ -3,7 +3,7 @@
 > **Living document.** Update when the operator-facing behavior or the runbook
 > recipes change. See the [change log](#10-change-log).
 >
-> Last updated: 2026-08-10 · Reflects: Phases 0–107. Phases 53–70 add one background worker (the hourly, leader-locked certification scheduler — always on, nothing to configure beyond `PAM_CERT_REMIND_DAYS`, which Phase 76 range-checks at `0`–`366` and refuses to start outside) and migrations `0025`–`0031`, all additive and applied at startup; 71–77 add no worker, migration or knob. Phase 78 adds one **optional, per-replica** worker — the Conjur secret refresh, off unless `PAM_CONJUR_REFRESH_MIN` is set, and deliberately not leader-locked because each replica holds its own copy of the secrets it re-reads. Phases 79–94 add no worker and no migration; the new knobs are the Phase 84 first-class ticket-connector family (`PAM_TICKET_PROVIDER`/`_URL`/`_USER`/`_TOKEN`/`_STATES`/`_ACTOR_FIELDS`/`_REQUIRE_WINDOW`/`_BIND_ACTOR`) and the Phase 86 `PAM_ANALYTICS_AUTO_STEPUP` response rung. Nothing else in this runbook changes.
+> Last updated: 2026-08-13 · Reflects: Phases 0–116. Phases 53–70 add one background worker (the hourly, leader-locked certification scheduler — always on, nothing to configure beyond `PAM_CERT_REMIND_DAYS`, which Phase 76 range-checks at `0`–`366` and refuses to start outside) and migrations `0025`–`0031`, all additive and applied at startup; 71–77 add no worker, migration or knob. Phase 78 adds one **optional, per-replica** worker — the Conjur secret refresh, off unless `PAM_CONJUR_REFRESH_MIN` is set, and deliberately not leader-locked because each replica holds its own copy of the secrets it re-reads. Phases 79–94 add no worker and no migration; the new knobs are the Phase 84 first-class ticket-connector family (`PAM_TICKET_PROVIDER`/`_URL`/`_USER`/`_TOKEN`/`_STATES`/`_ACTOR_FIELDS`/`_REQUIRE_WINDOW`/`_BIND_ACTOR`) and the Phase 86 `PAM_ANALYTICS_AUTO_STEPUP` response rung. Phase 116 adds migration `0032` (live session-sharing — §6.4, §7) and no new worker. Nothing else in this runbook changes.
 
 > ⚠️ **Beta · for learning purposes.** pamv1 is feature-complete against its
 > [roadmap](../ROADMAP.md) and has closed every finding of its own security
@@ -400,6 +400,7 @@ groups to roles so people log in with corporate SSO (+ MFA) instead of a token.
 ssh -p 2222 web-01@pam.example                  # SSH, default credential; password = alice's PAM token
 ssh -p 2222 root@web-01@pam.example             # pick a specific account
 ssh -p 2222 root@web-01+observe@pam.example     # read-only supervised session
+ssh -p 2222 join:7f3a9c...@pam.example          # join a session shared with you (Phase 116); password = YOUR OWN PAM token
 
 # Database session: every statement audited
 psql "host=pam.example port=5433 user=root@web-01 dbname=orders"   # password = PAM token
@@ -480,6 +481,7 @@ event, it refuses to hand out the secret.
 | **Audit → SIEM forwarding** | Push every audit event from a durable cursor as RFC 5424 / CEF / LEEF over UDP, TCP or TLS | `PAM_AUDIT_FORWARD_ADDR` |
 | **Retention + WORM archive** | Sweep aged recordings and audit rows; with an archive directory set, export-then-prune, and never prune if the archive failed | `PAM_RECORDING_RETENTION_DAYS`, `PAM_AUDIT_RETENTION_DAYS`, `PAM_RETENTION_ARCHIVE_DIR` |
 | **Live monitoring** | Watch a running session over server-sent events; kill it | `GET /api/sessions/{id}/stream` |
+| **Session sharing** | Bring a second party into a live session, view-only or view-control, via four-eyes request→approve; internal invites redeem over SSH, external ones by a single-use emailed QR through an unauthenticated guest page — never a stored password | `PAM_SESSION_SHARE_INVITE_TTL_SEC`, `PAM_SESSION_SHARE_GUEST_TTL_MIN` |
 | **Approvals (4-eyes)** | Require an approved request before connecting; N-of-M chains; maintenance windows; ITSM ticket | `PAM_REQUIRE_APPROVAL`, `PAM_APPROVALS_REQUIRED`, `PAM_REQUIRE_TICKET` |
 | **MFA** | TOTP second factor on login; enroll-only first sign-in until set up | `PAM_MFA_REQUIRED` |
 | **Zero Standing Privilege** | `ssh_ca` credentials store **no** secret — pamv1 mints a short-lived SSH certificate per session | `PAM_SSH_CA_KEY` |
@@ -553,6 +555,7 @@ Postgres), and Terraform. Full detail is in the [Administrator Guide](ADMIN-GUID
 
 | Date | Change |
 |---|---|
+| 2026-08-13 | Phase 116 (live session-sharing): §6.4 gained the `join:<token>` connect form (joining a session shared with you — your own PAM token is still the password) and §7 gained a **Session sharing** safety-net row. Migration `0032`; no new background worker |
 | 2026-08-09 | Phase 95 (documentation currency pass): header 0–80 → 0–94 — no new worker or migration in 79–94; named the Phase 84 ticket-connector knob family and the Phase 86 `PAM_ANALYTICS_AUTO_STEPUP` rung the header had not absorbed |
 | 2026-07-23 | Expanded §5 into a low-level "under the hood": the exact cipher (DEK/nonce, `v2:` token, AAD binding, KEK providers), the rest of the crypto, the encryption on every connection leg, and the step-by-step SSH/PostgreSQL/WinRM/RDP target handshakes |
 | 2026-07-23 | Aligned with the doc set (standard header, change log); added the tamper-evident-audit and kill-on-revoke safety nets; corrected the default-credential SSH example; standardized on "PAM token" for the per-user secret |
