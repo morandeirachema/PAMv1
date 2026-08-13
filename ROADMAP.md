@@ -2383,10 +2383,16 @@ is a **minor**, not a patch. Schema change: migration `0032`
 (`session_share_invites`, plus a `vendors.email` column).
 
 - [x] **v0.22.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-13 as `ghcr.io/morandeirachema/pamv1:0.22.0` (also
+  `latest`), digest
+  `sha256:b0dd90a2777900e1a6062bce0adf77819996783629968b02e5b4495476d555e5`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow)
 - [x] All five pins via the sweep; Helm chart `version` 0.12.0 -> **0.13.0**
   (minor, alongside the `appVersion` minor)
 - [x] Both READMEs restated
-- [x] `docs/README.md`'s currency line checked proactively
+- [x] `docs/README.md`'s currency line checked proactively; `docs/NIS2-COMPLIANCE.md`'s
+  compliance-evidence row (a documented recurring staleness point) caught too
 
 ## Phase 116 — Live session-sharing ("Session Invite") ✅
 
