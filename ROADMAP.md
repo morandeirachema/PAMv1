@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–115 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–117 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2375,6 +2375,18 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 117 — v0.22.0 ✅
+
+Releases Phase 116 (live session-sharing) — a genuine new capability, so this
+is a **minor**, not a patch. Schema change: migration `0032`
+(`session_share_invites`, plus a `vendors.email` column).
+
+- [x] **v0.22.0** through the test-gated pipeline, rehearsed on `main` first.
+- [x] All five pins via the sweep; Helm chart `version` 0.12.0 -> **0.13.0**
+  (minor, alongside the `appVersion` minor)
+- [x] Both READMEs restated
+- [x] `docs/README.md`'s currency line checked proactively
 
 ## Phase 116 — Live session-sharing ("Session Invite") ✅
 
