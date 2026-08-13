@@ -2390,6 +2390,11 @@ genuine new capability, so this is a **minor**, not a patch. Schema change:
 migration `0033` (`users.ip_allowlist`).
 
 - [x] **v0.23.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-13 as `ghcr.io/morandeirachema/pamv1:0.23.0` (also
+  `latest`), digest
+  `sha256:dbf9911cb9da807a08d18e8fc1c4d66418f5d8cee8b24e9d33f512de8a8d23e4`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow)
 - [x] All five pins via the sweep; Helm chart `version` 0.13.0 -> **0.14.0**
   (minor, alongside the `appVersion` minor)
 - [x] Both READMEs restated
