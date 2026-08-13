@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-12 · Reflects: Phases 0–112 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110) and mandatory live supervision (112, §9.4b) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-13 · Reflects: Phases 0–114 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b) and a live NIS2 compliance report (114, §9.2b) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -1568,7 +1568,8 @@ curl -H "X-API-Key: $PAM_API_KEY" \
 ```
 
 See the [NIS2 Compliance Pack](NIS2-COMPLIANCE.md) for the full Art. 21 control
-matrix and the Art. 23 reporting workflow.
+matrix and the Art. 23 reporting workflow, and §9.2b below for a live report
+against that same matrix rather than a raw event slice.
 
 **Tamper-evident audit trail (optional).** By default the audit table is a plain
 log; an attacker with database write access could edit or delete rows. Set a
@@ -1670,6 +1671,49 @@ export PAM_RETENTION_ARCHIVE_DIR=/mnt/worm/pamv1
   an archived artifact.
 - **With the HMAC chain on you now still get the scheduled export**; only the
   delete stays manual (re-anchor the chain, then reclaim the space).
+
+### 9.2b A live NIS2 compliance report (Phase 114)
+
+The exports above hand over a raw slice of the audit trail; a regulator or
+auditor usually wants it **mapped to the controls it's supposed to evidence**.
+`GET /api/compliance/nis2` produces a canned report against the same Art.
+21(2) matrix as the [NIS2 Compliance Pack](NIS2-COMPLIANCE.md) §1, scoped to a
+time window:
+
+```bash
+curl -H "X-API-Key: $PAM_API_KEY" \
+  "http://localhost:8080/api/compliance/nis2?since=2026-07-01T00:00:00Z&until=2026-08-01T00:00:00Z"
+```
+
+Each control comes back with its **status** — `implemented` or `partial`,
+architectural, the same as the doc: whether the capability exists, not
+whether it happened to fire in this particular window — and, for controls
+with a natural audit signal, an `evidence.families` count of matching events
+in the window, bucketed by the action's family prefix (`vendor.*` for (d)
+supply-chain security, `certification.*` for (f)/(i), `mfa.*`/`login.*` for
+(j), and so on). Control (b) — incident handling — additionally carries the
+current `GET /api/audit/verify` result, labeled honestly
+`"whole-chain (bounded-range verification is not supported)"`: this report
+does not claim to prove the chain was intact *only* during the requested
+window, just that it is intact now, end to end. A quiet window on a
+window-scoped control is not a finding — it means nothing of that kind
+happened, not that the control is broken.
+
+Same conventions as every other evidence export here: `X-PAM-Export-SHA256`
+over the exact delivered bytes, deterministic over a fixed window (so
+re-running it later for the same dates reproduces the same digest), and the
+act of generating it is itself audited (`compliance.nis2_report`). Requires
+`CapReadAudit` — the same gate as the raw export and playback. Console:
+**F8** from *Display Audit Trail* opens the report screen (since/until
+inputs default to the last 90 days; **F9** downloads the JSON).
+
+**Scope, honestly bounded.** Only NIS2 is mapped. PCI-DSS, ISO 27001 and SOX
+would each need their own control taxonomy authored by someone who actually
+knows that framework — this does not attempt to guess at one, unlike
+treating "compliance reporting" as interchangeable across frameworks would
+imply. If you need one of those, the building blocks (`ExportAudit`, the
+family-prefix bucketing, the digest/audit conventions) are the same ones this
+report is built from.
 
 ### 9.3 Session recordings
 
@@ -2319,6 +2363,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-13 | **Phase 114 — a live NIS2 compliance report.** `GET /api/compliance/nis2?since=&until=` maps window-scoped audit activity onto the existing Art. 21(2) control matrix (docs/NIS2-COMPLIANCE.md §1): each control's status is architectural, and controls with a natural audit signal (supply-chain, policy effectiveness, access control, MFA, incident handling) carry a count of matching events bucketed by action family, plus (for incident handling) the whole-chain integrity result. Same digest/determinism/audit conventions as the raw export. Console: **F8** from *Display Audit Trail*. NIS2 only — PCI-DSS/ISO27001/SOX are not attempted. See §9.2b |
 | 2026-08-12 | **Phase 112 — mandatory live supervision.** `PAM_REQUIRE_LIVE_SUPERVISION=true` holds an interactive SSH channel — before it dials the target — until a supervisor is actually watching (`GET /api/sessions/{id}/stream`) or `PAM_LIVE_SUPERVISION_TIMEOUT_SEC` (default 120) elapses; a timeout refuses the session and is audited `session.unsupervised`. Observer sessions and break-glass are exempt. SSH only for now — the database/WinRM proxies register their live session after dialing, so they're left for a future phase. See §9.4b |
 | 2026-08-12 | **Phase 110 — SSH session recordings are searchable by content.** `GET /api/recordings/search?q=` finds text anywhere in a recording's output, even split across several writes, and reports each hit's snippet plus the playback time to jump to. Console: **F4** from *Session Recordings* (menu 19). Same `read_audit` gate as playback; the search itself is audited (`session.search`) with the query. RDP/VNC and WinRM are not covered. See §9.3 |
 | 2026-08-06 | **Phase 60a — the ticket re-check no longer misfires when you hold more than one approval.** With `PAM_TICKET_REVALIDATE=true`, each live approval for the target is now checked in turn and the one admitted is the one whose ticket passed. Before, a second concurrent connection could be let in on an approval whose change had been cancelled (its ticket was never put to the ITSM at all), and one cancelled change could block a valid approval behind it for the rest of the window. Up to 8 approvals are considered and the whole walk shares the same 5-second ITSM budget. Nothing to configure. See §9.5 |
