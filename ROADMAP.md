@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–114 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–115 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -31,7 +31,7 @@ supervisor before it proceeds, not just after-the-fact review — released in
 turn as **v0.20.0 by Phase 113**, and **Phase 114 closes the pass's third
 finding**: `GET /api/compliance/nis2` turns the doc-only Art. 21(2) control
 matrix into a live, window-scoped report with real audit evidence per
-control. The narrative that follows traces the
+control — released in turn as **v0.21.0 by Phase 115**. The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2375,6 +2375,19 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 115 — v0.21.0 ✅
+
+Releases Phase 114 (a live NIS2 compliance report) — a genuine new
+capability, so this is a **minor**, not a patch. No schema change.
+
+- [x] **v0.21.0** through the test-gated pipeline, rehearsed on `main` first
+- [x] All five pins via the sweep; Helm chart `version` 0.11.0 -> **0.12.0**
+  (minor, alongside the `appVersion` minor)
+- [x] Both READMEs restated
+- [x] `docs/README.md`'s currency line caught proactively this time — it went
+  stale after both of the last two release-prep passes (v0.19.0, v0.20.0)
+  because it carries no version pin any checklist watches
 
 ## Phase 114 — A live NIS2 compliance report ✅
 
