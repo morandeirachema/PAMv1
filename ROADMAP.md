@@ -2381,7 +2381,12 @@ two did.
 Releases Phase 114 (a live NIS2 compliance report) — a genuine new
 capability, so this is a **minor**, not a patch. No schema change.
 
-- [x] **v0.21.0** through the test-gated pipeline, rehearsed on `main` first
+- [x] **v0.21.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-13 as `ghcr.io/morandeirachema/pamv1:0.21.0` (also
+  `latest`), digest
+  `sha256:31a727e2875268c3c69ea9a4e183b608718ccdeed8874d68e85d20cbc01cfcff`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow)
 - [x] All five pins via the sweep; Helm chart `version` 0.11.0 -> **0.12.0**
   (minor, alongside the `appVersion` minor)
 - [x] Both READMEs restated
