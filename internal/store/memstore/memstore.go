@@ -1246,6 +1246,19 @@ func (m *Memstore) UpdateUserRole(_ context.Context, id int64, role string) erro
 	return nil
 }
 
+// UpdateUserIPAllowlist sets a user's source-address restriction (Phase 118).
+func (m *Memstore) UpdateUserIPAllowlist(_ context.Context, id int64, allowlist string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	u.IPAllowlist = allowlist
+	m.users[id] = u
+	return nil
+}
+
 // GetUserByTokenHash returns the user whose token hash matches, or ErrNotFound.
 func (m *Memstore) GetUserByTokenHash(_ context.Context, tokenHashHex string) (*store.User, error) {
 	m.mu.Lock()

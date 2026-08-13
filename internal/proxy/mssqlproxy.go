@@ -328,6 +328,7 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		principal:      principal,
 		targetName:     targetName,
 		credUser:       credUser,
+		remoteAddr:     remote,
 		expectProtocol: "mssql",
 		startAudit: func(t *store.Target, cr *store.Credential) (string, string) {
 			return "db.session.start", fmt.Sprintf("target:%s db:%s cred_user:%s via:mssql", t.Name, database, cr.Username)
@@ -788,6 +789,8 @@ func (m *MSSQLProxy) refuse(ctx context.Context, c *tds.Conn, res admitResult, a
 		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: complete MFA enrollment first", tds72)
 	case gateRoleConnect:
 		m.deny(ctx, c, actor, login, "your role may not open sessions", tds72)
+	case gateIPAllowlist:
+		m.deny(ctx, c, actor, login, "this account may not connect from this network", tds72)
 	case gateResolve:
 		m.deny(ctx, c, actor, login, res.reason, tds72)
 	case gateProtocolMatch:

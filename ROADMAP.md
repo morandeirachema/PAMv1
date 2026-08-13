@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–117 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–118 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -31,7 +31,13 @@ supervisor before it proceeds, not just after-the-fact review — released in
 turn as **v0.20.0 by Phase 113**, and **Phase 114 closes the pass's third
 finding**: `GET /api/compliance/nis2` turns the doc-only Art. 21(2) control
 matrix into a live, window-scoped report with real audit evidence per
-control — released in turn as **v0.21.0 by Phase 115**. The narrative that follows traces the
+control — released in turn as **v0.21.0 by Phase 115**. A fresh Wallix-weighted
+research pass then closed its own strongest finding — **live session-sharing**
+("Session Invite": view-only or view-control joining of a running session,
+Phase 116) — released as **v0.22.0 by Phase 117**, and **Phase 118 closes that
+pass's second finding**: CIDR/network-based connect & login authorization, a
+per-user CIDR allowlist enforced at both the session-proxy `admit()` gate and
+the REST `authz` middleware, break-glass exempt. The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2375,6 +2381,69 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 118 — CIDR/network-based connect & login authorization ✅
+
+The one confirmed IP-authorization gap from the Wallix-weighted pass —
+exhaustive grep across `internal/auth`/`internal/api`/`internal/proxy`/
+`internal/config`/`internal/store` found zero CIDR/IP-based authorization
+logic anywhere, only rate-limiter key derivation and the wholly separate
+target-side SSH-certificate `SourceAddress` (enforced by the *target's* own
+sshd, not pamv1). Wallix's mechanism is `user.ip_source`/
+`profile.ip_limitation`; CyberArk's is "Network Areas."
+
+- [x] **`store.User.IPAllowlist`** (migration `0033`, `users.ip_allowlist
+  TEXT NOT NULL DEFAULT ''`): a comma-separated CIDR list. Empty means
+  unrestricted — zero behavior change for every existing user. Threaded onto
+  `Principal.IPAllowlist` in `auth.Resolver.Resolve`'s per-user-token branch
+  only; directory-authenticated principals (`POST /api/login`, no backing
+  `store.User` row) stay unrestricted in v1 — an honest, documented bound,
+  not a silent gap.
+- [x] **`auth.IPAllowed(allowlist, ip)` / `auth.ValidateCIDRList(s)`**:
+  comma-split, `net.ParseCIDR` per block.
+- [x] **Enforced at both admission points, break-glass exempt at both** —
+  matching every other gate in this codebase's own convention that
+  emergency access stays loud rather than newly blocked by the thing it's
+  meant to bypass. Session proxies: `gates.go` gains gate 4
+  `gateIPAllowlist` in the shared `admit()` sequence (new
+  `admitRequest.remoteAddr`, populated at all 3 proxy call sites); it fires
+  at channel-open, so `dial` still succeeds and only `NewSession` is
+  refused, matching every other post-auth gate. REST/portal: the existing
+  `authz(cap, handler)` middleware — the one checkpoint nearly every
+  protected route already passes through — checks `s.clientIP(r)` (reusing
+  the trusted-proxy-hop-aware resolver rate-limiting already relies on)
+  right after the `TunnelOnly` check.
+- [x] **Omit-vs-clear, caught before it shipped.** `PUT /api/users/{id}`'s
+  `ip_allowlist` is `*string`, not `string` — JSON omission leaves an
+  existing restriction untouched, an explicit `""` clears it. A plain
+  `string` field would have let any role-only update silently disable a
+  security restriction; `TestUpdateUserIPAllowlistOmitVsClear` pins the
+  distinction. Both create and update validate via `ValidateCIDRList`
+  before writing.
+- [x] **Console**: `useradd()`/`userchange()` gain an `ip_allowlist` input
+  (blank = unrestricted); the `users()` list gains a 5th "IP" column — a
+  bounded `restricted`/`-` indicator, never the raw CIDR text. Extending
+  `console_check.js` to the `users()` screen for the first time caught a
+  real pre-existing bug: its username/role columns used `pad()` (fixed-
+  width, never truncates) instead of `cell()` (truncate-then-pad) — fixed
+  alongside, not a Phase 118 regression but exactly the kind of hole this
+  safety net exists to find.
+- [x] **Tests**: `internal/auth/auth_test.go` (`IPAllowed` table-driven —
+  11 cases, `ValidateCIDRList`, `Resolve` threading); `internal/proxy/
+  ipallowlist_test.go` (JIT-style end-to-end against a real in-process
+  upstream: dial succeeds, `NewSession` fails outside the CIDR, admits
+  inside it — 2 tests); `internal/api/ipallowlist_test.go` (create/update
+  validation, omit-vs-clear, and `authz` enforcement proven both ways via
+  `PAM_TRUSTED_PROXY_HOPS` + `X-Forwarded-For` against a real
+  `httptest.Server` — 3 tests); `internal/store/storetest` extended for
+  both backends. Store surface 156 → **157**
+  (`UserStore.UpdateUserIPAllowlist`). All green under `-race`; `archgen`
+  confirms the route count is unchanged at 142 — this phase added a column,
+  not a route.
+
+**V1 scope, explicitly bounded**: directory/OIDC-authenticated principals
+have no backing `store.User` row to source a list from, so they are always
+unrestricted — a real, stated limit, not an oversight.
 
 ## Phase 117 — v0.22.0 ✅
 

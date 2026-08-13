@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-08-13 · Reflects: Phases 0–116. **Phase 53 added the first new
+> Last updated: 2026-08-13 · Reflects: Phases 0–118. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; nothing after
 > it adds a port or listener (55–94 ride the existing listeners and flows: the
 > live-monitor relay and the step-up decision bus ride the server ↔ PostgreSQL
@@ -22,6 +22,10 @@
 > since Phase 20: **E14, the outbound ITSM ticket-validation call** — a generic
 > webhook (Phase 20), first-class ServiceNow/Jira REST lookups since Phase 84,
 > re-checked at the moment access is used with `PAM_TICKET_REVALIDATE` (Phase 60).
+> **Phase 118 adds no port, listener or flow either** — the CIDR allowlist
+> check runs against the source address each connection already resolves
+> (`s.clientIP(r)` on `:8080`, the proxies' own `RemoteAddr()` on `:2222`/
+> `:5433`/`:1433`), in-process, with nothing new on the wire.
 > Everything from 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
 > **no new listeners**: certification/ticketing/approvals (19–21), threat analytics

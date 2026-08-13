@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-13 · Reflects: Phases 0–116 + the 2026-07 hardening passes.
+> Last updated: 2026-08-13 · Reflects: Phases 0–118 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -1062,6 +1062,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-13 | Phase 118 (CIDR/network-based connect & login authorization): §3.4 (`auth`) gains `Principal.IPAllowlist`, `IPAllowed`, `ValidateCIDRList`; §4.2 (the two auth middlewares) — `authz` now checks it via `s.clientIP(r)`; §5 — `gates.go`'s shared `admit()` gains gate 4, `admitRequest.remoteAddr` threaded from all three proxy call sites. New `UserStore.UpdateUserIPAllowlist` (store surface 156 → 157), migration `0033`. No package moved, no CI gate changed. |
 | 2026-08-13 | Phase 116 (live session-sharing): new §5.6 — `session.ShareRegistry` (an input mux any number of concurrent `view_control` joiners can write to, in-memory-only guest keys, replica-local by design), the SSH `join:<token>` prefix dispatch in `proxy.go` (a PAM login *plus* an invite match, never the token alone), and three unauthenticated routes in the new `sessionshare_handlers.go` (the RDP/VNC tunnel's no-`authz` pattern, reused). New `ShareInviteStore` role (6 methods, store surface 149 → 156), migration `0032`. No package moved, no CI gate changed. |
 | 2026-08-10 | Phase 107 (documentation currency pass): all 18 `Reflects: Phases 0–N` headers bumped to 0–107; HIGH-LEVEL log gained the five missing phases; this CI-gate list gained the fuzz step + enforced gosec; SECURITY-GAPS recorded the Phase 102 leak finding + 103/104 hardening. Docs-only. |
 | 2026-08-10 | Phase 106 (deferred-cleanup backlog): the `"ssh_ca"` magic string → `store.SecretTypeSSHCA` + `Credential.IsZSP()` (13 secret-path guards de-stringified). The rest of the backlog (deleteByID, credAndTarget, single-use pgstore scanners, the vendor N+1, storetest subtests) was evaluated and skipped as churn-with-wrinkles — see ROADMAP Phase 106. |

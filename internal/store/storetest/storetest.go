@@ -977,6 +977,20 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.UpdateUserRole(ctx, 999999, "user"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("UpdateUserRole missing: want ErrNotFound, got %v", err)
 	}
+	// UpdateUserIPAllowlist (Phase 118): a fresh user's allowlist is empty
+	// (unrestricted) by default; setting it persists and round-trips.
+	if u.IPAllowlist != "" {
+		t.Fatalf("new user's IPAllowlist = %q, want empty", u.IPAllowlist)
+	}
+	if err := st.UpdateUserIPAllowlist(ctx, u.ID, "10.0.0.0/8,192.168.1.0/24"); err != nil {
+		t.Fatalf("UpdateUserIPAllowlist: %v", err)
+	}
+	if by, err := st.GetUser(ctx, u.ID); err != nil || by.IPAllowlist != "10.0.0.0/8,192.168.1.0/24" {
+		t.Fatalf("after UpdateUserIPAllowlist: %+v err %v", by, err)
+	}
+	if err := st.UpdateUserIPAllowlist(ctx, 999999, "10.0.0.0/8"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateUserIPAllowlist missing: want ErrNotFound, got %v", err)
+	}
 	if err := st.DeleteUser(ctx, u.ID); err != nil {
 		t.Fatalf("DeleteUser: %v", err)
 	}

@@ -11,6 +11,20 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Added
+
+- **CIDR/network-based connect & login authorization.** A per-user,
+  comma-separated CIDR allowlist (`ip_allowlist`) restricting where a
+  bearer-token principal may connect from, enforced at both the REST
+  `authz` middleware and the session-proxy `admit()` gate (SSH/PostgreSQL/
+  SQL Server) — break-glass exempt, like every other admission gate. Empty
+  is unrestricted; directory/OIDC-authenticated principals are unaffected
+  in v1 (no backing `store.User` row to source a list from). `POST
+  /api/users` and `PUT /api/users/{id}` accept `ip_allowlist`; on update it
+  is omit-to-leave-alone, explicit-`""`-to-clear. Console: a new field on
+  the user-add/change forms and an "IP" column on the user list. New
+  migration `0033` (Postgres); store surface 156 → 157 methods.
+
 ## [0.22.0] — 2026-08-13
 
 A minor: one new capability. Schema change (migration `0032`).
