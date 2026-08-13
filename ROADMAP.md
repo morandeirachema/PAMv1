@@ -2378,7 +2378,13 @@ two did.
 Releases Phase 112 (mandatory live-supervision gate) — a genuine new
 capability, so this is a **minor**, not a patch. No schema change.
 
-- [x] **v0.20.0** through the test-gated pipeline, rehearsed on `main` first
+- [x] **v0.20.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-13 as `ghcr.io/morandeirachema/pamv1:0.20.0` (also
+  `latest`), digest
+  `sha256:ce01637e76be9acb2dd88e2c8cdb5d2bbfde76da59fc79ebff318fc00d35b421`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow). Keyless-signed with the SBOM and SLSA provenance as
+  OCI referrers; the Release carries `sbom.spdx.json`
 - [x] All five pins via the sweep; Helm chart `version` 0.10.0 -> **0.11.0**
   (minor, alongside the `appVersion` minor)
 - [x] Both READMEs restated
