@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -288,6 +289,17 @@ type Principal struct {
 	BreakGlass bool   // authenticated via the emergency key; use is audited loudly
 	EnrollOnly bool   // session may only complete MFA enrollment, nothing else
 	TunnelOnly bool   // token minted for the RDP tunnel only; API middleware refuses it
+	// IPAllowlist restricts this principal to connecting from a source address
+	// inside one of these comma-separated CIDR blocks (Phase 118), e.g.
+	// "10.0.0.0/8, 192.168.1.0/24". Empty (the default) means unrestricted —
+	// setting it never affects anyone who has not opted in. Sourced from
+	// store.User.IPAllowlist for a local (bearer-token) identity; a
+	// directory-authenticated principal (AD/LDAP/Entra/OIDC — no backing
+	// store.User row) has no allowlist to source, so it is always unrestricted
+	// for v1. Checked with IPAllowed at both HTTP authz and session-proxy
+	// connect time; BreakGlass bypasses it, matching every other gate
+	// break-glass already bypasses.
+	IPAllowlist string
 }
 
 // effectiveRoles returns the role set to evaluate capabilities and role-grants
@@ -312,6 +324,59 @@ func (p *Principal) Can(c Capability) bool {
 		}
 	}
 	return false
+}
+
+// IPAllowed reports whether ip satisfies allowlist — a comma-separated list of
+// CIDR blocks (Phase 118). An empty (or all-whitespace) allowlist means
+// unrestricted: true. An ip that fails to parse can never satisfy a
+// non-empty restriction (fail-closed) rather than erroring the caller — the
+// gates that call this always have a concrete remote address string, so a
+// parse failure here means malformed input, not "no restriction configured".
+// A malformed CIDR entry is skipped rather than aborting the whole check, so
+// one bad entry degrades to "that one entry never matches" instead of
+// silently disabling every other entry in the list — ValidateCIDRList is
+// what keeps a malformed entry from being stored in the first place.
+func IPAllowed(allowlist, ip string) bool {
+	entries := splitCIDRList(allowlist)
+	if len(entries) == 0 {
+		return true
+	}
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return false
+	}
+	for _, entry := range entries {
+		if _, network, err := net.ParseCIDR(entry); err == nil && network.Contains(parsedIP) {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateCIDRList reports an error naming the first malformed entry in a
+// comma-separated CIDR list, or nil if every entry (there may be zero) parses
+// — the write-time guard that keeps IPAllowed's per-entry skip-on-parse-error
+// from ever masking an operator's typo. Called wherever a caller may set a
+// principal's allowlist (currently POST/PUT /api/users).
+func ValidateCIDRList(s string) error {
+	for _, entry := range splitCIDRList(s) {
+		if _, _, err := net.ParseCIDR(entry); err != nil {
+			return fmt.Errorf("invalid CIDR block %q: %w", entry, err)
+		}
+	}
+	return nil
+}
+
+// splitCIDRList splits a comma-separated CIDR list into trimmed, non-empty
+// entries.
+func splitCIDRList(s string) []string {
+	var out []string
+	for _, entry := range strings.Split(s, ",") {
+		if entry = strings.TrimSpace(entry); entry != "" {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 // IsAdmin reports whether the principal is a built-in administrator — the
@@ -571,7 +636,11 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (*Principal, error) 
 	if r.dir != nil {
 		// Per-user access token (local identity).
 		if u, err := r.dir.GetUserByTokenHash(ctx, hash); err == nil {
-			return r.principalFor(ctx, u.Username, u.Role, false)
+			p, perr := r.principalFor(ctx, u.Username, u.Role, false)
+			if perr == nil {
+				p.IPAllowlist = u.IPAllowlist
+			}
+			return p, perr
 		}
 		// Login session token (e.g. Active Directory / Entra ID / break-glass).
 		if s, err := r.dir.GetSessionByTokenHash(ctx, hash); err == nil {

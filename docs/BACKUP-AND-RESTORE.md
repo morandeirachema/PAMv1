@@ -3,7 +3,7 @@
 > **Living document.** Update when the data model or deployment changes. See the
 > [change log](#change-log).
 >
-> Last updated: 2026-08-13 · Reflects: Phases 0–116. The procedure is unchanged: the migration high-water mark is now `0032` (Phase 116 added `session_share_invites` plus a `vendors.email` column; phases 71–115 otherwise added none beyond `0031`), migrations `0025`–`0032` are additive and applied at startup, and the new columns/tables live in tables this runbook already covers.
+> Last updated: 2026-08-13 · Reflects: Phases 0–118. The procedure is unchanged: the migration high-water mark is now `0033` (Phase 118 added a `users.ip_allowlist` column; Phase 116 added `session_share_invites` plus a `vendors.email` column; phases 71–115 otherwise added none beyond `0031`), migrations `0025`–`0033` are additive and applied at startup, and the new columns/tables live in tables this runbook already covers.
 
 > ⚠️ **Beta · for learning purposes.** pamv1 is feature-complete against its
 > [roadmap](../ROADMAP.md) and has closed every finding of its own security

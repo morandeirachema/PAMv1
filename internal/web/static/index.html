@@ -1917,8 +1917,8 @@ Type options, press Enter.
   <span class="cyan">2=Change role   4=Delete</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Username</th><th>Role / profile</th><th>Created</th></tr>
-${users.map((u) => `<tr><td>${opt(u.id)}</td><td>${esc(u.id)}</td><td>${pad(u.username, 18)}</td><td>${pad(u.role, 10)}</td><td class="cyan">${fmtTime(u.created_at)}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Username</th><th>Role / profile</th><th>IP</th><th>Created</th></tr>
+${users.map((u) => `<tr><td>${opt(u.id)}</td><td>${esc(u.id)}</td><td>${cell(u.username, 18)}</td><td>${cell(u.role, 10)}</td><td class="${u.ip_allowlist ? "amber" : ""}">${pad(u.ip_allowlist ? "restricted" : "-", 10)}</td><td class="cyan">${fmtTime(u.created_at)}</td></tr>`).join("")}
 </table>${users.length ? "" : `<div class="cyan indent">(No users. Press F6 to mint a token.)</div>`}
 <input type="submit" hidden></form>
 <div class="cyan">Built-in roles: admin, user, auditor, approver. Custom profiles: menu 12.</div>
@@ -1945,8 +1945,10 @@ A one-time access token is generated and shown once. Only its hash is stored.
 <form id="f-add" class="indent">
 <label>Username  . . . . . :  <input name="username" size="20" required autofocus></label>
 <label>Role / profile  . . :  <select name="role">${["user", "auditor", "approver", "admin"].map((r) => `<option>${r}</option>`).join("")}${profiles.map((p) => `<option value="${esc(p.name)}">${esc(p.name)} (profile)</option>`).join("")}</select></label>
+<label>IP allowlist  . . . :  <input name="ip_allowlist" size="40" placeholder="blank = unrestricted"></label>
 <input type="submit" hidden>
 </form>
+<div class="cyan indent">IP allowlist: comma-separated CIDR blocks (e.g. 10.0.0.0/8, 192.168.1.0/24) this user may connect from — blank means no restriction.</div>
 ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-add").onsubmit = async (ev) => {
           ev.preventDefault();
@@ -1967,15 +1969,19 @@ Editing user <span class="white">${esc(u.username)}</span> (id ${esc(u.id)}). Th
 
 <form id="f-chg" class="indent">
 <label>Role / profile  . . :  <select name="role" autofocus>${roles.map((r) => `<option${r === u.role ? " selected" : ""}>${r}</option>`).join("")}${profiles.map((p) => `<option value="${esc(p.name)}"${p.name === u.role ? " selected" : ""}>${esc(p.name)} (profile)</option>`).join("")}</select></label>
-<div class="cyan">You cannot assign capabilities you do not hold.</div>
+<label>IP allowlist  . . . :  <input name="ip_allowlist" size="40" value="${esc(u.ip_allowlist || "")}" placeholder="blank = unrestricted"></label>
+<div class="cyan">You cannot assign capabilities you do not hold. Clearing IP allowlist removes the restriction.</div>
 <input type="submit" hidden>
 </form>
 ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-chg").onsubmit = async (ev) => {
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
-          try { await api("PUT", `/api/users/${u.id}`, { role: f.role }); say(`USER ${String(u.username).toUpperCase()} IS NOW ${String(f.role).toUpperCase()}.`); await openUsers(); }
-          catch (e) { say("CPF9898: " + e.message, true); render(); }
+          try {
+            await api("PUT", `/api/users/${u.id}`, { role: f.role, ip_allowlist: f.ip_allowlist || "" });
+            say(`USER ${String(u.username).toUpperCase()} IS NOW ${String(f.role).toUpperCase()}.`);
+            await openUsers();
+          } catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
       },
 

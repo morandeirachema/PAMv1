@@ -269,3 +269,89 @@ func TestResolveIsSafeWhileSecretsRotate(t *testing.T) {
 	}
 	<-done
 }
+
+// TestIPAllowed covers empty-is-unrestricted, a matching/non-matching CIDR,
+// multiple entries, whitespace tolerance, an unparseable ip, and a malformed
+// entry being skipped rather than aborting the whole check (Phase 118).
+func TestIPAllowed(t *testing.T) {
+	cases := []struct {
+		name      string
+		allowlist string
+		ip        string
+		want      bool
+	}{
+		{"empty allowlist is unrestricted", "", "203.0.113.5", true},
+		{"whitespace-only allowlist is unrestricted", "   ", "203.0.113.5", true},
+		{"single matching CIDR", "10.0.0.0/8", "10.1.2.3", true},
+		{"single non-matching CIDR", "10.0.0.0/8", "192.168.1.1", false},
+		{"second entry matches", "10.0.0.0/8, 192.168.1.0/24", "192.168.1.42", true},
+		{"whitespace around entries tolerated", " 10.0.0.0/8 , 192.168.1.0/24 ", "192.168.1.42", true},
+		{"unparseable ip never matches a restriction", "10.0.0.0/8", "not-an-ip", false},
+		{"a malformed entry is skipped, not fatal to the rest", "not-a-cidr, 10.0.0.0/8", "10.1.2.3", true},
+		{"every entry malformed matches nothing", "not-a-cidr, also-not", "10.1.2.3", false},
+		{"IPv6 CIDR", "2001:db8::/32", "2001:db8::1", true},
+		{"IPv6 CIDR non-matching", "2001:db8::/32", "2001:db9::1", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := IPAllowed(c.allowlist, c.ip); got != c.want {
+				t.Errorf("IPAllowed(%q, %q) = %v, want %v", c.allowlist, c.ip, got, c.want)
+			}
+		})
+	}
+}
+
+// TestValidateCIDRList covers acceptance of a well-formed list (including
+// empty) and rejection of the first malformed entry.
+func TestValidateCIDRList(t *testing.T) {
+	for _, ok := range []string{"", "  ", "10.0.0.0/8", "10.0.0.0/8,192.168.1.0/24", " 10.0.0.0/8 , 192.168.1.0/24 "} {
+		if err := ValidateCIDRList(ok); err != nil {
+			t.Errorf("ValidateCIDRList(%q) unexpected error: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"not-a-cidr", "10.0.0.0/8,not-a-cidr", "10.0.0.0", "999.0.0.0/8"} {
+		if err := ValidateCIDRList(bad); err == nil {
+			t.Errorf("ValidateCIDRList(%q) should have failed", bad)
+		}
+	}
+}
+
+// TestResolveThreadsIPAllowlist proves a per-user token's IPAllowlist survives
+// Resolve into the returned Principal (Phase 118) — the store.User.IPAllowlist
+// -> Principal.IPAllowlist wiring that IPAllowed/the gates actually read.
+func TestResolveThreadsIPAllowlist(t *testing.T) {
+	dir := fakeDir{
+		users: map[string]*store.User{
+			hashOf("alice-token"): {Username: "alice", Role: "user", IPAllowlist: "10.0.0.0/8"},
+			hashOf("bob-token"):   {Username: "bob", Role: "user"}, // no allowlist
+		},
+	}
+	r, err := NewResolver(dir, "bootstrap", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	p, err := r.Resolve(ctx, "alice-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.IPAllowlist != "10.0.0.0/8" {
+		t.Fatalf("alice's Principal.IPAllowlist = %q, want %q", p.IPAllowlist, "10.0.0.0/8")
+	}
+	p, err = r.Resolve(ctx, "bob-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.IPAllowlist != "" {
+		t.Fatalf("bob's Principal.IPAllowlist = %q, want empty", p.IPAllowlist)
+	}
+	// The bootstrap admin is unaffected — no store.User backs it, so it stays
+	// permanently unrestricted regardless of any per-user allowlist.
+	p, err = r.Resolve(ctx, "bootstrap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.IPAllowlist != "" {
+		t.Fatalf("bootstrap-admin's Principal.IPAllowlist = %q, want empty", p.IPAllowlist)
+	}
+}

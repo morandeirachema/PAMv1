@@ -433,11 +433,18 @@ func AuditMAC(key, prev []byte, e *AuditEvent) []byte {
 // hex SHA-256 (TokenHash, never serialized); the plaintext token is shown to
 // the admin exactly once, at creation.
 type User struct {
-	ID        int64     `json:"id"`
-	Username  string    `json:"username"`
-	Role      string    `json:"role"` // admin | user | auditor | approver
-	TokenHash string    `json:"-"`
-	CreatedAt time.Time `json:"created_at"`
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+	Role     string `json:"role"` // admin | user | auditor | approver
+	// IPAllowlist restricts this user to connecting from a source address
+	// inside one of these comma-separated CIDR blocks (Phase 118), e.g.
+	// "10.0.0.0/8, 192.168.1.0/24". Empty (the default) means unrestricted.
+	// Validated with auth.ValidateCIDRList at write time, so a stored value
+	// is always well-formed; checked with auth.IPAllowed at both HTTP authz
+	// and session-proxy connect time.
+	IPAllowlist string    `json:"ip_allowlist,omitempty"`
+	TokenHash   string    `json:"-"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // AgentKey is an AI-agent identity for the access broker: a bearer key whose
@@ -929,6 +936,13 @@ type UserStore interface {
 	// re-keying an identity is a delete + re-mint, not an edit. Local tokens are
 	// re-resolved on every request, so a role change takes effect immediately.
 	UpdateUserRole(ctx context.Context, id int64, role string) error
+	// UpdateUserIPAllowlist sets a user's source-address restriction (Phase
+	// 118, see User.IPAllowlist), or ErrNotFound. The caller (currently
+	// POST/PUT /api/users) is responsible for validating it with
+	// auth.ValidateCIDRList first — the store layer trusts that check rather
+	// than re-enforcing it, the same division of responsibility every other
+	// write-time validation in this codebase uses.
+	UpdateUserIPAllowlist(ctx context.Context, id int64, allowlist string) error
 	// DeleteUser removes a user by ID, or ErrNotFound.
 	DeleteUser(ctx context.Context, id int64) error
 

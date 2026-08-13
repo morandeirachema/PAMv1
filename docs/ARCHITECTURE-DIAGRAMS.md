@@ -411,6 +411,7 @@ erDiagram
     int64 ID
     string Username
     string Role
+    string IPAllowlist
     time_Time CreatedAt
   }
   Vendor {

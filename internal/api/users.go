@@ -15,6 +15,10 @@ import (
 type userIn struct {
 	Username string `json:"username"`
 	Role     string `json:"role"`
+	// IPAllowlist optionally restricts this user to a comma-separated set of
+	// CIDR blocks (Phase 118), e.g. "10.0.0.0/8, 192.168.1.0/24". Empty (the
+	// default) means unrestricted.
+	IPAllowlist string `json:"ip_allowlist,omitempty"`
 }
 
 // createUser mints a new local identity and returns its access token exactly
@@ -40,39 +44,55 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	if !checkName(w, "username", in.Username) {
 		return
 	}
+	if err := auth.ValidateCIDRList(in.IPAllowlist); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
 	token, err := generateToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token generation failed")
 		return
 	}
-	u := store.User{Username: in.Username, Role: in.Role, TokenHash: hashHex(token)}
+	u := store.User{Username: in.Username, Role: in.Role, IPAllowlist: in.IPAllowlist, TokenHash: hashHex(token)}
 	if err := s.store.CreateUser(r.Context(), &u); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "user.create", fmt.Sprintf("%s role:%s", u.Username, u.Role))
+	createDetail := fmt.Sprintf("%s role:%s", u.Username, u.Role)
+	if u.IPAllowlist != "" {
+		createDetail += " ip_allowlist:" + auditField(u.IPAllowlist, 128)
+	}
+	s.audit(r.Context(), "user.create", createDetail)
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"id":       u.ID,
-		"username": u.Username,
-		"role":     u.Role,
-		"token":    token, // shown once; store it now
+		"id":           u.ID,
+		"username":     u.Username,
+		"role":         u.Role,
+		"ip_allowlist": u.IPAllowlist,
+		"token":        token, // shown once; store it now
 	})
 }
 
 // listUsers returns a page of the local users (?limit=&after=); token hashes
 // are never serialized.
 
-// updateUser changes a user's role or profile in place, so a promotion or
-// demotion no longer means delete + re-mint (which would revoke the token).
-// The same privilege-escalation guard as createUser applies: you cannot assign
-// capabilities you do not hold. The username and token are immutable.
+// updateUser changes a user's role/profile and, optionally, IP allowlist in
+// place, so a promotion or demotion no longer means delete + re-mint (which
+// would revoke the token). The same privilege-escalation guard as createUser
+// applies: you cannot assign capabilities you do not hold. The username and
+// token are immutable. IPAllowlist is a *string so a caller can distinguish
+// "omitted, leave it alone" (nil) from "explicitly clear it" (a pointer to
+// "") — unlike Role, which every caller already sends every time (an omitted
+// Role fails capsForGrant loudly), silently treating an omitted IPAllowlist
+// as "clear the restriction" would be a security-relevant field failing open
+// on a caller that simply didn't know about it.
 func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	id, ok := idParam(w, r)
 	if !ok {
 		return
 	}
 	var in struct {
-		Role string `json:"role"`
+		Role        string  `json:"role"`
+		IPAllowlist *string `json:"ip_allowlist"`
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -86,6 +106,12 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "cannot assign a role or profile with capabilities you do not hold")
 		return
 	}
+	if in.IPAllowlist != nil {
+		if err := auth.ValidateCIDRList(*in.IPAllowlist); err != nil {
+			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+	}
 	u, err := s.store.GetUser(r.Context(), id)
 	if err != nil {
 		storeError(w, err)
@@ -95,7 +121,16 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "user.update", fmt.Sprintf("%s role:%s->%s", u.Username, u.Role, in.Role))
+	auditDetail := fmt.Sprintf("%s role:%s->%s", u.Username, u.Role, in.Role)
+	if in.IPAllowlist != nil {
+		if err := s.store.UpdateUserIPAllowlist(r.Context(), id, *in.IPAllowlist); err != nil {
+			storeError(w, err)
+			return
+		}
+		auditDetail += fmt.Sprintf(" ip_allowlist:%s->%s", auditField(u.IPAllowlist, 128), auditField(*in.IPAllowlist, 128))
+		u.IPAllowlist = *in.IPAllowlist
+	}
+	s.audit(r.Context(), "user.update", auditDetail)
 	u.Role = in.Role
 	writeJSON(w, http.StatusOK, u)
 }
