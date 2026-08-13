@@ -23,7 +23,7 @@ import (
 func TestGeneratePassword(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 200; i++ {
-		pw, err := GeneratePassword(24)
+		pw, err := GeneratePassword(PasswordPolicy{MinLength: 24})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -48,12 +48,72 @@ func TestGeneratePassword(t *testing.T) {
 
 // TestGeneratePasswordMinLength checks a requested length below 12 is clamped up.
 func TestGeneratePasswordMinLength(t *testing.T) {
-	pw, err := GeneratePassword(4)
+	pw, err := GeneratePassword(PasswordPolicy{MinLength: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(pw) < 12 {
 		t.Fatalf("short length was not clamped up: %d", len(pw))
+	}
+}
+
+// TestGeneratePasswordZeroPolicy checks the zero value of PasswordPolicy
+// generates the exact same shape as DefaultPasswordPolicy (Phase 120) — a
+// caller that forgets to set a policy must not get a degenerate password.
+func TestGeneratePasswordZeroPolicy(t *testing.T) {
+	pw, err := GeneratePassword(PasswordPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pw) != 24 {
+		t.Fatalf("len = %d, want 24 (the default)", len(pw))
+	}
+}
+
+// TestGeneratePasswordPerClassMinimums checks a policy asking for MORE than
+// one of a class actually gets that many, not just "at least one" (Phase 120).
+func TestGeneratePasswordPerClassMinimums(t *testing.T) {
+	policy := PasswordPolicy{MinLength: 40, MinLower: 10, MinUpper: 10, MinDigit: 10, MinSymbol: 10}
+	for i := 0; i < 50; i++ {
+		pw, err := GeneratePassword(policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pw) != 40 {
+			t.Fatalf("len = %d, want 40", len(pw))
+		}
+		var nLower, nUpper, nDigit, nSymbol int
+		for _, c := range pw {
+			switch {
+			case strings.ContainsRune(lowers, c):
+				nLower++
+			case strings.ContainsRune(uppers, c):
+				nUpper++
+			case strings.ContainsRune(digits, c):
+				nDigit++
+			case strings.ContainsRune(symbols, c):
+				nSymbol++
+			default:
+				t.Fatalf("password %q contains a character outside every class: %q", pw, c)
+			}
+		}
+		if nLower < 10 || nUpper < 10 || nDigit < 10 || nSymbol < 10 {
+			t.Fatalf("password %q class counts = lower:%d upper:%d digit:%d symbol:%d, want >= 10 each", pw, nLower, nUpper, nDigit, nSymbol)
+		}
+	}
+}
+
+// TestGeneratePasswordMinimumsExceedLength checks a policy whose class
+// minimums sum to more than MinLength grows the password to fit rather than
+// silently dropping a required character (Phase 120).
+func TestGeneratePasswordMinimumsExceedLength(t *testing.T) {
+	policy := PasswordPolicy{MinLength: 12, MinLower: 10, MinUpper: 10, MinDigit: 10, MinSymbol: 10}
+	pw, err := GeneratePassword(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pw) != 40 {
+		t.Fatalf("len = %d, want 40 (grown to fit the 4x10 minimums)", len(pw))
 	}
 }
 
@@ -79,7 +139,7 @@ func TestSSHConnectorVerifyAndRotate(t *testing.T) {
 
 	// Rotate: run chpasswd with a new password; assert the server received the
 	// exact "user:newpass" payload on stdin.
-	newPass, err := GeneratePassword(20)
+	newPass, err := GeneratePassword(PasswordPolicy{MinLength: 20})
 	if err != nil {
 		t.Fatal(err)
 	}

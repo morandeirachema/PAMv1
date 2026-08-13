@@ -94,6 +94,22 @@ type Options struct {
 	// CertRemindDays is how many days before a certification campaign's due date
 	// its first reminder fires (PAM_CERT_REMIND_DAYS). 0 disables reminders.
 	CertRemindDays int
+	// PasswordPolicy configures every generated password's length and per-class
+	// minimums (Phase 120, PAM_PASSWORD_MIN_*). Restart-only, unlike checkout
+	// TTL: a domain-wide complexity policy is an infrequent, deliberate change,
+	// not something worth the hot-swap plumbing.
+	PasswordPolicy rotate.PasswordPolicy
+	// PasswordHistoryCount is how many of a credential's past rotation hashes
+	// are checked to refuse reissuing a recently-used password
+	// (PAM_PASSWORD_HISTORY_COUNT). 0 (the default) disables the check
+	// entirely, including the write, so an unconfigured deployment pays no
+	// extra query on every rotation.
+	PasswordHistoryCount int
+	// CheckoutMaxExtend (Phase 120) bounds how long a checkout lease may run in
+	// total, measured from CheckedOutAt — the ceiling POST
+	// /api/checkouts/{id}/extend enforces. Restart-only, like CertRemindDays:
+	// an infrequent policy change, not one worth hot-swap plumbing.
+	CheckoutMaxExtend time.Duration
 	// RequireRecording refuses a session that cannot be recorded, matching what
 	// PAM_REQUIRE_RECORDING already did for the SSH and PostgreSQL proxies. It
 	// covers the two paths the flag never reached: the in-portal RDP viewer and
@@ -316,20 +332,23 @@ type Options struct {
 }
 
 type Server struct {
-	store              store.Store
-	vault              *vault.Vault
-	resolver           *auth.Resolver
-	winrm              winrm.Runner
-	recordingDir       string
-	certRemindDays     int
-	requireRecording   bool
-	portalURL          string
-	guacdAddr          string
-	guacdRecordingPath string
-	guacdRDPSecurity   string
-	guacdIgnoreCert    bool
-	rdpClipboard       string
-	authLimiter        *ratelimit.Limiter
+	store                store.Store
+	vault                *vault.Vault
+	resolver             *auth.Resolver
+	winrm                winrm.Runner
+	recordingDir         string
+	certRemindDays       int
+	passwordPolicy       rotate.PasswordPolicy
+	passwordHistoryCount int
+	checkoutMaxExtend    time.Duration
+	requireRecording     bool
+	portalURL            string
+	guacdAddr            string
+	guacdRecordingPath   string
+	guacdRDPSecurity     string
+	guacdIgnoreCert      bool
+	rdpClipboard         string
+	authLimiter          *ratelimit.Limiter
 	// keyFailLimiter throttles FAILED bearer-credential attempts (X-API-Key,
 	// agent key, application key) per source IP. It is separate from
 	// authLimiter — which throttles every call to the login endpoints — because
@@ -536,67 +555,70 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		}
 	}
 	s := &Server{
-		store:               st,
-		vault:               v,
-		resolver:            resolver,
-		winrm:               runner,
-		ticketValidator:     opts.TicketValidator,
-		requireTicket:       opts.RequireTicket,
-		revalidateTicket:    opts.RevalidateTicket,
-		approvalsRequired:   opts.ApprovalsRequired,
-		requireReason:       opts.RequireReason,
-		oneTimeAccess:       opts.OneTimeAccess,
-		recordingDir:        opts.RecordingDir,
-		certRemindDays:      opts.CertRemindDays,
-		requireRecording:    opts.RequireRecording,
-		portalURL:           portalURL,
-		guacdAddr:           opts.GuacdAddr,
-		guacdRecordingPath:  opts.GuacdRecordingPath,
-		guacdRDPSecurity:    opts.GuacdRDPSecurity,
-		guacdIgnoreCert:     opts.GuacdIgnoreCert,
-		rdpClipboard:        rdpClipboardMode(opts.RDPClipboard),
-		authLimiter:         ratelimit.New(opts.AuthRatePerMin),
-		keyFailLimiter:      ratelimit.New(opts.AuthRatePerMin),
-		cmdGuard:            opts.CommandGuard,
-		recKey:              apiRecKey(opts.EncryptRecordings, v),
-		opaqueRecNames:      opts.OpaqueRecordingNames,
-		rdpClipAudit:        guacd.NormalizeClipAudit(opts.RDPClipboardAudit),
-		trustedProxyHops:    opts.TrustedProxyHops,
-		sessions:            opts.Sessions,
-		live:                opts.Live,
-		shares:              opts.Shares,
-		shareInviteTTL:      opts.ShareInviteTTL,
-		shareGuestTTL:       opts.ShareGuestSessionTTL,
-		shareSMTPAddr:       opts.ShareSMTPAddr,
-		shareSMTPFrom:       opts.ShareSMTPFrom,
-		shareSMTPUser:       opts.ShareSMTPUser,
-		shareSMTPPass:       opts.ShareSMTPPass,
-		cluster:             opts.Cluster,
-		stepup:              opts.StepUp,
-		bgThreshold:         opts.BreakGlassThreshold,
-		bgTTL:               bgTTL,
-		unseal:              newUnsealState(),
-		alerter:             alerter,
-		rotators:            rotators,
-		verifiers:           verifiers,
-		sshConnector:        sshConn,
-		airGap:              opts.AirGap,
-		discoveryDial:       opts.DiscoveryDial,
-		reconfigure:         opts.Reconfigure,
-		auditSignKey:        opts.AuditSignKey,
-		sshCA:               opts.CA,
-		sshOperatorCertTTL:  opts.SSHOperatorCertTTL,
-		vendorAttestor:      opts.VendorAttestor,
-		analytics:           opts.Analytics,
-		analyticsWindow:     opts.AnalyticsWindow,
-		analyticsAutoKill:   opts.AnalyticsAutoKill,
-		analyticsBaseline:   opts.AnalyticsBaseline,
-		analyticsAutoStepUp: opts.AnalyticsAutoStepUp,
-		analyticsAlerted:    make(map[string]analyticsAlert),
-		appSecretsEnabled:   opts.AppSecretsEnabled,
-		metrics:             metrics.New(),
-		log:                 logging.Component("api"),
-		mux:                 http.NewServeMux(),
+		store:                st,
+		vault:                v,
+		resolver:             resolver,
+		winrm:                runner,
+		ticketValidator:      opts.TicketValidator,
+		requireTicket:        opts.RequireTicket,
+		revalidateTicket:     opts.RevalidateTicket,
+		approvalsRequired:    opts.ApprovalsRequired,
+		requireReason:        opts.RequireReason,
+		oneTimeAccess:        opts.OneTimeAccess,
+		recordingDir:         opts.RecordingDir,
+		certRemindDays:       opts.CertRemindDays,
+		passwordPolicy:       opts.PasswordPolicy,
+		passwordHistoryCount: opts.PasswordHistoryCount,
+		checkoutMaxExtend:    opts.CheckoutMaxExtend,
+		requireRecording:     opts.RequireRecording,
+		portalURL:            portalURL,
+		guacdAddr:            opts.GuacdAddr,
+		guacdRecordingPath:   opts.GuacdRecordingPath,
+		guacdRDPSecurity:     opts.GuacdRDPSecurity,
+		guacdIgnoreCert:      opts.GuacdIgnoreCert,
+		rdpClipboard:         rdpClipboardMode(opts.RDPClipboard),
+		authLimiter:          ratelimit.New(opts.AuthRatePerMin),
+		keyFailLimiter:       ratelimit.New(opts.AuthRatePerMin),
+		cmdGuard:             opts.CommandGuard,
+		recKey:               apiRecKey(opts.EncryptRecordings, v),
+		opaqueRecNames:       opts.OpaqueRecordingNames,
+		rdpClipAudit:         guacd.NormalizeClipAudit(opts.RDPClipboardAudit),
+		trustedProxyHops:     opts.TrustedProxyHops,
+		sessions:             opts.Sessions,
+		live:                 opts.Live,
+		shares:               opts.Shares,
+		shareInviteTTL:       opts.ShareInviteTTL,
+		shareGuestTTL:        opts.ShareGuestSessionTTL,
+		shareSMTPAddr:        opts.ShareSMTPAddr,
+		shareSMTPFrom:        opts.ShareSMTPFrom,
+		shareSMTPUser:        opts.ShareSMTPUser,
+		shareSMTPPass:        opts.ShareSMTPPass,
+		cluster:              opts.Cluster,
+		stepup:               opts.StepUp,
+		bgThreshold:          opts.BreakGlassThreshold,
+		bgTTL:                bgTTL,
+		unseal:               newUnsealState(),
+		alerter:              alerter,
+		rotators:             rotators,
+		verifiers:            verifiers,
+		sshConnector:         sshConn,
+		airGap:               opts.AirGap,
+		discoveryDial:        opts.DiscoveryDial,
+		reconfigure:          opts.Reconfigure,
+		auditSignKey:         opts.AuditSignKey,
+		sshCA:                opts.CA,
+		sshOperatorCertTTL:   opts.SSHOperatorCertTTL,
+		vendorAttestor:       opts.VendorAttestor,
+		analytics:            opts.Analytics,
+		analyticsWindow:      opts.AnalyticsWindow,
+		analyticsAutoKill:    opts.AnalyticsAutoKill,
+		analyticsBaseline:    opts.AnalyticsBaseline,
+		analyticsAutoStepUp:  opts.AnalyticsAutoStepUp,
+		analyticsAlerted:     make(map[string]analyticsAlert),
+		appSecretsEnabled:    opts.AppSecretsEnabled,
+		metrics:              metrics.New(),
+		log:                  logging.Component("api"),
+		mux:                  http.NewServeMux(),
 	}
 	// The initial runtime snapshot comes from opts (built by main from the base
 	// env config + stored overrides); PUT /api/config later swaps it via
@@ -800,6 +822,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/reconcile", s.authz(auth.CapManageCredentials, s.reconcileAllHandler))
 	s.mux.Handle("POST /api/credentials/{id}/checkout", s.authz(auth.CapRevealSecret, s.checkoutCredential))
 	s.mux.Handle("POST /api/credentials/{id}/checkin", s.authz(auth.CapRevealSecret, s.checkinCredential))
+	s.mux.Handle("POST /api/credentials/{id}/checkout/extend", s.authz(auth.CapRevealSecret, s.extendCheckout))
 	s.mux.Handle("GET /api/checkouts", s.authz(auth.CapReadAudit, s.listCheckouts))
 	s.mux.Handle("POST /api/discovery/scan", s.authz(auth.CapManageTargets, s.discoveryScan))
 	s.mux.Handle("DELETE /api/credentials/{id}", s.authz(auth.CapManageCredentials, s.deleteCredential))
@@ -816,6 +839,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/access-requests", s.authz(auth.CapApprove, s.listAccessRequests))
 	s.mux.Handle("POST /api/access-requests/{id}/approve", s.authz(auth.CapApprove, s.approveAccessRequest))
 	s.mux.Handle("POST /api/access-requests/{id}/deny", s.authz(auth.CapApprove, s.denyAccessRequest))
+	s.mux.Handle("POST /api/access-requests/{id}/stop-recurrence", s.authz(auth.CapApprove, s.stopAccessRequestRecurrence))
 
 	s.mux.Handle("GET /api/audit", s.authz(auth.CapReadAudit, s.listAudit))
 	s.mux.Handle("GET /api/audit/export", s.authz(auth.CapReadAudit, s.exportAudit))

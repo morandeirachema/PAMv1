@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–119 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–120 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -38,7 +38,11 @@ Phase 116) — released as **v0.22.0 by Phase 117**, and **Phase 118 closes that
 pass's second finding**: CIDR/network-based connect & login authorization, a
 per-user CIDR allowlist enforced at both the session-proxy `admit()` gate and
 the REST `authz` middleware, break-glass exempt — released in turn as
-**v0.23.0 by Phase 119**. The narrative that follows traces the
+**v0.23.0 by Phase 119**. **Phase 120 closes three more policy-richness
+gaps** from the same Wallix-weighted plan: recurring access-request windows
+(reusing the campaign scheduler's proven anchor-spawns-children shape),
+configurable password-generation policy plus reuse-history enforcement, and
+checkout-lease extension up to a configured ceiling. The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2382,6 +2386,87 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 120 — Recurring access windows + configurable password policy + checkout extension ✅
+
+Three related, currently-absent policy-richness gaps closed together — all
+additive, config/data-model-only changes with no new subsystem, modeled on
+Wallix's actual `timeframe` and `local_password_policy` resources plus the
+small checkout-extension gap noted when Phase 116's plan verified
+`checkout_policy` parity.
+
+- [x] **Recurring access requests.** `store.AccessRequest` gains
+  `RecurDays`/`NextRunAt` (migration `0034`), the exact shape
+  `store.Campaign` already proved out (Phase 68): an **approved** request
+  with `RecurDays > 0` is an anchor; a new `RunAccessRequestScheduler`
+  (own goroutine, own leader-lock key `pam_arq`, hourly — a separate worker
+  from the campaign scheduler on purpose, since the two are different
+  domains that happen to share a shape) auto-files a fresh **PENDING**
+  successor every period via `spawnDueAccessRequests`, claim-before-create
+  ordering identical to `spawnDueCampaigns`. The child is never
+  pre-approved — recurrence automates the paperwork, not the four-eyes
+  decision, so recurring access can never quietly become standing access
+  nobody re-reviews. The anchor's clock starts **on approval**, not on the
+  original request (`decideAccessRequest` sets `NextRunAt` itself), so a
+  slow approval doesn't fire the first recurrence immediately. New `POST
+  /api/access-requests/{id}/stop-recurrence` (`CapApprove`, idempotent) is
+  the stop button, mirroring "closing the anchor ends the series." Console:
+  `requestadd()` gains a "Recur every N days" field, `requests()` gains a
+  Recur column and `7=Stop recur`.
+- [x] **Configurable password generation policy.** `rotate.GeneratePassword`
+  now takes a `PasswordPolicy{MinLength, MinLower, MinUpper, MinDigit,
+  MinSymbol}` (was a bare `int` length) — `PAM_PASSWORD_MIN_LENGTH`
+  (default 24) and `_MIN_LOWER`/`_MIN_UPPER`/`_MIN_DIGIT`/`_MIN_SYMBOL`
+  (default 1 each) reproduce today's hardcoded behavior exactly when
+  unconfigured. `PasswordPolicy.Normalized` grows `MinLength` to fit the
+  sum of the four minimums rather than silently dropping a required
+  character. Each `PAM_PASSWORD_MIN_*` is validated `>= 1` at config load —
+  0 is refused outright rather than silently falling back to the default,
+  since a value that reads as "disable this class" and actually means
+  "use the default" is worse than no knob at all.
+- [x] **Password reuse history.** New `PasswordHistoryStore` role (2
+  methods: `RecordPasswordHistory` prunes to `keep` in the same call,
+  `RecentPasswordHashes`) and `password_history` table (migration `0034`)
+  store SHA-256 hashes of past rotated secrets, never the secrets
+  themselves — sufficient here (unlike a bearer-token hash) because a
+  generated password is high-entropy, not user-chosen. `rotateCredential`'s
+  new `generateUnusedPassword` retries (bounded at 10 attempts) against
+  `PAM_PASSWORD_HISTORY_COUNT` (default 0 = off, and off means the write is
+  skipped too, not just the check). History write is best-effort: the
+  target's password is already changed by the time it runs, so a write
+  failure degrades only the *next* rotation's check, not this one's
+  correctness.
+- [x] **Checkout extension.** New `CheckoutStore.{GetCheckout,
+  ExtendCheckout}` (store surface 157 → 164 total across all three
+  additions) and `POST /api/credentials/{id}/checkout/extend`
+  (`CapRevealSecret`, holder-or-admin only — mirrors `checkinCredential`'s
+  own ownership rule exactly). `ExtendCheckout` refuses a missing,
+  returned, or already-expired lease (extension is a continuation, not a
+  resurrection); the handler separately caps the lease's **total** duration
+  from `CheckedOutAt` at `PAM_CHECKOUT_MAX_EXTEND_MIN` (default 240), so
+  "extend" cannot become "make it standing." Console: checkouts gains
+  `5=Extend (by one more lease period)`.
+- [x] **Tests**: `internal/rotate/rotate_test.go` (policy defaulting,
+  per-class minimums actually enforced not just "at least one," minimums
+  exceeding length grow it); `internal/store/storetest/storetest.go`
+  (access-request recurrence lifecycle mirroring the campaign section,
+  checkout extension including the returned/expired refusal cases, history
+  record+prune+per-credential-independence); `internal/api/
+  access_request_schedule_internal_test.go` (white-box spawn/stop, mirroring
+  `TestRecurringCampaignsSpawnAndStop`); `internal/api/recurring_access_test.go`,
+  `password_policy_test.go`, `checkout_extend_test.go` (HTTP-level: recur_days
+  validation, approval sets next_run_at, stop-recurrence gate, a rotated
+  secret's shape actually reflects a configured policy, history recorded/
+  pruned/off-by-default, extend lifecycle + max-duration ceiling). All green
+  under `-race`; `archgen` confirms 142 → **144** routes, no undocumented
+  drift.
+
+**V1 scope, explicitly bounded**: password policy and checkout-max-extend
+are restart-only config, not hot-swappable via `PUT /api/config` — an
+infrequent policy change, not worth the hot-swap plumbing `checkoutTTL`
+itself has. Recurring-access-request cadence is day-granularity
+(`RecurDays`), not a day-of-week/cron pattern — the cheap v1 cut, matching
+campaigns' own v1 scope from Phase 68.
 
 ## Phase 119 — v0.23.0 ✅
 

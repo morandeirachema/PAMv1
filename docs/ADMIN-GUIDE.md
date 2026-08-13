@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-13 · Reflects: Phases 0–118 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c) and a per-user CIDR source-address allowlist (118, §7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-14 · Reflects: Phases 0–120 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7) and recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -495,6 +495,24 @@ account's `authorized_keys` (the old key stops working). AD/LDAPS account
 password-change (`unicodePwd`) and identity reconciliation (revoking users the
 directory reports as disabled) shipped in Phase 7.
 
+**Generated-password policy and reuse history (Phase 120).** A generated
+password defaults to 24 characters with at least one lowercase, uppercase,
+digit and symbol — configurable, and reuse-prevention is opt-in:
+
+```bash
+PAM_PASSWORD_MIN_LENGTH=32       # default 24
+PAM_PASSWORD_MIN_LOWER=2         # default 1 (each of the four must be >= 1)
+PAM_PASSWORD_MIN_UPPER=2
+PAM_PASSWORD_MIN_DIGIT=2
+PAM_PASSWORD_MIN_SYMBOL=2
+PAM_PASSWORD_HISTORY_COUNT=5     # default 0 (off); refuses to reissue one of
+                                  # the last 5 rotated secrets per credential
+```
+
+History is tracked as SHA-256 hashes only — never the secrets themselves —
+and restart-only, like the length/class minimums above (a domain-wide
+complexity policy is an infrequent, deliberate change).
+
 **Checkout / check-in (exclusive lease).** For accounts a person or app must use
 the password directly, check it out: you get the secret exclusively for a lease
 (`PAM_CHECKOUT_TTL_MIN`, default 30 min), and on check-in the credential is
@@ -507,6 +525,19 @@ curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/credentials/
 curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/credentials/1/checkin
 # → {"returned":true,"rotated":true}          # the seen secret is now invalid
 curl -H "X-API-Key: $PAM_API_KEY" "http://localhost:8080/api/checkouts?active=true"
+```
+
+**Extending a lease (Phase 120).** Still working when the TTL is about to run
+out? Only the holder (or an admin) may extend, and only up to a configured
+ceiling on the lease's *total* duration from check-out
+(`PAM_CHECKOUT_MAX_EXTEND_MIN`, default 240 minutes) — extension prolongs a
+lease already granted, it does not re-grant one, and it cannot turn "leased"
+into "standing":
+
+```bash
+curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/credentials/1/checkout/extend \
+  -d '{"minutes":30}'
+# → {"checkout_id":7,"credential_id":1,"expires_at":"..."}
 ```
 
 **Discovery.** Probe hosts for reachable management ports and optionally onboard
@@ -2355,6 +2386,37 @@ bootstrap admin key is one actor (`bootstrap-admin`), so grants it created
 cannot be certified with it — mint a dedicated approver user for reviews (you
 should anyway).
 
+### 9.6c Recurring access requests (Phase 120)
+
+`recur_days` on an access request works the same way it does on a
+certification campaign (§9.6, "Repeat it, so it does not depend on
+remembering") — but a request's anchor must first clear the ordinary
+four-eyes approval before recurrence ever starts, since a request grants
+access rather than merely reviewing it:
+
+```bash
+curl -sX POST https://pam.example/api/access-requests -H "X-API-Key: $PAM_API_KEY" \
+  -d '{"target_id":1,"reason":"weekly patch window","recur_days":7}'
+# → {"id":42,"status":"pending","recur_days":7,...}   # not due yet — still pending
+
+curl -sX POST https://pam.example/api/access-requests/42/approve -H "X-API-Key: $PAM_APPROVER_TOKEN"
+# → {"id":42,"status":"approved","next_run_at":"...",...}   # the clock starts NOW, not at filing
+```
+
+- Every 7 days a **fresh, still-pending** request is auto-filed with the same
+  requester/target/reason — recurrence automates the paperwork, never the
+  approval decision, so a periodic access need can never quietly turn into
+  standing access nobody re-reviews.
+- **Stopping recurrence is the anchor's stop button**, the one an operator
+  reaches for first when the periodic need ends:
+  ```bash
+  curl -sX POST https://pam.example/api/access-requests/42/stop-recurrence -H "X-API-Key: $PAM_APPROVER_TOKEN"
+  ```
+  It is idempotent (safe to call on an already-stopped or never-recurring
+  request) and needs the same `approve`/`deny` capability.
+- Runs under its own HA leader lock (`recur_days` is capped at 366, same as
+  campaigns), on its own hourly worker — always on, nothing to configure.
+
 ### 9.7 Privileged threat analytics (Phase 23)
 
 pamv1 scores the audit trail into **behavioral risk** per actor, so a supervisor
@@ -2496,6 +2558,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-14 | **Phase 120 — recurring access requests, password policy, checkout extension.** Recurring access requests: `recur_days` makes an *approved* request an anchor (§9.6c), auto-filing a fresh pending successor every N days on its own hourly worker — the clock starts at approval, not filing; `stop-recurrence` is the anchor's stop button. Password policy: `PAM_PASSWORD_MIN_LENGTH`/`_MIN_LOWER`/`_MIN_UPPER`/`_MIN_DIGIT`/`_MIN_SYMBOL` make generated-password shape configurable (defaults reproduce the old hardcoded 24-char/one-of-each), and `PAM_PASSWORD_HISTORY_COUNT` (default 0) refuses to reissue one of a credential's last N rotated secrets, tracked as SHA-256 hashes only. Checkout extension: `POST /api/credentials/{id}/checkout/extend` (holder-or-admin) pushes an active lease's expiry out, capped at `PAM_CHECKOUT_MAX_EXTEND_MIN` (default 240) total from check-out. New migration `0034`; store surface 157 → 164. See §7 and §9.6c |
 | 2026-08-13 | **Phase 118 — CIDR/network source-address allowlist.** A per-user, comma-separated CIDR list (`ip_allowlist` on `POST /api/users` / `PUT /api/users/{id}`, `*string` on update so omitting it leaves an existing list untouched and only an explicit `""` clears it) restricts where that user's bearer token may be used from — enforced on every REST call (`authz` middleware) and every session-proxy connect (SSH/PostgreSQL/SQL Server, the shared `admit()` gate). Empty is unrestricted; break-glass is exempt; directory/OIDC logins are unaffected (no backing local-user row). New migration `0033` (`users.ip_allowlist`). See §7 |
 | 2026-08-13 | **Phase 116 — live session-sharing.** A live SSH session can be shared view-only or view-**control** with a second party through a four-eyes request→approve workflow (`POST /api/sessions/{id}/share`, decided by a *different* principal at `POST /api/share-invites/{id}/approve\|deny`). An **internal** invite redeems over SSH as `join:<token>` — the whole username — layered on the joiner's own PAM password, never the token alone; an **external**/vendor invite is emailed with a QR code instead, single-use, `PAM_SESSION_SHARE_INVITE_TTL_SEC` (default 900s), redeemed through a new **unauthenticated** page (`/share.html`) that mints a random 256-bit guest key good for `PAM_SESSION_SHARE_GUEST_TTL_MIN` (default 240 min). A roster + kick (`.../share/roster`, `.../share/kick`) close both. New migration `0032` (`session_share_invites`, plus a `vendors.email` column); new audit actions `session.share_{requested,approved,denied,revoked,joined,join_denied,ended,kicked}`. See §9.4c |
 | 2026-08-13 | **Phase 114 — a live NIS2 compliance report.** `GET /api/compliance/nis2?since=&until=` maps window-scoped audit activity onto the existing Art. 21(2) control matrix (docs/NIS2-COMPLIANCE.md §1): each control's status is architectural, and controls with a natural audit signal (supply-chain, policy effectiveness, access control, MFA, incident handling) carry a count of matching events bucketed by action family, plus (for incident handling) the whole-chain integrity result. Same digest/determinism/audit conventions as the raw export. Console: **F8** from *Display Audit Trail*. NIS2 only — PCI-DSS/ISO27001/SOX are not attempted. See §9.2b |

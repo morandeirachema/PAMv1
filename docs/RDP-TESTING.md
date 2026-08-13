@@ -3,7 +3,7 @@
 > **Living document.** Update whenever the RDP path (guacd handshake, the tunnel
 > prelude, the token endpoint, or the in-portal viewer) changes.
 >
-> Last updated: 2026-08-13 · Reflects: Phases 0–118 (nothing since 52g changes the RDP path or how it is exercised — Phase 116's session-sharing is SSH-only and does not touch guacd or the viewer. Phase 118's CIDR allowlist does reach this path indirectly — `POST /api/rdp-token` goes through the same `authz` middleware as every other route — but doesn't change this testing procedure, since the demo setup uses an unrestricted admin key). — RDP has changed in Phases 33
+> Last updated: 2026-08-13 · Reflects: Phases 0–120 (nothing since 52g changes the RDP path or how it is exercised — Phase 116's session-sharing is SSH-only and does not touch guacd or the viewer. Phase 118's CIDR allowlist does reach this path indirectly — `POST /api/rdp-token` goes through the same `authz` middleware as every other route — but doesn't change this testing procedure, since the demo setup uses an unrestricted admin key. Phase 120 doesn't touch this path at all). — RDP has changed in Phases 33
 > (clipboard control), 40 (brokered runs are supervised sessions), 50 (clipboard
 > auditing), 52c (recording-required, throttled tunnel auth) and 52e.
 

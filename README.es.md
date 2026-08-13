@@ -38,7 +38,7 @@ de fósforo verde** sin concesiones, porque tocar un PAM debe *sentirse* serio.
 
 Construido fase a fase con una regla: **cada fase es funcional de principio a fin** — arranca,
 pasa los tests y se despliega como Infraestructura-como-Código. El **[roadmap](ROADMAP.md)**
-abarca de la 0 a la 119, **se han entregado todas las fases**, y la release etiquetada y
+abarca de la 0 a la 120, **se han entregado todas las fases**, y la release etiquetada y
 firmada con cosign vigente es la
 **[v0.23.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.23.0)** (2026-08-13;
 la primera fue la v0.10.0, el 2026-07-28). Lo que eso suma:
@@ -151,7 +151,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–119, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–120, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -274,7 +274,7 @@ ves la credencial. Las grabaciones van a `PAM_RECORDING_DIR`; desactiva el proxy
 
 ## Hoja de ruta
 
-Se han entregado todas las fases (0–119) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
+Se han entregado todas las fases (0–120) — detalle por fase en **[ROADMAP.md](ROADMAP.md)**:
 
 | Fase | Tema | Estado |
 |---|---|---|
@@ -459,7 +459,7 @@ cada uno indica qué haría falta para cerrarlo.
 | ~~**Autorización de conexión por red/CIDR**~~ **✅ entregado (Fase 118)** | Condicionar una conexión a la red de origen del operador | Una lista blanca de CIDR por usuario, separada por comas (`store.User.IPAllowlist`), aplicada tanto en el middleware `authz` de REST como en la puerta `admit()` del proxy de sesión (SSH/PostgreSQL/SQL Server), exenta para break-glass. Vacía significa sin restricción; los principals de directorio/OIDC quedan fuera del alcance v1 (no tienen una fila `store.User` de origen) |
 | ~~**Compartir una sesión en vivo**~~ **✅ entregado (Fase 116)** | Quien aloja una sesión en vivo genera un enlace temporal para que un segundo participante se una, observe y opcionalmente controle, todo auditado (un diferenciador genuino de Wallix) | `SessionShareInvite` con flujo de cuatro-ojos, solicitud→aprobación: una invitación interna se canjea por SSH como `join:<token>`; una invitación externa/de proveedor se envía por correo con un código QR, de un solo uso, con TTL de 15 minutos, canjeada por una nueva página de invitado sin autenticar — nunca por SSH. Varios participantes con control simultáneo; un panel en vivo de participantes unidos con opción de expulsar |
 | **Suspender una sesión en vivo** | Congelar la entrada del operador sin terminar la sesión, un escalón por debajo de matarla | El bus de terminación de `internal/session` solo termina |
-| Política de ventanas recurrentes / complejidad configurable | Ventanas de acceso repetidas (frente a un rango de fechas único); histórico/no-reutilización de contraseñas (frente a un generador fijo) | Menor y real, prioridad más baja que lo anterior |
+| ~~**Política de ventanas recurrentes / complejidad configurable**~~ **✅ entregado (Fase 120)** | Ventanas de acceso repetidas (frente a un rango de fechas único); histórico/no-reutilización de contraseñas (frente a un generador fijo) | Una solicitud de acceso aprobada con `recur_days` establecido presenta automáticamente una sucesora (aún pendiente de aprobación) cada N días en su propio worker, reutilizando la forma de anclaje del scheduler de campañas de certificación; `rotate.PasswordPolicy` hace configurables la longitud y los mínimos por clase de la contraseña generada, y `PAM_PASSWORD_HISTORY_COUNT` rechaza reemitir uno de los últimos N secretos rotados de una credencial (rastreado por SHA-256, nunca el secreto). También cerró la brecha señalada de extensión de checkout: `POST /api/credentials/{id}/checkout/extend`, con un techo de duración total configurable |
 
 Un gestor de ciclo de vida de certificados X.509 de propósito general (el
 empuje de "identidad de máquina" de CyberArk, impulsado por su adquisición de

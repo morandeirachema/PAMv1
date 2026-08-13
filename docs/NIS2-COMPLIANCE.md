@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a mapped control or endpoint changes.
 >
-> Last updated: 2026-08-13 · Reflects: Phases 0–118 (introduced Phase 9, live report added Phase 114; 116's session-sharing is still the same brokered, recorded, four-eyes-gated session underneath — no control mapping changes; 118's IP-allowlist denial reuses the existing `authz.denied`/`session.denied` action families with a new reason string — no new control mapping either).
+> Last updated: 2026-08-13 · Reflects: Phases 0–120 (introduced Phase 9, live report added Phase 114; 116's session-sharing is still the same brokered, recorded, four-eyes-gated session underneath — no control mapping changes; 118's IP-allowlist denial reuses the existing `authz.denied`/`session.denied` action families with a new reason string — no new control mapping either; 120's new `access.request_recurred`/`access.recurrence_stopped`/`credential.checkout_extended` actions are new names within the existing `access.*`/`credential.*` families the access-control control already counts by family — no new control mapping).
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited, not legal advice.**
 > This maps pamv1 features to [Directive (EU) 2022/2555 (NIS2)](https://eur-lex.europa.eu/eli/dir/2022/2555/oj)

@@ -662,6 +662,84 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("ListAccessRequests(after=last): %d err %v", len(reqs), err)
 	}
 
+	// --- access request recurrence (Phase 120) ---
+	//
+	// Mirrors the campaign recurrence section above exactly: an anchor must be
+	// APPROVED (not merely pending) to ever be due, advancing the schedule
+	// takes it out of the due set, and stopping recurrence is the stop button.
+	recurAR := &store.AccessRequest{Requester: "carol", TargetID: tgt.ID, Reason: "weekly patch window", ExpiresAt: future, RecurDays: 7}
+	if err := st.CreateAccessRequest(ctx, recurAR); err != nil {
+		t.Fatalf("CreateAccessRequest(recurring): %v", err)
+	}
+	if a, _ := st.GetAccessRequest(ctx, recurAR.ID); a.RecurDays != 7 || a.NextRunAt != nil {
+		t.Fatalf("a freshly-created anchor must not be due yet (still pending): %+v", a)
+	}
+	if due, _ := st.ListDueAccessRequests(ctx, now); len(due) != 0 {
+		t.Fatalf("a pending anchor must never be due: %+v", due)
+	}
+	// Approving it alone still does not make it due — NextRunAt is set
+	// separately, the way the API layer does it (at approval time, not
+	// creation time, so a slow approval doesn't fire the first recurrence
+	// immediately).
+	if err := st.DecideAccessRequest(ctx, recurAR.ID, "approved", "dave", now); err != nil {
+		t.Fatalf("DecideAccessRequest(recurring): %v", err)
+	}
+	if due, _ := st.ListDueAccessRequests(ctx, now); len(due) != 0 {
+		t.Fatalf("an approved anchor with no NextRunAt set yet must not be due: %+v", due)
+	}
+	// Reuses `past` (now.Add(-time.Hour)), already declared above by the
+	// campaign recurrence section.
+	if err := st.SetAccessRequestNextRun(ctx, recurAR.ID, past); err != nil {
+		t.Fatalf("SetAccessRequestNextRun: %v", err)
+	}
+	// Reuses `err`, already declared above by the campaign recurrence section
+	// (dueAR is its own variable — ListDueAccessRequests returns
+	// []AccessRequest, not []Campaign, so it cannot share `due`'s type).
+	dueAR, err := st.ListDueAccessRequests(ctx, now)
+	if err != nil || len(dueAR) != 1 || dueAR[0].ID != recurAR.ID {
+		t.Fatalf("ListDueAccessRequests = %+v err %v, want just the due anchor %d", dueAR, err, recurAR.ID)
+	}
+	if err := st.SetAccessRequestNextRun(ctx, 999999, past); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("SetAccessRequestNextRun(missing): want ErrNotFound, got %v", err)
+	}
+	nextWeek := now.Add(24 * time.Hour)
+	if err := st.SetAccessRequestNextRun(ctx, recurAR.ID, nextWeek); err != nil {
+		t.Fatalf("SetAccessRequestNextRun(advance): %v", err)
+	}
+	if due, _ := st.ListDueAccessRequests(ctx, now); len(due) != 0 {
+		t.Fatalf("advanced anchor still due: %+v", due)
+	}
+	// STOPPING RECURRENCE is the anchor's stop button. Bring it back into the
+	// due window first, so the only thing the assertion can be measuring is
+	// the stop.
+	if err := st.SetAccessRequestNextRun(ctx, recurAR.ID, past); err != nil {
+		t.Fatalf("SetAccessRequestNextRun(back): %v", err)
+	}
+	if due, _ := st.ListDueAccessRequests(ctx, now); len(due) != 1 {
+		t.Fatalf("anchor should be due again before stopping, got %d", len(due))
+	}
+	if err := st.StopAccessRequestRecurrence(ctx, recurAR.ID); err != nil {
+		t.Fatalf("StopAccessRequestRecurrence: %v", err)
+	}
+	if due, err := st.ListDueAccessRequests(ctx, now); err != nil || len(due) != 0 {
+		t.Fatalf("a stopped anchor must not keep spawning: %+v err %v", due, err)
+	}
+	if a, _ := st.GetAccessRequest(ctx, recurAR.ID); a.RecurDays != 0 || a.NextRunAt != nil {
+		t.Fatalf("stopped anchor should read back as a one-off: %+v", a)
+	}
+	if err := st.StopAccessRequestRecurrence(ctx, recurAR.ID); err != nil {
+		t.Fatalf("StopAccessRequestRecurrence must be idempotent: %v", err)
+	}
+	if err := st.StopAccessRequestRecurrence(ctx, 999999); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("StopAccessRequestRecurrence(missing): want ErrNotFound, got %v", err)
+	}
+	// A one-off request (RecurDays 0, the default) is never due, whatever the
+	// clock says — ar itself, approved above, already covers this: it has no
+	// recurrence and must not appear in any due list.
+	if due, _ := st.ListDueAccessRequests(ctx, now.Add(10000*time.Hour)); len(due) != 0 {
+		t.Fatalf("a non-recurring request must never be due: %+v", due)
+	}
+
 	// --- multi-approver chain + scheduled window (Phase 21) ---
 	nb := now.Add(2 * time.Hour) // window opens in 2h
 	na := now.Add(3 * time.Hour) // and closes in 3h (after not_before)
@@ -909,6 +987,103 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 	if active, err := st.GetActiveCheckout(ctx, cred.ID, now); err != nil || active.Holder != "fresh" {
 		t.Fatalf("active checkout after expiry = %+v err %v, want holder fresh", active, err)
+	}
+
+	// --- checkout extension (Phase 120) ---
+	dana := &store.Checkout{CredentialID: cred.ID, TargetID: tgt.ID, Holder: "dana", ExpiresAt: now.Add(10 * time.Minute)}
+	freshActive, err := st.GetActiveCheckout(ctx, cred.ID, now)
+	if err != nil {
+		t.Fatalf("GetActiveCheckout(fresh): %v", err)
+	}
+	if err := st.CheckinCheckout(ctx, freshActive.ID, now); err != nil {
+		t.Fatalf("checkin fresh (making room for dana): %v", err)
+	}
+	if err := st.CreateCheckout(ctx, dana, now); err != nil {
+		t.Fatalf("CreateCheckout(dana): %v", err)
+	}
+	if got, err := st.GetCheckout(ctx, dana.ID); err != nil || got.Holder != "dana" {
+		t.Fatalf("GetCheckout: %+v err %v", got, err)
+	}
+	if _, err := st.GetCheckout(ctx, 999999); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetCheckout(missing): want ErrNotFound, got %v", err)
+	}
+	// Truncated to microsecond precision: PostgreSQL's TIMESTAMPTZ has no finer
+	// resolution than that, so a nanosecond-precision time.Now()-derived value
+	// would silently lose its sub-microsecond digits on the pgstore round trip
+	// and never compare equal again — memstore has no such loss, which is
+	// exactly the kind of backend divergence this contract test exists to
+	// catch rather than paper over by testing only the more forgiving side.
+	extended := now.Add(2 * time.Hour).Truncate(time.Microsecond)
+	if err := st.ExtendCheckout(ctx, dana.ID, extended, now); err != nil {
+		t.Fatalf("ExtendCheckout: %v", err)
+	}
+	if got, err := st.GetCheckout(ctx, dana.ID); err != nil || !got.ExpiresAt.Equal(extended) {
+		t.Fatalf("extended expiry did not round-trip: %+v err %v", got, err)
+	}
+	if err := st.ExtendCheckout(ctx, 999999, extended, now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ExtendCheckout(missing): want ErrNotFound, got %v", err)
+	}
+	// A RETURNED lease cannot be extended — extension is a continuation of a
+	// live lease, not a resurrection of a dead one.
+	if err := st.CheckinCheckout(ctx, dana.ID, now); err != nil {
+		t.Fatalf("checkin dana: %v", err)
+	}
+	if err := st.ExtendCheckout(ctx, dana.ID, extended.Add(time.Hour), now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ExtendCheckout(returned): want ErrNotFound, got %v", err)
+	}
+	// An EXPIRED-but-unreturned lease cannot be extended either.
+	expiredCO := &store.Checkout{CredentialID: cred.ID, TargetID: tgt.ID, Holder: "later", ExpiresAt: now.Add(time.Minute)}
+	if err := st.CreateCheckout(ctx, expiredCO, now); err != nil {
+		t.Fatalf("CreateCheckout(later): %v", err)
+	}
+	afterExpiry := now.Add(time.Hour)
+	if err := st.ExtendCheckout(ctx, expiredCO.ID, afterExpiry.Add(time.Hour), afterExpiry); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ExtendCheckout(expired): want ErrNotFound, got %v", err)
+	}
+	if err := st.CheckinCheckout(ctx, expiredCO.ID, afterExpiry); err != nil {
+		t.Fatalf("checkin later (cleanup): %v", err)
+	}
+
+	// --- password reuse history (Phase 120) ---
+	//
+	// Secrets are never stored here, only their hashes — this section never
+	// constructs anything that looks like a real password, deliberately.
+	if hashes, err := st.RecentPasswordHashes(ctx, cred.ID, 5); err != nil || len(hashes) != 0 {
+		t.Fatalf("RecentPasswordHashes(none recorded): %+v err %v", hashes, err)
+	}
+	t0, t1, t2, t3 := now, now.Add(time.Minute), now.Add(2*time.Minute), now.Add(3*time.Minute)
+	if err := st.RecordPasswordHistory(ctx, cred.ID, "hash-1", t0, 3); err != nil {
+		t.Fatalf("RecordPasswordHistory(1): %v", err)
+	}
+	if err := st.RecordPasswordHistory(ctx, cred.ID, "hash-2", t1, 3); err != nil {
+		t.Fatalf("RecordPasswordHistory(2): %v", err)
+	}
+	if hashes, err := st.RecentPasswordHashes(ctx, cred.ID, 5); err != nil || len(hashes) != 2 || hashes[0] != "hash-2" || hashes[1] != "hash-1" {
+		t.Fatalf("RecentPasswordHashes(2 recorded, newest first): %+v err %v", hashes, err)
+	}
+	if hashes, err := st.RecentPasswordHashes(ctx, cred.ID, 1); err != nil || len(hashes) != 1 || hashes[0] != "hash-2" {
+		t.Fatalf("RecentPasswordHashes(limit=1): %+v err %v", hashes, err)
+	}
+	// Recording beyond `keep` PRUNES the oldest — the history never grows
+	// unbounded relative to what reuse-prevention can actually check against.
+	if err := st.RecordPasswordHistory(ctx, cred.ID, "hash-3", t2, 3); err != nil {
+		t.Fatalf("RecordPasswordHistory(3): %v", err)
+	}
+	if err := st.RecordPasswordHistory(ctx, cred.ID, "hash-4", t3, 3); err != nil {
+		t.Fatalf("RecordPasswordHistory(4): %v", err)
+	}
+	if hashes, err := st.RecentPasswordHashes(ctx, cred.ID, 10); err != nil || len(hashes) != 3 {
+		t.Fatalf("RecentPasswordHashes after pruning to keep=3: %+v err %v", hashes, err)
+	} else if hashes[0] != "hash-4" || hashes[1] != "hash-3" || hashes[2] != "hash-2" {
+		t.Fatalf("pruning kept the wrong entries: %+v, want [hash-4 hash-3 hash-2]", hashes)
+	}
+	// A different credential's history is independent.
+	otherCred := &store.Credential{TargetID: tgt.ID, Username: "other-history-cred", SecretType: "password", SecretEnc: "v2:one"}
+	if err := st.CreateCredential(ctx, otherCred); err != nil {
+		t.Fatalf("CreateCredential(otherCred): %v", err)
+	}
+	if hashes, err := st.RecentPasswordHashes(ctx, otherCred.ID, 5); err != nil || len(hashes) != 0 {
+		t.Fatalf("RecentPasswordHashes(other credential): %+v err %v", hashes, err)
 	}
 
 	// --- audit + export ---

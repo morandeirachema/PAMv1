@@ -611,6 +611,11 @@ func (s *PGStore) DeleteCredential(ctx context.Context, id int64) error {
 	return execExpectingRow(ctx, s.pool, `DELETE FROM credentials WHERE id = $1`, id)
 }
 
+// accessRequestCols is the one column list every access-request read uses, so
+// a field cannot reach some reads and quietly miss others.
+const accessRequestCols = `id, requester, target_id, reason, status, approver, created_at, decided_at,
+	expires_at, ticket, required_approvals, approved_by, not_before, one_time, consumed_at, recur_days, next_run_at`
+
 // CreateAccessRequest inserts a request (defaulting status to pending),
 // populating its ID and CreatedAt; ErrNotFound if the target is missing.
 func (s *PGStore) CreateAccessRequest(ctx context.Context, ar *store.AccessRequest) error {
@@ -621,9 +626,9 @@ func (s *PGStore) CreateAccessRequest(ctx context.Context, ar *store.AccessReque
 		ar.RequiredApprovals = 1
 	}
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO access_requests (requester, target_id, reason, status, expires_at, ticket, required_approvals, not_before, one_time)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at`,
-		ar.Requester, ar.TargetID, ar.Reason, ar.Status, ar.ExpiresAt, ar.Ticket, ar.RequiredApprovals, ar.NotBefore, ar.OneTime,
+		`INSERT INTO access_requests (requester, target_id, reason, status, expires_at, ticket, required_approvals, not_before, one_time, recur_days)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, created_at`,
+		ar.Requester, ar.TargetID, ar.Reason, ar.Status, ar.ExpiresAt, ar.Ticket, ar.RequiredApprovals, ar.NotBefore, ar.OneTime, ar.RecurDays,
 	).Scan(&ar.ID, &ar.CreatedAt)
 	if pgCode(err) == pgForeignKeyViolation {
 		return store.ErrNotFound
@@ -634,7 +639,7 @@ func (s *PGStore) CreateAccessRequest(ctx context.Context, ar *store.AccessReque
 // GetAccessRequest returns the access request with the given ID, or ErrNotFound.
 func (s *PGStore) GetAccessRequest(ctx context.Context, id int64) (*store.AccessRequest, error) {
 	return getOne(ctx, s.pool, scanAccessRequest,
-		`SELECT id, requester, target_id, reason, status, approver, created_at, decided_at, expires_at, ticket, required_approvals, approved_by, not_before, one_time, consumed_at
+		`SELECT `+accessRequestCols+`
 		 FROM access_requests WHERE id = $1`, id)
 }
 
@@ -642,7 +647,7 @@ func (s *PGStore) GetAccessRequest(ctx context.Context, id int64) (*store.Access
 // "") in the (limit, afterID) window, ordered by ID.
 func (s *PGStore) ListAccessRequests(ctx context.Context, status string, limit int, afterID int64) ([]store.AccessRequest, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, requester, target_id, reason, status, approver, created_at, decided_at, expires_at, ticket, required_approvals, approved_by, not_before, one_time, consumed_at
+		`SELECT `+accessRequestCols+`
 		 FROM access_requests WHERE ($1 = '' OR status = $1) AND id > $2 ORDER BY id LIMIT $3`,
 		status, afterID, limitArg(limit))
 	if err != nil {
@@ -657,6 +662,29 @@ func (s *PGStore) DecideAccessRequest(ctx context.Context, id int64, status, app
 	return execExpectingRow(ctx, s.pool,
 		`UPDATE access_requests SET status = $1, approver = $2, decided_at = $3 WHERE id = $4`,
 		status, approver, decidedAt.UTC(), id)
+}
+
+// ListDueAccessRequests returns the approved recurring anchors whose next run
+// has arrived, oldest first.
+func (s *PGStore) ListDueAccessRequests(ctx context.Context, now time.Time) ([]store.AccessRequest, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+accessRequestCols+` FROM access_requests
+		WHERE status = 'approved' AND recur_days > 0 AND next_run_at IS NOT NULL AND next_run_at <= $1
+		ORDER BY next_run_at, id`, now)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanAccessRequest)
+}
+
+// SetAccessRequestNextRun moves an anchor's next occurrence.
+func (s *PGStore) SetAccessRequestNextRun(ctx context.Context, id int64, next time.Time) error {
+	return execExpectingRow(ctx, s.pool, `UPDATE access_requests SET next_run_at = $2 WHERE id = $1`, id, next)
+}
+
+// StopAccessRequestRecurrence ends a recurring anchor's series.
+func (s *PGStore) StopAccessRequestRecurrence(ctx context.Context, id int64) error {
+	return execExpectingRow(ctx, s.pool,
+		`UPDATE access_requests SET recur_days = 0, next_run_at = NULL WHERE id = $1`, id)
 }
 
 // HasActiveApproval reports whether requester has an approved, unexpired request
@@ -683,7 +711,7 @@ func (s *PGStore) ActiveApprovals(ctx context.Context, requester string, targetI
 		limit = 1
 	}
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, requester, target_id, reason, status, approver, created_at, decided_at, expires_at, ticket, required_approvals, approved_by, not_before, one_time, consumed_at
+		`SELECT `+accessRequestCols+`
 		 FROM access_requests
 		 WHERE requester = $1 AND target_id = $2 AND status = 'approved'
 		   AND expires_at > $3 AND (not_before IS NULL OR not_before <= $3)
@@ -931,11 +959,15 @@ func (s *PGStore) CreateCheckout(ctx context.Context, co *store.Checkout, now ti
 	return tx.Commit(ctx)
 }
 
+// checkoutCols is the one column list every checkout read uses, so a field
+// cannot reach some reads and quietly miss others.
+const checkoutCols = `id, credential_id, target_id, holder, reason, checked_out_at, expires_at, returned_at`
+
 // GetActiveCheckout returns the credential's active (unreturned, unexpired)
 // checkout as of now, or ErrNotFound.
 func (s *PGStore) GetActiveCheckout(ctx context.Context, credentialID int64, now time.Time) (*store.Checkout, error) {
 	return getOne(ctx, s.pool, scanCheckout,
-		`SELECT id, credential_id, target_id, holder, reason, checked_out_at, expires_at, returned_at
+		`SELECT `+checkoutCols+`
 		 FROM checkouts
 		 WHERE credential_id = $1 AND returned_at IS NULL AND expires_at > $2
 		 ORDER BY id DESC LIMIT 1`, credentialID, now.UTC())
@@ -951,7 +983,7 @@ func (s *PGStore) CheckinCheckout(ctx context.Context, id int64, at time.Time) e
 // ID; activeOnly limits to unreturned, unexpired ones as of now.
 func (s *PGStore) ListCheckouts(ctx context.Context, activeOnly bool, now time.Time, limit int, afterID int64) ([]store.Checkout, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, credential_id, target_id, holder, reason, checked_out_at, expires_at, returned_at
+		`SELECT `+checkoutCols+`
 		 FROM checkouts
 		 WHERE ((NOT $1) OR (returned_at IS NULL AND expires_at > $2)) AND id > $3
 		 ORDER BY id LIMIT $4`, activeOnly, now.UTC(), afterID, limitArg(limit))
@@ -959,6 +991,58 @@ func (s *PGStore) ListCheckouts(ctx context.Context, activeOnly bool, now time.T
 		return nil, err
 	}
 	return pgx.CollectRows(rows, scanCheckout)
+}
+
+// GetCheckout returns one checkout by ID, or ErrNotFound.
+func (s *PGStore) GetCheckout(ctx context.Context, id int64) (*store.Checkout, error) {
+	return getOne(ctx, s.pool, scanCheckout, `SELECT `+checkoutCols+` FROM checkouts WHERE id = $1`, id)
+}
+
+// ExtendCheckout pushes an active (unreturned, unexpired as of now) checkout's
+// expiry to newExpiresAt; ErrNotFound if missing, already returned, or already
+// expired.
+func (s *PGStore) ExtendCheckout(ctx context.Context, id int64, newExpiresAt, now time.Time) error {
+	return execExpectingRow(ctx, s.pool,
+		`UPDATE checkouts SET expires_at = $2 WHERE id = $1 AND returned_at IS NULL AND expires_at > $3`,
+		id, newExpiresAt.UTC(), now.UTC())
+}
+
+// RecordPasswordHistory appends secretHash to credentialID's history and
+// prunes anything beyond the most recent keep entries, in one transaction.
+func (s *PGStore) RecordPasswordHistory(ctx context.Context, credentialID int64, secretHash string, at time.Time, keep int) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO password_history (credential_id, secret_hash, created_at) VALUES ($1, $2, $3)`,
+		credentialID, secretHash, at.UTC()); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM password_history WHERE credential_id = $1 AND id NOT IN (
+			SELECT id FROM password_history WHERE credential_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2)`,
+		credentialID, keep); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// RecentPasswordHashes returns up to limit of a credential's most recent
+// rotation hashes, newest first.
+func (s *PGStore) RecentPasswordHashes(ctx context.Context, credentialID int64, limit int) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT secret_hash FROM password_history WHERE credential_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2`,
+		credentialID, limitArg(limit))
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (string, error) {
+		var h string
+		err := row.Scan(&h)
+		return h, err
+	})
 }
 
 // scanCheckout maps one result row into a store.Checkout.
@@ -2040,7 +2124,8 @@ func scanAccessRequest(row pgx.CollectableRow) (store.AccessRequest, error) {
 	var ar store.AccessRequest
 	err := row.Scan(&ar.ID, &ar.Requester, &ar.TargetID, &ar.Reason, &ar.Status,
 		&ar.Approver, &ar.CreatedAt, &ar.DecidedAt, &ar.ExpiresAt, &ar.Ticket,
-		&ar.RequiredApprovals, &ar.ApprovedBy, &ar.NotBefore, &ar.OneTime, &ar.ConsumedAt)
+		&ar.RequiredApprovals, &ar.ApprovedBy, &ar.NotBefore, &ar.OneTime, &ar.ConsumedAt,
+		&ar.RecurDays, &ar.NextRunAt)
 	return ar, err
 }
 
