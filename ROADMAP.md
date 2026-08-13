@@ -2396,6 +2396,11 @@ patch. Schema change: migration `0034` (`access_requests.recur_days`/
 `next_run_at`, a new `password_history` table).
 
 - [x] **v0.24.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-14 as `ghcr.io/morandeirachema/pamv1:0.24.0` (also
+  `latest`), digest
+  `sha256:81daffe77c05cbcb289475cdd240ee8682c7c68db5ecdc91125caf1f30c9a339`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow)
 - [x] All five pins via the sweep; Helm chart `version` 0.14.0 -> **0.15.0**
   (minor, alongside the `appVersion` minor)
 - [x] Both READMEs restated
