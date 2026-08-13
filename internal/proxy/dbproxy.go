@@ -333,6 +333,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		principal:      principal,
 		targetName:     targetName,
 		credUser:       credUser,
+		remoteAddr:     remote,
 		expectProtocol: "postgres",
 		startAudit: func(t *store.Target, c *store.Credential) (string, string) {
 			return "db.session.start", fmt.Sprintf("target:%s db:%s cred_user:%s", t.Name, database, c.Username)
@@ -607,6 +608,8 @@ func (d *DBProxy) refuse(ctx context.Context, backend *pgproto3.Backend, res adm
 		d.fail(backend, "28000", "pamv1: complete MFA enrollment first")
 	case gateRoleConnect:
 		d.deny(ctx, backend, actor, login, "your role may not open sessions")
+	case gateIPAllowlist:
+		d.deny(ctx, backend, actor, login, "this account may not connect from this network")
 	case gateResolve:
 		d.deny(ctx, backend, actor, login, res.reason)
 	case gateProtocolMatch:

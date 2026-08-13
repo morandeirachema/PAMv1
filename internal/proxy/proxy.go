@@ -570,6 +570,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		principal:  principal,
 		targetName: ext["target"],
 		credUser:   ext["cred_user"],
+		remoteAddr: remote,
 		// The SSH gateway brokers ssh always and winrm only with a runner
 		// configured, so it has no single expected protocol; it uses proxyable
 		// rather than expectProtocol (which the DB proxies use). serveWinRM
@@ -719,6 +720,10 @@ func (p *Proxy) refuse(ctx context.Context, chans <-chan ssh.NewChannel, res adm
 		p.audit(ctx, actor, "session.denied",
 			fmt.Sprintf("login:%s role:%s reason:role may not connect", auditField(login, 64), role))
 		rejectAll(chans, ssh.Prohibited, "pamv1: your role may not open sessions")
+	case gateIPAllowlist:
+		p.log.Warn("session denied: source address not allowed", "actor", actor, "remote", remote)
+		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:source-ip-not-allowed")
+		rejectAll(chans, ssh.Prohibited, "pamv1: this account may not connect from this network")
 	case gateResolve:
 		p.log.Warn("session denied", "actor", actor, "login", auditField(login, 64), "reason", res.reason, "remote", remote)
 		p.audit(ctx, actor, "session.denied", fmt.Sprintf("login:%s reason:%s", auditField(login, 64), res.reason))

@@ -993,6 +993,17 @@ func (s *Server) authz(cap auth.Capability, next http.HandlerFunc) http.Handler 
 			writeError(w, http.StatusForbidden, "this token is only valid for the RDP tunnel")
 			return
 		}
+		// Source-address restriction (Phase 118): a principal with a non-empty
+		// IPAllowlist may act only from inside it — the same gate the session
+		// proxies enforce at connect time (gates.go), applied here so a local
+		// user's bearer token is IP-restricted on every authenticated call, not
+		// only at connect. Break-glass bypasses, matching every other gate it
+		// already bypasses.
+		if !p.BreakGlass && !auth.IPAllowed(p.IPAllowlist, s.clientIP(r)) {
+			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:source-ip-not-allowed")
+			writeError(w, http.StatusForbidden, "your account may not connect from this network")
+			return
+		}
 		if !p.Can(cap) {
 			s.log.Warn("authorization denied", "actor", p.Name, "role", string(p.Role),
 				"method", r.Method, "path", r.URL.Path)

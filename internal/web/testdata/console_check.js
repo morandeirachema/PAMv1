@@ -164,6 +164,18 @@ const screens = [
       }],
     }),
   },
+  {
+    name: "users",
+    src: /\n {6}users\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      // ip_allowlist varies only WHETHER it is set, never its content — the
+      // rendered cell is a fixed-length "restricted"/"-" indicator, never the
+      // CIDR text itself, precisely so this column can never widen with data.
+      users: [{ id: 1, username: long ? LONGNAME : "alice", role: long ? LONGNAME : "user",
+                ip_allowlist: "10.0.0.0/8", created_at: "2026-08-08T12:00:00Z" }],
+      profiles: [],
+    }),
+  },
 ];
 
 // --- render ------------------------------------------------------------------

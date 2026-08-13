@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-13 · Reflects: Phases 0–116 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b) and live session-sharing (116, §9.4c) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-13 · Reflects: Phases 0–118 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c) and a per-user CIDR source-address allowlist (118, §7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -871,6 +871,33 @@ curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/profiles \
 curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/users \
   -d '{"username":"dana","role":"ops-readonly"}'
 ```
+
+### CIDR/network source-address allowlist (Phase 118)
+
+Restrict a local user (bearer-token) principal to connecting only from chosen
+networks — set at creation or update time as a comma-separated list of CIDR
+blocks. Empty (the default) means unrestricted. It's enforced everywhere that
+principal authenticates: every REST call and every session-proxy connect
+(SSH/PostgreSQL/SQL Server) — a refusal there fails the *session*, not just
+the login, matching the enforcement point CyberArk/Wallix call "network
+areas"/`ip_source`.
+
+```bash
+curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/users \
+  -d '{"username":"alice","role":"user","ip_allowlist":"10.0.0.0/8, 192.168.1.0/24"}'
+
+# Update later — omit ip_allowlist to leave it untouched (e.g. a role-only
+# change); send it explicitly, even as "", to change or clear it:
+curl -H "X-API-Key: $PAM_API_KEY" -X PUT http://localhost:8080/api/users/1 \
+  -d '{"role":"user","ip_allowlist":""}'   # clears the restriction
+```
+
+Break-glass access is exempt, like every other admission gate — an emergency
+login is already loudly audited on its own. Directory (AD/SSO/OIDC) logins
+have no backing local-user row to hold a list, so they are unaffected in v1.
+If you sit behind a reverse proxy, `PAM_TRUSTED_PROXY_HOPS` must already be
+set correctly (§3.6) or the resolved source address will be the proxy's, not
+the operator's.
 
 ### Safes: delegated-access containers (Phase 17)
 
@@ -2469,6 +2496,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-13 | **Phase 118 — CIDR/network source-address allowlist.** A per-user, comma-separated CIDR list (`ip_allowlist` on `POST /api/users` / `PUT /api/users/{id}`, `*string` on update so omitting it leaves an existing list untouched and only an explicit `""` clears it) restricts where that user's bearer token may be used from — enforced on every REST call (`authz` middleware) and every session-proxy connect (SSH/PostgreSQL/SQL Server, the shared `admit()` gate). Empty is unrestricted; break-glass is exempt; directory/OIDC logins are unaffected (no backing local-user row). New migration `0033` (`users.ip_allowlist`). See §7 |
 | 2026-08-13 | **Phase 116 — live session-sharing.** A live SSH session can be shared view-only or view-**control** with a second party through a four-eyes request→approve workflow (`POST /api/sessions/{id}/share`, decided by a *different* principal at `POST /api/share-invites/{id}/approve\|deny`). An **internal** invite redeems over SSH as `join:<token>` — the whole username — layered on the joiner's own PAM password, never the token alone; an **external**/vendor invite is emailed with a QR code instead, single-use, `PAM_SESSION_SHARE_INVITE_TTL_SEC` (default 900s), redeemed through a new **unauthenticated** page (`/share.html`) that mints a random 256-bit guest key good for `PAM_SESSION_SHARE_GUEST_TTL_MIN` (default 240 min). A roster + kick (`.../share/roster`, `.../share/kick`) close both. New migration `0032` (`session_share_invites`, plus a `vendors.email` column); new audit actions `session.share_{requested,approved,denied,revoked,joined,join_denied,ended,kicked}`. See §9.4c |
 | 2026-08-13 | **Phase 114 — a live NIS2 compliance report.** `GET /api/compliance/nis2?since=&until=` maps window-scoped audit activity onto the existing Art. 21(2) control matrix (docs/NIS2-COMPLIANCE.md §1): each control's status is architectural, and controls with a natural audit signal (supply-chain, policy effectiveness, access control, MFA, incident handling) carry a count of matching events bucketed by action family, plus (for incident handling) the whole-chain integrity result. Same digest/determinism/audit conventions as the raw export. Console: **F8** from *Display Audit Trail*. NIS2 only — PCI-DSS/ISO27001/SOX are not attempted. See §9.2b |
 | 2026-08-12 | **Phase 112 — mandatory live supervision.** `PAM_REQUIRE_LIVE_SUPERVISION=true` holds an interactive SSH channel — before it dials the target — until a supervisor is actually watching (`GET /api/sessions/{id}/stream`) or `PAM_LIVE_SUPERVISION_TIMEOUT_SEC` (default 120) elapses; a timeout refuses the session and is audited `session.unsupervised`. Observer sessions and break-glass are exempt. SSH only for now — the database/WinRM proxies register their live session after dialing, so they're left for a future phase. See §9.4b |

@@ -4,7 +4,7 @@
 > whenever the VNC path (the guacd handshake, the tunnel prelude, the token
 > endpoint, or the in-portal viewer) changes.
 >
-> Last updated: 2026-08-13 · Reflects: Phases 0–116 (nothing since 55 changes the VNC path or how it is exercised — Phase 116's session-sharing is SSH-only and does not touch guacd or the viewer). (VNC shipped in 54).
+> Last updated: 2026-08-13 · Reflects: Phases 0–118 (nothing since 55 changes the VNC path or how it is exercised — Phase 116's session-sharing is SSH-only and does not touch guacd or the viewer. Phase 118's CIDR allowlist reaches this path indirectly, same as RDP — `POST /api/vnc-token` goes through the same `authz` middleware — but doesn't change this testing procedure). (VNC shipped in 54).
 
 This is the procedure to verify pamv1's **VNC function** end to end: an operator
 opens a VNC target from the 5250 portal, the credential is injected server-side

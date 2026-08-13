@@ -10,7 +10,7 @@
 > live. This is the operator's checklist of what you must stand up (and what to
 > re-verify) before relying on each capability in production.
 >
-> Last updated: 2026-08-13 · Reflects: Phases 0–116 (58–94 needed no external infrastructure, so nothing here was added or closed by them; Phase 84 moved the ITSM gate's *depth* in-process with first-class ServiceNow/Jira connectors, leaving only live-instance interop verification external — see the ITSM row; **Phase 116** reuses the *existing* email-alerts requirement for its external session-share invites — see that row — so it adds nothing new here either).
+> Last updated: 2026-08-13 · Reflects: Phases 0–118 (58–94 needed no external infrastructure, so nothing here was added or closed by them; Phase 84 moved the ITSM gate's *depth* in-process with first-class ServiceNow/Jira connectors, leaving only live-instance interop verification external — see the ITSM row; **Phase 116** reuses the *existing* email-alerts requirement for its external session-share invites — see that row — so it adds nothing new here either; **Phase 118** needs nothing external either — CIDR matching is pure `net.ParseCIDR` against an already-resolved local address).
 > (Phases 25–28, 30 and 31 — console parity, recording playback + one-time
 > access, broker completion, operator SSH certificates, in-session step-up and the
 > CIEM blast-radius engine — are fully in-process and add no

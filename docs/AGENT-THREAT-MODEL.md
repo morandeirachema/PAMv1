@@ -2,7 +2,7 @@
 
 > 🟢 **Living document** — updated in the same change as the broker code (see the [docs hub](README.md)).
 >
-> Last updated: 2026-08-13 · Reflects: Phases 0–116. Phases 58–94 change nothing in the agent trust model: Phase 67 added a read-only console view of the delegations this document describes, the Phase 91–94 adversarial review **confirmed the broker four-eyes path sound**, and the rest is certification, session-proxy, deploy and release work — including 116's live session-sharing, a human-to-human feature the `agent` role cannot reach (its two capabilities, `read_inventory` and `call_tool`, cover none of the new routes).
+> Last updated: 2026-08-13 · Reflects: Phases 0–118. Phases 58–94 change nothing in the agent trust model: Phase 67 added a read-only console view of the delegations this document describes, the Phase 91–94 adversarial review **confirmed the broker four-eyes path sound**, and the rest is certification, session-proxy, deploy and release work — including 116's live session-sharing, a human-to-human feature the `agent` role cannot reach (its two capabilities, `read_inventory` and `call_tool`, cover none of the new routes), and 118's CIDR allowlist, which binds `store.User.IPAllowlist` on a bearer-token principal — a non-human `RoleAgent` is resolved from a SPIFFE SVID, not a `store.User` row, so it has no allowlist to be bound by and is unaffected either way.
 >
 > Scope: the **AI-agent access broker** (Phases 13, 27, 30, 38, 39, 40, 43, 52c, 52d) — `internal/broker`,
 > `internal/policy`, `internal/agentid`, `internal/auditchain`, `internal/mcp`,
