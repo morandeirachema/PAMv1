@@ -11,6 +11,10 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-08-14
+
+A minor: one new capability (three related additions). Schema change (migration `0034`).
+
 ### Added
 
 - **Recurring access requests, configurable password policy, checkout

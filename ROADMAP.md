@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–120 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–121 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -42,7 +42,8 @@ the REST `authz` middleware, break-glass exempt — released in turn as
 gaps** from the same Wallix-weighted plan: recurring access-request windows
 (reusing the campaign scheduler's proven anchor-spawns-children shape),
 configurable password-generation policy plus reuse-history enforcement, and
-checkout-lease extension up to a configured ceiling. The narrative that follows traces the
+checkout-lease extension up to a configured ceiling — released in turn as
+**v0.24.0 by Phase 121**. The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2386,6 +2387,37 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 121 — v0.24.0 ✅
+
+Releases Phase 120 (recurring access windows + configurable password policy +
+checkout extension) — a genuine new capability, so this is a **minor**, not a
+patch. Schema change: migration `0034` (`access_requests.recur_days`/
+`next_run_at`, a new `password_history` table).
+
+- [x] **v0.24.0** through the test-gated pipeline, rehearsed on `main` first.
+- [x] All five pins via the sweep; Helm chart `version` 0.14.0 -> **0.15.0**
+  (minor, alongside the `appVersion` minor)
+- [x] Both READMEs restated
+- [x] `docs/README.md`'s currency line and `docs/NIS2-COMPLIANCE.md`'s
+  compliance-evidence row (a documented recurring staleness point) both
+  caught proactively
+- [x] **Two real CI bugs found and fixed while cutting this release,
+  neither in the feature itself**: a `storetest.go` assertion compared a
+  `time.Now()`-derived value for exact equality after a live-Postgres round
+  trip — PostgreSQL's `TIMESTAMPTZ` has microsecond resolution, one step
+  coarser than Go's `time.Time`, so the comparison failed reliably against
+  `pgstore` (never against `memstore`, which never serializes) — fixed by
+  truncating the test's own input to microsecond precision before
+  comparing; and `govulncheck` failed on 5-6 disclosed Go stdlib CVEs, all
+  already fixed in the very next patch release — `actions/setup-go`'s
+  `check-latest: true` alone wasn't enough because `actions/go-versions`
+  (its own version catalog) hadn't yet published that patch, confirmed
+  directly against its `versions-manifest.json`; worked around by fetching
+  the release directly from `go.dev`, sha256-verified, prepended to `PATH`
+  for the `test` job (commented as removable once the catalog catches up).
+  Both confirmed pre-existing/unrelated to Phase 120's own code via a
+  clean-`main` re-check before being fixed.
 
 ## Phase 120 — Recurring access windows + configurable password policy + checkout extension ✅
 
