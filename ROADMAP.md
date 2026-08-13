@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–112 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–113 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -27,8 +27,8 @@ strongest finding from a fresh competitive-research pass against CyberArk and
 Wallix — which **Phase 111 releases as v0.19.0** (a minor, since it is a real
 feature, not a fix), and **Phase 112 closes that research pass's second
 finding**: an interactive SSH session can require an actively-connected
-supervisor before it proceeds, not just after-the-fact review. The narrative
-that follows traces the
+supervisor before it proceeds, not just after-the-fact review — released in
+turn as **v0.20.0 by Phase 113**. The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2372,6 +2372,16 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 113 — v0.20.0 ✅
+
+Releases Phase 112 (mandatory live-supervision gate) — a genuine new
+capability, so this is a **minor**, not a patch. No schema change.
+
+- [x] **v0.20.0** through the test-gated pipeline, rehearsed on `main` first
+- [x] All five pins via the sweep; Helm chart `version` 0.10.0 -> **0.11.0**
+  (minor, alongside the `appVersion` minor)
+- [x] Both READMEs restated
 
 ## Phase 112 — Mandatory live-supervision gate (SSH) ✅
 
