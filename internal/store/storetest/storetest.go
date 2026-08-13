@@ -1007,7 +1007,13 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if _, err := st.GetCheckout(ctx, 999999); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("GetCheckout(missing): want ErrNotFound, got %v", err)
 	}
-	extended := now.Add(2 * time.Hour)
+	// Truncated to microsecond precision: PostgreSQL's TIMESTAMPTZ has no finer
+	// resolution than that, so a nanosecond-precision time.Now()-derived value
+	// would silently lose its sub-microsecond digits on the pgstore round trip
+	// and never compare equal again — memstore has no such loss, which is
+	// exactly the kind of backend divergence this contract test exists to
+	// catch rather than paper over by testing only the more forgiving side.
+	extended := now.Add(2 * time.Hour).Truncate(time.Microsecond)
 	if err := st.ExtendCheckout(ctx, dana.ID, extended, now); err != nil {
 		t.Fatalf("ExtendCheckout: %v", err)
 	}
