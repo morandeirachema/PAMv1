@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-08-13 · Reflects: Phases 0–118. Phases 66–70 add one more
+> Last updated: 2026-08-14 · Reflects: Phases 0–120. Phases 66–70 add one more
 > background worker (the hourly, leader-locked certification scheduler); Phase 78
 > adds an optional per-replica Conjur refresh worker (off unless
 > `PAM_CONJUR_REFRESH_MIN` is set); 71–94 add no port, resource floor or
@@ -11,6 +11,11 @@
 > likewise, no port, resource floor or dependency. Phase 118 adds none of
 > those either — the CIDR allowlist is per-user data (`users.ip_allowlist`),
 > not configuration; no new env var, port, resource floor or dependency.
+> **Phase 120 adds one more background worker** (`RunAccessRequestScheduler`
+> — hourly, leader-locked, same shape as the certification scheduler, always
+> on) and seven env vars (`PAM_PASSWORD_MIN_LENGTH`/`_MIN_LOWER`/`_MIN_UPPER`/
+> `_MIN_DIGIT`/`_MIN_SYMBOL`/`PAM_PASSWORD_HISTORY_COUNT`/
+> `PAM_CHECKOUT_MAX_EXTEND_MIN`) — no new port or resource floor.
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** These are the
 > specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate

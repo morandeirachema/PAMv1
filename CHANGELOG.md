@@ -11,6 +11,24 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Added
+
+- **Recurring access requests, configurable password policy, checkout
+  extension.** Three additive policy-richness gaps. An access request with
+  `recur_days` set becomes, once approved, the anchor of a recurring series:
+  a fresh pending (never pre-approved) successor is auto-filed every N days
+  on its own worker; `POST /api/access-requests/{id}/stop-recurrence` ends
+  it. Generated-password shape is now config-driven
+  (`PAM_PASSWORD_MIN_LENGTH`/`_MIN_LOWER`/`_MIN_UPPER`/`_MIN_DIGIT`/
+  `_MIN_SYMBOL`, defaults unchanged from before) and reuse-prevention is
+  opt-in (`PAM_PASSWORD_HISTORY_COUNT`, default 0, tracked as SHA-256
+  hashes only). `POST /api/credentials/{id}/checkout/extend` (holder-or-
+  admin) pushes an active checkout's expiry out, capped at
+  `PAM_CHECKOUT_MAX_EXTEND_MIN` (default 240) total from check-out. Console:
+  a recur-days field + Recur column + stop-recur option on access requests,
+  an extend option on checkouts. New migration `0034`; store surface
+  157 → 164 methods.
+
 ## [0.23.0] — 2026-08-13
 
 A minor: one new capability. Schema change (migration `0033`).

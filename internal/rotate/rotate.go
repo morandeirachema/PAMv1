@@ -54,29 +54,79 @@ const (
 	allPw   = lowers + uppers + digits + symbols
 )
 
-// GeneratePassword returns a cryptographically strong password of length n
-// (minimum 12) guaranteed to contain at least one lowercase, uppercase, digit
-// and symbol — satisfying typical Windows/Linux complexity policies.
-func GeneratePassword(n int) (string, error) {
-	if n < 12 {
-		n = 12
+// PasswordPolicy configures a generated password's length and per-class
+// minimums (Phase 120). A zero value is not directly usable — pass it through
+// Normalized first, or use DefaultPasswordPolicy — because a caller-supplied
+// zero must never silently generate a 0-length password.
+type PasswordPolicy struct {
+	MinLength                               int
+	MinLower, MinUpper, MinDigit, MinSymbol int
+}
+
+// DefaultPasswordPolicy reproduces the hardcoded behavior every password had
+// before PasswordPolicy existed: 24 characters, at least one of each class.
+var DefaultPasswordPolicy = PasswordPolicy{MinLength: 24, MinLower: 1, MinUpper: 1, MinDigit: 1, MinSymbol: 1}
+
+// Normalized fills in zero fields from DefaultPasswordPolicy and then grows
+// MinLength, if necessary, to fit the sum of the four class minimums — a
+// policy asking for more required characters than its own length is a
+// misconfiguration GeneratePassword resolves rather than fails on, since the
+// alternative (refusing to rotate a credential at all) is worse than a
+// password slightly longer than PAM_PASSWORD_MIN_LENGTH requested.
+func (p PasswordPolicy) Normalized() PasswordPolicy {
+	if p.MinLength <= 0 {
+		p.MinLength = DefaultPasswordPolicy.MinLength
 	}
-	out := make([]byte, n)
-	// Guarantee one of each category, then fill the rest from the full set.
-	cats := []string{lowers, uppers, digits, symbols}
-	for i, set := range cats {
-		c, err := pick(set)
-		if err != nil {
-			return "", err
+	if p.MinLower <= 0 {
+		p.MinLower = DefaultPasswordPolicy.MinLower
+	}
+	if p.MinUpper <= 0 {
+		p.MinUpper = DefaultPasswordPolicy.MinUpper
+	}
+	if p.MinDigit <= 0 {
+		p.MinDigit = DefaultPasswordPolicy.MinDigit
+	}
+	if p.MinSymbol <= 0 {
+		p.MinSymbol = DefaultPasswordPolicy.MinSymbol
+	}
+	if p.MinLength < 12 {
+		p.MinLength = 12
+	}
+	if required := p.MinLower + p.MinUpper + p.MinDigit + p.MinSymbol; p.MinLength < required {
+		p.MinLength = required
+	}
+	return p
+}
+
+// GeneratePassword returns a cryptographically strong password satisfying
+// policy (see PasswordPolicy.Normalized for how a partial or zero policy is
+// filled in) — at least MinLength characters, containing at least MinLower
+// lowercase, MinUpper uppercase, MinDigit digit and MinSymbol symbol
+// characters, satisfying typical Windows/Linux complexity policies.
+func GeneratePassword(policy PasswordPolicy) (string, error) {
+	policy = policy.Normalized()
+	out := make([]byte, policy.MinLength)
+	idx := 0
+	for _, class := range []struct {
+		set string
+		min int
+	}{{lowers, policy.MinLower}, {uppers, policy.MinUpper}, {digits, policy.MinDigit}, {symbols, policy.MinSymbol}} {
+		for i := 0; i < class.min; i++ {
+			c, err := pick(class.set)
+			if err != nil {
+				return "", err
+			}
+			out[idx] = c
+			idx++
 		}
-		out[i] = c
 	}
-	for i := len(cats); i < n; i++ {
+	// Fill the rest from the full set.
+	for ; idx < policy.MinLength; idx++ {
 		c, err := pick(allPw)
 		if err != nil {
 			return "", err
 		}
-		out[i] = c
+		out[idx] = c
 	}
 	// Shuffle so the guaranteed characters are not always at the front.
 	if err := shuffle(out); err != nil {

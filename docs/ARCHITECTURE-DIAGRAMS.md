@@ -160,6 +160,7 @@ flowchart LR
   n_pam_server --> n_policy
   n_pam_server --> n_proxy
   n_pam_server --> n_recording
+  n_pam_server --> n_rotate
   n_pam_server --> n_session
   n_pam_server --> n_shamir
   n_pam_server --> n_sshca
@@ -213,6 +214,8 @@ erDiagram
     ptr_time_Time NotBefore
     bool OneTime
     ptr_time_Time ConsumedAt
+    int RecurDays
+    ptr_time_Time NextRunAt
   }
   AgentKey {
     int64 ID
@@ -452,7 +455,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 142 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 144 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -460,6 +463,7 @@ The 142 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/access-requests` | CapConnect |
 | POST | `/api/access-requests/{id}/approve` | CapApprove |
 | POST | `/api/access-requests/{id}/deny` | CapApprove |
+| POST | `/api/access-requests/{id}/stop-recurrence` | CapApprove |
 | GET | `/api/analytics/risk` | CapReadAudit |
 | GET | `/api/audit` | CapReadAudit |
 | GET | `/api/audit/export` | CapReadAudit |
@@ -495,6 +499,7 @@ The 142 routes registered on the API mux, with the capability or guard each enfo
 | DELETE | `/api/credentials/{id}` | CapManageCredentials |
 | POST | `/api/credentials/{id}/checkin` | CapRevealSecret |
 | POST | `/api/credentials/{id}/checkout` | CapRevealSecret |
+| POST | `/api/credentials/{id}/checkout/extend` | CapRevealSecret |
 | GET | `/api/credentials/{id}/dependencies` | CapReadInventory |
 | POST | `/api/credentials/{id}/dependencies` | CapManageCredentials |
 | DELETE | `/api/credentials/{id}/dependencies/{did}` | CapManageCredentials |

@@ -165,6 +165,32 @@ const screens = [
     }),
   },
   {
+    name: "checkouts",
+    src: /\n {6}checkouts\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      targets: [{ id: 1, name: long ? LONGNAME : "web-01" }],
+      checkouts: [{
+        id: 1, credential_id: 1, target_id: 1,
+        holder: long ? LONGNAME : "alice", reason: long ? LONG : "debug prod",
+        checked_out_at: "2026-08-08T12:00:00Z", expires_at: "2026-08-08T12:30:00Z",
+      }],
+    }),
+  },
+  {
+    name: "requests",
+    src: /\n {6}requests\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      targets: [{ id: 1, name: long ? LONGNAME : "web-01" }],
+      requests: [{
+        id: 1, requester: long ? LONGNAME : "alice", target_id: 1,
+        reason: long ? LONG : "patch", ticket: long ? LONGNAME : "CHG1001",
+        status: "pending", approved_by: "", required_approvals: 1,
+        one_time: false, recur_days: 7, not_before: null,
+        expires_at: "2026-08-08T12:00:00Z",
+      }],
+    }),
+  },
+  {
     name: "users",
     src: /\n {6}users\(\) \{\n[\s\S]*?\n {6}\},\n/,
     state: (long) => ({

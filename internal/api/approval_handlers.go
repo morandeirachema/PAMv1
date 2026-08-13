@@ -27,6 +27,11 @@ type accessRequestIn struct {
 	// OneTime (Phase 26) asks for a single-use approval: the first privileged
 	// use it admits consumes it. PAM_ACCESS_ONE_TIME forces it on every request.
 	OneTime bool `json:"one_time,omitempty"`
+	// RecurDays (Phase 120) makes this request, once approved, the anchor of a
+	// recurring series: every RecurDays a fresh request is auto-filed with the
+	// same requester/target/reason, needing its own approval every time. Zero
+	// is a one-off, matching every request before this field existed.
+	RecurDays int `json:"recur_days,omitempty"`
 }
 
 // createAccessRequest files a request to connect to a target. The requester is
@@ -57,6 +62,11 @@ func (s *Server) createAccessRequest(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnprocessableEntity, "ticket rejected: "+err.Error())
 			return
 		}
+	}
+	if in.RecurDays < 0 || in.RecurDays > maxRecurDays {
+		writeError(w, http.StatusUnprocessableEntity,
+			fmt.Sprintf("recur_days must be between 0 (one-off) and %d", maxRecurDays))
+		return
 	}
 	// Multi-tier chains + scheduled window (Phase 21). RequiredApprovals is the
 	// larger of the request's ask and the configured default (at least 1). The
@@ -93,12 +103,17 @@ func (s *Server) createAccessRequest(w http.ResponseWriter, r *http.Request) {
 		RequiredApprovals: required,
 		NotBefore:         in.NotBefore,
 		OneTime:           in.OneTime || s.oneTimeAccess,
+		RecurDays:         in.RecurDays,
 	}
 	if err := s.store.CreateAccessRequest(r.Context(), &ar); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "access.request", fmt.Sprintf("request:%d target:%d reason:%q ticket:%q approvals_required:%d one_time:%t", ar.ID, ar.TargetID, ar.Reason, ar.Ticket, ar.RequiredApprovals, ar.OneTime))
+	detail := fmt.Sprintf("request:%d target:%d reason:%q ticket:%q approvals_required:%d one_time:%t", ar.ID, ar.TargetID, ar.Reason, ar.Ticket, ar.RequiredApprovals, ar.OneTime)
+	if ar.RecurDays > 0 {
+		detail += fmt.Sprintf(" recur_days:%d", ar.RecurDays)
+	}
+	s.audit(r.Context(), "access.request", detail)
 	writeJSON(w, http.StatusCreated, ar)
 }
 
@@ -204,6 +219,17 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, dec
 		s.notifyDecision(r, "access.approve", approver, ar)
 		ar.Status = "approved"
 		ar.Approver = approver
+		// A recurring anchor's clock starts on APPROVAL, not on the original
+		// request (Phase 120) — an approval that takes days to arrive must not
+		// make the first recurrence fire immediately the moment it lands.
+		if ar.RecurDays > 0 {
+			next := now.UTC().AddDate(0, 0, ar.RecurDays)
+			if err := s.store.SetAccessRequestNextRun(r.Context(), ar.ID, next); err != nil {
+				storeError(w, err)
+				return
+			}
+			ar.NextRunAt = &next
+		}
 	} else {
 		if err := s.store.SetApprovalState(r.Context(), ar.ID, joined, "pending", "", nil); err != nil {
 			storeError(w, err)
@@ -212,6 +238,33 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, dec
 		s.audit(r.Context(), "access.approve_partial", fmt.Sprintf("request:%d target:%d approver:%s approvals:%d/%d", ar.ID, ar.TargetID, approver, len(approvers), required))
 	}
 	ar.ApprovedBy = joined
+	writeJSON(w, http.StatusOK, ar)
+}
+
+// stopAccessRequestRecurrence ends a recurring anchor's series — the stop
+// button an operator reaches for first when a periodic access need ends, so
+// it has to just work (Phase 120, mirroring closeCampaign's role for
+// campaigns). Idempotent: stopping an already one-off request, or one that
+// was never approved, succeeds either way — the caller's intent ("this
+// should not recur any more") is already satisfied. Gated the same as an
+// approve/deny decision: ending a series is the same class of call as making
+// one.
+func (s *Server) stopAccessRequestRecurrence(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	ar, err := s.store.GetAccessRequest(r.Context(), id)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	if err := s.store.StopAccessRequestRecurrence(r.Context(), id); err != nil {
+		storeError(w, err)
+		return
+	}
+	s.audit(r.Context(), "access.recurrence_stopped", fmt.Sprintf("request:%d target:%d", ar.ID, ar.TargetID))
+	ar.RecurDays, ar.NextRunAt = 0, nil
 	writeJSON(w, http.StatusOK, ar)
 }
 
