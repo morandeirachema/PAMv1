@@ -17,6 +17,21 @@ jobs:
         with:
           go-version: "1.26"
           check-latest: true
+      - name: work around actions/go-versions lagging the latest Go patch
+        # actions/setup-go's own version catalog (actions/go-versions) trails
+        # a fresh upstream Go patch release by up to ~a day, so check-latest
+        # above still resolved to go1.26.5 here even though go1.26.6 (fixing
+        # 5-6 disclosed stdlib CVEs — net/url, crypto/tls, net/http,
+        # encoding/xml, encoding/asn1) was already published on go.dev.
+        # Fetch it directly, sha256-verified against the published digest,
+        # and put it first on PATH for every step below. Safe to delete once
+        # the upstream catalog catches up and check-latest alone is enough
+        # again — try dropping this step first before adding a new one.
+        run: |
+          curl -sSL -o /tmp/go.tar.gz https://go.dev/dl/go1.26.6.linux-amd64.tar.gz
+          echo "708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89  /tmp/go.tar.gz" | sha256sum -c -
+          tar -C /tmp -xzf /tmp/go.tar.gz
+          echo "/tmp/go/bin" >> "$GITHUB_PATH"
       - name: gofmt
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - name: vet
