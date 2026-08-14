@@ -165,6 +165,16 @@ const screens = [
     }),
   },
   {
+    name: "sesswatch",
+    src: /\n {6}sesswatch\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      watchSess: { id: "abc12345-full-uuid-goes-here", actor: long ? LONGNAME : "alice", target: long ? LONGNAME : "web-01", protocol: "ssh" },
+      watchText: "",
+      watchSuspended: false,
+      roster: [{ join_id: "j1", actor: long ? LONGNAME : "bob", mode: "view_control" }],
+    }),
+  },
+  {
     name: "checkouts",
     src: /\n {6}checkouts\(\) \{\n[\s\S]*?\n {6}\},\n/,
     state: (long) => ({
@@ -238,6 +248,16 @@ function render(screen, long) {
     const now = () => "2026-08-08 12:00:00";
     const can = () => true;
     const document = { getElementById: () => ({ set onsubmit(_) {} }) };
+    // Several screens (sessions, sesswatch, ...) start a 5s live-refresh
+    // timer as their last act. A REAL setInterval would keep this harness's
+    // node process alive past the synchronous render below, so it is
+    // shadowed to a no-op here — screen/liveTimer/stopLive exist only so
+    // those lines don't throw a ReferenceError; the timer callback itself
+    // never runs during a render (nothing ticks the event loop before
+    // term.innerHTML is read and returned).
+    const setInterval = () => 0;
+    let screen = "", liveTimer = null;
+    const stopLive = () => {};
     ${decls}
   `;
   try {

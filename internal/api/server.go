@@ -857,6 +857,14 @@ func (s *Server) routes() {
 	// is an execution-authorizing act — CapApprove, so a read-only auditor cannot
 	// grant it (Phase 39).
 	s.mux.Handle("POST /api/sessions/{id}/stepup", s.authz(auth.CapApprove, s.decideStepUp)) // Phase 30
+	// Suspend/resume (Phase 122): a rung below kill — freeze an operator's
+	// input without ending their session. Deciding is CapApprove, the same
+	// authorization-decision class as deciding a step-up; reading current
+	// status is CapReadAudit, the same monitoring-read gate as the live
+	// stream and the step-up list.
+	s.mux.Handle("GET /api/sessions/{id}/suspend", s.authz(auth.CapReadAudit, s.sessionSuspendStatus))
+	s.mux.Handle("POST /api/sessions/{id}/suspend", s.authz(auth.CapApprove, s.suspendSession))
+	s.mux.Handle("POST /api/sessions/{id}/resume", s.authz(auth.CapApprove, s.resumeSession))
 	s.mux.Handle("DELETE /api/sessions/{id}", s.authz(auth.CapManageTargets, s.killSession))
 
 	// Live session-sharing / "Session Invite" (Phase 116): four-eyes request →

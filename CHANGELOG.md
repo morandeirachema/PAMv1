@@ -11,6 +11,17 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Added
+
+- **Suspend vs. terminate a live session.** `POST /api/sessions/{id}/suspend`/
+  `.../resume` (`approve`) freeze and unfreeze an operator's input without
+  ending the session, reusing the input mux session-sharing introduced rather
+  than new plumbing; `GET .../suspend` (`read_audit`) reports current state.
+  Idempotent; the operator gets a `Stderr` banner on either transition.
+  Replica-local, like sharing. Console: an amber *SUSPENDED* banner on the
+  live-watch pane, **F8** to toggle. New audit actions
+  `session.suspended`/`session.resumed`; no new migration.
+
 ## [0.24.0] — 2026-08-14
 
 A minor: one new capability (three related additions). Schema change (migration `0034`).
