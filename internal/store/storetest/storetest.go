@@ -1288,6 +1288,102 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatal("expired OIDC state must not be returned")
 	}
 
+	// --- WebAuthn credentials (Phase 124): a user may register more than one,
+	// unlike MFAEnrollment, so ID is a surrogate rather than username. ---
+	wc1 := store.WebAuthnCredential{
+		Username: "wa1", CredentialID: []byte("cred-1"), PublicKey: []byte("pubkey-1"),
+		AttestationType: "none", Transports: "usb", Name: "YubiKey",
+	}
+	if err := st.CreateWebAuthnCredential(ctx, &wc1); err != nil {
+		t.Fatalf("CreateWebAuthnCredential: %v", err)
+	}
+	if wc1.ID == 0 {
+		t.Fatal("CreateWebAuthnCredential did not populate ID")
+	}
+	if wc1.CreatedAt.IsZero() {
+		t.Fatal("CreateWebAuthnCredential did not populate CreatedAt")
+	}
+	wc2 := store.WebAuthnCredential{
+		Username: "wa1", CredentialID: []byte("cred-2"), PublicKey: []byte("pubkey-2"), Name: "Phone",
+	}
+	if err := st.CreateWebAuthnCredential(ctx, &wc2); err != nil {
+		t.Fatalf("CreateWebAuthnCredential(2nd): %v", err)
+	}
+	if creds, err := st.ListWebAuthnCredentials(ctx, "wa1"); err != nil || len(creds) != 2 {
+		t.Fatalf("ListWebAuthnCredentials: %d creds, err %v; want 2", len(creds), err)
+	} else if creds[0].ID != wc1.ID || creds[1].ID != wc2.ID {
+		t.Fatalf("ListWebAuthnCredentials order = [%d %d], want [%d %d]", creds[0].ID, creds[1].ID, wc1.ID, wc2.ID)
+	}
+	if creds, err := st.ListWebAuthnCredentials(ctx, "nobody"); err != nil || len(creds) != 0 {
+		t.Fatalf("ListWebAuthnCredentials(nobody): %d creds, err %v; want 0", len(creds), err)
+	}
+	if got, err := st.GetWebAuthnCredentialByCredentialID(ctx, []byte("cred-1")); err != nil || got.ID != wc1.ID || got.Username != "wa1" {
+		t.Fatalf("GetWebAuthnCredentialByCredentialID: %+v err %v", got, err)
+	}
+	if _, err := st.GetWebAuthnCredentialByCredentialID(ctx, []byte("no-such-cred")); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetWebAuthnCredentialByCredentialID(missing) err = %v, want ErrNotFound", err)
+	}
+	usedAt := now.Truncate(time.Microsecond)
+	if err := st.UpdateWebAuthnSignCount(ctx, wc1.ID, 42, true, usedAt); err != nil {
+		t.Fatalf("UpdateWebAuthnSignCount: %v", err)
+	}
+	if got, err := st.GetWebAuthnCredentialByCredentialID(ctx, []byte("cred-1")); err != nil || got.SignCount != 42 || !got.CloneWarning || got.LastUsedAt == nil || !got.LastUsedAt.Equal(usedAt) {
+		t.Fatalf("after UpdateWebAuthnSignCount: %+v err %v", got, err)
+	}
+	if err := st.UpdateWebAuthnSignCount(ctx, 999999, 1, false, now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateWebAuthnSignCount(missing id) err = %v, want ErrNotFound", err)
+	}
+	// DeleteWebAuthnCredential is scoped to username — a wrong owner must not
+	// be able to delete someone else's credential even with the right id.
+	if err := st.DeleteWebAuthnCredential(ctx, wc1.ID, "someone-else"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("DeleteWebAuthnCredential(wrong owner) err = %v, want ErrNotFound", err)
+	}
+	if err := st.DeleteWebAuthnCredential(ctx, wc1.ID, "wa1"); err != nil {
+		t.Fatalf("DeleteWebAuthnCredential: %v", err)
+	}
+	if creds, err := st.ListWebAuthnCredentials(ctx, "wa1"); err != nil || len(creds) != 1 || creds[0].ID != wc2.ID {
+		t.Fatalf("ListWebAuthnCredentials after delete: %+v err %v; want just [%d]", creds, err, wc2.ID)
+	}
+
+	// --- WebAuthn ceremony challenges: single-use, expiring, isolated by
+	// (username, purpose) — the same atomic put/take-with-expiry shape as
+	// OIDC state above. A fresh Put for the same key supersedes the old one. ---
+	if err := st.PutWebAuthnChallenge(ctx, "wa1", "register", []byte("session-a"), future); err != nil {
+		t.Fatalf("PutWebAuthnChallenge: %v", err)
+	}
+	if err := st.PutWebAuthnChallenge(ctx, "wa1", "login", []byte("session-b"), future); err != nil {
+		t.Fatalf("PutWebAuthnChallenge(login): %v", err)
+	}
+	sd, ok, err := st.TakeWebAuthnChallenge(ctx, "wa1", "register", now)
+	if err != nil || !ok || string(sd) != "session-a" {
+		t.Fatalf("TakeWebAuthnChallenge(register): sd=%q ok=%v err=%v", sd, ok, err)
+	}
+	if _, ok, _ := st.TakeWebAuthnChallenge(ctx, "wa1", "register", now); ok {
+		t.Fatal("webauthn challenge must be single-use")
+	}
+	// The "login" purpose challenge for the same user is untouched by taking
+	// "register" — the two purposes do not share state.
+	if sd, ok, err := st.TakeWebAuthnChallenge(ctx, "wa1", "login", now); err != nil || !ok || string(sd) != "session-b" {
+		t.Fatalf("TakeWebAuthnChallenge(login): sd=%q ok=%v err=%v", sd, ok, err)
+	}
+	if err := st.PutWebAuthnChallenge(ctx, "wa1", "register", []byte("expired"), now.Add(-time.Minute)); err != nil {
+		t.Fatalf("PutWebAuthnChallenge(expired): %v", err)
+	}
+	if _, ok, _ := st.TakeWebAuthnChallenge(ctx, "wa1", "register", now); ok {
+		t.Fatal("expired webauthn challenge must not be returned")
+	}
+	// A second Put for the same (username, purpose) supersedes the first —
+	// an abandoned Begin call must not linger once a fresh one replaces it.
+	if err := st.PutWebAuthnChallenge(ctx, "wa1", "register", []byte("first"), future); err != nil {
+		t.Fatalf("PutWebAuthnChallenge(first): %v", err)
+	}
+	if err := st.PutWebAuthnChallenge(ctx, "wa1", "register", []byte("second"), future); err != nil {
+		t.Fatalf("PutWebAuthnChallenge(second): %v", err)
+	}
+	if sd, ok, err := st.TakeWebAuthnChallenge(ctx, "wa1", "register", now); err != nil || !ok || string(sd) != "second" {
+		t.Fatalf("TakeWebAuthnChallenge after supersede: sd=%q ok=%v err=%v; want %q", sd, ok, err, "second")
+	}
+
 	// --- ListUsers ---
 	if err := st.CreateUser(ctx, &store.User{Username: "list-check", Role: "auditor", TokenHash: "listuserhash"}); err != nil {
 		t.Fatalf("CreateUser(list): %v", err)

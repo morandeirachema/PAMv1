@@ -156,8 +156,19 @@ type Config struct {
 	AlertEmailUser string
 	AlertEmailPass string
 
-	// MFARequired makes password login require a confirmed TOTP second factor.
+	// MFARequired makes password login require a confirmed second factor —
+	// TOTP or WebAuthn, whichever the user has confirmed.
 	MFARequired bool
+
+	// WebAuthnRPID/WebAuthnRPOrigin configure FIDO2/WebAuthn as an alternate
+	// second factor to TOTP. Presence enables it, the same idiom OIDC uses —
+	// there is no separate boolean flag. RPID is the effective domain (e.g.
+	// "pam.example.com", no scheme/port); RPOrigin is the fully-qualified
+	// origin browsers will present it as (e.g. "https://pam.example.com").
+	// Both are read once at startup: a domain migration is an operational
+	// event, not something to hot-reload like OIDC's config.
+	WebAuthnRPID     string
+	WebAuthnRPOrigin string
 
 	// RotateInterval enables the background credential-lifecycle worker (reconcile
 	// + max-age rotation); 0 disables it. RotateMaxAge rotates password
@@ -584,6 +595,8 @@ func Load() (*Config, error) {
 		AlertEmailUser:          os.Getenv("PAM_ALERT_EMAIL_USER"),
 		AlertEmailPass:          os.Getenv("PAM_ALERT_EMAIL_PASS"),
 		MFARequired:             boolean("PAM_MFA_REQUIRED", false),
+		WebAuthnRPID:            os.Getenv("PAM_WEBAUTHN_RP_ID"),
+		WebAuthnRPOrigin:        os.Getenv("PAM_WEBAUTHN_RP_ORIGIN"),
 		RotateInterval:          time.Duration(integer("PAM_ROTATE_INTERVAL_MIN", 0)) * time.Minute,
 		RotateMaxAge:            time.Duration(integer("PAM_ROTATE_MAX_AGE_HOURS", 0)) * time.Hour,
 		RotateAfterSession:      boolean("PAM_ROTATE_AFTER_SESSION", false),

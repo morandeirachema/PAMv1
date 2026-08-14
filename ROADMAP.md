@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–123 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–124 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -47,7 +47,12 @@ checkout-lease extension up to a configured ceiling — released in turn as
 finding**: suspending (freezing input on) a live SSH session without ending
 it, reusing Phase 116's input mux directly rather than new plumbing — an
 end-to-end test caught a real gate-placement race the unit tests alone
-missed — released in turn as **v0.25.0 by Phase 123**. The narrative that follows traces the
+missed — released in turn as **v0.25.0 by Phase 123**. **Phase 124 closes the
+plan's last open finding**: FIDO2/WebAuthn passwordless MFA, using a
+well-audited library for the ceremony's cryptographic verification rather
+than hand-rolling CBOR/COSE parsing — a deliberate departure from this
+project's usual protocol-client posture, reasoned through explicitly in the
+phase's own entry below. The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2391,6 +2396,94 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 124 — FIDO2/WebAuthn passwordless MFA ✅
+
+Closes the last open finding from the Wallix-weighted competitive-research
+plan: pamv1 was TOTP-only; both Wallix (via its Authenticator app + IdP
+federation) and CyberArk (native, FIDO2-certified) treat a hardware/platform
+second factor as table stakes, regardless of vendor attribution. Independent
+of the other phases in the plan — it raises the account-security baseline
+rather than adding a session-brokering capability, so it was sequenced last.
+
+**Schema: a wholly separate `webauthn_credentials` table, not an overload of
+`mfa_enrollments`.** `mfa_enrollments.username` is a literal `PRIMARY KEY` —
+one TOTP secret per user, full stop — which cannot hold more than one
+authenticator. `WebAuthnCredential` gets its own `BIGSERIAL` id instead, so a
+user can register a YubiKey *and* a phone. `webauthn_credentials.public_key`
+is stored in the clear, deliberately: unlike the TOTP secret, it is a public
+key — knowing it lets nobody forge an assertion, only the authenticator's own
+private key (which never leaves the device) can do that, the same reasoning
+that already lets an SSH `authorized_keys` entry sit unencrypted. A second
+table, `mfa_webauthn_challenges`, holds ephemeral ceremony state between the
+browser's two-step exchange (`navigator.credentials.create`/`.get`), keyed by
+`(username, purpose)` with the exact same atomic put/then-take-with-expiry
+shape `oidc_states`/`PutOIDCState`/`TakeOIDCState` already established — a
+fresh Begin for the same key simply supersedes an abandoned one. Migration
+`0035`; store surface 164 → 171 (`CreateWebAuthnCredential`,
+`ListWebAuthnCredentials`, `GetWebAuthnCredentialByCredentialID`,
+`UpdateWebAuthnSignCount`, `DeleteWebAuthnCredential`, `PutWebAuthnChallenge`,
+`TakeWebAuthnChallenge`). New `store/mfapolicy.go` centralizes "does this user
+have a usable second factor" (`EffectiveMFAFactors`, modeled on
+`approvalpolicy.go`'s narrow-reader-interface shape) — before this phase every
+call site inlined a bare check against `MFAEnrollment.Confirmed`, which a
+WebAuthn-only user would have failed.
+
+**The login-flow problem this design had to solve honestly.** TOTP fits one
+request (`password+otp` together) because a 6-digit code types inline.
+WebAuthn cannot: the server needs to know *which user* before it can build a
+challenge scoped to their credentials, and the ceremony is an unavoidable
+two-round-trip exchange. The naive fix — a public "give me a WebAuthn
+challenge for this username" endpoint reachable before password verification
+— is a regression: it lets an unauthenticated caller enumerate valid
+usernames and their MFA factor type for free. Fixed by reusing the codebase's
+existing narrow-scoped-session pattern (`EnrollOnly`, `TunnelOnly`) rather
+than inventing a parallel ticket mechanism: password verification still
+happens first, and only on success is a new `MFAPending`-scoped session
+minted (`auth.SessionScopeMFAPending`, 5-minute TTL) — good for nothing but
+`POST /api/webauthn/login/{begin,finish}`, via a new `mfaPendingOnly`
+middleware that is `authenticated`'s mirror image (refuses everyone EXCEPT an
+MFAPending principal, where `authenticated` refuses only that principal). The
+shared `gates.go` admission sequence gained `gateMFAPending` as gate 3 — right
+after `gateEnrollOnly`, same "identity resolved but not yet fully authorized"
+family — wired into all three session proxies' refusal switches so mandatory
+MFA cannot be bypassed through a session proxy just because the second factor
+happens to be a two-round-trip ceremony instead of an inline code. A user with
+confirmed TOTP is checked first and completely unchanged by any of this — the
+WebAuthn branch only gets a look-in for a user with no confirmed TOTP.
+
+**Library, not hand-rolled, for the ceremony verification itself.**
+`github.com/go-webauthn/webauthn` — new dependency, `PAM_WEBAUTHN_RP_ID`/
+`_RP_ORIGIN` (presence enables the feature, no separate boolean flag, the
+same idiom OIDC uses; restart-only unlike OIDC's hot-reloadable config,
+since a domain migration is an operational event). This is a deliberate
+departure from this codebase's usual preference for hand-rolling protocol
+clients (`internal/oidc`, `internal/tds`, `internal/winrm` are all
+in-tree): correctly verifying a WebAuthn attestation/assertion means parsing
+CBOR, parsing a COSE public key, and validating a signature across several
+attestation formats — code where a subtle mistake is a real authentication
+bypass, not a garbled reply. That risk profile sits with the vault's use of
+stdlib `crypto/*` rather than with the wire-protocol packages this project
+does hand-roll — the two are different classes of "don't hand-roll," and
+this phase treats them differently on purpose. Proven end-to-end rather than
+mocked, matching this project's standing preference: the new
+`internal/api/webauthn_ceremony_test.go` builds a real ES256 keypair, a real
+CBOR "none"-format attestation object and a real signed assertion — no
+browser or hardware key runs in CI, but the cryptography that matters is
+100% real on both sides of the wire, through registration and login.
+
+**V1 scope, explicitly bounded.** Any WebAuthn-conformant credential is
+accepted; attestation type/AAGUID are captured but not verified against a
+trust anchor (no FIDO Metadata Service integration). Username-first login
+only — no discoverable/"usernameless passkey" login. Console: the sign-on
+screen drives the WebAuthn ceremony automatically when `webauthn_required`
+comes back from `POST /api/login`; a new *WebAuthn Keys* screen
+(`mfawebauthn`, reached from the existing MFA menu) lists/deletes an
+account's own authenticators with F6 to register a new one, matching the
+console's established numbered-option table idiom (`users()`'s `4=Delete`
+shape) rather than a bespoke form. New audit actions
+`mfa.webauthn_registered`, `mfa.webauthn_register_failed`,
+`mfa.webauthn_deleted`. Route count 147 → 153.
 
 ## Phase 123 — v0.25.0 ✅
 

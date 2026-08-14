@@ -36,6 +36,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/morandeirachema/pamv1/internal/agentid"
 	"github.com/morandeirachema/pamv1/internal/alert"
 	"github.com/morandeirachema/pamv1/internal/analytics"
@@ -725,6 +726,28 @@ func buildOIDC(ctx context.Context, cfg *config.Config, log *slog.Logger) (*oidc
 	return p, nil
 }
 
+// buildWebAuthn constructs the WebAuthn relying party when PAM_WEBAUTHN_RP_ID
+// is set — the same "presence enables" idiom buildOIDC uses, deliberately
+// with no separate boolean flag.
+func buildWebAuthn(cfg *config.Config, log *slog.Logger) (*webauthn.WebAuthn, error) {
+	if cfg.WebAuthnRPID == "" {
+		return nil, nil
+	}
+	if cfg.WebAuthnRPOrigin == "" {
+		return nil, fmt.Errorf("PAM_WEBAUTHN_RP_ID is set but PAM_WEBAUTHN_RP_ORIGIN is not")
+	}
+	w, err := webauthn.New(&webauthn.Config{
+		RPID:          cfg.WebAuthnRPID,
+		RPDisplayName: "pamv1",
+		RPOrigins:     []string{cfg.WebAuthnRPOrigin},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("webauthn: %w", err)
+	}
+	log.Info("webauthn login enabled", "rp_id", cfg.WebAuthnRPID, "rp_origin", cfg.WebAuthnRPOrigin)
+	return w, nil
+}
+
 // roleMap builds a lower-cased key → role map for the four role slots, skipping
 // empty entries. Keys are group DNs (LDAP) or app-role/group ids (Entra).
 func roleMap(admin, user, auditor, approver string) map[string]auth.Role {
@@ -812,6 +835,10 @@ func run() error {
 	}
 
 	oidcProvider, err := buildOIDC(ctx, cfg, log)
+	if err != nil {
+		return err
+	}
+	webAuthnProvider, err := buildWebAuthn(cfg, log)
 	if err != nil {
 		return err
 	}
@@ -1091,6 +1118,7 @@ func run() error {
 		RDPClipboardAudit:       cfg.RDPClipboardAudit,
 		WinRM:                   winrmClient,
 		OIDC:                    oidcProvider,
+		WebAuthn:                webAuthnProvider,
 		OIDCRoleMap:             roleMap(cfg.OIDCRoleAdmin, cfg.OIDCRoleUser, cfg.OIDCRoleAuditor, cfg.OIDCRoleApprover),
 		PortalURL:               cfg.PortalURL,
 		GuacdAddr:               cfg.GuacdAddr,

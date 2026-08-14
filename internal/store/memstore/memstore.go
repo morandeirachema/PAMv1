@@ -49,6 +49,8 @@ type Memstore struct {
 	campaignItems map[int64]store.CampaignItem
 	shareInvites  map[int64]store.SessionShareInvite
 	pwHistory     map[int64][]pwHistoryEntry // credentialID -> hashes, oldest first
+	webauthnCreds map[int64]store.WebAuthnCredential
+	webauthnChal  map[webauthnChalKey]webauthnChallenge
 
 	killMu   sync.Mutex
 	killSubs map[chan session.KillSelector]struct{} // cross-replica kill fan-out
@@ -72,6 +74,8 @@ func New() *Memstore {
 		sessions:      make(map[int64]store.Session),
 		mfa:           make(map[string]store.MFAEnrollment),
 		recovery:      make(map[string]map[string]bool),
+		webauthnCreds: make(map[int64]store.WebAuthnCredential),
+		webauthnChal:  make(map[webauthnChalKey]webauthnChallenge),
 		grants:        make(map[int64]store.TargetGrant),
 		accessReq:     make(map[int64]store.AccessRequest),
 		checkouts:     make(map[int64]store.Checkout),
@@ -2395,6 +2399,109 @@ func (m *Memstore) TakeOIDCState(_ context.Context, state string, now time.Time)
 		return "", "", false, nil
 	}
 	return s.verifier, s.nonce, true, nil
+}
+
+// CreateWebAuthnCredential registers a new authenticator, populating ID and CreatedAt.
+func (m *Memstore) CreateWebAuthnCredential(_ context.Context, c *store.WebAuthnCredential) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c.ID = m.id()
+	c.CreatedAt = time.Now().UTC()
+	m.webauthnCreds[c.ID] = *c
+	return nil
+}
+
+// ListWebAuthnCredentials returns every authenticator a user has registered, oldest first.
+func (m *Memstore) ListWebAuthnCredentials(_ context.Context, username string) ([]store.WebAuthnCredential, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []store.WebAuthnCredential
+	for _, c := range m.webauthnCreds {
+		if c.Username == username {
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// GetWebAuthnCredentialByCredentialID looks up an authenticator by the credential ID an assertion presents, or ErrNotFound.
+func (m *Memstore) GetWebAuthnCredentialByCredentialID(_ context.Context, credentialID []byte) (*store.WebAuthnCredential, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.webauthnCreds {
+		if bytes.Equal(c.CredentialID, credentialID) {
+			cc := c
+			return &cc, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+// UpdateWebAuthnSignCount writes back the sign counter, clone-warning flag and last-used time after a successful login.
+func (m *Memstore) UpdateWebAuthnSignCount(_ context.Context, id int64, signCount uint32, cloneWarning bool, usedAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.webauthnCreds[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	c.SignCount = signCount
+	c.CloneWarning = cloneWarning
+	t := usedAt.UTC()
+	c.LastUsedAt = &t
+	m.webauthnCreds[id] = c
+	return nil
+}
+
+// DeleteWebAuthnCredential removes one authenticator by ID, scoped to username, or ErrNotFound.
+func (m *Memstore) DeleteWebAuthnCredential(_ context.Context, id int64, username string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.webauthnCreds[id]
+	if !ok || c.Username != username {
+		return store.ErrNotFound
+	}
+	delete(m.webauthnCreds, id)
+	return nil
+}
+
+// webauthnChalKey is the composite (username, purpose) key mfa_webauthn_challenges uses.
+type webauthnChalKey struct{ username, purpose string }
+
+type webauthnChallenge struct {
+	sessionData []byte
+	expiresAt   time.Time
+}
+
+// PutWebAuthnChallenge stores (or replaces) the in-flight ceremony state for a
+// (username, purpose) pair, sweeping expired entries first.
+func (m *Memstore) PutWebAuthnChallenge(_ context.Context, username, purpose string, sessionData []byte, expiresAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	for k, v := range m.webauthnChal { // opportunistic expiry sweep
+		if now.After(v.expiresAt) {
+			delete(m.webauthnChal, k)
+		}
+	}
+	m.webauthnChal[webauthnChalKey{username, purpose}] = webauthnChallenge{sessionData: sessionData, expiresAt: expiresAt.UTC()}
+	return nil
+}
+
+// TakeWebAuthnChallenge atomically fetches and deletes an unexpired challenge; ok is false if it is missing or expired.
+func (m *Memstore) TakeWebAuthnChallenge(_ context.Context, username, purpose string, now time.Time) ([]byte, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := webauthnChalKey{username, purpose}
+	c, ok := m.webauthnChal[key]
+	if ok {
+		delete(m.webauthnChal, key)
+	}
+	if !ok || now.After(c.expiresAt) {
+		return nil, false, nil
+	}
+	return c.sessionData, true, nil
 }
 
 // Ping always succeeds for the in-memory store.

@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-14 · Reflects: Phases 0–122 + the 2026-07 hardening passes.
+> Last updated: 2026-08-14 · Reflects: Phases 0–124 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -708,6 +708,16 @@ sequenceDiagram
   recovery codes (10 single-use, stored as hashes), disable. `checkSecondFactor`
   accepts a TOTP code or a recovery code; the TOTP anti-replay guard
   (`ConsumeTOTPStep`) **fails closed** on a store error.
+- **WebAuthn** (`internal/api/webauthn_handlers.go`, Phase 124, the
+  `github.com/go-webauthn/webauthn` library) — a second, independent factor
+  type: self-service `/api/webauthn/register/*` (any signed-in identity, like
+  `/api/mfa/*`) plus `/api/webauthn/login/*`, reachable only by an
+  `MFAPending`-scoped session `login()` mints after a correct password when
+  the user has no confirmed TOTP but does have a registered credential — see
+  `auth.SessionScopeMFAPending` and the `mfaPendingOnly` middleware.
+  `store.EffectiveMFAFactors` (`internal/store/mfapolicy.go`) is the one place
+  that widens "has TOTP" to "has any confirmed factor". Credential public
+  keys are stored in the clear (not a shared secret, unlike the TOTP secret).
 
 Session tokens, per-user tokens, recovery codes, and the break-glass key are all
 stored **only as SHA-256** — the plaintext is shown once and never persisted.

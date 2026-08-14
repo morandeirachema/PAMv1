@@ -11,6 +11,19 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Added
+
+- **FIDO2/WebAuthn passwordless MFA.** A second, independent second-factor
+  type alongside TOTP — either alone satisfies MFA. `PAM_WEBAUTHN_RP_ID`/
+  `_RP_ORIGIN` (presence enables it, same idiom as OIDC) turn it on;
+  self-service `POST /api/webauthn/register/{begin,finish}` registers a key,
+  `GET`/`DELETE /api/webauthn/credentials{,/{id}}` manage them. A
+  WebAuthn-enrolled user with no confirmed TOTP gets a narrow, 5-minute
+  `MFAPending` session on password success — good for nothing but the
+  two-call WebAuthn login ceremony the console drives automatically. A user
+  may register more than one key. Verified by `github.com/go-webauthn/webauthn`
+  rather than hand-rolled. New migration; store surface 164 → 171.
+
 ## [0.25.0] — 2026-08-14
 
 A minor: one new capability. No schema change.

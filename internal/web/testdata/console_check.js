@@ -212,6 +212,14 @@ const screens = [
       profiles: [],
     }),
   },
+  {
+    name: "mfawebauthn",
+    src: /\n {6}mfawebauthn\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      webauthnCreds: [{ id: 1, name: long ? LONGNAME : "YubiKey 5C",
+                        transports: long ? LONGNAME : "usb,nfc", created_at: "2026-08-08T12:00:00Z" }],
+    }),
+  },
 ];
 
 // --- render ------------------------------------------------------------------

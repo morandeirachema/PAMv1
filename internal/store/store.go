@@ -639,6 +639,37 @@ type MFAEnrollment struct {
 	LastTOTPStep int64 `json:"-"`
 }
 
+// WebAuthnCredential is one registered FIDO2/WebAuthn authenticator (a
+// hardware key or a platform authenticator). A user may register several —
+// unlike MFAEnrollment, Username is not the key: ID is a surrogate, since one
+// account can hold more than one authenticator (a YubiKey and a phone).
+//
+// PublicKey is stored in the clear, deliberately: unlike MFAEnrollment's
+// SecretEnc, this is a public key. Knowing it lets nobody forge an assertion —
+// only the authenticator's private key, which never leaves the device, can do
+// that — the same reasoning that already lets an SSH authorized_keys entry
+// live unencrypted.
+type WebAuthnCredential struct {
+	ID                int64  `json:"id"`
+	Username          string `json:"username"`
+	CredentialID      []byte `json:"-"`
+	PublicKey         []byte `json:"-"`
+	AttestationType   string `json:"attestation_type,omitempty"`
+	AttestationFormat string `json:"attestation_format,omitempty"`
+	// Transports is a comma-separated hint list ("usb,nfc"), as reported by the
+	// authenticator at registration; advisory only, never enforced.
+	Transports string `json:"transports,omitempty"`
+	AAGUID     []byte `json:"aaguid,omitempty"`
+	// SignCount lets a future login detect a cloned authenticator: a genuine
+	// device's counter only increases, so a login whose count does not exceed
+	// the stored value indicates the credential was duplicated.
+	SignCount    uint32     `json:"-"`
+	CloneWarning bool       `json:"clone_warning,omitempty"`
+	Name         string     `json:"name"` // user-chosen nickname, e.g. "YubiKey 5C"
+	CreatedAt    time.Time  `json:"created_at"`
+	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
+}
+
 // List-cursor semantics (Phase 44). Every top-level inventory list read takes a
 // (limit, afterID) window: rows are returned in ascending id order, starting
 // strictly after afterID, at most limit rows when limit > 0. limit <= 0 means
@@ -1079,6 +1110,34 @@ type MFAStore interface {
 	ConsumeMFARecoveryCode(ctx context.Context, username, codeHash string) (bool, error)
 	// CountMFARecoveryCodes returns how many recovery codes remain.
 	CountMFARecoveryCodes(ctx context.Context, username string) (int, error)
+
+	// CreateWebAuthnCredential registers a new authenticator, populating ID and
+	// CreatedAt.
+	CreateWebAuthnCredential(ctx context.Context, c *WebAuthnCredential) error
+	// ListWebAuthnCredentials returns every authenticator a user has registered,
+	// oldest first.
+	ListWebAuthnCredentials(ctx context.Context, username string) ([]WebAuthnCredential, error)
+	// GetWebAuthnCredentialByCredentialID looks up an authenticator by the
+	// credential ID an assertion presents, or ErrNotFound.
+	GetWebAuthnCredentialByCredentialID(ctx context.Context, credentialID []byte) (*WebAuthnCredential, error)
+	// UpdateWebAuthnSignCount writes back the sign counter and clone-warning flag
+	// after a successful login, and stamps LastUsedAt — the three fields the
+	// WebAuthn ceremony requires be persisted on every use, not just at
+	// registration.
+	UpdateWebAuthnSignCount(ctx context.Context, id int64, signCount uint32, cloneWarning bool, usedAt time.Time) error
+	// DeleteWebAuthnCredential removes one authenticator by ID, scoped to
+	// username so a user cannot delete another's, or ErrNotFound.
+	DeleteWebAuthnCredential(ctx context.Context, id int64, username string) error
+
+	// PutWebAuthnChallenge stores (or replaces) the in-flight ceremony state for
+	// a (username, purpose) pair — purpose is "register" or "login" — so a
+	// second Begin call simply supersedes an abandoned first one, the same
+	// overwrite-on-conflict shape PutOIDCState uses.
+	PutWebAuthnChallenge(ctx context.Context, username, purpose string, sessionData []byte, expiresAt time.Time) error
+	// TakeWebAuthnChallenge atomically fetches and deletes an unexpired
+	// challenge; ok is false if it is missing or expired. Single-use: a Finish
+	// call consumes the state a Begin call produced, so it cannot be replayed.
+	TakeWebAuthnChallenge(ctx context.Context, username, purpose string, now time.Time) (sessionData []byte, ok bool, err error)
 }
 
 // BrokerStore is the AI-agent broker: agent identities, single-use resume

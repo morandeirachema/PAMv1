@@ -13,7 +13,7 @@ import (
 // says so out loud — a role accidentally dropped from the composition would
 // otherwise surface only as a distant compile error in whichever caller used it.
 //
-// 164, not the count you get by counting declarations in the source: the
+// 171, not the count you get by counting declarations in the source: the
 // surface has always also carried session.LiveStore and session.StepUpStore,
 // whose methods a reader skimming the file does not see. That gap between
 // "what the file lists" and "what the interface is" is itself an argument for
@@ -22,9 +22,12 @@ import (
 // Phase 118 added UserStore.UpdateUserIPAllowlist (1); Phase 120 added
 // ApprovalStore.{ListDueAccessRequests,SetAccessRequestNextRun,
 // StopAccessRequestRecurrence} (3), CheckoutStore.{GetCheckout,
-// ExtendCheckout} (2) and the new PasswordHistoryStore role (2).
+// ExtendCheckout} (2) and the new PasswordHistoryStore role (2); Phase 124
+// added MFAStore.{CreateWebAuthnCredential,ListWebAuthnCredentials,
+// GetWebAuthnCredentialByCredentialID,UpdateWebAuthnSignCount,
+// DeleteWebAuthnCredential,PutWebAuthnChallenge,TakeWebAuthnChallenge} (7).
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 164
+	const want = 171
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

@@ -37,7 +37,7 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
-runs 0–123 and **every phase has shipped**, and the current
+runs 0–124 and **every phase has shipped**, and the current
 tagged, cosign-signed release is
 **[v0.25.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.25.0)** (2026-08-14;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
@@ -147,7 +147,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–123, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–124, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 
@@ -441,7 +441,7 @@ items only; each notes what closing it would take.
 | ~~**Searchable session recordings**~~ **✅ shipped (Phase 110)** | CyberArk OCR/text-indexes PSM recordings; Wallix does the same for its DVR-style capture — neither leaves an auditor scrubbing a session to find something | `GET /api/recordings/search?q=` reconstructs an SSH recording's output stream (a query can span more than one recorded write, since a terminal echoes in whatever chunks arrive) and returns each hit's snippet **and the playback time to seek to**. RDP/VNC (no text layer) and WinRM (plain text, but deferred) are not yet covered |
 | ~~**Real compliance reporting**~~ **✅ shipped (Phase 114, NIS2 only)** | Canned, control-mapped reports (PCI-DSS/ISO27001/NIS2/SOX-shaped), not just raw exports | `GET /api/compliance/nis2?since=&until=` maps window-scoped audit activity onto the existing Art. 21(2) matrix: status is architectural, controls with a natural signal (supply-chain, policy effectiveness, access control, MFA, incident handling) carry a live event count by action family. Same digest/audit conventions as the raw export. Only NIS2 — PCI-DSS/ISO27001/SOX would each need their own control taxonomy authored from scratch, not attempted here |
 | ~~**Mandatory live-supervision gate**~~ **✅ shipped (Phase 112, SSH)** | A session can be required to have an **actively-connected** supervisor before it proceeds, not just after-the-fact watching | `PAM_REQUIRE_LIVE_SUPERVISION` holds an interactive channel — before the upstream channel opens — until a supervisor is watching (polled against the Phase 55 cross-replica hub) or `PAM_LIVE_SUPERVISION_TIMEOUT_SEC` refuses it. Observer sessions and break-glass are exempt. PostgreSQL/SQL Server use the different per-statement step-up mechanism for the same concern; extending this gate to them needs a structural change (session registration happens after the credential already dials the target), deferred |
-| **FIDO2/WebAuthn MFA** | Passwordless hardware-key second factor alongside TOTP/push | TOTP only (`internal/mfa`) — already flagged as a gap in [docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md); this research independently confirms it |
+| ~~**FIDO2/WebAuthn MFA**~~ **✅ shipped (Phase 124)** | Passwordless hardware-key second factor alongside TOTP/push | A second, independent MFA factor to TOTP — either alone satisfies MFA. Verified by `github.com/go-webauthn/webauthn` rather than hand-rolled (a subtle CBOR/COSE/signature bug here is a real auth bypass, the same risk class as hand-rolling AES-GCM). A user with no confirmed TOTP gets a narrow, 5-minute `MFAPending` session on password success — good for nothing but the two-call WebAuthn ceremony — closing the naive "challenge for this username" enumeration trap. A user may register more than one key |
 | **Authenticated post-login discovery** | Enumerate local/service accounts and flag credential exposure on hosts already reached (CyberArk DNA) | `internal/discovery` only TCP-probes for open ports pre-auth — distinct from the infra-bound "SSH-key fleet discovery at scale" above: this is a missing *capability*, not a scale problem |
 | ~~**CIDR/network-based connect authorization**~~ **✅ shipped (Phase 118)** | Gate a connection by the operator's source network | A per-user, comma-separated CIDR allowlist (`store.User.IPAllowlist`) enforced at both the REST `authz` middleware and the session-proxy `admit()` gate (SSH/PostgreSQL/SQL Server), break-glass exempt. Empty is unrestricted; directory/OIDC principals are out of v1 scope (no backing `store.User` row) |
 | ~~**Live session sharing**~~ **✅ shipped (Phase 116)** | A host in a live session generates an expiring link letting a second party join, watch and optionally control it, fully audited (a genuine Wallix differentiator) | Four-eyes request→approve `SessionShareInvite`: an internal invite redeems over SSH as `join:<token>`; an external/vendor invite is emailed with a QR code, single-use, 15-minute TTL, redeemed through a new unauthenticated guest page — never the SSH path. Multi-parallel view-control joiners; a live joined-parties roster with kick |

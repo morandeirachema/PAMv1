@@ -247,6 +247,16 @@ func SplitRoles(s string) []Role {
 // MFA enrollment (issued when a policy requires MFA but the user has none).
 const SessionScopeEnroll = "enroll"
 
+// SessionScopeMFAPending marks a login session issued after a correct
+// password but before the WebAuthn second factor has been verified. Unlike
+// TOTP (which types inline, so password+otp is one request), WebAuthn is an
+// unavoidable two-round-trip ceremony — this scope is what ties the two
+// requests together without letting an unauthenticated caller probe for a
+// username's factor type: password verification happens first, and only on
+// success is this narrow token minted. It resolves to an MFAPending
+// principal, refused everywhere except the WebAuthn login-ceremony routes.
+const SessionScopeMFAPending = "mfa_pending"
+
 // SessionScopeBreakGlass marks a short-lived emergency session issued after a
 // successful M-of-N quorum unseal; it grants admin and is audited loudly.
 const SessionScopeBreakGlass = "breakglass"
@@ -289,6 +299,7 @@ type Principal struct {
 	BreakGlass bool   // authenticated via the emergency key; use is audited loudly
 	EnrollOnly bool   // session may only complete MFA enrollment, nothing else
 	TunnelOnly bool   // token minted for the RDP tunnel only; API middleware refuses it
+	MFAPending bool   // password verified, awaiting a WebAuthn second factor; nothing else
 	// IPAllowlist restricts this principal to connecting from a source address
 	// inside one of these comma-separated CIDR blocks (Phase 118), e.g.
 	// "10.0.0.0/8, 192.168.1.0/24". Empty (the default) means unrestricted —
@@ -651,6 +662,7 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (*Principal, error) 
 			if perr == nil {
 				p.Roles = SplitRoles(s.Roles) // restore the multi-group union
 				p.TunnelOnly = IsViewerScope(s.Scope)
+				p.MFAPending = s.Scope == SessionScopeMFAPending
 			}
 			return p, perr
 		}
