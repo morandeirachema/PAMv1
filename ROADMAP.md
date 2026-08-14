@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–130 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–131 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,51 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 131 — Command allow-listing for human sessions ✅
+
+Closes Delinea's SSH Command Menus gap: `internal/cmdguard` was denylist-only
+by design (its own doc comment said so), and the codebase's one real
+allow-list engine (`internal/policy`) is wired to the AI-agent broker's typed
+tool-call arguments only — bridging it to a human operator's raw command
+string would mean inventing a command tokenizer nothing in this codebase
+needs otherwise.
+
+**Design.** `cmdguard.Guard` gains a second method, `Allowed(cmd string)
+bool`, reading the exact same compiled `patterns []*regexp.Regexp` field
+`Blocked` already reads — zero changes to `New`, `ParseDeny` or
+`ErrNoPatterns`. A new `PAM_COMMAND_ALLOW_FILE` env var (sibling to
+`PAM_COMMAND_DENY_FILE`, identical fail-loud-on-bad-pattern loading) is
+wired in `main.go` into a second, independent `*cmdguard.Guard` value —
+never a mode flag on the existing one — threaded alongside `CommandGuard`
+at every call site that already carries it: both SSH-proxy exec paths
+(the broker-tool `onExec` hook, the interactive WinRM-loop `winrmRun`),
+both DB proxies via `sqlPolicy.allowGuard`, and the REST/broker shared
+`guardCommand`. Each site adds one refusal branch after its existing deny
+check — `!blocked && allowGuard != nil && !allowGuard.Allowed(cmd)` — so
+deny always wins when both would match, and a deployment that never sets
+`PAM_COMMAND_ALLOW_FILE` stays byte-for-byte deny-only. An allow-list
+refusal audits the existing `command.blocked` action with a
+`pattern:not-allowed` detail, distinguishable from a deny-pattern match
+without inventing a new action name. `sftpguard.go`'s path-denylist and
+`sqlPolicy.stepupGuard` are deliberately untouched — different concerns
+that happen to share the same regex engine.
+
+**Proven end-to-end**, not mocked: `TestProxyExecAllowList` (real
+in-process sshd), `TestDBProxyCommandAllowList` (real Postgres
+wire-protocol fake), `TestWinRMRunCommandAllowList` (REST) — each proving
+all three cases in one run: an allow-listed command succeeds, a command
+matching neither list is refused as `not-allowed`, and a command matching
+both is still refused (deny wins).
+
+**V1 scope.** Literal/regex allow patterns, matching Delinea's actual
+mechanism — a friendly-name-to-command label is a console presentation
+concern, not a policy-engine one, and isn't attempted here.
+
+**Critical files:** `internal/cmdguard/cmdguard.go`, `internal/config/config.go`,
+`cmd/pam-server/main.go`, `internal/api/server.go`, `internal/proxy/proxy.go`,
+`internal/proxy/dbproxy.go`, `internal/proxy/mssqlproxy.go`,
+`internal/proxy/sqlproxy.go`, `internal/api/credentials.go`.
 
 ## Phase 130 — v0.28.0 ✅
 

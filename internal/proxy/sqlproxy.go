@@ -58,9 +58,12 @@ type sqlClient interface {
 // their transport (the sqlClient) differs.
 type sqlPolicy struct {
 	// guard blocks statements matching its deny patterns (command control); a nil
-	// guard blocks nothing. stepupGuard marks statements that require in-session
-	// supervisor approval; a nil stepupGuard (or nil stepup) disables step-up.
+	// guard blocks nothing. allowGuard (Phase 131), once non-nil, narrows this
+	// path to ONLY statements it matches — deny still wins. stepupGuard marks
+	// statements that require in-session supervisor approval; a nil stepupGuard
+	// (or nil stepup) disables step-up.
 	guard       *cmdguard.Guard
+	allowGuard  *cmdguard.Guard
 	stepupGuard *cmdguard.Guard
 	// stepup coordinates the pause + supervisor decision; stepupTTL bounds how
 	// long a paused statement waits before it is denied.
@@ -165,6 +168,9 @@ func sqlStepUpRefused(ctx context.Context, l *listener, pol *sqlPolicy, cl sqlCl
 // PostgreSQL extended-protocol Parse (extended=true), which the caller then ends.
 func sqlBlockedStatement(ctx context.Context, l *listener, pol *sqlPolicy, cl sqlClient, actor string, target *store.Target, sql string, extended bool) bool {
 	pat, blocked := pol.guard.Blocked(sql)
+	if !blocked && pol.allowGuard != nil && !pol.allowGuard.Allowed(sql) {
+		pat, blocked = "not-allowed", true
+	}
 	if !blocked {
 		return false
 	}
