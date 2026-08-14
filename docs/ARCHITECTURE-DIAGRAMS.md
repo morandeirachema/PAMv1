@@ -74,6 +74,7 @@ flowchart LR
     n_jwtutil[jwtutil]
     n_keycustody[keycustody]
     n_ocsf[ocsf]
+    n_posture[posture]
     n_ratelimit[ratelimit]
     n_recording[recording]
     n_sshca[sshca]
@@ -109,6 +110,7 @@ flowchart LR
   n_api --> n_ocsf
   n_api --> n_oidc
   n_api --> n_policy
+  n_api --> n_posture
   n_api --> n_ratelimit
   n_api --> n_recording
   n_api --> n_rotate
@@ -160,6 +162,7 @@ flowchart LR
   n_pam_server --> n_oidc
   n_pam_server --> n_pgstore
   n_pam_server --> n_policy
+  n_pam_server --> n_posture
   n_pam_server --> n_proxy
   n_pam_server --> n_recording
   n_pam_server --> n_rotate
@@ -178,6 +181,7 @@ flowchart LR
   n_proxy --> n_auth
   n_proxy --> n_cmdguard
   n_proxy --> n_logging
+  n_proxy --> n_posture
   n_proxy --> n_ratelimit
   n_proxy --> n_recording
   n_proxy --> n_session
@@ -418,6 +422,7 @@ erDiagram
     string Username
     string Role
     string IPAllowlist
+    string DeviceFingerprint
     time_Time CreatedAt
   }
   Vendor {

@@ -27,6 +27,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/metrics"
 	"github.com/morandeirachema/pamv1/internal/oidc"
 	"github.com/morandeirachema/pamv1/internal/policy"
+	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
 	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/rotate"
@@ -322,6 +323,14 @@ type Options struct {
 	// VendorAttestor (optional) validates a vendor's live employment attestation
 	// before a contract grant is approved (Phase 29); nil accepts every vendor.
 	VendorAttestor *vendor.Attestor
+	// PostureAttestor (optional) validates a user's live device posture on
+	// every authenticated call and every session connect (Phase 133); nil
+	// disables posture checking.
+	PostureAttestor *posture.Attestor
+	// DeviceHeader (optional) names the HTTP header a trusted reverse proxy
+	// injects with the terminated client certificate's fingerprint
+	// (Phase 133); empty disables device-identity checking entirely.
+	DeviceHeader string
 	// Analytics (optional) enables privileged threat analytics (Phase 23): the
 	// GET /api/analytics/risk endpoint and, when AnalyticsInterval > 0, a
 	// background risk-scoring worker. nil disables both. AnalyticsWindow is how
@@ -400,6 +409,8 @@ type Server struct {
 	sshCA              *sshca.CertAuthority
 	sshOperatorCertTTL time.Duration
 	vendorAttestor     *vendor.Attestor
+	postureAttestor    *posture.Attestor
+	deviceHeader       string
 	analytics          *analytics.Engine
 	analyticsWindow    time.Duration
 	analyticsCooldown  time.Duration
@@ -622,6 +633,8 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		sshCA:                opts.CA,
 		sshOperatorCertTTL:   opts.SSHOperatorCertTTL,
 		vendorAttestor:       opts.VendorAttestor,
+		postureAttestor:      opts.PostureAttestor,
+		deviceHeader:         opts.DeviceHeader,
 		analytics:            opts.Analytics,
 		analyticsWindow:      opts.AnalyticsWindow,
 		analyticsAutoKill:    opts.AnalyticsAutoKill,
@@ -1074,6 +1087,27 @@ func (s *Server) authz(cap auth.Capability, next http.HandlerFunc) http.Handler 
 			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:source-ip-not-allowed")
 			writeError(w, http.StatusForbidden, "your account may not connect from this network")
 			return
+		}
+		// Device-identity restriction (Phase 133): when this principal has an
+		// enrolled fingerprint, the value a trusted reverse proxy injected in
+		// s.deviceHeader must match it. s.deviceHeader empty (the default)
+		// skips this entirely — the header, if present, is never even read.
+		// Break-glass bypasses, matching every other gate it already bypasses.
+		if !p.BreakGlass && s.deviceHeader != "" && p.DeviceFingerprint != "" && r.Header.Get(s.deviceHeader) != p.DeviceFingerprint {
+			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:device-not-trusted")
+			writeError(w, http.StatusForbidden, "this device is not enrolled for your account")
+			return
+		}
+		// Live device posture (Phase 133): re-checked on every authenticated
+		// call, not just at connect (gates.go), since posture — unlike vendor
+		// employment — can change mid-session. A nil/unconfigured attestor
+		// always passes. Break-glass bypasses.
+		if !p.BreakGlass && s.postureAttestor.Enabled() {
+			if err := s.postureAttestor.Attest(ctx, p.Name); err != nil {
+				s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:posture-check-failed")
+				writeError(w, http.StatusForbidden, "your device failed its posture check")
+				return
+			}
 		}
 		if !p.Can(cap) {
 			s.log.Warn("authorization denied", "actor", p.Name, "role", string(p.Role),

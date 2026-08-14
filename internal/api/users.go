@@ -19,7 +19,18 @@ type userIn struct {
 	// CIDR blocks (Phase 118), e.g. "10.0.0.0/8, 192.168.1.0/24". Empty (the
 	// default) means unrestricted.
 	IPAllowlist string `json:"ip_allowlist,omitempty"`
+	// DeviceFingerprint optionally binds this user to one enrolled
+	// client-certificate fingerprint (Phase 133), checked against
+	// PAM_DEVICE_HEADER's value at HTTP authz time. Empty (the default)
+	// means unbound.
+	DeviceFingerprint string `json:"device_fingerprint,omitempty"`
 }
+
+// maxDeviceFingerprintLen bounds the enrolled fingerprint's stored length.
+// There is no single canonical format across reverse proxies (a SHA-1 hex
+// digest is 40 chars, SHA-256 is 64, some inject colon separators), so this
+// is a sanity cap against an abusive value, not a format check.
+const maxDeviceFingerprintLen = 256
 
 // createUser mints a new local identity and returns its access token exactly
 // once. Only the token's SHA-256 is stored; the plaintext is never persisted.
@@ -48,12 +59,16 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	if len(in.DeviceFingerprint) > maxDeviceFingerprintLen {
+		writeError(w, http.StatusUnprocessableEntity, "device_fingerprint is too long")
+		return
+	}
 	token, err := generateToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token generation failed")
 		return
 	}
-	u := store.User{Username: in.Username, Role: in.Role, IPAllowlist: in.IPAllowlist, TokenHash: hashHex(token)}
+	u := store.User{Username: in.Username, Role: in.Role, IPAllowlist: in.IPAllowlist, DeviceFingerprint: in.DeviceFingerprint, TokenHash: hashHex(token)}
 	if err := s.store.CreateUser(r.Context(), &u); err != nil {
 		storeError(w, err)
 		return
@@ -62,13 +77,17 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	if u.IPAllowlist != "" {
 		createDetail += " ip_allowlist:" + auditField(u.IPAllowlist, 128)
 	}
+	if u.DeviceFingerprint != "" {
+		createDetail += " device_fingerprint:" + auditField(u.DeviceFingerprint, 128)
+	}
 	s.audit(r.Context(), "user.create", createDetail)
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"id":           u.ID,
-		"username":     u.Username,
-		"role":         u.Role,
-		"ip_allowlist": u.IPAllowlist,
-		"token":        token, // shown once; store it now
+		"id":                 u.ID,
+		"username":           u.Username,
+		"role":               u.Role,
+		"ip_allowlist":       u.IPAllowlist,
+		"device_fingerprint": u.DeviceFingerprint,
+		"token":              token, // shown once; store it now
 	})
 }
 
@@ -91,8 +110,9 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Role        string  `json:"role"`
-		IPAllowlist *string `json:"ip_allowlist"`
+		Role              string  `json:"role"`
+		IPAllowlist       *string `json:"ip_allowlist"`
+		DeviceFingerprint *string `json:"device_fingerprint"`
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -112,6 +132,10 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if in.DeviceFingerprint != nil && len(*in.DeviceFingerprint) > maxDeviceFingerprintLen {
+		writeError(w, http.StatusUnprocessableEntity, "device_fingerprint is too long")
+		return
+	}
 	u, err := s.store.GetUser(r.Context(), id)
 	if err != nil {
 		storeError(w, err)
@@ -129,6 +153,14 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		auditDetail += fmt.Sprintf(" ip_allowlist:%s->%s", auditField(u.IPAllowlist, 128), auditField(*in.IPAllowlist, 128))
 		u.IPAllowlist = *in.IPAllowlist
+	}
+	if in.DeviceFingerprint != nil {
+		if err := s.store.UpdateUserDeviceFingerprint(r.Context(), id, *in.DeviceFingerprint); err != nil {
+			storeError(w, err)
+			return
+		}
+		auditDetail += fmt.Sprintf(" device_fingerprint:%s->%s", auditField(u.DeviceFingerprint, 128), auditField(*in.DeviceFingerprint, 128))
+		u.DeviceFingerprint = *in.DeviceFingerprint
 	}
 	s.audit(r.Context(), "user.update", auditDetail)
 	u.Role = in.Role

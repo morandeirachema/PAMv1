@@ -52,6 +52,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/maint"
 	"github.com/morandeirachema/pamv1/internal/oidc"
 	"github.com/morandeirachema/pamv1/internal/policy"
+	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/proxy"
 	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/rotate"
@@ -1074,6 +1075,14 @@ func run() error {
 		log.Info("ITSM tickets are re-validated at connect time", "webhook", cfg.TicketValidateURL != "")
 	}
 
+	// Live device posture (Phase 133): resolved to a single value here so
+	// every gate — the API and the three session proxies — checks the same
+	// webhook, the same shared-value idiom as ticketRecheck just above.
+	postureAttestor := posture.NewAttestor(cfg.PostureAttestURL)
+	if postureAttestor.Enabled() {
+		log.Info("device posture checking enabled")
+	}
+
 	// Zero Standing Privilege (Phase 22): load (or create) the SSH certificate
 	// authority when PAM_SSH_CA_KEY is set. Shared by the proxy (which mints
 	// short-lived certificates JIT) and the API (which publishes its public key).
@@ -1193,6 +1202,8 @@ func run() error {
 		CA:                   sshCA,
 		SSHOperatorCertTTL:   cfg.SSHOperatorCertTTL,
 		VendorAttestor:       vendor.NewAttestor(cfg.VendorAttestURL),
+		PostureAttestor:      postureAttestor,
+		DeviceHeader:         cfg.DeviceHeader,
 		Analytics:            analyticsEngine,
 		AnalyticsWindow:      cfg.AnalyticsWindow,
 		AnalyticsAutoKill:    cfg.AnalyticsAutoKill,
@@ -1348,6 +1359,7 @@ func run() error {
 			SFTPMode:             proxy.SFTPMode(cfg.SSHSFTPMode),
 			SFTPPathGuard:        sftpPathGuard,
 			TicketCheck:          ticketRecheck,
+			PostureAttestor:      postureAttestor,
 			SFTPCapture:          sftpCapture,
 			SFTPCaptureMaxBytes:  int64(cfg.SSHSFTPCaptureMaxMB) * 1024 * 1024,
 		})
@@ -1414,6 +1426,7 @@ func run() error {
 			Sessions:             sessions,
 			RequireApproval:      cfg.RequireApproval,
 			TicketCheck:          ticketRecheck,
+			PostureAttestor:      postureAttestor,
 			AllowedProtocols:     splitAndTrim(cfg.AllowedProtocols),
 			RequireRecording:     cfg.RequireRecording,
 			ClientTLS:            dbClientTLS,
@@ -1459,6 +1472,7 @@ func run() error {
 			Sessions:             sessions,
 			RequireApproval:      cfg.RequireApproval,
 			TicketCheck:          ticketRecheck,
+			PostureAttestor:      postureAttestor,
 			AllowedProtocols:     splitAndTrim(cfg.AllowedProtocols),
 			RequireRecording:     cfg.RequireRecording,
 			ClientTLS:            dbClientTLS,

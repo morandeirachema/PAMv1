@@ -33,6 +33,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/logging"
+	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
 	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/session"
@@ -142,6 +143,9 @@ type Config struct {
 	// that admits a connection, at connect time rather than at request time
 	// (PAM_TICKET_REVALIDATE, Phase 60). nil leaves the pre-Phase-60 behaviour.
 	TicketCheck store.TicketChecker
+	// PostureAttestor (optional) validates a user's live device posture on
+	// every connect (Phase 133); nil disables posture checking.
+	PostureAttestor *posture.Attestor
 	// SFTPCaptureMaxBytes caps the captured bytes per file (0 = unlimited).
 	// Beyond the cap the transfer is REFUSED, not merely unrecorded — the same
 	// posture as the session-recording cap (PAM_SSH_SFTP_CAPTURE_MAX_MB).
@@ -196,6 +200,7 @@ type Proxy struct {
 	sftpCapture SFTPCaptureMode
 	sftpCapMax  int64
 	ticketCheck store.TicketChecker
+	posture     *posture.Attestor
 	gate        *gates // the shared admission-gate sequence (gates.go)
 
 	// pending carries the resolved *auth.Principal from authenticate (where the
@@ -273,6 +278,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		sftpCapture:  cfg.SFTPCapture,
 		sftpCapMax:   cfg.SFTPCaptureMaxBytes,
 		ticketCheck:  cfg.TicketCheck,
+		posture:      cfg.PostureAttestor,
 	}
 	p.gate = &gates{
 		store:        st,
@@ -282,6 +288,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		requireApprv: p.requireApprv,
 		ticketCheck:  p.ticketCheck,
 		sessions:     p.sessions,
+		posture:      p.posture,
 	}
 	if p.certTTL <= 0 {
 		p.certTTL = 2 * time.Minute
@@ -733,6 +740,10 @@ func (p *Proxy) refuse(ctx context.Context, chans <-chan ssh.NewChannel, res adm
 		p.log.Warn("session denied: source address not allowed", "actor", actor, "remote", remote)
 		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:source-ip-not-allowed")
 		rejectAll(chans, ssh.Prohibited, "pamv1: this account may not connect from this network")
+	case gatePosture:
+		p.log.Warn("session denied: device posture check failed", "actor", actor, "remote", remote)
+		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:posture-check-failed")
+		rejectAll(chans, ssh.Prohibited, "pamv1: your device failed its posture check")
 	case gateResolve:
 		p.log.Warn("session denied", "actor", actor, "login", auditField(login, 64), "reason", res.reason, "remote", remote)
 		p.audit(ctx, actor, "session.denied", fmt.Sprintf("login:%s reason:%s", auditField(login, 64), res.reason))

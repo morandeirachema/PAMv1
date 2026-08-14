@@ -9,6 +9,19 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [Unreleased]
+
+### Added
+
+- **Device-aware access control.** A live EDR/posture webhook
+  (`PAM_POSTURE_ATTEST_URL`) is re-checked on every connect and every
+  authenticated call, not just at approval. An optional device-identity
+  binding (`PAM_DEVICE_HEADER` + a per-user `device_fingerprint`) trusts a
+  reverse-proxy-injected client-certificate fingerprint — REST surface
+  only, since the SSH/PostgreSQL/SQL Server proxies have no HTTP layer.
+  Both break-glass exempt; neither reaches the AI-agent broker. New
+  `internal/posture` package; new migration `0037`.
+
 ## [0.29.0] — 2026-08-14
 
 A minor: one new capability. No schema change.

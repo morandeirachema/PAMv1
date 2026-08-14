@@ -1377,6 +1377,20 @@ func (m *Memstore) UpdateUserIPAllowlist(_ context.Context, id int64, allowlist 
 	return nil
 }
 
+// UpdateUserDeviceFingerprint sets a user's enrolled device-certificate
+// fingerprint (Phase 133).
+func (m *Memstore) UpdateUserDeviceFingerprint(_ context.Context, id int64, fingerprint string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	u.DeviceFingerprint = fingerprint
+	m.users[id] = u
+	return nil
+}
+
 // GetUserByTokenHash returns the user whose token hash matches, or ErrNotFound.
 func (m *Memstore) GetUserByTokenHash(_ context.Context, tokenHashHex string) (*store.User, error) {
 	m.mu.Lock()
