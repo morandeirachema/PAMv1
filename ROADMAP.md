@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–126 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–127 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -56,7 +56,8 @@ phase's own entry below — released in turn as **v0.26.0 by Phase 125**.
 **Phase 126 closes the plan's sixth and final item** — portal color themes,
 cosmetic rather than a vendor-parity finding, added to the plan after
 approval on a direct user ask for a dark palette — completing the
-Wallix-weighted plan's full run. The narrative that follows traces the
+Wallix-weighted plan's full run, released in turn as **v0.27.0 by Phase
+127**. The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2400,6 +2401,31 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 127 — v0.27.0 ✅
+
+Releases Phase 126 (portal color themes) — a genuine new capability, two
+selectable dark palettes alongside the existing green, so this is a
+**minor**, not a patch. No schema change. This closes out the
+Wallix-weighted competitive roadmap's full six-phase run (116–126, each
+released in turn) — the next phase starts a fresh planning cycle.
+
+- [x] **v0.27.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-14 as `ghcr.io/morandeirachema/pamv1:0.27.0` (also
+  `latest`), digest
+  `sha256:PENDING`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow)
+- [x] All five pins via the sweep; Helm chart `version` 0.17.0 -> **0.18.0**
+  (minor, alongside the `appVersion` minor)
+- [x] Both READMEs restated (the Tier-5 parity table row, and every scattered
+  version/phase-count mention, not just the hub lines)
+- [x] `docs/README.md`'s currency line and `docs/NIS2-COMPLIANCE.md`'s
+  compliance-evidence row (a documented recurring staleness point) both
+  caught proactively
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging:
+  `gofmt`, `go vet`, `staticcheck`, `gosec`, `govulncheck`, `go test -race
+  ./...`, `go run ./cmd/archgen` (no schema/route drift)
 
 ## Phase 126 — Portal color themes (dark phosphor palettes) ✅
 
