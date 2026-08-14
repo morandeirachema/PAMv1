@@ -5,58 +5,117 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PAMV1 — Privileged Access Management</title>
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: dark;
+    /* green (default phosphor palette) — every value below is exactly what was
+       previously hardcoded, so the default look is pixel-for-pixel unchanged. */
+    --bg: #050705;
+    --fg: #2eff7b;
+    --fg-glow: rgba(46,255,123,.35);
+    --fg-white: #eaffea;
+    --fg-white-glow: rgba(234,255,234,.35);
+    --fg-cyan: #4be0e0;
+    --fg-cyan-glow: rgba(75,224,224,.35);
+    --fg-red: #ff4d4d;
+    --fg-red-glow: rgba(255,77,77,.45);
+    --fg-amber: #ffcf55;
+    --fg-amber-glow: rgba(255,207,85,.4);
+    --rule: #123c1f;
+    --input-bg: #041407;
+    --focus-bg: #0a2a12;
+    --fg-dim: #2f7d4a;
+    --pane-bg: #020402;
+    --scanline: rgba(0,0,0,.22);
+  }
+  /* amber — classic amber-phosphor terminal. --fg and --fg-amber trade places
+     (green becomes the accent instead of the primary glow); background stays
+     black, only the phosphor color changes. */
+  :root[data-theme="amber"] {
+    --fg: #ffcf55;
+    --fg-glow: rgba(255,207,85,.4);
+    --fg-white: #fff4e0;
+    --fg-white-glow: rgba(255,244,224,.35);
+    --fg-amber: #2eff7b;
+    --fg-amber-glow: rgba(46,255,123,.35);
+    --rule: #3c2c12;
+    --input-bg: #140c04;
+    --focus-bg: #2a1c0a;
+    --fg-dim: #7d5f2f;
+    --pane-bg: #040302;
+  }
+  /* slate — a neutral, cooler dark palette: light gray on near-black instead of
+     a saturated glow, for lower glare while staying unmistakably the same
+     terminal (same grid, same monospace, same scanlines — just a quieter tube). */
+  :root[data-theme="slate"] {
+    --bg: #0a0c0e;
+    --fg: #cfd6dc;
+    --fg-glow: rgba(207,214,220,.12);
+    --fg-white: #f5f7f9;
+    --fg-white-glow: rgba(245,247,249,.15);
+    --fg-cyan: #6fb8d1;
+    --fg-cyan-glow: rgba(111,184,209,.15);
+    --fg-red: #e07070;
+    --fg-red-glow: rgba(224,112,112,.18);
+    --fg-amber: #d1a45f;
+    --fg-amber-glow: rgba(209,164,95,.15);
+    --rule: #262b30;
+    --input-bg: #14171a;
+    --focus-bg: #1e2226;
+    --fg-dim: #6b7480;
+    --pane-bg: #08090b;
+    --scanline: rgba(0,0,0,.18);
+  }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
-    margin: 0; background: #050705; color: #2eff7b;
+    margin: 0; background: var(--bg); color: var(--fg);
     font: 16px/1.35 "IBM Plex Mono", ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
-    text-shadow: 0 0 5px rgba(46, 255, 123, .35);
+    text-shadow: 0 0 5px var(--fg-glow);
     display: flex; justify-content: center;
   }
   body::after { /* CRT scanlines */
     content: ""; position: fixed; inset: 0; pointer-events: none;
-    background: repeating-linear-gradient(0deg, rgba(0,0,0,.22) 0 1px, transparent 1px 3px);
+    background: repeating-linear-gradient(0deg, var(--scanline) 0 1px, transparent 1px 3px);
   }
   #term { width: 100%; max-width: 980px; padding: 12px 16px; white-space: pre-wrap; }
-  a, .green { color: #2eff7b; }
-  .white { color: #eaffea; text-shadow: 0 0 5px rgba(234,255,234,.35); }
-  .cyan  { color: #4be0e0; text-shadow: 0 0 5px rgba(75,224,224,.35); }
-  .red   { color: #ff4d4d; text-shadow: 0 0 5px rgba(255,77,77,.45); }
-  .amber { color: #ffcf55; text-shadow: 0 0 5px rgba(255,207,85,.4); }
+  a, .green { color: var(--fg); }
+  .white { color: var(--fg-white); text-shadow: 0 0 5px var(--fg-white-glow); }
+  .cyan  { color: var(--fg-cyan); text-shadow: 0 0 5px var(--fg-cyan-glow); }
+  .red   { color: var(--fg-red); text-shadow: 0 0 5px var(--fg-red-glow); }
+  .amber { color: var(--fg-amber); text-shadow: 0 0 5px var(--fg-amber-glow); }
   .blink { animation: blink 1s steps(1) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
   .row { display: flex; justify-content: space-between; }
-  hr { border: 0; border-top: 1px solid #123c1f; margin: 6px 0; }
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 6px 0; }
   table { width: 100%; border-collapse: collapse; }
   td, th { text-align: left; padding: 1px 8px 1px 0; font-weight: normal; white-space: nowrap; }
-  th { color: #eaffea; }
+  th { color: var(--fg-white); }
   td.detail { white-space: normal; }
   input, select {
-    font: inherit; color: #2eff7b; background: #041407;
-    border: 0; border-bottom: 1px solid #2eff7b; outline: none; padding: 0 2px;
-    text-shadow: inherit; caret-color: #2eff7b;
+    font: inherit; color: var(--fg); background: var(--input-bg);
+    border: 0; border-bottom: 1px solid var(--fg); outline: none; padding: 0 2px;
+    text-shadow: inherit; caret-color: var(--fg);
   }
-  select { border: 1px solid #123c1f; }
-  input:focus, select:focus, a:focus { background: #0a2a12; outline: 1px solid #4be0e0; }
+  select { border: 1px solid var(--rule); }
+  input:focus, select:focus, a:focus { background: var(--focus-bg); outline: 1px solid var(--fg-cyan); }
   input.opt { width: 3ch; text-align: center; text-transform: uppercase; }
   input[type=checkbox] { width: auto; }
-  .fkeys { color: #4be0e0; margin-top: 8px; }
-  .khint { color: #2f7d4a; margin-top: 2px; font-size: 0.9em; }
-  .msg { min-height: 1.3em; color: #eaffea; }
-  .msg.err { color: #ff4d4d; }
+  .fkeys { color: var(--fg-cyan); margin-top: 8px; }
+  .khint { color: var(--fg-dim); margin-top: 2px; font-size: 0.9em; }
+  .msg { min-height: 1.3em; color: var(--fg-white); }
+  .msg.err { color: var(--fg-red); }
   form.inline { display: inline; }
   label { display: block; }
   .indent { margin-left: 4ch; }
   /* Live session watch pane (Phase 16 monitoring viewer). */
-  .watchpane { height: 55vh; overflow-y: auto; background: #020402;
-    border: 1px solid #123c1f; padding: 4px 6px; white-space: pre-wrap;
+  .watchpane { height: 55vh; overflow-y: auto; background: var(--pane-bg);
+    border: 1px solid var(--rule); padding: 4px 6px; white-space: pre-wrap;
     word-break: break-all; margin: 4px 0; }
   /* In-portal graphical viewer overlay, RDP and VNC alike (Guacamole canvas).
      The rdp* class names predate VNC; both viewers share this one overlay. */
-  .rdpwrap { position: fixed; inset: 0; z-index: 50; background: #050705;
+  .rdpwrap { position: fixed; inset: 0; z-index: 50; background: var(--bg);
     display: flex; flex-direction: column; }
-  .rdpbar { flex: 0 0 auto; padding: 4px 12px; border-bottom: 1px solid #123c1f;
+  .rdpbar { flex: 0 0 auto; padding: 4px 12px; border-bottom: 1px solid var(--rule);
     display: flex; justify-content: space-between; gap: 12px; white-space: nowrap; }
   .rdpview { flex: 1 1 auto; overflow: auto; display: flex;
     justify-content: center; align-items: flex-start; background: #000; }
@@ -68,6 +127,13 @@
 <script nonce="__CSP_NONCE__">
 (() => {
   const term = document.getElementById("term");
+  // Portal color theme (Phase 126): a cosmetic, client-only preference — no
+  // store table, no API route, no audit event. Applied before the first
+  // render so there is no flash of the wrong palette. "" (green) needs no
+  // attribute at all, since :root already IS the green palette by default.
+  const THEMES = ["", "amber", "slate"];
+  const savedTheme = localStorage.getItem("pam_theme") || "";
+  if (THEMES.includes(savedTheme) && savedTheme) document.documentElement.dataset.theme = savedTheme;
   let apiKey = sessionStorage.getItem("pam_api_key") || "";
   let me = null; // { name, role, break_glass, capabilities:[] }
 
@@ -246,7 +312,7 @@
            `<div class="row"><span>${me ? esc(me.name) + " / " + esc(me.role) + (me.break_glass ? " (BREAK-GLASS)" : "") : ""}</span><span class="cyan">${now()}</span></div><hr>`;
   }
   const fkeys = (t) => `<hr><div class="fkeys">${t}</div>` +
-    `<div class="khint">Enter=Confirm&nbsp;&nbsp;Esc=Back&nbsp;&nbsp;Tab / ↑↓=Move&nbsp;&nbsp;(the mouse is optional)</div>` +
+    `<div class="khint">Enter=Confirm&nbsp;&nbsp;Esc=Back&nbsp;&nbsp;Tab / ↑↓=Move&nbsp;&nbsp;F2=Theme&nbsp;&nbsp;(the mouse is optional)</div>` +
     `<div class="msg${msgErr ? " err" : ""}">${esc(msg)}</div>`;
 
   // opt renders a subfile option input; optCell reads the typed option for a row.
@@ -2974,6 +3040,18 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
   const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid) };
+  // cycleTheme rotates green → amber → slate → green, persists the choice, and
+  // re-renders so the F-key hint's confirmation message shows immediately.
+  function cycleTheme() {
+    const cur = document.documentElement.dataset.theme || "";
+    const next = THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length];
+    if (next) document.documentElement.dataset.theme = next;
+    else delete document.documentElement.dataset.theme;
+    localStorage.setItem("pam_theme", next);
+    say("THEME: " + (next || "green").toUpperCase() + ".");
+    render();
+  }
+
   const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, mfawebauthn: () => go("mfawebauthnadd") };
 
   window.addEventListener("keydown", async (ev) => {
@@ -2981,6 +3059,10 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
     // listener handles the Ctrl+Alt+Q disconnect); leave portal navigation inert.
     if (rdpActive) return;
     const k = ev.key;
+    // Theme cycling (Phase 126) works everywhere, including sign-on — it is a
+    // cosmetic preference, not a screen action, so it does not belong behind
+    // the "screen === signon" gate every other F-key sits behind below.
+    if (k === "F2") { ev.preventDefault(); cycleTheme(); return; }
     // Arrow keys move between subfile option cells (5250-style row navigation), so
     // a whole list of rows is operable without the mouse.
     if ((k === "ArrowDown" || k === "ArrowUp") && ev.target.classList && ev.target.classList.contains("opt")) {
