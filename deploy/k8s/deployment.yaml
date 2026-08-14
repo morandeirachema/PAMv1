@@ -31,7 +31,7 @@ spec:
         - name: pam-server
           # Pin to a released version (or a digest); :latest is non-reproducible
           # and defeats rollback.
-          image: ghcr.io/morandeirachema/pamv1:0.25.0
+          image: ghcr.io/morandeirachema/pamv1:0.26.0
           ports:
             - containerPort: 8080
               name: http
