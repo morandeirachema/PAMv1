@@ -86,6 +86,9 @@ type MSSQLConfig struct {
 	OpaqueRecordingNames bool
 	// CommandGuard blocks statements matching its deny patterns (Phase 16).
 	CommandGuard *cmdguard.Guard
+	// CommandAllowGuard (Phase 131), once set, narrows every command-control
+	// path to ONLY commands it matches; deny still wins. nil = deny-only.
+	CommandAllowGuard *cmdguard.Guard
 	// Live receives each recorded statement keyed by session id.
 	Live *session.Hub
 	// AuthRatePerMin throttles operator authentication attempts per source IP.
@@ -120,6 +123,7 @@ type MSSQLProxy struct {
 	dialTimeout  time.Duration
 	clientTLS    *tls.Config
 	guard        *cmdguard.Guard
+	allowGuard   *cmdguard.Guard
 	live         *session.Hub
 	chain        *recordChain
 	authLimiter  *ratelimit.Limiter
@@ -168,6 +172,7 @@ func NewMSSQL(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg MSSQL
 		dialTimeout:  cfg.DialTimeout,
 		clientTLS:    cfg.ClientTLS,
 		guard:        cfg.CommandGuard,
+		allowGuard:   cfg.CommandAllowGuard,
 		live:         cfg.Live,
 		chain:        newRecordChain(cfg.RecordingDir),
 		authLimiter:  ratelimit.New(cfg.AuthRatePerMin),
@@ -191,6 +196,7 @@ func NewMSSQL(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg MSSQL
 	}
 	m.pol = sqlPolicy{
 		guard:       m.guard,
+		allowGuard:  m.allowGuard,
 		stepupGuard: m.stepupGuard,
 		stepup:      m.stepup,
 		stepupTTL:   m.stepupTTL,

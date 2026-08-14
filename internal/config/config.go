@@ -303,6 +303,12 @@ type Config struct {
 	// comments) that block matching commands on the exec/WinRM/SQL paths
 	// (Phase 16 command control). Empty disables command control.
 	CommandDenyFile string
+	// CommandAllowFile (Phase 131) is a file of regular expressions, same
+	// format as CommandDenyFile, that — once set — narrows every command-
+	// control path to ONLY the listed commands; deny still wins when both
+	// would match. Empty leaves every path deny-only, unchanged from before
+	// this existed.
+	CommandAllowFile string
 	// DBStepUpFile (Phase 30) is a file of regex patterns; a matching PostgreSQL
 	// statement pauses for a supervisor's live approval before it runs.
 	// DBStepUpTTL bounds how long a paused statement waits before it is denied.
@@ -642,6 +648,7 @@ func Load() (*Config, error) {
 		ShareGuestSessionTTL: time.Duration(integer("PAM_SESSION_SHARE_GUEST_TTL_MIN", 240)) * time.Minute,
 		AllowedProtocols:     os.Getenv("PAM_ALLOWED_PROTOCOLS"),
 		CommandDenyFile:      os.Getenv("PAM_COMMAND_DENY_FILE"),
+		CommandAllowFile:     os.Getenv("PAM_COMMAND_ALLOW_FILE"),
 		SSHSFTPDenyFile:      os.Getenv("PAM_SSH_SFTP_DENY_FILE"),
 		DBStepUpFile:         os.Getenv("PAM_DB_STEPUP_FILE"),
 		DBStepUpTTL:          time.Duration(integer("PAM_DB_STEPUP_TTL_SEC", 120)) * time.Second,

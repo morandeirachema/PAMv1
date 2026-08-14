@@ -1,13 +1,20 @@
 // Package cmdguard implements command control: a policy-driven denylist that
-// blocks a dangerous command before it reaches a target.
+// blocks a dangerous command before it reaches a target, plus an optional
+// allow-list (Phase 131) that, once configured, narrows a path to ONLY the
+// listed commands — Delinea's "Command Menus" is the closest commercial-PAM
+// analogue. Deny always wins when both would match; an allow-list is
+// deliberately its own separate Guard value, not a mode flag on one, so a
+// path with no allow-list configured keeps exactly its pre-Phase-131
+// deny-only behavior.
 //
 // It applies on every path where pamv1 can see a **discrete command** — the SSH
 // `exec` request (non-interactive `ssh target "cmd"`), each WinRM command-loop
-// line and each REST WinRM run, each PostgreSQL statement, and the agent
-// broker's `ssh_exec`/`winrm_exec` tools. One policy, loaded once from
-// PAM_COMMAND_DENY_FILE, is shared by the session proxies and the API server so
-// a pattern cannot be enforced for a human on the proxy yet ignored for an AI
-// agent calling a tool.
+// line and each REST WinRM run, each PostgreSQL/SQL Server statement, and the
+// agent broker's `ssh_exec`/`winrm_exec` tools. One deny policy, loaded once
+// from PAM_COMMAND_DENY_FILE, and one optional allow policy, loaded once from
+// PAM_COMMAND_ALLOW_FILE, are each shared by the session proxies and the API
+// server so a pattern cannot be enforced for a human on the proxy yet ignored
+// for an AI agent calling a tool.
 //
 // What it does NOT cover is inherent, not an oversight: an interactive SSH shell
 // streams a raw PTY that is never parsed, so the guard must not be read as a
@@ -103,6 +110,26 @@ func (g *Guard) Blocked(cmd string) (pattern string, blocked bool) {
 		}
 	}
 	return "", false
+}
+
+// Allowed reports whether cmd matches any pattern this Guard holds — the same
+// compiled set Blocked reads, interpreted the opposite way by the caller (this
+// is an allow-list, not a denylist). A nil Guard allows nothing, mirroring
+// Blocked's "nil blocks nothing": the caller decides what a nil allow-list
+// MEANS (see cmd/pam-server/main.go's PAM_COMMAND_ALLOW_FILE wiring — an
+// unconfigured allow-list leaves every path deny-only, exactly as it worked
+// before this method existed; it is only once a caller HOLDS a non-nil
+// allow Guard that "no pattern matched" becomes a refusal).
+func (g *Guard) Allowed(cmd string) bool {
+	if g == nil {
+		return false
+	}
+	for _, re := range g.patterns {
+		if re.MatchString(cmd) {
+			return true
+		}
+	}
+	return false
 }
 
 // Size reports how many patterns the Guard holds (0 for a nil Guard).

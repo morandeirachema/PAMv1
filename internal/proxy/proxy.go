@@ -97,6 +97,9 @@ type Config struct {
 	// CommandGuard, when set, blocks commands matching its deny patterns on the
 	// exec and WinRM paths (Phase 16 command control). nil disables it.
 	CommandGuard *cmdguard.Guard
+	// CommandAllowGuard (Phase 131), once set, narrows every command-control
+	// path to ONLY commands it matches; deny still wins. nil = deny-only.
+	CommandAllowGuard *cmdguard.Guard
 	// Live, when set, receives a copy of every recorded output byte keyed by
 	// session id, so a supervisor can watch a session live (Phase 16).
 	Live *session.Hub
@@ -176,6 +179,7 @@ type Proxy struct {
 	requireSup   bool
 	supTimeout   time.Duration
 	guard        *cmdguard.Guard
+	allowGuard   *cmdguard.Guard
 	live         *session.Hub
 	// shares is the SAME *session.ShareRegistry instance the API layer's
 	// external/vendor redemption path uses (wired once in main.go, like
@@ -257,6 +261,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		requireSup:   cfg.RequireSupervision,
 		supTimeout:   cfg.SupervisionTimeout,
 		guard:        cfg.CommandGuard,
+		allowGuard:   cfg.CommandAllowGuard,
 		live:         cfg.Live,
 		shares:       cfg.Shares,
 		ca:           cfg.CA,
@@ -967,7 +972,11 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	onExec := func(payload []byte) bool {
 		var m struct{ Command string }
 		_ = ssh.Unmarshal(payload, &m)
-		if pat, blocked := p.guard.Blocked(m.Command); blocked {
+		pat, blocked := p.guard.Blocked(m.Command)
+		if !blocked && p.allowGuard != nil && !p.allowGuard.Allowed(m.Command) {
+			pat, blocked = "not-allowed", true
+		}
+		if blocked {
 			if rec != nil {
 				_, _ = io.WriteString(rec, "$ "+m.Command+"\r\npamv1: command blocked by policy\r\n")
 			}
@@ -1494,7 +1503,11 @@ func (p *Proxy) winrmRun(ctx context.Context, out io.Writer, target *store.Targe
 		p.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:observer-winrm cmd:"+auditCmd(command))
 		return 1
 	}
-	if pat, blocked := p.guard.Blocked(command); blocked {
+	pat, blocked := p.guard.Blocked(command)
+	if !blocked && p.allowGuard != nil && !p.allowGuard.Allowed(command) {
+		pat, blocked = "not-allowed", true
+	}
+	if blocked {
 		fmt.Fprint(out, "pamv1: command blocked by policy\r\n")
 		p.audit(ctx, actor, "command.blocked", fmt.Sprintf("target:%s via:proxy pattern:%s cmd:%s", target.Name, pat, auditCmd(command)))
 		return 1

@@ -72,6 +72,9 @@ type DBConfig struct {
 	OpaqueRecordingNames bool
 	// CommandGuard blocks SQL statements matching its deny patterns (Phase 16).
 	CommandGuard *cmdguard.Guard
+	// CommandAllowGuard (Phase 131), once set, narrows every command-control
+	// path to ONLY commands it matches; deny still wins. nil = deny-only.
+	CommandAllowGuard *cmdguard.Guard
 	// Live receives each recorded statement keyed by session id, so a supervisor
 	// can watch the session live (Phase 16).
 	Live *session.Hub
@@ -111,6 +114,7 @@ type DBProxy struct {
 	dialTimeout  time.Duration
 	clientTLS    *tls.Config
 	guard        *cmdguard.Guard
+	allowGuard   *cmdguard.Guard
 	live         *session.Hub
 	chain        *recordChain
 	authLimiter  *ratelimit.Limiter
@@ -160,6 +164,7 @@ func NewDB(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg DBConfig
 		dialTimeout:  cfg.DialTimeout,
 		clientTLS:    cfg.ClientTLS,
 		guard:        cfg.CommandGuard,
+		allowGuard:   cfg.CommandAllowGuard,
 		live:         cfg.Live,
 		chain:        newRecordChain(cfg.RecordingDir),
 		authLimiter:  ratelimit.New(cfg.AuthRatePerMin),
@@ -183,6 +188,7 @@ func NewDB(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg DBConfig
 	}
 	d.pol = sqlPolicy{
 		guard:       d.guard,
+		allowGuard:  d.allowGuard,
 		stepupGuard: d.stepupGuard,
 		stepup:      d.stepup,
 		stepupTTL:   d.stepupTTL,

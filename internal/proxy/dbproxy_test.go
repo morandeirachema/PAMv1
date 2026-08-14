@@ -415,6 +415,84 @@ func TestDBProxyCommandBlocked(t *testing.T) {
 	assertAuditContains(t, st, "command.blocked", "DROP TABLE")
 }
 
+// TestDBProxyCommandAllowList proves Phase 131's allow-mode over a real
+// PostgreSQL wire-protocol session: an allow-listed statement runs, one
+// matching neither list is refused, and a statement matching both lists is
+// still refused — deny wins over allow.
+func TestDBProxyCommandAllowList(t *testing.T) {
+	st := memstore.New()
+	v := mustVault(t)
+	fake := startFakePostgres(t, upstreamSecret)
+	seedPGTarget(t, st, v, fake.addr)
+	resolver, err := auth.NewResolver(st, proxyAPIKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deny, err := cmdguard.New([]string{`(?i)drop\s+table`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	allow, err := cmdguard.New([]string{`(?i)^select\s`, `(?i)drop\s+table`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbx, err := proxy.NewDB(st, v, resolver, proxy.DBConfig{
+		RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second,
+		CommandGuard: deny, CommandAllowGuard: allow,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := serveDBProxy(t, dbx)
+	fe, conn := openDBSession(t, addr, "dbuser@pg-01", "appdb", proxyAPIKey)
+	defer conn.Close()
+
+	// Allow-listed: reaches the upstream.
+	fe.Send(&pgproto3.Query{String: "SELECT 1"})
+	if err := fe.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	waitReady(t, fe)
+
+	// Matches neither list: refused, even though it was never denylisted.
+	fe.Send(&pgproto3.Query{String: "UPDATE accounts SET balance = 0"})
+	if err := fe.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := fe.Receive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := msg.(*pgproto3.ErrorResponse); !ok {
+		t.Fatalf("not-on-allow-list query: expected ErrorResponse, got %T", msg)
+	}
+	waitReady(t, fe)
+
+	// Matches BOTH lists: deny must still win.
+	fe.Send(&pgproto3.Query{String: "DROP TABLE users"})
+	if err := fe.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	msg, err = fe.Receive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := msg.(*pgproto3.ErrorResponse); !ok {
+		t.Fatalf("deny must win: expected ErrorResponse, got %T", msg)
+	}
+	waitReady(t, fe)
+	fe.Send(&pgproto3.Terminate{})
+	_ = fe.Flush()
+
+	for _, q := range fake.allQueries() {
+		if strings.Contains(strings.ToUpper(q), "DROP TABLE") || strings.Contains(strings.ToUpper(q), "UPDATE ACCOUNTS") {
+			t.Fatalf("a refused statement reached the upstream: %q", q)
+		}
+	}
+	assertAuditContains(t, st, "command.blocked", "not-allowed")
+	assertAuditContains(t, st, "command.blocked", "DROP TABLE")
+}
+
 // TestDBProxyLiveMonitor proves a supervisor watching the live hub sees the SQL
 // statements as they are brokered.
 func TestDBProxyLiveMonitor(t *testing.T) {

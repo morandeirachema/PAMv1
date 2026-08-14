@@ -697,6 +697,68 @@ func TestProxyExecBlocked(t *testing.T) {
 	assertAuditContains(t, st, "command.blocked", "rm -rf")
 }
 
+// TestProxyExecAllowList proves Phase 131's allow-mode end to end over a real
+// SSH exec: a command matching the allow-list reaches the target, one that
+// matches NEITHER list is refused (not just denylisted commands), and — the
+// most important edge case — a command matching BOTH lists is still refused,
+// proving deny wins even when an allow-list would otherwise let it through.
+func TestProxyExecAllowList(t *testing.T) {
+	host, port := startUpstream(t, upstreamUser, upstreamSecret, targetOutput)
+	st := memstore.New()
+	v := mustVault(t)
+	seedTarget(t, st, v, host, port)
+	resolver, err := auth.NewResolver(st, proxyAPIKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deny, err := cmdguard.New([]string{`rm\s+-rf`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	allow, err := cmdguard.New([]string{`^echo\s+hello$`, `rm\s+-rf`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	px, err := proxy.New(st, v, resolver, proxy.Config{
+		HostKey: mustSigner(t), RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second,
+		CommandGuard: deny, CommandAllowGuard: allow,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := serveProxy(t, px)
+
+	run := func(cmd string) (string, error) {
+		client, derr := dialProxy(t, addr, upstreamUser+"@web-01", proxyAPIKey)
+		if derr != nil {
+			t.Fatal(derr)
+		}
+		defer client.Close()
+		sess, serr := client.NewSession()
+		if serr != nil {
+			t.Fatal(serr)
+		}
+		defer sess.Close()
+		out, rerr := sess.CombinedOutput(cmd)
+		return string(out), rerr
+	}
+
+	// Allow-listed: reaches the target.
+	if out, rerr := run("echo hello"); rerr != nil || !strings.Contains(out, targetOutput) {
+		t.Fatalf("allow-listed command should reach the target: out=%q err=%v", out, rerr)
+	}
+	// Matches neither list: refused, even though it was never denylisted.
+	if out, rerr := run("echo goodbye"); rerr == nil {
+		t.Fatalf("a command matching no allow pattern must be refused; got output %q", out)
+	}
+	// Matches BOTH lists: deny must still win.
+	if out, rerr := run("rm -rf /tmp/x"); rerr == nil {
+		t.Fatalf("deny must win even when the allow-list would also match; got output %q", out)
+	}
+	assertAuditContains(t, st, "command.blocked", "not-allowed")
+	assertAuditContains(t, st, "command.blocked", "rm -rf")
+}
+
 // TestSafeMembershipGrantsConnect proves that placing a target in a safe
 // restricts it to the safe's members (a non-member is denied), and that safe
 // membership grants connect access (Phase 17) — the connect gate honors the
