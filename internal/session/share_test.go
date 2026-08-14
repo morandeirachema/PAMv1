@@ -340,3 +340,151 @@ func TestShareRegistryNilIssueGuestKey(t *testing.T) {
 		t.Fatal("ResolveGuestKey on a nil registry returned ok=true")
 	}
 }
+
+// TestShareRegistrySuspendBlocksReader proves the core Phase 122 guarantee:
+// once suspended, bytes already sitting in the mux (and any written after)
+// are held back from the reader — not dropped, not delivered — until Resume,
+// at which point they arrive intact and in order. This is what stands
+// between an operator's keystrokes and the target while frozen.
+func TestShareRegistrySuspendBlocksReader(t *testing.T) {
+	r := NewShareRegistry()
+	r.Open("s1")
+	defer r.Close("s1")
+
+	if !r.Suspend("s1") {
+		t.Fatal("Suspend reported false for a live session")
+	}
+	if !r.Suspended("s1") {
+		t.Fatal("Suspended reported false right after Suspend")
+	}
+
+	w := r.Writer("s1")
+	if _, err := w.Write([]byte("frozen")); err != nil {
+		t.Fatalf("write while suspended: %v", err)
+	}
+
+	rd := r.Reader("s1")
+	buf := make([]byte, 32)
+	readDone := make(chan struct{})
+	var n int
+	var readErr error
+	go func() {
+		n, readErr = rd.Read(buf)
+		close(readDone)
+	}()
+
+	select {
+	case <-readDone:
+		t.Fatal("Read returned while suspended — suspend did not block delivery")
+	case <-time.After(100 * time.Millisecond):
+		// still blocked, as expected
+	}
+
+	if !r.Resume("s1") {
+		t.Fatal("Resume reported false for a live session")
+	}
+	if r.Suspended("s1") {
+		t.Fatal("Suspended reported true right after Resume")
+	}
+
+	select {
+	case <-readDone:
+		if readErr != nil {
+			t.Fatalf("read after resume: %v", readErr)
+		}
+		if got := string(buf[:n]); got != "frozen" {
+			t.Fatalf("got %q, want %q — a byte was dropped or reordered", got, "frozen")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Resume did not unblock the pending reader — goroutine leak")
+	}
+}
+
+// TestShareRegistrySuspendResumeIdempotent proves both directions are safe to
+// call repeatedly — a supervisor re-clicking "suspend" (or a retry after a
+// network blip) must never error or double-toggle back to flowing.
+func TestShareRegistrySuspendResumeIdempotent(t *testing.T) {
+	r := NewShareRegistry()
+	r.Open("s1")
+	defer r.Close("s1")
+
+	first := r.Suspend("s1")
+	second := r.Suspend("s1")
+	if !first || !second {
+		t.Fatalf("Suspend called twice should report true both times, got %v then %v", first, second)
+	}
+	if !r.Suspended("s1") {
+		t.Fatal("expected suspended after two Suspend calls")
+	}
+	first = r.Resume("s1")
+	second = r.Resume("s1")
+	if !first || !second {
+		t.Fatalf("Resume called twice should report true both times, got %v then %v", first, second)
+	}
+	if r.Suspended("s1") {
+		t.Fatal("expected flowing after two Resume calls")
+	}
+}
+
+// TestShareRegistrySuspendUnknownSession proves every suspend-family call
+// reports false/false for a session that was never opened (or already
+// closed) — the same "unknown is inert, never a panic" convention every
+// other ShareRegistry method already follows.
+func TestShareRegistrySuspendUnknownSession(t *testing.T) {
+	r := NewShareRegistry()
+	if r.Suspend("ghost") {
+		t.Fatal("Suspend on an unknown session returned true")
+	}
+	if r.Resume("ghost") {
+		t.Fatal("Resume on an unknown session returned true")
+	}
+	if r.Suspended("ghost") {
+		t.Fatal("Suspended on an unknown session returned true")
+	}
+}
+
+// TestShareRegistryCloseUnblocksSuspendedReader proves a reader parked inside
+// a suspend (not just an ordinary mux-empty wait) is still released when the
+// session ends — Close must win over a suspend that was never explicitly
+// resumed, or a session-share goroutine leaks forever once its session ends
+// suspended.
+func TestShareRegistryCloseUnblocksSuspendedReader(t *testing.T) {
+	r := NewShareRegistry()
+	r.Open("s1")
+	r.Suspend("s1")
+
+	rd := r.Reader("s1")
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := rd.Read(make([]byte, 32))
+		errCh <- err
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	r.Close("s1")
+
+	select {
+	case err := <-errCh:
+		if err != io.EOF {
+			t.Fatalf("got err %v, want io.EOF", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not unblock a reader parked in a suspend — goroutine leak")
+	}
+}
+
+// TestShareRegistryNilSuspendResume proves a nil registry is inert for the
+// suspend family too, matching every other method's nil-is-a-safe-no-op
+// convention.
+func TestShareRegistryNilSuspendResume(t *testing.T) {
+	var r *ShareRegistry
+	if r.Suspend("s1") {
+		t.Fatal("Suspend on a nil registry returned true")
+	}
+	if r.Resume("s1") {
+		t.Fatal("Resume on a nil registry returned true")
+	}
+	if r.Suspended("s1") {
+		t.Fatal("Suspended on a nil registry returned true")
+	}
+}

@@ -30,9 +30,19 @@ type shareSession struct {
 	mux  chan []byte
 	done chan struct{} // closed by Close; wakes every blocked/future Write and Read
 
-	mu     sync.Mutex
-	joined map[string]joinedEntry
-	notify func(string) // delivers a Stderr banner to the primary's own terminal
+	mu        sync.Mutex
+	joined    map[string]joinedEntry
+	notify    func(string) // delivers a Stderr banner to the primary's own terminal
+	suspended bool         // Phase 122: true = pump must stop delivering to the target
+	// changed is closed and replaced on every Suspend/Resume call that
+	// actually flips suspended (Phase 122) — a broadcast a reader parked
+	// EITHER in waitResumed OR already inside muxReader's inner select
+	// (waiting on the mux channel itself) can react to. A closed-then-
+	// replaced "state changed" signal, not the state itself, because a
+	// goroutine already blocked receiving from the mux channel when a
+	// suspend arrives has no other way to be pulled out of that select and
+	// made to re-check suspended before delivering what it receives next.
+	changed chan struct{}
 }
 
 // JoinedParty describes one attached session-share join, for the console
@@ -145,9 +155,10 @@ func (r *ShareRegistry) Open(sid string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.m[sid] = &shareSession{
-		mux:    make(chan []byte, muxBuf),
-		done:   make(chan struct{}),
-		joined: make(map[string]joinedEntry),
+		mux:     make(chan []byte, muxBuf),
+		done:    make(chan struct{}),
+		joined:  make(map[string]joinedEntry),
+		changed: make(chan struct{}), // suspended starts false: opt-in, never the default
 	}
 }
 
@@ -337,6 +348,99 @@ func (r *ShareRegistry) Roster(sid string) []JoinedParty {
 	return out
 }
 
+// Suspend freezes session sid's input (Phase 122): pump stops delivering
+// operator keystrokes to the target until Resume is called, but the session
+// itself stays open — output keeps flowing (a wholly separate path, see
+// proxy.go's io.Copy(out, upChan)), only input stops. This is a rung below
+// killing the session: a supervisor can pause a typist mid-command without
+// ending their access.
+//
+// Freezing input, not the connection, means a suspended operator's terminal
+// simply stops accepting keystrokes rather than reporting an error — the mux
+// channel (bounded, muxBuf slots) fills and its writer goroutine blocks,
+// which back-pressures the client's own SSH channel via ordinary flow
+// control. Idempotent: suspending an already-suspended session is a no-op
+// success, not an error, matching StopAccessRequestRecurrence's own
+// idempotency (Phase 120) — a supervisor re-clicking "suspend" should never
+// fail. Reports false only if the session is unknown (already ended, or the
+// mux was never opened for it).
+func (r *ShareRegistry) Suspend(sid string) bool {
+	if r == nil {
+		return false
+	}
+	ss := r.session(sid)
+	if ss == nil {
+		return false
+	}
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	if !ss.suspended {
+		ss.suspended = true
+		close(ss.changed)
+		ss.changed = make(chan struct{})
+	}
+	return true
+}
+
+// Resume un-freezes a session Suspend froze (Phase 122). Idempotent, like
+// Suspend: resuming an already-flowing session is a no-op success. Reports
+// false only if the session is unknown.
+func (r *ShareRegistry) Resume(sid string) bool {
+	if r == nil {
+		return false
+	}
+	ss := r.session(sid)
+	if ss == nil {
+		return false
+	}
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	if ss.suspended {
+		ss.suspended = false
+		close(ss.changed)
+		ss.changed = make(chan struct{})
+	}
+	return true
+}
+
+// Suspended reports whether session sid is currently suspended — false for
+// an unknown sid, same as every other status query on this registry.
+func (r *ShareRegistry) Suspended(sid string) bool {
+	ss := r.session(sid)
+	if ss == nil {
+		return false
+	}
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	return ss.suspended
+}
+
+// waitResumed blocks while sid's session is suspended, returning as soon as
+// it is resumed or the session ends — the block point for a reader that has
+// not yet reached the mux (Phase 122). See muxReader.Read for the OTHER
+// block point this pairs with: a reader already parked waiting on the mux
+// channel itself, which reacts to the same ss.changed broadcast instead of
+// calling this method (calling it would mean waiting on a channel it is no
+// longer selecting on).
+func (ss *shareSession) waitResumed() error {
+	for {
+		ss.mu.Lock()
+		suspended := ss.suspended
+		changed := ss.changed
+		ss.mu.Unlock()
+		if !suspended {
+			return nil
+		}
+		select {
+		case <-changed:
+			// Suspend or Resume fired; loop back and re-check — a second
+			// Suspend arriving before a Resume leaves us waiting again.
+		case <-ss.done:
+			return io.EOF
+		}
+	}
+}
+
 // muxWriter implements io.Writer over one session's mux channel.
 type muxWriter struct{ ss *shareSession }
 
@@ -363,20 +467,41 @@ type muxReader struct {
 }
 
 func (rd *muxReader) Read(p []byte) (int, error) {
-	if len(rd.rest) > 0 {
-		n := copy(p, rd.rest)
-		rd.rest = rd.rest[n:]
-		return n, nil
-	}
-	select {
-	case b := <-rd.ss.mux:
-		n := copy(p, b)
-		if n < len(b) {
-			rd.rest = b[n:]
+	for {
+		// Suspend (Phase 122) gates here, before anything else on every loop
+		// pass — a buffered tail from a chunk read before the suspend must
+		// wait too, since the whole point is that nothing new reaches the
+		// target while frozen.
+		if err := rd.ss.waitResumed(); err != nil {
+			return 0, err
 		}
-		return n, nil
-	case <-rd.ss.done:
-		return 0, io.EOF
+		if len(rd.rest) > 0 {
+			n := copy(p, rd.rest)
+			rd.rest = rd.rest[n:]
+			return n, nil
+		}
+		rd.ss.mu.Lock()
+		changed := rd.ss.changed
+		rd.ss.mu.Unlock()
+		select {
+		case b := <-rd.ss.mux:
+			n := copy(p, b)
+			if n < len(b) {
+				rd.rest = b[n:]
+			}
+			return n, nil
+		case <-rd.ss.done:
+			return 0, io.EOF
+		case <-changed:
+			// A Suspend arrived while this call was idly parked waiting for
+			// mux data (the common case between keystrokes) rather than
+			// inside waitResumed above — without this case a suspend issued
+			// at exactly that moment would never take effect until the NEXT
+			// byte happened to arrive and complete this Read first. Loop
+			// back to re-check waitResumed instead of falling through to a
+			// delivery.
+			continue
+		}
 	}
 }
 

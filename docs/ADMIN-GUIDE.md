@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-14 · Reflects: Phases 0–120 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7) and recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-14 · Reflects: Phases 0–122 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c) and suspend/resume for a live session (122, §9.4d) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -2183,6 +2183,47 @@ Three things worth knowing before you rely on this:
   `session.share_join_denied` · `session.share_ended` ·
   `session.share_kicked`.
 
+### 9.4d Suspending a live session (Phase 122)
+
+Kill (9.4a) ends a session outright. **Suspend** freezes it instead — the
+operator's keystrokes stop reaching the target, the session stays open, and a
+later **resume** picks up exactly where it left off. It rides the same input
+mux Phase 116 built for session sharing, so it needs no new session-side
+plumbing — only a gate on the path from mux to target.
+
+```bash
+# Needs `approve` — the same capability that decides a share invite or a
+# step-up prompt; freezing someone's live input is that class of decision.
+curl -sX POST https://pam.example/api/sessions/<id>/suspend -H "X-API-Key: $APPROVER"
+# → {"session":"<id>","suspended":true}
+
+curl -sX POST https://pam.example/api/sessions/<id>/resume  -H "X-API-Key: $APPROVER"
+# → {"session":"<id>","suspended":false}
+
+# Check status without changing it — needs only `read_audit`:
+curl -s https://pam.example/api/sessions/<id>/suspend -H "X-API-Key: $KEY"
+# → {"session":"<id>","suspended":true}   # 404 if the session isn't live here
+```
+
+- **The operator is told, not left to think the terminal hung.** The instant
+  a session is suspended, its operator gets the same `Stderr`-banner notice
+  Phase 116 uses for join announcements — and another on resume. Freezing
+  input silently would look indistinguishable from a stuck connection.
+- **Idempotent.** Suspending an already-suspended session (or resuming an
+  already-live one) is a no-op that still returns `true` — safe to retry, and
+  the console's F8 toggle never needs to track state precisely to be correct.
+- **Replica-local, like sharing.** The registry behind this has no
+  cross-replica bus (unlike the cluster-wide session list or `StepUp`'s
+  sealed mirroring); behind a non-sticky load balancer, suspend/resume/status
+  must land on whichever replica actually hosts the session. The status
+  endpoint 404s rather than guessing when the session isn't live *here* —
+  the same honest "not live on this replica" posture `GET /sessions/{id}/stream`
+  already uses.
+- **Console:** the live-watch pane (**F5**, §9.4) shows an amber *SUSPENDED*
+  banner while frozen; **F8** toggles suspend/resume for anyone holding
+  `approve`.
+- **Audit vocabulary:** `session.suspended` · `session.resumed`.
+
 ### 9.5 Metrics & probes
 
 - `GET /metrics` — a Prometheus exposition: `pam_http_requests_total{status}`,
@@ -2558,6 +2599,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-14 | **Phase 122 — suspend vs. terminate a live session.** `POST /api/sessions/{id}/suspend`/`.../resume` (`approve`) freeze and unfreeze an operator's input without ending the session, riding Phase 116's session-sharing input mux rather than new plumbing; `GET .../suspend` (`read_audit`) reports current state, 404ing if the session isn't live on this replica. Both actions are idempotent, and the operator gets a `Stderr` banner the instant either fires — freezing input silently would look like a hang, not a policy action. Replica-local, like sharing: no cross-replica bus yet. Console: live-watch pane shows an amber *SUSPENDED* banner; **F8** toggles for anyone holding `approve`. New audit actions `session.suspended`/`session.resumed`; no new migration (suspend state is in-memory only). See §9.4d |
 | 2026-08-14 | **Phase 120 — recurring access requests, password policy, checkout extension.** Recurring access requests: `recur_days` makes an *approved* request an anchor (§9.6c), auto-filing a fresh pending successor every N days on its own hourly worker — the clock starts at approval, not filing; `stop-recurrence` is the anchor's stop button. Password policy: `PAM_PASSWORD_MIN_LENGTH`/`_MIN_LOWER`/`_MIN_UPPER`/`_MIN_DIGIT`/`_MIN_SYMBOL` make generated-password shape configurable (defaults reproduce the old hardcoded 24-char/one-of-each), and `PAM_PASSWORD_HISTORY_COUNT` (default 0) refuses to reissue one of a credential's last N rotated secrets, tracked as SHA-256 hashes only. Checkout extension: `POST /api/credentials/{id}/checkout/extend` (holder-or-admin) pushes an active lease's expiry out, capped at `PAM_CHECKOUT_MAX_EXTEND_MIN` (default 240) total from check-out. New migration `0034`; store surface 157 → 164. See §7 and §9.6c |
 | 2026-08-13 | **Phase 118 — CIDR/network source-address allowlist.** A per-user, comma-separated CIDR list (`ip_allowlist` on `POST /api/users` / `PUT /api/users/{id}`, `*string` on update so omitting it leaves an existing list untouched and only an explicit `""` clears it) restricts where that user's bearer token may be used from — enforced on every REST call (`authz` middleware) and every session-proxy connect (SSH/PostgreSQL/SQL Server, the shared `admit()` gate). Empty is unrestricted; break-glass is exempt; directory/OIDC logins are unaffected (no backing local-user row). New migration `0033` (`users.ip_allowlist`). See §7 |
 | 2026-08-13 | **Phase 116 — live session-sharing.** A live SSH session can be shared view-only or view-**control** with a second party through a four-eyes request→approve workflow (`POST /api/sessions/{id}/share`, decided by a *different* principal at `POST /api/share-invites/{id}/approve\|deny`). An **internal** invite redeems over SSH as `join:<token>` — the whole username — layered on the joiner's own PAM password, never the token alone; an **external**/vendor invite is emailed with a QR code instead, single-use, `PAM_SESSION_SHARE_INVITE_TTL_SEC` (default 900s), redeemed through a new **unauthenticated** page (`/share.html`) that mints a random 256-bit guest key good for `PAM_SESSION_SHARE_GUEST_TTL_MIN` (default 240 min). A roster + kick (`.../share/roster`, `.../share/kick`) close both. New migration `0032` (`session_share_invites`, plus a `vendors.email` column); new audit actions `session.share_{requested,approved,denied,revoked,joined,join_denied,ended,kicked}`. See §9.4c |
