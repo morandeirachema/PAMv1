@@ -9,7 +9,9 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
-## [Unreleased]
+## [0.29.0] — 2026-08-14
+
+A minor: one new capability. No schema change.
 
 ### Added
 
