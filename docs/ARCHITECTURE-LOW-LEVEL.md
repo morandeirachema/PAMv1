@@ -730,9 +730,9 @@ secrets. Format `json` (SIEM) or `text` (humans); collect from stdout.
 `credential.delete` · `credential.reveal_denied` · `credential.checkin_denied` · `credential.rotate_orphaned` · `grant.create` · `grant.delete` ·
 `winrm.denied` · `session.kill` · `breakglass.unseal` · `user.create` · `user.delete` · `login` · `logout` ·
 `credential.rotate` · `credential.rotate_denied` · `credential.rotate_started` · `credential.rotate_failed` · `credential.reconcile` · `credential.reconcile_denied` · `credential.reconcile_scan` · `credential.remediate` ·
-`credential.checkout` · `credential.checkin` · `credential.checkout_denied` · `credential.checkin_rotate_failed` · `credential.decrypt_failed` · `discovery.scan` ·
-`access.request` · `access.approve` · `access.deny` · `access.denied` · `access.decision_denied` · `audit.export` · `identity.reconcile` · `user.revoked` ·
-`mfa.enroll` · `mfa.confirm` · `mfa.disable` · `mfa.recovery_generated` ·
+`credential.checkout` · `credential.checkin` · `credential.checkout_denied` · `credential.checkin_rotate_failed` · `credential.decrypt_failed` · `discovery.scan` · `credential.checkout_extended` ·
+`access.request` · `access.approve` · `access.deny` · `access.denied` · `access.decision_denied` · `audit.export` · `identity.reconcile` · `user.revoked` · `access.request_recurred` · `access.recurrence_stopped` ·
+`mfa.enroll` · `mfa.confirm` · `mfa.disable` · `mfa.recovery_generated` · `mfa.webauthn_registered` · `mfa.webauthn_register_failed` · `mfa.webauthn_deleted` ·
 `mfa.recovery_used` · `session.kill_failed` · `winrm.run` · `winrm.error` · `winrm.refused` · `ssh.exec` · `rdp.token` · `rdp.connect` · `rdp.end` · `rdp.refused` · `vnc.token` · `vnc.connect` · `vnc.end` · `vnc.refused` · `vnc.error` · `vnc.clipboard` · `session.self_stepup_denied` ·
 `rdp.error` · `rdp.clipboard` · `authz.denied` · `login.failed` · `api.auth_failed` · `proxy.auth_failed` · `session.revoked` · `session.killed` · `vault.kek_rotated` · `breakglass.access` · `breakglass.unseal_failed` · `session.relay_start` · `session.start` ·
 `session.record` · `session.record_failed` · `session.record_limit` · `session.end` · `session.denied` · `session.error` · `session.cert_issued` · `ssh.cert_issued` · `ssh.cert_issue_denied` · `ssh.cert_denied` · `ssh.cert_revoked` ·
@@ -749,7 +749,7 @@ secrets. Format `json` (SIEM) or `text` (humans); collect from stdout.
 `app.create` · `app.revoke` · `app.grant` · `app.grant_denied` · `app.grant_revoked` · `app.secret_retrieved` · `app.secret_denied` ·
 `agent.create` · `agent.revoke` · `broker.tool_call.requested` · `broker.tool_call.executed` · `broker.tool_call.denied` · `broker.tool_call.pending_approval` · `broker.tool_call.failed` · `broker.tool_call.resumed` · `broker.tool_call.withdrawn` · `broker.approval.granted` · `broker.approval.denied` · `broker.approval.refused` · `broker.elicit.accepted` · `broker.elicit.declined` · `broker.audit.checkpoint` · `broker.token.exchanged` · `broker.token.refused` · `audit.ocsf_export` · `compliance.nis2_report` ·
 `config.update` · `config.revert` · `config.secret_refreshed` (actor `system-conjur`) · `profile.create` · `profile.delete` ·
-`session.share_requested` · `session.share_approved` · `session.share_denied` · `session.share_revoked` · `session.share_joined` · `session.share_join_denied` · `session.share_ended` · `session.share_kicked`. The actor is the Principal name
+`session.share_requested` · `session.share_approved` · `session.share_denied` · `session.share_revoked` · `session.share_joined` · `session.share_join_denied` · `session.share_ended` · `session.share_kicked` · `session.suspended` · `session.resumed`. The actor is the Principal name
 (`bootstrap-admin`, `break-glass`, a username, or an agent name) — or, for a
 session-share invite redeemed by an external/vendor recipient with no pamv1
 login at all (Phase 116), `guest:<email>`. Agent-broker events are also
