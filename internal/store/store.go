@@ -329,9 +329,34 @@ type Credential struct {
 	// real, stored, elevated credential, never itself db_zsp (Phase 129).
 	// Exactly one provisioner per target is the supported shape; a second
 	// one is legal in the schema but ambiguous at dial time, refused there.
-	Provisioner bool       `json:"provisioner"`
-	CreatedAt   time.Time  `json:"created_at"`
-	RotatedAt   *time.Time `json:"rotated_at,omitempty"`
+	Provisioner bool `json:"provisioner"`
+	// DoubleLockHolder names who holds this credential's DoubleLock password
+	// (Phase 135) — a person or comma-separated set, never the password
+	// itself. Empty (the default) means not double-locked: reveal/checkout
+	// decrypt SecretEnc exactly as before. Non-empty means the reveal and
+	// checkout API paths (never the session-proxy JIT-decrypt path, which
+	// always uses SecretEnc unmodified) additionally require the matching
+	// password, verified against DoubleLockVerifier before DoubleLockEnc —
+	// a second ciphertext of the same secret keyed directly off the password
+	// (PBKDF2-derived, no KEK involved) — is decrypted in its place. Kept
+	// independent of the vault/KEK layer entirely, on purpose: `-rotate-kek`
+	// re-wraps every KEK-protected artifact exhaustively, and a ciphertext
+	// only the password (which the tool never has) can open would break
+	// that guarantee, the same tension sealed session recordings already
+	// have with KEK rotation — see internal/maint/rotate.go.
+	DoubleLockHolder string `json:"double_lock_holder,omitempty"`
+	// DoubleLockVerifier is a salted PBKDF2 hash of the DoubleLock password,
+	// checked BEFORE ever attempting to decrypt DoubleLockEnc, so a caller
+	// gets a clean "wrong password" instead of one opaque decrypt-failed
+	// error indistinguishable from a corrupted ciphertext. Never the
+	// password itself; never serialized.
+	DoubleLockVerifier string `json:"-"`
+	// DoubleLockEnc is the secret re-encrypted under a key derived from the
+	// DoubleLock password (see DoubleLockHolder); empty when not
+	// double-locked. Never serialized.
+	DoubleLockEnc string     `json:"-"`
+	CreatedAt     time.Time  `json:"created_at"`
+	RotatedAt     *time.Time `json:"rotated_at,omitempty"`
 }
 
 // The secret types a Credential may hold. SecretTypeSSHCA and SecretTypeDBZSP
@@ -751,8 +776,21 @@ type CredentialStore interface {
 	UpdateCredentialSecretEnc(ctx context.Context, id int64, secretEnc string) error
 	// RotateCredentialSecret replaces the encrypted secret AND stamps rotated_at
 	// (used by the credential-lifecycle rotation, where the secret on the target
-	// actually changed).
+	// actually changed). Also clears any DoubleLock (Phase 135): a DoubleLockEnc
+	// sealed under the OLD secret is now stale, and the password that produced
+	// it is not available here to re-seal a new one — the holder must re-enable
+	// DoubleLock afterward. UpdateCredentialSecretEnc (the KEK re-wrap path,
+	// same plaintext under a new KEK) deliberately does NOT do this.
 	RotateCredentialSecret(ctx context.Context, id int64, secretEnc string, rotatedAt time.Time) error
+	// SetCredentialDoubleLock enables DoubleLock on a credential (Phase 135):
+	// holder is a display name (never the password), verifier is a salted
+	// PBKDF2 hash used only to distinguish a wrong password from a corrupted
+	// token, and enc is the secret re-encrypted under a key derived from the
+	// password. ErrNotFound if absent.
+	SetCredentialDoubleLock(ctx context.Context, id int64, holder, verifier, enc string) error
+	// ClearCredentialDoubleLock disables DoubleLock on a credential, or
+	// ErrNotFound if absent.
+	ClearCredentialDoubleLock(ctx context.Context, id int64) error
 	// DeleteCredential removes a credential by ID, or ErrNotFound.
 	DeleteCredential(ctx context.Context, id int64) error
 

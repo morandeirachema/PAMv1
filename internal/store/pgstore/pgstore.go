@@ -229,7 +229,7 @@ func (s *PGStore) CreateCredential(ctx context.Context, c *store.Credential) err
 // 0) in the (limit, afterID) window, ordered by ID.
 func (s *PGStore) ListCredentials(ctx context.Context, targetID int64, limit int, afterID int64) ([]store.Credential, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, target_id, username, secret_type, secret_enc, is_provisioner, created_at, rotated_at
+		`SELECT id, target_id, username, secret_type, secret_enc, is_provisioner, double_lock_holder, double_lock_verifier, double_lock_enc, created_at, rotated_at
 		 FROM credentials WHERE ($1 = 0 OR target_id = $1) AND id > $2 ORDER BY id LIMIT $3`,
 		targetID, afterID, limitArg(limit))
 	if err != nil {
@@ -241,21 +241,39 @@ func (s *PGStore) ListCredentials(ctx context.Context, targetID int64, limit int
 // GetCredential returns the credential with the given ID, or ErrNotFound.
 func (s *PGStore) GetCredential(ctx context.Context, id int64) (*store.Credential, error) {
 	return getOne(ctx, s.pool, scanCredential,
-		`SELECT id, target_id, username, secret_type, secret_enc, is_provisioner, created_at, rotated_at
+		`SELECT id, target_id, username, secret_type, secret_enc, is_provisioner, double_lock_holder, double_lock_verifier, double_lock_enc, created_at, rotated_at
 		 FROM credentials WHERE id = $1`, id)
 }
 
 // UpdateCredentialSecretEnc replaces a credential's encrypted secret without
-// touching rotated_at; ErrNotFound if absent.
+// touching rotated_at or DoubleLock; ErrNotFound if absent. Used only by the
+// KEK re-wrap path (-rotate-kek): the plaintext is unchanged, only which KEK
+// wraps it, so any DoubleLock (independent of the KEK entirely) stays valid.
 func (s *PGStore) UpdateCredentialSecretEnc(ctx context.Context, id int64, secretEnc string) error {
 	return execExpectingRow(ctx, s.pool, `UPDATE credentials SET secret_enc = $1 WHERE id = $2`, secretEnc, id)
 }
 
-// RotateCredentialSecret replaces the encrypted secret and stamps rotated_at;
+// RotateCredentialSecret replaces the encrypted secret, stamps rotated_at, and
+// clears any DoubleLock — the password-derived DoubleLockEnc now seals a
+// stale secret and the password to reseal a new one isn't available here;
 // ErrNotFound if absent.
 func (s *PGStore) RotateCredentialSecret(ctx context.Context, id int64, secretEnc string, rotatedAt time.Time) error {
 	return execExpectingRow(ctx, s.pool,
-		`UPDATE credentials SET secret_enc = $1, rotated_at = $2 WHERE id = $3`, secretEnc, rotatedAt.UTC(), id)
+		`UPDATE credentials SET secret_enc = $1, rotated_at = $2, double_lock_holder = '', double_lock_verifier = '', double_lock_enc = '' WHERE id = $3`,
+		secretEnc, rotatedAt.UTC(), id)
+}
+
+// SetCredentialDoubleLock enables DoubleLock on a credential; ErrNotFound if absent.
+func (s *PGStore) SetCredentialDoubleLock(ctx context.Context, id int64, holder, verifier, enc string) error {
+	return execExpectingRow(ctx, s.pool,
+		`UPDATE credentials SET double_lock_holder = $1, double_lock_verifier = $2, double_lock_enc = $3 WHERE id = $4`,
+		holder, verifier, enc, id)
+}
+
+// ClearCredentialDoubleLock disables DoubleLock on a credential; ErrNotFound if absent.
+func (s *PGStore) ClearCredentialDoubleLock(ctx context.Context, id int64) error {
+	return execExpectingRow(ctx, s.pool,
+		`UPDATE credentials SET double_lock_holder = '', double_lock_verifier = '', double_lock_enc = '' WHERE id = $1`, id)
 }
 
 // CreateTargetGrant adds a grant, populating its ID; ErrConflict if an identical
@@ -2240,7 +2258,8 @@ func scanAccessRequest(row pgx.CollectableRow) (store.AccessRequest, error) {
 // scanCredential maps one result row into a store.Credential.
 func scanCredential(row pgx.CollectableRow) (store.Credential, error) {
 	var c store.Credential
-	err := row.Scan(&c.ID, &c.TargetID, &c.Username, &c.SecretType, &c.SecretEnc, &c.Provisioner, &c.CreatedAt, &c.RotatedAt)
+	err := row.Scan(&c.ID, &c.TargetID, &c.Username, &c.SecretType, &c.SecretEnc, &c.Provisioner,
+		&c.DoubleLockHolder, &c.DoubleLockVerifier, &c.DoubleLockEnc, &c.CreatedAt, &c.RotatedAt)
 	return c, err
 }
 
