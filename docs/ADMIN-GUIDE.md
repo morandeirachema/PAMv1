@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-14 · Reflects: Phases 0–131 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-14 · Reflects: Phases 0–133 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -310,6 +310,8 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_ACCESS_ONE_TIME` | | `false` | Make **every** access request single-use (Phase 26): the first privileged use its approval admits consumes it. Requests can also opt in individually (`one_time`). |
 | `PAM_CHECKOUT_TTL_MIN` | | `30` | Credential checkout lease lifetime (minutes). |
 | `PAM_VENDOR_ATTEST_URL` | | (off) | Employment-attestation webhook consulted when a vendor contract grant is approved (Phase 29): pamv1 `POST`s `{"vendor":…,"org":…}` and the vendor-management system answers `2xx` for a currently-employed technician, so access is refused the moment their own employer offboards them. See §7. |
+| `PAM_POSTURE_ATTEST_URL` | | (off) | Live device-posture webhook, checked on every connect and every authenticated call, not just once at approval (Phase 133). See §7. |
+| `PAM_DEVICE_HEADER` | | (off) | Name of an HTTP header a trusted reverse proxy injects with a terminated client certificate's fingerprint; once set, a user with an enrolled `device_fingerprint` must present a matching value (Phase 133). See §7. |
 | `PAM_VENDOR_SWEEP_INTERVAL_MIN` | | `0` (off) | How often the sweeper cuts a vendor's **live** session once its contract grant's window closes (`vendor.session_expired`), so access ends with the contract rather than at the next connect. |
 | `PAM_OT_AIRGAP` | | `false` | Air-gapped sites. Forces the no-op alerter **and refuses to start** alongside anything that would call out of the enclave — the ITSM webhook, vendor attestation, the SIEM forwarder, Conjur, the alert webhook and `PAM_OIDC_ISSUER` — and rejects `PAM_KEK_PROVIDER=aws-kms` and `PAM_ENTRA_TENANT_ID` outright. It is a fail-closed startup gate, not a mute switch. |
 | `PAM_OT_AIRGAP_ALLOW` | | — | Comma-separated variable names you certify resolve **inside** the enclave, re-permitting them under air-gap. Without this the gate has no escape hatch, which is why an air-gapped site with an internal SIEM could not start. |
@@ -1003,6 +1005,52 @@ have no backing local-user row to hold a list, so they are unaffected in v1.
 If you sit behind a reverse proxy, `PAM_TRUSTED_PROXY_HOPS` must already be
 set correctly (§3.6) or the resolved source address will be the proxy's, not
 the operator's.
+
+### Device-aware access control (Phase 133)
+
+Two independent, opt-in checks close StrongDM's live EDR-posture gate and a
+rescoped Teleport device-identity binding — both re-checked on **every**
+connect and every authenticated call, not just at login, since either can
+change mid-session.
+
+**Live device posture.** Set `PAM_POSTURE_ATTEST_URL` to your EDR/posture
+system's webhook (CrowdStrike, Defender, SentinelOne, or anything that
+answers HTTP). pamv1 `POST`s `{"user":"<username>"}` and requires a `2xx` for
+the device to be considered healthy; anything else refuses the request. Unset
+(the default), no check ever runs. Because this is a live outbound endpoint,
+it also joins the `PAM_OT_AIRGAP` conflict list — an air-gapped deployment
+that sets it without adding it to `PAM_OT_AIRGAP_ALLOW` is refused at
+startup, the same as every other webhook this guide documents.
+
+**Device-identity binding.** Set `PAM_DEVICE_HEADER` to the name of a header
+your TLS-terminating reverse proxy injects with the client certificate's
+fingerprint (nginx's `$ssl_client_fingerprint`, or your ingress's equivalent)
+— **only if that proxy performs real mTLS and strips any client-supplied
+copy of the header first**; pamv1 trusts the value verbatim. Enroll a user's
+fingerprint the same way you set their IP allowlist:
+
+```bash
+curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/users \
+  -d '{"username":"alice","role":"user","device_fingerprint":"AA:BB:CC:..."}'
+
+# Update later — omit device_fingerprint to leave it untouched; send it
+# explicitly, even as "", to change or clear it:
+curl -H "X-API-Key: $PAM_API_KEY" -X PUT http://localhost:8080/api/users/1 \
+  -d '{"role":"user","device_fingerprint":""}'   # clears the binding
+```
+
+A user with no enrolled fingerprint is unaffected even when
+`PAM_DEVICE_HEADER` is set deployment-wide. This check reaches every REST
+call (RDP/VNC token minting, WinRM exec, account discovery, and every
+`authz`-gated route) but **not** a raw `ssh`/`psql`/`sqlcmd` connection —
+the session proxies are wire-protocol listeners with no HTTP layer for a
+reverse proxy to inject a header into, a permanent limitation of the
+approach, not a missing feature. Posture has no such gap: it covers the
+session proxies too.
+
+Break-glass is exempt from both, like every other admission gate. Neither
+check ever applies to the AI-agent broker's own tool calls (§7's
+"AI-agent access broker" below), which authenticate on a separate path.
 
 ### Safes: delegated-access containers (Phase 17)
 
@@ -2820,6 +2868,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 | 2026-07-25 | **Phases 27–31 review fixes.** A vendor grant scoped to one account no longer admits a session on another; DB step-up now also pauses a **prepared** (extended-protocol) statement, so the supervisor gate can't be dodged; broker approver-group membership drops the principal's own name (a delegated `manage_users` can't mint a user named after an approver group to self-approve); an SSH-cert issue refused for an unmanaged principal no longer burns a one-time approval |
 | 2026-07-25 | Phase 31: **identity blast radius / CIEM** — `POST /api/blast/analyze` (`read_audit`) answers "if this identity were compromised, what could it reach?" over a normalized identity graph you submit: a real AWS IAM effective-permission evaluator, toxic-combination findings (escalation, cross-provider lateral movement) and an earliest-cut remediation for each. Read-only; the ingester that builds the graph is external. See §9.8 |
 | 2026-07-25 | Phase 30: **in-session step-up** — `PAM_DB_STEPUP_FILE` marks PostgreSQL statements that **pause for a supervisor's live decision** (`GET /api/sessions/stepups`, `POST /api/sessions/{id}/stepup`) instead of killing the session; `PAM_DB_STEPUP_TTL_SEC` bounds the wait. Broker policy rules also gained numeric comparators (`gte`/`gt`/`lte`/`lt`) so a rule can gate on an amount. See §9.4 |
+| 2026-08-14 | Phase 133: **device-aware access control** — a live EDR-posture webhook (`PAM_POSTURE_ATTEST_URL`) re-checked on every connect and every authenticated call, and an optional device-identity binding (`PAM_DEVICE_HEADER` + a per-user `device_fingerprint`) trusting a reverse-proxy-injected client-certificate fingerprint on the REST surface only. Both break-glass exempt. See §7 |
 | 2026-07-25 | Phase 29: **third-party vendor access gate** — time-boxed, customer-approved contract grants for external technicians, enforced on every connect path, with a live employment-attestation webhook (`PAM_VENDOR_ATTEST_URL`), a mid-session sweeper (`PAM_VENDOR_SWEEP_INTERVAL_MIN`), a one-action offboard cascade, and a per-vendor evidence export. See §7 |
 | 2026-07-24 | Phase 28: **operator-issued SSH certificates** — an operator proves possession of their own key (`POST /api/ca/ssh/challenge` → `/sign`) and gets a short-lived cert scoped to one principal (`PAM_SSH_OPERATOR_CERT_TTL_MIN`), usable with their normal SSH client; revoke by serial and publish an OpenSSH **KRL** (`GET /api/ca/ssh/krl`) as your targets' `RevokedKeys`. See §6 |
 | 2026-07-24 | Phase 27: **AI-agent broker completion** — a `require_approval` rule's `approvers:` list is enforced at decision time (separation of duties); periodic **signed in-chain checkpoints** (`PAM_BROKER_AUDIT_CHECKPOINT_EVERY`) with signing-key rotation (`PAM_BROKER_AUDIT_SIGN_PREV`) and a JWKS at `GET /v1/audit/jwks`; a truncation floor on `GET /v1/audit/verify?min_entries=N`; **OCSF** SIEM export at `GET /api/audit/ocsf`; and the MCP SSE transport with elicitation. See §7 and §9.2 |

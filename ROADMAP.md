@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–132 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–133 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,88 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 133 — Device-aware access control (posture + client identity) ✅
+
+Second phase of the BeyondTrust/Delinea/Teleport/StrongDM batch. Closes
+StrongDM's live EDR-posture gate and a rescoped, honestly-buildable version
+of Teleport's device-identity binding — bundled because both slot into the
+same extension point (a new per-connect check in `gates.go` and the REST
+`authz` middleware, right where Phase 118's CIDR gate already sits) even
+though the two mechanisms differ.
+
+**Posture design.** A pluggable webhook, `internal/posture`, copying Phase
+29's `vendor.Attestor` shape almost exactly (`NewAttestor(url)` → `nil` when
+unconfigured, POST `{"user":...}`, non-2xx-is-failure, an 8s timeout) — but
+called on **every connect and every authenticated call**, like the CIDR
+gate itself, not once at approval time like the vendor webhook is, since
+posture (unlike employment) can change between one request and the next. A
+new gate 6 in `gates.go`'s fixed sequence (renumbering 6–15 to 7–16) and a
+matching check in `authz`, both break-glass-exempt. `PAM_POSTURE_ATTEST_URL`
+is a live outbound endpoint, so it also joins the `PAM_OT_AIRGAP` conflict
+list (`airGapConflicts` in `internal/config/config.go`) alongside the
+vendor/ITSM/SIEM/OIDC/Conjur/alert webhooks — an air-gapped deployment that
+sets it without declaring it in `PAM_OT_AIRGAP_ALLOW` is refused at startup,
+the same control every other outbound-URL knob already gets.
+
+**Device-identity design, rescoped from "TPM" to what's actually
+buildable.** pamv1 has zero client-facing TLS/mTLS termination on any of
+its three session proxies today, and no client-side story for presenting a
+hardware-backed key at all — true device attestation is its own
+multi-phase undertaking, not this one. V1 instead trusts an **optional,
+reverse-proxy-injected client-certificate fingerprint header**
+(`PAM_DEVICE_HEADER` names it; the common nginx/Envoy mTLS-terminated-
+upstream pattern), bound to a principal at enrollment time
+(`store.User.DeviceFingerprint`, migration `0037`, mirroring
+`IPAllowlist`'s exact shape — same v1 scope limit too: sourced only for a
+local bearer-token identity, since a directory-authenticated principal has
+no `store.User` row to source it from) and checked the same per-call way
+posture is. Honest about what it actually verifies (the reverse proxy did
+mTLS and pamv1 trusts its header) rather than claiming a hardware-
+attestation guarantee it can't back up alone — the doc comment on
+`Config.DeviceHeader` says this explicitly, including that pamv1 trusts the
+header's value verbatim and the reverse proxy must strip any client-
+supplied copy of it.
+
+**A real scope boundary found building this, not assumed going in:**
+device-identity is wired into the REST `authz` middleware only — **not**
+`gates.go`'s `admit()`. The three session proxies (SSH, PostgreSQL, SQL
+Server) are raw TCP/wire-protocol listeners with no HTTP layer at all, so
+there is no request for a reverse proxy to inject a header into; a
+`PAM_DEVICE_HEADER` deployment therefore covers the REST-brokered surface
+(RDP/VNC token minting, WinRM exec, account discovery, and every
+`authz`-gated call) but not a raw SSH/`psql`/`sqlcmd` connection, a
+permanent transport-level limitation rather than a corner cut. Posture has
+no such boundary — it needs no header, only the identity already resolved
+on any transport — so it covers all three proxies AND the REST surface
+symmetrically, gate 6 in `gates.go` plus the `authz` check.
+
+**RoleAgent is structurally unaffected by both**, not by a special-cased
+exemption: the broker's `ssh_exec`/`winrm_exec` tools run over
+`rotate.SSHConnector`, a separate one-shot path that never calls
+`admit()`, and an agent identity is resolved via SPIFFE SVID through
+`agentAuth`, never through `authz` at all — so neither new gate has a code
+path by which a `RoleAgent` principal could ever reach it. See
+[AGENT-THREAT-MODEL.md](docs/AGENT-THREAT-MODEL.md).
+
+**V1 scope.** Both checks are opt-in per deployment (unset = today's
+behavior, unchanged) and per-principal for device-identity (an empty
+`DeviceFingerprint` is unbound even when the header mechanism is globally
+enabled). No live interop test against a real CrowdStrike/Duo/Defender/
+SentinelOne account — proven against a fake webhook, matching how Phase
+29's vendor webhook itself is tested, plus a real in-process sshd
+end-to-end (`TestPostureGateProxy`).
+
+New env vars `PAM_POSTURE_ATTEST_URL`, `PAM_DEVICE_HEADER`. New audit
+reasons `reason:posture-check-failed` and `reason:device-not-trusted`
+under the existing `authz.denied`/`session.denied`/`db.session.denied`
+action families — no new action name.
+
+**Critical files:** `internal/posture/` (new), `internal/proxy/gates.go`,
+`internal/api/server.go` (`authz`), `internal/auth/auth.go` (`Principal`),
+`internal/store/store.go` (`User.DeviceFingerprint`), `internal/api/users.go`,
+`internal/config/config.go` (incl. the air-gap conflict list), all three
+proxy `Config` structs, `cmd/pam-server/main.go`, new migration `0037`.
 
 ## Phase 132 — v0.29.0 ✅
 

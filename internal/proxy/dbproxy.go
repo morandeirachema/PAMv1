@@ -36,6 +36,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/logging"
+	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
 	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/session"
@@ -51,7 +52,10 @@ type DBConfig struct {
 	RequireApproval bool              // global 4-eyes/OT gate (per-target also applies)
 	// TicketCheck re-validates the admitting request's ITSM ticket at connect
 	// time rather than at request time (PAM_TICKET_REVALIDATE, Phase 60).
-	TicketCheck      store.TicketChecker
+	TicketCheck store.TicketChecker
+	// PostureAttestor (optional) validates a user's live device posture on
+	// every connect (Phase 133); nil disables posture checking.
+	PostureAttestor  *posture.Attestor
 	AllowedProtocols []string // protocol allowlist (must include "postgres")
 	RequireRecording bool     // refuse a session that cannot be recorded
 	DialTimeout      time.Duration
@@ -108,6 +112,7 @@ type DBProxy struct {
 	sessions     *session.Registry
 	requireApprv bool
 	ticketCheck  store.TicketChecker
+	posture      *posture.Attestor
 	onBreakGlass func(ctx context.Context, actor, detail string)
 	allowedProto map[string]bool
 	requireRec   bool
@@ -158,6 +163,7 @@ func NewDB(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg DBConfig
 		sessions:     cfg.Sessions,
 		requireApprv: cfg.RequireApproval,
 		ticketCheck:  cfg.TicketCheck,
+		posture:      cfg.PostureAttestor,
 		onBreakGlass: cfg.OnBreakGlass,
 		allowedProto: protocolSet(cfg.AllowedProtocols),
 		requireRec:   cfg.RequireRecording,
@@ -185,6 +191,7 @@ func NewDB(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg DBConfig
 		requireApprv: d.requireApprv,
 		ticketCheck:  d.ticketCheck,
 		sessions:     d.sessions,
+		posture:      d.posture,
 	}
 	d.pol = sqlPolicy{
 		guard:       d.guard,
@@ -650,6 +657,8 @@ func (d *DBProxy) refuse(ctx context.Context, backend *pgproto3.Backend, res adm
 		d.deny(ctx, backend, actor, login, "your role may not open sessions")
 	case gateIPAllowlist:
 		d.deny(ctx, backend, actor, login, "this account may not connect from this network")
+	case gatePosture:
+		d.deny(ctx, backend, actor, login, "your device failed its posture check")
 	case gateResolve:
 		d.deny(ctx, backend, actor, login, res.reason)
 	case gateProtocolMatch:

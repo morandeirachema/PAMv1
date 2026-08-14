@@ -19,12 +19,15 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
+	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/store/memstore"
@@ -163,6 +166,34 @@ func TestAdmitDeniesEachGate(t *testing.T) {
 				return p, baseReq(p)
 			},
 			wantKind: admitDenied, wantGate: gateRoleConnect,
+		},
+		{
+			name: "device posture check fails",
+			build: func(t *testing.T, env *testEnv) (*auth.Principal, admitRequest) {
+				fail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusForbidden)
+				}))
+				t.Cleanup(fail.Close)
+				env.g.posture = posture.NewAttestor(fail.URL)
+				p := gatesUser("alice")
+				return p, baseReq(p)
+			},
+			wantKind: admitDenied, wantGate: gatePosture,
+		},
+		{
+			name: "break-glass bypasses the posture gate",
+			build: func(t *testing.T, env *testEnv) (*auth.Principal, admitRequest) {
+				fail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusForbidden)
+				}))
+				t.Cleanup(fail.Close)
+				env.g.posture = posture.NewAttestor(fail.URL)
+				p := gatesUser("alice")
+				p.BreakGlass = true
+				return p, baseReq(p)
+			},
+			wantKind: admitOK, wantGate: gateNone, wantSecret: true,
+			wantAudits: []string{"session.start"},
 		},
 		{
 			name: "target does not resolve",
