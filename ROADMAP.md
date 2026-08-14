@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–125 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–126 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -52,10 +52,11 @@ plan's last open finding**: FIDO2/WebAuthn passwordless MFA, using a
 well-audited library for the ceremony's cryptographic verification rather
 than hand-rolling CBOR/COSE parsing — a deliberate departure from this
 project's usual protocol-client posture, reasoned through explicitly in the
-phase's own entry below — released in turn as **v0.26.0 by Phase 125**, and
-with it the Wallix-weighted plan's six phases are all shipped: only Phase
-126 (portal color themes, cosmetic rather than a vendor-parity finding)
-remains. The narrative that follows traces the
+phase's own entry below — released in turn as **v0.26.0 by Phase 125**.
+**Phase 126 closes the plan's sixth and final item** — portal color themes,
+cosmetic rather than a vendor-parity finding, added to the plan after
+approval on a direct user ask for a dark palette — completing the
+Wallix-weighted plan's full run. The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2399,6 +2400,82 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 126 — Portal color themes (dark phosphor palettes) ✅
+
+Closes a direct user ask, made after the original 6-phase Wallix-weighted plan
+was approved: a new theme for the management console, specifically a dark
+one — the plan's own final item, cosmetic rather than a CyberArk/Wallix
+finding like the other five.
+
+**Verified starting point before touching anything**: `internal/web/static/index.html`
+had zero theme infrastructure — every color was a hardcoded hex literal
+inside one inline `<style>` block. `:root { color-scheme: dark; }` only tells
+the browser chrome (scrollbars, form controls) to render dark; it defines no
+palette and is not a toggle. The portal is, and has always been, a dark UI —
+so "a new dark theme" reads as *another* dark palette to choose from, not a
+light/dark switch, which is the reading this phase implements.
+
+**Token pass, behavior-preserving.** Every hardcoded color literal became a
+CSS custom property (`--bg`, `--fg`, `--fg-white`, `--fg-cyan`, `--fg-red`,
+`--fg-amber`, plus their `-glow` text-shadow companions, `--rule`,
+`--input-bg`, `--focus-bg`, `--fg-dim`, `--pane-bg`, `--scanline`), defined
+once on `:root` with the exact prior values — a mechanical refactor with zero
+visible change for anyone who never switches themes, confirmed by the
+existing console safety net (`console_check.js`) passing unmodified.
+
+**Two new palettes, same grid**, added as `[data-theme="…"]` blocks that only
+redefine those custom properties — no selector outside `:root`/`[data-theme]`
+changes, so layout, spacing, the monospace font and the scanline overlay stay
+identical across every theme:
+- `amber` — classic amber-phosphor terminal. `--fg` and `--fg-amber` trade
+  values (green becomes the accent instead of the primary glow); background
+  stays black.
+- `slate` — the theme actually asked for: a neutral, cooler dark palette
+  (light gray on near-black, `--fg-glow`'s alpha cut from `.35` to `.12`) for
+  a genuinely lower-glare feel, while every other utility color (`--fg-cyan`/
+  `--fg-red`/`--fg-amber`) is also desaturated to match rather than staying
+  saturated against a muted primary.
+- `green` (today's palette) stays the default — existing users see no change
+  unless they opt in.
+
+**Keyboard-first switching, no new backend surface.** A theme is a cosmetic
+preference, not an authorization-relevant fact, so this stays client-only:
+**F2**, wired globally (including on the sign-on screen, ahead of the
+`screen === "signon"` gate every other F-key sits behind, since dimming the
+glare is exactly as useful before login as after) cycles green → amber →
+slate → green, applying `data-theme` on `<html>` and persisting the choice in
+`localStorage`. No new store table, no new API route, no new audit event.
+The shared `fkeys()` helper's hint line now advertises `F2=Theme` on every
+screen.
+
+**Regression coverage that matches what the harness can actually check.** The
+existing JS-eval harness (`console_check.js`) measures rendered row *width* —
+a property no CSS custom property can affect — so extending it to "snapshot
+the slate theme" would test nothing real; no browser runs in that harness to
+judge contrast or overflow either. Added a new, honest Go test instead,
+`TestConsoleThemeTokensAreConsistent`: it extracts the stylesheet as text and
+proves every `var(--x)` used is defined in the base `:root`, and every
+property a `[data-theme]` block defines is a real base token — catching a
+typo'd or forgotten token name, which is the one theme-bug class actually
+checkable without a renderer. Verified the test fires by deliberately
+misspelling a `var()` reference and confirming it fails, then reverting.
+Manually rendered all three themes with a headless browser (sign-on screen,
+representative of the base/white/cyan/dim color set together) and confirmed
+green is visually unchanged and amber/slate are both legible and cohesive
+before trusting the palette values.
+
+### V1 scope, explicitly bounded
+Two new palettes (amber, slate) plus the existing green, all dark-background
+— no light theme, which would cross the project's standing "don't modernize
+the portal" line. No server-side persistence of the preference (client-only;
+a per-user stored preference is easy follow-on work, not needed to satisfy
+the ask). No change to any non-portal surface — the Phase 116 guest-viewer
+page keeps its own minimal styling, unaffected.
+
+**Critical files:** `internal/web/static/index.html` (the CSS custom-property
+refactor, the two new palettes, `cycleTheme()`, the F2 wiring),
+`internal/web/console_test.go` (`TestConsoleThemeTokensAreConsistent`).
 
 ## Phase 125 — v0.26.0 ✅
 

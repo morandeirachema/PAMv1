@@ -91,3 +91,62 @@ func TestConsoleScreensAreBounded(t *testing.T) {
 
 // writeFile is os.WriteFile with the test's usual permissions.
 func writeFile(path, content string) error { return os.WriteFile(path, []byte(content), 0o600) }
+
+// TestConsoleThemeTokensAreConsistent proves the invariant the Phase 126 color
+// themes depend on: every CSS custom property the stylesheet USES (var(--x)) is
+// DEFINED somewhere in the base :root block, and every property a [data-theme]
+// override DEFINES is a real token from that same base set — not a typo that
+// silently renders as the browser's initial value (transparent/black), and not
+// a stray new token one theme defines that the others never override, which
+// would make that theme quietly inherit a wrong color from whichever palette
+// happened to be active.
+//
+// This is a text-level check, not a rendered one: the JS-eval harness above
+// measures row *width*, which no CSS custom property can affect, so it is the
+// wrong tool for a color-token regression. No browser runs here to check
+// contrast or overflow either — this test catches the one class of theme bug
+// that is mechanically checkable without one: a token used or defined that
+// does not match the base set, letter for letter.
+func TestConsoleThemeTokensAreConsistent(t *testing.T) {
+	style := regexp.MustCompile(`(?s)<style>(.*?)</style>`).FindSubmatch(indexHTML)
+	if style == nil {
+		t.Fatal("index.html has no <style> block")
+	}
+	css := string(style[1])
+
+	rootBlock := regexp.MustCompile(`(?s):root\s*\{([^}]*)\}`).FindStringSubmatch(css)
+	if rootBlock == nil {
+		t.Fatal("no base :root { ... } block found")
+	}
+	tokenName := regexp.MustCompile(`--([a-z-]+)\s*:`)
+	defined := map[string]bool{}
+	for _, m := range tokenName.FindAllStringSubmatch(rootBlock[1], -1) {
+		defined[m[1]] = true
+	}
+	if len(defined) < 10 {
+		t.Fatalf("base :root only defines %d custom properties; the extraction is probably wrong", len(defined))
+	}
+
+	used := map[string]bool{}
+	for _, m := range regexp.MustCompile(`var\(--([a-z-]+)\)`).FindAllStringSubmatch(css, -1) {
+		used[m[1]] = true
+	}
+	for name := range used {
+		if !defined[name] {
+			t.Errorf("stylesheet uses var(--%s), which the base :root block never defines", name)
+		}
+	}
+
+	themes := regexp.MustCompile(`(?s):root\[data-theme="([a-z]+)"\]\s*\{([^}]*)\}`).FindAllStringSubmatch(css, -1)
+	if len(themes) < 2 {
+		t.Fatalf("expected at least 2 [data-theme] palettes (amber, slate), found %d", len(themes))
+	}
+	for _, th := range themes {
+		name, block := th[1], th[2]
+		for _, m := range tokenName.FindAllStringSubmatch(block, -1) {
+			if !defined[m[1]] {
+				t.Errorf("theme %q defines --%s, which is not one of the base :root tokens (typo?)", name, m[1])
+			}
+		}
+	}
+}
