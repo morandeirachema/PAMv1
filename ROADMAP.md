@@ -2413,7 +2413,7 @@ released in turn) — the next phase starts a fresh planning cycle.
 - [x] **v0.27.0** through the test-gated pipeline, rehearsed on `main` first.
   Published 2026-08-14 as `ghcr.io/morandeirachema/pamv1:0.27.0` (also
   `latest`), digest
-  `sha256:PENDING`,
+  `sha256:4988b627b762fe6760fc23ac1e9030145a1ff8b6a6600907e8d9eb88e50fbf5d`,
   **public** (anonymous pull 200, verified via the GHCR anonymous
   token-exchange flow)
 - [x] All five pins via the sweep; Helm chart `version` 0.17.0 -> **0.18.0**
