@@ -152,7 +152,7 @@
   // Per-screen data.
   let targets = [], creds = [], audit = [], sessions = [], requests = [], checkouts = [], users = [], grants = [];
   let apps = [], appGrants = [], grantsApp = 0, newApp = null;
-  let viewCred = null, grantsTarget = 0, newUser = null, mfaInfo = null, mfaEnroll = null, recoveryCodes = [], discovered = null, reconcileReport = null;
+  let viewCred = null, grantsTarget = 0, newUser = null, mfaInfo = null, mfaEnroll = null, recoveryCodes = [], discovered = null, reconcileReport = null, acctScan = null;
   let webauthnCreds = []; // Phase 124: the caller's own registered FIDO2/WebAuthn authenticators
   let profiles = [], configItems = [], configNote = "", effCfg = null, iacText = "", iacFormat = "";
   let safes = [], safeMembers = [], membersSafe = 0, safeTarget = null;
@@ -830,6 +830,15 @@
     await openUsers();
   }
 
+  // discoverAccounts runs the Phase 128 authenticated account scan on target t
+  // and opens the results screen — errors (blocked command, no credential,
+  // scan failure) are shown inline rather than navigating to an empty report.
+  async function discoverAccounts(t) {
+    try { acctScan = await api("POST", `/api/targets/${t.id}/discover-accounts`); }
+    catch (e) { say("CPF9999: " + e.message, true); return; }
+    go("acctscan");
+  }
+
   // exportAudit downloads the tamper-evident CSV export and shows its digest.
   async function exportAudit() {
     const res = await fetch("/api/audit/export?format=csv", { headers: { "X-API-Key": apiKey } });
@@ -1057,7 +1066,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
         const canConnect = can("connect");
         term.innerHTML = `${head("PAMWRKTGT", "Work with Targets")}
 Type options, press Enter.
-  <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "7=Open viewer (rdp/vnc targets)" : "", canManage ? "8=Assign to safe" : "", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
+  <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "7=Open viewer (rdp/vnc targets)" : "", canManage ? "8=Assign to safe" : "", canManage ? "9=Discover accounts (ssh/winrm)" : "", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Name</th><th>Host</th><th>Port</th><th>OS</th><th>Proto</th><th>Approval</th><th>Clip</th><th>Safe</th></tr>
@@ -1075,6 +1084,7 @@ ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add target" : ""}   F12=Cancel
               else if (o === "5") { return openGrants(t.id); }
               else if (o === "7") { return openViewer(t); }
               else if (o === "8") { return openTargetSafe(t); }
+              else if (o === "9") { return discoverAccounts(t); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
             await openTargets();
@@ -2549,6 +2559,23 @@ ${rep ? `<div class="white">Checked: ${esc(rep.checked)}   Out of sync: <span cl
 ${(rep.results || []).map((r) => `<tr><td>${esc(r.credential_id)}</td><td>${pad(r.target, 14)}</td><td>${pad(r.username, 12)}</td><td class="${r.status === "out_of_sync" ? "red" : r.status === "in_sync" ? "green" : "amber"}">${esc(r.status)}</td><td class="detail">${esc(r.detail || "")}</td></tr>`).join("")}</table>` : `<div class="cyan">Loading…</div>`}
 <div class="cyan">Remediate drift by rotating the credential (menu 2, option 7).</div>
 ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
+      },
+
+      // acctscan (Phase 128): authenticated post-login account discovery — a
+      // fixed enumeration command run over the target's own vaulted
+      // credential, cross-referenced against every credential vaulted for
+      // that target. An "unmanaged" account is one the host has but pamv1
+      // does not — nobody is rotating or auditing access to it.
+      acctscan() {
+        back = "targets";
+        const r = acctScan;
+        term.innerHTML = `${head("PAMACCTSC", "Account Discovery")}
+${r ? `<div class="white">Target: ${esc(r.target)} (${esc(r.protocol)})   Found: ${esc(r.accounts.length)}   Unmanaged: <span class="${r.unmanaged_count ? "red" : "green"}">${esc(r.unmanaged_count)}</span>   Privileged + unmanaged: <span class="${r.privileged_unmanaged_count ? "red" : "green"}">${esc(r.privileged_unmanaged_count)}</span></div>
+<table><tr><th>Account</th><th>Privileged</th><th>Managed</th></tr>
+${r.accounts.map((a) => `<tr><td>${cell(a.username, 24)}</td><td class="${a.privileged ? "amber" : ""}">${a.privileged ? "yes" : "-"}</td><td class="${r.managed[a.username] ? "green" : "red"}">${r.managed[a.username] ? "yes" : "NO"}</td></tr>`).join("")}
+</table>
+<div class="cyan indent">An unmanaged account has no vaulted pamv1 credential for this target — pamv1 is not rotating, auditing or brokering access to it.</div>` : `<div class="cyan">No scan results. Go back and run 9=Discover accounts on a target.</div>`}
+${fkeys("F3=Exit   F12=Cancel")}`;
       },
 
       audit() {
