@@ -455,7 +455,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 144 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 147 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -536,12 +536,15 @@ The 144 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/sessions` | CapReadAudit |
 | GET | `/api/sessions/stepups` | CapReadAudit |
 | DELETE | `/api/sessions/{id}` | CapManageTargets |
+| POST | `/api/sessions/{id}/resume` | CapApprove |
 | GET | `/api/sessions/{id}/share` | CapReadAudit |
 | POST | `/api/sessions/{id}/share` | CapConnect |
 | POST | `/api/sessions/{id}/share/kick` | CapManageTargets |
 | GET | `/api/sessions/{id}/share/roster` | CapReadAudit |
 | POST | `/api/sessions/{id}/stepup` | CapApprove |
 | GET | `/api/sessions/{id}/stream` | CapReadAudit |
+| GET | `/api/sessions/{id}/suspend` | CapReadAudit |
+| POST | `/api/sessions/{id}/suspend` | CapApprove |
 | POST | `/api/share-invites/{id}/approve` | CapApprove |
 | POST | `/api/share-invites/{id}/deny` | CapApprove |
 | POST | `/api/share-invites/{id}/revoke` | CapManageTargets |

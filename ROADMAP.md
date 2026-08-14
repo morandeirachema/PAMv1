@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–121 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–122 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -43,7 +43,11 @@ gaps** from the same Wallix-weighted plan: recurring access-request windows
 (reusing the campaign scheduler's proven anchor-spawns-children shape),
 configurable password-generation policy plus reuse-history enforcement, and
 checkout-lease extension up to a configured ceiling — released in turn as
-**v0.24.0 by Phase 121**. The narrative that follows traces the
+**v0.24.0 by Phase 121**. **Phase 122 closes the plan's one CyberArk-primary
+finding**: suspending (freezing input on) a live SSH session without ending
+it, reusing Phase 116's input mux directly rather than new plumbing — an
+end-to-end test caught a real gate-placement race the unit tests alone
+missed. The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2387,6 +2391,97 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 122 — Suspend (freeze input) vs. terminate a live session ✅
+
+Closes CyberArk PAM's documented suspend/resume web-service capability:
+freeze an operator's input without ending their session, then explicitly
+release it — a rung below killing them outright. Not a Wallix capability
+(verified during the original research pass — Wallix's own session-
+restriction model exposes kill/notify only), so the one CyberArk-primary
+phase in this run, and deliberately sequenced after Phase 116 to reuse its
+input mux rather than build parallel plumbing.
+
+- [x] **Built entirely on Phase 116's `ShareRegistry` mux, no new
+  subsystem.** Every interactive SSH session already opens the mux
+  unconditionally (Phase 116: "whether or not anyone ever joins"), so
+  suspend/resume needed no new per-session registration — only two new
+  gates on state that already existed. `shareSession` gains `suspended
+  bool` plus a `changed chan struct{}` that Suspend/Resume close-then-
+  replace on every actual state flip — a broadcast, not the state itself,
+  because a reader parked **inside** `muxReader`'s inner `select` (waiting
+  on the mux channel — the common case between keystrokes) has no other way
+  to be pulled out and made to re-check suspension before delivering
+  whatever it receives next. `waitResumed` (the entry gate) and the inner
+  select's own `case <-changed: continue` (the mid-wait gate) both react to
+  the same broadcast, covering both places a reader can be blocked.
+- [x] **A real bug this two-gate design exists because of, caught only by
+  the end-to-end test, not the unit tests.** The first cut gated only at
+  `Read`'s entry (`waitResumed()` before anything else) — correct in
+  isolation (`internal/session/share_test.go`'s unit tests all passed
+  against it) but wrong against the real proxy: `pump` spends nearly all
+  its idle time already blocked inside the inner `select` waiting for the
+  next mux message, not re-entering `Read` fresh, so a `Suspend` issued at
+  exactly that moment — the realistic case — had no effect until the next
+  byte happened to arrive and complete the read first. Only
+  `internal/proxy/suspend_test.go`, dialing a real in-process echo upstream
+  and asserting a genuine **absence** of delivery (not just presence, later
+  — the harder direction to prove and the one a mock would have waved
+  through), caught it. Fixed by adding the `changed` broadcast as a second
+  case in the inner select. **Reusable lesson: a gate on a reader that has
+  two blocking points (entering, and already waiting inside a nested
+  select) needs to interrupt both, and only an end-to-end test exercises
+  the second one.**
+- [x] **New `ShareRegistry.{Suspend,Resume,Suspended}`**, all nil-safe and
+  idempotent (matching `StopAccessRequestRecurrence`'s own idempotency,
+  Phase 120) — reports false only for an unknown/already-ended session,
+  never an error. `POST /api/sessions/{id}/{suspend,resume}` (`CapApprove`
+  — the same authorization-decision class as deciding a step-up) and a new
+  `GET /api/sessions/{id}/suspend` status query (`CapReadAudit`, the same
+  monitoring-read gate as the live stream) — deliberately **not** folded
+  into `GET /api/sessions`' own list response, since `ShareRegistry` is
+  explicitly replica-local (no cross-replica bus, unlike `session.LiveStore`/
+  `StepUpStore`) and a session hosted on another replica would otherwise
+  read back a silently-wrong `false` instead of an honest "not live here."
+  The suspended operator's own terminal gets a clear `Stderr` notice (Phase
+  116's existing `Notify` mechanism, unchanged) — freezing input silently
+  would look like a hang, not a policy action.
+- [x] **New audit actions** `session.suspended` / `session.resumed`.
+- [x] **Console**: the live-watch pane gains an amber "OPERATOR INPUT IS
+  SUSPENDED" banner and `F8=Suspend/Resume input` (label reflects current
+  state), gated `can("approve")`, polling status alongside its existing
+  5-second roster refresh. Extending `console_check.js` to the
+  (previously-uncovered) `sesswatch()` screen caught the same `pad`-vs-
+  `cell` class of bug found in Phases 110/118/120 — the roster's own actor
+  column, unrelated to this phase's own changes — fixed alongside. The
+  harness itself gained a small, general fix while doing this: no
+  fixture-covered screen had exercised the `stopLive()`/`liveTimer =
+  setInterval(...)` shutdown idiom several screens share before, so
+  `setInterval` is now shadowed to a no-op in the render harness — a REAL
+  timer would have kept the check's `node` process alive past the
+  synchronous render.
+- [x] **Tests**: `internal/session/share_test.go` (6 new: blocks-then-
+  delivers-on-resume proving no byte is dropped just held, idempotent both
+  directions, unknown session is inert, `Close` unblocks a reader parked
+  *inside* a suspend specifically — not just an ordinary empty-mux wait —
+  nil-registry safety); `internal/proxy/suspend_test.go` (JIT-style
+  end-to-end against a real in-process echo upstream — the test that found
+  the entry-only-gate bug above; unknown session reports false); `internal/
+  api/suspend_test.go` (HTTP round trip including the audit trail, status
+  endpoint, idempotency, the `CapApprove` gate, unknown session 404s). All
+  green under `-race`, including 10 repeated end-to-end runs with no
+  flakiness; `archgen` confirms 144 → **147** routes, no schema change (the
+  suspend flag is intentionally in-memory and replica-local, like the rest
+  of the mux it extends — no migration).
+
+**V1 scope, explicitly bounded**: SSH only, riding Phase 116's mux exactly
+— the DB proxies' own per-statement step-up (`internal/session/stepup.go`)
+is a structurally different, already-cross-replica primitive for a
+different concern (approve-then-release one statement) and was
+deliberately NOT reused directly; suspend/resume borrows its *shape*
+(atomic state + broadcast wakeup), not its code. Cluster-wide suspend
+(freezing a session hosted on another replica) is not attempted — the same
+same-replica-only bound Phase 116's own mux already carries.
 
 ## Phase 121 — v0.24.0 ✅
 

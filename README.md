@@ -147,7 +147,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–121, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–122, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 
@@ -445,7 +445,7 @@ items only; each notes what closing it would take.
 | **Authenticated post-login discovery** | Enumerate local/service accounts and flag credential exposure on hosts already reached (CyberArk DNA) | `internal/discovery` only TCP-probes for open ports pre-auth — distinct from the infra-bound "SSH-key fleet discovery at scale" above: this is a missing *capability*, not a scale problem |
 | ~~**CIDR/network-based connect authorization**~~ **✅ shipped (Phase 118)** | Gate a connection by the operator's source network | A per-user, comma-separated CIDR allowlist (`store.User.IPAllowlist`) enforced at both the REST `authz` middleware and the session-proxy `admit()` gate (SSH/PostgreSQL/SQL Server), break-glass exempt. Empty is unrestricted; directory/OIDC principals are out of v1 scope (no backing `store.User` row) |
 | ~~**Live session sharing**~~ **✅ shipped (Phase 116)** | A host in a live session generates an expiring link letting a second party join, watch and optionally control it, fully audited (a genuine Wallix differentiator) | Four-eyes request→approve `SessionShareInvite`: an internal invite redeems over SSH as `join:<token>`; an external/vendor invite is emailed with a QR code, single-use, 15-minute TTL, redeemed through a new unauthenticated guest page — never the SSH path. Multi-parallel view-control joiners; a live joined-parties roster with kick |
-| **Suspend a live session** | Freeze operator input without ending the session, as a rung below killing it | `internal/session`'s kill bus only terminates |
+| ~~**Suspend a live session**~~ **✅ shipped (Phase 122)** | Freeze operator input without ending the session, as a rung below killing it | `POST /api/sessions/{id}/suspend`/`.../resume` gate the same input mux Phase 116's session-sharing introduced — no new plumbing. Idempotent, `approve`-gated, replica-local like sharing; the operator gets a clear on-screen notice on either transition, never a silent hang |
 | ~~**Recurring / configurable-complexity policy**~~ **✅ shipped (Phase 120)** | Repeating access windows (vs. one-shot date ranges); password history/reuse prevention (vs. a fixed generator) | An approved access request with `recur_days` set auto-files a fresh (still-approval-needed) successor every N days on its own worker, reusing the certification-campaign scheduler's anchor shape; `rotate.PasswordPolicy` makes generated-password length and per-class minimums configurable, and `PAM_PASSWORD_HISTORY_COUNT` refuses to reissue one of a credential's last N rotated secrets (SHA-256 tracked, never the secret). Also closed the noted checkout-lease-extension gap: `POST /api/credentials/{id}/checkout/extend`, capped at a configured total-duration ceiling |
 
 A general-purpose X.509 certificate lifecycle manager (CyberArk's Venafi-driven

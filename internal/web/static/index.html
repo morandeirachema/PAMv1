@@ -104,6 +104,7 @@
   // parties; shareInvites/shareInviteSid back the per-session invite list;
   // newShareToken holds a just-approved INTERNAL invite's one-time token.
   let roster = [], shareInvites = [], shareInviteSid = null, newShareToken = null;
+  let watchSuspended = false; // Phase 122: current watch session's suspend status
   let recordings = [], replay = null; // replay = one loaded recording + player state
   let recSearchQuery = "", recSearchHits = null, recSearchErr = ""; // null = no search run yet
   let replaySource = "recordings"; // where F12 returns from recplay: the list, or a search that led here
@@ -242,7 +243,22 @@
   // navigating away must not resurrect it).
   async function refreshRoster(sid) {
     try { roster = await api("GET", `/api/sessions/${sid}/share/roster`); } catch (e) { roster = []; }
+    // Phase 122: piggybacks on the same 5s refresh tick rather than its own
+    // timer — one poll, two facts. A read-only auditor without CapApprove
+    // can still see status (CapReadAudit-gated), just not act on it, so this
+    // call itself must not be treated as a sign the F-key should be offered.
+    try { watchSuspended = (await api("GET", `/api/sessions/${sid}/suspend`)).suspended; } catch (e) { watchSuspended = false; }
     if (screen === "sesswatch") render();
+  }
+  // Phase 122: F8 on the watch pane toggles freeze/unfreeze based on the
+  // status this same screen already polled — one key, both directions,
+  // rather than two separate F-keys for what is really one on/off switch.
+  async function toggleSuspend() {
+    if (!watchSess) return;
+    const verb = watchSuspended ? "resume" : "suspend";
+    await api("POST", `/api/sessions/${watchSess.id}/${verb}`, {});
+    say(watchSuspended ? "SESSION RESUMED." : "SESSION SUSPENDED — operator input is now frozen.");
+    await refreshRoster(watchSess.id);
   }
   async function openShareInvites(sid) {
     shareInviteSid = sid; shareInvites = [];
@@ -492,6 +508,7 @@
     stopWatch();
     watchSess = s;
     roster = [];
+    watchSuspended = false;
     go("sesswatch");
     refreshRoster(s.id);
     const ctrl = new AbortController();
@@ -1182,18 +1199,20 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         back = "sessions";
         const s = watchSess || {};
         const canManage = can("manage_targets");
+        const canApprove = can("approve");
         term.innerHTML = `${head("PAMWCHSSN", "Watch Session (live)")}
 Session <span class="white">${esc(String(s.id).slice(0, 8))}</span>  actor <span class="white">${esc(s.actor)}</span>  target <span class="white">${esc(s.target)}</span>  proto <span class="white">${esc(s.protocol)}</span>
 <span class="cyan">View-only supervision — keystrokes are not sent. This watch is audited (session.monitor).</span>
+${watchSuspended ? `<div class="amber">*** OPERATOR INPUT IS SUSPENDED — output still flows, keystrokes do not reach the target ***</div>` : ""}
 <div id="watch-pane" class="watchpane">${esc(watchText)}</div>
 
 Joined now:${canManage ? ` (type an option, press Enter — <span class="cyan">4=Kick</span>)` : ""}
 <form id="f-list"><table>
 <tr><th>Opt</th><th>Actor</th><th>Mode</th></tr>
-${roster.map((p) => `<tr><td>${canManage ? opt(p.join_id) : ""}</td><td class="white">${pad(p.actor, 24)}</td><td class="${p.mode === "view_control" ? "amber" : "cyan"}">${esc(p.mode)}</td></tr>`).join("")}
+${roster.map((p) => `<tr><td>${canManage ? opt(p.join_id) : ""}</td><td class="white">${cell(p.actor, 24)}</td><td class="${p.mode === "view_control" ? "amber" : "cyan"}">${esc(p.mode)}</td></tr>`).join("")}
 </table>${roster.length ? "" : `<div class="cyan indent">(No one has joined this session.)</div>`}
 <input type="submit" hidden></form>
-${fkeys("F3=Exit   F5=Refresh   F6=Invite someone   F7=Session invites   F12=Stop watching")}`;
+${fkeys(`F3=Exit   F5=Refresh   F6=Invite someone   F7=Session invites${canApprove ? `   F8=${watchSuspended ? "Resume" : "Suspend"} input` : ""}   F12=Stop watching`)}`;
         const pane = document.getElementById("watch-pane");
         if (pane) pane.scrollTop = pane.scrollHeight;
         document.getElementById("f-list").onsubmit = async (ev) => {
@@ -2871,7 +2890,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
       else if (k === "F5") { const r = refreshers[screen]; if (r) await r(); else render(); }
       else if (k === "F6") { if (screen === "effective") await exportIaC("env"); else if (screen === "audit") await verifyChain(); else { const a = adders[screen]; if (a) a(); } }
       else if (k === "F7") { if (screen === "effective") await exportIaC("helm"); else if (screen === "audit") await fetchAuditHead(); else if (screen === "campaigns" && can("approve")) await openMyQueue(); else if (screen === "sesswatch" && watchSess) await openShareInvites(watchSess.id); }
-      else if (k === "F8") { if (screen === "effective") await exportIaC("terraform"); else if (screen === "audit") await openNIS2Report(); }
+      else if (k === "F8") { if (screen === "effective") await exportIaC("terraform"); else if (screen === "audit") await openNIS2Report(); else if (screen === "sesswatch" && watchSess && can("approve")) await toggleSuspend(); }
       else if (k === "F9") { if (screen === "audit") await exportAudit(); else if (screen === "users") await reconcileIdentities(); else if (screen === "sshcerts") await download("/api/ca/ssh/krl", "pamv1-revoked-certs.krl", "KRL"); else if (screen === "nis2report") await download("/api/compliance/nis2" + (nis2Query() ? "?" + nis2Query() : ""), "pamv1-nis2-report.json", "NIS2 REPORT"); }
       else if (k === "F10") { if (screen === "audit") await download("/api/audit/ocsf", "pamv1-audit-ocsf.json", "OCSF"); }
       else if (k === "F12") { go(back); }
