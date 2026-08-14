@@ -89,6 +89,61 @@ func TestWinRMRunCommandBlocked(t *testing.T) {
 	}
 }
 
+// TestWinRMRunCommandAllowList proves Phase 131's allow-mode on the shared
+// guardCommand path: an allow-listed command runs, one matching neither list
+// is refused (never denylisted, but not on the allow-list either), and a
+// command matching both lists is still refused — deny wins.
+func TestWinRMRunCommandAllowList(t *testing.T) {
+	fake := &fakeWinRM{result: winrm.Result{Stdout: "ok", ExitCode: 0}}
+	srv, st := newTestServerOpts(t, nil, api.Options{
+		WinRM:             fake,
+		RecordingDir:      t.TempDir(),
+		CommandGuard:      denyGuard(t, `(?i)format\s+c:`),
+		CommandAllowGuard: denyGuard(t, `^whoami$`, `(?i)format\s+c:`),
+	})
+
+	_, data := do(t, srv, http.MethodPost, "/api/targets", testAPIKey, map[string]any{
+		"name": "win-allow", "host": "10.0.0.5", "port": 5986, "os_type": "windows", "protocol": "winrm",
+	})
+	targetID := int64(jsonMap(t, data)["id"].(float64))
+	if code, body := do(t, srv, http.MethodPost, "/api/credentials", testAPIKey, map[string]any{
+		"target_id": targetID, "username": "Administrator", "secret": "vaulted-pw",
+	}); code != http.StatusCreated {
+		t.Fatalf("seed credential: %d %s", code, body)
+	}
+	runURL := fmt.Sprintf("/api/targets/%d/winrm", targetID)
+
+	// Allow-listed: runs.
+	if code, body := do(t, srv, http.MethodPost, runURL, testAPIKey,
+		map[string]any{"command": "whoami"}); code != http.StatusOK {
+		t.Fatalf("allow-listed command: status %d body %s, want 200", code, body)
+	}
+	if fake.gotCmd != "whoami" {
+		t.Fatalf("runner got %q, want whoami", fake.gotCmd)
+	}
+
+	// Matches neither list: refused, even though it was never denylisted.
+	if code, body := do(t, srv, http.MethodPost, runURL, testAPIKey,
+		map[string]any{"command": "ipconfig /all"}); code != http.StatusForbidden {
+		t.Fatalf("not-on-allow-list command: status %d body %s, want 403", code, body)
+	}
+	if !blockedAudit(t, st, "win-allow", "not-allowed") {
+		t.Fatal("no command.blocked(not-allowed) audit event")
+	}
+
+	// Matches BOTH lists: deny must still win.
+	if code, body := do(t, srv, http.MethodPost, runURL, testAPIKey,
+		map[string]any{"command": "format C: /q"}); code != http.StatusForbidden {
+		t.Fatalf("deny-must-win command: status %d body %s, want 403", code, body)
+	}
+	if !blockedAudit(t, st, "win-allow", `(?i)format\s+c:`) {
+		t.Fatal("no command.blocked audit event for the deny-pattern match")
+	}
+	if fake.gotCmd != "whoami" {
+		t.Fatalf("a refused command reached the target; runner last saw %q", fake.gotCmd)
+	}
+}
+
 // TestBrokerWinRMCommandBlocked proves an AI agent gets the same treatment as a
 // human: the broker's winrm_exec shares execWinRM, so the denylist refuses the
 // call before any credential is decrypted.

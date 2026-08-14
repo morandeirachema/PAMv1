@@ -65,6 +65,41 @@ func TestGuard(t *testing.T) {
 	}
 }
 
+// TestGuardAllowed proves Allowed reads the same compiled pattern set Blocked
+// does (built via the same New/ParseDeny loader — an allow-list is just a
+// Guard value used the other way round), and that a nil Guard allows nothing,
+// mirroring Blocked's "nil blocks nothing" — the opposite default, on purpose,
+// since an allow-list's whole point is to be restrictive once configured.
+func TestGuardAllowed(t *testing.T) {
+	g, err := New([]string{
+		"^service\\s+nginx\\s+(status|restart)$",
+		"^df\\s+-h$",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	cases := []struct {
+		cmd     string
+		allowed bool
+	}{
+		{"service nginx status", true},
+		{"service nginx restart", true},
+		{"df -h", true},
+		{"rm -rf /", false},
+		{"service nginx stop", false}, // not in the (status|restart) alternation
+	}
+	for _, c := range cases {
+		if got := g.Allowed(c.cmd); got != c.allowed {
+			t.Errorf("Allowed(%q) = %v, want %v", c.cmd, got, c.allowed)
+		}
+	}
+
+	var nilGuard *Guard
+	if nilGuard.Allowed("df -h") {
+		t.Fatal("nil guard must not allow anything")
+	}
+}
+
 // TestParseDeny proves the deny-file loader keeps every line verbatim (New is
 // where comments/blank handling and compilation happen) and round-trips into a
 // working guard — the PAM_COMMAND_DENY_FILE path main.go uses.

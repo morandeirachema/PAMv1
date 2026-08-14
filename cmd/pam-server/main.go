@@ -884,6 +884,28 @@ func run() error {
 		log.Info("command control enabled", "patterns", cmdGuard.Size())
 	}
 
+	// Command allow-list (Phase 131): once configured, narrows every path
+	// cmdGuard already covers to ONLY the listed commands — deny still wins
+	// when both would match. Same file format, same fail-loud-on-bad-pattern
+	// loading as the deny file; a separate *cmdguard.Guard value, not a mode
+	// flag on cmdGuard, so a deployment that never sets this stays exactly
+	// deny-only.
+	var cmdAllowGuard *cmdguard.Guard
+	if cfg.CommandAllowFile != "" {
+		allowBytes, aerr := os.ReadFile(cfg.CommandAllowFile)
+		if aerr != nil {
+			return fmt.Errorf("command allow file %q: %w", cfg.CommandAllowFile, aerr)
+		}
+		cmdAllowGuard, aerr = cmdguard.New(cmdguard.ParseDeny(string(allowBytes)))
+		if errors.Is(aerr, cmdguard.ErrNoPatterns) {
+			return fmt.Errorf("command allow file %q yielded no usable patterns; PAM_COMMAND_ALLOW_FILE is set, so refusing to start without the control it asks for", cfg.CommandAllowFile)
+		}
+		if aerr != nil {
+			return fmt.Errorf("command allow file %q: %w", cfg.CommandAllowFile, aerr)
+		}
+		log.Info("command allow-list enabled", "patterns", cmdAllowGuard.Size())
+	}
+
 	// SFTP path policy (Phase 51): the same regex-denylist engine, matched against
 	// file paths instead of commands, so one semantic covers both. Fail-loud on a
 	// bad pattern — an operator who configured a path deny and got none would not
@@ -1128,6 +1150,7 @@ func run() error {
 		RDPClipboard:            cfg.RDPClipboard,
 		AuthRatePerMin:          cfg.AuthRatePerMin,
 		CommandGuard:            cmdGuard,
+		CommandAllowGuard:       cmdAllowGuard,
 		TrustedProxyHops:        cfg.TrustedProxyHops,
 		RevealDisabled:          cfg.RevealDisabled,
 		BreakGlassThreshold:     cfg.BreakGlassThreshold,
@@ -1313,6 +1336,7 @@ func run() error {
 			RequireSupervision:   cfg.RequireSupervision,
 			SupervisionTimeout:   cfg.SupervisionTimeout,
 			CommandGuard:         cmdGuard,
+			CommandAllowGuard:    cmdAllowGuard,
 			Live:                 liveHub,
 			Shares:               shares,
 			CA:                   sshCA,
@@ -1396,6 +1420,7 @@ func run() error {
 			OnSessionEnd:         dbOnSessionEnd,
 			OnBreakGlass:         handler.NoteBreakGlassSignal,
 			CommandGuard:         cmdGuard,
+			CommandAllowGuard:    cmdAllowGuard,
 			Live:                 liveHub,
 			AuthRatePerMin:       cfg.ProxyAuthRatePerMin,
 			MaxRecordingBytes:    maxRecBytes,
@@ -1440,6 +1465,7 @@ func run() error {
 			OnSessionEnd:         msOnSessionEnd,
 			OnBreakGlass:         handler.NoteBreakGlassSignal,
 			CommandGuard:         cmdGuard,
+			CommandAllowGuard:    cmdAllowGuard,
 			Live:                 liveHub,
 			AuthRatePerMin:       cfg.ProxyAuthRatePerMin,
 			MaxRecordingBytes:    maxRecBytes,

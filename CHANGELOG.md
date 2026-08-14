@@ -9,6 +9,16 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [Unreleased]
+
+### Added
+
+- **Command allow-listing.** `PAM_COMMAND_ALLOW_FILE` (sibling to the
+  existing `PAM_COMMAND_DENY_FILE`) narrows every command-control path —
+  SSH `exec`, WinRM, SQL statements, the broker's `ssh_exec`/`winrm_exec`
+  tools — to only the listed patterns; deny still wins when both match.
+  Closes the Delinea SSH Command Menus gap. New `cmdguard.Guard.Allowed`.
+
 ## [0.28.0] — 2026-08-14
 
 A minor: two new capabilities. Schema change (migration `0036`).
