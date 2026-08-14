@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–122 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–123 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -47,7 +47,7 @@ checkout-lease extension up to a configured ceiling — released in turn as
 finding**: suspending (freezing input on) a live SSH session without ending
 it, reusing Phase 116's input mux directly rather than new plumbing — an
 end-to-end test caught a real gate-placement race the unit tests alone
-missed. The narrative that follows traces the
+missed — released in turn as **v0.25.0 by Phase 123**. The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2391,6 +2391,32 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 123 — v0.25.0 ✅
+
+Releases Phase 122 (suspend vs. terminate a live session) — a genuine new
+capability, so this is a **minor**, not a patch. No schema change — suspend
+state is in-memory only, replica-local like Phase 116's sharing it builds on.
+
+- [x] **v0.25.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-14 as `ghcr.io/morandeirachema/pamv1:0.25.0` (also
+  `latest`), digest
+  `sha256:PENDING`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow)
+- [x] All five pins via the sweep; Helm chart `version` 0.15.0 -> **0.16.0**
+  (minor, alongside the `appVersion` minor)
+- [x] Both READMEs restated, including a stale `(0–121)` in README.es.md's
+  roadmap-table intro that had drifted from its own English sibling's
+  deliberately-frozen `(0–94)` — the table itself has said "stops at 61 to
+  stay readable" on both sides since Phase 95's currency pass; only the
+  Spanish header had kept climbing after that note was written
+- [x] `docs/README.md`'s currency line and `docs/NIS2-COMPLIANCE.md`'s
+  compliance-evidence row (a documented recurring staleness point) both
+  caught proactively
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging:
+  `gofmt`, `go vet`, `staticcheck`, `gosec`, `govulncheck`, `go test -race
+  ./...`, `go run ./cmd/archgen` (144 -> 147 routes, no schema drift)
 
 ## Phase 122 — Suspend (freeze input) vs. terminate a live session ✅
 

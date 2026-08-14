@@ -11,6 +11,10 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-08-14
+
+A minor: one new capability. No schema change.
+
 ### Added
 
 - **Suspend vs. terminate a live session.** `POST /api/sessions/{id}/suspend`/
