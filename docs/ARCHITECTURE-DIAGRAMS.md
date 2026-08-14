@@ -64,6 +64,7 @@ flowchart LR
     n_session[session]
   end
   subgraph n_Other["Other"]
+    n_accountscan[accountscan]
     n_analytics[analytics]
     n_auditfmt[auditfmt]
     n_auditfwd[auditfwd]
@@ -87,6 +88,7 @@ flowchart LR
   n_alert --> n_auditfmt
   n_alert --> n_logging
   n_analytics --> n_store
+  n_api --> n_accountscan
   n_api --> n_agentid
   n_api --> n_alert
   n_api --> n_analytics
@@ -467,7 +469,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 153 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 154 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -568,6 +570,7 @@ The 153 routes registered on the API mux, with the capability or guard each enfo
 | DELETE | `/api/targets/{id}` | CapManageTargets |
 | GET | `/api/targets/{id}` | CapReadInventory |
 | PUT | `/api/targets/{id}` | CapManageTargets |
+| POST | `/api/targets/{id}/discover-accounts` | CapManageTargets |
 | GET | `/api/targets/{id}/grants` | CapManageTargets |
 | POST | `/api/targets/{id}/grants` | CapManageTargets |
 | DELETE | `/api/targets/{id}/grants/{gid}` | CapManageTargets |

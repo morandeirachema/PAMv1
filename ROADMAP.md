@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–127 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–128 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -57,7 +57,14 @@ phase's own entry below — released in turn as **v0.26.0 by Phase 125**.
 cosmetic rather than a vendor-parity finding, added to the plan after
 approval on a direct user ask for a dark palette — completing the
 Wallix-weighted plan's full run, released in turn as **v0.27.0 by Phase
-127**. The narrative that follows traces the
+127**. With that plan closed, **Phase 128 returns to the original
+CyberArk/Wallix gap-research backlog's remaining item**: authenticated
+post-login account discovery — a fixed, read-only enumeration command run
+over a target's own vaulted credential (never the live interactive session),
+parsed by a new pure `internal/accountscan` package and cross-referenced
+against every credential pamv1 already vaults for that target, so a
+login-capable account the host has but pamv1 doesn't track comes back
+`"managed":false`, CyberArk DNA-style. The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2401,6 +2408,82 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 128 — Authenticated post-login account discovery ✅
+
+With the Wallix-weighted plan (116–126) fully released as of Phase 127,
+returns to the original CyberArk/Wallix competitive-research backlog's
+remaining item (see [[cyberark-wallix-gap-research]] in memory, or
+README.md's Tier-5 table before this phase): CyberArk DNA enumerates
+local/service accounts and flags credential exposure on hosts already
+reached. `internal/discovery` (Phase 7) only ever TCP-probed for reachable
+management ports, pre-auth — this is the authenticated counterpart.
+
+**New pure package, `internal/accountscan`.** `ParseUnixAccounts` extracts
+login-capable accounts from `/etc/passwd` text (root, or uid ≥ 1000 on the
+Debian/Ubuntu convention this project's own OVA and Docker images use;
+system accounts and nologin shells are skipped as noise). `ParseWindowsAccounts`
+extracts `net user`'s fixed-width account listing and cross-marks each
+against a `net localgroup Administrators` member listing. Neither function
+does any I/O or touches the store — both are unit-tested directly against
+fixed sample text, including a degraded case (the admins listing failed or
+is empty: accounts still come back, just none marked privileged, rather than
+losing the whole scan).
+
+**New `POST /api/targets/{id}/discover-accounts` (`manage_targets`).** Loads
+the target's first vaulted credential, decrypts it just-in-time
+(`vault.Decrypt`/`store.CredentialAAD`, the same call every other secret-use
+path makes), and runs the fixed command over a **fresh, one-shot** connection
+— `rotate.SSHConnector.Exec` for SSH, `winrm.Runner.Run` for WinRM — the
+exact shape the broker's own `ssh_exec`/`winrm_exec` tools and
+`rotate`'s own reconciliation already use, never the live interactive
+session (reusing that would need new plumbing with no existing precedent).
+Every discovered username is cross-referenced against **all** credentials
+already vaulted for that target, not just the one used to authenticate the
+scan — an account with no match comes back `"managed":false`, the finding
+this phase exists to surface.
+
+**Every command goes through `guardCommand` first**, the same chokepoint
+every other discrete pamv1-run command passes through (Phase 38's "every
+path where a discrete command is visible obeys one policy") — pamv1's own
+fixed literal commands are not exempt from an operator-configured deny
+pattern, proven by a dedicated test that configures a deny pattern matching
+`cat /etc/passwd` and confirms the scan is refused, not silently bypassed.
+
+**Deliberately not built on `execWinRM`.** That existing helper (shared by
+the REST WinRM endpoint and the broker's `winrm_exec` tool) couples command
+execution to the live-session registry, `PAM_REQUIRE_RECORDING`, and
+live-watch publishing (`s.live.Publish`) — correct for a supervised,
+recorded operator session, wrong for a `manage_targets` background scan that
+isn't a session at all. This phase calls `guardCommand`/`vault.Decrypt`/
+`winrm.Run` directly instead — the same underlying primitives, with none of
+the session/recording coupling `execWinRM` exists to provide.
+
+**V1 scope, explicitly bounded.** SSH and WinRM only — RDP/VNC/PostgreSQL/
+SQL Server have no discrete command-execution surface pamv1 already speaks.
+Unix privilege detection is UID-based only (root); group-membership
+awareness (sudo/wheel) is a reasonable follow-on, not attempted here. A
+target needs at least one already-vaulted credential to authenticate the
+scan itself — there is no bootstrap path around that, matching every other
+credential-using feature in this codebase.
+
+**Console:** menu 1 (*Work with Targets*), option **9=Discover accounts**
+(shown to `manage_targets` holders) opens a new `acctscan` results screen —
+account name, privileged (amber if yes), managed (green/red). Extending
+`console_check.js` to this new screen used `cell()` (bounded) for the
+account-name column from the very first commit, rather than `pad()`
+(unbounded) — the class of bug found and fixed in Phases 110/118/120×2/122
+this session, this time avoided rather than caught after the fact.
+
+New audit actions `target.accounts_scanned`/`target.accounts_scan_failed`
+(§5), both plain `s.audit` — informational activity logging, the same tier
+as `winrm.error`, not the fail-closed tier `credential.decrypt_failed` sits
+in. No schema change; store surface unchanged; `archgen` confirms +1 route.
+
+**Critical files:** `internal/accountscan/accountscan.go` (new),
+`internal/api/accountscan_handlers.go` (new), `internal/api/server.go`
+(route registration), `internal/web/static/index.html` (`acctscan()` screen,
+option 9, `discoverAccounts()`), `internal/web/testdata/console_check.js`.
 
 ## Phase 127 — v0.27.0 ✅
 

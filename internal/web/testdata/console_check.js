@@ -220,6 +220,19 @@ const screens = [
                         transports: long ? LONGNAME : "usb,nfc", created_at: "2026-08-08T12:00:00Z" }],
     }),
   },
+  {
+    name: "acctscan",
+    src: /\n {6}acctscan\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      // privileged/managed are booleans (fixed-width by construction, "yes"/
+      // "-"/"NO"); username is the one genuinely free-text field.
+      acctScan: {
+        target: long ? LONGNAME : "web-01", protocol: "ssh",
+        accounts: [{ username: long ? LONGNAME : "deploy", privileged: false }],
+        managed: {}, unmanaged_count: 1, privileged_unmanaged_count: 0,
+      },
+    }),
+  },
 ];
 
 // --- render ------------------------------------------------------------------

@@ -9,6 +9,18 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [Unreleased]
+
+### Added
+
+- **Authenticated post-login account discovery.** `POST
+  /api/targets/{id}/discover-accounts` (`manage_targets`) dials an ssh/winrm
+  target with its own vaulted credential and runs a fixed, read-only
+  enumeration command, then cross-references every discovered account name
+  against every credential already vaulted for that target — an account
+  with no match comes back unmanaged, the CyberArk-DNA-style finding.
+  New `internal/accountscan` package; console menu 1, option 9.
+
 ## [0.27.0] — 2026-08-14
 
 A minor: one new capability. No schema change.

@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-14 · Reflects: Phases 0–126 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), and selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-14 · Reflects: Phases 0–128 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), and authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -548,6 +548,35 @@ curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/discovery/sc
   -d '{"hosts":["10.0.0.5","10.0.0.6"],"ports":[22,3389,5986],"create":true}'
 # → {"candidates":[{"host":"10.0.0.5","port":22,"protocol":"ssh",...}],"created":[...]}
 ```
+
+**Authenticated post-login account discovery (Phase 128).** Discovery above only
+probes reachability — it never authenticates. This is the authenticated
+counterpart: dials an `ssh` or `winrm` target with its *own* first vaulted
+credential and runs a fixed, read-only enumeration command (`cat /etc/passwd`
+on SSH; `net user` + `net localgroup Administrators` on WinRM), then
+cross-references every discovered account name against **every** credential
+already vaulted for that target. An account with no matching credential comes
+back `"managed":false` — CyberArk DNA-style: a login-capable local or service
+account the host has, that pamv1 is not tracking, rotating or auditing access
+to. `manage_targets`, not `connect` — this is a management action, not a
+brokered session, so it does not touch the live-session registry or recording
+requirements. The command itself still goes through the command-deny policy
+(`PAM_COMMAND_DENY_FILE`) like every other discrete command pamv1 runs:
+
+```bash
+curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/targets/1/discover-accounts
+# → {"target":"web-01","protocol":"ssh","scanned_at":"...",
+#    "accounts":[{"username":"root","privileged":true},{"username":"deploy","privileged":false}],
+#    "managed":{"deploy":true},"unmanaged_count":1,"privileged_unmanaged_count":1}
+```
+
+Console: menu 1 (*Work with Targets*), option **9=Discover accounts**
+(ssh/winrm targets only) opens a results screen listing every account found,
+whether it is privileged, and whether pamv1 manages it. Scope: SSH and WinRM
+only (RDP/VNC/PostgreSQL/SQL Server have no equivalent shell command surface);
+Unix privilege detection is UID-based only (root, or a group-membership-aware
+follow-on is not attempted in v1); a target needs at least one already-vaulted
+credential to authenticate the scan itself.
 
 ### Zero Standing Privilege: ephemeral SSH certificates (Phase 22)
 
@@ -2674,6 +2703,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-14 | **Phase 128 — authenticated post-login account discovery.** Returns to the original CyberArk/Wallix competitive-research backlog's remaining item now that the Wallix-weighted plan (116–126) is closed: enumerate local/service accounts on a target pamv1 already holds a credential for, and flag ones with no matching vaulted credential (CyberArk DNA-style). New `POST /api/targets/{id}/discover-accounts` (`manage_targets`): dials fresh with the target's first credential (SSH: `cat /etc/passwd`; WinRM: `net user` + `net localgroup Administrators`, both through `guardCommand` like every other discrete command pamv1 runs), parses with the new pure `internal/accountscan` package, and cross-references every found username against **all** the target's vaulted credentials — `"managed":false` is the finding. Deliberately not built on `execWinRM` (which drags in the live-session registry, recording requirements and vendor gating meant for a supervised operator session) — a lean, dedicated path reusing only `guardCommand`/`vault.Decrypt`/`sshConnector.Exec`/`winrm.Run` directly. Console: menu 1, option **9=Discover accounts**. New audit actions `target.accounts_scanned`/`target.accounts_scan_failed`. No schema change; store surface unchanged; route count +1. See "Authenticated post-login account discovery" above |
 | 2026-08-14 | **Phase 126 — portal color themes.** Every hardcoded color in the console's inline stylesheet became a CSS custom property on `:root` (exact values preserved); two new `[data-theme="amber"\|"slate"]` blocks redefine only those tokens, so layout/spacing/font/scanlines are identical across all three palettes. **F2** cycles the theme client-side (`localStorage`, no login required) — no new store table, route or audit event, since a color preference isn't an authorization-relevant fact. `TestConsoleThemeTokensAreConsistent` guards token-name consistency between the base palette and every theme override. No schema/route change. |
 | 2026-08-14 | **Phase 124 — FIDO2/WebAuthn passwordless MFA.** A second, independent second-factor type alongside TOTP — either alone satisfies MFA. `PAM_WEBAUTHN_RP_ID`/`_RP_ORIGIN` (presence enables it, restart-only) turn it on; self-service `POST /api/webauthn/register/{begin,finish}` (any signed-in identity, and an enrollment-only session too) registers a key, `GET`/`DELETE /api/webauthn/credentials{,/{id}}` manage them. Login for a WebAuthn-enrolled user with no confirmed TOTP is necessarily two calls, not one — password-only `POST /api/login` returns a narrow, 5-minute `MFAPending` token good for nothing but `POST /api/webauthn/login/{begin,finish}`, which the console drives automatically. A user may register more than one key; public keys are stored in the clear (not a secret, unlike the TOTP secret). New migration `0035` (`webauthn_credentials`, `mfa_webauthn_challenges`); store surface 164 → 171. New audit actions `mfa.webauthn_registered`/`_register_failed`/`_deleted`. See the "Multi-factor authentication (WebAuthn, Phase 124)" section above |
 | 2026-08-14 | **Phase 122 — suspend vs. terminate a live session.** `POST /api/sessions/{id}/suspend`/`.../resume` (`approve`) freeze and unfreeze an operator's input without ending the session, riding Phase 116's session-sharing input mux rather than new plumbing; `GET .../suspend` (`read_audit`) reports current state, 404ing if the session isn't live on this replica. Both actions are idempotent, and the operator gets a `Stderr` banner the instant either fires — freezing input silently would look like a hang, not a policy action. Replica-local, like sharing: no cross-replica bus yet. Console: live-watch pane shows an amber *SUSPENDED* banner; **F8** toggles for anyone holding `approve`. New audit actions `session.suspended`/`session.resumed`; no new migration (suspend state is in-memory only). See §9.4d |

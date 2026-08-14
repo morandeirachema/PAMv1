@@ -807,6 +807,11 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/targets/{id}/grants", s.authz(auth.CapManageTargets, s.listTargetGrants))
 	s.mux.Handle("DELETE /api/targets/{id}/grants/{gid}", s.authz(auth.CapManageTargets, s.deleteTargetGrant))
 	s.mux.Handle("PUT /api/targets/{id}/safe", s.authz(auth.CapManageTargets, s.setTargetSafe))
+	// Authenticated post-login account discovery (Phase 128): enumerate local/
+	// service accounts over the target's own vaulted credential and flag ones
+	// with no matching pamv1 credential. A management action, not a connect
+	// action — CapManageTargets, not CapConnect.
+	s.mux.Handle("POST /api/targets/{id}/discover-accounts", s.authz(auth.CapManageTargets, s.discoverAccounts))
 
 	// Safes (Phase 17): named containers grouping targets with delegated members.
 	// Membership management is open to inventory readers so a delegated can_manage
