@@ -11,6 +11,14 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Added
+
+- **Portal color themes.** Every hardcoded color in the management console's
+  stylesheet became a CSS custom property; two new dark palettes (`amber`,
+  `slate`) sit alongside the existing green. Press **F2** anywhere in the
+  portal to cycle between them — a client-only preference persisted in
+  `localStorage`, no new store table, route or audit event.
+
 ## [0.26.0] — 2026-08-14
 
 A minor: one new capability. Schema change (migration `0035`).
