@@ -31,7 +31,7 @@ spec:
         - name: pam-server
           # Pin to an immutable tag (or @sha256 digest) — a security appliance
           # must not track a mutable :latest.
-          image: ghcr.io/morandeirachema/pamv1:0.29.0
+          image: ghcr.io/morandeirachema/pamv1:0.30.0
           args: ["-healthcheck=false"]
           ports:
             - { containerPort: 8080, name: http }
