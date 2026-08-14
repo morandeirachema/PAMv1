@@ -11,6 +11,10 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+## [0.26.0] — 2026-08-14
+
+A minor: one new capability. Schema change (migration `0035`).
+
 ### Added
 
 - **FIDO2/WebAuthn passwordless MFA.** A second, independent second-factor
