@@ -2409,7 +2409,7 @@ capability, so this is a **minor**, not a patch. Schema change: migration
 - [x] **v0.26.0** through the test-gated pipeline, rehearsed on `main` first.
   Published 2026-08-14 as `ghcr.io/morandeirachema/pamv1:0.26.0` (also
   `latest`), digest
-  `sha256:PENDING`,
+  `sha256:e74508f8d7731065d52a98d5079924797a9a9512e27cf354a97cd9f6f4681494`,
   **public** (anonymous pull 200, verified via the GHCR anonymous
   token-exchange flow)
 - [x] All five pins via the sweep; Helm chart `version` 0.16.0 -> **0.17.0**
