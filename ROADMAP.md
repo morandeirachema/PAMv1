@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–129 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–130 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -72,7 +72,9 @@ session ends, proven against a real Postgres wire-protocol exchange — with
 two exclusions decided *before* writing code, not discovered after: RDP has
 no equivalent (Guacamole's own documentation confirms no certificate-based
 RDP auth parameter exists), and SQL Server is deferred (`internal/tds` has
-no client-side response-token reader yet). The narrative that follows traces the
+no client-side response-token reader yet), released in turn as **v0.28.0 by
+Phase 130** (bundled with Phase 128, since both banked unreleased while the
+new 15-phase batch was being researched and planned). The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2416,6 +2418,31 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 130 — v0.28.0 ✅
+
+Releases Phases 128 (authenticated post-login account discovery) and 129
+(Zero Standing Privilege for PostgreSQL) together — both banked unreleased
+while the fresh BeyondTrust/Delinea/Teleport/StrongDM gap research and the
+resulting 15-phase plan were being worked through. A genuine **minor**
+(two new capabilities), schema change (migration `0036`).
+
+- [x] **v0.28.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-14 as `ghcr.io/morandeirachema/pamv1:0.28.0` (also
+  `latest`), digest
+  `sha256:PENDING`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow)
+- [x] All five pins via the sweep; Helm chart `version` 0.18.0 -> **0.19.0**
+  (minor, alongside the `appVersion` minor)
+- [x] Both READMEs restated (the new Tier-6 parity table row, and every
+  scattered version/phase-count mention, not just the hub lines)
+- [x] `docs/README.md`'s currency line and `docs/NIS2-COMPLIANCE.md`'s
+  compliance-evidence row (a documented recurring staleness point) both
+  caught proactively
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging:
+  `gofmt`, `go vet`, `staticcheck`, `gosec`, `govulncheck`, `go test -race
+  ./...`, `go run ./cmd/archgen` (no schema/route drift)
 
 ## Phase 129 — Zero Standing Privilege for PostgreSQL ✅
 
