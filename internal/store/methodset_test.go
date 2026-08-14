@@ -26,9 +26,10 @@ import (
 // added MFAStore.{CreateWebAuthnCredential,ListWebAuthnCredentials,
 // GetWebAuthnCredentialByCredentialID,UpdateWebAuthnSignCount,
 // DeleteWebAuthnCredential,PutWebAuthnChallenge,TakeWebAuthnChallenge} (7);
-// Phase 133 added UserStore.UpdateUserDeviceFingerprint (1).
+// Phase 133 added UserStore.UpdateUserDeviceFingerprint (1); Phase 135 added
+// CredentialStore.{SetCredentialDoubleLock,ClearCredentialDoubleLock} (2).
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 172
+	const want = 174
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

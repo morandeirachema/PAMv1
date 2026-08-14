@@ -38,7 +38,7 @@ de fósforo verde** sin concesiones, porque tocar un PAM debe *sentirse* serio.
 
 Construido fase a fase con una regla: **cada fase es funcional de principio a fin** — arranca,
 pasa los tests y se despliega como Infraestructura-como-Código. El **[roadmap](ROADMAP.md)**
-abarca de la 0 a la 134, **se han entregado todas las fases**, y la release etiquetada y
+abarca de la 0 a la 135, **se han entregado todas las fases**, y la release etiquetada y
 firmada con cosign vigente es la
 **[v0.30.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.30.0)** (2026-08-14;
 la primera fue la v0.10.0, el 2026-07-28). Lo que eso suma:
@@ -151,7 +151,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–134, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–135, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -485,6 +485,7 @@ que cada fase se entrega, no se predeclaran en bloque.
 | ~~**Privilegio Cero Permanente más allá de SSH**~~ **✅ entregado, solo PostgreSQL (Fase 129)** | ZSP basado en certificado para RDP (StrongDM); aprovisionamiento de usuarios efímeros para bases de datos (Teleport) | Una credencial `db_zsp` aprovisiona un rol PostgreSQL nuevo y de nombre aleatorio mediante la credencial de aprovisionamiento del objetivo, guardada aparte, y lo elimina al terminar la sesión — probado contra un intercambio real del protocolo de cable de Postgres. RDP **no es alcanzable**: la propia documentación de Guacamole confirma que no existe ningún parámetro de autenticación RDP por certificado/tarjeta inteligente, una limitación permanente del protocolo. SQL Server queda diferido: `internal/tds` aún no tiene un lector de tokens de respuesta del lado cliente |
 | ~~**Lista blanca de comandos**~~ **✅ entregado (Fase 131)** | Lista blanca positiva de comandos para sesiones humanas ("Command Menus", Delinea) | `PAM_COMMAND_ALLOW_FILE`, una vez fijada, restringe cada vía de control de comandos (SSH, WinRM, PostgreSQL/SQL Server, WinRM por REST, herramientas de ejecución del bróker) a SOLO los comandos listados — la denegación sigue ganando si coincide con ambas. `cmdguard.Guard` gana `Allowed(cmd)`, que lee el mismo conjunto de patrones que ya usa `Blocked`; un segundo valor Guard, sin cambios en el motor de lista negra existente. Opcional e independiente — sin fijar, cada vía sigue siendo solo de denegación |
 | ~~**Control de acceso consciente del dispositivo**~~ **✅ entregado (Fase 133)** | Puerta de postura EDR en vivo (StrongDM) + vínculo de identidad de dispositivo (Teleport, redefinido) | El webhook `PAM_POSTURE_ATTEST_URL` se revisa en cada conexión Y en cada llamada autenticada, exento para break-glass. `PAM_DEVICE_HEADER` confía en una huella de certificado de cliente inyectada por un proxy inverso, comparada contra un `device_fingerprint` inscrito por usuario — solo en la superficie REST, con alcance honesto: los proxies SSH/PostgreSQL/SQL Server no tienen capa HTTP por la que viaje una cabecera. Ninguno de los dos alcanza al bróker de agentes IA, que se autentica por una vía distinta |
+| ~~**DoubleLock**~~ **✅ entregado (Fase 135)** | Clave de cifrado específica del secreto, independiente del RBAC (Delinea DoubleLock/QuantumLock) | La contraseña de una persona nombrada, exigida además para revelar/retirar una credencial — ni un admin comprometido puede leerla, ni desactivar la protección, sin ella. Mantenida fuera del KEK a propósito: `DoubleLockEnc` es un segundo cifrado con clave derivada directamente por PBKDF2(contraseña), nunca `vault.Encrypt`, así que el re-envolvimiento exhaustivo de `-rotate-kek` (que no dispone de la contraseña a mitad de rotación) no necesita ningún cambio — un hallazgo de construcción, no el mecanismo de mezcla en el AAD del plan original. Rotar el secreto limpia el DoubleLock |
 
 ### No-objetivo deliberado
 

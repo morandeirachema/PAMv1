@@ -861,6 +861,8 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/credentials", s.authz(auth.CapManageCredentials, s.createCredential))
 	s.mux.Handle("GET /api/credentials", s.authz(auth.CapReadInventory, s.listCredentials))
 	s.mux.Handle("POST /api/credentials/{id}/reveal", s.authz(auth.CapRevealSecret, s.revealCredential))
+	s.mux.Handle("POST /api/credentials/{id}/doublelock", s.authz(auth.CapRevealSecret, s.setDoubleLock))
+	s.mux.Handle("DELETE /api/credentials/{id}/doublelock", s.authz(auth.CapRevealSecret, s.clearDoubleLock))
 	s.mux.Handle("POST /api/credentials/{id}/rotate", s.authz(auth.CapManageCredentials, s.rotateCredentialHandler))
 	s.mux.Handle("POST /api/credentials/{id}/reconcile", s.authz(auth.CapManageCredentials, s.reconcileCredentialHandler))
 	s.mux.Handle("GET /api/reconcile", s.authz(auth.CapManageCredentials, s.reconcileAllHandler))

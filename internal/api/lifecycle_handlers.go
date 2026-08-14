@@ -390,13 +390,12 @@ func (s *Server) checkoutCredential(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	secret, err := s.vault.Decrypt(r.Context(), cred.SecretEnc, store.CredentialAAD(target.ID, cred.ID))
+	secret, err := s.doubleLockReveal(r, cred, "checkout")
 	if err != nil {
 		// The lease was created but the secret can't be revealed — roll it back so
 		// the credential isn't blocked from checkout for the whole TTL.
 		_ = s.store.CheckinCheckout(r.Context(), co.ID, time.Now())
-		s.audit(r.Context(), "credential.decrypt_failed", fmt.Sprintf("credential:%d target:%s op:checkout", cred.ID, target.Name))
-		writeError(w, http.StatusInternalServerError, "decryption failed")
+		writeDoubleLockError(w, err)
 		return
 	}
 	// Fail closed: the checkout must be durably audited before the secret leaves.

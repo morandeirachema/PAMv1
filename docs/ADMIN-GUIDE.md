@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-14 · Reflects: Phases 0–133 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-14 · Reflects: Phases 0–135 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -580,6 +580,50 @@ only (RDP/VNC/PostgreSQL/SQL Server have no equivalent shell command surface);
 Unix privilege detection is UID-based only (root, or a group-membership-aware
 follow-on is not attempted in v1); a target needs at least one already-vaulted
 credential to authenticate the scan itself.
+
+### DoubleLock: a second password held by someone else (Phase 135)
+
+Any non-ZSP credential can carry an **additional** password, held by a
+named person, required — on top of your normal `reveal_secret` capability —
+to reveal or check it out. This is the answer to "what stops one admin
+account, alone, from reading every secret in the vault": nothing stops
+RBAC from being compromised, but a DoubleLocked secret still needs a
+*second, different* person's password even then.
+
+```bash
+# Enable — requires you can already reveal this credential; you supply the
+# new password once, here.
+curl -H "X-API-Key: $PAM_API_KEY" -X POST \
+  http://localhost:8080/api/credentials/7/doublelock \
+  -d '{"holder":"alice (break-glass custodian)","password":"a-second-secret"}'
+
+# Reveal/checkout now additionally require the password, as a header:
+curl -H "X-API-Key: $PAM_API_KEY" -H "X-DoubleLock-Password: a-second-secret" \
+  -X POST http://localhost:8080/api/credentials/7/reveal
+
+# Without it (or with the wrong one), reveal/checkout are refused with a
+# distinct "double-locked" error, not the generic decryption-failed one.
+
+# Disable — ALSO requires the password. An admin who does not know it
+# cannot turn DoubleLock off any more than they can read the secret through
+# it; that is the whole point.
+curl -H "X-API-Key: $PAM_API_KEY" -X DELETE \
+  http://localhost:8080/api/credentials/7/doublelock -d '{"password":"a-second-secret"}'
+```
+
+`holder` is a display label (a name, or a comma-separated set) — never the
+password itself, and not tied to a real `store.User` row in v1. Connecting
+through the proxy is **completely unaffected**: DoubleLock only gates the
+two paths that hand plaintext back to a caller (reveal, checkout), never
+the JIT-injection a live session uses, so a DoubleLocked credential still
+opens sessions normally. **Rotating the credential's secret clears
+DoubleLock** — the password to reseal the new secret isn't available to
+the rotation worker, so the holder re-enables it afterward if still wanted.
+API/curl-only in v1, not yet on the console screens — matching
+`ssh_ca`/`db_zsp`'s own precedent of not adding every new credential
+concept to the 5250 UI immediately. See
+"Rotating the vault key" in §8 for why a KEK rotation (`-rotate-kek`) never
+touches a DoubleLocked credential either way.
 
 ### Zero Standing Privilege: ephemeral SSH certificates (Phase 22)
 
@@ -1726,6 +1770,13 @@ half-rotated store.
 > command counts sealed recordings and warns you by name of the KEK they still
 > need. Discard that key and those recordings become permanently unreadable.
 
+**DoubleLocked credentials (Phase 135) need none of this.** A credential's
+DoubleLock protection (§6, "DoubleLock") is deliberately never wrapped by
+the KEK at all — it is a second, independent encryption keyed directly by
+the DoubleLock password, not by anything `-rotate-kek` touches. Run
+`-rotate-kek` freely; every DoubleLocked credential comes through unaffected
+and you do not need to retain the old key on their account.
+
 ### On-prem HSM (PKCS#11 KEK)
 
 For a hardware security module, the AES wrapping key lives *inside* the HSM and
@@ -2868,6 +2919,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 | 2026-07-25 | **Phases 27–31 review fixes.** A vendor grant scoped to one account no longer admits a session on another; DB step-up now also pauses a **prepared** (extended-protocol) statement, so the supervisor gate can't be dodged; broker approver-group membership drops the principal's own name (a delegated `manage_users` can't mint a user named after an approver group to self-approve); an SSH-cert issue refused for an unmanaged principal no longer burns a one-time approval |
 | 2026-07-25 | Phase 31: **identity blast radius / CIEM** — `POST /api/blast/analyze` (`read_audit`) answers "if this identity were compromised, what could it reach?" over a normalized identity graph you submit: a real AWS IAM effective-permission evaluator, toxic-combination findings (escalation, cross-provider lateral movement) and an earliest-cut remediation for each. Read-only; the ingester that builds the graph is external. See §9.8 |
 | 2026-07-25 | Phase 30: **in-session step-up** — `PAM_DB_STEPUP_FILE` marks PostgreSQL statements that **pause for a supervisor's live decision** (`GET /api/sessions/stepups`, `POST /api/sessions/{id}/stepup`) instead of killing the session; `PAM_DB_STEPUP_TTL_SEC` bounds the wait. Broker policy rules also gained numeric comparators (`gte`/`gt`/`lte`/`lt`) so a rule can gate on an amount. See §9.4 |
+| 2026-08-14 | Phase 135: **DoubleLock** — a named person's password, additionally required (on top of `reveal_secret`) to reveal or check out a credential; disabling it needs the password too, so an admin alone cannot strip the protection. Kept deliberately outside the KEK (`POST`/`DELETE /api/credentials/{id}/doublelock`), so `-rotate-kek` needs no special case for it. See §6 |
 | 2026-08-14 | Phase 133: **device-aware access control** — a live EDR-posture webhook (`PAM_POSTURE_ATTEST_URL`) re-checked on every connect and every authenticated call, and an optional device-identity binding (`PAM_DEVICE_HEADER` + a per-user `device_fingerprint`) trusting a reverse-proxy-injected client-certificate fingerprint on the REST surface only. Both break-glass exempt. See §7 |
 | 2026-07-25 | Phase 29: **third-party vendor access gate** — time-boxed, customer-approved contract grants for external technicians, enforced on every connect path, with a live employment-attestation webhook (`PAM_VENDOR_ATTEST_URL`), a mid-session sweeper (`PAM_VENDOR_SWEEP_INTERVAL_MIN`), a one-action offboard cascade, and a per-vendor evidence export. See §7 |
 | 2026-07-24 | Phase 28: **operator-issued SSH certificates** — an operator proves possession of their own key (`POST /api/ca/ssh/challenge` → `/sign`) and gets a short-lived cert scoped to one principal (`PAM_SSH_OPERATOR_CERT_TTL_MIN`), usable with their normal SSH client; revoke by serial and publish an OpenSSH **KRL** (`GET /api/ca/ssh/krl`) as your targets' `RevokedKeys`. See §6 |

@@ -1098,7 +1098,9 @@ func cloneTimePtr(p *time.Time) *time.Time {
 }
 
 // UpdateCredentialSecretEnc replaces a credential's encrypted secret without
-// touching rotated_at; ErrNotFound if absent.
+// touching rotated_at or DoubleLock; ErrNotFound if absent. Used only by the
+// KEK re-wrap path (-rotate-kek): the plaintext is unchanged, only which KEK
+// wraps it, so any DoubleLock (independent of the KEK entirely) stays valid.
 func (m *Memstore) UpdateCredentialSecretEnc(_ context.Context, id int64, secretEnc string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1111,7 +1113,9 @@ func (m *Memstore) UpdateCredentialSecretEnc(_ context.Context, id int64, secret
 	return nil
 }
 
-// RotateCredentialSecret replaces the encrypted secret and stamps rotated_at;
+// RotateCredentialSecret replaces the encrypted secret, stamps rotated_at, and
+// clears any DoubleLock — the password-derived DoubleLockEnc now seals a
+// stale secret and the password to reseal a new one isn't available here;
 // ErrNotFound if absent.
 func (m *Memstore) RotateCredentialSecret(_ context.Context, id int64, secretEnc string, rotatedAt time.Time) error {
 	m.mu.Lock()
@@ -1123,6 +1127,39 @@ func (m *Memstore) RotateCredentialSecret(_ context.Context, id int64, secretEnc
 	c.SecretEnc = secretEnc
 	at := rotatedAt.UTC()
 	c.RotatedAt = &at
+	c.DoubleLockHolder = ""
+	c.DoubleLockVerifier = ""
+	c.DoubleLockEnc = ""
+	m.creds[id] = c
+	return nil
+}
+
+// SetCredentialDoubleLock enables DoubleLock on a credential; ErrNotFound if absent.
+func (m *Memstore) SetCredentialDoubleLock(_ context.Context, id int64, holder, verifier, enc string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.creds[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	c.DoubleLockHolder = holder
+	c.DoubleLockVerifier = verifier
+	c.DoubleLockEnc = enc
+	m.creds[id] = c
+	return nil
+}
+
+// ClearCredentialDoubleLock disables DoubleLock on a credential; ErrNotFound if absent.
+func (m *Memstore) ClearCredentialDoubleLock(_ context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.creds[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	c.DoubleLockHolder = ""
+	c.DoubleLockVerifier = ""
+	c.DoubleLockEnc = ""
 	m.creds[id] = c
 	return nil
 }
