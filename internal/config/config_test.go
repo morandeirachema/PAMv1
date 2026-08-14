@@ -245,6 +245,7 @@ func TestAirGapRefusesEgressingIntegrations(t *testing.T) {
 	for _, tc := range []struct{ name, key, value, wantIn string }{
 		{"ITSM webhook", "PAM_TICKET_VALIDATE_URL", "https://itsm.example/api", "PAM_TICKET_VALIDATE_URL"},
 		{"vendor attestation", "PAM_VENDOR_ATTEST_URL", "https://vendor.example/attest", "PAM_VENDOR_ATTEST_URL"},
+		{"posture attestation", "PAM_POSTURE_ATTEST_URL", "https://edr.example/posture", "PAM_POSTURE_ATTEST_URL"},
 		{"SIEM forwarder", "PAM_AUDIT_FORWARD_ADDR", "siem.example:514", "PAM_AUDIT_FORWARD_ADDR"},
 		{"OIDC issuer", "PAM_OIDC_ISSUER", "https://idp.example", "PAM_OIDC_ISSUER"},
 		{"Conjur", "PAM_CONJUR_URL", "https://conjur.example", "PAM_CONJUR_URL"},

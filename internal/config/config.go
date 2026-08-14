@@ -276,6 +276,25 @@ type Config struct {
 	// VendorSweepInterval runs a background sweep that cuts a vendor's live
 	// sessions once their contract window closes or they are offboarded (0 = off).
 	VendorSweepInterval time.Duration
+	// PostureAttestURL (Phase 133) is a webhook the deployment's EDR/posture
+	// system answers 2xx for a currently healthy device; checked on every
+	// connect (session-proxy admit() and the REST authz middleware), not just
+	// once at approval, since posture — unlike vendor employment — can change
+	// between one connection and the next. Empty disables posture checking.
+	PostureAttestURL string
+	// DeviceHeader (Phase 133) is the name of an HTTP header a trusted
+	// reverse proxy injects with the terminated client certificate's
+	// fingerprint (the common nginx/Envoy mTLS-terminated-upstream pattern).
+	// Empty (the default) disables device-identity checking entirely — the
+	// header, if present, is never read. When set, a principal whose
+	// enrolled store.User.DeviceFingerprint is non-empty must present a
+	// matching value in this header to act; a principal with no enrolled
+	// fingerprint is unaffected. pamv1 trusts whatever value arrives in this
+	// header verbatim, so it must be deployed behind a reverse proxy that
+	// performs real mTLS termination and strips any client-supplied value —
+	// setting this without that proxy in place lets a caller self-assert any
+	// device identity.
+	DeviceHeader string
 	// CheckoutTTL is the lifetime of a credential checkout lease.
 	CheckoutTTL time.Duration
 	// CheckoutMaxExtend (Phase 120, PAM_CHECKOUT_MAX_EXTEND_MIN, default 240)
@@ -641,6 +660,8 @@ func Load() (*Config, error) {
 		OneTimeAccess:        boolean("PAM_ACCESS_ONE_TIME", false),
 		VendorAttestURL:      getenv("PAM_VENDOR_ATTEST_URL", ""),
 		VendorSweepInterval:  time.Duration(integer("PAM_VENDOR_SWEEP_INTERVAL_MIN", 0)) * time.Minute,
+		PostureAttestURL:     getenv("PAM_POSTURE_ATTEST_URL", ""),
+		DeviceHeader:         getenv("PAM_DEVICE_HEADER", ""),
 		AirGap:               boolean("PAM_OT_AIRGAP", false),
 		CheckoutTTL:          time.Duration(integer("PAM_CHECKOUT_TTL_MIN", 30)) * time.Minute,
 		CheckoutMaxExtend:    time.Duration(integer("PAM_CHECKOUT_MAX_EXTEND_MIN", 240)) * time.Minute,
@@ -1007,6 +1028,7 @@ func airGapConflicts(cfg *Config) []string {
 	for _, c := range []struct{ name, value string }{
 		{"PAM_TICKET_VALIDATE_URL", cfg.TicketValidateURL},
 		{"PAM_VENDOR_ATTEST_URL", cfg.VendorAttestURL},
+		{"PAM_POSTURE_ATTEST_URL", cfg.PostureAttestURL},
 		{"PAM_AUDIT_FORWARD_ADDR", cfg.AuditForwardAddr},
 		{"PAM_OIDC_ISSUER", cfg.OIDCIssuer},
 		{"PAM_CONJUR_URL", os.Getenv("PAM_CONJUR_URL")},

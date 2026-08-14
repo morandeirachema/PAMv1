@@ -470,9 +470,17 @@ type User struct {
 	// Validated with auth.ValidateCIDRList at write time, so a stored value
 	// is always well-formed; checked with auth.IPAllowed at both HTTP authz
 	// and session-proxy connect time.
-	IPAllowlist string    `json:"ip_allowlist,omitempty"`
-	TokenHash   string    `json:"-"`
-	CreatedAt   time.Time `json:"created_at"`
+	IPAllowlist string `json:"ip_allowlist,omitempty"`
+	// DeviceFingerprint binds this user to one enrolled client-certificate
+	// fingerprint (Phase 133), e.g. a SHA-256 hex digest of the cert a trusted
+	// reverse proxy terminated. Empty (the default) means unbound — no device
+	// check for this user even when PAM_DEVICE_HEADER is set deployment-wide.
+	// Checked against the configured header's value at HTTP authz time; not a
+	// secret (derived from a public certificate), so an ordinary equality
+	// check is enough — no constant-time comparison needed.
+	DeviceFingerprint string    `json:"device_fingerprint,omitempty"`
+	TokenHash         string    `json:"-"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 // AgentKey is an AI-agent identity for the access broker: a bearer key whose
@@ -1049,6 +1057,9 @@ type UserStore interface {
 	// than re-enforcing it, the same division of responsibility every other
 	// write-time validation in this codebase uses.
 	UpdateUserIPAllowlist(ctx context.Context, id int64, allowlist string) error
+	// UpdateUserDeviceFingerprint sets a user's enrolled device-certificate
+	// fingerprint (Phase 133, see User.DeviceFingerprint), or ErrNotFound.
+	UpdateUserDeviceFingerprint(ctx context.Context, id int64, fingerprint string) error
 	// DeleteUser removes a user by ID, or ErrNotFound.
 	DeleteUser(ctx context.Context, id int64) error
 

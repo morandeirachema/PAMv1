@@ -9,9 +9,12 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +22,7 @@ import (
 
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
+	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/proxy"
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/store/memstore"
@@ -906,5 +910,70 @@ func TestVendorContractGateProxy(t *testing.T) {
 	defer sess.Close()
 	if out, err := sess.Output("run"); err != nil || string(out) != targetOutput {
 		t.Fatalf("vendor session output = %q err %v", out, err)
+	}
+}
+
+// TestPostureGateProxy proves Phase 133's live device-posture check end to
+// end: a failing (or unreachable) posture webhook refuses a real SSH session
+// before the target is even resolved, a healthy one admits it, and
+// break-glass bypasses the check entirely — the same three-way shape
+// TestVendorContractGateProxy proves for the vendor-contract gate this
+// posture gate is modeled on.
+func TestPostureGateProxy(t *testing.T) {
+	host, port := startUpstream(t, upstreamUser, upstreamSecret, targetOutput)
+	st := memstore.New()
+	v := mustVault(t)
+	seedTarget(t, st, v, host, port)
+	resolver, err := auth.NewResolver(st, proxyAPIKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var healthy atomic.Bool
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if healthy.Load() {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(http.StatusForbidden)
+		}
+	}))
+	defer webhook.Close()
+
+	px, err := proxy.New(st, v, resolver, proxy.Config{
+		HostKey: mustSigner(t), RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second,
+		PostureAttestor: posture.NewAttestor(webhook.URL),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := serveProxy(t, px)
+
+	// Failing posture: the operator's key still authenticates the SSH
+	// transport, but no channel opens — refused before target resolution.
+	client, err := dialProxy(t, addr, upstreamUser+"@web-01", proxyAPIKey)
+	if err != nil {
+		t.Fatalf("ssh auth should pass even though posture will refuse: %v", err)
+	}
+	if sess, serr := client.NewSession(); serr == nil {
+		sess.Close()
+		client.Close()
+		t.Fatal("a failed posture check must refuse the session")
+	}
+	client.Close()
+
+	// A healthy posture check admits the session, reaching the real target.
+	healthy.Store(true)
+	client2, err := dialProxy(t, addr, upstreamUser+"@web-01", proxyAPIKey)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client2.Close()
+	sess, err := client2.NewSession()
+	if err != nil {
+		t.Fatalf("a healthy posture check must admit the session: %v", err)
+	}
+	defer sess.Close()
+	if out, err := sess.Output("run"); err != nil || string(out) != targetOutput {
+		t.Fatalf("session output = %q err %v", out, err)
 	}
 }

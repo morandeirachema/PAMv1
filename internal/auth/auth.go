@@ -311,6 +311,14 @@ type Principal struct {
 	// connect time; BreakGlass bypasses it, matching every other gate
 	// break-glass already bypasses.
 	IPAllowlist string
+	// DeviceFingerprint binds this principal to one enrolled client-certificate
+	// fingerprint (Phase 133). Empty (the default) means unbound — no device
+	// check even when PAM_DEVICE_HEADER is set deployment-wide. Sourced from
+	// store.User.DeviceFingerprint for a local (bearer-token) identity only,
+	// same v1 scope as IPAllowlist above and for the same reason (a
+	// directory-authenticated principal has no store.User row to source it
+	// from). Checked against the configured header's value at HTTP authz time.
+	DeviceFingerprint string
 }
 
 // effectiveRoles returns the role set to evaluate capabilities and role-grants
@@ -650,6 +658,7 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (*Principal, error) 
 			p, perr := r.principalFor(ctx, u.Username, u.Role, false)
 			if perr == nil {
 				p.IPAllowlist = u.IPAllowlist
+				p.DeviceFingerprint = u.DeviceFingerprint
 			}
 			return p, perr
 		}

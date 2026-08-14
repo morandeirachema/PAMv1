@@ -37,7 +37,7 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
-runs 0–132 and **every phase has shipped**, and the current
+runs 0–133 and **every phase has shipped**, and the current
 tagged, cosign-signed release is
 **[v0.29.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.29.0)** (2026-08-14;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
@@ -147,7 +147,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–132, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–133, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 
@@ -468,6 +468,7 @@ each phase ships, not pre-declared as a block.
 |---|---|---|
 | ~~**Zero Standing Privilege beyond SSH**~~ **✅ shipped, PostgreSQL only (Phase 129)** | Cert-based ZSP for RDP (StrongDM); ephemeral-user provisioning for databases (Teleport) | A `db_zsp` credential provisions a fresh, randomly-named PostgreSQL role via the target's separately vaulted provisioner credential and drops it when the session ends — proven against a real Postgres wire-protocol exchange. RDP is **not achievable**: Guacamole's own documentation confirms no certificate/smartcard RDP auth parameter exists, a permanent protocol limitation. SQL Server is deferred: `internal/tds` has no client-side response-token reader yet |
 | ~~**Command allow-listing**~~ **✅ shipped (Phase 131)** | Positive allow-listing of commands for human sessions ("Command Menus," Delinea) | `PAM_COMMAND_ALLOW_FILE`, once set, narrows every command-control path (SSH, WinRM, PostgreSQL/SQL Server, REST WinRM, broker exec tools) to ONLY the listed commands — deny still wins on overlap. `cmdguard.Guard` gains `Allowed(cmd)` reading the same pattern set `Blocked` already does; a second Guard value, zero changes to the existing deny-list engine. Optional and independent — unset, every path stays deny-only |
+| ~~**Device-aware access control**~~ **✅ shipped (Phase 133)** | Live EDR-posture gate (StrongDM) + device-identity binding (Teleport, rescoped) | `PAM_POSTURE_ATTEST_URL` webhook re-checked on every connect AND every authenticated call, break-glass exempt. `PAM_DEVICE_HEADER` trusts a reverse-proxy-injected client-certificate fingerprint against a per-user enrolled `device_fingerprint` — REST surface only, honestly scoped: the SSH/PostgreSQL/SQL Server proxies have no HTTP layer for a header to travel on. Neither reaches the AI-agent broker, which authenticates on a separate path |
 
 ### Deliberate non-goal
 

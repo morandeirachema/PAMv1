@@ -1166,6 +1166,20 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.UpdateUserIPAllowlist(ctx, 999999, "10.0.0.0/8"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("UpdateUserIPAllowlist missing: want ErrNotFound, got %v", err)
 	}
+	// UpdateUserDeviceFingerprint (Phase 133): a fresh user's fingerprint is
+	// empty (unbound) by default; setting it persists and round-trips.
+	if u.DeviceFingerprint != "" {
+		t.Fatalf("new user's DeviceFingerprint = %q, want empty", u.DeviceFingerprint)
+	}
+	if err := st.UpdateUserDeviceFingerprint(ctx, u.ID, "aa:bb:cc:dd"); err != nil {
+		t.Fatalf("UpdateUserDeviceFingerprint: %v", err)
+	}
+	if by, err := st.GetUser(ctx, u.ID); err != nil || by.DeviceFingerprint != "aa:bb:cc:dd" {
+		t.Fatalf("after UpdateUserDeviceFingerprint: %+v err %v", by, err)
+	}
+	if err := st.UpdateUserDeviceFingerprint(ctx, 999999, "aa:bb:cc:dd"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateUserDeviceFingerprint missing: want ErrNotFound, got %v", err)
+	}
 	if err := st.DeleteUser(ctx, u.ID); err != nil {
 		t.Fatalf("DeleteUser: %v", err)
 	}
