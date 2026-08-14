@@ -1966,6 +1966,108 @@ func (s *PGStore) CountMFARecoveryCodes(ctx context.Context, username string) (i
 	return n, err
 }
 
+const webauthnCredentialCols = `id, username, credential_id, public_key, attestation_type, attestation_format, transports, aaguid, sign_count, clone_warning, name, created_at, last_used_at`
+
+func scanWebAuthnCredential(row pgx.CollectableRow) (store.WebAuthnCredential, error) {
+	var c store.WebAuthnCredential
+	err := row.Scan(&c.ID, &c.Username, &c.CredentialID, &c.PublicKey, &c.AttestationType,
+		&c.AttestationFormat, &c.Transports, &c.AAGUID, &c.SignCount, &c.CloneWarning,
+		&c.Name, &c.CreatedAt, &c.LastUsedAt)
+	return c, err
+}
+
+// CreateWebAuthnCredential registers a new authenticator, populating ID and CreatedAt.
+func (s *PGStore) CreateWebAuthnCredential(ctx context.Context, c *store.WebAuthnCredential) error {
+	return s.pool.QueryRow(ctx,
+		`INSERT INTO webauthn_credentials (username, credential_id, public_key, attestation_type, attestation_format, transports, aaguid, sign_count, clone_warning, name)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		 RETURNING id, created_at`,
+		c.Username, c.CredentialID, c.PublicKey, c.AttestationType, c.AttestationFormat,
+		c.Transports, c.AAGUID, c.SignCount, c.CloneWarning, c.Name,
+	).Scan(&c.ID, &c.CreatedAt)
+}
+
+// ListWebAuthnCredentials returns every authenticator a user has registered, oldest first.
+func (s *PGStore) ListWebAuthnCredentials(ctx context.Context, username string) ([]store.WebAuthnCredential, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+webauthnCredentialCols+` FROM webauthn_credentials WHERE username = $1 ORDER BY id`, username)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanWebAuthnCredential)
+}
+
+// GetWebAuthnCredentialByCredentialID looks up an authenticator by the credential ID an assertion presents, or ErrNotFound.
+func (s *PGStore) GetWebAuthnCredentialByCredentialID(ctx context.Context, credentialID []byte) (*store.WebAuthnCredential, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+webauthnCredentialCols+` FROM webauthn_credentials WHERE credential_id = $1`, credentialID)
+	if err != nil {
+		return nil, err
+	}
+	c, err := pgx.CollectExactlyOneRow(rows, scanWebAuthnCredential)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// UpdateWebAuthnSignCount writes back the sign counter, clone-warning flag and
+// last-used time after a successful login.
+func (s *PGStore) UpdateWebAuthnSignCount(ctx context.Context, id int64, signCount uint32, cloneWarning bool, usedAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE webauthn_credentials SET sign_count = $2, clone_warning = $3, last_used_at = $4 WHERE id = $1`,
+		id, signCount, cloneWarning, usedAt.UTC())
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+// DeleteWebAuthnCredential removes one authenticator by ID, scoped to username, or ErrNotFound.
+func (s *PGStore) DeleteWebAuthnCredential(ctx context.Context, id int64, username string) error {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM webauthn_credentials WHERE id = $1 AND username = $2`, id, username)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+// PutWebAuthnChallenge stores (or replaces) the in-flight ceremony state for a
+// (username, purpose) pair, best-effort GCing expired rows first.
+func (s *PGStore) PutWebAuthnChallenge(ctx context.Context, username, purpose string, sessionData []byte, expiresAt time.Time) error {
+	_, _ = s.pool.Exec(ctx, `DELETE FROM mfa_webauthn_challenges WHERE expires_at <= now()`)
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO mfa_webauthn_challenges (username, purpose, session_data, expires_at) VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (username, purpose) DO UPDATE SET session_data = EXCLUDED.session_data, expires_at = EXCLUDED.expires_at`,
+		username, purpose, sessionData, expiresAt.UTC())
+	return err
+}
+
+// TakeWebAuthnChallenge atomically fetches and deletes an unexpired challenge; ok is false if it is missing or expired.
+func (s *PGStore) TakeWebAuthnChallenge(ctx context.Context, username, purpose string, now time.Time) ([]byte, bool, error) {
+	var sessionData []byte
+	err := s.pool.QueryRow(ctx,
+		`DELETE FROM mfa_webauthn_challenges WHERE username = $1 AND purpose = $2 AND expires_at > $3 RETURNING session_data`,
+		username, purpose, now.UTC()).Scan(&sessionData)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return sessionData, true, nil
+}
+
 // PutOIDCState stores (or replaces) PKCE verifier/nonce state for an OIDC login,
 // best-effort GCing expired rows first.
 func (s *PGStore) PutOIDCState(ctx context.Context, state, verifier, nonce string, expiresAt time.Time) error {

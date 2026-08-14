@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/morandeirachema/pamv1/internal/agentid"
 	"github.com/morandeirachema/pamv1/internal/alert"
 	"github.com/morandeirachema/pamv1/internal/analytics"
@@ -117,6 +118,11 @@ type Options struct {
 	RequireRecording bool
 	// OIDC (optional) enables the browser Authorization Code login flow.
 	OIDC *oidc.Provider
+	// WebAuthn (optional) enables FIDO2/WebAuthn as an alternate second factor
+	// to TOTP. Unlike OIDC this is NOT part of RuntimeConfig — PAM_WEBAUTHN_RP_ID/
+	// _RP_ORIGIN name a domain, and re-pointing that at runtime without a
+	// restart is a migration event, not a routine policy change.
+	WebAuthn *webauthn.WebAuthn
 	// OIDCRoleMap maps OIDC app-role/group claims to roles.
 	OIDCRoleMap map[string]auth.Role
 	// PortalURL is where the OIDC callback redirects (default "/").
@@ -337,6 +343,7 @@ type Server struct {
 	resolver             *auth.Resolver
 	winrm                winrm.Runner
 	recordingDir         string
+	webAuthn             *webauthn.WebAuthn
 	certRemindDays       int
 	passwordPolicy       rotate.PasswordPolicy
 	passwordHistoryCount int
@@ -566,6 +573,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		requireReason:        opts.RequireReason,
 		oneTimeAccess:        opts.OneTimeAccess,
 		recordingDir:         opts.RecordingDir,
+		webAuthn:             opts.WebAuthn,
 		certRemindDays:       opts.CertRemindDays,
 		passwordPolicy:       opts.PasswordPolicy,
 		passwordHistoryCount: opts.PasswordHistoryCount,
@@ -775,6 +783,19 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/mfa/verify", s.rateLimit(s.authenticated(s.mfaVerify)))
 	s.mux.Handle("POST /api/mfa/recovery-codes", s.authenticated(s.mfaRecoveryCodes))
 	s.mux.Handle("DELETE /api/mfa", s.authenticated(s.mfaDisable))
+
+	// WebAuthn (Phase 124): self-service registration of a new authenticator
+	// follows the same "any authenticated identity manages its own second
+	// factor" shape as /api/mfa/* above. The two login-ceremony routes are
+	// different in kind — unauthenticated-by-username, authenticated-by-
+	// MFAPending-token instead — so they get mfaPendingOnly, not authenticated,
+	// and sit with /api/login rather than with self-service MFA.
+	s.mux.Handle("POST /api/webauthn/register/begin", s.authenticated(s.webauthnRegisterBegin))
+	s.mux.Handle("POST /api/webauthn/register/finish", s.authenticated(s.webauthnRegisterFinish))
+	s.mux.Handle("GET /api/webauthn/credentials", s.authenticated(s.webauthnListCredentials))
+	s.mux.Handle("DELETE /api/webauthn/credentials/{id}", s.authenticated(s.webauthnDeleteCredential))
+	s.mux.Handle("POST /api/webauthn/login/begin", s.rateLimit(s.mfaPendingOnly(s.webauthnLoginBegin)))
+	s.mux.Handle("POST /api/webauthn/login/finish", s.rateLimit(s.mfaPendingOnly(s.webauthnLoginFinish)))
 
 	s.mux.Handle("POST /api/targets", s.authz(auth.CapManageTargets, s.createTarget))
 	s.mux.Handle("GET /api/targets", s.authz(auth.CapReadInventory, pagedList(s, s.store.ListTargets)))
@@ -1018,6 +1039,14 @@ func (s *Server) authz(cap auth.Capability, next http.HandlerFunc) http.Handler 
 			writeError(w, http.StatusForbidden, "complete MFA enrollment to continue")
 			return
 		}
+		if p.MFAPending {
+			// A password-verified, WebAuthn-pending token is narrower than
+			// EnrollOnly: it exists only to finish one specific login ceremony
+			// (see mfaPendingOnly), so it must not reach any ordinary API route.
+			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:mfa-webauthn-pending")
+			writeError(w, http.StatusForbidden, "complete WebAuthn sign-in to continue")
+			return
+		}
 		if p.TunnelOnly {
 			// An RDP-tunnel token (minted for the WS URL) must not reach any API endpoint,
 			// so a copy leaked from a proxy log cannot act or re-mint itself.
@@ -1104,7 +1133,37 @@ func (s *Server) authenticated(next http.HandlerFunc) http.Handler {
 			writeError(w, http.StatusForbidden, "this token is only valid for the RDP tunnel")
 			return
 		}
+		if p.MFAPending {
+			// Narrower than EnrollOnly (which /api/mfa/* still accepts): this
+			// token exists only to finish the pending WebAuthn login ceremony,
+			// via mfaPendingOnly — not /me, /logout, or self-service MFA.
+			writeError(w, http.StatusForbidden, "complete WebAuthn sign-in to continue")
+			return
+		}
 		next(w, r.WithContext(ctx))
+	})
+}
+
+// mfaPendingOnly wraps the two routes that finish a WebAuthn login ceremony
+// (POST /api/webauthn/login/begin and .../finish). It is the mirror image of
+// authenticated: where authenticated refuses MFAPending, this refuses
+// everyone EXCEPT MFAPending — a fully-authenticated principal has no reason
+// to be starting a *pending* login, and letting one through here would let an
+// already-logged-in user register an assertion against someone else's
+// in-flight login state.
+func (s *Server) mfaPendingOnly(next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, err := s.resolver.Resolve(r.Context(), r.Header.Get("X-API-Key"))
+		if err != nil {
+			s.authFailed(w, r, "api", "invalid or missing API key")
+			return
+		}
+		if !p.MFAPending {
+			writeError(w, http.StatusForbidden, "no WebAuthn sign-in is pending")
+			return
+		}
+		setActor(r.Context(), p.Name)
+		next(w, r.WithContext(withPrincipal(r.Context(), p)))
 	})
 }
 

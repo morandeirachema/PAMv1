@@ -87,6 +87,7 @@
   let targets = [], creds = [], audit = [], sessions = [], requests = [], checkouts = [], users = [], grants = [];
   let apps = [], appGrants = [], grantsApp = 0, newApp = null;
   let viewCred = null, grantsTarget = 0, newUser = null, mfaInfo = null, mfaEnroll = null, recoveryCodes = [], discovered = null, reconcileReport = null;
+  let webauthnCreds = []; // Phase 124: the caller's own registered FIDO2/WebAuthn authenticators
   let profiles = [], configItems = [], configNote = "", effCfg = null, iacText = "", iacFormat = "";
   let safes = [], safeMembers = [], membersSafe = 0, safeTarget = null;
   let editTarget = null, editSafe = null, editUser = null; // 2=Change subjects (Phase 44)
@@ -162,6 +163,63 @@
     return data;
   }
 
+  // b64uToBuf/bufToB64u convert between the base64url strings the WebAuthn
+  // wire format carries (JSON has no binary type) and the ArrayBuffers the
+  // browser's navigator.credentials API actually requires — every
+  // challenge/id/signature crosses this boundary exactly once each way.
+  function b64uToBuf(b64u) {
+    const b64 = b64u.replace(/-/g, "+").replace(/_/g, "/");
+    const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
+    const bin = atob(b64 + pad);
+    const buf = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    return buf.buffer;
+  }
+  function bufToB64u(buf) {
+    const bytes = new Uint8Array(buf);
+    let bin = "";
+    for (const b of bytes) bin += String.fromCharCode(b);
+    return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+
+  // webauthnCreate drives navigator.credentials.create() from the server's
+  // POST /api/webauthn/register/begin response, and returns the wire JSON
+  // POST /api/webauthn/register/finish expects — the exact shape
+  // protocol.CredentialCreationResponse decodes.
+  async function webauthnCreate(opts) {
+    const pk = opts.publicKey;
+    pk.challenge = b64uToBuf(pk.challenge);
+    pk.user.id = b64uToBuf(pk.user.id);
+    for (const c of pk.excludeCredentials || []) c.id = b64uToBuf(c.id);
+    const cred = await navigator.credentials.create({ publicKey: pk });
+    return {
+      id: cred.id, type: cred.type, rawId: bufToB64u(cred.rawId),
+      response: {
+        clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+        attestationObject: bufToB64u(cred.response.attestationObject),
+      },
+    };
+  }
+
+  // webauthnGet is webauthnCreate's login-side mirror: drives
+  // navigator.credentials.get() from POST /api/webauthn/login/begin's
+  // response, returns what POST /api/webauthn/login/finish expects.
+  async function webauthnGet(opts) {
+    const pk = opts.publicKey;
+    pk.challenge = b64uToBuf(pk.challenge);
+    for (const c of pk.allowCredentials || []) c.id = b64uToBuf(c.id);
+    const cred = await navigator.credentials.get({ publicKey: pk });
+    return {
+      id: cred.id, type: cred.type, rawId: bufToB64u(cred.rawId),
+      response: {
+        clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+        authenticatorData: bufToB64u(cred.response.authenticatorData),
+        signature: bufToB64u(cred.response.signature),
+        userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : undefined,
+      },
+    };
+  }
+
   // apiAll drains a cursor-paged list endpoint (Phase 44): the API caps every
   // page at 500 rows, so follow the ?after= cursor until a short page comes
   // back. Keeps the subfiles complete while each request stays bounded.
@@ -205,6 +263,7 @@
   async function openConfig() { try { const r = await api("GET", "/api/config"); configItems = r.settings || []; configNote = r.note || ""; } catch (e) { configItems = []; } go("config"); }
   async function openEffective() { try { effCfg = await api("GET", "/api/config/effective"); } catch (e) { effCfg = null; } go("effective"); }
   async function openMfa() { try { mfaInfo = await api("GET", "/api/mfa"); } catch (e) { mfaInfo = { enrolled: false, confirmed: false }; } go("mfa"); }
+  async function openMfaWebAuthn() { try { const r = await api("GET", "/api/webauthn/credentials"); webauthnCreds = r.credentials || []; } catch (e) { webauthnCreds = []; } go("mfawebauthn"); }
   async function openAudit() { try { audit = await api("GET", "/api/audit?limit=100"); } catch (e) { audit = []; } go("audit"); }
   async function openReconcile() { reconcileReport = null; try { reconcileReport = await api("GET", "/api/reconcile"); } catch (e) {} go("reconcile"); }
   async function openGrants(tid) { grantsTarget = tid; try { grants = await api("GET", `/api/targets/${tid}/grants`); } catch (e) { grants = []; } go("grants"); }
@@ -823,7 +882,9 @@
 </form>
 
 <div class="cyan indent">Directory (AD) users: enter User + Password (+ MFA code if enrolled). Token
-users: leave Password blank and enter the access token. Press Enter to sign on.
+users: leave Password blank and enter the access token. WebAuthn-enrolled
+users: leave the MFA code blank — your browser prompts for your key. Press
+Enter to sign on.
 Single sign-on (OIDC): <a href="/api/auth/oidc/start" style="color:#4be0e0">/api/auth/oidc/start</a></div>
 ${fkeys("")}
 <div class="red indent">UNAUTHORIZED USE OF THIS SYSTEM IS PROHIBITED AND AUDITED.</div>`;
@@ -842,7 +903,19 @@ ${fkeys("")}
               const d = await res.json().catch(() => ({}));
               if (d.mfa_required) throw new Error("MFA CODE REQUIRED — ENTER YOUR 6-DIGIT CODE");
               if (!res.ok) throw new Error((d.error || res.statusText).toUpperCase());
-              apiKey = d.token;
+              if (d.webauthn_required) {
+                // A narrow, MFAPending-scoped token — good for nothing but the
+                // two ceremony calls below. apiKey is overwritten with the real
+                // session token only once that ceremony actually succeeds.
+                apiKey = d.token;
+                say("TOUCH YOUR SECURITY KEY TO CONTINUE...");
+                const opts = await api("POST", "/api/webauthn/login/begin", {});
+                const assertion = await webauthnGet(opts);
+                const fin = await api("POST", "/api/webauthn/login/finish", assertion);
+                apiKey = fin.token;
+              } else {
+                apiKey = d.token;
+              }
             } else {
               apiKey = tok || user;
             }
@@ -2269,16 +2342,19 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         const m = mfaInfo || {};
         const status = m.enrolled ? (m.confirmed ? '<span class="green">enrolled & confirmed</span>' : '<span class="amber">enrolled, NOT confirmed</span>') : '<span class="red">not enrolled</span>';
         term.innerHTML = `${head("PAMMFA", "Multi-Factor Authentication")}
-Manage your own TOTP second factor.
+Manage your own second factor — TOTP (an authenticator app) or WebAuthn (a
+hardware key or platform authenticator). Either satisfies MFA on its own.
 
-<div class="indent">Status  . . . . . . :  ${status}</div>
+<div class="indent">TOTP status  . . . :  ${status}
+WebAuthn keys  . . :  <span class="white">${webauthnCreds.length}</span> registered</div>
 
 <form id="f-mfa" class="indent">
 <label>Action  . . . . . . :  <select name="act">
-  <option value="enroll">Enroll / re-enroll (get a new secret)</option>
-  <option value="verify">Confirm / test a code</option>
+  <option value="enroll">TOTP: enroll / re-enroll (get a new secret)</option>
+  <option value="verify">TOTP: confirm / test a code</option>
   <option value="recovery">Generate recovery codes</option>
-  <option value="disable">Disable MFA</option>
+  <option value="disable">TOTP: disable</option>
+  <option value="webauthn">WebAuthn: manage keys</option>
 </select></label>
 <label>Code (confirm/disable) :  <input name="otp" size="8" inputmode="numeric" autocomplete="one-time-code"></label>
 <input type="submit" hidden>
@@ -2293,6 +2369,7 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
             if (act === "verify") { await api("POST", "/api/mfa/verify", { otp }); say("CODE CONFIRMED."); return openMfa(); }
             if (act === "recovery") { const r = await api("POST", "/api/mfa/recovery-codes", {}); recoveryCodes = r.recovery_codes || []; return go("mfarecovery"); }
             if (act === "disable") { await api("DELETE", "/api/mfa", { otp }); say("MFA DISABLED."); return openMfa(); }
+            if (act === "webauthn") return openMfaWebAuthn();
           } catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
       },
@@ -2317,6 +2394,56 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
 
 <div class="indent white">${recoveryCodes.map(esc).join("\n")}</div>
 ${fkeys("F3=Exit   F12=Cancel")}`;
+      },
+
+      mfawebauthn() {
+        back = "mfa";
+        term.innerHTML = `${head("PAMMFAWA", "WebAuthn Keys")}
+Hardware keys and platform authenticators registered on this account. Any
+ONE confirmed factor (TOTP or WebAuthn) satisfies MFA at sign-on.
+Type options, press Enter.  <span class="cyan">4=Delete</span>
+
+<form id="f-mfawa"><table>
+<tr><th>Opt</th><th>ID</th><th>Name</th><th>Transports</th><th>Registered</th></tr>
+${webauthnCreds.map((c) => `<tr><td>${opt(c.id)}</td><td>${esc(c.id)}</td><td>${cell(c.name, 24)}</td><td>${cell(c.transports || "-", 16)}</td><td class="cyan">${fmtTime(c.created_at)}</td></tr>`).join("")}
+</table>${webauthnCreds.length ? "" : `<div class="cyan indent">(No keys registered. Press F6 to register one.)</div>`}
+<input type="submit" hidden></form>
+${fkeys("F3=Exit   F5=Refresh   F6=Register key   F12=Cancel")}`;
+        document.getElementById("f-mfawa").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const c of webauthnCreds) {
+              const o = optVal(ev.target, c.id);
+              if (o === "4") { await api("DELETE", `/api/webauthn/credentials/${c.id}`); say(`KEY ${String(c.name).toUpperCase()} DELETED.`); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openMfaWebAuthn();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      mfawebauthnadd() {
+        back = "mfawebauthn";
+        term.innerHTML = `${head("PAMMFAWAADD", "Register a WebAuthn Key")}
+Your browser will prompt you to touch or unlock your security key.
+
+<form id="f-mfawaadd" class="indent">
+<label>Nickname . . . . . . . . . :  <input name="name" size="24" placeholder="e.g. YubiKey 5C" autofocus></label>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-mfawaadd").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const name = ev.target.name.value.trim() || "Authenticator";
+          try {
+            say("TOUCH YOUR SECURITY KEY TO REGISTER IT...");
+            const opts = await api("POST", "/api/webauthn/register/begin", {});
+            const cred = await webauthnCreate(opts);
+            await api("POST", "/api/webauthn/register/finish?name=" + encodeURIComponent(name), cred);
+            say("KEY REGISTERED.");
+            await openMfaWebAuthn();
+          } catch (e) { say("CPF9898: " + e.message, true); render(); }
+        };
       },
 
       discovery() {
@@ -2847,7 +2974,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
   const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid) };
-  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); } };
+  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, mfawebauthn: () => go("mfawebauthnadd") };
 
   window.addEventListener("keydown", async (ev) => {
     // While the RDP viewer is open it owns the keyboard (its own capture-phase

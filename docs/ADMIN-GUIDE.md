@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-14 · Reflects: Phases 0–122 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c) and suspend/resume for a live session (122, §9.4d) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-14 · Reflects: Phases 0–124 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) and FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -1206,6 +1206,10 @@ held in a shared store (Phase 10), so the callback can land on any replica in HA
 
 ### Multi-factor authentication (TOTP)
 
+pamv1 offers two independent second-factor types, TOTP and (Phase 124)
+WebAuthn — either one alone satisfies MFA at login; a user is never required
+to have both. This section covers TOTP; WebAuthn follows immediately after.
+
 Users can add a second factor ([TOTP](https://en.wikipedia.org/wiki/Time-based_one-time_password),
 RFC 6238) that works with Google Authenticator, Microsoft Authenticator, 1Password,
 etc. It is **self-service and per-user opt-in**, and applies to the password-login
@@ -1235,8 +1239,79 @@ login if you lose your authenticator; each works exactly once.
 
 **Require MFA for everyone:** set `PAM_MFA_REQUIRED=true`. Then a password login by
 a user without confirmed MFA returns an **enrollment-only** session — it can *only*
-call the `/api/mfa/*` endpoints (everything else, including the SSH proxy, is
-refused) until the user enrolls and confirms, then logs in again with a code.
+call the `/api/mfa/*` **and** `/api/webauthn/register/*` endpoints (everything
+else, including the SSH proxy, is refused) until the user enrolls and
+confirms **either** factor, then logs in again.
+
+### Multi-factor authentication (WebAuthn, Phase 124)
+
+FIDO2/WebAuthn is the second second-factor type: a hardware security key
+(YubiKey, etc.) or a platform authenticator (Touch ID, Windows Hello). Like
+TOTP it is **self-service and per-user opt-in**. It needs one thing TOTP
+doesn't — a Relying Party identity — configured once at startup:
+
+```bash
+export PAM_WEBAUTHN_RP_ID=pam.example.com        # the effective domain, no scheme/port
+export PAM_WEBAUTHN_RP_ORIGIN=https://pam.example.com  # the fully-qualified origin browsers see
+```
+
+Presence enables the feature — the same idiom `PAM_OIDC_ISSUER` uses, no
+separate boolean flag — and, unlike OIDC's hot-reloadable config, it is
+**restart-only**: re-pointing an RP ID at a different domain is a migration
+event, not a routine change `PUT /api/config` should ever touch live. Leave
+both unset and every `/api/webauthn/*` route refuses with 503.
+
+```bash
+# Register a new authenticator (as the signed-in user) — a two-call ceremony:
+curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/webauthn/register/begin
+# → PublicKeyCredentialCreationOptions JSON — the browser's own
+#   navigator.credentials.create() consumes this directly; the console does
+#   this step for you (menu 9 → WebAuthn: manage keys → F6)
+curl -H "X-API-Key: $PAM_API_KEY" -X POST "http://localhost:8080/api/webauthn/register/finish?name=YubiKey" \
+  -d '<the browser's PublicKeyCredential response, verbatim>'
+
+# List / delete your own keys:
+curl -H "X-API-Key: $PAM_API_KEY" http://localhost:8080/api/webauthn/credentials
+curl -H "X-API-Key: $PAM_API_KEY" -X DELETE http://localhost:8080/api/webauthn/credentials/3
+```
+
+**Login is a different shape than TOTP's, necessarily.** A 6-digit TOTP code
+types inline, so `POST /api/login {username, password, otp}` is one request.
+WebAuthn cannot work that way — the server has to know *which user* before it
+can build a challenge scoped to their credentials, which is an unavoidable
+second round trip. So a password-only login for a WebAuthn-enrolled user (with
+no confirmed TOTP) returns `{"webauthn_required": true, "token": "..."}`
+instead of a full session — that `token` is narrowly scoped
+(`MFAPending`, 5-minute TTL) and works for nothing except the two calls below;
+using it anywhere else, including `/api/me`, is refused:
+
+```bash
+curl -H "X-API-Key: $PENDING_TOKEN" -X POST http://localhost:8080/api/webauthn/login/begin
+# → PublicKeyCredentialRequestOptions JSON for navigator.credentials.get()
+curl -H "X-API-Key: $PENDING_TOKEN" -X POST http://localhost:8080/api/webauthn/login/finish \
+  -d '<the browser's assertion response, verbatim>'
+# → {"token": "...", "username": "...", "role": "...", "expires_at": "..."} — a
+#   real, full session, same shape POST /api/login's success response has
+```
+
+The console drives this automatically: enter your username + password and
+leave the MFA code blank, and the browser prompts for your key on its own.
+
+A few things worth knowing:
+
+- **A user with confirmed TOTP is checked first, unaffected by any of this**
+  — the WebAuthn branch only applies when there is no confirmed TOTP. A user
+  is not expected to juggle both; pick one.
+- **Credential public keys are not secret** and are stored in the clear —
+  knowing one lets nobody forge an assertion, only the authenticator's own
+  private key (which never leaves the device) can.
+- **A user may register more than one key** (a YubiKey and a phone, say) —
+  unlike TOTP, which is one secret per account.
+- **Attestation is accepted but not verified against a trust anchor** in v1
+  (no FIDO Metadata Service integration) — any WebAuthn-conformant
+  authenticator is accepted, same posture as accepting any TOTP app.
+- Recovery codes (above) work identically regardless of which factor type
+  they're backing up.
 
 ### AI-agent access broker (Phase 13)
 
@@ -2599,6 +2674,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-14 | **Phase 124 — FIDO2/WebAuthn passwordless MFA.** A second, independent second-factor type alongside TOTP — either alone satisfies MFA. `PAM_WEBAUTHN_RP_ID`/`_RP_ORIGIN` (presence enables it, restart-only) turn it on; self-service `POST /api/webauthn/register/{begin,finish}` (any signed-in identity, and an enrollment-only session too) registers a key, `GET`/`DELETE /api/webauthn/credentials{,/{id}}` manage them. Login for a WebAuthn-enrolled user with no confirmed TOTP is necessarily two calls, not one — password-only `POST /api/login` returns a narrow, 5-minute `MFAPending` token good for nothing but `POST /api/webauthn/login/{begin,finish}`, which the console drives automatically. A user may register more than one key; public keys are stored in the clear (not a secret, unlike the TOTP secret). New migration `0035` (`webauthn_credentials`, `mfa_webauthn_challenges`); store surface 164 → 171. New audit actions `mfa.webauthn_registered`/`_register_failed`/`_deleted`. See the "Multi-factor authentication (WebAuthn, Phase 124)" section above |
 | 2026-08-14 | **Phase 122 — suspend vs. terminate a live session.** `POST /api/sessions/{id}/suspend`/`.../resume` (`approve`) freeze and unfreeze an operator's input without ending the session, riding Phase 116's session-sharing input mux rather than new plumbing; `GET .../suspend` (`read_audit`) reports current state, 404ing if the session isn't live on this replica. Both actions are idempotent, and the operator gets a `Stderr` banner the instant either fires — freezing input silently would look like a hang, not a policy action. Replica-local, like sharing: no cross-replica bus yet. Console: live-watch pane shows an amber *SUSPENDED* banner; **F8** toggles for anyone holding `approve`. New audit actions `session.suspended`/`session.resumed`; no new migration (suspend state is in-memory only). See §9.4d |
 | 2026-08-14 | **Phase 120 — recurring access requests, password policy, checkout extension.** Recurring access requests: `recur_days` makes an *approved* request an anchor (§9.6c), auto-filing a fresh pending successor every N days on its own hourly worker — the clock starts at approval, not filing; `stop-recurrence` is the anchor's stop button. Password policy: `PAM_PASSWORD_MIN_LENGTH`/`_MIN_LOWER`/`_MIN_UPPER`/`_MIN_DIGIT`/`_MIN_SYMBOL` make generated-password shape configurable (defaults reproduce the old hardcoded 24-char/one-of-each), and `PAM_PASSWORD_HISTORY_COUNT` (default 0) refuses to reissue one of a credential's last N rotated secrets, tracked as SHA-256 hashes only. Checkout extension: `POST /api/credentials/{id}/checkout/extend` (holder-or-admin) pushes an active lease's expiry out, capped at `PAM_CHECKOUT_MAX_EXTEND_MIN` (default 240) total from check-out. New migration `0034`; store surface 157 → 164. See §7 and §9.6c |
 | 2026-08-13 | **Phase 118 — CIDR/network source-address allowlist.** A per-user, comma-separated CIDR list (`ip_allowlist` on `POST /api/users` / `PUT /api/users/{id}`, `*string` on update so omitting it leaves an existing list untouched and only an explicit `""` clears it) restricts where that user's bearer token may be used from — enforced on every REST call (`authz` middleware) and every session-proxy connect (SSH/PostgreSQL/SQL Server, the shared `admit()` gate). Empty is unrestricted; break-glass is exempt; directory/OIDC logins are unaffected (no backing local-user row). New migration `0033` (`users.ip_allowlist`). See §7 |

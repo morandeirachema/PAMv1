@@ -715,6 +715,10 @@ func (p *Proxy) refuse(ctx context.Context, chans <-chan ssh.NewChannel, res adm
 		p.log.Warn("session denied: mfa enrollment incomplete", "actor", actor, "remote", remote)
 		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
 		rejectAll(chans, ssh.Prohibited, "pamv1: complete MFA enrollment first")
+	case gateMFAPending:
+		p.log.Warn("session denied: webauthn sign-in pending", "actor", actor, "remote", remote)
+		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:mfa-webauthn-pending")
+		rejectAll(chans, ssh.Prohibited, "pamv1: complete WebAuthn sign-in first")
 	case gateRoleConnect:
 		p.log.Warn("session denied by role", "actor", actor, "role", string(role), "remote", remote)
 		p.audit(ctx, actor, "session.denied",
