@@ -15,6 +15,12 @@ import (
 
 const sessionTTL = 12 * time.Hour
 
+// mfaPendingTTL bounds how long a password-verified, WebAuthn-pending login
+// has to complete the ceremony — generous enough for a user to be prompted by
+// their browser and touch a physical key, short enough that an abandoned
+// attempt does not linger as a live, if narrow, credential.
+const mfaPendingTTL = 5 * time.Minute
+
 type loginIn struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -52,6 +58,19 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		storeError(w, mfaErr)
 		return
 	}
+	// A user with confirmed TOTP is checked above WebAuthn deliberately: TOTP
+	// fits in this one request (password+otp together), so leaving its branch
+	// untouched keeps every existing TOTP user's login byte-for-byte the same.
+	// WebAuthn only gets a look-in for a user with NO confirmed TOTP.
+	var webauthnCreds []store.WebAuthnCredential
+	if s.webAuthn != nil {
+		var werr error
+		webauthnCreds, werr = s.store.ListWebAuthnCredentials(r.Context(), principal.Name)
+		if werr != nil {
+			storeError(w, werr)
+			return
+		}
+	}
 	switch {
 	case mfaErr == nil && enr.Confirmed:
 		// User has MFA — require a valid code (or a single-use recovery code).
@@ -67,6 +86,27 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "invalid multi-factor code")
 			return
 		}
+	case len(webauthnCreds) > 0:
+		// Password verified; this user's second factor is WebAuthn, which
+		// cannot fit in one request — BeginLogin needs to build a challenge
+		// scoped to their credentials first. Mint a narrow MFAPending session
+		// (usable for nothing but POST /api/webauthn/login/begin|finish) rather
+		// than trusting a client-supplied username on a later, separate call —
+		// that would let an unauthenticated caller enumerate who has WebAuthn
+		// enrolled just by asking.
+		token, _, err := s.issueSessionTTL(r.Context(), principal, auth.SessionScopeMFAPending, mfaPendingTTL)
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		setActor(r.Context(), principal.Name)
+		s.audit(withPrincipal(r.Context(), principal), "login", "user:"+principal.Name+" scope:mfa_pending")
+		writeJSON(w, http.StatusOK, map[string]any{
+			"webauthn_required": true,
+			"token":             token,
+			"username":          principal.Name,
+		})
+		return
 	case rt.mfaRequired:
 		// Policy requires MFA but the user has none yet: issue an
 		// enrollment-only session so they can set it up, nothing else.

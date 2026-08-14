@@ -438,6 +438,18 @@ erDiagram
     ptr_time_Time RevokedAt
     time_Time CreatedAt
   }
+  WebAuthnCredential {
+    int64 ID
+    string Username
+    string AttestationType
+    string AttestationFormat
+    string Transports
+    arr_byte AAGUID
+    bool CloneWarning
+    string Name
+    time_Time CreatedAt
+    ptr_time_Time LastUsedAt
+  }
   Campaign ||--o{ CampaignItem : "has"
   Credential ||--o{ AppSecretGrant : "has"
   Credential ||--o{ Checkout : "has"
@@ -455,7 +467,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 147 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 153 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -577,6 +589,12 @@ The 147 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/vendors/{id}/grants` | CapManageTargets |
 | POST | `/api/vendors/{id}/offboard` | CapManageUsers |
 | POST | `/api/vnc-token` | CapConnect |
+| GET | `/api/webauthn/credentials` | authenticated |
+| DELETE | `/api/webauthn/credentials/{id}` | authenticated |
+| POST | `/api/webauthn/login/begin` | public (rate-limited) |
+| POST | `/api/webauthn/login/finish` | public (rate-limited) |
+| POST | `/api/webauthn/register/begin` | authenticated |
+| POST | `/api/webauthn/register/finish` | authenticated |
 | GET | `/healthz` | public |
 | GET | `/mcp` | public |
 | POST | `/mcp` | public |

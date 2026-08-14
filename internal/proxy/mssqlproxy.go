@@ -787,6 +787,9 @@ func (m *MSSQLProxy) refuse(ctx context.Context, c *tds.Conn, res admitResult, a
 	case gateEnrollOnly:
 		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
 		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: complete MFA enrollment first", tds72)
+	case gateMFAPending:
+		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-webauthn-pending")
+		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: complete WebAuthn sign-in first", tds72)
 	case gateRoleConnect:
 		m.deny(ctx, c, actor, login, "your role may not open sessions", tds72)
 	case gateIPAllowlist:
