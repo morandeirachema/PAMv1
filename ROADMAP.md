@@ -2401,7 +2401,7 @@ state is in-memory only, replica-local like Phase 116's sharing it builds on.
 - [x] **v0.25.0** through the test-gated pipeline, rehearsed on `main` first.
   Published 2026-08-14 as `ghcr.io/morandeirachema/pamv1:0.25.0` (also
   `latest`), digest
-  `sha256:PENDING`,
+  `sha256:0fc9f5dc847123599ae3cfd2a97b5fa8c9848fe0716af867b96d9861a89095d2`,
   **public** (anonymous pull 200, verified via the GHCR anonymous
   token-exchange flow)
 - [x] All five pins via the sweep; Helm chart `version` 0.15.0 -> **0.16.0**
