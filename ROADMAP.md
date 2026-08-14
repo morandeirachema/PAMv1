@@ -2427,7 +2427,7 @@ this is a **minor**, not a patch. No schema change.
 - [x] **v0.29.0** through the test-gated pipeline, rehearsed on `main` first.
   Published 2026-08-14 as `ghcr.io/morandeirachema/pamv1:0.29.0` (also
   `latest`), digest
-  `sha256:PENDING`,
+  `sha256:f203f30a9ff93b5885b3b15bb4e7bfd47771d1cb1f925cdfe72ab1177b2dea1a`,
   **public** (anonymous pull 200, verified via the GHCR anonymous
   token-exchange flow)
 - [x] All five pins via the sweep; Helm chart `version` 0.19.0 -> **0.20.0**
