@@ -13,9 +13,11 @@ import (
 var (
 	validOS       = map[string]bool{"linux": true, "windows": true}
 	validProtocol = map[string]bool{"ssh": true, "winrm": true, "rdp": true, "vnc": true, "postgres": true, "mssql": true}
-	// "ssh_ca" is a Zero Standing Privilege credential (Phase 22): it stores no
-	// secret — the proxy mints a short-lived certificate just-in-time instead.
-	validSecret = map[string]bool{store.SecretTypePassword: true, store.SecretTypeSSHKey: true, store.SecretTypeSSHCA: true}
+	// "ssh_ca" and "db_zsp" are Zero Standing Privilege credentials (Phase 22,
+	// extended to databases in Phase 129): neither stores a secret — the proxy
+	// mints a short-lived certificate, or provisions-and-drops an ephemeral
+	// database role, just-in-time instead.
+	validSecret = map[string]bool{store.SecretTypePassword: true, store.SecretTypeSSHKey: true, store.SecretTypeSSHCA: true, store.SecretTypeDBZSP: true}
 )
 
 // validOverride reports whether v is "" (inherit) or a mode the rank map knows.

@@ -21,6 +21,14 @@ file records **releases**: the tagged, signed points you can actually deploy.
   with no match comes back unmanaged, the CyberArk-DNA-style finding.
   New `internal/accountscan` package; console menu 1, option 9.
 
+- **Zero Standing Privilege for PostgreSQL.** A new `db_zsp` credential
+  type stores no secret; at connect time pamv1 provisions a fresh,
+  randomly-named database role via a separately vaulted `provisioner`
+  credential, connects the session as that role, and drops it when the
+  session ends — extending Phase 22's SSH-only ZSP to databases. RDP has
+  no equivalent (a confirmed Guacamole/FreeRDP protocol limitation); SQL
+  Server is deferred.
+
 ## [0.27.0] — 2026-08-14
 
 A minor: one new capability. No schema change.

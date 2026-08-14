@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-14 · Reflects: Phases 0–128 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), and authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-14 · Reflects: Phases 0–129 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -812,6 +812,50 @@ authenticates upstream with the vaulted secret — supporting **SCRAM-SHA-256**
 Sessions appear in *Work with active sessions* (protocol `postgres`) and can be
 killed like any other. MySQL/MSSQL/Oracle are follow-on connectors on the same
 pattern.
+
+### Zero Standing Privilege: ephemeral database roles (Phase 129)
+
+Extends Phase 22's SSH-only ZSP to **PostgreSQL**: instead of a stored,
+standing database credential, pamv1 mints a fresh, randomly-named role with a
+random password at connect time, connects the operator's session as that
+role, and drops it the instant the session ends — no vaulted secret exists
+for the connecting identity at all. This needs two credentials on the
+target: one real, vaulted **provisioner** credential with enough privilege to
+`CREATE ROLE`/`DROP ROLE` (never itself ZSP), and one `db_zsp` credential —
+the connect-time slot operators actually use — which stores nothing:
+
+```bash
+# 1. The provisioner: a real password credential, flagged as this target's
+#    role-provisioning identity. Exactly one per target — a second is
+#    refused at connect time, not silently picked.
+curl -sX POST https://pam.example/api/credentials -H "X-API-Key: $PAM_API_KEY" \
+  -d '{"target_id":1,"username":"pamv1_provisioner","secret":"...","provisioner":true}'
+
+# 2. The db_zsp credential operators actually connect as — no "secret" field.
+curl -sX POST https://pam.example/api/credentials -H "X-API-Key: $PAM_API_KEY" \
+  -d '{"target_id":1,"username":"zsp","secret_type":"db_zsp"}'
+```
+
+```bash
+psql "host=pam.example port=5433 user=zsp@appdb dbname=orders"
+# Password: <your PAM token>
+# → connects as a freshly minted pamv1_zsp_<random> role, dropped on disconnect
+```
+
+Provisioning (`CREATE ROLE ... WITH LOGIN PASSWORD ... VALID UNTIL ...`, a
+30-minute hard ceiling independent of teardown succeeding) and teardown
+(`DROP ROLE`) both run over their own short-lived connection as the
+provisioner — the operator's real session dials the target only as the
+ephemeral role, never as the provisioner. New audit actions
+`db.zsp_provisioned`/`db.zsp_provision_failed`/`db.zsp_teardown`/
+`db.zsp_teardown_failed`. **SQL Server is not supported** — `internal/tds`
+has no client-side response-token reader yet (it only ever parses what a
+*client* sends), a genuine follow-on tracked in
+[ROADMAP.md](../ROADMAP.md#what-is-left-). **RDP has no ZSP path at all**:
+Guacamole's RDP implementation has no certificate/smartcard authentication
+parameter for the RDP protocol itself (confirmed against its own
+documentation) — a permanent limitation of guacd/FreeRDP, not an
+infrastructure gap more hardware would resolve.
 
 ### Database targets (SQL Server)
 
@@ -2703,6 +2747,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-14 | **Phase 129 — Zero Standing Privilege for PostgreSQL.** Extends Phase 22's SSH-only ZSP to databases: a new `db_zsp` credential type stores no secret; at connect time pamv1 dials the target's separately vaulted `provisioner` credential and runs `CREATE ROLE ... WITH LOGIN PASSWORD ... VALID UNTIL ...` (a 30-minute hard-ceiling safety net independent of teardown), connects the operator's real session as that fresh role, and `DROP ROLE`s it on session end — the operator's real session never touches the provisioner's own credential. Exactly one provisioner per target; zero or more than one refuses the connect (fail-closed, never guessed). Proven end-to-end against a real Postgres wire-protocol fake that authenticates twice with two different, dynamically-generated credentials in one test run. **RDP cut before any code was written**: Guacamole's own documentation confirms no certificate/smartcard RDP auth parameter exists — a permanent protocol limitation, not an infra gap. **SQL Server deferred**: `internal/tds` only ever parses what a client sends; issuing pamv1's own `CREATE LOGIN` needs a client-side response-token reader that doesn't exist yet. New audit actions `db.zsp_provisioned`/`db.zsp_provision_failed`/`db.zsp_teardown`/`db.zsp_teardown_failed`. New migration `0036` (`credentials.is_provisioner`). See "Zero Standing Privilege: ephemeral database roles" above |
 | 2026-08-14 | **Phase 128 — authenticated post-login account discovery.** Returns to the original CyberArk/Wallix competitive-research backlog's remaining item now that the Wallix-weighted plan (116–126) is closed: enumerate local/service accounts on a target pamv1 already holds a credential for, and flag ones with no matching vaulted credential (CyberArk DNA-style). New `POST /api/targets/{id}/discover-accounts` (`manage_targets`): dials fresh with the target's first credential (SSH: `cat /etc/passwd`; WinRM: `net user` + `net localgroup Administrators`, both through `guardCommand` like every other discrete command pamv1 runs), parses with the new pure `internal/accountscan` package, and cross-references every found username against **all** the target's vaulted credentials — `"managed":false` is the finding. Deliberately not built on `execWinRM` (which drags in the live-session registry, recording requirements and vendor gating meant for a supervised operator session) — a lean, dedicated path reusing only `guardCommand`/`vault.Decrypt`/`sshConnector.Exec`/`winrm.Run` directly. Console: menu 1, option **9=Discover accounts**. New audit actions `target.accounts_scanned`/`target.accounts_scan_failed`. No schema change; store surface unchanged; route count +1. See "Authenticated post-login account discovery" above |
 | 2026-08-14 | **Phase 126 — portal color themes.** Every hardcoded color in the console's inline stylesheet became a CSS custom property on `:root` (exact values preserved); two new `[data-theme="amber"\|"slate"]` blocks redefine only those tokens, so layout/spacing/font/scanlines are identical across all three palettes. **F2** cycles the theme client-side (`localStorage`, no login required) — no new store table, route or audit event, since a color preference isn't an authorization-relevant fact. `TestConsoleThemeTokensAreConsistent` guards token-name consistency between the base palette and every theme override. No schema/route change. |
 | 2026-08-14 | **Phase 124 — FIDO2/WebAuthn passwordless MFA.** A second, independent second-factor type alongside TOTP — either alone satisfies MFA. `PAM_WEBAUTHN_RP_ID`/`_RP_ORIGIN` (presence enables it, restart-only) turn it on; self-service `POST /api/webauthn/register/{begin,finish}` (any signed-in identity, and an enrollment-only session too) registers a key, `GET`/`DELETE /api/webauthn/credentials{,/{id}}` manage them. Login for a WebAuthn-enrolled user with no confirmed TOTP is necessarily two calls, not one — password-only `POST /api/login` returns a narrow, 5-minute `MFAPending` token good for nothing but `POST /api/webauthn/login/{begin,finish}`, which the console drives automatically. A user may register more than one key; public keys are stored in the clear (not a secret, unlike the TOTP secret). New migration `0035` (`webauthn_credentials`, `mfa_webauthn_challenges`); store surface 164 → 171. New audit actions `mfa.webauthn_registered`/`_register_failed`/`_deleted`. See the "Multi-factor authentication (WebAuthn, Phase 124)" section above |

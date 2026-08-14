@@ -335,6 +335,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		credUser:       credUser,
 		remoteAddr:     remote,
 		expectProtocol: "postgres",
+		skipDecrypt:    func(c *store.Credential) bool { return c.IsZSP() },
 		startAudit: func(t *store.Target, c *store.Credential) (string, string) {
 			return "db.session.start", fmt.Sprintf("target:%s db:%s cred_user:%s", t.Name, database, c.Username)
 		},
@@ -345,7 +346,37 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	}
 	target, cred, secret := res.target, res.cred, res.secret
 
-	up, err := d.dialUpstream(ctx, target, cred.Username, secret, database)
+	// Zero Standing Privilege (Phase 129): a db_zsp credential carries no
+	// stored secret (secret is "" here, per skipDecrypt above) — provision a
+	// fresh, ephemeral role via the target's provisioner credential and dial
+	// AS that role instead of the db_zsp row's own (unusable) username.
+	dialUser, dialSecret := cred.Username, secret
+	var provisioner *store.Credential
+	var provisionerSecret, ephemeralUser string
+	if cred.IsZSP() {
+		var perr error
+		provisioner, perr = findProvisioner(ctx, d.store, target.ID)
+		if perr == nil {
+			provisionerSecret, perr = jitDecrypt(ctx, d.vault, target, provisioner)
+		}
+		if perr == nil {
+			ephemeralUser, dialSecret, perr = d.provisionPGRole(ctx, target, provisioner, provisionerSecret)
+		}
+		if perr != nil {
+			d.audit(ctx, actor, "db.zsp_provision_failed", fmt.Sprintf("target:%s error:%v", target.Name, perr))
+			d.fail(backend, "08006", "pamv1: zero standing privilege provisioning failed")
+			return
+		}
+		dialUser = ephemeralUser
+		d.audit(ctx, actor, "db.zsp_provisioned", fmt.Sprintf("target:%s role:%s", target.Name, ephemeralUser))
+		// Registered immediately, not folded into the later session-lifecycle
+		// defer below: several early-return paths between here and that defer
+		// (a failed dial, a required-recording refusal) would otherwise leak
+		// the just-created role for the rest of its VALID UNTIL window.
+		defer d.teardownPGRole(context.WithoutCancel(ctx), actor, target, provisioner, provisionerSecret, ephemeralUser)
+	}
+
+	up, err := d.dialUpstream(ctx, target, dialUser, dialSecret, database)
 	if err != nil {
 		d.log.Error("upstream database connection failed", "actor", actor, "target", target.Name, "err", err)
 		d.audit(ctx, actor, "db.session.error", fmt.Sprintf("target:%s db:%s error:%v", target.Name, database, err))

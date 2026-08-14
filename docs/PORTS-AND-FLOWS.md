@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-08-14 · Reflects: Phases 0–128. **Phase 53 added the first new
+> Last updated: 2026-08-14 · Reflects: Phases 0–129. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; nothing after
 > it adds a port or listener (55–94 ride the existing listeners and flows: the
 > live-monitor relay and the step-up decision bus ride the server ↔ PostgreSQL
@@ -44,6 +44,9 @@
 > **Phase 128 adds no port, listener or flow either** — one new route on
 > the existing `:8080`, dialing the target over the exact ssh/winrm flow
 > that target's own credential already uses for a real session.
+> **Phase 129 adds no port, listener or flow either** — the provisioning
+> and teardown dials ride the existing `:5433` PostgreSQL flow, the same
+> one the real session itself uses, just twice more per connect.
 > Everything from 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
 > **no new listeners**: certification/ticketing/approvals (19–21), threat analytics

@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–128 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–129 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -64,7 +64,15 @@ over a target's own vaulted credential (never the live interactive session),
 parsed by a new pure `internal/accountscan` package and cross-referenced
 against every credential pamv1 already vaults for that target, so a
 login-capable account the host has but pamv1 doesn't track comes back
-`"managed":false`, CyberArk DNA-style. The narrative that follows traces the
+`"managed":false`, CyberArk DNA-style. **Phase 129 then extended Zero
+Standing Privilege (Phase 22, SSH-only until now) to PostgreSQL**: a
+`db_zsp` credential provisions a fresh, randomly-named role via the
+target's separately vaulted provisioner credential and drops it when the
+session ends, proven against a real Postgres wire-protocol exchange — with
+two exclusions decided *before* writing code, not discovered after: RDP has
+no equivalent (Guacamole's own documentation confirms no certificate-based
+RDP auth parameter exists), and SQL Server is deferred (`internal/tds` has
+no client-side response-token reader yet). The narrative that follows traces the
 feature arc through Phase 43 — the CyberArk/Wallix-style console, the AI-agent
 access broker (MCP + SPIFFE), SOPS-encrypted secrets, the four **Tier-1
 competitive-coverage gaps** closed (a PostgreSQL session proxy, supervised sessions
@@ -2408,6 +2416,97 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 129 — Zero Standing Privilege for PostgreSQL ✅
+
+First phase of a 15-phase batch drawn from a fresh gap-research pass against
+BeyondTrust, Delinea, Teleport and StrongDM — the vendors README.md names as
+comparison points but neither of the two prior research rounds this session
+covered. Extends Phase 22's SSH-only Zero Standing Privilege to databases:
+StrongDM's RDP cert-based ZSP and Teleport's ephemeral-DB-user provisioning
+were the two findings behind this phase; RDP turned out not to be
+achievable at all (see below) and SQL Server was cut for its own honest
+reason, so what shipped is the database half, PostgreSQL only.
+
+**RDP cut before any implementation code was written.** No live guacd/Docker
+daemon was available in this environment to run a real protocol handshake,
+so the go/no-go check this phase opened with was done against Apache
+Guacamole's own official documentation instead: the full RDP parameter list
+has no client-certificate or smartcard authentication parameter — only
+`username`/`password`/`domain` (plus `gateway-*` equivalents) and
+server-certificate-trust settings (`ignore-cert`/`cert-tofu`/
+`cert-fingerprints`, which govern the *client* trusting the *server's*
+cert, the opposite direction). A second page, "Signing in with smart cards
+or certificates," looked promising but turned out to be a different
+mechanism entirely — a reverse-proxy-terminated client cert used to log
+into Guacamole's own web frontend (`guacamole-client`), which pamv1 doesn't
+use at all (pamv1 talks to guacd directly), and even that path still
+requires a separate username/password/domain for the RDP connection
+afterward. **Conclusion: RDP certificate-based ZSP is not achievable with
+guacd/FreeRDP as they exist today** — a confirmed, permanent protocol
+limitation, not an infrastructure gap a bigger test rig would resolve.
+
+**SQL Server deferred for a second, different honest reason, found building
+the database half.** Postgres has a rich client-side wire-protocol library
+already vendored (`jackc/pgx/v5/pgproto3` — `dialUpstream`'s own
+`*upstreamPG.fe` is already a full `pgproto3.Frontend`), so pamv1 issuing
+its own `CREATE ROLE`/`DROP ROLE` as a client and reading the real server's
+response needs no new wire-level code, just a normal `Query` message send +
+response loop. SQL Server has no equivalent: `internal/tds` is entirely
+built for pamv1 acting as a TDS *server* (parsing what an operator's client
+sends, encoding what pamv1 sends back) — there is no existing code for
+pamv1 acting as a TDS *client* parsing a real server's response token
+stream (COLMETADATA/ROW/DONE/error tokens), which `CREATE LOGIN`'s result
+would need. Building that reader from scratch, calibrated to be
+trustworthy for something this security-sensitive, is real, separate work —
+not a corner to cut into this phase.
+
+**Design.** A new `store.SecretTypeDBZSP` ("db_zsp") joins `SecretTypeSSHCA`
+under the existing `IsZSP()` predicate — neither stores a secret. A new
+`Credential.Provisioner bool` (migration `0036`, `credentials.is_provisioner`)
+marks the one real, stored, elevated credential per target eligible to run
+the DDL a db_zsp dial needs; `dbproxy.go`'s `admitRequest` gains
+`skipDecrypt: func(c) bool { return c.IsZSP() }` (previously only the SSH
+proxy set this hook). At connect time: `findProvisioner` resolves the
+target's one `Provisioner` credential — zero or more than one refuses the
+connect, fail-closed, never guessed at — `provisionPGRole` dials it via the
+*existing* `dialUpstream` and issues `CREATE ROLE %s WITH LOGIN PASSWORD %s
+VALID UNTIL %s` (a 30-minute hard-ceiling expiry, a safety net independent
+of teardown succeeding) as pamv1's own PostgreSQL client (`pgSimpleExec`, a
+plain `Query` send + response-loop, distinct from the relay path which
+never originates a statement itself). Role name and password are
+`crypto/rand`-generated hex, never client input, so the string-built DDL
+(`pgQuoteIdent`/`pgQuoteLiteral`, standard SQL doubled-quote escaping) is
+not an injection surface — verified anyway by dedicated unit tests. The
+real session then dials again as that fresh role; teardown (`DROP ROLE`,
+best-effort audited on failure — its `VALID UNTIL` safety net covers a lost
+teardown call) is registered in its own `defer` at the moment provisioning
+succeeds, deliberately not folded into the later session-lifecycle defer,
+since a failed dial or a required-recording refusal between provisioning
+and relay would otherwise leak the role for the rest of its window.
+
+**Proven end-to-end**, not mocked: a dedicated fake Postgres upstream
+(`fakePGProvisioner`, distinct from the shared single-password
+`fakePostgres` other DB-proxy tests use) parses the `CREATE ROLE`/`DROP
+ROLE` statements the proxy issues to learn the dynamically-generated
+ephemeral credential and accept a second, different login with it in the
+same test run — proving the operator's real session actually runs as the
+newly minted role, never the provisioner's own credential. Plus fail-closed
+tests for the no-provisioner and ambiguous-provisioner cases.
+
+**V1 scope, explicitly bounded.** PostgreSQL only. One provisioner
+credential per target, required to exist before db_zsp can be used — no
+auto-discovery of superuser credentials. Console unchanged: `db_zsp`/
+provisioner credentials are curl/API-only, matching the existing precedent
+that `ssh_ca` credentials were never addable through the console either.
+
+New audit actions `db.zsp_provisioned`/`db.zsp_provision_failed`/
+`db.zsp_teardown`/`db.zsp_teardown_failed`.
+
+**Critical files:** `internal/proxy/dbzsp.go` (new), `internal/proxy/dbproxy.go`,
+`internal/store/store.go` (`SecretTypeDBZSP`, `Credential.Provisioner`),
+`internal/store/pgstore/pgstore.go`, `internal/api/credentials.go`,
+`internal/api/targets.go`, new migration `0036`.
 
 ## Phase 128 — Authenticated post-login account discovery ✅
 

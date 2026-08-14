@@ -215,9 +215,9 @@ func (s *PGStore) DeleteTarget(ctx context.Context, id int64) error {
 // ErrNotFound if the target does not exist.
 func (s *PGStore) CreateCredential(ctx context.Context, c *store.Credential) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO credentials (target_id, username, secret_type, secret_enc)
-		 VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
-		c.TargetID, c.Username, c.SecretType, c.SecretEnc,
+		`INSERT INTO credentials (target_id, username, secret_type, secret_enc, is_provisioner)
+		 VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
+		c.TargetID, c.Username, c.SecretType, c.SecretEnc, c.Provisioner,
 	).Scan(&c.ID, &c.CreatedAt)
 	if pgCode(err) == pgForeignKeyViolation {
 		return store.ErrNotFound
@@ -229,7 +229,7 @@ func (s *PGStore) CreateCredential(ctx context.Context, c *store.Credential) err
 // 0) in the (limit, afterID) window, ordered by ID.
 func (s *PGStore) ListCredentials(ctx context.Context, targetID int64, limit int, afterID int64) ([]store.Credential, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, target_id, username, secret_type, secret_enc, created_at, rotated_at
+		`SELECT id, target_id, username, secret_type, secret_enc, is_provisioner, created_at, rotated_at
 		 FROM credentials WHERE ($1 = 0 OR target_id = $1) AND id > $2 ORDER BY id LIMIT $3`,
 		targetID, afterID, limitArg(limit))
 	if err != nil {
@@ -241,7 +241,7 @@ func (s *PGStore) ListCredentials(ctx context.Context, targetID int64, limit int
 // GetCredential returns the credential with the given ID, or ErrNotFound.
 func (s *PGStore) GetCredential(ctx context.Context, id int64) (*store.Credential, error) {
 	return getOne(ctx, s.pool, scanCredential,
-		`SELECT id, target_id, username, secret_type, secret_enc, created_at, rotated_at
+		`SELECT id, target_id, username, secret_type, secret_enc, is_provisioner, created_at, rotated_at
 		 FROM credentials WHERE id = $1`, id)
 }
 
@@ -2234,7 +2234,7 @@ func scanAccessRequest(row pgx.CollectableRow) (store.AccessRequest, error) {
 // scanCredential maps one result row into a store.Credential.
 func scanCredential(row pgx.CollectableRow) (store.Credential, error) {
 	var c store.Credential
-	err := row.Scan(&c.ID, &c.TargetID, &c.Username, &c.SecretType, &c.SecretEnc, &c.CreatedAt, &c.RotatedAt)
+	err := row.Scan(&c.ID, &c.TargetID, &c.Username, &c.SecretType, &c.SecretEnc, &c.Provisioner, &c.CreatedAt, &c.RotatedAt)
 	return c, err
 }
 

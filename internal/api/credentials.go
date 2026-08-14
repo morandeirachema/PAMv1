@@ -19,10 +19,11 @@ import (
 )
 
 type credentialIn struct {
-	TargetID   int64  `json:"target_id"`
-	Username   string `json:"username"`
-	Secret     string `json:"secret"`
-	SecretType string `json:"secret_type"`
+	TargetID    int64  `json:"target_id"`
+	Username    string `json:"username"`
+	Secret      string `json:"secret"`
+	SecretType  string `json:"secret_type"`
+	Provisioner bool   `json:"provisioner"`
 }
 
 // createCredential vaults a secret for a target, encrypting it under the target's
@@ -36,19 +37,22 @@ func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 	if in.SecretType == "" {
 		in.SecretType = "password"
 	}
-	zsp := in.SecretType == store.SecretTypeSSHCA
+	zsp := in.SecretType == store.SecretTypeSSHCA || in.SecretType == store.SecretTypeDBZSP
 	switch {
 	case validName(in.Username) != nil:
 		writeError(w, http.StatusUnprocessableEntity, "username "+validName(in.Username).Error())
 		return
 	case !validSecret[in.SecretType]:
-		writeError(w, http.StatusUnprocessableEntity, `secret_type must be "password", "ssh_key" or "ssh_ca"`)
+		writeError(w, http.StatusUnprocessableEntity, `secret_type must be "password", "ssh_key", "ssh_ca" or "db_zsp"`)
 		return
 	case !zsp && in.Secret == "":
 		writeError(w, http.StatusUnprocessableEntity, "secret is required")
 		return
 	case zsp && in.Secret != "":
-		writeError(w, http.StatusUnprocessableEntity, "an ssh_ca (zero standing privilege) credential must not carry a secret")
+		writeError(w, http.StatusUnprocessableEntity, "a zero standing privilege credential (ssh_ca, db_zsp) must not carry a secret")
+		return
+	case zsp && in.Provisioner:
+		writeError(w, http.StatusUnprocessableEntity, "a zero standing privilege credential cannot itself be a provisioner")
 		return
 	}
 	target, err := s.store.GetTarget(r.Context(), in.TargetID)
@@ -57,14 +61,19 @@ func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A Zero Standing Privilege credential is served by minting a certificate over
-	// SSH — it only makes sense on an ssh target.
-	if zsp && target.Protocol != "ssh" {
+	// SSH, or provisioning-and-dropping an ephemeral role over Postgres/SQL
+	// Server — each only makes sense on the matching target protocol.
+	switch {
+	case in.SecretType == store.SecretTypeSSHCA && target.Protocol != "ssh":
 		writeError(w, http.StatusUnprocessableEntity, "ssh_ca credentials are only valid on ssh targets")
+		return
+	case in.SecretType == store.SecretTypeDBZSP && target.Protocol != "postgres" && target.Protocol != "mssql":
+		writeError(w, http.StatusUnprocessableEntity, "db_zsp credentials are only valid on postgres or mssql targets")
 		return
 	}
 	// Insert first so the row has an ID, then bind the ciphertext to (target,
 	// credential) via the AAD and store it. Roll the row back if either fails.
-	c := store.Credential{TargetID: target.ID, Username: in.Username, SecretType: in.SecretType}
+	c := store.Credential{TargetID: target.ID, Username: in.Username, SecretType: in.SecretType, Provisioner: in.Provisioner}
 	if err := s.store.CreateCredential(r.Context(), &c); err != nil {
 		storeError(w, err)
 		return
