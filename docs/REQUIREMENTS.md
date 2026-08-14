@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-08-14 · Reflects: Phases 0–128. Phases 66–70 add one more
+> Last updated: 2026-08-14 · Reflects: Phases 0–129. Phases 66–70 add one more
 > background worker (the hourly, leader-locked certification scheduler); Phase 78
 > adds an optional per-replica Conjur refresh worker (off unless
 > `PAM_CONJUR_REFRESH_MIN` is set); 71–94 add no port, resource floor or
@@ -27,6 +27,10 @@
 > **Phase 128 adds none of that either** — one new route, no new
 > worker or resource floor beyond the target dial its own credential
 > already makes.
+> **Phase 129 adds none of that either** — Zero Standing Privilege for
+> PostgreSQL rides the existing `:5433` listener, no new port or worker;
+> a db_zsp connect makes one extra short-lived dial to provision/tear
+> down its ephemeral role, not a standing resource cost.
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** These are the
 > specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate
