@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–134 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–135 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,86 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 135 — DoubleLock: a per-credential second password ✅
+
+Third phase of the BeyondTrust/Delinea/Teleport/StrongDM batch. Closes
+Delinea's DoubleLock/QuantumLock: a named person's password, independent of
+RBAC, additionally required to reveal or check out a credential's plaintext
+— so even a compromised admin account can't read a Double-Locked secret
+alone.
+
+**The plan's original mechanism didn't survive contact with `-rotate-kek`,
+and the fix is the interesting part of this phase.** The plan called for
+mixing a hash of the password into the AAD passed to the *existing*
+`vault.Encrypt`/`Decrypt` — cheap, and it would have worked for reveal and
+checkout in isolation. But `internal/maint/rotate.go`'s `-rotate-kek` re-
+wraps every KEK-protected artifact **exhaustively** (its own doc comment
+recounts the exact incident: key custody was added in Phase 42, the
+rotation forgot about it, and the server came back up unable to decrypt a
+fourth of what it needed to) — and it has no way to obtain a credential's
+DoubleLock password to redo that AAD mid-rotation. Baking the password into
+an AAD checked by a KEK-wrapped ciphertext would have meant every DoubleLock
+either silently breaks on the next KEK rotation, or `-rotate-kek` must grow
+a way to prompt for passwords it was never designed to ask for — the same
+shape of problem this codebase already has an honest answer for: sealed
+session recordings, which *also* carry KEK-wrapped material `-rotate-kek`
+cannot reach, and are handled by documenting the limitation and requiring
+the old KEK to be retained, not by pretending the rotation is exhaustive
+when it isn't.
+
+**Fix: keep DoubleLock's ciphertext outside the KEK entirely.**
+`DoubleLockEnc` is a *second*, independent encryption of the same secret —
+raw AES-256-GCM keyed directly by PBKDF2(password), never touching
+`vault.Encrypt`, never wrapped by any KEK. `-rotate-kek`'s exhaustive
+"four kinds" list (`internal/maint/rotate.go`) needed **zero changes**: from
+its perspective `DoubleLockEnc` simply doesn't exist, because it was never a
+KEK-protected artifact to begin with. This is arguably a *stronger*
+security property than the original plan too — a compromised KEK provides
+literally no help decrypting `DoubleLockEnc`, versus "the AAD it's gated on
+happens to be hard to guess."
+
+**The rest of the design still matches the plan's shape.** `SecretEnc`
+itself is never touched — the session-proxy JIT-decrypt path always uses
+it, standard AAD, unmodified, so a Double-Locked credential still connects
+through the proxy exactly like any other (the operator never sees the
+plaintext there either way; DoubleLock protects the two paths that *do*
+hand plaintext to a caller — reveal and checkout). A new
+`Credential.DoubleLockHolder` (migration `0038`) names who holds the
+password, never the password itself. Since a raw AEAD `Open` failure
+doesn't distinguish "wrong key" from "corrupted ciphertext" any more than
+`vault.Decrypt`'s single `ErrInvalidToken` does, a separate salted PBKDF2
+verifier is checked first — the plan's own concern, solved the same way
+regardless of which primitive ended up doing the real decryption.
+**Rotation clears DoubleLock** (a real, deliberate v1 limitation, not an
+oversight): `RotateCredentialSecret` — the actual secret-changed path, as
+opposed to `UpdateCredentialSecretEnc`'s KEK-re-wrap-only path, which
+leaves DoubleLock untouched — now also clears it at the store layer, since
+the password to reseal a *new* secret isn't available there; the holder
+re-enables it afterward if still wanted.
+
+**Disabling DoubleLock requires the password too** — the one design point
+that actually matters for the threat model. If any `CapRevealSecret` holder
+could strip DoubleLock without the password, the feature would be theater:
+the entire promise is that an admin *alone* cannot read the secret, and that
+has to include not being able to simply turn the protection off.
+
+New routes `POST`/`DELETE /api/credentials/{id}/doublelock`. New audit
+actions `credential.doublelock_enabled`/`_disabled`/`_denied`, within the
+existing `credential.*` family.
+
+**V1 scope.** One password, one named holder (a free-text label — a name or
+a comma-separated set — not a link to a real `store.User` row). No
+DoubleLock chaining, no QuantumLock post-quantum variant, no safe-level
+cascading (the plan's own "(or per safe...)" was framed as an alternative
+scope, not an addition).
+
+**Critical files:** `internal/api/doublelock.go` (new), `internal/api/credentials.go`,
+`internal/api/lifecycle_handlers.go` (checkout), `internal/api/server.go`,
+`internal/store/store.go`, `internal/store/pgstore/pgstore.go`,
+`internal/store/memstore/memstore.go`, new migration `0038`.
+`internal/vault/vault.go` and `internal/maint/rotate.go`: unchanged, and
+staying unchanged is the point.
 
 ## Phase 134 — v0.30.0 ✅
 

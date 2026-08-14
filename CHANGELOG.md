@@ -9,6 +9,21 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [Unreleased]
+
+### Added
+
+- **DoubleLock.** A named person's password, additionally required (on top
+  of `reveal_secret`) to reveal or check out a credential's plaintext —
+  even a compromised admin account can't read it alone, and disabling it
+  requires the same password, so an admin alone can't strip the protection
+  either. `POST`/`DELETE /api/credentials/{id}/doublelock`. Kept
+  deliberately independent of the vault/KEK: `DoubleLockEnc` is a second
+  encryption of the secret keyed directly by PBKDF2(password), never
+  KEK-wrapped, so `-rotate-kek` needs no special case for it. Rotating the
+  credential's secret clears DoubleLock. New `internal/api/doublelock.go`;
+  new migration `0038`.
+
 ## [0.30.0] — 2026-08-14
 
 A minor: one new capability. Schema change (migration `0037`).

@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-08-14 · Reflects: Phases 0–133. **Phase 53 added the first new
+> Last updated: 2026-08-14 · Reflects: Phases 0–135. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; nothing after
 > it adds a port or listener (55–94 ride the existing listeners and flows: the
 > live-monitor relay and the step-up decision bus ride the server ↔ PostgreSQL
@@ -56,6 +56,10 @@
 > destination is real infrastructure this deployment now depends on;
 > `PAM_DEVICE_HEADER` adds neither, it only reads a header already on
 > an inbound request the existing `:8080` listener already accepts.
+> **Phase 135 adds no port, listener or flow either** — DoubleLock's
+> two new routes ride the existing `:8080` REST listener, and the
+> extra encryption/decryption it does is entirely in-process, no
+> outbound call of any kind.
 > Everything from 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
 > **no new listeners**: certification/ticketing/approvals (19–21), threat analytics

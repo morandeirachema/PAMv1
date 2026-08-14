@@ -313,6 +313,7 @@ erDiagram
     string Username
     string SecretType
     bool Provisioner
+    string DoubleLockHolder
     time_Time CreatedAt
     ptr_time_Time RotatedAt
   }
@@ -475,7 +476,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 154 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 156 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -523,6 +524,8 @@ The 154 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/credentials/{id}/dependencies` | CapReadInventory |
 | POST | `/api/credentials/{id}/dependencies` | CapManageCredentials |
 | DELETE | `/api/credentials/{id}/dependencies/{did}` | CapManageCredentials |
+| DELETE | `/api/credentials/{id}/doublelock` | CapRevealSecret |
+| POST | `/api/credentials/{id}/doublelock` | CapRevealSecret |
 | POST | `/api/credentials/{id}/reconcile` | CapManageCredentials |
 | POST | `/api/credentials/{id}/reveal` | CapRevealSecret |
 | POST | `/api/credentials/{id}/rotate` | CapManageCredentials |

@@ -245,6 +245,50 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatal("UpdateCredentialSecretEnc must not clear rotated_at")
 	}
 
+	// --- DoubleLock (Phase 135) ---
+	if err := st.SetCredentialDoubleLock(ctx, cred.ID, "alice", "verifier-1", "dl-enc-1"); err != nil {
+		t.Fatalf("SetCredentialDoubleLock: %v", err)
+	}
+	got, _ = st.GetCredential(ctx, cred.ID)
+	if got.DoubleLockHolder != "alice" || got.DoubleLockVerifier != "verifier-1" || got.DoubleLockEnc != "dl-enc-1" {
+		t.Fatalf("after SetCredentialDoubleLock: %+v", got)
+	}
+	if err := st.SetCredentialDoubleLock(ctx, 999999, "x", "y", "z"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("SetCredentialDoubleLock missing: want ErrNotFound, got %v", err)
+	}
+	// UpdateCredentialSecretEnc is the KEK re-wrap path (same plaintext, new
+	// KEK) and must NOT disturb DoubleLock.
+	if err := st.UpdateCredentialSecretEnc(ctx, cred.ID, "v2:four"); err != nil {
+		t.Fatalf("UpdateCredentialSecretEnc: %v", err)
+	}
+	got, _ = st.GetCredential(ctx, cred.ID)
+	if got.DoubleLockHolder != "alice" || got.DoubleLockVerifier != "verifier-1" || got.DoubleLockEnc != "dl-enc-1" {
+		t.Fatalf("UpdateCredentialSecretEnc (KEK re-wrap) must not clear DoubleLock: %+v", got)
+	}
+	// RotateCredentialSecret is a REAL secret change and must clear DoubleLock —
+	// the password-derived DoubleLockEnc now seals a stale secret.
+	if err := st.RotateCredentialSecret(ctx, cred.ID, "v2:five", now); err != nil {
+		t.Fatalf("RotateCredentialSecret: %v", err)
+	}
+	got, _ = st.GetCredential(ctx, cred.ID)
+	if got.DoubleLockHolder != "" || got.DoubleLockVerifier != "" || got.DoubleLockEnc != "" {
+		t.Fatalf("RotateCredentialSecret must clear DoubleLock: %+v", got)
+	}
+	// ClearCredentialDoubleLock on its own.
+	if err := st.SetCredentialDoubleLock(ctx, cred.ID, "bob", "verifier-2", "dl-enc-2"); err != nil {
+		t.Fatalf("SetCredentialDoubleLock: %v", err)
+	}
+	if err := st.ClearCredentialDoubleLock(ctx, cred.ID); err != nil {
+		t.Fatalf("ClearCredentialDoubleLock: %v", err)
+	}
+	got, _ = st.GetCredential(ctx, cred.ID)
+	if got.DoubleLockHolder != "" || got.DoubleLockVerifier != "" || got.DoubleLockEnc != "" {
+		t.Fatalf("after ClearCredentialDoubleLock: %+v", got)
+	}
+	if err := st.ClearCredentialDoubleLock(ctx, 999999); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ClearCredentialDoubleLock missing: want ErrNotFound, got %v", err)
+	}
+
 	// --- grants ---
 	g := &store.TargetGrant{TargetID: tgt.ID, SubjectType: "user", Subject: "alice", CreatedBy: "grantor-gary"}
 	if err := st.CreateTargetGrant(ctx, g); err != nil {

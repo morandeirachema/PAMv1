@@ -166,10 +166,9 @@ func (s *Server) revealCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "this credential has no stored secret (zero standing privilege); connect through the proxy")
 		return
 	}
-	secret, err := s.vault.Decrypt(r.Context(), c.SecretEnc, store.CredentialAAD(c.TargetID, c.ID))
+	secret, err := s.doubleLockReveal(r, c, "reveal")
 	if err != nil {
-		s.audit(r.Context(), "credential.decrypt_failed", fmt.Sprintf("credential:%d target:%d op:reveal", c.ID, c.TargetID))
-		writeError(w, http.StatusInternalServerError, "decryption failed")
+		writeDoubleLockError(w, err)
 		return
 	}
 	// Fail closed: the reveal must be durably audited before the secret leaves.
