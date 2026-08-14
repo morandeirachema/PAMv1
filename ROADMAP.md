@@ -2430,7 +2430,7 @@ resulting 15-phase plan were being worked through. A genuine **minor**
 - [x] **v0.28.0** through the test-gated pipeline, rehearsed on `main` first.
   Published 2026-08-14 as `ghcr.io/morandeirachema/pamv1:0.28.0` (also
   `latest`), digest
-  `sha256:PENDING`,
+  `sha256:30eb91806df2052e3a2d80f0de97839b94723dad92a01dfd5ee2dca1ecafec9a`,
   **public** (anonymous pull 200, verified via the GHCR anonymous
   token-exchange flow)
 - [x] All five pins via the sweep; Helm chart `version` 0.18.0 -> **0.19.0**
