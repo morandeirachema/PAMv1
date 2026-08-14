@@ -37,7 +37,7 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
-runs 0–128 and **every phase has shipped**, and the current
+runs 0–129 and **every phase has shipped**, and the current
 tagged, cosign-signed release is
 **[v0.27.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.27.0)** (2026-08-14;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
@@ -147,7 +147,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–128, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–129, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 
@@ -453,6 +453,20 @@ A general-purpose X.509 certificate lifecycle manager (CyberArk's Venafi-driven
 local CA for Zero Standing Privilege (Phase 22), and a full cert
 issuance/renewal/expiry-alerting product is closer to a scope decision (PAM vs.
 PKI) than a phase-sized item.
+
+### Tier 6 — BeyondTrust / Delinea / Teleport / StrongDM gap research (2026-08-14)
+
+Four independent research passes — one per vendor, each fact-checked against
+this repo's own code before being reported — covering the vendors this doc
+already names as comparison points but neither prior research round reached.
+Two findings were confirmed independently by two vendors each: Kubernetes
+target support (Teleport, StrongDM) and device-aware admission (Teleport's
+hardware device identity, StrongDM's live EDR posture). Rows are added as
+each phase ships, not pre-declared as a block.
+
+| Gap | Leaders | pamv1 today |
+|---|---|---|
+| ~~**Zero Standing Privilege beyond SSH**~~ **✅ shipped, PostgreSQL only (Phase 129)** | Cert-based ZSP for RDP (StrongDM); ephemeral-user provisioning for databases (Teleport) | A `db_zsp` credential provisions a fresh, randomly-named PostgreSQL role via the target's separately vaulted provisioner credential and drops it when the session ends — proven against a real Postgres wire-protocol exchange. RDP is **not achievable**: Guacamole's own documentation confirms no certificate/smartcard RDP auth parameter exists, a permanent protocol limitation. SQL Server is deferred: `internal/tds` has no client-side response-token reader yet |
 
 ### Deliberate non-goal
 

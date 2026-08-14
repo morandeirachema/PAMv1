@@ -38,7 +38,7 @@ de fósforo verde** sin concesiones, porque tocar un PAM debe *sentirse* serio.
 
 Construido fase a fase con una regla: **cada fase es funcional de principio a fin** — arranca,
 pasa los tests y se despliega como Infraestructura-como-Código. El **[roadmap](ROADMAP.md)**
-abarca de la 0 a la 128, **se han entregado todas las fases**, y la release etiquetada y
+abarca de la 0 a la 129, **se han entregado todas las fases**, y la release etiquetada y
 firmada con cosign vigente es la
 **[v0.27.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.27.0)** (2026-08-14;
 la primera fue la v0.10.0, el 2026-07-28). Lo que eso suma:
@@ -151,7 +151,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–128, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–129, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -467,6 +467,22 @@ Venafi) es más una pregunta de alcance que una brecha: pamv1 ya opera una CA
 local para Privilegio Cero Permanente (Fase 22), y un producto completo de
 emisión/renovación/alerta de expiración se acerca más a una decisión de
 alcance (PAM frente a PKI) que a un ítem del tamaño de una fase.
+
+### Nivel 6 — investigación de brechas BeyondTrust / Delinea / Teleport / StrongDM (2026-08-14)
+
+Cuatro investigaciones independientes — una por proveedor, cada una
+verificada contra el código real de este repositorio antes de reportarse —
+cubriendo los proveedores que este documento ya nombra como puntos de
+comparación pero que ninguna investigación anterior había cubierto. Dos
+hallazgos fueron confirmados independientemente por dos proveedores cada
+uno: soporte de objetivos Kubernetes (Teleport, StrongDM) y admisión
+consciente del dispositivo (identidad de dispositivo por hardware de
+Teleport, postura EDR en vivo de StrongDM). Las filas se añaden a medida
+que cada fase se entrega, no se predeclaran en bloque.
+
+| Brecha | Líderes | pamv1 hoy |
+|---|---|---|
+| ~~**Privilegio Cero Permanente más allá de SSH**~~ **✅ entregado, solo PostgreSQL (Fase 129)** | ZSP basado en certificado para RDP (StrongDM); aprovisionamiento de usuarios efímeros para bases de datos (Teleport) | Una credencial `db_zsp` aprovisiona un rol PostgreSQL nuevo y de nombre aleatorio mediante la credencial de aprovisionamiento del objetivo, guardada aparte, y lo elimina al terminar la sesión — probado contra un intercambio real del protocolo de cable de Postgres. RDP **no es alcanzable**: la propia documentación de Guacamole confirma que no existe ningún parámetro de autenticación RDP por certificado/tarjeta inteligente, una limitación permanente del protocolo. SQL Server queda diferido: `internal/tds` aún no tiene un lector de tokens de respuesta del lado cliente |
 
 ### No-objetivo deliberado
 

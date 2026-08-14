@@ -308,6 +308,7 @@ erDiagram
     int64 TargetID
     string Username
     string SecretType
+    bool Provisioner
     time_Time CreatedAt
     ptr_time_Time RotatedAt
   }
