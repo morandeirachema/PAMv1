@@ -182,6 +182,15 @@ type Config struct {
 	// RequireRecording refuses a proxied session when its recording cannot be
 	// created, rather than proceeding unrecorded (fail-closed session auditing).
 	RequireRecording bool
+	// SSHPortForward enables client-initiated direct-tcpip channels (ssh -L
+	// style forwarding) on the SSH proxy, scoped to the connected target's
+	// own host only (Phase 141). Default true, matching SSHSFTPMode's
+	// default-allow posture — an operator already fully authorized for a
+	// target loses nothing by also being able to forward to it. Forwarding
+	// is refused regardless of this setting for an observer session, or
+	// while RequireSupervision/RequireRecording are configured: neither has
+	// a mechanism that covers a raw, unrecordable byte stream.
+	SSHPortForward bool
 	// RequireSupervision refuses an interactive SSH session to proceed until a
 	// supervisor actively watches it (GET /api/sessions/{id}/stream) or
 	// SupervisionTimeout elapses — after-the-fact review isn't enough for a
@@ -632,6 +641,7 @@ func Load() (*Config, error) {
 		RotateMaxAge:            time.Duration(integer("PAM_ROTATE_MAX_AGE_HOURS", 0)) * time.Hour,
 		RotateAfterSession:      boolean("PAM_ROTATE_AFTER_SESSION", false),
 		RequireRecording:        boolean("PAM_REQUIRE_RECORDING", false),
+		SSHPortForward:          boolean("PAM_SSH_PORT_FORWARD", true),
 		RequireSupervision:      boolean("PAM_REQUIRE_LIVE_SUPERVISION", false),
 		SupervisionTimeout:      time.Duration(integer("PAM_LIVE_SUPERVISION_TIMEOUT_SEC", 120)) * time.Second,
 		MaxSessionsPerUser:      integer("PAM_MAX_SESSIONS_PER_USER", 0),

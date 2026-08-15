@@ -80,6 +80,18 @@ type Config struct {
 	// RequireRecording refuses a session when its recording cannot be created,
 	// rather than proceeding unrecorded (fail-closed session auditing).
 	RequireRecording bool
+	// PortForward enables client-initiated direct-tcpip channels (ssh -L
+	// style forwarding), scoped to the connected target's own host only —
+	// see handleDirectTCPIP (Phase 141). The PAM_SSH_PORT_FORWARD default is
+	// true (matching SFTPMode's default-allow posture: an operator already
+	// fully authorized for this target loses nothing by also being able to
+	// forward to it), resolved by internal/config before reaching here.
+	// Forwarded bytes are opaque, so RequireRecording refuses forwarding
+	// outright rather than attempting an unrecordable session, and
+	// forwarding is always refused for an observer session or while
+	// RequireSupervision is configured — neither has a mechanism to cover
+	// it.
+	PortForward bool
 	// RequireSupervision refuses an interactive session to proceed until a
 	// supervisor actively watches it (the live hub reports a subscriber) or
 	// SupervisionTimeout elapses. Observer sessions and break-glass access are
@@ -182,6 +194,7 @@ type Proxy struct {
 	requireRec   bool
 	requireSup   bool
 	supTimeout   time.Duration
+	portForward  bool
 	guard        *cmdguard.Guard
 	allowGuard   *cmdguard.Guard
 	live         *session.Hub
@@ -264,6 +277,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		chain:        newRecordChain(cfg.RecordingDir),
 		requireRec:   cfg.RequireRecording,
 		requireSup:   cfg.RequireSupervision,
+		portForward:  cfg.PortForward,
 		supTimeout:   cfg.SupervisionTimeout,
 		guard:        cfg.CommandGuard,
 		allowGuard:   cfg.CommandAllowGuard,
@@ -681,16 +695,39 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 
 	var wg sync.WaitGroup
 	for nc := range chans {
-		if nc.ChannelType() != "session" {
+		switch nc.ChannelType() {
+		case "session":
+			wg.Add(1)
+			go func(nc ssh.NewChannel) {
+				defer wg.Done()
+				defer recoverPanicLog(p.log, "session")
+				p.handleSession(ctx, nc, upstream, target, cred, actor, observe, principal.BreakGlass, sid)
+			}(nc)
+		case "direct-tcpip":
+			// Phase 141: ssh -L style forwarding, scoped to the target's own
+			// host only. None of observe/RequireSupervision/RequireRecording
+			// have a mechanism that covers a raw forward, so each refuses it
+			// outright rather than silently admitting an uncovered path.
+			switch {
+			case !p.portForward:
+				nc.Reject(ssh.Prohibited, "pamv1: port forwarding is disabled by policy")
+			case observe:
+				nc.Reject(ssh.Prohibited, "pamv1: port forwarding is not available in an observer session")
+			case p.requireSup:
+				nc.Reject(ssh.Prohibited, "pamv1: port forwarding is unavailable when live supervision is required")
+			case p.requireRec:
+				nc.Reject(ssh.Prohibited, "pamv1: port forwarding is unavailable when session recording is required")
+			default:
+				wg.Add(1)
+				go func(nc ssh.NewChannel) {
+					defer wg.Done()
+					defer recoverPanicLog(p.log, "forward")
+					p.handleDirectTCPIP(ctx, nc, upstream, target, actor)
+				}(nc)
+			}
+		default:
 			nc.Reject(ssh.UnknownChannelType, "pamv1: only session channels are proxied")
-			continue
 		}
-		wg.Add(1)
-		go func(nc ssh.NewChannel) {
-			defer wg.Done()
-			defer recoverPanicLog(p.log, "session")
-			p.handleSession(ctx, nc, upstream, target, cred, actor, observe, principal.BreakGlass, sid)
-		}(nc)
 	}
 	// The chans range ends when the client connection closes — the true
 	// "client is gone" signal. Close the upstream now (before waiting) so any
@@ -1173,6 +1210,110 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 			fmt.Sprintf("target:%s cred_user:%s file:%s bytes:%d sha256:%s chain:%s",
 				target.Name, cred.Username, path, n, sum, chain))
 	}
+}
+
+// directTCPIPExtra is the RFC 4254 §7.2 direct-tcpip channel-open payload a
+// client sends to request forwarding (the wire shape behind `ssh -L`).
+// Marshaled by an ssh.Client's own Dial when pamv1 acts as the client (see
+// jumpDial); this is the mirror-image server-side decode, needed only since
+// Phase 141 accepts a client-initiated direct-tcpip channel for the first
+// time — every prior use of this shape in this codebase was outbound.
+type directTCPIPExtra struct {
+	DestAddr string
+	DestPort uint32
+	SrcAddr  string
+	SrcPort  uint32
+}
+
+// sameHostAsTarget reports whether addr names the connected target's own
+// host — an exact (case-insensitive) match, or a loopback literal
+// (localhost/127.0.0.1/::1). The loopback case matters because
+// handleDirectTCPIP dials out through upstream, the already-authenticated
+// connection TO the target: "localhost" resolved from there is the target
+// itself, and `ssh -L 5432:localhost:5432 op@target` — reaching a service
+// bound only to loopback on the target box — is the single most common
+// real-world use of this feature. The port is deliberately never compared
+// against target.Port: that is the target's SSH port, not the port of
+// whatever service the operator actually wants to reach on the same host.
+func sameHostAsTarget(addr string, target *store.Target) bool {
+	if strings.EqualFold(addr, target.Host) {
+		return true
+	}
+	switch strings.ToLower(addr) {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
+}
+
+// handleDirectTCPIP admits a client-initiated direct-tcpip channel (Phase
+// 141) ONLY to the connected target's own host, reusing the session's
+// existing authorization rather than inventing a new "allowed destinations"
+// concept — deliberately narrower than a real SSH server's forwarding,
+// which would let the client reach anything the target's network position
+// can. Forwarded bytes are opaque: no parser exists for arbitrary
+// application data the way there is for exec/SQL, so the audit trail is
+// connection-level only (destination, byte counts, duration), never
+// content — the caller has already refused observe/RequireSupervision/
+// RequireRecording sessions before this is reached.
+func (p *Proxy) handleDirectTCPIP(ctx context.Context, nc ssh.NewChannel, upstream *ssh.Client, target *store.Target, actor string) {
+	var d directTCPIPExtra
+	if err := ssh.Unmarshal(nc.ExtraData(), &d); err != nil {
+		nc.Reject(ssh.Prohibited, "pamv1: malformed forwarding request")
+		return
+	}
+	dest := net.JoinHostPort(d.DestAddr, strconv.Itoa(int(d.DestPort)))
+	if !sameHostAsTarget(d.DestAddr, target) {
+		p.audit(ctx, actor, "forward.refused",
+			fmt.Sprintf("target:%s dest:%s reason:not-same-host", target.Name, auditField(dest, 255)))
+		nc.Reject(ssh.Prohibited, "pamv1: forwarding is only permitted to the connected target's own host")
+		return
+	}
+	upConn, err := upstream.Dial("tcp", dest)
+	if err != nil {
+		p.audit(ctx, actor, "forward.refused",
+			fmt.Sprintf("target:%s dest:%s reason:dial-failed", target.Name, auditField(dest, 255)))
+		nc.Reject(ssh.ConnectionFailed, "pamv1: could not reach the forwarding destination")
+		return
+	}
+	ch, reqs, err := nc.Accept()
+	if err != nil {
+		upConn.Close()
+		return
+	}
+	go ssh.DiscardRequests(reqs)
+
+	started := time.Now()
+	p.audit(ctx, actor, "forward.start", fmt.Sprintf("target:%s dest:%s", target.Name, auditField(dest, 255)))
+
+	var bytesIn, bytesOut int64
+	var pipes sync.WaitGroup
+	pipes.Add(2)
+	go func() {
+		defer pipes.Done()
+		n, _ := io.Copy(upConn, ch)
+		atomic.AddInt64(&bytesIn, n)
+		// A half-close, not a full Close: the other leg's goroutine may still
+		// be delivering the destination's response, and tearing the whole
+		// connection down here would truncate it.
+		if cw, ok := upConn.(interface{ CloseWrite() error }); ok {
+			cw.CloseWrite()
+		} else {
+			upConn.Close()
+		}
+	}()
+	go func() {
+		defer pipes.Done()
+		n, _ := io.Copy(ch, upConn)
+		atomic.AddInt64(&bytesOut, n)
+		ch.CloseWrite()
+	}()
+	pipes.Wait()
+	ch.Close()
+	upConn.Close()
+
+	p.auditClosing(ctx, actor, "forward.end", fmt.Sprintf("target:%s dest:%s bytes_in:%d bytes_out:%d duration:%s",
+		target.Name, auditField(dest, 255), atomic.LoadInt64(&bytesIn), atomic.LoadInt64(&bytesOut), time.Since(started).Round(time.Second)))
 }
 
 // handleJoinConn attaches an approved, internal (named-pamv1-user) session-

@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–140 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–141 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,87 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 141 — Raw TCP port-forwarding (same-target only) ✅
+
+Sixth phase of the BeyondTrust/Delinea/Teleport/StrongDM batch. Closes
+StrongDM's `ssh -L`-style forwarding — deliberately scoped, per the plan's
+own "explicitly excluded" list, to the already-admitted target's own host:
+forwarding reuses the connection's existing authorization rather than
+inventing a new "allowed destinations" concept.
+
+**The channel-accept loop, read before touching it.** pamv1's SSH proxy has
+three near-identical `for nc := range chans` loops rejecting every channel
+type but `session` (`handleConn`, `handleJoinConn`, `serveWinRM`). Only
+`handleConn` has an `*ssh.Client` to the real target in scope — the other
+two have no upstream SSH connection a forward could tunnel through, so
+they keep rejecting `direct-tcpip` unchanged; this phase touches exactly
+one of the three.
+
+**The RFC 4254 §7.2 wire shape existed only for the *client* role.**
+`jumpDial` already marshals `direct-tcpip` `ExtraData` when pamv1 dials a
+target through a bastion, via `(*ssh.Client).Dial`'s own internals — but
+nothing in production code had ever *decoded* it, because nothing had ever
+accepted a client-initiated forward before. The only in-repo decoder was
+`jump_test.go`'s fake bastion, and even that ignores the unmarshal error;
+production code cannot.
+
+**The real design question was never "parse the struct," it was "what
+does 'same host' mean," and the plan text alone doesn't answer it.**
+`target.Port` is the target's *SSH* port — restricting a forward's
+destination port to it would make the feature pointless, since the whole
+reason to forward is reaching a *different* service on the same box (a
+database, an internal admin UI) that isn't SSH. So the restriction is
+**same host, any port** — validated against `target.Host` exactly, plus
+the loopback aliases (`localhost`/`127.0.0.1`/`::1`), because the forward
+dials out through `upstream`, the connection already authenticated *as*
+the target: resolved from there, `localhost` **is** the target, and
+`ssh -L 5432:localhost:5432 op@target` — reaching a service bound only to
+loopback on the target — is the single most common real-world shape of
+this feature. A different host, even one on the same subnet, is refused
+before the upstream is ever asked to dial it — closing what would
+otherwise be an open SSRF pivot into the target's network, proven by a
+test that confirms the decoy listener is never even reached.
+
+**Three refusals nothing automatically covers, found by asking "what
+inherits into a bare channel-loop branch" rather than assumed safe.** A
+`direct-tcpip` channel is accepted at the loop level, not inside
+`handleSession` — so it inherits none of that function's machinery.
+Concretely: an **observer** (read-only, supervisor-watching) session's
+read-only enforcement lives entirely inside `handleSession`'s
+client→upstream request pump, which a raw forward never passes through —
+left alone, observe mode would be a full bidirectional data path wearing
+a read-only label. **`RequireSupervision`** has no supervision-wait
+mechanism outside `handleSession` either, and forwarding cannot honestly
+replicate "wait for a supervisor" without real, separate state-sharing
+between two independent channels of the same connection — refused
+outright instead. **`RequireRecording`** normally means "refuse if the
+attempted recording fails," but a forward's bytes are opaque and were
+never going to be recorded at all (no asciicast makes sense for arbitrary
+binary protocols) — so for a forward specifically, "required" means
+refused unconditionally, not attempted-then-checked.
+
+**Auditability, honestly scoped, matching the plan.** Forwarded bytes are
+opaque — no parser exists for arbitrary application data the way there is
+for exec/SQL. New audit actions `forward.start`/`forward.end` (connection-
+level: destination, byte counts each direction, duration) and
+`forward.refused` (destination rejected, or a policy gate declined before
+ever dialing).
+
+**V1 scope.** `PAM_SSH_PORT_FORWARD` (default true, matching `PAM_SSH_SFTP`'s
+default-allow posture — an operator already fully authorized for a target
+loses nothing by also being able to forward to it) is a global on/off, not
+a per-destination allowlist; no new capability, since a forward is just
+another way of using a session the operator already opened. No IPv6
+canonicalization beyond the literal `::1` alias — a target configured with
+a non-canonical IPv6 form is an existing admin-input edge case, not new
+here.
+
+**Critical files:** `internal/proxy/proxy.go` (`handleConn`'s channel loop,
+`handleDirectTCPIP`, `directTCPIPExtra`, `sameHostAsTarget`),
+`internal/config/config.go` (`PAM_SSH_PORT_FORWARD`), `cmd/pam-server/main.go`,
+new `internal/proxy/directtcpip_test.go` (6 tests against real upstream/backend
+listeners, including the SSRF-refusal proof and all three policy-gate refusals).
 
 ## Phase 140 — v0.33.0 ✅
 

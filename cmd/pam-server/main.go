@@ -1363,6 +1363,7 @@ func run() error {
 			PostureAttestor:      postureAttestor,
 			SFTPCapture:          sftpCapture,
 			SFTPCaptureMaxBytes:  int64(cfg.SSHSFTPCaptureMaxMB) * 1024 * 1024,
+			PortForward:          cfg.SSHPortForward,
 		})
 		if err != nil {
 			return err
