@@ -424,6 +424,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 			Actor: actor, Target: target.Name, Protocol: "postgres", Remote: remote, Started: time.Now(),
 		}, func() { conn.Close(); up.conn.Close() })
 		defer d.sessions.Remove(sid)
+		d.live.Publish(sid, watermarkBanner(actor, target.Name))
 	}
 	defer func() {
 		if rec != nil {

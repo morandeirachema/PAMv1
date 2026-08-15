@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-08-14 · Reflects: Phases 0–135. **Phase 53 added the first new
+> Last updated: 2026-08-15 · Reflects: Phases 0–137. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; nothing after
 > it adds a port or listener (55–94 ride the existing listeners and flows: the
 > live-monitor relay and the step-up decision bus ride the server ↔ PostgreSQL
@@ -60,6 +60,13 @@
 > two new routes ride the existing `:8080` REST listener, and the
 > extra encryption/decryption it does is entirely in-process, no
 > outbound call of any kind.
+> **Phase 137 adds no new egress purpose either** — magic-link approval
+> email rides the same **E9b** flow (session-share invite email) Phase
+> 116 already added on `:587`, not a new destination; its five new REST
+> routes ride the existing `:8080`. Watermarking adds nothing on the
+> wire at all — the RDP/VNC overlay is client-side, and the text-session
+> banner is an in-process `Hub.Publish` write into a stream the operator
+> is already connected to.
 > Everything from 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
 > **no new listeners**: certification/ticketing/approvals (19–21), threat analytics

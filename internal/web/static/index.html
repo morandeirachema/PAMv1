@@ -117,9 +117,19 @@
     display: flex; flex-direction: column; }
   .rdpbar { flex: 0 0 auto; padding: 4px 12px; border-bottom: 1px solid var(--rule);
     display: flex; justify-content: space-between; gap: 12px; white-space: nowrap; }
-  .rdpview { flex: 1 1 auto; overflow: auto; display: flex;
+  .rdpview { position: relative; flex: 1 1 auto; overflow: auto; display: flex;
     justify-content: center; align-items: flex-start; background: #000; }
   .rdpview canvas { image-rendering: pixelated; }
+  /* Session watermark (Phase 137): a static, non-interactive identity overlay
+     — who is connected, and when — deterring an unauthorized screenshot of a
+     privileged session and identifying one if it leaks anyway. pointer-events
+     none so it never intercepts the mouse/keyboard input Guac.Mouse/Keyboard
+     bind to this same element. */
+  .rdpwatermark { position: absolute; inset: 0; z-index: 5; pointer-events: none;
+    overflow: hidden; display: flex; flex-wrap: wrap; align-content: space-evenly;
+    justify-content: space-evenly; user-select: none; }
+  .rdpwatermark span { transform: rotate(-30deg); white-space: nowrap;
+    opacity: .16; color: var(--fg-white); font: 12px ui-monospace, "SF Mono", Consolas, monospace; }
 </style>
 </head>
 <body>
@@ -884,6 +894,24 @@
     startViewer(Guac, t, tok, v);
   }
 
+  // buildWatermark returns a non-interactive overlay identifying who is
+  // connected and when (Phase 137, BeyondTrust-style session watermarking):
+  // a repeating, low-opacity, rotated label, static text (not a moving/
+  // dynamic tracking pattern — deliberately simple, v1 scope). One tile is
+  // enough to fill the viewport via flex-wrap; the exact count only affects
+  // density, not correctness.
+  function buildWatermark(targetName) {
+    const el = document.createElement("div");
+    el.className = "rdpwatermark";
+    const label = `${me && me.name ? me.name : "?"} · ${targetName} · ${new Date().toLocaleString()}`;
+    for (let i = 0; i < 24; i++) {
+      const span = document.createElement("span");
+      span.textContent = label;
+      el.appendChild(span);
+    }
+    return el;
+  }
+
   // startViewer builds the fullscreen viewer overlay, wires the Guacamole client to
   // the WebSocket tunnel, and forwards keyboard/mouse. Keyboard/Mouse are bound to
   // the overlay element (not document), so removing the overlay on teardown drops
@@ -905,6 +933,7 @@
     const client = new Guac.Client(tunnel);
     const display = client.getDisplay();
     view.appendChild(display.getElement());
+    view.appendChild(buildWatermark(t.name));
 
     let closed = false;
     const teardown = (msg, isErr) => {

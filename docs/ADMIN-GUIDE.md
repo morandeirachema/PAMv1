@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-14 · Reflects: Phases 0–135 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-15 · Reflects: Phases 0–137 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -2491,6 +2491,27 @@ curl -s https://pam.example/api/sessions/<id>/suspend -H "X-API-Key: $KEY"
   `approve`.
 - **Audit vocabulary:** `session.suspended` · `session.resumed`.
 
+### 9.4e Session watermarking (Phase 137)
+
+Every session now carries a visible reminder of who is watching it, in the
+form the protocol actually supports:
+
+- **RDP/VNC** shows a small overlay in the viewer itself — operator name,
+  target, and the time the session started — rendered client-side over the
+  Guacamole canvas, `pointer-events: none` so it never intercepts a click
+  or keystroke.
+- **SSH/PostgreSQL/SQL Server** sessions instead get the same identity as
+  a **one-time banner** written into the stream the moment the session
+  starts, the same `Hub.Publish` mechanism a WinRM run's own live notices
+  already use — so a supervisor watching live (§9.4) or replaying the
+  recording later (§9.3) sees exactly who was connected, without pamv1
+  needing to parse or reformat protocol-specific frames to show it.
+
+There is nothing to configure and nothing to enable — every new session
+gets its watermark. The text is static identity, not a per-frame dynamic
+tracking pattern, and it emits no audit event of its own: it is a display
+aid, not a decision.
+
 ### 9.5 Metrics & probes
 
 - `GET /metrics` — a Prometheus exposition: `pam_http_requests_total{status}`,
@@ -2725,6 +2746,54 @@ curl -sX POST https://pam.example/api/access-requests/42/approve -H "X-API-Key: 
 - Runs under its own HA leader lock (`recur_days` is capped at 366, same as
   campaigns), on its own hourly worker — always on, nothing to configure.
 
+### 9.6d Magic-link approval (Phase 137)
+
+An approver can delegate one specific decision — not their whole `approve`
+capability — to someone by email, the buildable half of BeyondTrust's
+out-of-band approval (no native mobile app in v1). Minting the link needs
+no separate approval step of its own: creating it already requires
+`approve`, so the invite itself **is** the delegation.
+
+```bash
+# Needs `approve` on the request being decided, and you cannot be its own
+# requester — see the four-eyes note below.
+curl -sX POST https://pam.example/api/access-requests/42/invite -H "X-API-Key: $APPROVER" \
+  -d '{"email":"oncall-lead@example.com"}'
+# → 201, and an email goes out with a link to /approve.html?token=...
+
+curl -s https://pam.example/api/access-requests/42/invites -H "X-API-Key: $APPROVER"
+# → lists every invite for this request: outstanding, consumed, revoked
+
+curl -sX POST https://pam.example/api/approval-invites/7/revoke -H "X-API-Key: $APPROVER"
+# → the link stops working even though its TTL hasn't expired
+```
+
+- **The recipient never needs a pamv1 account.** `approve.html` is
+  unauthenticated — reached only by knowing the single-use token in the
+  link — and shows the requester, target and reason before asking for a
+  decision.
+- **Loading the link decides nothing.** The page's first call is a safe,
+  non-consuming preview; the decision itself only fires when the recipient
+  clicks Approve or Deny, deliberately unlike the session-share guest page
+  (§9.4c), which redeems automatically on load — approving or denying
+  access is a materially higher-stakes action than joining an
+  already-approved session, so it needs an explicit act, not just an
+  opened email.
+- **Four-eyes applies twice, not once.** The obvious defense —
+  redemption uses a synthetic `magiclink:<email>` actor that can never
+  equal a real requester's own actor string — does not by itself stop a
+  requester from addressing an invite to their **own** inbox and
+  redeeming it themselves. So the same check also runs at **creation**
+  time: you cannot mint an invite for a request you filed yourself,
+  regardless of whose email address you name.
+- **Single-use, TTL-bound.** `PAM_APPROVAL_INVITE_TTL_MIN` (default 1440 —
+  24 hours, deliberately longer than a session-share invite's 15 minutes:
+  this is a decision an approver may not open for hours, closer in profile
+  to a password-reset link). Revoking works even inside the TTL.
+- **Audit vocabulary:** `access.invite_created` · `access.invite_revoked` ·
+  the existing `access.decision_denied`, for both the self-approval refusal
+  above and an ordinary decision made through the link.
+
 ### 9.7 Privileged threat analytics (Phase 23)
 
 pamv1 scores the audit trail into **behavioral risk** per actor, so a supervisor
@@ -2866,6 +2935,9 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-15 | **Phase 137 — magic-link approval + session watermarking.** An `ApprovalInvite` delegates one specific access-request decision by email (`POST /api/access-requests/{id}/invite`, `approve`) — mirrors the Phase 116 session-share invite, but creating it already requires `approve`, so the invite itself is the delegation. Redemption on the new unauthenticated `approve.html` is a safe, non-consuming preview `GET` plus a single-use decision `POST`, fired only on an explicit button click — deliberately unlike `share.html`'s auto-redeem-on-load, since deciding access is higher-stakes than joining a session. A second four-eyes check at invite *creation* (not just redemption) stops a requester self-approving through their own emailed link. `PAM_APPROVAL_INVITE_TTL_MIN` (default 1440). Every RDP/VNC session also now shows a client-side watermark overlay (operator, target, start time); SSH/PostgreSQL/SQL Server sessions get the same identity as a one-time `Hub.Publish` banner. New audit actions `access.invite_created`/`access.invite_revoked`; new migration `0039`; store surface 174 → 181. See §9.4e and §9.6d |
+| 2026-08-14 | **Phase 135 — DoubleLock.** A named person's password, additionally required (on top of `reveal_secret`) to reveal or check out a credential; disabling it needs the password too, so an admin alone cannot strip the protection. Kept deliberately outside the KEK (`POST`/`DELETE /api/credentials/{id}/doublelock`), so `-rotate-kek` needs no special case for it. See §6 |
+| 2026-08-14 | **Phase 133 — device-aware access control.** A live EDR-posture webhook (`PAM_POSTURE_ATTEST_URL`) re-checked on every connect and every authenticated call, and an optional device-identity binding (`PAM_DEVICE_HEADER` + a per-user `device_fingerprint`) trusting a reverse-proxy-injected client-certificate fingerprint on the REST surface only. Both break-glass exempt. See §7 |
 | 2026-08-14 | **Phase 131 — command allow-listing.** `PAM_COMMAND_ALLOW_FILE`, same regex-file format as `PAM_COMMAND_DENY_FILE`, once set narrows every command-control path (SSH `exec`, WinRM command loop, PostgreSQL/SQL Server statements, `POST /api/targets/{id}/winrm`, the agent broker's `ssh_exec`/`winrm_exec`) to ONLY the listed commands — Delinea's Command Menus is the closest commercial-PAM analogue. `cmdguard.Guard` gains an `Allowed(cmd)` method reading the exact same compiled pattern set `Blocked` does, so an allow-list is just a second `*cmdguard.Guard` value used the other way round — zero changes to `New`/`ParseDeny`. Deny always wins when both would match; a refusal from the allow-list audits `command.blocked` with `pattern:not-allowed`. Optional and independent of the deny file — unset, every path stays exactly deny-only. Proven end-to-end (real SSH exec, real Postgres wire-protocol session, REST WinRM) including the deny-wins-over-allow edge case. No schema change; no new route. See §9.4 |
 | 2026-08-14 | **Phase 129 — Zero Standing Privilege for PostgreSQL.** Extends Phase 22's SSH-only ZSP to databases: a new `db_zsp` credential type stores no secret; at connect time pamv1 dials the target's separately vaulted `provisioner` credential and runs `CREATE ROLE ... WITH LOGIN PASSWORD ... VALID UNTIL ...` (a 30-minute hard-ceiling safety net independent of teardown), connects the operator's real session as that fresh role, and `DROP ROLE`s it on session end — the operator's real session never touches the provisioner's own credential. Exactly one provisioner per target; zero or more than one refuses the connect (fail-closed, never guessed). Proven end-to-end against a real Postgres wire-protocol fake that authenticates twice with two different, dynamically-generated credentials in one test run. **RDP cut before any code was written**: Guacamole's own documentation confirms no certificate/smartcard RDP auth parameter exists — a permanent protocol limitation, not an infra gap. **SQL Server deferred**: `internal/tds` only ever parses what a client sends; issuing pamv1's own `CREATE LOGIN` needs a client-side response-token reader that doesn't exist yet. New audit actions `db.zsp_provisioned`/`db.zsp_provision_failed`/`db.zsp_teardown`/`db.zsp_teardown_failed`. New migration `0036` (`credentials.is_provisioner`). See "Zero Standing Privilege: ephemeral database roles" above |
 | 2026-08-14 | **Phase 128 — authenticated post-login account discovery.** Returns to the original CyberArk/Wallix competitive-research backlog's remaining item now that the Wallix-weighted plan (116–126) is closed: enumerate local/service accounts on a target pamv1 already holds a credential for, and flag ones with no matching vaulted credential (CyberArk DNA-style). New `POST /api/targets/{id}/discover-accounts` (`manage_targets`): dials fresh with the target's first credential (SSH: `cat /etc/passwd`; WinRM: `net user` + `net localgroup Administrators`, both through `guardCommand` like every other discrete command pamv1 runs), parses with the new pure `internal/accountscan` package, and cross-references every found username against **all** the target's vaulted credentials — `"managed":false` is the finding. Deliberately not built on `execWinRM` (which drags in the live-session registry, recording requirements and vendor gating meant for a supervised operator session) — a lean, dedicated path reusing only `guardCommand`/`vault.Decrypt`/`sshConnector.Exec`/`winrm.Run` directly. Console: menu 1, option **9=Discover accounts**. New audit actions `target.accounts_scanned`/`target.accounts_scan_failed`. No schema change; store surface unchanged; route count +1. See "Authenticated post-login account discovery" above |
@@ -2919,8 +2991,6 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 | 2026-07-25 | **Phases 27–31 review fixes.** A vendor grant scoped to one account no longer admits a session on another; DB step-up now also pauses a **prepared** (extended-protocol) statement, so the supervisor gate can't be dodged; broker approver-group membership drops the principal's own name (a delegated `manage_users` can't mint a user named after an approver group to self-approve); an SSH-cert issue refused for an unmanaged principal no longer burns a one-time approval |
 | 2026-07-25 | Phase 31: **identity blast radius / CIEM** — `POST /api/blast/analyze` (`read_audit`) answers "if this identity were compromised, what could it reach?" over a normalized identity graph you submit: a real AWS IAM effective-permission evaluator, toxic-combination findings (escalation, cross-provider lateral movement) and an earliest-cut remediation for each. Read-only; the ingester that builds the graph is external. See §9.8 |
 | 2026-07-25 | Phase 30: **in-session step-up** — `PAM_DB_STEPUP_FILE` marks PostgreSQL statements that **pause for a supervisor's live decision** (`GET /api/sessions/stepups`, `POST /api/sessions/{id}/stepup`) instead of killing the session; `PAM_DB_STEPUP_TTL_SEC` bounds the wait. Broker policy rules also gained numeric comparators (`gte`/`gt`/`lte`/`lt`) so a rule can gate on an amount. See §9.4 |
-| 2026-08-14 | Phase 135: **DoubleLock** — a named person's password, additionally required (on top of `reveal_secret`) to reveal or check out a credential; disabling it needs the password too, so an admin alone cannot strip the protection. Kept deliberately outside the KEK (`POST`/`DELETE /api/credentials/{id}/doublelock`), so `-rotate-kek` needs no special case for it. See §6 |
-| 2026-08-14 | Phase 133: **device-aware access control** — a live EDR-posture webhook (`PAM_POSTURE_ATTEST_URL`) re-checked on every connect and every authenticated call, and an optional device-identity binding (`PAM_DEVICE_HEADER` + a per-user `device_fingerprint`) trusting a reverse-proxy-injected client-certificate fingerprint on the REST surface only. Both break-glass exempt. See §7 |
 | 2026-07-25 | Phase 29: **third-party vendor access gate** — time-boxed, customer-approved contract grants for external technicians, enforced on every connect path, with a live employment-attestation webhook (`PAM_VENDOR_ATTEST_URL`), a mid-session sweeper (`PAM_VENDOR_SWEEP_INTERVAL_MIN`), a one-action offboard cascade, and a per-vendor evidence export. See §7 |
 | 2026-07-24 | Phase 28: **operator-issued SSH certificates** — an operator proves possession of their own key (`POST /api/ca/ssh/challenge` → `/sign`) and gets a short-lived cert scoped to one principal (`PAM_SSH_OPERATOR_CERT_TTL_MIN`), usable with their normal SSH client; revoke by serial and publish an OpenSSH **KRL** (`GET /api/ca/ssh/krl`) as your targets' `RevokedKeys`. See §6 |
 | 2026-07-24 | Phase 27: **AI-agent broker completion** — a `require_approval` rule's `approvers:` list is enforced at decision time (separation of duties); periodic **signed in-chain checkpoints** (`PAM_BROKER_AUDIT_CHECKPOINT_EVERY`) with signing-key rotation (`PAM_BROKER_AUDIT_SIGN_PREV`) and a JWKS at `GET /v1/audit/jwks`; a truncation floor on `GET /v1/audit/verify?min_entries=N`; **OCSF** SIEM export at `GET /api/audit/ocsf`; and the MCP SSE transport with elicitation. See §7 and §9.2 |

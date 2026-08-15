@@ -22,6 +22,16 @@ var indexHTML []byte
 //go:embed static/share.html
 var shareHTML []byte
 
+// approveHTML is the decision page a magic-link approval invite's emailed
+// link opens (Phase 137) — like shareHTML, a separate, minimal page: its
+// visitor has no pamv1 login, only the invite token in the URL. Unlike
+// shareHTML it never auto-fires its state-changing call on load — only an
+// explicit Approve/Deny click does, so a mail client's link-prefetcher
+// visiting the URL cannot trigger a decision.
+//
+//go:embed static/approve.html
+var approveHTML []byte
+
 // guacamoleJS is the vendored Apache Guacamole JavaScript client (an unmodified
 // ESM build of guacamole-common-js, Apache-2.0 — see the repo NOTICE). It powers
 // the in-portal RDP viewer, rendering guacd's protocol stream to a canvas. It is
@@ -97,6 +107,21 @@ func Share(w http.ResponseWriter, _ *http.Request) {
 			"frame-ancestors 'none'; object-src 'none'")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	page := bytes.Replace(shareHTML, noncePlaceholder, []byte(n), 1)
+	_, _ = w.Write(page)
+}
+
+// Approve serves the magic-link decision page (Phase 137), the same
+// nonce-based CSP convention as Share — a redemption-only, unauthenticated
+// page, minimal in exactly the same way.
+func Approve(w http.ResponseWriter, _ *http.Request) {
+	n := nonce()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy",
+		"default-src 'self'; style-src 'unsafe-inline'; script-src 'nonce-"+n+"' 'self'; "+
+			"img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; "+
+			"frame-ancestors 'none'; object-src 'none'")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	page := bytes.Replace(approveHTML, noncePlaceholder, []byte(n), 1)
 	_, _ = w.Write(page)
 }
 

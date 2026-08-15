@@ -192,6 +192,10 @@ type Options struct {
 	// guest key stays valid once redeemed (Phase 116) — separate from, and
 	// much longer than, ShareInviteTTL.
 	ShareGuestSessionTTL time.Duration
+	// ApprovalInviteTTL is how long a magic-link access-request approval
+	// invite stays redeemable (Phase 137) — see config.Config.ApprovalInviteTTL's
+	// doc comment.
+	ApprovalInviteTTL time.Duration
 	// ShareSMTP{Addr,From,User,Pass} are the SMTP settings session-share
 	// invite emails send through (Phase 116) — reused verbatim from
 	// PAM_ALERT_EMAIL_* by main.go, so enabling security-alert email also
@@ -385,6 +389,7 @@ type Server struct {
 	shares             *session.ShareRegistry
 	shareInviteTTL     time.Duration
 	shareGuestTTL      time.Duration
+	approvalInviteTTL  time.Duration
 	shareSMTPAddr      string
 	shareSMTPFrom      string
 	shareSMTPUser      string
@@ -612,6 +617,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		live:                 opts.Live,
 		shares:               opts.Shares,
 		shareInviteTTL:       opts.ShareInviteTTL,
+		approvalInviteTTL:    opts.ApprovalInviteTTL,
 		shareGuestTTL:        opts.ShareGuestSessionTTL,
 		shareSMTPAddr:        opts.ShareSMTPAddr,
 		shareSMTPFrom:        opts.ShareSMTPFrom,
@@ -784,6 +790,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /{$}", web.Index)
 	s.mux.HandleFunc("GET /static/guacamole-common.min.js", web.GuacamoleJS) // vendored RDP viewer client
 	s.mux.HandleFunc("GET /share.html", web.Share)                           // Phase 116 guest viewer, no pamv1 login
+	s.mux.HandleFunc("GET /approve.html", web.Approve)                       // Phase 137 magic-link approval, no pamv1 login
 
 	// Authentication endpoints are rate-limited per client IP.
 	s.mux.Handle("POST /api/login", s.rateLimit(http.HandlerFunc(s.login))) // public: this IS authentication
@@ -886,6 +893,18 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/access-requests/{id}/approve", s.authz(auth.CapApprove, s.approveAccessRequest))
 	s.mux.Handle("POST /api/access-requests/{id}/deny", s.authz(auth.CapApprove, s.denyAccessRequest))
 	s.mux.Handle("POST /api/access-requests/{id}/stop-recurrence", s.authz(auth.CapApprove, s.stopAccessRequestRecurrence))
+
+	// Magic-link approval (Phase 137): a CapApprove holder delegates one
+	// decision to a named person via an emailed link, instead of that person
+	// logging into pamv1. The redeem/preview pair below is registered
+	// WITHOUT the authz(...) wrapper — reached from the unauthenticated
+	// approve.html guest page, the same way the session-share guest routes
+	// and RDP/VNC viewer tunnels are.
+	s.mux.Handle("POST /api/access-requests/{id}/invite", s.authz(auth.CapApprove, s.createApprovalInvite))
+	s.mux.Handle("GET /api/access-requests/{id}/invites", s.authz(auth.CapApprove, s.listApprovalInvites))
+	s.mux.Handle("POST /api/approval-invites/{id}/revoke", s.authz(auth.CapApprove, s.revokeApprovalInvite))
+	s.mux.HandleFunc("GET /api/approval/preview/{token}", s.previewApprovalInvite)
+	s.mux.HandleFunc("POST /api/approval/redeem/{token}", s.redeemApprovalInvite)
 
 	s.mux.Handle("GET /api/audit", s.authz(auth.CapReadAudit, s.listAudit))
 	s.mux.Handle("GET /api/audit/export", s.authz(auth.CapReadAudit, s.exportAudit))
