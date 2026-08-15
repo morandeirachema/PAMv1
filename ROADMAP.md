@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–139 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–140 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,29 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 140 — v0.33.0 ✅
+
+Releases Phase 139 (personal/private secret folders) — a genuine minor:
+one new capability. Schema change (migration `0040`).
+
+- [x] **v0.33.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-15 as `ghcr.io/morandeirachema/pamv1:0.33.0` (also
+  `latest`), digest
+  `sha256:PENDING`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow)
+- [x] All five pins via the sweep; Helm chart `version` 0.23.0 -> **0.24.0**
+  (minor, alongside the `appVersion` minor)
+- [x] Both READMEs restated (the Tier-6 parity table row, and every
+  scattered version/phase-count mention, not just the hub lines)
+- [x] `docs/README.md`'s currency line and `docs/NIS2-COMPLIANCE.md`'s
+  compliance-evidence row (a documented recurring staleness point) both
+  caught proactively; the top-banner "Phases 0–N are shipped" line caught
+  in the same PR this time, not left for the next phase to find
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging:
+  `gofmt`, `go vet`, `staticcheck`, `gosec`, `govulncheck`, `go test -race
+  ./...`, `go run ./cmd/archgen` (no schema/route drift)
 
 ## Phase 139 — Personal/private secret folders ✅
 
