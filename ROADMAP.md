@@ -2427,7 +2427,7 @@ one new capability. Schema change (migration `0040`).
 - [x] **v0.33.0** through the test-gated pipeline, rehearsed on `main` first.
   Published 2026-08-15 as `ghcr.io/morandeirachema/pamv1:0.33.0` (also
   `latest`), digest
-  `sha256:PENDING`,
+  `sha256:be8cb9dbf061bd4e58dcf0435696622e19cf3dc5725d30b4a298e59ceea7453e`,
   **public** (anonymous pull 200, verified via the GHCR anonymous
   token-exchange flow)
 - [x] All five pins via the sweep; Helm chart `version` 0.23.0 -> **0.24.0**
