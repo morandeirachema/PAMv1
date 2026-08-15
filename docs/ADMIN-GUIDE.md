@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-15 · Reflects: Phases 0–137 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-15 · Reflects: Phases 0–139 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -1154,6 +1154,72 @@ Two properties worth knowing:
 Both fields are on the console's **Work with Safes** add and change screens, and
 the list shows an **Approval** column. Changing them is audited (`safe.update`
 records the policy), because it changes who may reach everything inside.
+
+### Personal/private safes (Phase 139)
+
+A safe can be marked **personal** — private even from admins by default,
+Delinea's personal-folders model. This changes a real invariant: every
+*other* safe still admits any admin unconditionally, exactly as before;
+a personal one does not.
+
+```bash
+# Creating a personal safe REQUIRES an owner — they are seeded as its
+# first can_manage member in the same call, so the safe is never created
+# in an unmanageable, memberless state.
+curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/safes \
+  -d '{"name":"alice-personal","personal":true,"owner":"alice"}'
+
+# alice now owns it and manages her own roster like any can_manage member
+# — no different capability needed for that part.
+curl -H "X-API-Key: $ALICE_TOKEN" -X POST http://localhost:8080/api/safes/9/members \
+  -d '{"subject_type":"user","subject":"bob"}'
+
+# A plain admin key, with no membership and no override, is refused —
+# both to CONNECT to a target in the safe and to REVEAL/checkout a
+# credential in it:
+curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/credentials/42/reveal
+# → 403 not authorized for this target
+```
+
+- **`personal` is set only at creation and cannot be changed afterward** —
+  `PUT /api/safes/{id}` never touches it, at the store layer, regardless
+  of what the request body says. A rename or approval-policy edit can
+  never accidentally un-personalize a safe.
+- **The override is a named, narrow capability, not a role.**
+  `unlimited_vault_access` lets its holder reach a personal safe as if
+  they were a member — but it is deliberately **not** part of the built-in
+  `admin` role. Grant it through a [custom permission
+  profile](#custom-permission-profiles-phase-12) to a specific person (a
+  security lead, an incident responder), the same way you would grant any
+  other narrow capability:
+  ```bash
+  curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/profiles \
+    -d '{"name":"vault-override","capabilities":["read_inventory","connect","reveal_secret","unlimited_vault_access"]}'
+  curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/users \
+    -d '{"username":"security-lead","role":"vault-override"}'
+  ```
+  Using it is **audited loudly** — `safe.personal_override_used`, naming
+  the target — mirroring how break-glass access is always loudly audited.
+  In v1 that extra audit line covers the REST paths (reveal, checkout, the
+  RDP/VNC token mint); the raw SSH/PostgreSQL/SQL Server proxy connect
+  path enforces the identical denial/admission but does not yet add the
+  same audit line — see ROADMAP.md Phase 139 for why.
+- **Managing a personal safe's own roster also needs the override** (or
+  being an existing `can_manage` member) — `manage_targets` alone, enough
+  for any *ordinary* safe, is deliberately not enough here. Otherwise a
+  target manager could simply add themselves as a member and connect
+  normally, defeating the protection through a side door.
+- **What stays unaffected.** Inventory listing (`GET /api/targets`,
+  `GET /api/credentials`) is unchanged — a personal safe's target and
+  credential *metadata* (name, username, that it exists) is visible to
+  any `read_inventory` holder exactly like any other safe's; only the
+  paths that actually hand back or use the secret are gated. Deleting or
+  renaming the safe itself (`DELETE`/`PUT /api/safes/{id}`) stays a plain
+  `manage_targets` action, unchanged from before — a lifecycle action, not
+  a confidentiality one.
+- API/curl-only in v1, not yet on the **Work with Safes** console screens
+  — matching `ssh_ca`/`db_zsp`/DoubleLock's own precedent of not adding
+  every new concept to the 5250 UI immediately.
 
 ### Dependent accounts: safe service-account rotation (Phase 17)
 
@@ -2935,6 +3001,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-15 | **Phase 139 — personal/private secret folders.** A safe marked `personal` (set only at creation, required to name an `owner` seeded as its first `can_manage` member) replaces `auth.CanConnectTarget`'s unconditional admin bypass with a check for the new, narrow `unlimited_vault_access` capability — deliberately not part of the built-in `admin` role, grantable only via a custom profile. `canManageSafe` closes the matching side door: `manage_targets` alone, enough for any ordinary safe's roster, is no longer enough for a personal one. Using the override to reach a personal safe is loudly audited (`safe.personal_override_used`) on the REST paths (reveal, checkout, RDP/VNC token mint); the raw SSH/PostgreSQL/SQL Server proxy connect path enforces the identical denial/admission, proven end-to-end against a real upstream, but doesn't yet add the same audit line. Inventory listing and safe deletion/rename are unaffected — only the paths that hand back or use the secret are gated. New migration `0040`. See §6 |
 | 2026-08-15 | **Phase 137 — magic-link approval + session watermarking.** An `ApprovalInvite` delegates one specific access-request decision by email (`POST /api/access-requests/{id}/invite`, `approve`) — mirrors the Phase 116 session-share invite, but creating it already requires `approve`, so the invite itself is the delegation. Redemption on the new unauthenticated `approve.html` is a safe, non-consuming preview `GET` plus a single-use decision `POST`, fired only on an explicit button click — deliberately unlike `share.html`'s auto-redeem-on-load, since deciding access is higher-stakes than joining a session. A second four-eyes check at invite *creation* (not just redemption) stops a requester self-approving through their own emailed link. `PAM_APPROVAL_INVITE_TTL_MIN` (default 1440). Every RDP/VNC session also now shows a client-side watermark overlay (operator, target, start time); SSH/PostgreSQL/SQL Server sessions get the same identity as a one-time `Hub.Publish` banner. New audit actions `access.invite_created`/`access.invite_revoked`; new migration `0039`; store surface 174 → 181. See §9.4e and §9.6d |
 | 2026-08-14 | **Phase 135 — DoubleLock.** A named person's password, additionally required (on top of `reveal_secret`) to reveal or check out a credential; disabling it needs the password too, so an admin alone cannot strip the protection. Kept deliberately outside the KEK (`POST`/`DELETE /api/credentials/{id}/doublelock`), so `-rotate-kek` needs no special case for it. See §6 |
 | 2026-08-14 | **Phase 133 — device-aware access control.** A live EDR-posture webhook (`PAM_POSTURE_ATTEST_URL`) re-checked on every connect and every authenticated call, and an optional device-identity binding (`PAM_DEVICE_HEADER` + a per-user `device_fingerprint`) trusting a reverse-proxy-injected client-certificate fingerprint on the REST surface only. Both break-glass exempt. See §7 |

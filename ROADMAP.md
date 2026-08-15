@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–138 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–139 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,100 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 139 — Personal/private secret folders ✅
+
+Fifth phase of the BeyondTrust/Delinea/Teleport/StrongDM batch. Closes
+Delinea's personal folders: secrets invisible even to admins by default,
+with a named, narrow override role — the batch's first phase to change a
+real, load-bearing access-control invariant rather than add a new gate
+alongside the existing ones.
+
+**The invariant it changes, read from the code, not assumed from the
+plan.** `auth.CanConnectTarget` admitted **any admin unconditionally**,
+before grants were even consulted — confirmed by reading it, not carried
+over from the earlier research pass. A "personal" safe cannot mean
+anything while that stands: every admin already bypassed every safe. Fix:
+`Safe.Personal bool` (migration `0040`, additive, defaults false — every
+existing safe is exactly as open to admins as it always was); when a
+target's safe is personal, `CanConnectTarget`'s admin bypass is replaced
+by a check for `CapUnlimitedVaultAccess`, a new capability deliberately
+**not** in `roleCaps[RoleAdmin]` — only a custom profile that explicitly
+lists it grants it. An admin who lacks it still falls through to ordinary
+grant matching, so the safe's own owner (a member by construction)
+connects normally regardless of role; only a *different* admin without the
+override is turned away. Off a personal safe, behavior is byte-identical
+to before this phase.
+
+**A second, independent side door found while building, not in the
+original plan text.** `canManageSafe` — the function deciding who may
+add/remove a safe's members — let **any** `CapManageTargets` holder manage
+**any** safe's roster, including one they'd just been denied by
+`CanConnectTarget`. Left alone, the fix above is cosmetic: a target
+manager simply adds themselves as a member of someone else's personal
+safe and connects normally afterward. Closed the same way:
+`CapManageTargets` alone is no longer sufficient for a *personal* safe's
+membership — only an existing `can_manage` member of that safe, or
+`CapUnlimitedVaultAccess`, may manage it.
+
+**The bootstrap problem that finding created, and its fix.** Once
+`CapManageTargets` stops being sufficient, a freshly created personal
+safe with zero members would be permanently unmanageable — not even its
+creator could ever add the first member. `createSafe` closes this by
+requiring `owner` for a personal safe and seeding that user as its first
+`can_manage` member in the same call (rolled back if the membership insert
+fails), so a personal safe is never created in a dead-end state.
+
+**Immutable after creation, enforced at the layer that actually matters.**
+`Personal` is settable only by `CreateSafe`; `UpdateSafe` in both
+`pgstore`/`memstore` never touches it (mirroring how `CreatedAt` is
+already handled) regardless of what the caller's struct claims — so a
+later rename or policy edit cannot silently un-personalize a safe, and the
+guarantee lives in the store layer, not in handler code being careful.
+
+**Loud audit, mirroring break-glass — REST paths only in v1, stated
+plainly rather than dropped silently.** A new `safe.personal_override_used`
+audit event fires whenever `CapUnlimitedVaultAccess` — not ordinary
+membership — is what admitted a caller, wired into the two REST
+chokepoints (`authorizedForTarget`, covering reveal/checkout/connect-REST;
+`viewer_handlers.go`'s RDP/VNC token mint). The raw SSH/PostgreSQL/SQL
+Server proxy connect path (`gates.go`) enforces the identical
+access-control property — a plain admin without the capability is turned
+away exactly the same way, proven end-to-end against a real upstream
+(`TestPersonalSafeGateProxy`) — but does not yet add the extra audit line:
+`admitResult` carries only a denial reason today, and threading a
+success-side signal through it and all three proxies' gate-result
+switches is real, separable plumbing this phase doesn't attempt.
+
+**RoleAgent is unreachable, structurally, not by exemption.** The
+broker's `authorizeAgentTarget`/`authorizeAgentCredential` also compute
+`EffectiveSafePersonal` and pass it to `CanConnectTarget`, for
+correctness — but `RoleAgent`'s fixed two-capability set (`read_inventory`,
+`call_tool`) can never include `CapUnlimitedVaultAccess`, so the override
+can never fire there.
+
+**V1 scope.** A personal safe still requires `CapManageTargets` to create
+(self-service creation is a bigger, separate access-model question).
+Inventory *listing* (`GET /api/targets`, `GET /api/credentials`) is
+unaffected — a personal safe's target/credential metadata (name, username,
+existence) stays visible to any `read_inventory` holder exactly like any
+other safe's; only the paths that actually hand back or use the secret
+(connect, reveal, checkout) are gated. Deleting or renaming a safe
+(`DELETE`/`PUT /api/safes/{id}`) stays `CapManageTargets`-gated
+unconditionally, unchanged from before this phase — a destructive/
+lifecycle action, not a confidentiality one, and out of scope for what
+"personal" protects.
+
+New capability `unlimited_vault_access`; new audit action
+`safe.personal_override_used`; new migration `0040`; no new route (`personal`/
+`owner` ride the existing `POST /api/safes`).
+
+**Critical files:** `internal/auth/auth.go` (`CapUnlimitedVaultAccess`,
+`CanConnectTarget`, `PersonalOverrideUsed`), `internal/store/personalsafe.go`
+(new, `EffectiveSafePersonal`), `internal/store/store.go` (`Safe.Personal`),
+`internal/api/safes_handlers.go` (`createSafe`, `canManageSafe`),
+`internal/api/targets.go` (`authorizedForTarget`), `internal/api/viewer_handlers.go`,
+`internal/api/broker_tools.go`, `internal/proxy/gates.go`, new migration `0040`.
 
 ## Phase 138 — v0.32.0 ✅
 

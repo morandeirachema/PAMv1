@@ -409,6 +409,43 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("target should survive safe deletion with a nil safe_id: %+v", tt)
 	}
 
+	// --- Safe.Personal (Phase 139): set at creation, immutable after ---
+	// Round-trips through create/get/list, and — the property that actually
+	// matters — UpdateSafe must never change it, even when the caller's
+	// struct carries a different value, the same way it never changes
+	// CreatedAt.
+	psf := &store.Safe{Name: "alice-personal", Personal: true}
+	if err := st.CreateSafe(ctx, psf); err != nil {
+		t.Fatalf("CreateSafe(personal): %v", err)
+	}
+	if got, err := st.GetSafe(ctx, psf.ID); err != nil || !got.Personal {
+		t.Fatalf("GetSafe did not round-trip Personal: %+v err %v", got, err)
+	}
+	if listed, err := st.ListSafes(ctx, 10, 0); err != nil {
+		t.Fatalf("ListSafes: %v", err)
+	} else {
+		found := false
+		for _, s := range listed {
+			if s.ID == psf.ID && s.Personal {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("ListSafes did not carry Personal for safe %d: %+v", psf.ID, listed)
+		}
+	}
+	// UpdateSafe's incoming struct explicitly claims Personal:false — a bug
+	// here would silently un-personalize the safe.
+	if err := st.UpdateSafe(ctx, &store.Safe{ID: psf.ID, Name: "alice-personal-renamed", Personal: false}); err != nil {
+		t.Fatalf("UpdateSafe(personal): %v", err)
+	}
+	if got, err := st.GetSafe(ctx, psf.ID); err != nil || !got.Personal {
+		t.Fatalf("UpdateSafe must never change Personal: %+v err %v", got, err)
+	}
+	if err := st.DeleteSafe(ctx, psf.ID); err != nil {
+		t.Fatalf("DeleteSafe(personal): %v", err)
+	}
+
 	// --- dependent accounts (Phase 17): a credential's consumers ---
 	dep := &store.CredentialDependency{CredentialID: cred.ID, Kind: "windows_service", Host: "app-01", Name: "MyService"}
 	if err := st.CreateCredentialDependency(ctx, dep); err != nil {

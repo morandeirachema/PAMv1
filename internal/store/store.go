@@ -251,6 +251,14 @@ type Safe struct {
 	// the global/request value stands.
 	RequireApproval bool `json:"require_approval,omitempty"`
 	MinApprovers    int  `json:"min_approvers,omitempty"`
+	// Personal (Phase 139) marks the safe private: auth.CanConnectTarget's
+	// unconditional admin bypass no longer applies to a target placed here —
+	// only the safe's own members, or a principal holding
+	// auth.CapUnlimitedVaultAccess, may reach it. Set only at creation
+	// (CreateSafe); UpdateSafe in both store implementations deliberately
+	// never changes it, the same way it never changes CreatedAt, so a later
+	// rename/policy edit cannot silently un-personalize a safe.
+	Personal bool `json:"personal,omitempty"`
 }
 
 // SafeMember authorizes a subject (a user or a role) on a safe. CanManage marks
