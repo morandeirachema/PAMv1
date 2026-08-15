@@ -2427,7 +2427,7 @@ genuine minor: one new capability. No schema change.
 - [x] **v0.34.0** through the test-gated pipeline, rehearsed on `main` first.
   Published 2026-08-15 as `ghcr.io/morandeirachema/pamv1:0.34.0` (also
   `latest`), digest
-  `sha256:PENDING`,
+  `sha256:ee9efe2090e84ae8bed9c1d07769babaad6024bf0a0189a093dfd88f052f5303`,
   **public** (anonymous pull 200, verified via the GHCR anonymous
   token-exchange flow)
 - [x] All five pins via the sweep; Helm chart `version` 0.24.0 -> **0.25.0**
