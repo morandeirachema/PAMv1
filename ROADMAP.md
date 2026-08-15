@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–143 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–144 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,29 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 144 — v0.35.0 ✅
+
+Releases Phase 143 (ICAP-based file-transfer scanning) — a genuine minor:
+one new capability. No schema change.
+
+- [x] **v0.35.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-15 as `ghcr.io/morandeirachema/pamv1:0.35.0` (also
+  `latest`), digest
+  `sha256:PENDING`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow)
+- [x] All five pins via the sweep; Helm chart `version` 0.25.0 -> **0.26.0**
+  (minor, alongside the `appVersion` minor)
+- [x] Both READMEs restated (the Tier-6 parity table row already landed in
+  Phase 143's own PR — this pass covers every scattered version/phase-count
+  mention, not just the hub lines)
+- [x] `docs/README.md`'s currency line, `docs/NIS2-COMPLIANCE.md`'s
+  compliance-evidence row and ROADMAP.md's top-banner phase count all
+  caught proactively
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging:
+  `gofmt`, `go vet`, `staticcheck`, `gosec`, `govulncheck`, `go test -race
+  ./...`, `go run ./cmd/archgen` (no schema/route drift)
 
 ## Phase 143 — ICAP-based file-transfer scanning ✅
 
