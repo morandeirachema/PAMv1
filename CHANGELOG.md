@@ -9,6 +9,26 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.35.0] — 2026-08-15
+
+A minor: one new capability.
+
+### Added
+
+- **ICAP-based file-transfer scanning.** `PAM_ICAP_URL` submits every
+  finalized SFTP transfer's captured bytes whole to an ICAP (RFC 3507)
+  RESPMOD AV/DLP gateway, via a new minimal `internal/icap` client. This is
+  **detection, not prevention**: a whole-object scan needs a complete file,
+  which by the time it exists has already reached the target (upload) or the
+  operator (download) through the existing per-packet relay — proven by a
+  test where an unreachable ICAP server still lets the transfer through. A
+  flagged file is audited `sftp.icap_flagged` naming the vendor's own reason;
+  a scan failure is audited `sftp.icap_scan_failed`; a capped or broken
+  capture is skipped rather than scanned incomplete (`sftp.icap_skipped`).
+  Requires `PAM_SSH_SFTP_CAPTURE` and `PAM_SSH_SFTP_CAPTURE_MAX_MB` already
+  set — the same byte cap bounds the in-memory scan buffer. Joins the
+  `PAM_OT_AIRGAP` conflict list.
+
 ## [0.34.0] — 2026-08-15
 
 A minor: one new capability.
