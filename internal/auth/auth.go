@@ -79,6 +79,13 @@ const (
 	CapManageUsers                         // create/delete users
 	CapApprove                             // review and approve/deny access requests
 	CapCallTool                            // invoke a brokered tool call (AI agents)
+	// CapUnlimitedVaultAccess (Phase 139) is the named override that lets a
+	// principal reach a target placed in a Personal safe despite not being one
+	// of its members. Deliberately NOT in roleCaps[RoleAdmin] — see
+	// CanConnectTarget's doc comment for why a plain admin no longer bypasses
+	// a personal safe by role alone, and canManageSafe for why CapManageTargets
+	// alone is likewise not enough to manage one's membership.
+	CapUnlimitedVaultAccess
 
 	capCount // sentinel: keep LAST. Loops range [CapReadInventory, capCount) so a
 	// new capability added above is picked up everywhere automatically.
@@ -125,15 +132,16 @@ func (r Role) CapabilitySet() CapSet {
 // role-aware menu off these, so they are part of the /api/me contract — do not
 // rename without updating the portal.
 var capNames = map[Capability]string{
-	CapReadInventory:     "read_inventory",
-	CapManageTargets:     "manage_targets",
-	CapManageCredentials: "manage_credentials",
-	CapRevealSecret:      "reveal_secret",
-	CapConnect:           "connect",
-	CapReadAudit:         "read_audit",
-	CapManageUsers:       "manage_users",
-	CapApprove:           "approve",
-	CapCallTool:          "call_tool",
+	CapReadInventory:        "read_inventory",
+	CapManageTargets:        "manage_targets",
+	CapManageCredentials:    "manage_credentials",
+	CapRevealSecret:         "reveal_secret",
+	CapConnect:              "connect",
+	CapReadAudit:            "read_audit",
+	CapManageUsers:          "manage_users",
+	CapApprove:              "approve",
+	CapCallTool:             "call_tool",
+	CapUnlimitedVaultAccess: "unlimited_vault_access",
 }
 
 // String returns the capability's stable snake_case name.
@@ -157,17 +165,34 @@ func (r Role) Capabilities() []string {
 }
 
 // CanConnectTarget reports whether the principal may connect to a target given
-// its effective grants (direct grants ∪ safe members) and whether the target is
-// placed in a safe. Admins may always connect. When no grant matches, an
-// *ungated* target (safeScoped=false) is open to any connect-capable principal,
-// but a *safe-scoped* target (safeScoped=true) is default-DENY — placing a target
-// in a safe restricts it to that safe's members, so an empty/unmatched grant set
-// must not fall through to "open". Otherwise a grant must match the user or role.
-func CanConnectTarget(p *Principal, grants []store.TargetGrant, safeScoped bool) bool {
-	for _, r := range p.effectiveRoles() {
-		if r == RoleAdmin {
-			return true
+// its effective grants (direct grants ∪ safe members), whether the target is
+// placed in a safe, and whether that safe is Personal (Phase 139). When no
+// grant matches, an *ungated* target (safeScoped=false) is open to any
+// connect-capable principal, but a *safe-scoped* target (safeScoped=true) is
+// default-DENY — placing a target in a safe restricts it to that safe's
+// members, so an empty/unmatched grant set must not fall through to "open".
+// Otherwise a grant must match the user or role.
+//
+// Admins may always connect — UNLESS the target sits in a Personal safe, in
+// which case the unconditional role-based bypass is replaced by a check for
+// CapUnlimitedVaultAccess, a narrow capability no built-in role carries by
+// default (only a custom profile that explicitly lists it does). This is the
+// one place personal-folder privacy actually lives: without it, "personal"
+// would mean nothing, since every admin bypassed every safe already. An admin
+// who lacks the capability still falls through to ordinary grant matching, so
+// the safe's own owner (a member by construction — see createSafe) connects
+// normally regardless of role; only a *different* admin without the override
+// is turned away. For an ordinary (non-personal) target this function's
+// behavior is byte-identical to before Phase 139.
+func CanConnectTarget(p *Principal, grants []store.TargetGrant, safeScoped, personal bool) bool {
+	if !personal {
+		for _, r := range p.effectiveRoles() {
+			if r == RoleAdmin {
+				return true
+			}
 		}
+	} else if p.Can(CapUnlimitedVaultAccess) {
+		return true
 	}
 	if len(grants) == 0 {
 		// Ungated ⇒ open; safe-scoped-but-no-members ⇒ closed (containment).
@@ -179,6 +204,18 @@ func CanConnectTarget(p *Principal, grants []store.TargetGrant, safeScoped bool)
 		}
 	}
 	return false
+}
+
+// PersonalOverrideUsed reports whether p's access to a personal-safe target
+// specifically relied on CapUnlimitedVaultAccess, so a caller that admitted
+// the connection via CanConnectTarget can decide to audit it loudly (Phase
+// 139) — mirroring how break-glass access is always loudly audited.
+// Deliberately over-inclusive: a principal who also holds a direct grant on
+// the target still reports true here if they carry the capability, since
+// erring toward more visibility on a privileged bypass is the safe
+// direction, not less. Always false when personal is false.
+func (p *Principal) PersonalOverrideUsed(personal bool) bool {
+	return personal && p.Can(CapUnlimitedVaultAccess)
 }
 
 // SubjectMatches reports whether p matches an authorization subject: a "user"

@@ -332,12 +332,13 @@ func (s *PGStore) EffectiveTargetGrants(ctx context.Context, targetID int64) ([]
 	})
 }
 
-// CreateSafe inserts a safe, populating its ID and CreatedAt.
+// CreateSafe inserts a safe, populating its ID and CreatedAt. Personal is
+// set here and only here — see store.Safe.Personal.
 func (s *PGStore) CreateSafe(ctx context.Context, sf *store.Safe) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO safes (name, description, require_approval, min_approvers)
-		 VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
-		sf.Name, sf.Description, sf.RequireApproval, sf.MinApprovers,
+		`INSERT INTO safes (name, description, require_approval, min_approvers, personal)
+		 VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
+		sf.Name, sf.Description, sf.RequireApproval, sf.MinApprovers, sf.Personal,
 	).Scan(&sf.ID, &sf.CreatedAt)
 	if pgCode(err) == pgUniqueViolation {
 		return store.ErrConflict
@@ -349,7 +350,7 @@ func (s *PGStore) CreateSafe(ctx context.Context, sf *store.Safe) error {
 // (creation order — the stable order a cursor needs).
 func (s *PGStore) ListSafes(ctx context.Context, limit int, afterID int64) ([]store.Safe, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, description, created_at, require_approval, min_approvers
+		`SELECT id, name, description, created_at, require_approval, min_approvers, personal
 		 FROM safes WHERE id > $1 ORDER BY id LIMIT $2`,
 		afterID, limitArg(limit))
 	if err != nil {
@@ -358,15 +359,18 @@ func (s *PGStore) ListSafes(ctx context.Context, limit int, afterID int64) ([]st
 	return pgx.CollectRows(rows, scanSafe)
 }
 
-// UpdateSafe replaces a safe's name and description, refreshing s.CreatedAt
-// from the stored row; ErrNotFound if absent, ErrConflict if the new name
-// belongs to another safe.
+// UpdateSafe replaces a safe's name, description and approval policy,
+// refreshing s.CreatedAt and s.Personal from the stored row; ErrNotFound if
+// absent, ErrConflict if the new name belongs to another safe. Personal is
+// deliberately NOT in the SET list — see store.Safe.Personal — so whatever
+// the caller's struct happened to carry in that field is discarded in favor
+// of the true stored value the RETURNING clause reads back.
 func (s *PGStore) UpdateSafe(ctx context.Context, sf *store.Safe) error {
 	err := s.pool.QueryRow(ctx,
 		`UPDATE safes SET name = $1, description = $2, require_approval = $3, min_approvers = $4
-		 WHERE id = $5 RETURNING created_at`,
+		 WHERE id = $5 RETURNING created_at, personal`,
 		sf.Name, sf.Description, sf.RequireApproval, sf.MinApprovers, sf.ID,
-	).Scan(&sf.CreatedAt)
+	).Scan(&sf.CreatedAt, &sf.Personal)
 	switch {
 	case pgCode(err) == pgUniqueViolation:
 		return store.ErrConflict
@@ -379,7 +383,7 @@ func (s *PGStore) UpdateSafe(ctx context.Context, sf *store.Safe) error {
 // GetSafe returns a safe by ID, or ErrNotFound.
 func (s *PGStore) GetSafe(ctx context.Context, id int64) (*store.Safe, error) {
 	return getOne(ctx, s.pool, scanSafe,
-		`SELECT id, name, description, created_at, require_approval, min_approvers FROM safes WHERE id = $1`, id)
+		`SELECT id, name, description, created_at, require_approval, min_approvers, personal FROM safes WHERE id = $1`, id)
 }
 
 // DeleteSafe removes a safe by ID (members cascade; targets are unassigned).
@@ -620,7 +624,7 @@ func scanCampaignItem(row pgx.CollectableRow) (store.CampaignItem, error) {
 // scanSafe scans one safe row.
 func scanSafe(row pgx.CollectableRow) (store.Safe, error) {
 	var sf store.Safe
-	err := row.Scan(&sf.ID, &sf.Name, &sf.Description, &sf.CreatedAt, &sf.RequireApproval, &sf.MinApprovers)
+	err := row.Scan(&sf.ID, &sf.Name, &sf.Description, &sf.CreatedAt, &sf.RequireApproval, &sf.MinApprovers, &sf.Personal)
 	return sf, err
 }
 

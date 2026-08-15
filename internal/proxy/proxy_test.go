@@ -838,6 +838,80 @@ func TestSafeMembershipGrantsConnect(t *testing.T) {
 	}
 }
 
+// TestPersonalSafeGateProxy proves the Phase 139 personal-safe protection over
+// the real SSH proxy connect path, mirroring TestSafeMembershipGrantsConnect's
+// shape: the bootstrap key — which resolves to the built-in, unconstrained
+// admin — is denied a target placed in a safe marked Personal, exactly like any
+// non-member would be, because it does not hold CapUnlimitedVaultAccess. The
+// safe's own member connects normally regardless, proving the protection
+// narrows the admin bypass without narrowing ordinary membership.
+func TestPersonalSafeGateProxy(t *testing.T) {
+	host, port := startUpstream(t, upstreamUser, upstreamSecret, targetOutput)
+	st := memstore.New()
+	v := mustVault(t)
+	target := seedTarget(t, st, v, host, port) // web-01, no direct grants
+	ctx := context.Background()
+
+	const userToken = "alice-token"
+	sum := sha256.Sum256([]byte(userToken))
+	if err := st.CreateUser(ctx, &store.User{Username: "alice", Role: "user", TokenHash: hex.EncodeToString(sum[:])}); err != nil {
+		t.Fatal(err)
+	}
+
+	sf := &store.Safe{Name: "alice-personal", Personal: true}
+	if err := st.CreateSafe(ctx, sf); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddSafeMember(ctx, &store.SafeMember{SafeID: sf.ID, SubjectType: "user", Subject: "alice", CanManage: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AssignTargetSafe(ctx, target.ID, &sf.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver, err := auth.NewResolver(st, proxyAPIKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	px, err := proxy.New(st, v, resolver, proxy.Config{HostKey: mustSigner(t), RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := serveProxy(t, px)
+
+	// The bootstrap admin key is turned away — a personal safe means what it
+	// says even to the identity every OTHER safe unconditionally admits.
+	adminClient, err := dialProxy(t, addr, upstreamUser+"@web-01", proxyAPIKey)
+	if err != nil {
+		t.Fatalf("auth should pass: %v", err)
+	}
+	if sess, err := adminClient.NewSession(); err == nil {
+		sess.Close()
+		adminClient.Close()
+		t.Fatal("the built-in admin must be denied a target in a personal safe without CapUnlimitedVaultAccess")
+	}
+	adminClient.Close()
+
+	// The safe's own member connects exactly as if it were an ordinary safe.
+	memberClient, err := dialProxy(t, addr, upstreamUser+"@web-01", userToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer memberClient.Close()
+	sess, err := memberClient.NewSession()
+	if err != nil {
+		t.Fatalf("the personal safe's own member should connect: %v", err)
+	}
+	defer sess.Close()
+	out, err := sess.CombinedOutput("echo hi")
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if string(out) != targetOutput {
+		t.Fatalf("output = %q, want %q", out, targetOutput)
+	}
+}
+
 // TestVendorContractGateProxy proves the Phase 29 vendor gate on the SSH proxy: a
 // vendor is denied a target with no active contract grant, and admitted once a
 // customer-approved, in-window grant exists.

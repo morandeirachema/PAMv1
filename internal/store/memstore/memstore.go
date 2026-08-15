@@ -334,8 +334,11 @@ func (m *Memstore) ListSafes(_ context.Context, limit int, afterID int64) ([]sto
 	return window(out, func(sf store.Safe) int64 { return sf.ID }, limit, afterID), nil
 }
 
-// UpdateSafe replaces a safe's name and description; ErrNotFound if absent,
-// ErrConflict if the new name belongs to another safe.
+// UpdateSafe replaces a safe's name, description and approval policy;
+// ErrNotFound if absent, ErrConflict if the new name belongs to another
+// safe. Personal is carried forward from the existing row, never from the
+// caller's struct — see store.Safe.Personal and PGStore.UpdateSafe's
+// matching comment.
 func (m *Memstore) UpdateSafe(_ context.Context, sf *store.Safe) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -349,6 +352,7 @@ func (m *Memstore) UpdateSafe(_ context.Context, sf *store.Safe) error {
 		}
 	}
 	sf.CreatedAt = cur.CreatedAt
+	sf.Personal = cur.Personal
 	m.safes[sf.ID] = *sf
 	return nil
 }

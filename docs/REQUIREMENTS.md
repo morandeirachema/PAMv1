@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-08-15 · Reflects: Phases 0–137. Phases 66–70 add one more
+> Last updated: 2026-08-15 · Reflects: Phases 0–139. Phases 66–70 add one more
 > background worker (the hourly, leader-locked certification scheduler); Phase 78
 > adds an optional per-replica Conjur refresh worker (off unless
 > `PAM_CONJUR_REFRESH_MIN` is set); 71–94 add no port, resource floor or
@@ -47,6 +47,10 @@
 > requires (see [EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md)); session
 > watermarking is a client-side overlay plus an in-process `Hub.Publish`
 > banner, no new dependency of any kind.
+> **Phase 139 adds no env var, worker, port or resource floor at all** —
+> the personal-safe check is a capability comparison and one extra `GetSafe`
+> read on an already-open store connection, no new dependency, no new
+> outbound call.
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** These are the
 > specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate

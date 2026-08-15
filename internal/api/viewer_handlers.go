@@ -174,9 +174,18 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 		storeError(w, err)
 		return
 	}
-	if !auth.CanConnectTarget(principal, grants, target.SafeID != nil) {
+	personal, err := store.EffectiveSafePersonal(r.Context(), s.store, target)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	if !auth.CanConnectTarget(principal, grants, target.SafeID != nil, personal) {
 		writeError(w, http.StatusForbidden, "not authorized for this target")
 		return
+	}
+	// Loud, mirroring authorizedForTarget's own audit (Phase 139).
+	if principal.PersonalOverrideUsed(personal) {
+		s.audit(r.Context(), "safe.personal_override_used", "target:"+target.Name)
 	}
 	needsApproval, aperr := s.requireApprovalFor(r.Context(), target)
 	if aperr != nil {

@@ -59,7 +59,17 @@ func (s *Server) authorizeAgentTarget(ctx context.Context, p *auth.Principal, na
 	if err != nil {
 		return nil, err
 	}
-	if !auth.CanConnectTarget(p, grants, target.SafeID != nil) {
+	// A RoleAgent identity's fixed two-capability set (read_inventory,
+	// call_tool — see AGENT-THREAT-MODEL.md) never includes
+	// CapUnlimitedVaultAccess, so the personal-safe override this fetches
+	// can structurally never fire here; this call exists for correctness
+	// (an agent must be default-deny on a personal safe like anyone else),
+	// not because an agent is expected to ever use the override.
+	personal, err := store.EffectiveSafePersonal(ctx, s.store, target)
+	if err != nil {
+		return nil, err
+	}
+	if !auth.CanConnectTarget(p, grants, target.SafeID != nil, personal) {
 		return nil, fmt.Errorf("agent not authorized for target %q", name)
 	}
 	if !broker.Approved(ctx) {
@@ -110,7 +120,13 @@ func (s *Server) authorizeAgentCredential(ctx context.Context, p *auth.Principal
 	if err != nil {
 		return nil, nil, err
 	}
-	if !auth.CanConnectTarget(p, grants, target.SafeID != nil) {
+	// See authorizeAgentTarget's matching comment: structurally unreachable
+	// by a RoleAgent identity, fetched for correctness regardless.
+	personal, err := store.EffectiveSafePersonal(ctx, s.store, target)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !auth.CanConnectTarget(p, grants, target.SafeID != nil, personal) {
 		return nil, nil, fmt.Errorf("agent not authorized for target %q", target.Name)
 	}
 	if !broker.Approved(ctx) {

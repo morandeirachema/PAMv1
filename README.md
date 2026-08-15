@@ -37,7 +37,7 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
-runs 0–137 and **every phase has shipped**, and the current
+runs 0–139 and **every phase has shipped**, and the current
 tagged, cosign-signed release is
 **[v0.32.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.32.0)** (2026-08-15;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
@@ -147,7 +147,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–137, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–139, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 
@@ -471,6 +471,7 @@ each phase ships, not pre-declared as a block.
 | ~~**Device-aware access control**~~ **✅ shipped (Phase 133)** | Live EDR-posture gate (StrongDM) + device-identity binding (Teleport, rescoped) | `PAM_POSTURE_ATTEST_URL` webhook re-checked on every connect AND every authenticated call, break-glass exempt. `PAM_DEVICE_HEADER` trusts a reverse-proxy-injected client-certificate fingerprint against a per-user enrolled `device_fingerprint` — REST surface only, honestly scoped: the SSH/PostgreSQL/SQL Server proxies have no HTTP layer for a header to travel on. Neither reaches the AI-agent broker, which authenticates on a separate path |
 | ~~**DoubleLock**~~ **✅ shipped (Phase 135)** | Secret-specific encryption key independent of RBAC (Delinea DoubleLock/QuantumLock) | A named person's password, additionally required to reveal/checkout a credential — even a compromised admin can't read it, or disable the protection, alone. Kept outside the KEK on purpose: `DoubleLockEnc` is a second ciphertext keyed directly by PBKDF2(password), never `vault.Encrypt`, so `-rotate-kek`'s exhaustive re-wrap (which has no password to work with mid-rotation) needs zero changes — a build-time discovery, not the plan's original AAD-mixing mechanism. Rotating the secret clears DoubleLock |
 | ~~**Magic-link approval + session watermarking**~~ **✅ shipped (Phase 137)** | Out-of-band approval link (BeyondTrust) + session watermarking (BeyondTrust) | An `ApprovalInvite` mirrors Phase 116's session-share invite almost exactly, but creating one already requires `CapApprove` — the invite IS the delegation. Redemption is a safe, non-consuming preview `GET` plus a single-use decision `POST`, fired only on an explicit button click, deliberately unlike `share.html`'s auto-redeem — approving a request is higher-stakes than joining a session. A second four-eyes check at invite *creation* (not just redemption) stops a requester self-approving through their own emailed link, a hole a synthetic-actor check alone would have missed. Watermarking: a DOM overlay for RDP/VNC, a one-time `Hub.Publish` banner for text/DB sessions |
+| ~~**Personal/private secret folders**~~ **✅ shipped (Phase 139)** | Secrets invisible even to admins by default, with a named override role (Delinea) | `Safe.Personal` replaces `CanConnectTarget`'s unconditional admin bypass with a check for a new, narrow `unlimited_vault_access` capability — deliberately absent from the built-in admin role, grantable only via a custom profile. A matching fix in `canManageSafe` closes a side door found while building: `manage_targets` alone, enough to manage any ordinary safe's roster, is not enough for a personal one, or a target manager could just add themselves as a member. Using the override is audited loudly, mirroring break-glass. Inventory listing and safe deletion are unaffected — only connect/reveal/checkout are gated |
 
 ### Deliberate non-goal
 
