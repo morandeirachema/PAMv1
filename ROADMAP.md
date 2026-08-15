@@ -2419,6 +2419,112 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 137 — Magic-link approval + session watermarking ✅
+
+Fourth phase of the BeyondTrust/Delinea/Teleport/StrongDM batch. Two small,
+independent items bundled for efficiency, the same shape as Phase 120
+bundling three small policy gaps — closes BeyondTrust's out-of-band approval
+(the buildable "link" half, not the native mobile app) and BeyondTrust's
+session watermarking.
+
+**Magic-link design: a near-structural copy of Phase 116's own pattern.**
+A new `store.ApprovalInvite` type and a 7-method `ApprovalInviteStore` role
+(store surface 174 → 181) mirror `SessionShareInvite` almost exactly, down
+to reusing `newShareToken()` verbatim for single-use minting. The one real
+difference: unlike a session share, minting an approval invite needs no
+separate approval step of its own — creating one already requires
+`CapApprove`, so the invite **is** the delegation, not a request for one.
+
+**One deliberate deviation from `share.html`'s own precedent, reasoned
+explicitly.** `share.html` fires its redeem `POST` automatically on page
+load — fine for joining an already-approved session, but approving or
+denying an access request is a materially higher-stakes action, one that
+must never be triggerable by a mail client's link-prefetcher visiting the
+URL. Redemption is split into two calls instead: `previewApprovalInvite`
+(`GET /api/approval/preview/{token}`), a safe, non-consuming lookup the
+page loads immediately so a prefetch learns nothing and changes nothing;
+and `redeemApprovalInvite` (`POST /api/approval/redeem/{token}`), the
+single-use, state-changing decision, fired only from an explicit
+Approve/Deny button click on `approve.html`.
+
+**A real self-approval vulnerability, found by tracing the attack, not by
+a failing test.** The first-draft design assumed the redeem path's
+synthetic `"magiclink:<email>"` actor was enough to prevent self-approval,
+since it can never equal a real principal's own actor string —
+`decideAccessRequest`'s existing four-eyes check (`ar.Requester ==
+approver`) would never trip against it. Deliberately tracing an actual
+attack scenario before writing tests surfaced the hole: nothing stopped
+the **requester** from creating an invite addressed to their own inbox and
+redeeming it themselves — the synthetic actor is different from `"alice"`
+regardless of whose email address ends up inside it. Fix: a second,
+independent four-eyes check at invite **creation** time, in
+`createApprovalInvite` (`ar.Requester == actorFrom(r.Context())` refuses
+with 403, audited `access.decision_denied` with
+`reason:self-approval-invite`) — closing the loophole regardless of which
+address the invite names. `TestApprovalInviteCannotSelfApprove` proves it,
+including against a principal holding both `CapConnect` and `CapApprove`
+at once.
+
+**`decideAccessRequest` refactored for reuse, not duplicated.** The
+existing `approveAccessRequest`/`denyAccessRequest` handlers derived their
+`id` from the URL and their `approver` from `actorFrom(r.Context())`
+internally — the magic-link path needs to supply both explicitly (an `id`
+read off the just-consumed invite, a synthetic `approver`), so the
+function's signature became `(w, r, id int64, decision, approver string)
+bool`, with the two REST handlers now parsing `id` and passing
+`actorFrom(r.Context())` themselves. The `bool` return tells the redeem
+handler whether to record an outcome on the invite itself — the underlying
+request may already have been decided by someone else in a race, in which
+case the invite's own record stays best-effort.
+
+**A route-collision panic, found by the test suite, not the build.**
+`POST /api/approval-invites/{id}/revoke` and a first-draft
+`POST /api/approval-invites/redeem/{token}` are ambiguous Go 1.22+
+`ServeMux` patterns. `go build ./...` is silent about it — server
+construction never runs at build time — but `go test ./...` panics at
+server construction in every package that builds one, `cmd/pam-server`'s
+end-to-end test and `internal/api`'s own suite included. Fixed by
+reapplying the exact precedent this codebase already set for the identical
+shape (`share` vs. `share-invites`): the unauthenticated preview/redeem
+routes moved to their own `/api/approval/` prefix —
+`GET /api/approval/preview/{token}`, `POST /api/approval/redeem/{token}`
+— leaving `POST /api/approval-invites/{id}/revoke` on the
+authenticated-CRUD prefix. A reminder to run the full test suite, not just
+`go build`/`go vet`, before trusting a routing change.
+
+**Watermarking design: two mechanically separate hooks.** RDP/VNC gets a
+client-side DOM overlay — `buildWatermark(targetName)` in `index.html`
+builds a `.rdpwatermark` element (operator name, target, timestamp, set via
+`.textContent` only, so it carries no XSS risk) appended as a sibling of
+the Guacamole canvas mount point, `pointer-events: none` so it never
+intercepts input. SSH/PostgreSQL/SQL Server sessions get a one-time
+identity banner instead, published through `Hub.Publish` — the exact
+mechanism `execWinRM` already uses to inject its own notices into a
+live-watched stream — right after session registration, in all three
+proxies, via one small shared helper: `internal/proxy/watermark.go`'s
+`watermarkBanner(actor, targetName string) []byte`.
+
+**V1 scope.** Approval links are single-use and `PAM_APPROVAL_INVITE_TTL_MIN`-
+bounded (default 1440 minutes/24h — deliberately closer in profile to a
+password-reset link than to Phase 116's 15-minute live-session-join link,
+since an approval decision has no live session on the other end to time
+out). No native mobile app. Watermark text is static identity, not a
+dynamic per-frame tracking pattern. New audit actions
+`access.invite_created`/`access.invite_revoked` (plus the existing
+`access.decision_denied`, reused for the self-approval-at-creation refusal,
+within the family it already belongs to); no new action for
+watermarking — it is a display/banner concern, not a decision.
+
+**Critical files:** `internal/store/store.go` (`ApprovalInvite`,
+`ApprovalInviteStore`), `internal/api/approvalinvite_handlers.go` (new),
+`internal/api/approval_handlers.go` (`decideAccessRequest` signature
+change), `internal/api/server.go` (routes, `ApprovalInviteTTL` wiring),
+`internal/config/config.go` (`PAM_APPROVAL_INVITE_TTL_MIN`),
+`internal/proxy/watermark.go` (new), `internal/proxy/proxy.go`/`dbproxy.go`/
+`mssqlproxy.go` (one `Hub.Publish` call each), `internal/web/web.go` +
+`internal/web/static/approve.html` (new), `internal/web/static/index.html`
+(viewer overlay), new migration `0039`.
+
 ## Phase 136 — v0.31.0 ✅
 
 Releases Phase 135 (DoubleLock) — a genuine new capability, so this is a

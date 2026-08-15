@@ -3,9 +3,10 @@
 > **Living document.** Update whenever the RDP path (guacd handshake, the tunnel
 > prelude, the token endpoint, or the in-portal viewer) changes.
 >
-> Last updated: 2026-08-14 · Reflects: Phases 0–135 (nothing since 52g changes the RDP path or how it is exercised — Phase 116's session-sharing is SSH-only and does not touch guacd or the viewer. Phase 118's CIDR allowlist does reach this path indirectly — `POST /api/rdp-token` goes through the same `authz` middleware as every other route — but doesn't change this testing procedure, since the demo setup uses an unrestricted admin key. Phase 120 doesn't touch this path at all. Phase 122's suspend/resume is SSH-only too and doesn't touch this path either. Phase 124's WebAuthn is a login-time change only — once signed in, by whichever factor, the RDP viewer path is unchanged. Phase 126's theme toggle doesn't touch this path either — it's a global console preference, not per-protocol. Phase 128's account discovery is SSH/WinRM only and doesn't touch RDP either. Phase 129 explicitly does NOT extend to RDP — see the "Zero Standing Privilege: ephemeral database roles" section of ADMIN-GUIDE.md for why: Guacamole's own documentation confirms no certificate-based RDP auth parameter exists, a permanent protocol limitation this testing procedure cannot work around. Phase 131's command allow-listing doesn't touch this path either — RDP has no discrete command surface for cmdguard to see, same as VNC. Phase 133's device-aware access control reaches this path indirectly, same as Phase 118 — `POST /api/rdp-token` goes through the same `authz` middleware every other route does — but doesn't change this testing procedure, since the demo setup configures neither `PAM_POSTURE_ATTEST_URL` nor `PAM_DEVICE_HEADER`. Phase 135's DoubleLock doesn't touch this path either — it gates the credential-management reveal/checkout endpoints, not a connect path). — RDP has changed in Phases 33
+> Last updated: 2026-08-15 · Reflects: Phases 0–137 (**Phase 137 is the first phase since 52g to change the rendered viewer**: a small `.rdpwatermark` overlay — operator, target, start time — is appended as a sibling of the Guacamole canvas, client-side, `pointer-events: none`; see "Two things" below. Nothing else since 52g changes the RDP path or how it is exercised — Phase 116's session-sharing is SSH-only and does not touch guacd or the viewer. Phase 118's CIDR allowlist does reach this path indirectly — `POST /api/rdp-token` goes through the same `authz` middleware as every other route — but doesn't change this testing procedure, since the demo setup uses an unrestricted admin key. Phase 120 doesn't touch this path at all. Phase 122's suspend/resume is SSH-only too and doesn't touch this path either. Phase 124's WebAuthn is a login-time change only — once signed in, by whichever factor, the RDP viewer path is unchanged. Phase 126's theme toggle doesn't touch this path either — it's a global console preference, not per-protocol. Phase 128's account discovery is SSH/WinRM only and doesn't touch RDP either. Phase 129 explicitly does NOT extend to RDP — see the "Zero Standing Privilege: ephemeral database roles" section of ADMIN-GUIDE.md for why: Guacamole's own documentation confirms no certificate-based RDP auth parameter exists, a permanent protocol limitation this testing procedure cannot work around. Phase 131's command allow-listing doesn't touch this path either — RDP has no discrete command surface for cmdguard to see, same as VNC. Phase 133's device-aware access control reaches this path indirectly, same as Phase 118 — `POST /api/rdp-token` goes through the same `authz` middleware every other route does — but doesn't change this testing procedure, since the demo setup configures neither `PAM_POSTURE_ATTEST_URL` nor `PAM_DEVICE_HEADER`. Phase 135's DoubleLock doesn't touch this path either — it gates the credential-management reveal/checkout endpoints, not a connect path). — RDP has changed in Phases 33
 > (clipboard control), 40 (brokered runs are supervised sessions), 50 (clipboard
-> auditing), 52c (recording-required, throttled tunnel auth) and 52e.
+> auditing), 52c (recording-required, throttled tunnel auth), 52e and 137
+> (watermark overlay).
 
 This is the procedure to verify pamv1's **RDP function** end to end: an operator
 opens an RDP target from the 5250 portal, the credential is injected server-side
@@ -158,7 +159,13 @@ See [EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md).
    - **least privilege** — an `auditor` (no connect) never sees option 7 and is
      refused by both `/api/rdp-token` (403) and the tunnel (403).
 
-### Two things that will change what you see
+### Three things that will change what you see
+
+**You should see a watermark overlay (Phase 137).** The moment the viewer
+connects, a small translucent label appears over the desktop naming the
+signed-in operator, the target, and the time the session started. It's
+`pointer-events: none` — it never intercepts a click — and there's nothing to
+configure; every RDP/VNC session gets it.
 
 **`PAM_REQUIRE_RECORDING` breaks this demo.** Neither compose file sets
 `PAM_GUACD_RECORDING_PATH`, so with the flag on the tunnel returns **503

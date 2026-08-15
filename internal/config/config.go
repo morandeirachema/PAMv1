@@ -314,6 +314,12 @@ type Config struct {
 	// but once redeemed the guest's browser needs to keep streaming/typing for
 	// the rest of the viewing, which the 15-minute window is not meant to cap.
 	ShareGuestSessionTTL time.Duration
+	// ApprovalInviteTTL (Phase 137) is how long a magic-link access-request
+	// approval invite stays redeemable. Deliberately much longer than
+	// ShareInviteTTL's 15 minutes: this is a decision link an approver may
+	// not open for hours, closer in profile to a password-reset link than to
+	// a live-session join link — 24 hours by default.
+	ApprovalInviteTTL time.Duration
 	// AllowedProtocols restricts which target protocols may be created and
 	// connected to (comma-separated, e.g. "ssh,winrm"); empty = all allowed. Used
 	// in OT zones to forbid protocols like RDP.
@@ -666,6 +672,7 @@ func Load() (*Config, error) {
 		CheckoutTTL:          time.Duration(integer("PAM_CHECKOUT_TTL_MIN", 30)) * time.Minute,
 		CheckoutMaxExtend:    time.Duration(integer("PAM_CHECKOUT_MAX_EXTEND_MIN", 240)) * time.Minute,
 		ShareInviteTTL:       time.Duration(integer("PAM_SESSION_SHARE_INVITE_TTL_SEC", 900)) * time.Second,
+		ApprovalInviteTTL:    time.Duration(integer("PAM_APPROVAL_INVITE_TTL_MIN", 1440)) * time.Minute,
 		ShareGuestSessionTTL: time.Duration(integer("PAM_SESSION_SHARE_GUEST_TTL_MIN", 240)) * time.Minute,
 		AllowedProtocols:     os.Getenv("PAM_ALLOWED_PROTOCOLS"),
 		CommandDenyFile:      os.Getenv("PAM_COMMAND_DENY_FILE"),

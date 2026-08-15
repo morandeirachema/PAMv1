@@ -243,6 +243,17 @@ erDiagram
     int64 CredentialID
     time_Time CreatedAt
   }
+  ApprovalInvite {
+    int64 ID
+    int64 AccessRequestID
+    string Email
+    string CreatedBy
+    time_Time CreatedAt
+    time_Time ExpiresAt
+    string Decision
+    ptr_time_Time ConsumedAt
+    ptr_time_Time RevokedAt
+  }
   AuditEvent {
     int64 ID
     time_Time TS
@@ -459,6 +470,7 @@ erDiagram
     time_Time CreatedAt
     ptr_time_Time LastUsedAt
   }
+  AccessRequest ||--o{ ApprovalInvite : "has"
   Campaign ||--o{ CampaignItem : "has"
   Credential ||--o{ AppSecretGrant : "has"
   Credential ||--o{ Checkout : "has"
@@ -476,7 +488,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 156 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 162 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -484,8 +496,13 @@ The 156 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/access-requests` | CapConnect |
 | POST | `/api/access-requests/{id}/approve` | CapApprove |
 | POST | `/api/access-requests/{id}/deny` | CapApprove |
+| POST | `/api/access-requests/{id}/invite` | CapApprove |
+| GET | `/api/access-requests/{id}/invites` | CapApprove |
 | POST | `/api/access-requests/{id}/stop-recurrence` | CapApprove |
 | GET | `/api/analytics/risk` | CapReadAudit |
+| POST | `/api/approval-invites/{id}/revoke` | CapApprove |
+| GET | `/api/approval/preview/{token}` | public |
+| POST | `/api/approval/redeem/{token}` | public |
 | GET | `/api/audit` | CapReadAudit |
 | GET | `/api/audit/export` | CapReadAudit |
 | GET | `/api/audit/head` | CapReadAudit |
@@ -607,6 +624,7 @@ The 156 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/webauthn/login/finish` | public (rate-limited) |
 | POST | `/api/webauthn/register/begin` | authenticated |
 | POST | `/api/webauthn/register/finish` | authenticated |
+| GET | `/approve.html` | public |
 | GET | `/healthz` | public |
 | GET | `/mcp` | public |
 | POST | `/mcp` | public |

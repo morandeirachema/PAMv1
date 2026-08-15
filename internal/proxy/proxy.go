@@ -659,6 +659,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 			Actor: actor, Target: target.Name, Protocol: "ssh", Remote: remote, Started: time.Now(),
 		}, func() { sconn.Close() })
 		defer p.sessions.Remove(sid)
+		p.live.Publish(sid, watermarkBanner(actor, target.Name))
 	}
 	// The input-sharing mux (Phase 116) is opened unconditionally alongside
 	// the session, whether or not anyone ever joins — matching how teeLive's

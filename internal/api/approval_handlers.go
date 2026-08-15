@@ -137,49 +137,63 @@ func (s *Server) listAccessRequests(w http.ResponseWriter, r *http.Request) {
 
 // approveAccessRequest approves the access request named in the {id} path value.
 func (s *Server) approveAccessRequest(w http.ResponseWriter, r *http.Request) {
-	s.decideAccessRequest(w, r, "approved")
-}
-
-// denyAccessRequest denies the access request named in the {id} path value.
-func (s *Server) denyAccessRequest(w http.ResponseWriter, r *http.Request) {
-	s.decideAccessRequest(w, r, "denied")
-}
-
-// decideAccessRequest records an approver's decision, enforcing the 4-eyes rule
-// (the approver must differ from the requester) and that only pending requests
-// can be decided.
-func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, decision string) {
 	id, ok := idParam(w, r)
 	if !ok {
 		return
 	}
+	s.decideAccessRequest(w, r, id, "approved", actorFrom(r.Context()))
+}
+
+// denyAccessRequest denies the access request named in the {id} path value.
+func (s *Server) denyAccessRequest(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	s.decideAccessRequest(w, r, id, "denied", actorFrom(r.Context()))
+}
+
+// decideAccessRequest records approver's decision on the access request id,
+// enforcing the 4-eyes rule (approver must differ from the requester) and
+// that only pending requests can be decided. id and approver are explicit
+// parameters — not derived from the URL/request context internally — so the
+// magic-link redemption path (Phase 137) can call this with an access
+// request id read from an already-consumed ApprovalInvite and a synthetic
+// "magiclink:<email>" approver, an actor form no authenticated principal
+// can ever present, sharing this exact four-eyes check rather than
+// reimplementing it. Returns whether the decision was actually recorded
+// (false on every refusal/error path, which has already written its own
+// response) — the magic-link redemption handler uses this to know whether
+// to record an outcome on the invite, since the underlying request may
+// already have been decided by someone else between invite creation and
+// redemption.
+func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, id int64, decision, approver string) bool {
 	ar, err := s.store.GetAccessRequest(r.Context(), id)
 	if err != nil {
 		storeError(w, err)
-		return
+		return false
 	}
-	approver := actorFrom(r.Context())
 	if ar.Requester == approver {
 		s.audit(r.Context(), "access.decision_denied", fmt.Sprintf("request:%d reason:self-approval", ar.ID))
 		writeError(w, http.StatusForbidden, "four-eyes: you cannot decide your own access request")
-		return
+		return false
 	}
 	if ar.Status != "pending" {
 		writeError(w, http.StatusConflict, "request already "+ar.Status)
-		return
+		return false
 	}
 
 	// A single deny is final.
 	if decision == "denied" {
 		if err := s.store.DecideAccessRequest(r.Context(), ar.ID, "denied", approver, time.Now()); err != nil {
 			storeError(w, err)
-			return
+			return false
 		}
 		s.notifyDecision(r, "access.deny", approver, ar)
 		ar.Status = "denied"
 		ar.Approver = approver
 		writeJSON(w, http.StatusOK, ar)
-		return
+		return true
 	}
 
 	// Approve: accumulate DISTINCT approvers (Phase 21 multi-tier chains). The
@@ -188,7 +202,7 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, dec
 	for _, a := range approvers {
 		if strings.EqualFold(a, approver) {
 			writeError(w, http.StatusConflict, "you have already approved this request")
-			return
+			return false
 		}
 	}
 	approvers = append(approvers, approver)
@@ -204,7 +218,7 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, dec
 	// safe's floor immediately binds every request still in flight.
 	if floor, ferr := s.approvalFloorForTarget(r.Context(), ar.TargetID); ferr != nil {
 		storeError(w, ferr)
-		return
+		return false
 	} else if floor > required {
 		required = floor
 	}
@@ -213,7 +227,7 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, dec
 		now := time.Now()
 		if err := s.store.SetApprovalState(r.Context(), ar.ID, joined, "approved", approver, &now); err != nil {
 			storeError(w, err)
-			return
+			return false
 		}
 		s.audit(r.Context(), "access.approve", fmt.Sprintf("request:%d requester:%s target:%d approvers:%d/%d", ar.ID, ar.Requester, ar.TargetID, len(approvers), required))
 		s.notifyDecision(r, "access.approve", approver, ar)
@@ -226,19 +240,20 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, dec
 			next := now.UTC().AddDate(0, 0, ar.RecurDays)
 			if err := s.store.SetAccessRequestNextRun(r.Context(), ar.ID, next); err != nil {
 				storeError(w, err)
-				return
+				return false
 			}
 			ar.NextRunAt = &next
 		}
 	} else {
 		if err := s.store.SetApprovalState(r.Context(), ar.ID, joined, "pending", "", nil); err != nil {
 			storeError(w, err)
-			return
+			return false
 		}
 		s.audit(r.Context(), "access.approve_partial", fmt.Sprintf("request:%d target:%d approver:%s approvals:%d/%d", ar.ID, ar.TargetID, approver, len(approvers), required))
 	}
 	ar.ApprovedBy = joined
 	writeJSON(w, http.StatusOK, ar)
+	return true
 }
 
 // stopAccessRequestRecurrence ends a recurring anchor's series — the stop

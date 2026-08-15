@@ -2204,6 +2204,88 @@ func (s *PGStore) ConsumeSessionShareInviteByTokenHash(ctx context.Context, toke
 	return &inv, nil
 }
 
+// scanApprovalInvite maps one approval_invites row into a store.ApprovalInvite.
+func scanApprovalInvite(row pgx.CollectableRow) (store.ApprovalInvite, error) {
+	var inv store.ApprovalInvite
+	err := row.Scan(&inv.ID, &inv.AccessRequestID, &inv.Email, &inv.CreatedBy, &inv.TokenHash,
+		&inv.CreatedAt, &inv.ExpiresAt, &inv.Decision, &inv.ConsumedAt, &inv.RevokedAt)
+	return inv, err
+}
+
+const approvalInviteCols = `id, access_request_id, email, created_by, token_hash, created_at, expires_at, decision, consumed_at, revoked_at`
+
+// CreateApprovalInvite records a new magic-link invite; the caller has
+// already generated and hashed the token and computed ExpiresAt.
+func (s *PGStore) CreateApprovalInvite(ctx context.Context, inv *store.ApprovalInvite) error {
+	return s.pool.QueryRow(ctx,
+		`INSERT INTO approval_invites (access_request_id, email, created_by, token_hash, expires_at)
+		 VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
+		inv.AccessRequestID, inv.Email, inv.CreatedBy, inv.TokenHash, inv.ExpiresAt.UTC(),
+	).Scan(&inv.ID, &inv.CreatedAt)
+}
+
+// GetApprovalInvite returns one invite by id, or ErrNotFound.
+func (s *PGStore) GetApprovalInvite(ctx context.Context, id int64) (*store.ApprovalInvite, error) {
+	return getOne(ctx, s.pool, scanApprovalInvite,
+		`SELECT `+approvalInviteCols+` FROM approval_invites WHERE id = $1`, id)
+}
+
+// ListApprovalInvitesForRequest lists an access request's invites, newest first.
+func (s *PGStore) ListApprovalInvitesForRequest(ctx context.Context, accessRequestID int64) ([]store.ApprovalInvite, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+approvalInviteCols+` FROM approval_invites WHERE access_request_id = $1 ORDER BY created_at DESC`,
+		accessRequestID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanApprovalInvite)
+}
+
+// RevokeApprovalInvite marks an invite revoked, or ErrNotFound.
+func (s *PGStore) RevokeApprovalInvite(ctx context.Context, id int64, at time.Time) error {
+	return execExpectingRow(ctx, s.pool, `UPDATE approval_invites SET revoked_at = $2 WHERE id = $1`, id, at.UTC())
+}
+
+// GetApprovalInviteByTokenHash is the non-consuming preview lookup: it
+// refuses (ErrNotFound) an unknown, expired, revoked or already-consumed
+// invite, but does not itself write anything — safe to call from a bare
+// page load.
+func (s *PGStore) GetApprovalInviteByTokenHash(ctx context.Context, tokenHash string) (*store.ApprovalInvite, error) {
+	return getOne(ctx, s.pool, scanApprovalInvite,
+		`SELECT `+approvalInviteCols+` FROM approval_invites
+		 WHERE token_hash = $1 AND revoked_at IS NULL AND consumed_at IS NULL AND expires_at > now()`,
+		tokenHash)
+}
+
+// ConsumeApprovalInviteByTokenHash atomically redeems an unexpired,
+// unrevoked, not-yet-consumed invite matching tokenHash — the
+// UPDATE...RETURNING is the single statement that makes this a genuine
+// single-use check-and-set rather than a read-then-write race.
+func (s *PGStore) ConsumeApprovalInviteByTokenHash(ctx context.Context, tokenHash string, now time.Time) (*store.ApprovalInvite, error) {
+	rows, err := s.pool.Query(ctx,
+		`UPDATE approval_invites SET consumed_at = $2
+		 WHERE token_hash = $1 AND revoked_at IS NULL AND consumed_at IS NULL AND expires_at > $2
+		 RETURNING `+approvalInviteCols,
+		tokenHash, now.UTC())
+	if err != nil {
+		return nil, err
+	}
+	inv, err := pgx.CollectExactlyOneRow(rows, scanApprovalInvite)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &inv, nil
+}
+
+// RecordApprovalInviteDecision stamps the outcome on an already-consumed
+// invite, or ErrNotFound.
+func (s *PGStore) RecordApprovalInviteDecision(ctx context.Context, id int64, decision string) error {
+	return execExpectingRow(ctx, s.pool, `UPDATE approval_invites SET decision = $2 WHERE id = $1`, id, decision)
+}
+
 // Ping reports whether the database is reachable (readiness probe).
 func (s *PGStore) Ping(ctx context.Context) error {
 	return s.pool.Ping(ctx)
