@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–142 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–143 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,100 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 143 — ICAP-based file-transfer scanning ✅
+
+Seventh phase of the BeyondTrust/Delinea/Teleport/StrongDM batch. Closes
+BeyondTrust's ICAP/DLP-AV integration for in-session file transfers, by
+plugging onto the SFTP capture path Phase 32 already built.
+
+**The plan's own premise didn't survive reading the code.** The plan text
+claimed ICAP scanning could "fail closed exactly like the existing byte-cap
+check" by hooking `finalizeLocked`. Reading `sftpcapture.go` in full first
+disproved that: by the time finalization runs, an upload has already
+reached the target (`gateWrite` forwards synchronously per-packet) and a
+download has already reached the operator (`sftpRespWatcher.observe`
+appends to `forward` *before* calling the capture-recording `handle()`).
+Whole-object ICAP scanning needs a complete file, which only exists at
+finalization — by which point the transfer, in either direction, is already
+done. True pre-delivery blocking would mean buffering the whole file and
+delaying delivery until scanned: a store-and-forward redesign the existing
+per-packet relay architecture does not support. **v1 ships audit-only
+detection, honestly, not prevention** —
+`TestSFTPCaptureICAPScanFailedStillReachesTarget` is the concrete proof: an
+unreachable ICAP server still lets the file land on the target, loudly
+audited as `sftp.icap_scan_failed`, exactly as documented here rather than
+discovered by an operator later.
+
+**New `internal/icap` package: a minimal RFC 3507 client, RESPMOD only.**
+One TCP connection per scan — dial, one request, one response, close — no
+OPTIONS negotiation, no Preview, no keep-alive; all wire-valid omissions
+against a real ICAP server (RFC 3507 §4.6 makes OPTIONS a SHOULD, not a
+MUST) and unnecessary for a scan that isn't latency-sensitive the way the
+per-packet relay it feeds is. Deliberately **no encapsulated req-hdr**: RFC
+3507 doesn't require one for RESPMOD, and the alternative would mean
+embedding an attacker-influenced SFTP remote path into a hand-built HTTP-
+like header line — a CRLF-injection surface, traded here for a real but
+minor v1 limitation (some AV gateways use a filename/extension heuristic in
+addition to content scanning). A 204 response means clean; a 200 means
+flagged, with the reason read from whichever of five widely-used vendor
+threat headers is present (`X-Infection-Found`, `X-Virus-ID`,
+`X-Violations-Found`, `X-Blocked-Reason`, `X-Attribute-Names` — none
+standardized by RFC 3507, all in wide use); anything else, or a network
+failure, is an error the caller must treat as "the scan didn't run," a
+different fact from "the scan found nothing."
+
+**Reused the byte cap already there instead of inventing a second one.**
+Buffering a whole file in memory for scanning needs an explicit bound.
+Rather than a new knob, `PAM_ICAP_URL` requires `PAM_SSH_SFTP_CAPTURE_MAX_MB`
+to already be set (> 0) — the same cap that already bounds the disk
+artifact now doubles as the in-memory scan buffer's ceiling, enforced at
+config-load time, not discovered the first time a large transfer arrives.
+
+**The ICAP round trip runs outside the capture lock, extending a pattern
+already there for exactly this reason.** Both SFTP legs block on
+`sftpCapture.mu` per packet; `sftpAuditRec`/`c.pending`/`flush()` already
+existed to move slow audit-store writes outside it. This phase adds a
+parallel `sftpScanRec`/`c.pendingScans`, queued by `finalizeLocked` and
+drained by the same `flush()` after the lock is released — a synchronous
+network call inside `finalizeLocked` itself would have stalled the whole
+session on every file close.
+
+**A capped or broken artifact is skipped, not scanned incomplete.**
+Reporting a partial file as scanned-clean would be a false negative wearing
+a real result's audit trail. New audit action `sftp.icap_skipped` names
+which: `over-capture-limit` (the file hit `PAM_SSH_SFTP_CAPTURE_MAX_MB`) or
+`incomplete-capture` (the artifact broke — a disk or sealer write failure).
+A clean scan verdict is deliberately **not** audited per file — logging
+"clean" for every single transferred file would dwarf the rest of a
+session's audit trail for no operational gain; absence of a finding is the
+clean report.
+
+**Config wiring stayed inside the leaf-package boundary.**
+`internal/config` imports no other `internal/` package — it is this
+codebase's dependency root. Rather than importing `internal/icap` for a
+better validation error, `PAM_ICAP_URL`'s shape (`icap://host[:port]/service`)
+is re-validated with `net/url` alone; the strict parse `icap.NewClient`
+itself performs runs again where the client is actually built
+(`cmd/pam-server/main.go`), so a malformed URL still fails at startup, not
+on the first file transfer. `PAM_ICAP_URL` was also added to
+`airGapConflicts` (the Phase 133 precedent): `PAM_OT_AIRGAP` refuses to
+start with an ICAP URL set unless it's named in `PAM_OT_AIRGAP_ALLOW`.
+
+**V1 scope.** SFTP only — RDP clipboard file transfer is a smaller, separate
+surface, noted as a natural follow-on rather than attempted here. No real
+ICAP/AV appliance in CI or in this environment; proven against a fake wire-
+level ICAP responder, the same pattern already used for the ITSM and
+vendor-attestation webhooks. New audit actions `sftp.icap_flagged`,
+`sftp.icap_scan_failed`, `sftp.icap_skipped`.
+
+**Critical files:** new `internal/icap/icap.go` (client) and
+`internal/icap/icap_test.go` (6 tests against a real fake ICAP responder),
+`internal/proxy/sftpcapture.go` (`scanBuf`, `pendingScans`, `runScan`,
+`skipReason`), `internal/proxy/proxy.go` (`Config.ICAPClient`),
+`internal/proxy/sftp_icap_test.go` (4 end-to-end tests including the
+scan-failed-still-reaches-target scope proof), `internal/config/config.go`
+(`PAM_ICAP_URL`, validation, `airGapConflicts`), `cmd/pam-server/main.go`.
 
 ## Phase 142 — v0.34.0 ✅
 

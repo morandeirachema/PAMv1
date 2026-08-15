@@ -32,6 +32,7 @@ import (
 
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
+	"github.com/morandeirachema/pamv1/internal/icap"
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
@@ -162,6 +163,11 @@ type Config struct {
 	// Beyond the cap the transfer is REFUSED, not merely unrecorded — the same
 	// posture as the session-recording cap (PAM_SSH_SFTP_CAPTURE_MAX_MB).
 	SFTPCaptureMaxBytes int64
+	// ICAPClient (optional) submits each finalized SFTP transfer to an ICAP
+	// RESPMOD service for AV/DLP scanning (Phase 143); nil disables it.
+	// Detection only, not prevention — see sftpcapture.go's finalizeLocked
+	// for why a whole-file scan cannot block a transfer before it lands.
+	ICAPClient *icap.Client
 }
 
 // JumpConfig configures reaching SSH targets through an SSH bastion.
@@ -212,6 +218,7 @@ type Proxy struct {
 	sftpPaths   *cmdguard.Guard
 	sftpCapture SFTPCaptureMode
 	sftpCapMax  int64
+	icapClient  *icap.Client
 	ticketCheck store.TicketChecker
 	posture     *posture.Attestor
 	gate        *gates // the shared admission-gate sequence (gates.go)
@@ -291,6 +298,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		sftpPaths:    cfg.SFTPPathGuard,
 		sftpCapture:  cfg.SFTPCapture,
 		sftpCapMax:   cfg.SFTPCaptureMaxBytes,
+		icapClient:   cfg.ICAPClient,
 		ticketCheck:  cfg.TicketCheck,
 		posture:      cfg.PostureAttestor,
 	}
@@ -1058,7 +1066,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		sftpAuditClosing := func(action, detail string) {
 			p.auditClosing(ctx, actor, action, fmt.Sprintf("target:%s cred_user:%s %s", target.Name, cred.Username, detail))
 		}
-		capState = newSFTPCapture(ctx, p.recordingDir, title, p.recKey, p.chain, p.sftpCapture, p.sftpCapMax, sftpAudit, sftpAuditClosing)
+		capState = newSFTPCapture(ctx, p.recordingDir, title, p.recKey, p.chain, p.sftpCapture, p.sftpCapMax, p.icapClient, sftpAudit, sftpAuditClosing)
 		respWatch = &sftpRespWatcher{cap: capState}
 	}
 	insp := newSFTPInspector(p.sftpMode, p.sftpPaths, capState, sftpAudit)

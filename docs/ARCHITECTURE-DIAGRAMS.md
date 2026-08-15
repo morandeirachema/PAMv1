@@ -71,6 +71,7 @@ flowchart LR
     n_blast[blast]
     n_cmdguard[cmdguard]
     n_conjur[conjur]
+    n_icap[icap]
     n_jwtutil[jwtutil]
     n_keycustody[keycustody]
     n_ocsf[ocsf]
@@ -155,6 +156,7 @@ flowchart LR
   n_pam_server --> n_cmdguard
   n_pam_server --> n_config
   n_pam_server --> n_conjur
+  n_pam_server --> n_icap
   n_pam_server --> n_keycustody
   n_pam_server --> n_logging
   n_pam_server --> n_maint
@@ -180,6 +182,7 @@ flowchart LR
   n_proxy --> n_auditfmt
   n_proxy --> n_auth
   n_proxy --> n_cmdguard
+  n_proxy --> n_icap
   n_proxy --> n_logging
   n_proxy --> n_posture
   n_proxy --> n_ratelimit

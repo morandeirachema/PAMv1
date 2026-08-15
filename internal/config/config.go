@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -69,6 +70,15 @@ type Config struct {
 	// unrecorded, mirroring the session-recording cap's posture — which makes
 	// it double as a transfer size limit when capture is on.
 	SSHSFTPCaptureMaxMB int
+	// ICAPURL (Phase 143), when set, submits each finalized SFTP transfer to
+	// an ICAP RESPMOD service (icap://host[:port]/service) for AV/DLP
+	// scanning — detection only; see docs/ADMIN-GUIDE.md for why a whole-file
+	// scan cannot block a transfer already in flight. Requires
+	// PAM_SSH_SFTP_CAPTURE to be enabled and PAM_SSH_SFTP_CAPTURE_MAX_MB to
+	// be set (validated below): the scan needs a complete captured file, and
+	// a deployment that turns on scanning without bounding file size would
+	// buffer an unbounded amount of memory per open transfer.
+	ICAPURL string
 	// SSHJump* route SSH targets through an SSH bastion (for legacy equipment only
 	// reachable via a jump host). Empty SSHJumpHost disables it.
 	SSHJumpHost string
@@ -601,6 +611,7 @@ func Load() (*Config, error) {
 		SSHSFTPMode:             strings.ToLower(getenv("PAM_SSH_SFTP", "allow")),
 		SSHSFTPCapture:          strings.ToLower(getenv("PAM_SSH_SFTP_CAPTURE", "off")),
 		SSHSFTPCaptureMaxMB:     integer("PAM_SSH_SFTP_CAPTURE_MAX_MB", 0),
+		ICAPURL:                 getenv("PAM_ICAP_URL", ""),
 		SSHJumpHost:             os.Getenv("PAM_SSH_JUMP_HOST"),
 		SSHJumpUser:             os.Getenv("PAM_SSH_JUMP_USER"),
 		SSHJumpKey:              os.Getenv("PAM_SSH_JUMP_KEY"),
@@ -936,6 +947,30 @@ func Load() (*Config, error) {
 	if cfg.SSHSFTPCaptureMaxMB < 0 || cfg.SSHSFTPCaptureMaxMB > 1<<30 {
 		errs = append(errs, "PAM_SSH_SFTP_CAPTURE_MAX_MB must be between 0 (unlimited) and 1073741824")
 	}
+	// ICAP scanning needs a COMPLETE captured file to submit, so it is
+	// meaningless without capture on, and a deployment that enabled it
+	// without also bounding file size would buffer an unbounded amount of
+	// memory per open transfer (the same buffer capture's own disk artifact
+	// is bounded by, mirrored in memory) — both must fail loud at startup
+	// rather than silently scan nothing, or silently have no size ceiling.
+	if cfg.ICAPURL != "" {
+		if cfg.SSHSFTPCapture == "off" {
+			errs = append(errs, "PAM_ICAP_URL requires PAM_SSH_SFTP_CAPTURE to be uploads, downloads, or all")
+		}
+		if cfg.SSHSFTPCaptureMaxMB <= 0 {
+			errs = append(errs, "PAM_ICAP_URL requires PAM_SSH_SFTP_CAPTURE_MAX_MB to be set (> 0), so the in-memory scan buffer is bounded")
+		}
+		// A light, stdlib-only shape check: this package deliberately imports
+		// no other internal/ package (it is the dependency root every other
+		// package's config comes from), so it cannot call internal/icap.
+		// NewClient directly. The strict parse — the same one NewClient
+		// itself performs — runs again where the client actually gets built;
+		// this exists so a malformed URL fails at startup, not on the first
+		// file transfer.
+		if u, err := url.Parse(cfg.ICAPURL); err != nil || u.Scheme != "icap" || u.Hostname() == "" || strings.TrimPrefix(u.Path, "/") == "" {
+			errs = append(errs, fmt.Sprintf("PAM_ICAP_URL must look like icap://host[:port]/service (got %q)", cfg.ICAPURL))
+		}
+	}
 	// RDP clipboard policy is the same fixed enum.
 	switch cfg.RDPClipboard {
 	case "allow", "readonly", "deny":
@@ -1046,6 +1081,7 @@ func airGapConflicts(cfg *Config) []string {
 		{"PAM_TICKET_VALIDATE_URL", cfg.TicketValidateURL},
 		{"PAM_VENDOR_ATTEST_URL", cfg.VendorAttestURL},
 		{"PAM_POSTURE_ATTEST_URL", cfg.PostureAttestURL},
+		{"PAM_ICAP_URL", cfg.ICAPURL},
 		{"PAM_AUDIT_FORWARD_ADDR", cfg.AuditForwardAddr},
 		{"PAM_OIDC_ISSUER", cfg.OIDCIssuer},
 		{"PAM_CONJUR_URL", os.Getenv("PAM_CONJUR_URL")},
