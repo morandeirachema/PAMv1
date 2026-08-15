@@ -662,9 +662,9 @@ kubectl -n pamv1 exec deploy/pamv1 -- /pam-server -version   # → pam-server 0.
 curl -s http://pamv1:8080/metrics | grep pam_build_info      # same, for monitoring
 ```
 
-**Status:** **[v0.30.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.30.0)
-was released on 2026-08-14** and is what every manifest here pins — image digest
-`sha256:752bee357ccb1e0c4553ef4abaf160a1cc1f7ca212b7d03a2162e3def9111ad9`, public
+**Status:** **[v0.31.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.31.0)
+was released on 2026-08-15** and is what every manifest here pins — image digest
+`sha256:7bb703d85e1dc98b2a0678e83340baf24b9df9eb42ce15c3b3eaf3d1fc3dc478`, public
 (anonymous pull verified). Each tag's own digest is on its release page. (`v0.11.1` is a source tag only: its pipeline failed
 before the push, and it stays where it is because the Go module proxy had already
 cached it.) The first release was
