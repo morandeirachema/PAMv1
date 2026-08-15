@@ -38,7 +38,7 @@ de fósforo verde** sin concesiones, porque tocar un PAM debe *sentirse* serio.
 
 Construido fase a fase con una regla: **cada fase es funcional de principio a fin** — arranca,
 pasa los tests y se despliega como Infraestructura-como-Código. El **[roadmap](ROADMAP.md)**
-abarca de la 0 a la 139, **se han entregado todas las fases**, y la release etiquetada y
+abarca de la 0 a la 141, **se han entregado todas las fases**, y la release etiquetada y
 firmada con cosign vigente es la
 **[v0.33.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.33.0)** (2026-08-15;
 la primera fue la v0.10.0, el 2026-07-28). Lo que eso suma:
@@ -151,7 +151,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–139, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–141, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -488,6 +488,7 @@ que cada fase se entrega, no se predeclaran en bloque.
 | ~~**DoubleLock**~~ **✅ entregado (Fase 135)** | Clave de cifrado específica del secreto, independiente del RBAC (Delinea DoubleLock/QuantumLock) | La contraseña de una persona nombrada, exigida además para revelar/retirar una credencial — ni un admin comprometido puede leerla, ni desactivar la protección, sin ella. Mantenida fuera del KEK a propósito: `DoubleLockEnc` es un segundo cifrado con clave derivada directamente por PBKDF2(contraseña), nunca `vault.Encrypt`, así que el re-envolvimiento exhaustivo de `-rotate-kek` (que no dispone de la contraseña a mitad de rotación) no necesita ningún cambio — un hallazgo de construcción, no el mecanismo de mezcla en el AAD del plan original. Rotar el secreto limpia el DoubleLock |
 | ~~**Aprobación por enlace mágico + marca de agua de sesión**~~ **✅ entregado (Fase 137)** | Aprobación fuera de banda por enlace (BeyondTrust) + marca de agua de sesión (BeyondTrust) | Un `ApprovalInvite` refleja casi exactamente la invitación de sesión compartida de la Fase 116, pero crearlo ya exige `CapApprove` — la invitación ES la delegación. La redención es un `GET` de vista previa seguro y sin consumo, más un `POST` de decisión de un solo uso, disparado solo con un clic explícito, a propósito distinto del auto-redimido de `share.html` — aprobar una solicitud es más delicado que unirse a una sesión. Una segunda comprobación de cuatro ojos en la *creación* de la invitación (no solo en la redención) impide que quien solicita se auto-apruebe a través de su propio enlace por correo, un hueco que una comprobación de actor sintético por sí sola habría pasado por alto. Marca de agua: una superposición DOM para RDP/VNC, un aviso `Hub.Publish` de una sola vez para sesiones de texto/BD |
 | ~~**Carpetas de secretos personales/privadas**~~ **✅ entregado (Fase 139)** | Secretos invisibles incluso para administradores por defecto, con un rol de anulación nombrado (Delinea) | `Safe.Personal` sustituye el acceso incondicional de administrador de `CanConnectTarget` por una comprobación de una nueva capacidad estrecha, `unlimited_vault_access` — deliberadamente ausente del rol admin integrado, solo concedible mediante un perfil personalizado. Una corrección equivalente en `canManageSafe` cierra una puerta trasera hallada al construirlo: `manage_targets` por sí solo, suficiente para gestionar la lista de cualquier caja fuerte ordinaria, no basta para una personal — o un gestor de objetivos podría simplemente añadirse a sí mismo como miembro. Usar la anulación queda auditado en voz alta, reflejando el break-glass. El listado del inventario y el borrado de la caja fuerte no se ven afectados — solo se protegen conectar/revelar/retirar |
+| ~~**Reenvío de puertos TCP en bruto**~~ **✅ entregado, solo al propio objetivo (Fase 141)** | Reenvío al estilo `ssh -L` (StrongDM) | Un canal `direct-tcpip` iniciado por el cliente se admite solo hacia el propio host del objetivo conectado — cualquier puerto, ya que el puerto propio del objetivo es su puerto SSH, no el servicio que el operador realmente quiere — cerrando lo que de otro modo sería un pivote SSRF hacia la red del objetivo; un host distinto se rechaza antes de que se pida siquiera al upstream que lo marque. Rechazado sin más en una sesión observadora o mientras se exige supervisión en vivo/grabación, ya que ninguno de esos mecanismos cubre un flujo de bytes en bruto y no registrable. `PAM_SSH_PORT_FORWARD` (por defecto true) |
 
 ### No-objetivo deliberado
 

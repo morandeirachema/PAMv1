@@ -9,6 +9,24 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [Unreleased]
+
+### Added
+
+- **Raw TCP port-forwarding, same-target only.** `ssh -L`-style forwarding:
+  a client-initiated `direct-tcpip` channel is admitted only to the
+  connected target's own host — any port, since the target's own
+  configured port is its SSH port, not the service the operator actually
+  wants — closing what would otherwise be an SSRF pivot into the target's
+  network. `localhost`/`127.0.0.1`/`::1` count as the target too, since
+  the forward dials out through the already-authenticated upstream
+  connection. Always refused in an observer session, or while
+  `PAM_REQUIRE_LIVE_SUPERVISION`/`PAM_REQUIRE_RECORDING` are set — none of
+  those mechanisms cover a raw, unrecordable byte stream.
+  `PAM_SSH_PORT_FORWARD` (default true) turns the feature off
+  deployment-wide. New audit actions `forward.start`/`forward.end`/
+  `forward.refused`.
+
 ## [0.33.0] — 2026-08-15
 
 A minor: one new capability. Schema change (migration `0040`).
