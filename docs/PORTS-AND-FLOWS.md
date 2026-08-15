@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-08-15 · Reflects: Phases 0–141. **Phase 53 added the first new
+> Last updated: 2026-08-15 · Reflects: Phases 0–143. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; nothing after
 > it adds a port or listener (55–94 ride the existing listeners and flows: the
 > live-monitor relay and the step-up decision bus ride the server ↔ PostgreSQL
@@ -79,6 +79,13 @@
 > egress needs widening to the target's other ports for forwarding to
 > work. `PAM_SSH_PORT_FORWARD=false` keeps the egress surface exactly as
 > narrow as before this phase.
+> **Phase 143 adds a genuinely new egress destination and protocol**: **E15**,
+> `PAM_ICAP_URL`, a whole-file RESPMOD scan (RFC 3507) of a finalized SFTP
+> transfer sent to an AV/DLP gateway on `1344` by default. Unlike E4a/E13
+> this is not brokering a session — it is a side-channel scan that runs,
+> and completes, only *after* the file has already crossed E2 (or
+> E10/E13) in either direction; a firewall rule for it protects
+> visibility, not the transfer itself. Off unless `PAM_ICAP_URL` is set.
 > Everything from 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
 > **no new listeners**: certification/ticketing/approvals (19–21), threat analytics
@@ -152,6 +159,7 @@ add `5433 → 5433` and/or `1433 → 1433` when the database proxies are enabled
 | E11 | pam-server | CyberArk Conjur (identity/secrets zone) | 443 | HTTPS | Source bootstrap secrets at startup, and — with `PAM_CONJUR_REFRESH_MIN` — re-read the refreshable ones every N minutes from **every replica** (optional) | ✅ P18, P78 |
 | E12 | pam-server | KMS / HSM (Vault-Transit / AWS-KMS / PKCS#11) | 443 / — | HTTPS / PKCS#11 | Envelope-encryption KEK (wrap/unwrap), when not `local` | ✅ P5 |
 | E14 | pam-server | ITSM (mgmt zone: ServiceNow / Jira / generic webhook) | 443 | HTTPS | Change-ticket validation on access requests — generic 2xx webhook (P20) or **first-class ServiceNow/Jira lookup** (P84: ticket state, change window, ticket **names the operator**); with `PAM_TICKET_REVALIDATE`, checked again at the moment access is used (P60) | ✅ P20/P60/P84 |
+| E15 | pam-server | ICAP AV/DLP gateway (mgmt zone) | 1344 (default) | ICAP (RFC 3507) | Whole-file RESPMOD scan of a finalized SFTP transfer (`PAM_ICAP_URL`); **detection only** — the file has already crossed E2 in either direction by the time a verdict exists. Plaintext, no TLS option in v1: keep the gateway inside a trusted segment | ✅ P143 |
 
 ## 4. Internal / data-plane
 
@@ -235,6 +243,7 @@ allow  pam-server -> <siem>:514                 udp   # audit forwarding (DEFAUL
 allow  pam-server -> <siem>:514,6514           tcp   # audit forwarding over TCP/TLS; syslog alerts
 allow  pam-server -> <smtp/webhook>:587,443    tcp   # alerts (if enabled)
 allow  pam-server -> <itsm>:443                tcp   # change-ticket validation (if enabled)
+allow  pam-server -> <icap-gateway>:1344       tcp   # ICAP AV/DLP scan of SFTP transfers (if enabled)
 deny   pam-server -> any                              # default deny
 
 # Database is never reachable from operator or target zones
@@ -301,6 +310,8 @@ specific target hosts and protocols, and default-deny everything else across the
 
 | Date | Change |
 |---|---|
+| 2026-08-15 | **Phase 143 — ICAP AV/DLP scanning, a genuinely new egress destination and protocol.** New **E15**: `PAM_ICAP_URL` submits a finalized SFTP transfer's captured bytes to an ICAP (RFC 3507) RESPMOD gateway on `1344` by default, plaintext, no TLS option in v1. Not a session-brokering flow like E4a/E13 — it is a side-channel scan that runs only *after* the file has already crossed E2 (or E10/E13) in either direction, so a firewall rule for it protects visibility, not the transfer itself. Off unless configured; joins the `PAM_OT_AIRGAP` conflict list. §6 and §7 updated |
+| 2026-08-15 | **Phase 141 — port-forwarding widens an existing flow, no new listener or destination.** A client `ssh -L` forward rides E2 (the same `:2222`-admitted host the session already reaches) but on WHATEVER port the operator requests, not just the target's SSH port — a firewall/NetworkPolicy scoped to exactly `target:22` egress needs widening for forwarding to work. `PAM_SSH_PORT_FORWARD=false` keeps the egress surface exactly as narrow as before this phase; no table row changes, since E2 already covers the destination host |
 | 2026-08-13 | **Phase 116 — live session-sharing, no new listener.** Adds a new *ingress* row rather than a new port: **I7**, an unauthenticated external/vendor guest redeeming an emailed invite at `/share.html` and streaming/controlling the shared session with a minted guest key — reaches the existing `:8080`. Adds a new *egress* row too: **E9b**, the invite email itself — same `PAM_ALERT_EMAIL_*` SMTP config as E9 but a different recipient (the guest, not an admin) and, worth flagging for OT sites, **not** covered by `PAM_OT_AIRGAP`'s alert no-op, since it bypasses the alerter abstraction that gets silenced. The internal-invite `join:<token>` SSH form rides the existing I2 ingress with ordinary PAM password auth, so it gets no new row. §6 and §7 updated with the exposure this implies |
 | 2026-08-09 | **Phase 95 — documentation currency pass.** Header brought from 0–80 to 0–94 (no port or listener changed in 81–94), and the egress matrix gains **E14 — the outbound ITSM ticket-validation call** it had omitted since Phase 20: generic webhook (P20), first-class ServiceNow/Jira connectors (P84), use-time re-check (P60). Diagram and firewall summary updated with it |
 | 2026-07-31 | **Phase 56 — cross-replica step-up decisions.** No new port, listener or flow: the sealed decision channel (`pam_stepup_decision`) rides the existing pam-server ↔ PostgreSQL store connection (flow E1) as a third `LISTEN/NOTIFY` bus beside the kill and live-monitor buses, and the shared pending-pause inventory is a table (statements stored sealed). A supervisor's `GET /api/sessions/stepups` / `POST /api/sessions/{id}/stepup` may land on any replica; replicas still never talk to each other directly, so no pod-to-pod firewall rule exists to add |

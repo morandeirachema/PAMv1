@@ -35,7 +35,7 @@ type captureHarness struct {
 func newCaptureHarness(t *testing.T, base string, mode SFTPCaptureMode, maxBytes int64) *captureHarness {
 	t.Helper()
 	h := &captureHarness{dir: t.TempDir()}
-	h.c = newSFTPCapture(context.Background(), h.dir, base, nil, newRecordChain(h.dir), mode, maxBytes,
+	h.c = newSFTPCapture(context.Background(), h.dir, base, nil, newRecordChain(h.dir), mode, maxBytes, nil,
 		func(action, detail string) { h.live = append(h.live, action+" "+detail); h.liveN++ },
 		func(action, detail string) { h.closing = append(h.closing, action+" "+detail); h.closeN++ },
 	)

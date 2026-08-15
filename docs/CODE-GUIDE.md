@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-15 · Reflects: Phases 0–141 + the 2026-07 hardening passes.
+> Last updated: 2026-08-15 · Reflects: Phases 0–143 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -188,13 +188,15 @@ flowchart TB
     auditfwd["auditfwd — audit→SIEM forwarder"]
     ocsf["ocsf — OCSF audit export"]
     ratelimit["ratelimit — per-IP auth throttling"]
+    posture["posture — device/EDR posture attestation webhook"]
+    icap["icap — ICAP AV/DLP scan client (RFC 3507)"]
     metrics["metrics"]
     config["config"]
     logging["logging"]
   end
   main --> core & front & identity & lifecycle & agents & zsp & support
-  api --> core & identity & lifecycle & agents & zsp & session & winrm & guacd & alert & ticket & vendor & recording & ocsf & auditfwd
-  proxy --> core & session & sshca & winrm & tds & recording
+  api --> core & identity & lifecycle & agents & zsp & session & winrm & guacd & alert & ticket & vendor & recording & ocsf & auditfwd & posture
+  proxy --> core & session & sshca & winrm & tds & recording & posture & icap
 ```
 
 The two most load-bearing cross-package couplings — memorize these:
@@ -1072,6 +1074,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-15 | Phase 143 (ICAP-based file-transfer scanning): new leaf package `internal/icap` (client only — `NewClient`/`Enabled`/`ScanRespmod`, no dependents besides `proxy`), added to the package map's "Supporting" subgraph alongside the previously-missing `posture` (Phase 133, backfilled here). §5 (`internal/proxy`) — `sftpCaptureFile` gains `scanBuf`, `sftpCapture` gains `icapClient`/`pendingScans`, `finalizeLocked` queues a scan run by the existing `flush()` outside the capture lock. `Config.ICAPClient` new field. No package moved, no CI gate changed. |
 | 2026-08-14 | Phase 120 (recurring access requests, password policy, checkout extension): §7 (`internal/rotate`) — `GeneratePassword` now takes a `PasswordPolicy` struct, not a bare `int`; new `generateUnusedPassword` retry loop in `lifecycle_handlers.go`; new `RunAccessRequestScheduler`/`spawnDueAccessRequests` in `scheduler.go`, mirroring the campaign scheduler exactly (own lock key `pam_arq`, own hourly ticker). New `ApprovalStore.{ListDueAccessRequests,SetAccessRequestNextRun,StopAccessRequestRecurrence}`, `CheckoutStore.{GetCheckout,ExtendCheckout}`, and the new `PasswordHistoryStore` role (store surface 157 → 164), migration `0034`. No package moved, no CI gate changed. |
 | 2026-08-13 | Phase 118 (CIDR/network-based connect & login authorization): §3.4 (`auth`) gains `Principal.IPAllowlist`, `IPAllowed`, `ValidateCIDRList`; §4.2 (the two auth middlewares) — `authz` now checks it via `s.clientIP(r)`; §5 — `gates.go`'s shared `admit()` gains gate 4, `admitRequest.remoteAddr` threaded from all three proxy call sites. New `UserStore.UpdateUserIPAllowlist` (store surface 156 → 157), migration `0033`. No package moved, no CI gate changed. |
 | 2026-08-13 | Phase 116 (live session-sharing): new §5.6 — `session.ShareRegistry` (an input mux any number of concurrent `view_control` joiners can write to, in-memory-only guest keys, replica-local by design), the SSH `join:<token>` prefix dispatch in `proxy.go` (a PAM login *plus* an invite match, never the token alone), and three unauthenticated routes in the new `sessionshare_handlers.go` (the RDP/VNC tunnel's no-`authz` pattern, reused). New `ShareInviteStore` role (6 methods, store surface 149 → 156), migration `0032`. No package moved, no CI gate changed. |

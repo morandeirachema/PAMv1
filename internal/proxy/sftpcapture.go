@@ -41,6 +41,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/morandeirachema/pamv1/internal/icap"
 	"github.com/morandeirachema/pamv1/internal/recording"
 )
 
@@ -123,6 +124,14 @@ type sftpCaptureFile struct {
 	refuseData bool  // always refuse this handle's data (a tracking bound overflowed)
 	closing    bool  // CLOSE seen with reads still in flight; finalize when they resolve
 	inflight   int   // outstanding READ requests naming this handle
+
+	// scanBuf mirrors the captured bytes in memory for ICAP scanning (Phase
+	// 143), lazily allocated only when icapClient is configured. It is NOT
+	// what backs the disk artifact — cf.sink is — so an ICAP-scanning
+	// deployment pays extra memory (bounded by the same maxBytes cap that
+	// already gates every call to record) on top of, not instead of, the
+	// existing disk capture.
+	scanBuf *bytes.Buffer
 }
 
 // sftpCapture is one session's content-capture state. Methods named gate* run
@@ -140,6 +149,7 @@ type sftpCapture struct {
 	auditClosing func(action, detail string) // events written as the session unwinds
 	maxBytes     int64                       // per-file captured-byte cap (0 = unlimited)
 	up, down     bool                        // which directions this deployment captures
+	icapClient   *icap.Client                // Phase 143: nil = ICAP scanning disabled
 
 	pendingOpens map[uint32]sftpPendingOpen
 	pendingReads map[uint32]sftpPendingRead
@@ -149,6 +159,16 @@ type sftpCapture struct {
 	seq          int                         // artifacts created so far (names + the per-session bound)
 	backlogged   bool                        // a tracking bound refused work (audited once)
 	pending      []sftpAuditRec              // audit events queued while the lock is held
+	pendingScans []sftpScanRec               // ICAP scans queued while the lock is held
+}
+
+// sftpScanRec is one finalized file awaiting an ICAP scan, queued by
+// finalizeLocked and run by flush() — never under c.mu, since an ICAP round
+// trip is a network call and both SFTP legs block on that mutex for every
+// packet (the same reason sftpAuditRec exists).
+type sftpScanRec struct {
+	remote, name, mode string
+	data               []byte
 }
 
 // sftpAuditRec is one queued audit event. Capture never writes to the audit
@@ -180,7 +200,7 @@ const artifactWrapTimeout = 10 * time.Second
 // containment control and `broken` is sticky, so continuing would forward the
 // rest of the file with recording silently stopped. The flag still governs the
 // session recording itself in handleSession; it has nothing left to say here.
-func newSFTPCapture(ctx context.Context, dir, base string, kw recording.KeyWrapper, chain *recordChain, mode SFTPCaptureMode, maxBytes int64, audit, auditClosing func(action, detail string)) *sftpCapture {
+func newSFTPCapture(ctx context.Context, dir, base string, kw recording.KeyWrapper, chain *recordChain, mode SFTPCaptureMode, maxBytes int64, icapClient *icap.Client, audit, auditClosing func(action, detail string)) *sftpCapture {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -195,6 +215,7 @@ func newSFTPCapture(ctx context.Context, dir, base string, kw recording.KeyWrapp
 		maxBytes:     maxBytes,
 		up:           mode == SFTPCaptureUploads || mode == SFTPCaptureAll,
 		down:         mode == SFTPCaptureDownloads || mode == SFTPCaptureAll,
+		icapClient:   icapClient,
 		pendingOpens: make(map[uint32]sftpPendingOpen),
 		pendingReads: make(map[uint32]sftpPendingRead),
 		outstanding:  make(map[uint32]struct{}),
@@ -215,12 +236,17 @@ func (c *sftpCapture) noteClosingAudit(action, detail string) {
 	c.pending = append(c.pending, sftpAuditRec{action: action, detail: detail, closing: true})
 }
 
-// flush writes the queued audit events. Every entry point defers it BEFORE
-// deferring the unlock, so it runs after the mutex is released.
+// flush writes the queued audit events and runs any queued ICAP scans.
+// Every entry point defers it BEFORE deferring the unlock, so it runs after
+// the mutex is released — required for the scans, which make a real network
+// call, and kept for the audit events too so the store round trip they
+// already needed never happens while either SFTP leg is blocked on c.mu.
 func (c *sftpCapture) flush() {
 	c.mu.Lock()
 	queued := c.pending
 	c.pending = nil
+	scans := c.pendingScans
+	c.pendingScans = nil
 	c.mu.Unlock()
 	for _, a := range queued {
 		emit := c.audit
@@ -230,6 +256,30 @@ func (c *sftpCapture) flush() {
 		if emit != nil {
 			emit(a.action, a.detail)
 		}
+	}
+	for _, sc := range scans {
+		c.runScan(sc)
+	}
+}
+
+// runScan submits one finalized file to the configured ICAP service and
+// audits the outcome. Always through the closing auditor: like
+// sftp.file_recorded, this can run while a session is unwinding (a drain
+// finalizes every open artifact), and a scan result dropped there would be
+// silently missing evidence, not merely late. Only a non-clean or failed
+// scan is audited — a clean verdict on every single transferred file would
+// dwarf the rest of the session's audit trail for no operational gain; the
+// absence of a finding IS the clean report.
+func (c *sftpCapture) runScan(sc sftpScanRec) {
+	if !c.icapClient.Enabled() {
+		return
+	}
+	res, err := c.icapClient.ScanRespmod(c.ctx, sc.data)
+	switch {
+	case err != nil:
+		c.auditClosing("sftp.icap_scan_failed", fmt.Sprintf("path:%s file:%s open_mode:%s error:%v", auditPath(sc.remote), sc.name, sc.mode, err))
+	case !res.Clean:
+		c.auditClosing("sftp.icap_flagged", fmt.Sprintf("path:%s file:%s open_mode:%s reason:%s", auditPath(sc.remote), sc.name, sc.mode, auditField(res.Reason, 200)))
 	}
 }
 
@@ -436,6 +486,12 @@ func (c *sftpCapture) record(cf *sftpCaptureFile, dir string, offset uint64, dat
 		cf.upBytes += int64(len(data))
 	} else {
 		cf.downBytes += int64(len(data))
+	}
+	if c.icapClient.Enabled() {
+		if cf.scanBuf == nil {
+			cf.scanBuf = &bytes.Buffer{}
+		}
+		cf.scanBuf.Write(data)
 	}
 }
 
@@ -659,6 +715,30 @@ func (c *sftpCapture) finalizeLocked(handle string, cf *sftpCaptureFile, reason 
 	// the session context was cancelled would leave a file whose hash appears
 	// nowhere, which playback reports as indistinguishable from tampering.
 	c.noteClosingAudit("sftp.file_recorded", detail)
+
+	// ICAP scanning (Phase 143): queued here, run later by flush() outside
+	// c.mu. A capped or broken artifact is skipped, not scanned incomplete —
+	// scanning a partial file and reporting it clean would be a false
+	// negative with an audit trail that reads as a real result.
+	if c.icapClient.Enabled() {
+		switch {
+		case cf.capped || cf.broken:
+			c.note("sftp.icap_skipped", fmt.Sprintf("path:%s file:%s reason:%s", auditPath(cf.remote), cf.name, skipReason(cf)))
+		case cf.scanBuf != nil && cf.scanBuf.Len() > 0:
+			c.pendingScans = append(c.pendingScans, sftpScanRec{remote: cf.remote, name: cf.name, mode: cf.mode, data: cf.scanBuf.Bytes()})
+		}
+	}
+}
+
+// skipReason names why a capped or broken artifact was not submitted for
+// ICAP scanning — capped and broken are otherwise-independent flags
+// (finalizeLocked's own detail string reports them separately), but a scan
+// skip has exactly one cause, so this picks whichever applies.
+func skipReason(cf *sftpCaptureFile) string {
+	if cf.broken {
+		return "incomplete-capture"
+	}
+	return "over-capture-limit"
 }
 
 // --- response-leg watcher ----------------------------------------------------
