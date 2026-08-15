@@ -396,6 +396,7 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 			Actor: actor, Target: target.Name, Protocol: "mssql", Remote: remote, Started: time.Now(),
 		}, func() { conn.Close(); up.conn.Close() })
 		defer m.sessions.Remove(sid)
+		m.live.Publish(sid, watermarkBanner(actor, target.Name))
 	}
 	defer func() {
 		if rec != nil {

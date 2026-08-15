@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>pamv1 — access request</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: #050705; color: #2eff7b; font: 14px/1.4 ui-monospace, "SF Mono", Consolas, monospace;
+    display: flex; flex-direction: column; align-items: center; padding-top: 12vh;
+  }
+  #card { width: min(92vw, 480px); border: 1px solid #123; padding: 18px 20px; }
+  #status { white-space: pre-wrap; }
+  #status.err { color: #ff4d4d; }
+  dl { margin: 14px 0; }
+  dt { color: #2f7d4a; font-size: 0.85em; text-transform: uppercase; margin-top: 8px; }
+  dd { margin: 2px 0 0; word-break: break-word; }
+  #actions { margin-top: 18px; display: flex; gap: 12px; }
+  button {
+    font: inherit; padding: 8px 18px; cursor: pointer; background: #0a1a0a; color: inherit;
+    border: 1px solid #2eff7b;
+  }
+  button:hover { background: #123; }
+  #deny { border-color: #ff4d4d; color: #ff4d4d; }
+  #deny:hover { background: #2a0a0a; }
+  button:disabled { opacity: 0.4; cursor: default; }
+</style>
+</head>
+<body>
+<div id="card">
+  <div id="status">Loading&hellip;</div>
+  <dl id="details" hidden>
+    <dt>Requester</dt><dd id="d-requester"></dd>
+    <dt>Target</dt><dd id="d-target"></dd>
+    <dt>Reason</dt><dd id="d-reason"></dd>
+    <dt>Link expires</dt><dd id="d-expires"></dd>
+  </dl>
+  <div id="actions" hidden>
+    <button id="approve" type="button">Approve</button>
+    <button id="deny" type="button">Deny</button>
+  </div>
+</div>
+<script nonce="__CSP_NONCE__">
+(function () {
+  "use strict";
+  var statusEl = document.getElementById("status");
+  var detailsEl = document.getElementById("details");
+  var actionsEl = document.getElementById("actions");
+  var approveBtn = document.getElementById("approve");
+  var denyBtn = document.getElementById("deny");
+
+  function fail(msg) {
+    statusEl.textContent = msg;
+    statusEl.className = "err";
+    detailsEl.hidden = true;
+    actionsEl.hidden = true;
+  }
+
+  var params = new URLSearchParams(window.location.search);
+  var token = params.get("token");
+  if (!token) {
+    fail("No invite link token in the URL. Ask whoever invited you to resend it.");
+    return;
+  }
+
+  // A safe, non-consuming GET — loading this page never decides anything by
+  // itself, so a mail client's link-prefetcher visiting this URL is harmless.
+  fetch("/api/approval/preview/" + encodeURIComponent(token))
+    .then(function (r) {
+      if (!r.ok) {
+        return r.json().then(function (b) { throw new Error(b.error || ("HTTP " + r.status)); });
+      }
+      return r.json();
+    })
+    .then(function (p) {
+      statusEl.textContent = "An access request needs your decision:";
+      document.getElementById("d-requester").textContent = p.requester;
+      document.getElementById("d-target").textContent = p.target;
+      document.getElementById("d-reason").textContent = p.reason || "(none given)";
+      document.getElementById("d-expires").textContent = new Date(p.expires_at).toLocaleString();
+      detailsEl.hidden = false;
+      actionsEl.hidden = false;
+    })
+    .catch(function (err) { fail("Could not load this invite: " + err.message); });
+
+  // decide is the ONLY state-changing call this page ever makes, and it
+  // fires only from an explicit click on one of the two buttons below —
+  // never automatically on page load.
+  function decide(decision) {
+    approveBtn.disabled = true;
+    denyBtn.disabled = true;
+    statusEl.textContent = "Recording your decision…";
+    statusEl.className = "";
+    fetch("/api/approval/redeem/" + encodeURIComponent(token), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision: decision }),
+    })
+      .then(function (r) {
+        if (!r.ok) {
+          return r.json().then(function (b) { throw new Error(b.error || ("HTTP " + r.status)); });
+        }
+        return r.json();
+      })
+      .then(function () {
+        statusEl.textContent = decision === "approved"
+          ? "Approved. The requester may now connect."
+          : "Denied.";
+        detailsEl.hidden = true;
+        actionsEl.hidden = true;
+      })
+      .catch(function (err) { fail("Could not record your decision: " + err.message); });
+  }
+
+  approveBtn.addEventListener("click", function () { decide("approved"); });
+  denyBtn.addEventListener("click", function () { decide("denied"); });
+})();
+</script>
+</body>
+</html>

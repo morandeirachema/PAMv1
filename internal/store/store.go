@@ -443,6 +443,45 @@ type SessionShareInvite struct {
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
 }
 
+// ApprovalInvite is a magic link that lets a named person decide a pending
+// AccessRequest without ever logging into pamv1 (Phase 137) — BeyondTrust's
+// out-of-band approval, the buildable "link" half (no native mobile app).
+// Minting one requires CapApprove (the same capability the authenticated
+// approve/deny routes require), so it is a delegation of a capability the
+// creator already holds, not a request for one — unlike SessionShareInvite,
+// there is no separate meta-approval stage. Redemption is split into a
+// safe, non-consuming preview (GetApprovalInviteByTokenHash, a GET, so a
+// mail client's link-prefetcher cannot trigger anything) and the actual
+// state-changing decision (ConsumeApprovalInviteByTokenHash, a POST,
+// single-use).
+//
+// Self-approval is closed at TWO points, not one — an easy mistake to make
+// (and one this phase's own review caught): the redemption actor
+// decideAccessRequest sees is built as "magiclink:<Email>", a form no real
+// principal's actor string can ever take, but that alone does not stop the
+// REQUESTER from minting an invite addressed to their own inbox — the
+// synthetic string is different from their real actor name either way, so
+// decideAccessRequest's Requester != approver check would never trip on
+// it. What actually closes that path is createApprovalInvite refusing a
+// caller who IS the request's own Requester, mirroring the exact rule
+// decideAccessRequest enforces, applied one step earlier — a requester can
+// never create the delegation in the first place, regardless of whose
+// email they address it to.
+type ApprovalInvite struct {
+	ID              int64     `json:"id"`
+	AccessRequestID int64     `json:"access_request_id"`
+	Email           string    `json:"email"`
+	CreatedBy       string    `json:"created_by"`
+	TokenHash       string    `json:"-"`
+	CreatedAt       time.Time `json:"created_at"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	// Decision is set on redemption ("approved" | "denied"), purely for the
+	// creator's own visibility — empty until then.
+	Decision   string     `json:"decision,omitempty"`
+	ConsumedAt *time.Time `json:"consumed_at,omitempty"`
+	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+}
+
 type AuditEvent struct {
 	ID     int64     `json:"id"`
 	TS     time.Time `json:"ts"`
@@ -1358,6 +1397,47 @@ type ShareInviteStore interface {
 	ConsumeSessionShareInviteByTokenHash(ctx context.Context, tokenHash string, now time.Time) (*SessionShareInvite, error)
 }
 
+// ApprovalInviteStore is the create/preview/redeem lifecycle for magic-link
+// access-request approval (Phase 137). See ApprovalInvite's doc comment for
+// the shape.
+type ApprovalInviteStore interface {
+	// CreateApprovalInvite records a new invite, populating ID/CreatedAt. The
+	// caller has already generated and hashed the token and computed
+	// ExpiresAt — unlike SessionShareInvite, there is no separate approval
+	// stage for the invite itself: minting one already requires CapApprove,
+	// so the invite IS the delegation.
+	CreateApprovalInvite(ctx context.Context, inv *ApprovalInvite) error
+	// GetApprovalInvite returns one invite by id, or ErrNotFound.
+	GetApprovalInvite(ctx context.Context, id int64) (*ApprovalInvite, error)
+	// ListApprovalInvitesForRequest lists an access request's invites
+	// (outstanding, consumed and revoked), newest first.
+	ListApprovalInvitesForRequest(ctx context.Context, accessRequestID int64) ([]ApprovalInvite, error)
+	// RevokeApprovalInvite marks a not-yet-consumed invite revoked, so a later
+	// redemption attempt fails even though the token and TTL would otherwise
+	// still be valid. ErrNotFound if unknown.
+	RevokeApprovalInvite(ctx context.Context, id int64, at time.Time) error
+	// GetApprovalInviteByTokenHash is a READ-ONLY lookup for the redemption
+	// page's preview step (show the request's target/requester/reason before
+	// asking for a decision) — it does NOT consume the invite, so it is safe
+	// to call from a bare page load an email link-scanner might trigger.
+	// Refuses (ErrNotFound) an expired, revoked or already-consumed invite,
+	// the same as the consuming lookup below, so a preview never leaks a
+	// dead invite's request details either.
+	GetApprovalInviteByTokenHash(ctx context.Context, tokenHash string) (*ApprovalInvite, error)
+	// ConsumeApprovalInviteByTokenHash atomically finds the invite matching
+	// tokenHash and, only if it is unexpired (ExpiresAt > now), unrevoked and
+	// not already consumed, stamps ConsumedAt and returns it — single-use
+	// redemption. ErrNotFound covers every refusal reason, the same
+	// fail-closed shape ConsumeSessionShareInviteByTokenHash uses.
+	ConsumeApprovalInviteByTokenHash(ctx context.Context, tokenHash string, now time.Time) (*ApprovalInvite, error)
+	// RecordApprovalInviteDecision stamps the outcome (approved | denied) on
+	// an already-consumed invite, purely for the creator's own visibility —
+	// it does not itself decide the underlying AccessRequest (the caller does
+	// that separately, via the same decideAccessRequest every authenticated
+	// approve/deny call already goes through). ErrNotFound if unknown.
+	RecordApprovalInviteDecision(ctx context.Context, id int64, decision string) error
+}
+
 // SSHCertStore is operator-issued SSH certificates and their revocation list.
 type SSHCertStore interface {
 	// Operator-issued SSH certificates + KRL revocation (Phase 28).
@@ -1473,6 +1553,7 @@ type Store interface {
 	AppSecretStore
 	VendorStore
 	ShareInviteStore
+	ApprovalInviteStore
 	SSHCertStore
 	KeyMaterialStore
 	SettingStore

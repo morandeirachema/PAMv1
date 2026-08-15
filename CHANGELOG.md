@@ -9,6 +9,27 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [Unreleased]
+
+### Added
+
+- **Magic-link access-request approval.** An `ApprovalInvite` mirrors the
+  Phase 116 session-share invite: creating one already requires
+  `CapApprove`, so the invite itself is the delegation. Redemption is a
+  safe, non-consuming preview `GET` plus a single-use decision `POST`,
+  fired only from an explicit button click on the new `approve.html` page
+  — deliberately unlike `share.html`'s auto-redeem-on-load, since deciding
+  an access request is higher-stakes than joining a session. A second
+  four-eyes check at invite *creation* time (`createApprovalInvite`) stops
+  a requester self-approving through their own emailed link — a hole the
+  redemption path's synthetic actor alone would not have closed.
+  `PAM_APPROVAL_INVITE_TTL_MIN` (default 1440). New
+  `internal/api/approvalinvite_handlers.go`; new migration `0039`.
+- **Session watermarking.** RDP/VNC sessions show a client-side DOM overlay
+  naming the operator, target and start time; SSH/PostgreSQL/SQL Server
+  sessions get the same identity as a one-time `Hub.Publish` banner. New
+  `internal/proxy/watermark.go`.
+
 ## [0.31.0] — 2026-08-15
 
 A minor: one new capability. Schema change (migration `0038`).

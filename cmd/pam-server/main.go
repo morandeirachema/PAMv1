@@ -1132,6 +1132,7 @@ func run() error {
 		Shares:                  shares,
 		ShareInviteTTL:          cfg.ShareInviteTTL,
 		ShareGuestSessionTTL:    cfg.ShareGuestSessionTTL,
+		ApprovalInviteTTL:       cfg.ApprovalInviteTTL,
 		ShareSMTPAddr:           cfg.AlertEmailSMTP,
 		ShareSMTPFrom:           cfg.AlertEmailFrom,
 		ShareSMTPUser:           cfg.AlertEmailUser,

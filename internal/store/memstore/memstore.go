@@ -17,40 +17,41 @@ import (
 )
 
 type Memstore struct {
-	mu            sync.Mutex
-	nextID        int64
-	targets       map[int64]store.Target
-	creds         map[int64]store.Credential
-	users         map[int64]store.User
-	sessions      map[int64]store.Session
-	mfa           map[string]store.MFAEnrollment
-	recovery      map[string]map[string]bool // username -> set of code hashes
-	grants        map[int64]store.TargetGrant
-	accessReq     map[int64]store.AccessRequest
-	checkouts     map[int64]store.Checkout
-	oidcStates    map[string]oidcState
-	audit         []store.AuditEvent
-	auditKey      []byte // set ⇒ chain the primary audit trail
-	agentKeys     map[int64]store.AgentKey
-	sshCerts      map[int64]store.SSHCert
-	vendors       map[int64]store.Vendor
-	vendorGrants  map[int64]store.VendorGrant
-	appKeys       map[int64]store.AppKey
-	appGrants     map[int64]store.AppSecretGrant
-	brokerLog     []store.BrokerAuditEvent
-	brokerTok     map[string]store.BrokerToken
-	settings      map[string]store.Setting
-	keyMaterial   map[string]string
-	profiles      map[int64]store.Profile
-	safes         map[int64]store.Safe
-	safeMembers   map[int64]store.SafeMember
-	credDeps      map[int64]store.CredentialDependency
-	campaigns     map[int64]store.Campaign
-	campaignItems map[int64]store.CampaignItem
-	shareInvites  map[int64]store.SessionShareInvite
-	pwHistory     map[int64][]pwHistoryEntry // credentialID -> hashes, oldest first
-	webauthnCreds map[int64]store.WebAuthnCredential
-	webauthnChal  map[webauthnChalKey]webauthnChallenge
+	mu              sync.Mutex
+	nextID          int64
+	targets         map[int64]store.Target
+	creds           map[int64]store.Credential
+	users           map[int64]store.User
+	sessions        map[int64]store.Session
+	mfa             map[string]store.MFAEnrollment
+	recovery        map[string]map[string]bool // username -> set of code hashes
+	grants          map[int64]store.TargetGrant
+	accessReq       map[int64]store.AccessRequest
+	checkouts       map[int64]store.Checkout
+	oidcStates      map[string]oidcState
+	audit           []store.AuditEvent
+	auditKey        []byte // set ⇒ chain the primary audit trail
+	agentKeys       map[int64]store.AgentKey
+	sshCerts        map[int64]store.SSHCert
+	vendors         map[int64]store.Vendor
+	vendorGrants    map[int64]store.VendorGrant
+	appKeys         map[int64]store.AppKey
+	appGrants       map[int64]store.AppSecretGrant
+	brokerLog       []store.BrokerAuditEvent
+	brokerTok       map[string]store.BrokerToken
+	settings        map[string]store.Setting
+	keyMaterial     map[string]string
+	profiles        map[int64]store.Profile
+	safes           map[int64]store.Safe
+	safeMembers     map[int64]store.SafeMember
+	credDeps        map[int64]store.CredentialDependency
+	campaigns       map[int64]store.Campaign
+	campaignItems   map[int64]store.CampaignItem
+	shareInvites    map[int64]store.SessionShareInvite
+	approvalInvites map[int64]store.ApprovalInvite
+	pwHistory       map[int64][]pwHistoryEntry // credentialID -> hashes, oldest first
+	webauthnCreds   map[int64]store.WebAuthnCredential
+	webauthnChal    map[webauthnChalKey]webauthnChallenge
 
 	killMu   sync.Mutex
 	killSubs map[chan session.KillSelector]struct{} // cross-replica kill fan-out
@@ -68,40 +69,41 @@ type Memstore struct {
 // New returns an empty in-memory store ready for use.
 func New() *Memstore {
 	return &Memstore{
-		targets:       make(map[int64]store.Target),
-		creds:         make(map[int64]store.Credential),
-		users:         make(map[int64]store.User),
-		sessions:      make(map[int64]store.Session),
-		mfa:           make(map[string]store.MFAEnrollment),
-		recovery:      make(map[string]map[string]bool),
-		webauthnCreds: make(map[int64]store.WebAuthnCredential),
-		webauthnChal:  make(map[webauthnChalKey]webauthnChallenge),
-		grants:        make(map[int64]store.TargetGrant),
-		accessReq:     make(map[int64]store.AccessRequest),
-		checkouts:     make(map[int64]store.Checkout),
-		agentKeys:     make(map[int64]store.AgentKey),
-		sshCerts:      make(map[int64]store.SSHCert),
-		vendors:       make(map[int64]store.Vendor),
-		vendorGrants:  make(map[int64]store.VendorGrant),
-		appKeys:       make(map[int64]store.AppKey),
-		appGrants:     make(map[int64]store.AppSecretGrant),
-		brokerTok:     make(map[string]store.BrokerToken),
-		settings:      make(map[string]store.Setting),
-		keyMaterial:   make(map[string]string),
-		profiles:      make(map[int64]store.Profile),
-		safes:         make(map[int64]store.Safe),
-		safeMembers:   make(map[int64]store.SafeMember),
-		credDeps:      make(map[int64]store.CredentialDependency),
-		campaigns:     make(map[int64]store.Campaign),
-		campaignItems: make(map[int64]store.CampaignItem),
-		shareInvites:  make(map[int64]store.SessionShareInvite),
-		pwHistory:     make(map[int64][]pwHistoryEntry),
-		killSubs:      make(map[chan session.KillSelector]struct{}),
-		liveSessions:  make(map[string]liveRow),
-		frameSubs:     make(map[chan session.LiveFrame]struct{}),
-		interestSubs:  make(map[chan string]struct{}),
-		stepups:       make(map[string]stepUpRow),
-		stepupSubs:    make(map[chan session.StepUpDecision]struct{}),
+		targets:         make(map[int64]store.Target),
+		creds:           make(map[int64]store.Credential),
+		users:           make(map[int64]store.User),
+		sessions:        make(map[int64]store.Session),
+		mfa:             make(map[string]store.MFAEnrollment),
+		recovery:        make(map[string]map[string]bool),
+		webauthnCreds:   make(map[int64]store.WebAuthnCredential),
+		webauthnChal:    make(map[webauthnChalKey]webauthnChallenge),
+		grants:          make(map[int64]store.TargetGrant),
+		accessReq:       make(map[int64]store.AccessRequest),
+		checkouts:       make(map[int64]store.Checkout),
+		agentKeys:       make(map[int64]store.AgentKey),
+		sshCerts:        make(map[int64]store.SSHCert),
+		vendors:         make(map[int64]store.Vendor),
+		vendorGrants:    make(map[int64]store.VendorGrant),
+		appKeys:         make(map[int64]store.AppKey),
+		appGrants:       make(map[int64]store.AppSecretGrant),
+		brokerTok:       make(map[string]store.BrokerToken),
+		settings:        make(map[string]store.Setting),
+		keyMaterial:     make(map[string]string),
+		profiles:        make(map[int64]store.Profile),
+		safes:           make(map[int64]store.Safe),
+		safeMembers:     make(map[int64]store.SafeMember),
+		credDeps:        make(map[int64]store.CredentialDependency),
+		campaigns:       make(map[int64]store.Campaign),
+		campaignItems:   make(map[int64]store.CampaignItem),
+		shareInvites:    make(map[int64]store.SessionShareInvite),
+		approvalInvites: make(map[int64]store.ApprovalInvite),
+		pwHistory:       make(map[int64][]pwHistoryEntry),
+		killSubs:        make(map[chan session.KillSelector]struct{}),
+		liveSessions:    make(map[string]liveRow),
+		frameSubs:       make(map[chan session.LiveFrame]struct{}),
+		interestSubs:    make(map[chan string]struct{}),
+		stepups:         make(map[string]stepUpRow),
+		stepupSubs:      make(map[chan session.StepUpDecision]struct{}),
 	}
 }
 
@@ -1877,6 +1879,111 @@ func (m *Memstore) ConsumeSessionShareInviteByTokenHash(_ context.Context, token
 		return &out, nil
 	}
 	return nil, store.ErrNotFound
+}
+
+// CreateApprovalInvite records a new magic-link invite; the caller has
+// already generated and hashed the token and computed ExpiresAt.
+func (m *Memstore) CreateApprovalInvite(_ context.Context, inv *store.ApprovalInvite) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv.ID = m.id()
+	inv.CreatedAt = time.Now().UTC()
+	m.approvalInvites[inv.ID] = *inv
+	return nil
+}
+
+// GetApprovalInvite returns one invite by id, or ErrNotFound.
+func (m *Memstore) GetApprovalInvite(_ context.Context, id int64) (*store.ApprovalInvite, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv, ok := m.approvalInvites[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	out := inv
+	return &out, nil
+}
+
+// ListApprovalInvitesForRequest lists an access request's invites, newest first.
+func (m *Memstore) ListApprovalInvitesForRequest(_ context.Context, accessRequestID int64) ([]store.ApprovalInvite, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]store.ApprovalInvite, 0)
+	for _, inv := range m.approvalInvites {
+		if inv.AccessRequestID == accessRequestID {
+			out = append(out, inv)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out, nil
+}
+
+// RevokeApprovalInvite marks an invite revoked, or ErrNotFound.
+func (m *Memstore) RevokeApprovalInvite(_ context.Context, id int64, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv, ok := m.approvalInvites[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	revoked := at.UTC()
+	inv.RevokedAt = &revoked
+	m.approvalInvites[id] = inv
+	return nil
+}
+
+// GetApprovalInviteByTokenHash is the non-consuming preview lookup: it
+// refuses (ErrNotFound) an unknown, expired, revoked or already-consumed
+// invite, but does not itself write anything.
+func (m *Memstore) GetApprovalInviteByTokenHash(_ context.Context, tokenHash string) (*store.ApprovalInvite, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, inv := range m.approvalInvites {
+		if inv.TokenHash != tokenHash {
+			continue
+		}
+		if inv.RevokedAt != nil || inv.ConsumedAt != nil || !time.Now().Before(inv.ExpiresAt) {
+			return nil, store.ErrNotFound
+		}
+		out := inv
+		return &out, nil
+	}
+	return nil, store.ErrNotFound
+}
+
+// ConsumeApprovalInviteByTokenHash atomically redeems an unexpired,
+// unrevoked, not-yet-consumed invite matching tokenHash.
+func (m *Memstore) ConsumeApprovalInviteByTokenHash(_ context.Context, tokenHash string, now time.Time) (*store.ApprovalInvite, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, inv := range m.approvalInvites {
+		if inv.TokenHash != tokenHash {
+			continue
+		}
+		if inv.RevokedAt != nil || inv.ConsumedAt != nil || !now.Before(inv.ExpiresAt) {
+			return nil, store.ErrNotFound
+		}
+		consumed := now.UTC()
+		inv.ConsumedAt = &consumed
+		m.approvalInvites[id] = inv
+		out := inv
+		return &out, nil
+	}
+	return nil, store.ErrNotFound
+}
+
+// RecordApprovalInviteDecision stamps the outcome on an already-consumed
+// invite, or ErrNotFound.
+func (m *Memstore) RecordApprovalInviteDecision(_ context.Context, id int64, decision string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inv, ok := m.approvalInvites[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	inv.Decision = decision
+	m.approvalInvites[id] = inv
+	return nil
 }
 
 // GetAgentKey returns an agent key by ID (regardless of disabled), or ErrNotFound.
