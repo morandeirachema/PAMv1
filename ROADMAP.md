@@ -2427,7 +2427,7 @@ Releases Phase 135 (DoubleLock) — a genuine new capability, so this is a
 - [x] **v0.31.0** through the test-gated pipeline, rehearsed on `main` first.
   Published 2026-08-15 as `ghcr.io/morandeirachema/pamv1:0.31.0` (also
   `latest`), digest
-  `sha256:PENDING`,
+  `sha256:7bb703d85e1dc98b2a0678e83340baf24b9df9eb42ce15c3b3eaf3d1fc3dc478`,
   **public** (anonymous pull 200, verified via the GHCR anonymous
   token-exchange flow)
 - [x] All five pins via the sweep; Helm chart `version` 0.21.0 -> **0.22.0**
