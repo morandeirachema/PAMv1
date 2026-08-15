@@ -262,7 +262,23 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 		g.log.Error("target grants lookup failed", "target", target.Name, "err", err)
 		return admitResult{outcome: admitCheckFailed, gate: gateTargetGrants, target: target, cred: cred}
 	}
-	if !auth.CanConnectTarget(principal, grants, target.SafeID != nil) {
+	// A target's safe being Personal (Phase 139) narrows the admin bypass
+	// CanConnectTarget otherwise grants to CapUnlimitedVaultAccess only — see
+	// its doc comment. V1 scope, stated plainly rather than silently
+	// dropped: unlike the REST paths (authorizedForTarget,
+	// viewer_handlers.go), a successful override here is not additionally
+	// loud-audited — admitResult carries only a DENIAL reason today, and
+	// threading a success-side signal through it and all three proxies'
+	// gate-result switches is real, separable plumbing this phase doesn't
+	// attempt. The access-control property itself — a plain admin without
+	// the capability is turned away exactly the same as on the REST paths —
+	// is not weakened; only the extra audit line is REST-only for now.
+	personal, err := store.EffectiveSafePersonal(ctx, g.store, target)
+	if err != nil {
+		g.log.Error("safe personal lookup failed", "target", target.Name, "err", err)
+		return admitResult{outcome: admitCheckFailed, gate: gateTargetGrants, target: target, cred: cred}
+	}
+	if !auth.CanConnectTarget(principal, grants, target.SafeID != nil, personal) {
 		return admitResult{outcome: admitDenied, gate: gateTargetPolicy, target: target, cred: cred}
 	}
 

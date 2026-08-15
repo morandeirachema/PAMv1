@@ -38,7 +38,7 @@ de fósforo verde** sin concesiones, porque tocar un PAM debe *sentirse* serio.
 
 Construido fase a fase con una regla: **cada fase es funcional de principio a fin** — arranca,
 pasa los tests y se despliega como Infraestructura-como-Código. El **[roadmap](ROADMAP.md)**
-abarca de la 0 a la 137, **se han entregado todas las fases**, y la release etiquetada y
+abarca de la 0 a la 139, **se han entregado todas las fases**, y la release etiquetada y
 firmada con cosign vigente es la
 **[v0.32.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.32.0)** (2026-08-15;
 la primera fue la v0.10.0, el 2026-07-28). Lo que eso suma:
@@ -151,7 +151,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–137, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–139, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -487,6 +487,7 @@ que cada fase se entrega, no se predeclaran en bloque.
 | ~~**Control de acceso consciente del dispositivo**~~ **✅ entregado (Fase 133)** | Puerta de postura EDR en vivo (StrongDM) + vínculo de identidad de dispositivo (Teleport, redefinido) | El webhook `PAM_POSTURE_ATTEST_URL` se revisa en cada conexión Y en cada llamada autenticada, exento para break-glass. `PAM_DEVICE_HEADER` confía en una huella de certificado de cliente inyectada por un proxy inverso, comparada contra un `device_fingerprint` inscrito por usuario — solo en la superficie REST, con alcance honesto: los proxies SSH/PostgreSQL/SQL Server no tienen capa HTTP por la que viaje una cabecera. Ninguno de los dos alcanza al bróker de agentes IA, que se autentica por una vía distinta |
 | ~~**DoubleLock**~~ **✅ entregado (Fase 135)** | Clave de cifrado específica del secreto, independiente del RBAC (Delinea DoubleLock/QuantumLock) | La contraseña de una persona nombrada, exigida además para revelar/retirar una credencial — ni un admin comprometido puede leerla, ni desactivar la protección, sin ella. Mantenida fuera del KEK a propósito: `DoubleLockEnc` es un segundo cifrado con clave derivada directamente por PBKDF2(contraseña), nunca `vault.Encrypt`, así que el re-envolvimiento exhaustivo de `-rotate-kek` (que no dispone de la contraseña a mitad de rotación) no necesita ningún cambio — un hallazgo de construcción, no el mecanismo de mezcla en el AAD del plan original. Rotar el secreto limpia el DoubleLock |
 | ~~**Aprobación por enlace mágico + marca de agua de sesión**~~ **✅ entregado (Fase 137)** | Aprobación fuera de banda por enlace (BeyondTrust) + marca de agua de sesión (BeyondTrust) | Un `ApprovalInvite` refleja casi exactamente la invitación de sesión compartida de la Fase 116, pero crearlo ya exige `CapApprove` — la invitación ES la delegación. La redención es un `GET` de vista previa seguro y sin consumo, más un `POST` de decisión de un solo uso, disparado solo con un clic explícito, a propósito distinto del auto-redimido de `share.html` — aprobar una solicitud es más delicado que unirse a una sesión. Una segunda comprobación de cuatro ojos en la *creación* de la invitación (no solo en la redención) impide que quien solicita se auto-apruebe a través de su propio enlace por correo, un hueco que una comprobación de actor sintético por sí sola habría pasado por alto. Marca de agua: una superposición DOM para RDP/VNC, un aviso `Hub.Publish` de una sola vez para sesiones de texto/BD |
+| ~~**Carpetas de secretos personales/privadas**~~ **✅ entregado (Fase 139)** | Secretos invisibles incluso para administradores por defecto, con un rol de anulación nombrado (Delinea) | `Safe.Personal` sustituye el acceso incondicional de administrador de `CanConnectTarget` por una comprobación de una nueva capacidad estrecha, `unlimited_vault_access` — deliberadamente ausente del rol admin integrado, solo concedible mediante un perfil personalizado. Una corrección equivalente en `canManageSafe` cierra una puerta trasera hallada al construirlo: `manage_targets` por sí solo, suficiente para gestionar la lista de cualquier caja fuerte ordinaria, no basta para una personal — o un gestor de objetivos podría simplemente añadirse a sí mismo como miembro. Usar la anulación queda auditado en voz alta, reflejando el break-glass. El listado del inventario y el borrado de la caja fuerte no se ven afectados — solo se protegen conectar/revelar/retirar |
 
 ### No-objetivo deliberado
 

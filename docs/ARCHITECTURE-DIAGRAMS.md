@@ -369,6 +369,7 @@ erDiagram
     time_Time CreatedAt
     bool RequireApproval
     int MinApprovers
+    bool Personal
   }
   SafeMember {
     int64 ID

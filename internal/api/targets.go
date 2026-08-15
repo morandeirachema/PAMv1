@@ -301,12 +301,25 @@ func (s *Server) deleteTargetGrant(w http.ResponseWriter, r *http.Request) {
 // authorizedForTarget reports whether the caller may connect to a target under
 // its access grants. A safe-scoped target (target.SafeID set) is default-deny
 // when no grant matches; an ungated target is open to any connect-capable caller.
+// When the target's safe is Personal (Phase 139) and the caller is admitted
+// specifically via CapUnlimitedVaultAccess rather than ordinary membership,
+// that use is audited loudly — safe.personal_override_used — mirroring how
+// break-glass access always is.
 func (s *Server) authorizedForTarget(ctx context.Context, target *store.Target) (bool, error) {
 	grants, err := s.store.EffectiveTargetGrants(ctx, target.ID)
 	if err != nil {
 		return false, err
 	}
-	return auth.CanConnectTarget(principalFrom(ctx), grants, target.SafeID != nil), nil
+	personal, err := store.EffectiveSafePersonal(ctx, s.store, target)
+	if err != nil {
+		return false, err
+	}
+	principal := principalFrom(ctx)
+	ok := auth.CanConnectTarget(principal, grants, target.SafeID != nil, personal)
+	if ok && principal.PersonalOverrideUsed(personal) {
+		s.audit(ctx, "safe.personal_override_used", "target:"+target.Name)
+	}
+	return ok, nil
 }
 
 // gateCredentialAccess enforces the per-target grant and four-eyes approval gates

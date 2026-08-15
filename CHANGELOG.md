@@ -9,6 +9,29 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [Unreleased]
+
+### Added
+
+- **Personal/private safes.** A safe marked `personal` (`POST /api/safes`
+  with `personal:true` and a required `owner`, seeded as the safe's first
+  `can_manage` member) is invisible to the admin auto-bypass every other
+  safe still grants: `auth.CanConnectTarget` requires a new, narrow
+  `unlimited_vault_access` capability instead — deliberately absent from
+  the built-in admin role, grantable only through a custom profile. A
+  matching fix in `canManageSafe` stops `manage_targets` alone from being
+  a side door around it. Using the override is audited loudly
+  (`safe.personal_override_used`), mirroring break-glass. Inventory
+  listing and safe deletion/rename are unaffected — only connect, reveal
+  and checkout are gated. New `internal/store/personalsafe.go`; new
+  migration `0040`.
+
+### Changed
+
+- `auth.CanConnectTarget` gained a fourth parameter (`personal bool`).
+  Every in-repo call site was updated; an out-of-tree caller of this
+  function needs the same.
+
 ## [0.32.0] — 2026-08-15
 
 A minor: two new capabilities.

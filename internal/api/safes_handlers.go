@@ -22,6 +22,17 @@ type safeIn struct {
 	// global and per-target settings: a safe can tighten them, never loosen them.
 	RequireApproval bool `json:"require_approval,omitempty"`
 	MinApprovers    int  `json:"min_approvers,omitempty"`
+	// Personal (Phase 139) marks the safe private — see store.Safe.Personal.
+	// Read only by createSafe; updateSafe never reads it, so it cannot be
+	// changed after creation through this struct even by accident (the store
+	// layer enforces the same immutability independently).
+	Personal bool `json:"personal,omitempty"`
+	// Owner is required when Personal is true: the username createSafe adds
+	// as the safe's first can_manage member in the same call, so a personal
+	// safe is never created ownerless and unmanageable (canManageSafe no
+	// longer treats CapManageTargets alone as enough once a safe is
+	// personal). Must be empty when Personal is false.
+	Owner string `json:"owner,omitempty"`
 }
 
 // maxSafeApprovers bounds the dual-control floor. A floor larger than any
@@ -39,7 +50,10 @@ func validSafePolicy(w http.ResponseWriter, in safeIn) bool {
 	return true
 }
 
-// createSafe creates a safe (CapManageTargets) and audits it.
+// createSafe creates a safe (CapManageTargets) and audits it. A Personal
+// safe (Phase 139) additionally requires Owner and seeds them as its first
+// can_manage member in the same call — see safeIn.Owner — so it is never
+// left in an unmanageable, memberless state.
 func (s *Server) createSafe(w http.ResponseWriter, r *http.Request) {
 	var in safeIn
 	if !readJSON(w, r, &in) {
@@ -51,14 +65,36 @@ func (s *Server) createSafe(w http.ResponseWriter, r *http.Request) {
 	if !validSafePolicy(w, in) {
 		return
 	}
+	switch {
+	case in.Personal && in.Owner == "":
+		writeError(w, http.StatusUnprocessableEntity, "owner is required for a personal safe")
+		return
+	case in.Personal && validName(in.Owner) != nil:
+		writeError(w, http.StatusUnprocessableEntity, "owner "+validName(in.Owner).Error())
+		return
+	case !in.Personal && in.Owner != "":
+		writeError(w, http.StatusUnprocessableEntity, "owner is only meaningful for a personal safe")
+		return
+	}
 	sf := store.Safe{Name: in.Name, Description: in.Description,
-		RequireApproval: in.RequireApproval, MinApprovers: in.MinApprovers}
+		RequireApproval: in.RequireApproval, MinApprovers: in.MinApprovers, Personal: in.Personal}
 	if err := s.store.CreateSafe(r.Context(), &sf); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "safe.create", fmt.Sprintf("safe:%s require_approval:%t min_approvers:%d",
-		in.Name, sf.RequireApproval, sf.MinApprovers))
+	if in.Personal {
+		owner := store.SafeMember{SafeID: sf.ID, SubjectType: "user", Subject: in.Owner,
+			CanManage: true, CreatedBy: actorFrom(r.Context())}
+		if err := s.store.AddSafeMember(r.Context(), &owner); err != nil {
+			// A personal safe nobody can manage is dead weight, not a smaller
+			// version of the feature — roll it back rather than leave it stuck.
+			_ = s.store.DeleteSafe(context.WithoutCancel(r.Context()), sf.ID)
+			storeError(w, err)
+			return
+		}
+	}
+	s.audit(r.Context(), "safe.create", fmt.Sprintf("safe:%s require_approval:%t min_approvers:%d personal:%t owner:%s",
+		in.Name, sf.RequireApproval, sf.MinApprovers, sf.Personal, in.Owner))
 	writeJSON(w, http.StatusCreated, sf)
 }
 
@@ -214,10 +250,24 @@ func (s *Server) deleteSafeMember(w http.ResponseWriter, r *http.Request) {
 }
 
 // canManageSafe reports whether the caller may manage a safe's membership: a
-// global target manager (CapManageTargets) or a can_manage member of that safe.
+// global target manager (CapManageTargets) or a can_manage member of that
+// safe. For a Personal safe (Phase 139), CapManageTargets alone is
+// deliberately NOT enough — it would be a side door around
+// auth.CanConnectTarget's own personal-safe protection, letting any target
+// manager add themselves as a member and connect normally. A personal
+// safe's roster is managed only by its own can_manage member(s) (seeded at
+// creation — see createSafe) or a principal holding CapUnlimitedVaultAccess,
+// the same override CanConnectTarget itself honors.
 func (s *Server) canManageSafe(ctx context.Context, safeID int64) bool {
 	p := principalFrom(ctx)
-	if p.Can(auth.CapManageTargets) {
+	sf, err := s.store.GetSafe(ctx, safeID)
+	if err != nil {
+		return false
+	}
+	switch {
+	case !sf.Personal && p.Can(auth.CapManageTargets):
+		return true
+	case sf.Personal && p.Can(auth.CapUnlimitedVaultAccess):
 		return true
 	}
 	members, err := s.store.ListSafeMembers(ctx, safeID)
