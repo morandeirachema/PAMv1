@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–136 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–138 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,29 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 138 — v0.32.0 ✅
+
+Releases Phase 137 (magic-link approval + session watermarking) — a genuine
+minor: two new capabilities. Schema change (migration `0039`).
+
+- [x] **v0.32.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-15 as `ghcr.io/morandeirachema/pamv1:0.32.0` (also
+  `latest`), digest
+  `sha256:PENDING`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow)
+- [x] All five pins via the sweep; Helm chart `version` 0.22.0 -> **0.23.0**
+  (minor, alongside the `appVersion` minor)
+- [x] Both READMEs restated (the Tier-6 parity table row, and every
+  scattered version/phase-count mention, not just the hub lines)
+- [x] `docs/README.md`'s currency line and `docs/NIS2-COMPLIANCE.md`'s
+  compliance-evidence row (a documented recurring staleness point) both
+  caught proactively; the top-banner "Phases 0–N are shipped" line, missed
+  in Phase 137's own sweep, caught here too
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging:
+  `gofmt`, `go vet`, `staticcheck`, `gosec`, `govulncheck`, `go test -race
+  ./...`, `go run ./cmd/archgen` (no schema/route drift)
 
 ## Phase 137 — Magic-link approval + session watermarking ✅
 
