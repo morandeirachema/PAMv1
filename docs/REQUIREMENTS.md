@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-08-15 · Reflects: Phases 0–141. Phases 66–70 add one more
+> Last updated: 2026-08-15 · Reflects: Phases 0–143. Phases 66–70 add one more
 > background worker (the hourly, leader-locked certification scheduler); Phase 78
 > adds an optional per-replica Conjur refresh worker (off unless
 > `PAM_CONJUR_REFRESH_MIN` is set); 71–94 add no port, resource floor or
@@ -54,6 +54,12 @@
 > **Phase 141 adds one env var** (`PAM_SSH_PORT_FORWARD`, default true) and
 > no new worker, port or resource floor — a forward is one more dial on the
 > connection the session already holds open, not a standing cost.
+> **Phase 143 adds one env var** (`PAM_ICAP_URL`, off by default) and no new
+> worker, listening port or memory floor on `pam-server` itself — like the
+> ITSM/vendor/posture webhooks before it, turning it on adds a real optional
+> external dependency: a genuine ICAP-speaking AV/DLP gateway (c-icap or a
+> commercial equivalent), which you must supply and reach on `1344` (default).
+> Off, this requirement does not apply.
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** These are the
 > specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate

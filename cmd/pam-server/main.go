@@ -47,6 +47,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/config"
 	"github.com/morandeirachema/pamv1/internal/conjur"
+	"github.com/morandeirachema/pamv1/internal/icap"
 	"github.com/morandeirachema/pamv1/internal/keycustody"
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/maint"
@@ -1083,6 +1084,18 @@ func run() error {
 		log.Info("device posture checking enabled")
 	}
 
+	// ICAP file-transfer scanning (Phase 143): resolved once here, same
+	// shared-value idiom as postureAttestor above. cfg's own validation
+	// already confirmed the URL's shape, so a construction error here would
+	// mean the two disagree, not that the deployment is misconfigured.
+	icapClient, err := icap.NewClient(cfg.ICAPURL)
+	if err != nil {
+		return fmt.Errorf("icap client: %w", err)
+	}
+	if icapClient.Enabled() {
+		log.Info("ICAP file-transfer scanning enabled")
+	}
+
 	// Zero Standing Privilege (Phase 22): load (or create) the SSH certificate
 	// authority when PAM_SSH_CA_KEY is set. Shared by the proxy (which mints
 	// short-lived certificates JIT) and the API (which publishes its public key).
@@ -1364,6 +1377,7 @@ func run() error {
 			SFTPCapture:          sftpCapture,
 			SFTPCaptureMaxBytes:  int64(cfg.SSHSFTPCaptureMaxMB) * 1024 * 1024,
 			PortForward:          cfg.SSHPortForward,
+			ICAPClient:           icapClient,
 		})
 		if err != nil {
 			return err
