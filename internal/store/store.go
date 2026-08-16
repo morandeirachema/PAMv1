@@ -389,6 +389,14 @@ const (
 	// encrypted, the same hard-refuse-not-truncate posture the SFTP capture
 	// byte cap already established.
 	SecretTypeFile = "file"
+	// SecretTypeK8sToken (Phase 155) is a Kubernetes bearer credential — a
+	// service-account token — for a `kubernetes` target: vaulted, revealed and
+	// rotated like any other secret, injected just-in-time as the
+	// `Authorization: Bearer …` header of one brokered API call and never
+	// handed to the operator. What that token may do is decided by the
+	// CLUSTER's own RBAC; pamv1 brokers and audits the call, it does not
+	// re-implement Kubernetes authorization.
+	SecretTypeK8sToken = "k8s_token"
 )
 
 // IsZSP reports whether this is a Zero Standing Privilege credential

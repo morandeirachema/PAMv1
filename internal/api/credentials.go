@@ -66,15 +66,14 @@ func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	// A Zero Standing Privilege credential is served by minting a certificate over
-	// SSH, or provisioning-and-dropping an ephemeral role over Postgres/SQL
-	// Server — each only makes sense on the matching target protocol.
-	switch {
-	case in.SecretType == store.SecretTypeSSHCA && target.Protocol != "ssh":
-		writeError(w, http.StatusUnprocessableEntity, "ssh_ca credentials are only valid on ssh targets")
-		return
-	case in.SecretType == store.SecretTypeDBZSP && target.Protocol != "postgres" && target.Protocol != "mssql":
-		writeError(w, http.StatusUnprocessableEntity, "db_zsp credentials are only valid on postgres or mssql targets")
+	// Some secret types only mean anything on one kind of target — a
+	// certificate minted over SSH, an ephemeral role provisioned over a
+	// database wire protocol, a bearer token sent to a Kubernetes API server.
+	// One shared rule (secretTypeFitsProtocol) decides that here and again
+	// when a target's protocol is changed, so the two ends cannot drift.
+	if !secretTypeFitsProtocol(in.SecretType, target.Protocol) {
+		writeError(w, http.StatusUnprocessableEntity,
+			in.SecretType+" credentials are only valid on "+strings.Join(protocolsFor(in.SecretType), " or ")+" targets")
 		return
 	}
 	// Insert first so the row has an ID, then bind the ciphertext to (target,
@@ -108,15 +107,51 @@ func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, c)
 }
 
-// hasZSPCredential reports whether any credential in the list is Zero Standing
-// Privilege (an ssh_ca credential — see Credential.IsZSP).
-func hasZSPCredential(creds []store.Credential) bool {
-	for _, c := range creds {
-		if c.IsZSP() {
+// protocolsFor names the target protocols a secret type may live on; nil means
+// "any protocol" (a password or an ssh_key is not bound to one).
+//
+// This table is the single source of truth for a rule that used to be written
+// twice, in opposite directions: createCredential refused an `ssh_ca` on a
+// non-ssh target, while updateTarget refused any protocol change away from
+// `ssh` when the target held ANY Zero Standing Privilege credential. That
+// mismatch was a real (if narrow) hole and a real false refusal: a
+// postgres+`db_zsp` target could be switched to `ssh` — stranding a credential
+// the SSH proxy can never serve — while a legitimate `postgres` → `mssql`
+// change, where `db_zsp` is valid on both, was refused. Deriving both ends from
+// one table fixes both.
+func protocolsFor(secretType string) []string {
+	switch secretType {
+	case store.SecretTypeSSHCA:
+		return []string{"ssh"}
+	case store.SecretTypeDBZSP:
+		return []string{"postgres", "mssql"}
+	case store.SecretTypeK8sToken:
+		return []string{"kubernetes"}
+	}
+	return nil
+}
+
+// secretTypeFitsProtocol reports whether a credential of this secret type may
+// live on a target of this protocol.
+func secretTypeFitsProtocol(secretType, protocol string) bool {
+	for _, p := range protocolsFor(secretType) {
+		if p == protocol {
 			return true
 		}
 	}
-	return false
+	return protocolsFor(secretType) == nil
+}
+
+// strandedByProtocol returns the first credential these targets hold that the
+// given protocol could not serve, or nil — the check a protocol change must
+// pass so an edit cannot leave a credential no code path can ever use.
+func strandedByProtocol(creds []store.Credential, protocol string) *store.Credential {
+	for i, c := range creds {
+		if !secretTypeFitsProtocol(c.SecretType, protocol) {
+			return &creds[i]
+		}
+	}
+	return nil
 }
 
 // listCredentials returns credentials, optionally scoped to ?target_id=. Secret
@@ -502,20 +537,39 @@ func (s *Server) recordWinRMRefusal(ctx context.Context, target *store.Target, c
 // file path and its SHA-256 (tamper evidence in the audit trail). Best-effort:
 // a recording failure is logged but does not fail the request.
 func (s *Server) recordWinRM(target *store.Target, credUser, actor, command string, res winrm.Result) (string, string) {
+	return s.recordExecTranscript("WinRM", ".winrm.log", target, credUser, actor, command,
+		res.Stdout, res.Stderr, fmt.Sprintf("exit: %d", res.ExitCode))
+}
+
+// recordExecTranscript writes the transcript of ONE discrete brokered command —
+// what was run, by whom, against what, and what came back — and returns the
+// file path and the SHA-256 of the bytes that landed on disk (the tamper
+// evidence the audit trail carries and playback re-checks).
+//
+// Every REST-side execution path shares it, so a new one cannot ship recording
+// a different shape (or, worse, not recording at all): kind names the family in
+// the header ("WinRM", "Kubernetes"), suffix is the file extension the console
+// filters on, and outcome is the trailing status line ("exit: 0",
+// "status: 200") — the one part that is genuinely protocol-specific.
+//
+// Best-effort by contract: a recording failure is logged and returns empty
+// strings; the caller decides what that means (PAM_REQUIRE_RECORDING refuses
+// the command BEFORE it runs rather than relying on this).
+func (s *Server) recordExecTranscript(kind, suffix string, target *store.Target, credUser, actor, command, stdout, stderr, outcome string) (string, string) {
 	if s.recordingDir == "" {
 		return "", ""
 	}
 	if err := os.MkdirAll(s.recordingDir, 0o700); err != nil {
-		s.log.Error("winrm recording dir", "err", err)
+		s.log.Error("exec recording dir", "kind", kind, "err", err)
 		return "", ""
 	}
 	ts := time.Now()
-	name := recording.Title(s.opaqueRecNames, ts, sanitizeName(target.Name), sanitizeName(actor)) + ".winrm.log"
+	name := recording.Title(s.opaqueRecNames, ts, sanitizeName(target.Name), sanitizeName(actor)) + suffix
 	path := filepath.Join(s.recordingDir, name)
 	transcript := fmt.Sprintf(
-		"# pamv1 WinRM session\n# target: %s (%s:%d)\n# user: %s\n# actor: %s\n# time: %s\n\n$ %s\n\n--- stdout ---\n%s\n--- stderr ---\n%s\n--- exit: %d ---\n",
-		target.Name, target.Host, target.Port, credUser, actor, ts.Format(time.RFC3339),
-		command, res.Stdout, res.Stderr, res.ExitCode)
+		"# pamv1 %s session\n# target: %s (%s:%d)\n# user: %s\n# actor: %s\n# time: %s\n\n$ %s\n\n--- stdout ---\n%s\n--- stderr ---\n%s\n--- %s ---\n",
+		kind, target.Name, target.Host, target.Port, credUser, actor, ts.Format(time.RFC3339),
+		command, stdout, stderr, outcome)
 	// Seal the transcript at rest when configured, and hash the bytes that land ON
 	// DISK — not the plaintext. Playback re-hashes the stored file to check it
 	// against the audit trail, so the two must describe the same bytes or every
@@ -524,11 +578,11 @@ func (s *Server) recordWinRM(target *store.Target, credUser, actor, command stri
 	if s.recKey != nil {
 		sealer, serr := recording.NewSealer(context.Background(), &stored, s.recKey, name)
 		if serr != nil {
-			s.log.Error("winrm recording seal", "err", serr)
+			s.log.Error("exec recording seal", "kind", kind, "err", serr)
 			return "", ""
 		}
 		if _, werr := sealer.Write([]byte(transcript)); werr != nil {
-			s.log.Error("winrm recording seal", "err", werr)
+			s.log.Error("exec recording seal", "kind", kind, "err", werr)
 			return "", ""
 		}
 		_ = sealer.Close()
@@ -536,7 +590,7 @@ func (s *Server) recordWinRM(target *store.Target, credUser, actor, command stri
 		stored.WriteString(transcript)
 	}
 	if err := os.WriteFile(path, stored.Bytes(), 0o600); err != nil {
-		s.log.Error("winrm recording write", "err", err)
+		s.log.Error("exec recording write", "kind", kind, "err", err)
 		return "", ""
 	}
 	return path, hashHex(stored.String())

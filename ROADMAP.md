@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–154 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–155 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,158 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 155 — Kubernetes target support (discrete operations) ✅
+
+**Closes:** the batch's one **cross-vendor-confirmed** finding — Teleport and
+StrongDM each flagged Kubernetes independently and unprompted, the strongest
+signal this project's research method produces — and one notably absent from
+pamv1's own connector-breadth gap list (README Tier 3 and
+EXTERNAL-INFRA-GAPS §7 name Cisco/Juniper/F5, MySQL/Oracle, VMware/SAP/
+mainframe, never Kubernetes), so genuinely new rather than a rediscovery.
+The batch's biggest item by surface area: a new protocol, a new secret type,
+a new leaf package, a new route, a new console screen and a dozen existing
+`Protocol ==` call sites to review one at a time.
+
+**The shape, decided before any code.** kubectl's operations split cleanly in
+two, and only one half fits anything pamv1 already does well. Discrete
+verb+resource calls are ordinary synchronous HTTPS requests — one call in, one
+audited result out — which is exactly what `POST /api/targets/{id}/winrm`
+already proves end to end. `exec`, `attach` and `port-forward` upgrade the
+connection to a multiplexed SPDY/WebSocket stream whose framing would need its
+own audit parser (the closest analogue, `guacd`'s Guacamole instruction
+framing, is protocol-specific and does not generalize). So: a `kubernetes`
+target is a cluster's **API server**, not a host; there is no session to proxy,
+and `POST /api/targets/{id}/kubectl` brokers `get`, `logs`, `apply` and
+`delete` — with the streaming half documented as an exclusion rather than
+half-built.
+
+**Hand-rolled, not `client-go`.** `internal/k8s` speaks the Kubernetes REST
+API directly: HTTPS + JSON, four request shapes, ~330 lines. Vendoring
+`k8s.io/client-go` would pull in hundreds of packages, its own scheme/codec
+machinery and a release cadence tied to the cluster's, to reach the same four
+HTTP calls. That is the same reasoning behind every other hand-rolled protocol
+client here (`tds`, `winrm`, `guacd`, `oidc`), and the bar this project set for
+reaching for a library — *cryptographic verification we should not own*
+(`go-webauthn` in Phase 124, `crewjam/saml` in Phase 151) — is not met by an
+authenticated JSON request over TLS. **No new dependency at all**: standard
+library only.
+
+**No discovery — the caller names the API version.** kubectl maps
+`deployments` → `/apis/apps/v1/…` by querying `/api`, `/apis` and each group's
+version, which is N+2 requests per operation unless a cache with its own
+staleness semantics is introduced. pamv1 takes `api_version` explicitly
+(defaulting to core `v1`), so **one operation is one request**, nothing caches
+staleness, a CRD works on day one (`resource:"widgets",
+api_version:"example.com/v1alpha1"`) and the audited command string is
+unambiguous about what was touched. The cost — the operator must know
+`apps/v1` — is real and documented; the console form defaults it.
+
+**Path safety is the package's security core.** Namespace, name, resource,
+group and version all become URL path segments, so each is validated against
+Kubernetes' own naming rules (the upstream DNS-subdomain/label/version regexes,
+not an approximation) *before* interpolation and escaped again after. A name
+like `../../secrets/db` is refused outright rather than aiming the request
+somewhere the audited command string does not describe — pinned by a dedicated
+test matrix (traversal in each segment, percent-encoded traversal, newlines,
+uppercase, consecutive dots, unknown verbs), each case also asserting the
+request never left the process.
+
+**The handler is the WinRM twin, and the plan's own assumption did not
+survive contact with the code — for the better.** The plan expected a
+Kubernetes handler to hand-roll `viewerTunnel`'s inline gate sequence.
+Reading it showed *why* viewerTunnel hand-rolls: it resolves its own principal
+from a WebSocket URL token, because browsers cannot set headers on a WS
+handshake. A REST endpoint has no such problem, so `runKubectl` rides the
+ordinary `authz(CapConnect, …)` middleware and reuses the same helpers
+`runWinRM` does — `authorizedForTarget`, `enforceApproval`, `vendorGate`,
+`superviseSession` — which means the IP allowlist (118), device/posture checks
+(133) and break-glass auditing cover the route for free and there is one fewer
+copy of the gate order to drift. `execKubectl` then mirrors `execWinRM`
+step for step: echo `kubectl> …` to live watchers, command control, the
+`PAM_REQUIRE_RECORDING` check, JIT decrypt, the call, the transcript, the
+**durable** audit, and only then release the output (an audit failure withholds
+the result with 503, because the operation already reached the cluster).
+
+**Command control reaches Kubernetes, which is the whole point of a PAM
+brokering it.** The canonical `kubectl get pods -n prod` line — rendered from
+the *normalized* request, so it describes what will actually be sent — is what
+`PAM_COMMAND_DENY_FILE` and `PAM_COMMAND_ALLOW_FILE` match. A site can forbid
+`^kubectl delete` fleet-wide, or permit only `^kubectl (get|logs)`, with the
+same file that governs SSH exec, the WinRM loop and SQL statements (Phase 38's
+principle, now covering a fifth path). A blocked operation never reaches the
+cluster, is audited `command.blocked … path:kubernetes`, and still leaves a
+transcript — the attempt is evidence.
+
+**pamv1 does not re-implement Kubernetes RBAC.** What the vaulted
+service-account token may do is the cluster's business; a cluster-side refusal
+comes back as its own `403` inside the 200 envelope, with `status:403` on the
+audit row — an answer the operator asked for, not a pamv1 failure, exactly as a
+non-zero exit code is on the WinRM endpoint.
+
+**Two consolidations fell out of the required call-site review** (the plan
+insisted every `Protocol ==` site be audited individually rather than assumed
+covered by one switch — it was right):
+
+- `recordWinRM` became `recordExecTranscript(kind, suffix, …)`, one transcript
+  writer shared by every REST-side execution path, byte-identical output for
+  WinRM. A new brokered command shape can no longer ship recording a different
+  shape, or nothing at all.
+- The protocol↔secret-type rule became one table (`protocolsFor` /
+  `secretTypeFitsProtocol` / `strandedByProtocol`), replacing a rule written
+  twice in opposite directions — and **that fixed a real pre-existing defect**:
+  `createCredential` refused an `ssh_ca` on a non-ssh target, while
+  `updateTarget` refused any protocol change away from `ssh` whenever the
+  target held any ZSP credential. Since `IsZSP()` covers `db_zsp` too, the old
+  guard both **refused a legitimate `postgres` → `mssql` change** (where
+  `db_zsp` is valid on both) and **allowed `postgres` → `ssh`**, stranding a
+  `db_zsp` credential no code path could ever serve. Both directions are now
+  pinned by tests. The then-dead `hasZSPCredential` was deleted.
+
+**Proven end to end against a fake that can only be satisfied by the vault.**
+The API-level test's in-process TLS API server accepts **only** the vaulted
+service-account token, so a 200 proves the token came from the vault and that
+the operator's own PAM key never reached the cluster; the same test checks the
+canonical command, the `k8s.run` audit row, and that the on-disk transcript's
+SHA-256 matches the audited one and contains no token. Around it: a cluster
+403 surfaced as a result, command control blocking `kubectl delete` while
+`get` still runs, request validation (collection delete, logs of a non-pod,
+traversal), authorization (no `CapConnect`, wrong protocol, no `k8s_token`
+credential, and the protocol policy enforced on a target created while it was
+still allowed — via a second server on the same store), and the target rules
+(6443 default, `k8s_token` only on `kubernetes`, the strand guard both ways).
+The package's own tests pin every verb's method/path/query/content-type
+against the same fake, plus the path-injection matrix and the fail-closed
+response cap.
+
+**V1 boundaries, each with its reason:** no `exec`/`attach`/`port-forward`
+(streaming, no audit-parsing precedent); **bearer tokens only** — a client
+certificate is a keypair rather than a string and a cluster cannot revoke one,
+which conflicts with pamv1's revoke-and-rotate model; no discovery (above);
+one `k8s_token` per target is what the broker uses (a `file` credential
+holding a kubeconfig or CA bundle is never sent as a bearer token — hence
+`kubeCredential` selects by type rather than taking `creds[0]` the way the
+single-credential SSH/WinRM paths do); and **no broker tool** — an AI agent
+cannot reach a cluster through pamv1, because a tool whose argument is a
+manifest would need policy over arbitrary YAML that `internal/policy`'s
+typed-argument model does not express.
+
+**Not verified against a real cluster** — none is available in this
+environment (`kind`/k3s would be the honest-verification layer), recorded in
+EXTERNAL-INFRA-GAPS.md. Full CI-gate sweep clean: `gofmt`, `go vet`,
+`staticcheck` (which caught the newly-dead helper), `gosec`, `govulncheck`,
+`go test -race ./...`, `go run ./cmd/archgen` (179 → **180** routes, no schema
+drift — this phase adds **no migration**).
+
+**Critical files:** new `internal/k8s/k8s.go`, new
+`internal/api/kubernetes_handlers.go`, `internal/api/targets.go`
+(protocol/secret maps, 6443 default, the generalized strand guard),
+`internal/api/credentials.go` (the shared protocol-fit table, the generalized
+transcript writer), `internal/store/store.go` (`SecretTypeK8sToken`),
+`internal/api/server.go` (`Options.K8s`, route), `internal/config/config.go`
+(`PAM_K8S_*`), `cmd/pam-server/main.go` (CA pool), `internal/web/static/index.html`
+(targets option 6 + the `kubectl` screen), `internal/web/testdata/console_check.js`
+(the `noRows` opt-out for a screen with no subfile table).
 
 ## Phase 154 — v0.40.0 ✅
 

@@ -391,6 +391,22 @@ type Config struct {
 	// by default.
 	ScimEnabled bool
 
+	// K8sCAFile is a PEM CA bundle used to VERIFY a Kubernetes API server's TLS
+	// certificate on the brokered-operation leg (Phase 155). Unset verifies
+	// against the system roots, which is right for a managed cluster with a
+	// publicly-rooted endpoint and wrong for the usual private cluster CA — so
+	// most on-prem deployments set this. Several clusters' CAs may be
+	// concatenated into one bundle. K8sInsecureSkipVerify disables verification
+	// entirely (kind/minikube demos): the bearer token would then be handed to
+	// whoever answers, so it is a loud, deliberate opt-in and never a default.
+	K8sCAFile             string
+	K8sInsecureSkipVerify bool
+	// K8sTimeoutSec bounds one brokered Kubernetes request end to end, and
+	// K8sMaxResponseKB caps the response body — over it the operation fails
+	// closed rather than returning a truncated object or log.
+	K8sTimeoutSec    int
+	K8sMaxResponseKB int
+
 	// EndpointAgentsEnabled turns on outbound-only endpoint agents (Phase 153,
 	// BeyondTrust "Jump Client"-style): the SSH listener accepts the
 	// "endpoint-agent:<name>" login (an agent's own bearer key, never a
@@ -773,6 +789,10 @@ func Load() (*Config, error) {
 		AppSecretsEnabled:      boolean("PAM_APP_SECRETS_ENABLED", false),
 		ScimEnabled:            boolean("PAM_SCIM_ENABLED", false),
 		EndpointAgentsEnabled:  boolean("PAM_ENDPOINT_AGENTS_ENABLED", false),
+		K8sCAFile:              os.Getenv("PAM_K8S_CA_FILE"),
+		K8sInsecureSkipVerify:  boolean("PAM_K8S_INSECURE_SKIP_VERIFY", false),
+		K8sTimeoutSec:          integer("PAM_K8S_TIMEOUT_SEC", 30),
+		K8sMaxResponseKB:       integer("PAM_K8S_MAX_RESPONSE_KB", 1024),
 		BrokerPolicyFile:       os.Getenv("PAM_BROKER_POLICY_FILE"),
 		BrokerAuditKey:         os.Getenv("PAM_BROKER_AUDIT_KEY"),
 		BrokerAuditSignSeed:    os.Getenv("PAM_BROKER_AUDIT_SIGN_SEED"),
