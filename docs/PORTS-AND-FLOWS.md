@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-08-16 · Reflects: Phases 0–153. **Phase 53 added the first new
+> Last updated: 2026-08-16 · Reflects: Phases 0–155. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; nothing after
 > it adds a port or listener (55–94 ride the existing listeners and flows: the
 > live-monitor relay and the step-up decision bus ride the server ↔ PostgreSQL
@@ -118,6 +118,11 @@
 > pam-server: E2 simply does not happen for an agent-bound target, and the
 > firewall rule that used to be "pam-server → target:22" becomes
 > "endpoint → pam-server:2222" (§6). Opt-in (`PAM_ENDPOINT_AGENTS_ENABLED`).
+> **Phase 155 adds one new egress destination and no listener or port** — a
+> `kubernetes` target's API server (**E16**, `:6443` by convention, HTTPS,
+> verified). It is an ordinary outbound request per brokered operation, from
+> pam-server, on the same `:8080` control plane the operator already talks to;
+> there is no session proxy and therefore no new inbound flow.
 > Everything from 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
 > **no new listeners**: certification/ticketing/approvals (19–21), threat analytics
@@ -193,6 +198,7 @@ add `5433 → 5433` and/or `1433 → 1433` when the database proxies are enabled
 | E12 | pam-server | KMS / HSM (Vault-Transit / AWS-KMS / PKCS#11) | 443 / — | HTTPS / PKCS#11 | Envelope-encryption KEK (wrap/unwrap), when not `local` | ✅ P5 |
 | E14 | pam-server | ITSM (mgmt zone: ServiceNow / Jira / generic webhook) | 443 | HTTPS | Change-ticket validation on access requests — generic 2xx webhook (P20) or **first-class ServiceNow/Jira lookup** (P84: ticket state, change window, ticket **names the operator**); with `PAM_TICKET_REVALIDATE`, checked again at the moment access is used (P60) | ✅ P20/P60/P84 |
 | E15 | pam-server | ICAP AV/DLP gateway (mgmt zone) | 1344 (default) | ICAP (RFC 3507) | Whole-file RESPMOD scan of a finalized SFTP transfer (`PAM_ICAP_URL`); **detection only** — the file has already crossed E2 in either direction by the time a verdict exists. Plaintext, no TLS option in v1: keep the gateway inside a trusted segment | ✅ P143 |
+| E16 | pam-server | Kubernetes API server (target zone) | **6443** | HTTPS | Brokered kubectl-shaped operations (`get`/`logs`/`apply`/`delete`) with a JIT-injected service-account token; certificate verified against `PAM_K8S_CA_FILE` or the system roots (Phase 155) | ✅ P155 |
 
 ## 4. Internal / data-plane
 
@@ -217,6 +223,7 @@ flowchart LR
         DB[("PostgreSQL store<br/>:5432")]
     end
     subgraph TGT["Target zone (IT / OT)"]
+        K8["Kubernetes API<br/>:6443"]
         L["Linux<br/>:22"]
         W["Windows<br/>:5986 winrm"]
         V["VNC desktop<br/>:5900"]
@@ -243,6 +250,7 @@ flowchart LR
     G -->|"E4c 5900 vnc"| V
     S -->|"E10 5432"| PG
     S -->|"E13 1433"| MS
+    S -->|"E16 6443"| K8
     S -->|"E5 636/443"| ID
     S -->|"E11 443"| CJ
     S -->|"E14 443"| TK
@@ -282,6 +290,7 @@ allow  pam-server -> <siem>:514,6514           tcp   # audit forwarding over TCP
 allow  pam-server -> <smtp/webhook>:587,443    tcp   # alerts (if enabled)
 allow  pam-server -> <itsm>:443                tcp   # change-ticket validation (if enabled)
 allow  pam-server -> <icap-gateway>:1344       tcp   # ICAP AV/DLP scan of SFTP transfers (if enabled)
+allow  pam-server -> <cluster-cidr>:6443       tcp   # kubernetes targets (brokered kubectl operations)
 deny   pam-server -> any                              # default deny
 
 # Database is never reachable from operator or target zones
@@ -348,6 +357,7 @@ specific target hosts and protocols, and default-deny everything else across the
 
 | Date | Change |
 |---|---|
+| 2026-08-16 | **Phase 155 — Kubernetes targets: one new EGRESS destination (E16), no new listener.** A `kubernetes` target is a cluster's API server, brokered as discrete operations over the existing `:8080` control plane rather than proxied on a listener of its own — so the only new flow is pam-server → API server `:6443` (HTTPS, certificate verified against `PAM_K8S_CA_FILE` or the system roots; no trust-any fallback, since every request carries a bearer token). One request per operation, no long-lived connection, and no streaming: `exec`/`attach`/`port-forward` are not brokered, so nothing here opens a multiplexed SPDY/WebSocket channel |
 | 2026-08-16 | **Phase 153 — outbound-only endpoint agents: a genuinely new INGRESS flow, and the first that reverses the proxy's direction.** New **I8**: `pam-agent`, installed on a target pamv1 cannot dial into (NAT, CGNAT, no inbound firewall rule), connects *in* to the existing `:2222` SSH listener as `endpoint-agent:<name>` with its own bearer key, requests one RFC 4254 `tcpip-forward`, and thereafter only carries `forwarded-tcpip` streams pam-server opens toward it — each of which lands on the ONE local address the agent is configured with (its own sshd). The proxy's ordinary upstream SSH handshake runs over that stream, so E2 is simply not used for an agent-bound target: no new listener, port or egress. In §6 the rule "pam-server → target:22" is replaced, for such endpoints, by "endpoint → pam-server:2222"; the endpoint itself needs no inbound rule at all. Per-replica: an agent's TCP connection terminates on one process, so in HA the agent lists every replica (`PAM_AGENT_SERVERS`) and holds one tunnel to each. Opt-in via `PAM_ENDPOINT_AGENTS_ENABLED`; the agent pins pam-server's SSH host key (`PAM_AGENT_SERVER_HOST_KEY`), which is one key cluster-wide under shared custody |
 | 2026-08-15 | **Phase 143 — ICAP AV/DLP scanning, a genuinely new egress destination and protocol.** New **E15**: `PAM_ICAP_URL` submits a finalized SFTP transfer's captured bytes to an ICAP (RFC 3507) RESPMOD gateway on `1344` by default, plaintext, no TLS option in v1. Not a session-brokering flow like E4a/E13 — it is a side-channel scan that runs only *after* the file has already crossed E2 (or E10/E13) in either direction, so a firewall rule for it protects visibility, not the transfer itself. Off unless configured; joins the `PAM_OT_AIRGAP` conflict list. §6 and §7 updated |
 | 2026-08-15 | **Phase 141 — port-forwarding widens an existing flow, no new listener or destination.** A client `ssh -L` forward rides E2 (the same `:2222`-admitted host the session already reaches) but on WHATEVER port the operator requests, not just the target's SSH port — a firewall/NetworkPolicy scoped to exactly `target:22` egress needs widening for forwarding to work. `PAM_SSH_PORT_FORWARD=false` keeps the egress surface exactly as narrow as before this phase; no table row changes, since E2 already covers the destination host |

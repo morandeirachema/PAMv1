@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-08-16 · Reflects: Phases 0–153. Phases 66–70 add one more
+> Last updated: 2026-08-16 · Reflects: Phases 0–155. Phases 66–70 add one more
 > background worker (the hourly, leader-locked certification scheduler); Phase 78
 > adds an optional per-replica Conjur refresh worker (off unless
 > `PAM_CONJUR_REFRESH_MIN` is set); 71–94 add no port, resource floor or
@@ -94,6 +94,13 @@
 > connection (goroutine + keepalive every 30 s) — the resource floor is unchanged
 > for deployments that leave the flag off, and negligible per agent when on. In HA
 > the agent holds one connection per listed replica.
+> **Phase 155 adds four env vars** (`PAM_K8S_CA_FILE`, `PAM_K8S_INSECURE_SKIP_VERIFY`,
+> `PAM_K8S_TIMEOUT_SEC`, `PAM_K8S_MAX_RESPONSE_KB`), no migration, no new
+> listener, no worker and no new Go dependency — the Kubernetes client is
+> hand-rolled on the standard library. A brokered operation is one outbound
+> HTTPS request whose response is capped (1 MiB by default), so the memory
+> floor is unchanged; the runtime dependency, when used, is a reachable
+> cluster API server on `:6443` and a service-account token you supply.
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** These are the
 > specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate

@@ -23,6 +23,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/broker"
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/guacd"
+	"github.com/morandeirachema/pamv1/internal/k8s"
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/metrics"
 	"github.com/morandeirachema/pamv1/internal/oidc"
@@ -371,6 +372,12 @@ type Options struct {
 	// ScimEnabled turns on the SCIM 2.0 provisioning API (Phase 149): the SCIM
 	// key admin routes and the /scim/v2/Users surface.
 	ScimEnabled bool
+	// K8s (Phase 155) is the TEMPLATE for every brokered Kubernetes call: TLS
+	// trust (PAM_K8S_CA_FILE / PAM_K8S_INSECURE_SKIP_VERIFY) and the request
+	// bounds. Server and Token are filled per operation — the API server URL
+	// comes from the target row, the bearer token from the vault, decrypted
+	// just-in-time and discarded with the client.
+	K8s k8s.Config
 	// EndpointAgents (Phase 153) is the SHARED live registry of connected
 	// outbound-only endpoint agents — the same instance the SSH proxy
 	// registers into — so GET /api/endpoint-agents can report connectivity and
@@ -458,6 +465,7 @@ type Server struct {
 	appSecretsEnabled   bool
 	scimEnabled         bool
 	endpointAgents      *session.EndpointAgents
+	k8sConfig           k8s.Config
 	metrics             *metrics.Metrics
 	log                 *slog.Logger
 	mux                 *http.ServeMux
@@ -688,6 +696,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		appSecretsEnabled:    opts.AppSecretsEnabled,
 		scimEnabled:          opts.ScimEnabled,
 		endpointAgents:       opts.EndpointAgents,
+		k8sConfig:            opts.K8s,
 		metrics:              metrics.New(),
 		log:                  logging.Component("api"),
 		mux:                  http.NewServeMux(),
@@ -897,6 +906,10 @@ func (s *Server) routes() {
 	s.mux.Handle("DELETE /api/safes/{id}/members/{mid}", s.authz(auth.CapReadInventory, s.deleteSafeMember))
 
 	s.mux.Handle("POST /api/targets/{id}/winrm", s.authz(auth.CapConnect, s.runWinRM))
+	// One discrete, audited Kubernetes operation against a `kubernetes` target
+	// (Phase 155) — the same capability the WinRM twin needs, since both are a
+	// privileged action on a machine pamv1 holds the credential for.
+	s.mux.Handle("POST /api/targets/{id}/kubectl", s.authz(auth.CapConnect, s.runKubectl))
 	s.mux.Handle("POST /api/rdp-token", s.authz(auth.CapConnect, s.rdpToken))                  // mint a short-lived WS token for the viewer
 	s.mux.Handle("POST /api/vnc-token", s.authz(auth.CapConnect, s.vncToken))                  // same, for the VNC viewer
 	s.mux.Handle("POST /api/extension-token", s.authz(auth.CapRevealSecret, s.extensionToken)) // mint a browser-extension autofill token (Phase 147)

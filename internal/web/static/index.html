@@ -171,6 +171,7 @@
   let vendors = [], vendorGrants = [], grantsVendor = 0, newVendor = null, editVendor = null;
   let sshCerts = [], caInfo = null, loginSessions = [], agents = [], newAgent = null;
   let endpointAgents = [], newEndpointAgent = null; // Phase 153: outbound-only endpoint agents
+  let kubeTarget = null, kubeResult = null, kubeErr = ""; // Phase 155: brokered kubectl operations
   let deps = [], depsCred = null, blastResult = null, auditHead = null, nis2Report = null;
   let nis2Since = "", nis2Until = "";
   let campaigns = [], campView = null, risk = null, riskMin = "", riskWin = "";
@@ -575,6 +576,15 @@
     catch (e) { if (e.status === 404) say("AI-AGENT BROKER IS DISABLED (set PAM_BROKER_POLICY_FILE)."); }
     go("agents");
   }
+  // Phase 155: one brokered Kubernetes operation against a kubernetes target.
+  // The form is the whole vocabulary — there is no free-text kubectl here,
+  // because every operation has to be nameable in a command string that
+  // command control can match and the audit trail can carry.
+  function openKubectl(t) {
+    kubeTarget = t; kubeResult = null; kubeErr = "";
+    go("kubectl");
+  }
+
   // Phase 153: outbound-only endpoint agents (menu 28). The list carries this
   // replica's live connectivity; targets are fetched alongside for the F6 form.
   async function openEndpointAgents() {
@@ -1107,7 +1117,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
         const canConnect = can("connect");
         term.innerHTML = `${head("PAMWRKTGT", "Work with Targets")}
 Type options, press Enter.
-  <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "7=Open viewer (rdp/vnc targets)" : "", canManage ? "8=Assign to safe" : "", canManage ? "9=Discover accounts (ssh/winrm)" : "", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
+  <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "6=Run kubectl (kubernetes)" : "", canConnect ? "7=Open viewer (rdp/vnc targets)" : "", canManage ? "8=Assign to safe" : "", canManage ? "9=Discover accounts (ssh/winrm)" : "", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Name</th><th>Host</th><th>Port</th><th>OS</th><th>Proto</th><th>Approval</th><th>Clip</th><th>Safe</th></tr>
@@ -1123,6 +1133,7 @@ ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add target" : ""}   F12=Cancel
               if (o === "2") { editTarget = t; return go("targetchange"); }
               else if (o === "4") { await api("DELETE", `/api/targets/${t.id}`); say(`TARGET ${String(t.name).toUpperCase()} DELETED.`); }
               else if (o === "5") { return openGrants(t.id); }
+              else if (o === "6") { return openKubectl(t); }
               else if (o === "7") { return openViewer(t); }
               else if (o === "8") { return openTargetSafe(t); }
               else if (o === "9") { return discoverAccounts(t); }
@@ -1143,7 +1154,7 @@ Type choices, press Enter.
 <label>Host  . . . . . . . :  <input name="host" size="24" required></label>
 <label>Port  . . . . . . . :  <input name="port" type="number" value="22" min="1" max="65535" size="6" required></label>
 <label>OS type . . . . . . :  <select name="os_type"><option>linux</option><option>windows</option></select>   <span class="cyan">linux, windows</span></label>
-<label>Protocol  . . . . . :  <select name="protocol"><option>ssh</option><option>winrm</option><option>rdp</option><option>vnc</option><option>postgres</option><option>mssql</option></select>   <span class="cyan">ssh, winrm, rdp, vnc, postgres, mssql</span></label>
+<label>Protocol  . . . . . :  <select name="protocol"><option>ssh</option><option>winrm</option><option>rdp</option><option>vnc</option><option>postgres</option><option>mssql</option><option>kubernetes</option></select>   <span class="cyan">ssh, winrm, rdp, vnc, postgres, mssql, kubernetes (port defaults to 6443)</span></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox">   <span class="cyan">connections need an approved request (4-eyes)</span></label>
 <label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value="">(global)</option><option>allow</option><option>readonly</option><option>deny</option></select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
 <label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value="">(global)</option><option>off</option><option>meta</option><option>full</option></select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
@@ -1175,7 +1186,7 @@ Editing target <span class="white">${esc(t.name)}</span> (id ${esc(t.id)}). Type
 <label>Host  . . . . . . . :  <input name="host" size="24" required value="${esc(t.host)}"></label>
 <label>Port  . . . . . . . :  <input name="port" type="number" min="1" max="65535" size="6" required value="${esc(t.port)}"></label>
 <label>OS type . . . . . . :  <select name="os_type">${sel(["linux", "windows"], t.os_type)}</select></label>
-<label>Protocol  . . . . . :  <select name="protocol">${sel(["ssh", "winrm", "rdp", "vnc", "postgres", "mssql"], t.protocol)}</select></label>
+<label>Protocol  . . . . . :  <select name="protocol">${sel(["ssh", "winrm", "rdp", "vnc", "postgres", "mssql", "kubernetes"], t.protocol)}</select></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox"${t.require_approval ? " checked" : ""}>   <span class="cyan">connections need an approved request (4-eyes)</span></label>
 <label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value=""${t.rdp_clipboard ? "" : " selected"}>(global)</option>${sel(["allow", "readonly", "deny"], t.rdp_clipboard)}</select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
 <label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value=""${t.rdp_clipboard_audit ? "" : " selected"}>(global)</option>${sel(["off", "meta", "full"], t.rdp_clipboard_audit)}</select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
@@ -1280,7 +1291,7 @@ Type choices, press Enter.  <span class="cyan">Secret is encrypted (AES-256-GCM)
 <label>Target ID . . . . . :  <input name="target_id" type="number" min="1" size="6" required autofocus>   <span class="cyan">${targets.map((t) => `${t.id}=${esc(t.name)}`).join("  ") || "no targets defined"}</span></label>
 <label>Username  . . . . . :  <input name="username" size="16" required></label>
 <label>Secret  . . . . . . :  <input name="secret" type="password" size="28" required autocomplete="new-password"></label>
-<label>Secret type . . . . :  <select name="secret_type"><option>password</option><option>ssh_key</option></select>   <span class="cyan">password, ssh_key</span></label>
+<label>Secret type . . . . :  <select name="secret_type"><option>password</option><option>ssh_key</option><option>k8s_token</option></select>   <span class="cyan">password, ssh_key, k8s_token (kubernetes targets)</span></label>
 <input type="submit" hidden>
 </form>
 ${fkeys("F3=Exit   F12=Cancel")}`;
@@ -1909,6 +1920,48 @@ ${rows}
 trail above is the only record that a delegation existed. It is bounded by the delegator's
 own expiry, and its chain is capped by PAM_BROKER_MAX_DELEGATION_DEPTH.</div>
 ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
+      },
+
+      // Phase 155 — one discrete, audited Kubernetes operation against a
+      // kubernetes target: the same JIT-injected credential, command control,
+      // transcript and audit row every other brokered command gets. Streaming
+      // verbs (exec/attach/port-forward) are deliberately not offered.
+      kubectl() {
+        back = "targets";
+        const t = kubeTarget || {};
+        const r = kubeResult;
+        term.innerHTML = `${head("PAMKUBECT", "Run Kubernetes Operation")}
+Target <span class="white">${esc(t.name)}</span> (${esc(t.host)}:${esc(t.port)}) — the cluster's own RBAC decides what the
+vaulted service-account token may do; pamv1 brokers, guards and records the call.
+
+<form id="f-kube" class="indent">
+<label>Verb  . . . . . . . :  <select name="verb"><option>get</option><option>logs</option><option>apply</option><option>delete</option></select>   <span class="cyan">exec/attach/port-forward are not brokered</span></label>
+<label>API version . . . . :  <input name="api_version" size="20" value="v1" autofocus>   <span class="cyan">v1, apps/v1, example.com/v1alpha1</span></label>
+<label>Resource  . . . . . :  <input name="resource" size="20" value="pods">   <span class="cyan">lowercase plural</span></label>
+<label>Name  . . . . . . . :  <input name="name" size="30">   <span class="cyan">blank lists the collection (get)</span></label>
+<label>Namespace . . . . . :  <input name="namespace" size="20">   <span class="cyan">blank = across all namespaces</span></label>
+<label>Selector (get)  . . :  <input name="selector" size="30"></label>
+<label>Container (logs)  . :  <input name="container" size="20"></label>
+<label>Tail lines (logs) . :  <input name="tail_lines" size="6" value="200"></label>
+<label>Manifest (apply)  . :  <textarea name="manifest" rows="4" cols="60"></textarea></label>
+<input type="submit" hidden>
+</form>
+${kubeErr ? `<div class="red indent">${esc(kubeErr)}</div>` : ""}
+${r ? `<div class="indent">Command . . . . . . :  <span class="white">${esc(r.command)}</span>
+Cluster status  . . :  <span class="${r.status >= 200 && r.status < 300 ? "green" : "red"}">${esc(r.status)}</span>   <span class="cyan">${esc(r.method)} ${esc(r.path)}</span>
+</div>
+<div class="indent white" style="white-space:pre-wrap;max-height:20em;overflow:auto">${esc(r.body)}</div>` : ""}
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-kube").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          f.tail_lines = Number(f.tail_lines) || 0;
+          for (const k of Object.keys(f)) { if (f[k] === "") delete f[k]; }
+          kubeErr = "";
+          try { kubeResult = await api("POST", `/api/targets/${t.id}/kubectl`, f); }
+          catch (e) { kubeResult = null; kubeErr = "CPF9899: " + e.message; }
+          render();
+        };
       },
 
       // Menu 28 — outbound-only endpoint agents (Phase 153): a target pamv1
