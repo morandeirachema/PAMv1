@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-16 · Reflects: Phases 0–153 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-16 · Reflects: Phases 0–155 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -290,6 +290,9 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_SSH_CERT_TTL_MIN` | | `2` | Validity (minutes) of a minted ZSP certificate. |
 | `PAM_SSH_OPERATOR_CERT_TTL_MIN` | | `10` | Cap (minutes) on an operator-issued SSH certificate (Phase 28: `POST /api/ca/ssh/sign`). See §6. |
 | `PAM_SSH_KNOWN_HOSTS` | | (trust-any + warn) | OpenSSH known_hosts file pinning **upstream target** host keys. |
+| `PAM_K8S_CA_FILE` | | (system roots) | (Phase 155) PEM CA bundle verifying a Kubernetes API server's certificate. Most on-prem clusters use a private CA, so most deployments set this; several clusters' CAs may be concatenated into one file. |
+| `PAM_K8S_INSECURE_SKIP_VERIFY` | | `false` | Disable that verification entirely (kind/minikube demos only). The vaulted bearer token would then be handed to whoever answers for the API server; the server logs a warning at startup when it is on. |
+| `PAM_K8S_TIMEOUT_SEC` / `PAM_K8S_MAX_RESPONSE_KB` | | `30` / `1024` | Bounds on one brokered Kubernetes operation: how long it may take, and how large a response may be before it fails closed (a truncated object or log is worse than none). |
 | `PAM_ENDPOINT_AGENTS_ENABLED` | | `false` | (Phase 153) Accept **outbound-only endpoint agents** on the SSH listener (`endpoint-agent:<name>` login with the agent's own bearer key) and register the `/api/endpoint-agents` routes; a target bound to an agent is then reached only through its reverse tunnel, never dialed. Off = the login is refused and the routes are absent. See "Outbound-only endpoint agents" under §6. |
 | `PAM_SSH_JUMP_HOST` / `_USER` / `_KEY` | | (direct) | Reach SSH targets only routable through a **bastion** (Phase 8): the proxy opens a `direct-tcpip` channel through the jump host, authenticating to it with the private key at `_KEY` (public-key only). Set all three; leave unset for a direct dial. |
 | `PAM_GUACD_ADDR` | | (RDP off) | `host:port` of the `guacd` daemon that brokers RDP (the Docker/K8s/Helm deploys ship one). See §5 → *RDP*. |
@@ -796,6 +799,107 @@ curl -s -H "X-API-Key: $KEY" $PAM/api/ca/ssh/krl -o pamv1-ssh.krl   # install as
 
 Audit: `ssh.cert_issued` / `ssh.cert_denied` (bad proof of possession) /
 `ssh.cert_revoked`.
+
+### Kubernetes clusters (Phase 155)
+
+A `kubernetes` target is a cluster's **API server**, not a host: there is no
+session to proxy, so pamv1 brokers **discrete, audited kubectl-shaped
+operations** over `POST /api/targets/{id}/kubectl` — the same shape as the WinRM
+REST endpoint, and gated the same way. The vaulted credential is a **service-account
+bearer token** (`k8s_token`), injected just-in-time as the `Authorization` header
+of ONE API call and never handed to the operator.
+
+```bash
+# 1. The cluster as a target (port defaults to 6443 for this protocol).
+curl -s -XPOST -H "X-API-Key: $KEY" $PAM/api/targets \
+  -d '{"name":"prod-cluster","host":"api.k8s.example","port":6443,"os_type":"linux","protocol":"kubernetes"}'
+
+# 2. Its service-account token, vaulted. `username` is the account the token
+#    belongs to — it is what the audit trail and the vendor gate record.
+curl -s -XPOST -H "X-API-Key: $KEY" $PAM/api/credentials \
+  -d '{"target_id":42,"username":"pam-broker","secret_type":"k8s_token","secret":"eyJhbGci..."}'
+
+# 3. One brokered operation.
+curl -s -XPOST -H "X-API-Key: $KEY" $PAM/api/targets/42/kubectl \
+  -d '{"verb":"get","resource":"pods","namespace":"prod"}'
+# → {"target":"prod-cluster","command":"kubectl get pods -n prod","status":200,
+#    "method":"GET","path":"/api/v1/namespaces/prod/pods","body":"{\"kind\":\"PodList\",…}"}
+```
+
+**The request is a vocabulary, not a passthrough** — every operation has to be
+nameable in a command string that command control can match and the audit trail
+can carry:
+
+| Field | Verbs | Meaning |
+|---|---|---|
+| `verb` | — | `get`, `logs`, `apply`, `delete` |
+| `api_version` | all | `v1` (default, the core group) or `group/version` — e.g. `apps/v1`, `example.com/v1alpha1` for a CRD |
+| `resource` | get/apply/delete | the lowercase plural (`pods`, `deployments`); implied `pods` for `logs` |
+| `name` | logs/delete required | the object; blank on `get` lists the collection |
+| `namespace` | all | blank means the cluster-scoped path — for a namespaced resource that is Kubernetes' own across-all-namespaces collection |
+| `selector` | get | label selector (`app=web,tier!=db`) |
+| `container` / `tail_lines` | logs | one container of many; how many lines (default 200, max 10000) |
+| `manifest` | apply | the YAML or JSON, sent verbatim as a **server-side apply** patch with `fieldManager=pamv1` |
+
+**What the cluster decides, and what pamv1 decides.** pamv1 does not
+re-implement Kubernetes RBAC: what the token may do is the cluster's business,
+and a cluster-side refusal comes back as its own `403` inside the envelope (with
+`status:403` on the audit row) — an answer, not a pamv1 error, exactly as a
+non-zero exit code is on the WinRM endpoint. pamv1 decides everything else: the
+protocol policy (`PAM_ALLOWED_PROTOCOLS`), per-target grants and safes, the
+four-eyes approval gate, the vendor contract gate, the concurrent-session cap,
+the source-IP allowlist and device/posture checks (they ride the ordinary `authz`
+middleware), **command control**, recording and the audit trail.
+
+**Command control covers it.** The canonical `kubectl …` line is what your deny
+patterns (`PAM_COMMAND_DENY_FILE`) and, if set, your allow-list
+(`PAM_COMMAND_ALLOW_FILE`) match — so `^kubectl delete` can be forbidden
+fleet-wide, or a read-only site can permit only `^kubectl (get|logs)`, with the
+same file that governs SSH and WinRM. A blocked operation never reaches the
+cluster, is audited as `command.blocked … path:kubernetes`, and still leaves a
+transcript: the attempt is evidence.
+
+**Recording, monitoring and limits** work as they do for WinRM: every operation
+is registered in the live-session registry (listed by `GET /api/sessions`,
+killable, watchable — a supervisor sees `kubectl> …` and then the result), the
+transcript lands in `PAM_RECORDING_DIR` as a `.k8s.log` whose SHA-256 is on the
+audit row, and `PAM_REQUIRE_RECORDING` refuses the operation *before* it runs if
+no transcript can be written. If the audit write fails after the call reached the
+cluster, the result is **withheld** (503) rather than returned unaccounted for.
+
+**TLS.** The API server's certificate is verified against `PAM_K8S_CA_FILE`, or
+the system roots when it is unset — there is no trust-any fallback, because every
+request carries a bearer token. `PAM_K8S_INSECURE_SKIP_VERIFY=true` exists for
+demos and is logged loudly at startup.
+
+**Console:** *Work with Targets* → option **6** (`Run kubectl`) opens the
+operation form and shows the cluster's answer.
+
+**Deliberate boundaries (v1):**
+
+- **`exec`, `attach` and `port-forward` are not brokered.** kubectl upgrades
+  those to a multiplexed SPDY/WebSocket stream; auditing what crosses it needs a
+  stream parser this codebase has no precedent for, so they are documented as
+  out of scope rather than half-built. Use the SSH proxy to reach a node, or a
+  cluster-side break-glass procedure, when you need an interactive shell in a pod.
+- **Bearer tokens only.** Client-certificate credentials are a keypair, not a
+  string, and a cluster cannot revoke one — which conflicts with pamv1's
+  revoke-and-rotate model. Use a service-account token (ideally short-lived and
+  re-issued by your own automation into the vault).
+- **No discovery.** The API version is explicit (defaulting to `v1`) rather than
+  resolved from the cluster's discovery endpoints, so one operation is one
+  request, nothing caches staleness, and CRDs work immediately.
+- **One `k8s_token` per target** is what the broker uses; a target may still hold
+  `file` credentials (a kubeconfig kept for humans, a CA bundle) — they are never
+  sent as a bearer token.
+- **Not verified against a real cluster** in this environment — the mechanism is
+  proven end to end against an in-process API server that accepts only the
+  vaulted token; see [EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md).
+
+Audit: `k8s.run` (target, service account, the command, the cluster's status,
+the transcript + its hash), `k8s.denied` (target policy / vendor contract),
+`k8s.refused` (recording required), `k8s.error` (the call never got an answer),
+plus `command.blocked` and the usual `access.denied` from the shared gates.
 
 ### Outbound-only endpoint agents — reaching targets pamv1 cannot dial (Phase 153)
 
@@ -3439,6 +3543,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-16 | **Phase 155 — Kubernetes targets (discrete operations).** A new `kubernetes` target protocol (port defaults to 6443) whose credential is a vaulted service-account bearer token (`k8s_token`), and `POST /api/targets/{id}/kubectl` (`connect`) brokering one audited operation at a time: `get`, `logs`, `apply` (server-side apply, `fieldManager=pamv1`) and `delete`. Same gates as the WinRM REST twin (protocol policy, grants/safes, approval, vendor contract, session cap + registry), same command control (the canonical `kubectl …` line is what deny/allow patterns match), same transcript (`.k8s.log`, hash on the audit row), same withheld-result contract when the audit write fails. The cluster's own RBAC decides what the token may do; its refusal comes back as `status:403` in the envelope. New `PAM_K8S_CA_FILE` / `PAM_K8S_INSECURE_SKIP_VERIFY` / `PAM_K8S_TIMEOUT_SEC` / `PAM_K8S_MAX_RESPONSE_KB`. New audit family `k8s.*`. Console: *Work with Targets* option 6. `exec`/`attach`/`port-forward` (streaming), client-certificate credentials and API discovery are deliberate v1 exclusions. No schema change. **Not verified against a real cluster** — proven against an in-process API server that accepts only the vaulted token. See "Kubernetes clusters" under §6 |
 | 2026-08-16 | **Phase 153 — outbound-only endpoint agents (Jump Client-style reachability).** For targets pamv1 cannot dial into: a new `pam-agent` binary (Release assets `pam-agent_linux_{amd64,arm64}` + `SHA256SUMS`) dials OUT to the existing `:2222` listener as `endpoint-agent:<name>` with its own bearer key, holds an RFC 4254 reverse tunnel, and the proxy reaches the bound target through it — never dialing it. `PAM_ENDPOINT_AGENTS_ENABLED` (default off); `POST/GET /api/endpoint-agents`, `DELETE /api/endpoint-agents/{id}` (`manage_targets` to create/revoke, `read_inventory` to list); console menu 28. One live agent per target; revoke kicks the live tunnel; SSH targets only. New migration `0042` (`endpoint_agents`). New audit family `endpoint_agent.*` plus `via:endpoint-agent:<name>` on `session.start`. The agent pins pam-server's host key (`PAM_AGENT_SERVER_HOST_KEY`, required), exposes exactly one local address, may open nothing toward pamv1, and lists every replica in HA. Proven end to end against a real upstream sshd through the tunnel; not verified across a real NAT. See "Outbound-only endpoint agents" under §6 |
 | 2026-08-16 | **Phase 151 — SAML 2.0 single sign-on (Service Provider).** For IdPs with no OIDC endpoint (on-prem AD FS, SAML-only Okta/OneLogin/Entra apps): SP-initiated Web Browser SSO — `GET /api/auth/saml/start` (AuthnRequest, HTTP-Redirect), `POST /api/auth/saml/acs` (the IdP's signed Response, HTTP-POST), `GET /api/auth/saml/metadata` (the SP descriptor an IdP admin imports). `PAM_SAML_SP_URL` enables it (presence, like `PAM_OIDC_ISSUER`); IdP metadata from `PAM_SAML_IDP_METADATA_URL` or `_FILE`; group/role attribute → role via `PAM_SAML_ROLE_*`; optional `PAM_SAML_SP_KEY_FILE`/`_CERT_FILE` sign AuthnRequests and accept encrypted assertions; `PAM_SAML_NAME_ATTR`/`_GROUP_ATTR` pick the attributes. Hot-swappable except the three `_FILE` paths; `PAM_OT_AIRGAP` refuses the metadata URL. XML-DSig verification is delegated to a well-audited library (the WebAuthn precedent — see PROTOCOLS-AND-CRYPTO.md §"SAML"). Login state rides the same single-use store the OIDC flow uses, so the ACS can land on any replica. Login audited as `login … via:saml`. No schema change. **Not verified against a live IdP** — proven against a real in-process SAML IdP instead. See the "SAML 2.0 single sign-on" section above |
 | 2026-08-16 | **Phase 149 — SCIM 2.0 user provisioning.** New `/scim/v2/Users` (RFC 7643/7644), authenticated by a new non-human `ScimKey` bearer identity (`POST /v1/scim-keys`, `manage_users` to mint), never a human principal — every SCIM-provisioned user gets the fixed `user` role, no way to request more. `store.User` gains `ExternalID` and `Active`; deactivating (`PATCH active:false` or `DELETE`, which is a soft-delete) now actually blocks that user's local token from authenticating, not just a flag — proven end to end. Reactivation restores the same token, nothing re-minted. Complements the existing pull-based `POST /api/identity/reconcile`. `PAM_SCIM_ENABLED` (default off). **Not interactively verified against a real IdP** — no Okta/Azure AD/OneLogin account in this environment; both RFC 7644's standard `PATCH` shape and Azure AD's documented no-path variant are implemented and tested against a fake. See §7 |

@@ -5,19 +5,23 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
 var (
-	validOS       = map[string]bool{"linux": true, "windows": true}
-	validProtocol = map[string]bool{"ssh": true, "winrm": true, "rdp": true, "vnc": true, "postgres": true, "mssql": true}
+	validOS = map[string]bool{"linux": true, "windows": true}
+	// "kubernetes" (Phase 155) is a cluster's API server rather than a host:
+	// there is no session to proxy, only discrete, audited kubectl-shaped
+	// operations over POST /api/targets/{id}/kubectl.
+	validProtocol = map[string]bool{"ssh": true, "winrm": true, "rdp": true, "vnc": true, "postgres": true, "mssql": true, "kubernetes": true}
 	// "ssh_ca" and "db_zsp" are Zero Standing Privilege credentials (Phase 22,
 	// extended to databases in Phase 129): neither stores a secret — the proxy
 	// mints a short-lived certificate, or provisions-and-drops an ephemeral
 	// database role, just-in-time instead.
-	validSecret = map[string]bool{store.SecretTypePassword: true, store.SecretTypeSSHKey: true, store.SecretTypeSSHCA: true, store.SecretTypeDBZSP: true, store.SecretTypeFile: true}
+	validSecret = map[string]bool{store.SecretTypePassword: true, store.SecretTypeSSHKey: true, store.SecretTypeSSHCA: true, store.SecretTypeDBZSP: true, store.SecretTypeFile: true, store.SecretTypeK8sToken: true}
 )
 
 // validOverride reports whether v is "" (inherit) or a mode the rank map knows.
@@ -56,7 +60,13 @@ type targetIn struct {
 // reports whether the input passed.
 func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
 	if in.Port == 0 {
+		// 22 is the historical default (this started as an SSH-only vault);
+		// a Kubernetes API server is 6443, and defaulting it to 22 would only
+		// ever produce a connection refused on the first brokered call.
 		in.Port = 22
+		if in.Protocol == "kubernetes" {
+			in.Port = 6443
+		}
 	}
 	switch {
 	case in.Host == "":
@@ -68,7 +78,7 @@ func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
 	case !validOS[in.OSType]:
 		writeError(w, http.StatusUnprocessableEntity, `os_type must be "linux" or "windows"`)
 	case !validProtocol[in.Protocol]:
-		writeError(w, http.StatusUnprocessableEntity, `protocol must be "ssh", "winrm", "rdp", "vnc", "postgres" or "mssql"`)
+		writeError(w, http.StatusUnprocessableEntity, `protocol must be "ssh", "winrm", "rdp", "vnc", "postgres", "mssql" or "kubernetes"`)
 	case !s.protocolAllowed(in.Protocol):
 		writeError(w, http.StatusUnprocessableEntity, "protocol "+in.Protocol+" is not allowed by policy")
 	case !validOverride(clipboardRank, in.RDPClipboard):
@@ -138,21 +148,21 @@ func (s *Server) updateTarget(w http.ResponseWriter, r *http.Request) {
 	if !s.validateTargetIn(w, &in) {
 		return
 	}
-	// An ssh_ca (Zero Standing Privilege) credential is only ever created on an
-	// ssh target (createCredential enforces it); mirror that here so a protocol
-	// change can't strand one on a target that can no longer serve it — the SSH
-	// proxy is the only path that mints its certificate JIT.
-	if in.Protocol != "ssh" {
-		// hasZSPCredential only checks SecretType, so metadata-only is enough.
-		creds, err := s.store.ListCredentialsMeta(r.Context(), id, 0, 0)
-		if err != nil {
-			storeError(w, err)
-			return
-		}
-		if hasZSPCredential(creds) {
-			writeError(w, http.StatusUnprocessableEntity, "target has an ssh_ca (zero standing privilege) credential; it must stay an ssh target")
-			return
-		}
+	// A protocol-bound credential (ssh_ca, db_zsp, k8s_token) is only ever
+	// created on a target whose protocol can serve it (createCredential
+	// enforces it); mirror that here, through the SAME table, so an edit
+	// cannot strand one on a target no code path can serve it from.
+	// Metadata-only is enough — the rule reads SecretType, never a secret.
+	creds, err := s.store.ListCredentialsMeta(r.Context(), id, 0, 0)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	if c := strandedByProtocol(creds, in.Protocol); c != nil {
+		writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf(
+			"target has a %s credential (id %d); it is only valid on %s targets",
+			c.SecretType, c.ID, strings.Join(protocolsFor(c.SecretType), " or ")))
+		return
 	}
 	t := targetFromIn(in)
 	t.ID = id
