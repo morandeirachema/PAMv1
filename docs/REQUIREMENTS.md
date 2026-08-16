@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-08-16 · Reflects: Phases 0–149. Phases 66–70 add one more
+> Last updated: 2026-08-16 · Reflects: Phases 0–151. Phases 66–70 add one more
 > background worker (the hourly, leader-locked certification scheduler); Phase 78
 > adds an optional per-replica Conjur refresh worker (off unless
 > `PAM_CONJUR_REFRESH_MIN` is set); 71–94 add no port, resource floor or
@@ -74,6 +74,16 @@
 > the existing `:8080` listener; the only new runtime dependency, when
 > enabled, is a SCIM-speaking IdP to push requests from, which you must
 > supply.
+> **Phase 151 adds twelve env vars** (`PAM_SAML_SP_URL` enables; `_IDP_METADATA_URL`/`_FILE`,
+> `_SP_ENTITY_ID`, `_SP_KEY_FILE`/`_SP_CERT_FILE`, `_NAME_ATTR`, `_GROUP_ATTR`,
+> `_ROLE_ADMIN`/`_USER`/`_AUDITOR`/`_APPROVER`) and no new worker, port or
+> resource floor — the SAML SP is three routes on the existing `:8080`, and
+> the only outbound call is one metadata fetch at startup/hot-swap (none with
+> the `_FILE` form). The runtime dependency, when enabled, is a SAML 2.0 IdP
+> (AD FS, Okta, OneLogin, an Entra SAML app) that you must supply and
+> register pamv1's SP metadata with. Three new Go dependencies
+> (`crewjam/saml`, `russellhaering/goxmldsig`, `beevik/etree`) are compiled
+> in — no runtime library, no CGO.
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** These are the
 > specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate

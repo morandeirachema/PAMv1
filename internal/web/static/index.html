@@ -147,7 +147,7 @@
   let apiKey = sessionStorage.getItem("pam_api_key") || "";
   let me = null; // { name, role, break_glass, capabilities:[] }
 
-  // Pick up a token/error handed back by the OIDC callback in the URL fragment.
+  // Pick up a token/error handed back by the OIDC callback or the SAML ACS in the URL fragment.
   let ssoMsg = "", ssoErr = false;
   if (location.hash.length > 1) {
     const h = new URLSearchParams(location.hash.slice(1));
@@ -989,7 +989,8 @@
 users: leave Password blank and enter the access token. WebAuthn-enrolled
 users: leave the MFA code blank — your browser prompts for your key. Press
 Enter to sign on.
-Single sign-on (OIDC): <a href="/api/auth/oidc/start" style="color:#4be0e0">/api/auth/oidc/start</a></div>
+Single sign-on (OIDC): <a href="/api/auth/oidc/start" style="color:#4be0e0">/api/auth/oidc/start</a>
+Single sign-on (SAML): <a href="/api/auth/saml/start" style="color:#4be0e0">/api/auth/saml/start</a></div>
 ${fkeys("")}
 <div class="red indent">UNAUTHORIZED USE OF THIS SYSTEM IS PROHIBITED AND AUDITED.</div>`;
         document.getElementById("f-signon").onsubmit = async (ev) => {
@@ -2421,6 +2422,7 @@ Live status of the identity / SSO / policy backends (read-only).
 <div class="indent">
 Password login (AD) . . :  ${flag(b.password_login)}
 OIDC single sign-on . . :  ${flag(b.oidc_login)}
+SAML single sign-on . . :  ${flag(b.saml_login)}
 Directory reconcile . . :  ${flag(b.directory_reconcile)}
 MFA required  . . . . . :  ${flag(b.mfa_required)}
 Reveal disabled . . . . :  ${flag(b.reveal_disabled)}

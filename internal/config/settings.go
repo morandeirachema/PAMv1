@@ -92,6 +92,19 @@ var settingSpecs = []setting{
 	{Key: "PAM_OIDC_ROLE_USER", apply: applyStr(func(c *Config, v string) { c.OIDCRoleUser = v })},
 	{Key: "PAM_OIDC_ROLE_AUDITOR", apply: applyStr(func(c *Config, v string) { c.OIDCRoleAuditor = v })},
 	{Key: "PAM_OIDC_ROLE_APPROVER", apply: applyStr(func(c *Config, v string) { c.OIDCRoleApprover = v })},
+	// PAM_SAML_IDP_METADATA_FILE / PAM_SAML_SP_KEY_FILE / PAM_SAML_SP_CERT_FILE are
+	// deliberately NOT overridable: they name files on the server's own host, and
+	// a stored setting must never be able to make the server read one — the
+	// same env/IaC-only line the module draws for transport settings.
+	{Key: "PAM_SAML_SP_URL", apply: applyStr(func(c *Config, v string) { c.SAMLSPURL = v })},
+	{Key: "PAM_SAML_SP_ENTITY_ID", apply: applyStr(func(c *Config, v string) { c.SAMLSPEntityID = v })},
+	{Key: "PAM_SAML_IDP_METADATA_URL", apply: applyStr(func(c *Config, v string) { c.SAMLIDPMetadataURL = v })},
+	{Key: "PAM_SAML_NAME_ATTR", apply: applyStr(func(c *Config, v string) { c.SAMLNameAttr = v })},
+	{Key: "PAM_SAML_GROUP_ATTR", apply: applyStr(func(c *Config, v string) { c.SAMLGroupAttr = v })},
+	{Key: "PAM_SAML_ROLE_ADMIN", apply: applyStr(func(c *Config, v string) { c.SAMLRoleAdmin = v })},
+	{Key: "PAM_SAML_ROLE_USER", apply: applyStr(func(c *Config, v string) { c.SAMLRoleUser = v })},
+	{Key: "PAM_SAML_ROLE_AUDITOR", apply: applyStr(func(c *Config, v string) { c.SAMLRoleAuditor = v })},
+	{Key: "PAM_SAML_ROLE_APPROVER", apply: applyStr(func(c *Config, v string) { c.SAMLRoleApprover = v })},
 	{Key: "PAM_REQUIRE_APPROVAL", apply: applyBool(func(c *Config, b bool) { c.RequireApproval = b })},
 	{Key: "PAM_APPROVAL_WINDOW_MIN", apply: applyMinutes(func(c *Config, d time.Duration) { c.ApprovalWindow = d })},
 	{Key: "PAM_MFA_REQUIRED", apply: applyBool(func(c *Config, b bool) { c.MFARequired = b })},
