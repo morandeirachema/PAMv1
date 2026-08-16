@@ -2427,7 +2427,7 @@ one new capability. No schema change.
 - [x] **v0.37.0** through the test-gated pipeline, rehearsed on `main` first.
   Published 2026-08-16 as `ghcr.io/morandeirachema/pamv1:0.37.0` (also
   `latest`), digest
-  `sha256:PENDING`,
+  `sha256:ec18cf8018f2d6f05cc2ba3aca085a16793d401f15c9471f0eff6a0d4647f464`,
   **public** (anonymous pull 200, verified via the GHCR anonymous
   token-exchange flow)
 - [x] All five pins via the sweep; Helm chart `version` 0.27.0 -> **0.28.0**
