@@ -1213,6 +1213,7 @@ func run() error {
 		},
 		PasswordHistoryCount: cfg.PasswordHistoryCount,
 		CredentialFileMaxKB:  cfg.CredentialFileMaxKB,
+		ExtensionTokenTTL:    time.Duration(cfg.ExtensionTokenTTLHours) * time.Hour,
 		BrokerMaxDelegation:  cfg.BrokerMaxDelegation,
 		CA:                   sshCA,
 		SSHOperatorCertTTL:   cfg.SSHOperatorCertTTL,
