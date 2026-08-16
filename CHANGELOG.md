@@ -9,6 +9,40 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.39.0] — 2026-08-16
+
+A minor: one new capability. No schema change.
+
+### Added
+
+- **SAML 2.0 single sign-on (Service Provider).** pamv1 can act as a SAML
+  SP in the SP-initiated Web Browser SSO profile, for identity providers
+  that speak SAML but not OIDC — on-prem AD FS above all, plus SAML-only
+  Okta/OneLogin/Entra applications. New routes `GET /api/auth/saml/start`
+  (AuthnRequest, HTTP-Redirect), `POST /api/auth/saml/acs` (the IdP's
+  signed Response, HTTP-POST) and `GET /api/auth/saml/metadata` (the SP
+  descriptor an IdP administrator imports). `PAM_SAML_SP_URL` enables it;
+  IdP metadata from `PAM_SAML_IDP_METADATA_URL` or `_FILE`; group/role
+  attribute values map to roles via `PAM_SAML_ROLE_*`; optional
+  `PAM_SAML_SP_KEY_FILE`/`_CERT_FILE` sign AuthnRequests and accept
+  encrypted assertions. Wired exactly like OIDC (hot-swappable, same role
+  mapper, same portal landing); the AuthnRequest ID reuses the existing
+  single-use OIDC-state table, so no migration. XML-DSig verification is
+  delegated to `crewjam/saml` + `goxmldsig` — the second deliberate
+  crypto-verification library exception after WebAuthn, reasoned in
+  ROADMAP.md (Phase 151). Proven against a real in-process SAML IdP,
+  including tampered, stripped, wrong-audience/issuer, expired and
+  signature-wrapped Responses; interop with a live IdP is not verified.
+
+### Changed
+
+- The OIDC callback now refuses a login-state row that belongs to the SAML
+  flow (cross-protocol guard on the shared single-use table).
+- `PAM_OT_AIRGAP` additionally refuses `PAM_SAML_IDP_METADATA_URL`; use
+  `PAM_SAML_IDP_METADATA_FILE` inside the enclave.
+- New direct Go dependencies: `github.com/crewjam/saml`,
+  `github.com/russellhaering/goxmldsig`, `github.com/beevik/etree`.
+
 ## [0.38.0] — 2026-08-16
 
 A minor: one new capability.
