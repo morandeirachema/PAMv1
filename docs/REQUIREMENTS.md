@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-08-15 · Reflects: Phases 0–145. Phases 66–70 add one more
+> Last updated: 2026-08-16 · Reflects: Phases 0–147. Phases 66–70 add one more
 > background worker (the hourly, leader-locked certification scheduler); Phase 78
 > adds an optional per-replica Conjur refresh worker (off unless
 > `PAM_CONJUR_REFRESH_MIN` is set); 71–94 add no port, resource floor or
@@ -64,6 +64,11 @@
 > max 10240) and no new worker, port or external dependency — a file-attachment
 > secret is capped in KB, not MB, so its per-request memory footprint stays
 > well inside the resource requests already sized for this workload.
+> **Phase 147 adds one env var** (`PAM_EXTENSION_TOKEN_TTL_HOURS`, default 24,
+> range 1–720) and no new worker, port or resource floor — an extension token
+> is one more row in the existing `sessions` table, not a standing cost; the
+> only new runtime dependency is the browser extension itself, which is not
+> part of `pam-server` and has no server-side resource footprint.
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** These are the
 > specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate

@@ -415,6 +415,13 @@ type Config struct {
 	// storage class defaults to a sane ceiling from day one rather than
 	// opening one up that has to be dialed back later.
 	CredentialFileMaxKB int
+	// ExtensionTokenTTLHours bounds how long a browser-extension autofill
+	// token (Phase 147, PAM_EXTENSION_TOKEN_TTL_HOURS) stays valid before its
+	// holder must mint a new one from the portal. Default 24h: long enough to
+	// survive a workday of page loads without asking a user to re-mint
+	// constantly, short enough that a token pulled from a compromised
+	// endpoint's local storage has a bounded, forensically legible window.
+	ExtensionTokenTTLHours int
 	// ConjurRefreshMin is how often, in minutes, the refreshable bootstrap
 	// secrets are re-read from Conjur (0 = off, the default). Only the secrets
 	// that can be adopted by a running server are refreshed; see internal/conjur.
@@ -736,6 +743,7 @@ func Load() (*Config, error) {
 		PasswordMinSymbol:      integer("PAM_PASSWORD_MIN_SYMBOL", 1),
 		PasswordHistoryCount:   integer("PAM_PASSWORD_HISTORY_COUNT", 0),
 		CredentialFileMaxKB:    integer("PAM_CREDENTIAL_FILE_MAX_KB", 1024),
+		ExtensionTokenTTLHours: integer("PAM_EXTENSION_TOKEN_TTL_HOURS", 24),
 		ConjurRefreshMin:       integer("PAM_CONJUR_REFRESH_MIN", 0),
 		BrokerMaxArgBytes:      integer("PAM_BROKER_MAX_ARG_BYTES", 16384),
 		BrokerRatePerMin:       integer("PAM_BROKER_RATE_PER_MIN", 0),
@@ -951,6 +959,13 @@ func Load() (*Config, error) {
 	// short document and still nowhere near "general file storage."
 	if cfg.CredentialFileMaxKB < 1 || cfg.CredentialFileMaxKB > 10240 {
 		errs = append(errs, "PAM_CREDENTIAL_FILE_MAX_KB must be between 1 and 10240")
+	}
+	// A 30-day ceiling is generous for "set it up once, use it for weeks" —
+	// unlike the checkout-extension ceiling above, this token is meant to
+	// outlive a single task, but it is still a bearer credential sitting in
+	// an endpoint's local storage, so it does not get to be truly unbounded.
+	if cfg.ExtensionTokenTTLHours < 1 || cfg.ExtensionTokenTTLHours > 720 {
+		errs = append(errs, "PAM_EXTENSION_TOKEN_TTL_HOURS must be between 1 and 720")
 	}
 	// A checkout is meant to stay time-boxed even when extended, so the ceiling
 	// itself is bounded — a week is generous for any legitimate maintenance

@@ -9,13 +9,13 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-08-15 · Reflects: Phases 0–145 + the 2026-07 hardening
+> Last updated: 2026-08-16 · Reflects: Phases 0–147 + the 2026-07 hardening
 > passes, including the **post-beta sweep of 2026-07-27** (thirty findings, all
 > closed), the **sweep of 2026-08-07** over phases 56–61a (nine findings: two
 > closed by Phase 62, six by Phase 63, half of one withdrawn as a false
 > positive), the **per-phase reviews of 56–61a**, and the **2026-08-12 audit
 > sweep** (two findings, both closed by Phase 108) — the section immediately
-> below. **Nothing since has added a new self-audit finding here** — 109–145
+> below. **Nothing since has added a new self-audit finding here** — 109–147
 > are feature phases, not review sweeps; their security-relevant properties are
 > described where they ship ([ADMIN-GUIDE.md](ADMIN-GUIDE.md),
 > [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md)) rather than re-audited
