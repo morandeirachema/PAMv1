@@ -2428,9 +2428,10 @@ mark stays `0042`).
 
 - [x] **v0.41.0** through the test-gated pipeline, rehearsed on `main` first.
   Published 2026-08-16 as `ghcr.io/morandeirachema/pamv1:0.41.0` (also
-  `latest`), digest `PENDING` (recorded once the tag's publish workflow has
-  run and the anonymous pull is verified), with the `pam-agent` binaries
-  attached as in v0.40.0
+  `latest`), digest
+  `sha256:0daa9ff20cca77a253c5f3b26c7bdb3abf1009039c8966589aa168fa5f408ce7`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow), with the `pam-agent` binaries attached as in v0.40.0
 - [x] All five pins via the sweep; Helm chart `version` 0.31.0 -> **0.32.0**
   (minor, alongside the `appVersion` minor)
 - [x] Both READMEs restated (the Tier-6 parity table row already landed in
