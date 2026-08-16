@@ -319,6 +319,14 @@ func IsViewerScope(scope string) bool {
 	return scope == SessionScopeRDP || scope == SessionScopeVNC
 }
 
+// SessionScopeExtension marks a token minted for the browser-extension
+// autofill client (Phase 147). It travels in the extension's own local
+// storage rather than a URL, so unlike the viewer scopes above it can live
+// for hours or days, not seconds — but the same "narrow purpose, broad
+// refusal" shape applies: it resolves to an ExtensionOnly principal, refused
+// on every route except the one the extension actually needs.
+const SessionScopeExtension = "extension"
+
 // CapSet is a resolved set of capabilities (used for custom profiles).
 type CapSet map[Capability]bool
 
@@ -337,6 +345,14 @@ type Principal struct {
 	EnrollOnly bool   // session may only complete MFA enrollment, nothing else
 	TunnelOnly bool   // token minted for the RDP tunnel only; API middleware refuses it
 	MFAPending bool   // password verified, awaiting a WebAuthn second factor; nothing else
+	// ExtensionOnly marks a token minted for the browser extension (Phase
+	// 147): unlike TunnelOnly, it is not a blanket refusal everywhere — the
+	// reveal route specifically admits it (see the api package's authzExtOK),
+	// where Can(cap) still applies normally, since the token inherits the
+	// minting user's own role/capabilities. Every OTHER authenticated route
+	// refuses it exactly like TunnelOnly, so a token that leaked from an
+	// endpoint's local storage cannot do anything but reveal.
+	ExtensionOnly bool
 	// IPAllowlist restricts this principal to connecting from a source address
 	// inside one of these comma-separated CIDR blocks (Phase 118), e.g.
 	// "10.0.0.0/8, 192.168.1.0/24". Empty (the default) means unrestricted —
@@ -709,6 +725,7 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (*Principal, error) 
 				p.Roles = SplitRoles(s.Roles) // restore the multi-group union
 				p.TunnelOnly = IsViewerScope(s.Scope)
 				p.MFAPending = s.Scope == SessionScopeMFAPending
+				p.ExtensionOnly = s.Scope == SessionScopeExtension
 			}
 			return p, perr
 		}

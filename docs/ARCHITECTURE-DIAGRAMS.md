@@ -492,7 +492,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 162 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 163 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -551,6 +551,7 @@ The 162 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/credentials/{id}/reveal` | CapRevealSecret |
 | POST | `/api/credentials/{id}/rotate` | CapManageCredentials |
 | POST | `/api/discovery/scan` | CapManageTargets |
+| POST | `/api/extension-token` | CapRevealSecret |
 | POST | `/api/identity/reconcile` | CapManageUsers |
 | POST | `/api/login` | public (rate-limited) |
 | GET | `/api/login-sessions` | CapManageUsers |

@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-15 · Reflects: Phases 0–145 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-16 · Reflects: Phases 0–147 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -489,6 +489,69 @@ curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/credentials/
   update-secret route for any secret type (only `rotate`, which generates a
   fresh random value — meaningless for an uploaded file); replacing a file
   attachment means deleting the credential and creating a new one.
+
+### Browser-extension password autofill (Phase 147)
+
+A real Manifest V3 extension — `extension/` in the repo root, outside
+`internal/`, with its own [setup README](../extension/README.md) — fills a
+login form from a credential vaulted in pamv1. It closes Delinea's Web
+Password Filler / BeyondTrust's Workforce Passwords gap by calling the
+*existing*, already-audited `POST /api/credentials/{id}/reveal` — the same
+route the portal itself uses — rather than opening any new way to get a
+secret out of the vault.
+
+**Minting a token.** Anyone holding `reveal_secret` can mint one for
+themselves:
+
+```bash
+curl -H "X-API-Key: $PAM_API_KEY_OR_USER_TOKEN" -X POST http://localhost:8080/api/extension-token
+# → {"token":"...", "expires_at":"..."}
+```
+
+The token is pasted into the extension's own settings page (toolbar icon →
+Settings). It is **not** a general-purpose API key:
+
+- **Refused on every route except reveal.** The token resolves to an
+  `ExtensionOnly` principal — structurally similar to an RDP/VNC viewer
+  token's `TunnelOnly`, but narrower: where a viewer token is refused
+  *everywhere*, an extension token is refused everywhere *except*
+  `POST /api/credentials/{id}/reveal`. A copy pulled from the extension's
+  local storage cannot list credentials, list targets, connect to
+  anything, or mint another token.
+- **Inherits the minting user's own access — nothing more.** The token
+  carries the same role/capabilities as whoever minted it, so
+  `reveal_secret` plus every existing grant, safe membership and approval
+  requirement (`gateCredentialAccess`) still applies exactly as it does to
+  a normal reveal. Minting one for a user who could never reveal a secret
+  is refused up front, not just discovered on first use.
+- **`PAM_EXTENSION_TOKEN_TTL_HOURS`** (default `24`, range 1–720) bounds
+  how long it stays valid. Unlike an RDP/VNC token (60 seconds, since it
+  travels in a WebSocket URL), this one lives in the extension's own
+  browser storage across many page loads, so it needs to survive longer —
+  but it is still a bearer credential sitting on an endpoint, so it is not
+  unbounded either. Once it expires, reveal returns 401 and the user mints
+  a new one; there is no renew-in-place.
+- **Every reveal is still audited** (`credential.reveal`), with a
+  `via:extension` detail marker distinguishing it from a portal/API
+  reveal — nothing about the audit trail changes except that one marker.
+
+**What the extension cannot do (v1 scope).** It only reads a vaulted
+secret and fills a form — no credential capture, no write-back to pamv1.
+It also has **no way to browse your vault**: there is no route that lists
+credentials for an extension-scoped token, so a user manually maps one
+hostname to one credential ID in the extension's own settings (which
+credential IDs to use come from the portal or `GET /api/credentials`, a
+normal admin/reveal-capable action, not something the extension itself
+can discover).
+
+> ⚠️ **Not interactively verified against a real browser in this
+> environment** — no GUI browser was available to load the unpacked
+> extension. Every JS file is syntax-checked and `manifest.json` is
+> JSON-validated, and the code follows well-established Manifest V3
+> password-manager patterns, but treat this the same way as any
+> unverified-infrastructure finding elsewhere in this project (see
+> [EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md)): test it against your
+> own browser before relying on it.
 
 ### Rotation & reconciliation (credential lifecycle)
 
@@ -3118,6 +3181,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-16 | **Phase 147 — browser-extension password autofill.** New `extension/` (Manifest V3) calls the existing `POST /api/credentials/{id}/reveal` with a new `POST /api/extension-token`-minted bearer token (`CapRevealSecret` required to mint) that inherits the caller's own role/capabilities but is refused on every route except reveal — a new `ExtensionOnly` principal flag, narrower than the RDP/VNC viewer scope's blanket refusal. `PAM_EXTENSION_TOKEN_TTL_HOURS` (default 24, max 720). Reveal audits gain a `via:extension` marker; new audit action `extension.token_issued`. No schema change, no way for the extension to browse the vault (one hostname → one credential ID, configured manually). **Not interactively verified against a real browser** — no GUI browser in this environment; JS syntax-checked, manifest JSON-validated. See §6 |
 | 2026-08-15 | **Phase 145 — generic file-attachment secrets.** New `secret_type: "file"` for license keys, cert bundles and short documents — the same `POST /api/credentials` route and `vault.Encrypt`/`Decrypt` pathway every other secret type already uses, base64-encoded by the client. `PAM_CREDENTIAL_FILE_MAX_KB` (default 1024, max 10240, never "0 = unlimited") refuses an over-cap upload before it is ever encrypted or a row inserted. No schema change (`secret_type` is a plain `TEXT` column) and no new REST surface. **A near-miss along the way**: the plan's own stated fix — stop `ListCredentials` from selecting `secret_enc`, since it's `json:"-"` — passed a store-layer contract test and then broke the PostgreSQL session proxy's real JIT credential injection, because `dbproxy.go`'s `lookupTargetCred` deliberately lists first and decrypts from the result afterward, so every gate can run before any plaintext exists; a repo-wide check found nine such internal callers (also `-rotate-kek`, the lifecycle reconciler, the RDP/VNC viewer, REST WinRM, the broker's exec tools). Fixed by leaving `ListCredentials` untouched and adding a separate `ListCredentialsMeta` for the four callers that never touch the secret (the REST list endpoint among them). See §6 |
 | 2026-08-15 | **Phase 143 — ICAP-based file-transfer scanning.** `PAM_ICAP_URL` (`icap://host[:port]/service`) submits every finalized SFTP transfer's captured bytes whole to an ICAP RESPMOD service (c-icap, or any commercial AV/DLP gateway that speaks ICAP) for scanning — new `internal/icap` package, a minimal RFC 3507 client (one connection per scan, no OPTIONS/Preview/keep-alive, deliberately no encapsulated req-hdr to avoid embedding an attacker-influenced remote path into a hand-built wire header). **Detection, not prevention**: by the time a whole-object scan can run, an upload has already reached the target and a download has already reached the operator — proven end-to-end by a test where an unreachable ICAP server still lets the transfer through. A flagged file audits `sftp.icap_flagged` (naming the vendor's own reason); a scan failure audits `sftp.icap_scan_failed`; a capped or broken capture is skipped, not scanned incomplete (`sftp.icap_skipped`). Requires `PAM_SSH_SFTP_CAPTURE` enabled and `PAM_SSH_SFTP_CAPTURE_MAX_MB` set — the same cap that bounds the disk artifact also bounds the in-memory scan buffer. Joins the `PAM_OT_AIRGAP` conflict list. No schema change. See §9.4 |
 | 2026-08-15 | **Phase 141 — raw TCP port-forwarding, same-target only.** A client-initiated `direct-tcpip` channel (`ssh -L`) is admitted only to the connected target's own host — any port, since the target's own configured port is its SSH port, not the service the operator actually wants to reach — closing what would otherwise be an SSRF pivot into the target's network; a different host is refused (`forward.refused reason:not-same-host`) before the upstream is ever asked to dial it. `localhost`/`127.0.0.1`/`::1` count as the target too, since the forward dials out through the already-authenticated upstream connection. Always refused in an observer session, or while `PAM_REQUIRE_LIVE_SUPERVISION`/`PAM_REQUIRE_RECORDING` are set — none of those mechanisms cover a raw, unrecordable byte stream. `PAM_SSH_PORT_FORWARD` (default true) turns the whole feature off. New audit actions `forward.start`/`forward.end`/`forward.refused`; no schema change. See §9.4 |

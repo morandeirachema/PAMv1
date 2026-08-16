@@ -177,8 +177,16 @@ func (s *Server) revealCredential(w http.ResponseWriter, r *http.Request) {
 		writeDoubleLockError(w, err)
 		return
 	}
+	// via:extension (Phase 147) is appended, never client-controlled, when
+	// the caller authenticated with a browser-extension token — the same
+	// route, same handler, same gates, but the audit trail says which door
+	// the reveal came through.
+	detail := fmt.Sprintf("credential:%d target:%d user:%s", c.ID, c.TargetID, c.Username)
+	if principalFrom(r.Context()).ExtensionOnly {
+		detail += " via:extension"
+	}
 	// Fail closed: the reveal must be durably audited before the secret leaves.
-	if !s.mustAudit(w, r.Context(), "credential.reveal", fmt.Sprintf("credential:%d target:%d user:%s", c.ID, c.TargetID, c.Username)) {
+	if !s.mustAudit(w, r.Context(), "credential.reveal", detail) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

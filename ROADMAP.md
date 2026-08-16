@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–146 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–147 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,87 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 147 — Browser-extension password autofill ✅
+
+Ninth phase of the BeyondTrust/Delinea/Teleport/StrongDM batch. Closes
+Delinea's Web Password Filler / BeyondTrust's Workforce Passwords
+equivalent — by reusing pamv1's own already-audited reveal path rather
+than opening any new secrets-disclosure surface, honoring this project's
+"secrets never leave as data... except via the audited reveal path"
+invariant instead of working around it.
+
+**A real Manifest V3 extension** (`extension/` — `manifest.json`,
+`background.js`, `content.js`, `options.html`/`options.js`, its own
+README), not a stub. It calls the *existing*
+`POST /api/credentials/{id}/reveal` — the identical route and handler the
+portal itself uses — with a new bearer-token shape minted specifically for
+this purpose. **Not interactively verified against a real browser in this
+environment** (no GUI browser available to load an unpacked extension in):
+every JS file is syntax-checked (`node --check`) and `manifest.json`
+JSON-validated, and the code closely follows well-established MV3
+password-manager patterns (native-setter field writes so
+framework-managed forms notice the fill, a debounced `MutationObserver`
+for SPA login forms, `host_permissions: ["<all_urls>"]` since a password
+filler has to work on any site the user visits) — but this is a real,
+documented verification gap, not a "should be fine" hand-wave, catalogued
+alongside RDP/guacd's own unverified-infrastructure precedent from
+Phase 129.
+
+**Design: a new session scope, narrower than TunnelOnly, not just another
+copy of it.** `auth.SessionScopeExtension` resolves to a new
+`Principal.ExtensionOnly bool` — but unlike `TunnelOnly` (RDP/VNC's
+viewer-tunnel scope, a blanket refusal with **zero** exceptions anywhere
+in the API middleware), an extension token needs exactly **one**
+exception: the reveal route. Building that exception cleanly, without
+duplicating `authz`'s ~40-line checklist (source-IP, device, posture,
+`Can(cap)` — Phase 133's own gates, refactored once and shared everywhere
+since), meant extracting the shared body into a new private `authzCore(cap,
+allowExtension bool, next)`, with `authz` and a new `authzExtOK` as thin
+wrappers over it. `authzExtOK` is wired at exactly one route,
+`POST /api/credentials/{id}/reveal`; every other route keeps plain
+`authz`, which now also blanket-refuses `ExtensionOnly` the same way it
+already refuses `TunnelOnly`/`MFAPending`/`EnrollOnly` — and
+`authenticated` (the capability-free sibling covering `/me`, `/logout`,
+...) gained the identical refusal, since no route reachable through it is
+the reveal endpoint either.
+
+**The token inherits the minting user's own role and capabilities** —
+deliberately, mirroring exactly how an RDP/VNC viewer token already works
+(`issueSessionTTL`): `Can(auth.CapRevealSecret)` still runs normally at
+the reveal route for an extension-scoped principal, so a user who could
+never reveal a secret cannot mint a usable token in the first place
+(`POST /api/extension-token` itself requires `CapRevealSecret`), and one
+who could still goes through `revealCredential`'s own existing
+`gateCredentialAccess` (grants ∪ safes, four-eyes approval) exactly as a
+normal reveal does — nothing about being an extension token bypasses that.
+The reveal audit detail gains a non-client-controlled `via:extension`
+marker so the trail says which door a reveal came through, without a new
+action name.
+
+**`PAM_EXTENSION_TOKEN_TTL_HOURS`** (default 24, range 1–720) is
+deliberately hours-to-days, not `rdpTokenTTL`'s 60 seconds: an RDP/VNC
+token travels in a WebSocket URL and exists only for one connection's
+setup, while an extension token lives in the browser's own local storage
+and has to survive many page loads across a workday — but it is still a
+bearer credential sitting on an endpoint, so it is not unbounded either.
+
+**V1 scope**, matching the plan exactly: autofill only — read the vaulted
+secret, fill a login form. No credential capture or write-back from the
+browser (a materially different, riskier feature, not attempted here). No
+automatic "which credential belongs to this site" discovery either: the
+extension has no route that lists credentials, so a user manually maps
+one hostname to one credential ID in Settings — a real, honest v1
+limitation, not an oversight.
+
+**Critical files:** `internal/auth/auth.go` (`SessionScopeExtension`,
+`Principal.ExtensionOnly`), `internal/api/server.go` (`authzCore`,
+`authzExtOK`, the `authenticated` refusal, the new route),
+`internal/api/extension_handlers.go` (new — `extensionToken`),
+`internal/api/credentials.go` (the `via:extension` audit marker),
+`internal/config/config.go` (`PAM_EXTENSION_TOKEN_TTL_HOURS`), new
+`internal/api/extension_test.go` (the load-bearing proof: a minted token
+is refused on every route but reveal), new `extension/` directory.
 
 ## Phase 146 — v0.36.0 ✅
 
