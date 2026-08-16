@@ -1212,6 +1212,7 @@ func run() error {
 			MinUpper: cfg.PasswordMinUpper, MinDigit: cfg.PasswordMinDigit, MinSymbol: cfg.PasswordMinSymbol,
 		},
 		PasswordHistoryCount: cfg.PasswordHistoryCount,
+		CredentialFileMaxKB:  cfg.CredentialFileMaxKB,
 		BrokerMaxDelegation:  cfg.BrokerMaxDelegation,
 		CA:                   sshCA,
 		SSHOperatorCertTTL:   cfg.SSHOperatorCertTTL,

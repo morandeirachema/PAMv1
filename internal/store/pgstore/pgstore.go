@@ -226,7 +226,8 @@ func (s *PGStore) CreateCredential(ctx context.Context, c *store.Credential) err
 }
 
 // ListCredentials returns credentials for one target (or all when targetID is
-// 0) in the (limit, afterID) window, ordered by ID.
+// 0) in the (limit, afterID) window, ordered by ID, WITH secret_enc — see the
+// interface doc comment (store.Store) for why this must stay full-fidelity.
 func (s *PGStore) ListCredentials(ctx context.Context, targetID int64, limit int, afterID int64) ([]store.Credential, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, target_id, username, secret_type, secret_enc, is_provisioner, double_lock_holder, double_lock_verifier, double_lock_enc, created_at, rotated_at
@@ -236,6 +237,20 @@ func (s *PGStore) ListCredentials(ctx context.Context, targetID int64, limit int
 		return nil, err
 	}
 	return pgx.CollectRows(rows, scanCredential)
+}
+
+// ListCredentialsMeta is ListCredentials without secret_enc, double_lock_verifier
+// or double_lock_enc (Phase 145) — see the interface doc comment for which
+// callers this is, and is not, safe for.
+func (s *PGStore) ListCredentialsMeta(ctx context.Context, targetID int64, limit int, afterID int64) ([]store.Credential, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, target_id, username, secret_type, is_provisioner, double_lock_holder, created_at, rotated_at
+		 FROM credentials WHERE ($1 = 0 OR target_id = $1) AND id > $2 ORDER BY id LIMIT $3`,
+		targetID, afterID, limitArg(limit))
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanCredentialMeta)
 }
 
 // GetCredential returns the credential with the given ID, or ErrNotFound.
@@ -2346,6 +2361,17 @@ func scanCredential(row pgx.CollectableRow) (store.Credential, error) {
 	var c store.Credential
 	err := row.Scan(&c.ID, &c.TargetID, &c.Username, &c.SecretType, &c.SecretEnc, &c.Provisioner,
 		&c.DoubleLockHolder, &c.DoubleLockVerifier, &c.DoubleLockEnc, &c.CreatedAt, &c.RotatedAt)
+	return c, err
+}
+
+// scanCredentialMeta mirrors scanCredential for ListCredentials' narrower
+// column list (Phase 145) — SecretEnc, DoubleLockVerifier and DoubleLockEnc
+// stay at their zero value, exactly as a caller relying only on json-visible
+// fields already expected.
+func scanCredentialMeta(row pgx.CollectableRow) (store.Credential, error) {
+	var c store.Credential
+	err := row.Scan(&c.ID, &c.TargetID, &c.Username, &c.SecretType, &c.Provisioner,
+		&c.DoubleLockHolder, &c.CreatedAt, &c.RotatedAt)
 	return c, err
 }
 

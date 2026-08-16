@@ -107,6 +107,10 @@ type Options struct {
 	// entirely, including the write, so an unconfigured deployment pays no
 	// extra query on every rotation.
 	PasswordHistoryCount int
+	// CredentialFileMaxKB (Phase 145, PAM_CREDENTIAL_FILE_MAX_KB) caps a
+	// SecretTypeFile credential's content at creation — refused over the cap,
+	// not truncated.
+	CredentialFileMaxKB int
 	// CheckoutMaxExtend (Phase 120) bounds how long a checkout lease may run in
 	// total, measured from CheckedOutAt — the ceiling POST
 	// /api/checkouts/{id}/extend enforces. Restart-only, like CertRemindDays:
@@ -363,6 +367,7 @@ type Server struct {
 	certRemindDays       int
 	passwordPolicy       rotate.PasswordPolicy
 	passwordHistoryCount int
+	credentialFileMaxKB  int
 	checkoutMaxExtend    time.Duration
 	requireRecording     bool
 	portalURL            string
@@ -597,6 +602,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		certRemindDays:       opts.CertRemindDays,
 		passwordPolicy:       opts.PasswordPolicy,
 		passwordHistoryCount: opts.PasswordHistoryCount,
+		credentialFileMaxKB:  opts.CredentialFileMaxKB,
 		checkoutMaxExtend:    opts.CheckoutMaxExtend,
 		requireRecording:     opts.RequireRecording,
 		portalURL:            portalURL,

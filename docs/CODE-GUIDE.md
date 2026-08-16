@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-15 · Reflects: Phases 0–143 + the 2026-07 hardening passes.
+> Last updated: 2026-08-15 · Reflects: Phases 0–145 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -1074,6 +1074,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-15 | Phase 145 (generic file-attachment secrets): `store.SecretTypeFile`, capped at creation by new `Server.credentialFileMaxKB`/`Options.CredentialFileMaxKB` (`internal/api/server.go`). `store.Store` gained `ListCredentialsMeta` — a genuinely separate method, not a changed one — after stripping `secret_enc` from the existing `ListCredentials` broke the PostgreSQL proxy's JIT injection in testing (`dbproxy.go`'s `lookupTargetCred` depends on `ListCredentials` staying full-fidelity). Only 4 of 16 real call sites (found by a repo-wide grep, not assumed from package boundaries) were safe to redirect to the new method: the REST list endpoint, the broker's `list_credentials` tool, and two metadata-only checks in `sshca_handlers.go`/`targets.go`. §1 package map unchanged (no new package); `internal/store/methodset_test.go`'s pinned count moved 181 → 182. No package moved, no CI gate changed. |
 | 2026-08-15 | Phase 143 (ICAP-based file-transfer scanning): new leaf package `internal/icap` (client only — `NewClient`/`Enabled`/`ScanRespmod`, no dependents besides `proxy`), added to the package map's "Supporting" subgraph alongside the previously-missing `posture` (Phase 133, backfilled here). §5 (`internal/proxy`) — `sftpCaptureFile` gains `scanBuf`, `sftpCapture` gains `icapClient`/`pendingScans`, `finalizeLocked` queues a scan run by the existing `flush()` outside the capture lock. `Config.ICAPClient` new field. No package moved, no CI gate changed. |
 | 2026-08-14 | Phase 120 (recurring access requests, password policy, checkout extension): §7 (`internal/rotate`) — `GeneratePassword` now takes a `PasswordPolicy` struct, not a bare `int`; new `generateUnusedPassword` retry loop in `lifecycle_handlers.go`; new `RunAccessRequestScheduler`/`spawnDueAccessRequests` in `scheduler.go`, mirroring the campaign scheduler exactly (own lock key `pam_arq`, own hourly ticker). New `ApprovalStore.{ListDueAccessRequests,SetAccessRequestNextRun,StopAccessRequestRecurrence}`, `CheckoutStore.{GetCheckout,ExtendCheckout}`, and the new `PasswordHistoryStore` role (store surface 157 → 164), migration `0034`. No package moved, no CI gate changed. |
 | 2026-08-13 | Phase 118 (CIDR/network-based connect & login authorization): §3.4 (`auth`) gains `Principal.IPAllowlist`, `IPAllowed`, `ValidateCIDRList`; §4.2 (the two auth middlewares) — `authz` now checks it via `s.clientIP(r)`; §5 — `gates.go`'s shared `admit()` gains gate 4, `admitRequest.remoteAddr` threaded from all three proxy call sites. New `UserStore.UpdateUserIPAllowlist` (store surface 156 → 157), migration `0033`. No package moved, no CI gate changed. |

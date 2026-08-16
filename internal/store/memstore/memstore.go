@@ -1066,7 +1066,8 @@ func (m *Memstore) CreateCredential(_ context.Context, c *store.Credential) erro
 }
 
 // ListCredentials returns credentials for one target (or all when targetID is
-// 0) in the (limit, afterID) window, ordered by ID.
+// 0) in the (limit, afterID) window, ordered by ID, WITH SecretEnc — see the
+// interface doc comment (store.Store) for why this must stay full-fidelity.
 func (m *Memstore) ListCredentials(_ context.Context, targetID int64, limit int, afterID int64) ([]store.Credential, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1079,6 +1080,18 @@ func (m *Memstore) ListCredentials(_ context.Context, targetID int64, limit int,
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return window(out, func(c store.Credential) int64 { return c.ID }, limit, afterID), nil
+}
+
+// ListCredentialsMeta is ListCredentials without SecretEnc, DoubleLockVerifier
+// or DoubleLockEnc (Phase 145), matching pgstore's narrower query so a
+// contract test run against both backends catches a caller wired to the
+// wrong one instead of passing here and failing only in production.
+func (m *Memstore) ListCredentialsMeta(ctx context.Context, targetID int64, limit int, afterID int64) ([]store.Credential, error) {
+	out, err := m.ListCredentials(ctx, targetID, limit, afterID)
+	for i := range out {
+		out[i].SecretEnc, out[i].DoubleLockVerifier, out[i].DoubleLockEnc = "", "", ""
+	}
+	return out, err
 }
 
 // GetCredential returns the credential with the given ID, or ErrNotFound.
