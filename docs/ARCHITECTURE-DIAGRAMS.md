@@ -74,6 +74,7 @@ flowchart LR
     n_endpointagent[endpointagent]
     n_icap[icap]
     n_jwtutil[jwtutil]
+    n_k8s[k8s]
     n_keycustody[keycustody]
     n_ocsf[ocsf]
     n_pam_agent[pam-agent]
@@ -107,6 +108,7 @@ flowchart LR
   n_api --> n_config
   n_api --> n_discovery
   n_api --> n_guacd
+  n_api --> n_k8s
   n_api --> n_logging
   n_api --> n_maint
   n_api --> n_mcp
@@ -164,6 +166,7 @@ flowchart LR
   n_pam_server --> n_config
   n_pam_server --> n_conjur
   n_pam_server --> n_icap
+  n_pam_server --> n_k8s
   n_pam_server --> n_keycustody
   n_pam_server --> n_logging
   n_pam_server --> n_maint
@@ -519,7 +522,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 179 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 180 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -638,6 +641,7 @@ The 179 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/targets/{id}/grants` | CapManageTargets |
 | POST | `/api/targets/{id}/grants` | CapManageTargets |
 | DELETE | `/api/targets/{id}/grants/{gid}` | CapManageTargets |
+| POST | `/api/targets/{id}/kubectl` | CapConnect |
 | GET | `/api/targets/{id}/rdp` | token (query) |
 | PUT | `/api/targets/{id}/safe` | CapManageTargets |
 | GET | `/api/targets/{id}/vnc` | token (query) |

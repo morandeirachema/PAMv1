@@ -234,6 +234,25 @@ const screens = [
     }),
   },
   {
+    // The kubectl screen has no subfile table (it is a form plus a free-flowing
+    // output pane), so what this fixture proves is that it renders at all —
+    // short and long — including with a pathological result body, which is the
+    // regression that would otherwise reach a live console unnoticed.
+    name: "kubectl",
+    noRows: true,
+    src: /\n {6}kubectl\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      kubeTarget: { id: 1, name: long ? LONGNAME : "cluster-01", host: long ? LONGNAME : "10.0.0.5", port: 6443 },
+      kubeErr: long ? LONGNAME : "",
+      kubeResult: {
+        command: long ? `kubectl get ${LONGNAME} -n ${LONGNAME}` : "kubectl get pods -n prod",
+        status: 200, method: "GET",
+        path: long ? "/apis/" + LONGNAME + "/v1/namespaces/" + LONGNAME + "/pods" : "/api/v1/namespaces/prod/pods",
+        body: long ? `${LONG} ${LONG} ${LONG}` : `{"kind":"PodList"}`,
+      },
+    }),
+  },
+  {
     name: "endpointagents",
     src: /\n {6}endpointagents\(\) \{\n[\s\S]*?\n {6}\},\n/,
     state: (long) => ({
@@ -312,6 +331,14 @@ for (const screen of screens) {
   if (short === null || long === null) continue;
   rendered++;
   const a = rowWidths(short), b = rowWidths(long);
+  // A screen may legitimately have no subfile table: `kubectl` is a form plus
+  // one free-flowing output pane, so there is no row to measure. Such a screen
+  // declares `noRows` and is still rendered short AND long — which is most of
+  // the value here, since a screen that throws (a renamed helper, a bad
+  // template literal) is the failure that actually reaches a live console. The
+  // flag is deliberately explicit: without it, "no rows" stays a FAILURE, so a
+  // fixture that quietly stops exercising a table cannot pass unnoticed.
+  if (a.length === 0 && screen.noRows) continue;
   if (a.length === 0) { fail(`screen ${screen.name} rendered no table rows — the fixture is not exercising it`); continue; }
   if (a.length !== b.length) { fail(`screen ${screen.name}: ${a.length} rows short vs ${b.length} long`); continue; }
   for (let i = 0; i < a.length; i++) {

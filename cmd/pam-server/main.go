@@ -48,6 +48,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/config"
 	"github.com/morandeirachema/pamv1/internal/conjur"
 	"github.com/morandeirachema/pamv1/internal/icap"
+	"github.com/morandeirachema/pamv1/internal/k8s"
 	"github.com/morandeirachema/pamv1/internal/keycustody"
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/maint"
@@ -1088,6 +1089,32 @@ func run() error {
 		log.Info("agent broker accepts SPIFFE SVIDs", "trust_domain", cfg.BrokerTrustDomain, "max_delegation", cfg.BrokerMaxDelegation)
 	}
 
+	// Kubernetes broker TLS trust (Phase 155): a pinned CA bundle, or the system
+	// roots. Unlike the database proxy's upstream leg there is no trust-any
+	// fallback — the Kubernetes API is always TLS and every request carries a
+	// bearer token, so verification is ON by default and only
+	// PAM_K8S_INSECURE_SKIP_VERIFY (loudly logged) turns it off.
+	k8sCfg := k8s.Config{
+		InsecureSkipVerify: cfg.K8sInsecureSkipVerify,
+		Timeout:            time.Duration(cfg.K8sTimeoutSec) * time.Second,
+		MaxResponseBytes:   int64(cfg.K8sMaxResponseKB) * 1024,
+	}
+	if cfg.K8sCAFile != "" {
+		pem, rerr := os.ReadFile(cfg.K8sCAFile) // #nosec G304 -- operator-supplied path from PAM_K8S_CA_FILE (env/IaC-only)
+		if rerr != nil {
+			return fmt.Errorf("kubernetes ca: %w", rerr)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return fmt.Errorf("kubernetes ca: no certificates found in %s", cfg.K8sCAFile)
+		}
+		k8sCfg.CAs = pool
+		log.Info("kubernetes api servers verified against a pinned CA bundle", "file", cfg.K8sCAFile)
+	}
+	if cfg.K8sInsecureSkipVerify {
+		log.Warn("kubernetes API server certificates are NOT verified (PAM_K8S_INSECURE_SKIP_VERIFY); the vaulted bearer token is exposed to anyone who can answer for the API server")
+	}
+
 	// reconfigure reproduces the hot-swappable RuntimeConfig from the pristine env
 	// baseline plus the current DB overrides, so PUT/DELETE /api/config can rebuild
 	// the identity backends and operational policy without a restart (Phase 12).
@@ -1301,6 +1328,7 @@ func run() error {
 		AppSecretsEnabled:    cfg.AppSecretsEnabled,
 		ScimEnabled:          cfg.ScimEnabled,
 		EndpointAgents:       endpointAgents,
+		K8s:                  k8sCfg,
 	})
 	if err != nil {
 		return err
