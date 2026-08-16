@@ -168,6 +168,12 @@ type Config struct {
 	// Detection only, not prevention — see sftpcapture.go's finalizeLocked
 	// for why a whole-file scan cannot block a transfer before it lands.
 	ICAPClient *icap.Client
+	// EndpointAgents (optional, Phase 153) is the SHARED registry of connected
+	// outbound-only endpoint agents — the same instance handed to api.Options,
+	// since the API reports live status from it. nil disables the feature:
+	// the "endpoint-agent:<name>" login is refused and a target bound to an
+	// agent row is unreachable (never silently dialed direct).
+	EndpointAgents *session.EndpointAgents
 }
 
 // JumpConfig configures reaching SSH targets through an SSH bastion.
@@ -222,6 +228,9 @@ type Proxy struct {
 	ticketCheck store.TicketChecker
 	posture     *posture.Attestor
 	gate        *gates // the shared admission-gate sequence (gates.go)
+	// endpointAgents is the shared live registry of connected endpoint agents
+	// (Phase 153); nil = feature disabled.
+	endpointAgents *session.EndpointAgents
 
 	// pending carries the resolved *auth.Principal from authenticate (where the
 	// SSH password is available) to handleConn (which runs the gates), keyed by a
@@ -268,39 +277,40 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 			onSessionEnd: cfg.OnSessionEnd,
 			conns:        make(map[net.Conn]struct{}),
 		},
-		vault:        v,
-		recKey:       recKeyFor(cfg.EncryptRecordings, v),
-		opaqueNames:  cfg.OpaqueRecordingNames,
-		resolver:     resolver,
-		hostKey:      cfg.HostKey,
-		recordingDir: cfg.RecordingDir,
-		dialTimeout:  cfg.DialTimeout,
-		sessions:     cfg.Sessions,
-		requireApprv: cfg.RequireApproval,
-		upstreamHKCB: cfg.UpstreamHostKey,
-		onBreakGlass: cfg.OnBreakGlass,
-		allowedProto: protocolSet(cfg.AllowedProtocols),
-		winrm:        cfg.WinRMRunner,
-		chain:        newRecordChain(cfg.RecordingDir),
-		requireRec:   cfg.RequireRecording,
-		requireSup:   cfg.RequireSupervision,
-		portForward:  cfg.PortForward,
-		supTimeout:   cfg.SupervisionTimeout,
-		guard:        cfg.CommandGuard,
-		allowGuard:   cfg.CommandAllowGuard,
-		live:         cfg.Live,
-		shares:       cfg.Shares,
-		ca:           cfg.CA,
-		certTTL:      cfg.CertTTL,
-		authLimiter:  ratelimit.New(cfg.AuthRatePerMin),
-		maxRecBytes:  cfg.MaxRecordingBytes,
-		sftpMode:     cfg.SFTPMode,
-		sftpPaths:    cfg.SFTPPathGuard,
-		sftpCapture:  cfg.SFTPCapture,
-		sftpCapMax:   cfg.SFTPCaptureMaxBytes,
-		icapClient:   cfg.ICAPClient,
-		ticketCheck:  cfg.TicketCheck,
-		posture:      cfg.PostureAttestor,
+		vault:          v,
+		recKey:         recKeyFor(cfg.EncryptRecordings, v),
+		opaqueNames:    cfg.OpaqueRecordingNames,
+		resolver:       resolver,
+		hostKey:        cfg.HostKey,
+		recordingDir:   cfg.RecordingDir,
+		dialTimeout:    cfg.DialTimeout,
+		sessions:       cfg.Sessions,
+		requireApprv:   cfg.RequireApproval,
+		upstreamHKCB:   cfg.UpstreamHostKey,
+		onBreakGlass:   cfg.OnBreakGlass,
+		allowedProto:   protocolSet(cfg.AllowedProtocols),
+		winrm:          cfg.WinRMRunner,
+		chain:          newRecordChain(cfg.RecordingDir),
+		requireRec:     cfg.RequireRecording,
+		requireSup:     cfg.RequireSupervision,
+		portForward:    cfg.PortForward,
+		supTimeout:     cfg.SupervisionTimeout,
+		guard:          cfg.CommandGuard,
+		allowGuard:     cfg.CommandAllowGuard,
+		live:           cfg.Live,
+		shares:         cfg.Shares,
+		endpointAgents: cfg.EndpointAgents,
+		ca:             cfg.CA,
+		certTTL:        cfg.CertTTL,
+		authLimiter:    ratelimit.New(cfg.AuthRatePerMin),
+		maxRecBytes:    cfg.MaxRecordingBytes,
+		sftpMode:       cfg.SFTPMode,
+		sftpPaths:      cfg.SFTPPathGuard,
+		sftpCapture:    cfg.SFTPCapture,
+		sftpCapMax:     cfg.SFTPCaptureMaxBytes,
+		icapClient:     cfg.ICAPClient,
+		ticketCheck:    cfg.TicketCheck,
+		posture:        cfg.PostureAttestor,
 	}
 	p.gate = &gates{
 		store:        st,
@@ -362,6 +372,15 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 		// middleware, which returns before auditing for exactly this reason.
 		p.log.Warn("authentication rate limited", "login", auditField(c.User(), 64), "remote", c.RemoteAddr().String())
 		return nil, fmt.Errorf("pamv1: too many attempts; try again shortly")
+	}
+	// An outbound-only endpoint agent (Phase 153) authenticates as
+	// "endpoint-agent:<name>" with its own bearer key — a wholly separate
+	// identity kind, resolved against endpoint_agents, never through the human
+	// resolver below. Checked after the rate limit (an agent key is as
+	// guessable as any other) and before anything else, since nothing that
+	// follows — target parsing, principals, gates — applies to it.
+	if name, ok := endpointAgentLogin(c.User()); ok {
+		return p.authenticateEndpointAgent(c, name, password)
 	}
 	principal, err := p.resolver.Resolve(context.Background(), string(password))
 	if err != nil {
@@ -553,9 +572,20 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	}
 	_ = nConn.SetDeadline(time.Time{})
 	defer sconn.Close()
-	go ssh.DiscardRequests(reqs)
 
 	ext := sconn.Permissions.Extensions
+	// An endpoint agent's connection (Phase 153) is not a session: it carries
+	// no principal, opens no channels of its own, and exists only to accept
+	// the reverse-forward request and then hold still. It owns the global
+	// request stream (which every operator connection discards below).
+	if idStr := ext["endpoint_agent"]; idStr != "" {
+		agentID, _ := strconv.ParseInt(idStr, 10, 64)
+		targetID, _ := strconv.ParseInt(ext["endpoint_agent_target"], 10, 64)
+		p.serveEndpointAgent(ctx, sconn, chans, reqs, agentID, targetID, ext["endpoint_agent_name"], sconn.RemoteAddr().String())
+		return
+	}
+	go ssh.DiscardRequests(reqs)
+
 	actor := ext["principal"]
 	login := ext["login"]
 	role := auth.Role(ext["role"])
@@ -600,6 +630,11 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	}
 
 	observe := ext["observe"] == "true"
+	// viaAgent is set inside startAudit — the first point at which the target
+	// is resolved — so the same lookup that stamps the session.start row also
+	// decides how dialUpstream reaches the target (Phase 153).
+	var viaAgent *store.EndpointAgent
+	var agentErr error
 	res := p.gate.admit(ctx, admitRequest{
 		principal:  principal,
 		targetName: ext["target"],
@@ -628,6 +663,15 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 			if t.Protocol != "ssh" {
 				detail += " protocol:" + t.Protocol
 			}
+			// A target bound to an endpoint agent is reached through it, never
+			// dialed — say so on the session.start row. A store error here fails
+			// closed at dial time (viaAgent stays nil, agentErr is checked below).
+			if a, err := p.endpointAgentFor(ctx, t.ID); err != nil {
+				agentErr = err
+			} else if a != nil {
+				viaAgent = a
+				detail += " via:endpoint-agent:" + a.Name
+			}
 			return "session.start", detail
 		},
 	})
@@ -636,6 +680,20 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		return
 	}
 	target, cred, secret := res.target, res.cred, res.secret
+	if agentErr != nil {
+		p.log.Error("endpoint agent lookup failed", "actor", actor, "target", target.Name, "err", agentErr)
+		p.audit(ctx, actor, "session.error", fmt.Sprintf("target:%s reason:endpoint-agent-lookup-failed", target.Name))
+		rejectAll(chans, ssh.ConnectionFailed, "pamv1: upstream connection failed")
+		return
+	}
+	// The endpoint-agent tunnel is an SSH-only path in v1 (the API refuses to
+	// bind an agent to any other protocol); refuse rather than let a WinRM
+	// target's agent row be silently ignored by a direct HTTP dial.
+	if viaAgent != nil && target.Protocol != "ssh" {
+		p.audit(ctx, actor, "session.error", fmt.Sprintf("target:%s reason:endpoint-agent-unsupported-protocol protocol:%s", target.Name, target.Protocol))
+		rejectAll(chans, ssh.ConnectionFailed, "pamv1: endpoint agents reach SSH targets only")
+		return
+	}
 
 	// Zero Standing Privilege but no CA configured: refuse where decryption would
 	// otherwise have happened (after admit's fail-closed session.start audit).
@@ -658,7 +716,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		return
 	}
 
-	upstream, err := p.dialUpstream(ctx, target, cred, secret, actor)
+	upstream, err := p.dialUpstream(ctx, target, cred, secret, actor, viaAgent)
 	if err != nil {
 		p.log.Error("upstream connection failed", "actor", actor, "target", target.Name,
 			"host", fmt.Sprintf("%s:%d", target.Host, target.Port), "err", err)
@@ -846,8 +904,12 @@ func (p *Proxy) refuse(ctx context.Context, chans <-chan ssh.NewChannel, res adm
 // ("ssh_ca") credential it mints a short-lived certificate just-in-time and
 // authenticates with it (no standing secret); otherwise it authenticates with
 // the decrypted secret as a parsed private key ("ssh_key") or a password. The
-// upstream host key is checked via the configured callback.
-func (p *Proxy) dialUpstream(ctx context.Context, target *store.Target, cred *store.Credential, secret, actor string) (*ssh.Client, error) {
+// upstream host key is checked via the configured callback. When via is
+// non-nil the target is bound to an outbound-only endpoint agent (Phase 153):
+// the raw stream is opened back through that agent's connection instead of
+// dialing target.Host — direct and jump-host dialing are never attempted for
+// such a target, so an offline agent is "unreachable", not "fall back".
+func (p *Proxy) dialUpstream(ctx context.Context, target *store.Target, cred *store.Credential, secret, actor string, via *store.EndpointAgent) (*ssh.Client, error) {
 	var authMethod ssh.AuthMethod
 	switch cred.SecretType {
 	case store.SecretTypeSSHCA:
@@ -894,6 +956,15 @@ func (p *Proxy) dialUpstream(ctx context.Context, target *store.Target, cred *st
 	dial := p.upstreamDial
 	if dial == nil {
 		dial = func(a string) (net.Conn, error) { return net.DialTimeout("tcp", a, p.dialTimeout) }
+	}
+	if via != nil {
+		dial = func(string) (net.Conn, error) {
+			c, err := p.endpointAgents.Dial(target.ID)
+			if err != nil {
+				return nil, fmt.Errorf("endpoint agent %q: %w", via.Name, err)
+			}
+			return c, nil
+		}
 	}
 	conn, err := dial(addr)
 	if err != nil {

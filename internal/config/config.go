@@ -391,6 +391,16 @@ type Config struct {
 	// by default.
 	ScimEnabled bool
 
+	// EndpointAgentsEnabled turns on outbound-only endpoint agents (Phase 153,
+	// BeyondTrust "Jump Client"-style): the SSH listener accepts the
+	// "endpoint-agent:<name>" login (an agent's own bearer key, never a
+	// human's), holds the reverse tunnel it requests, and reaches the bound
+	// target through it; /api/endpoint-agents manages the agents. Opt-in
+	// (default off), the same posture as PAM_SCIM_ENABLED: a new bearer-key
+	// identity on a public listener is not worth accepting by default in a
+	// deployment with no NAT'd endpoints to reach.
+	EndpointAgentsEnabled bool
+
 	// Broker (Phase 13, AI-agent access broker). Setting BrokerPolicyFile enables
 	// the broker. The audit key + seed may be set explicitly — that is also how a
 	// signing-key rotation is driven — and when left unset each is generated under
@@ -762,6 +772,7 @@ func Load() (*Config, error) {
 		AnalyticsTimezone:      os.Getenv("PAM_ANALYTICS_TIMEZONE"),
 		AppSecretsEnabled:      boolean("PAM_APP_SECRETS_ENABLED", false),
 		ScimEnabled:            boolean("PAM_SCIM_ENABLED", false),
+		EndpointAgentsEnabled:  boolean("PAM_ENDPOINT_AGENTS_ENABLED", false),
 		BrokerPolicyFile:       os.Getenv("PAM_BROKER_POLICY_FILE"),
 		BrokerAuditKey:         os.Getenv("PAM_BROKER_AUDIT_KEY"),
 		BrokerAuditSignSeed:    os.Getenv("PAM_BROKER_AUDIT_SIGN_SEED"),
