@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-16 · Reflects: Phases 0–147 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-16 · Reflects: Phases 0–149 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -1193,6 +1193,78 @@ session proxies too.
 Break-glass is exempt from both, like every other admission gate. Neither
 check ever applies to the AI-agent broker's own tool calls (§7's
 "AI-agent access broker" below), which authenticate on a separate path.
+
+### SCIM 2.0 user provisioning (Phase 149)
+
+`POST /api/identity/reconcile` is **pull**: pamv1 asks your directory who's
+still enabled, on your schedule. SCIM is the **push** complement — your IdP
+tells pamv1 the moment a user is created, renamed, or deprovisioned, without
+waiting for the next reconcile. Both mechanisms can run side by side.
+
+**Turn it on.** Set `PAM_SCIM_ENABLED=true` (default off — this is a new
+bearer-key surface most deployments have no IdP to speak it, so it stays
+opt-in like `PAM_APP_SECRETS_ENABLED`). Then mint a SCIM client key
+(`manage_users`, the token is shown once):
+
+```bash
+curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/v1/scim-keys \
+  -d '{"name":"okta","owner":"identity-team"}'
+# → {"id":1,"name":"okta","owner":"identity-team","token":"pamt_…"}
+```
+
+Give the token to your IdP's SCIM connector as an **OAuth Bearer Token**
+(the auth scheme `GET /scim/v2/ServiceProviderConfig` advertises), and point
+it at `https://your-pamv1-host/scim/v2` as the base URL — most IdPs append
+`/Users` themselves. Revoke with `DELETE /v1/scim-keys/{id}`, the same as
+revoking an app key.
+
+**What a SCIM key can and cannot do.** It authenticates outside pamv1's
+normal RBAC entirely — it is not an `admin`/`user`/`auditor`/`approver`
+principal and holds none of their capabilities, only the ability to
+create/read/update/deactivate the user roster over `/scim/v2/Users`. Every
+user it provisions gets the fixed, least-privileged built-in `user` role;
+there is no way for a SCIM payload to request `admin` or any other role —
+promote a SCIM-provisioned user the normal way afterward
+(`PUT /api/users/{id}`) if they need more.
+
+**Deactivation actually cuts access.** `PATCH .../active:false` (or
+`DELETE`, which does the same thing — see below) immediately blocks that
+user's own local pamv1 token: their next authenticated call gets a plain
+401, exactly like an unknown token, not just a cosmetic flag flip. Directory
+(AD/SSO/OIDC) logins are unaffected by this switch — govern those the way
+you already do, with `POST /api/identity/reconcile` or upstream directory
+disablement. Reactivating (`active:true`) restores access on the **same**
+token — nothing is ever re-minted, so there's nothing new to hand back to
+the user.
+
+`DELETE /scim/v2/Users/{id}` is a **soft** delete — it sets `active:false`
+exactly like a PATCH, never removing the row. This is deliberately
+different from `DELETE /api/users/{id}`, which still hard-deletes: SCIM's
+whole provisioning model expects a deprovisioned identity to be
+reactivatable later, which a hard delete would foreclose.
+
+**A SCIM-provisioned user's local pamv1 token is never handed back over
+SCIM.** One is minted internally (every user row needs one), but SCIM's
+schema has no field for a bearer secret, and the realistic expectation is
+that this user signs in through the same IdP doing the provisioning
+(AD/Entra/OIDC), not a standalone pamv1 credential. If you specifically need
+one, mint it the normal way instead: delete and re-create the user via
+`POST /api/users`.
+
+**Idempotent provisioning.** Before creating a user, a well-behaved IdP
+checks whether one already exists — `GET /scim/v2/Users?filter=userName eq
+"alice"` (or `externalId`) — and pamv1 answers with an empty result set
+(`totalResults:0`), not an error, when there's no match. This is the one
+filter shape this server understands; it does not implement SCIM's full
+filter grammar.
+
+> ⚠️ **Not interactively verified against a real IdP in this environment**
+> (no Okta/Azure AD/OneLogin account available). The wire behavior — both
+> RFC 7644's standard `PATCH` shape and Azure AD's documented "no path,
+> attributes directly in `value`" variant — is implemented and tested
+> against a hand-rolled fake, per [EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md).
+> Test your own IdP's connector against a non-production pamv1 instance
+> before relying on it.
 
 ### Safes: delegated-access containers (Phase 17)
 
@@ -3181,6 +3253,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-16 | **Phase 149 — SCIM 2.0 user provisioning.** New `/scim/v2/Users` (RFC 7643/7644), authenticated by a new non-human `ScimKey` bearer identity (`POST /v1/scim-keys`, `manage_users` to mint), never a human principal — every SCIM-provisioned user gets the fixed `user` role, no way to request more. `store.User` gains `ExternalID` and `Active`; deactivating (`PATCH active:false` or `DELETE`, which is a soft-delete) now actually blocks that user's local token from authenticating, not just a flag — proven end to end. Reactivation restores the same token, nothing re-minted. Complements the existing pull-based `POST /api/identity/reconcile`. `PAM_SCIM_ENABLED` (default off). **Not interactively verified against a real IdP** — no Okta/Azure AD/OneLogin account in this environment; both RFC 7644's standard `PATCH` shape and Azure AD's documented no-path variant are implemented and tested against a fake. See §7 |
 | 2026-08-16 | **Phase 147 — browser-extension password autofill.** New `extension/` (Manifest V3) calls the existing `POST /api/credentials/{id}/reveal` with a new `POST /api/extension-token`-minted bearer token (`CapRevealSecret` required to mint) that inherits the caller's own role/capabilities but is refused on every route except reveal — a new `ExtensionOnly` principal flag, narrower than the RDP/VNC viewer scope's blanket refusal. `PAM_EXTENSION_TOKEN_TTL_HOURS` (default 24, max 720). Reveal audits gain a `via:extension` marker; new audit action `extension.token_issued`. No schema change, no way for the extension to browse the vault (one hostname → one credential ID, configured manually). **Not interactively verified against a real browser** — no GUI browser in this environment; JS syntax-checked, manifest JSON-validated. See §6 |
 | 2026-08-15 | **Phase 145 — generic file-attachment secrets.** New `secret_type: "file"` for license keys, cert bundles and short documents — the same `POST /api/credentials` route and `vault.Encrypt`/`Decrypt` pathway every other secret type already uses, base64-encoded by the client. `PAM_CREDENTIAL_FILE_MAX_KB` (default 1024, max 10240, never "0 = unlimited") refuses an over-cap upload before it is ever encrypted or a row inserted. No schema change (`secret_type` is a plain `TEXT` column) and no new REST surface. **A near-miss along the way**: the plan's own stated fix — stop `ListCredentials` from selecting `secret_enc`, since it's `json:"-"` — passed a store-layer contract test and then broke the PostgreSQL session proxy's real JIT credential injection, because `dbproxy.go`'s `lookupTargetCred` deliberately lists first and decrypts from the result afterward, so every gate can run before any plaintext exists; a repo-wide check found nine such internal callers (also `-rotate-kek`, the lifecycle reconciler, the RDP/VNC viewer, REST WinRM, the broker's exec tools). Fixed by leaving `ListCredentials` untouched and adding a separate `ListCredentialsMeta` for the four callers that never touch the secret (the REST list endpoint among them). See §6 |
 | 2026-08-15 | **Phase 143 — ICAP-based file-transfer scanning.** `PAM_ICAP_URL` (`icap://host[:port]/service`) submits every finalized SFTP transfer's captured bytes whole to an ICAP RESPMOD service (c-icap, or any commercial AV/DLP gateway that speaks ICAP) for scanning — new `internal/icap` package, a minimal RFC 3507 client (one connection per scan, no OPTIONS/Preview/keep-alive, deliberately no encapsulated req-hdr to avoid embedding an attacker-influenced remote path into a hand-built wire header). **Detection, not prevention**: by the time a whole-object scan can run, an upload has already reached the target and a download has already reached the operator — proven end-to-end by a test where an unreachable ICAP server still lets the transfer through. A flagged file audits `sftp.icap_flagged` (naming the vendor's own reason); a scan failure audits `sftp.icap_scan_failed`; a capped or broken capture is skipped, not scanned incomplete (`sftp.icap_skipped`). Requires `PAM_SSH_SFTP_CAPTURE` enabled and `PAM_SSH_SFTP_CAPTURE_MAX_MB` set — the same cap that bounds the disk artifact also bounds the in-memory scan buffer. Joins the `PAM_OT_AIRGAP` conflict list. No schema change. See §9.4 |

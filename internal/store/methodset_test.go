@@ -32,9 +32,11 @@ import (
 // CredentialStore.ListCredentialsMeta (1) — deliberately a NEW method, not a
 // changed one: ListCredentials itself stays full-fidelity (SecretEnc and all)
 // because real internal callers decrypt from its result, and Meta is the
-// narrow, display-only sibling for the few callers that do not.
+// narrow, display-only sibling for the few callers that do not. Phase 149
+// added UserStore.{GetUserByUsername,GetUserByExternalID,UpdateUserActive,
+// UpdateUserExternalID} (4) and the new ScimStore role (4).
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 182
+	const want = 190
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

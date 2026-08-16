@@ -361,6 +361,9 @@ type Options struct {
 	// AppSecretsEnabled turns on the application-secrets API (Phase 24): the app
 	// identity + secret-grant admin routes and the /v1/app-secrets fetch path.
 	AppSecretsEnabled bool
+	// ScimEnabled turns on the SCIM 2.0 provisioning API (Phase 149): the SCIM
+	// key admin routes and the /scim/v2/Users surface.
+	ScimEnabled bool
 }
 
 type Server struct {
@@ -440,6 +443,7 @@ type Server struct {
 	analyticsMu         sync.Mutex
 	analyticsAlerted    map[string]analyticsAlert // actor → last alert (score + time)
 	appSecretsEnabled   bool
+	scimEnabled         bool
 	metrics             *metrics.Metrics
 	log                 *slog.Logger
 	mux                 *http.ServeMux
@@ -662,6 +666,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		analyticsAutoStepUp:  opts.AnalyticsAutoStepUp,
 		analyticsAlerted:     make(map[string]analyticsAlert),
 		appSecretsEnabled:    opts.AppSecretsEnabled,
+		scimEnabled:          opts.ScimEnabled,
 		metrics:              metrics.New(),
 		log:                  logging.Component("api"),
 		mux:                  http.NewServeMux(),
@@ -1004,6 +1009,24 @@ func (s *Server) routes() {
 		s.mux.Handle("GET /v1/apps/{id}/grants", s.authz(auth.CapManageUsers, s.listAppSecretGrants))
 		s.mux.Handle("POST /v1/apps/{id}/grants", s.authz(auth.CapRevealSecret, s.grantAppSecret))
 		s.mux.Handle("DELETE /v1/apps/{id}/grants/{gid}", s.authz(auth.CapRevealSecret, s.deleteAppSecretGrant))
+	}
+
+	// SCIM 2.0 provisioning API (Phase 149), opt-in via PAM_SCIM_ENABLED: an
+	// IdP pushes user create/deactivate/reactivate over /scim/v2/Users,
+	// authenticated by a narrowly-scoped bearer key (never a human's own
+	// capability set — the same non-human shape appAuth already uses). Key
+	// admin routes reuse human RBAC, matching the app-secrets pattern above.
+	if s.scimEnabled {
+		s.mux.Handle("POST /v1/scim-keys", s.authz(auth.CapManageUsers, s.createScimKey))
+		s.mux.Handle("GET /v1/scim-keys", s.authz(auth.CapManageUsers, s.listScimKeys))
+		s.mux.Handle("DELETE /v1/scim-keys/{id}", s.authz(auth.CapManageUsers, s.deleteScimKey))
+		s.mux.HandleFunc("GET /scim/v2/ServiceProviderConfig", s.scimAuth(s.scimServiceProviderConfig))
+		s.mux.HandleFunc("GET /scim/v2/Users", s.scimAuth(s.listScimUsers))
+		s.mux.HandleFunc("POST /scim/v2/Users", s.scimAuth(s.createScimUser))
+		s.mux.HandleFunc("GET /scim/v2/Users/{id}", s.scimAuth(s.getScimUser))
+		s.mux.HandleFunc("PUT /scim/v2/Users/{id}", s.scimAuth(s.replaceScimUser))
+		s.mux.HandleFunc("PATCH /scim/v2/Users/{id}", s.scimAuth(s.patchScimUser))
+		s.mux.HandleFunc("DELETE /scim/v2/Users/{id}", s.scimAuth(s.deleteScimUser))
 	}
 
 	s.mux.Handle("POST /api/users", s.authz(auth.CapManageUsers, s.createUser))
