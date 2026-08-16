@@ -1226,6 +1226,7 @@ func run() error {
 		AnalyticsBaseline:    time.Duration(cfg.AnalyticsBaselineDays) * 24 * time.Hour,
 		AnalyticsAutoStepUp:  cfg.AnalyticsAutoStepUp,
 		AppSecretsEnabled:    cfg.AppSecretsEnabled,
+		ScimEnabled:          cfg.ScimEnabled,
 	})
 	if err != nil {
 		return err

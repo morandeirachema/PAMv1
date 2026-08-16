@@ -37,6 +37,7 @@ type Memstore struct {
 	vendorGrants    map[int64]store.VendorGrant
 	appKeys         map[int64]store.AppKey
 	appGrants       map[int64]store.AppSecretGrant
+	scimKeys        map[int64]store.ScimKey
 	brokerLog       []store.BrokerAuditEvent
 	brokerTok       map[string]store.BrokerToken
 	settings        map[string]store.Setting
@@ -86,6 +87,7 @@ func New() *Memstore {
 		vendorGrants:    make(map[int64]store.VendorGrant),
 		appKeys:         make(map[int64]store.AppKey),
 		appGrants:       make(map[int64]store.AppSecretGrant),
+		scimKeys:        make(map[int64]store.ScimKey),
 		brokerTok:       make(map[string]store.BrokerToken),
 		settings:        make(map[string]store.Setting),
 		keyMaterial:     make(map[string]string),
@@ -1373,6 +1375,12 @@ func (m *Memstore) FindAuditDetail(_ context.Context, action, substr string) (bo
 }
 
 // CreateUser inserts a user, assigning its ID and CreatedAt; ErrConflict if the username is taken.
+// CreateUser always creates an active user — Active on the input struct is
+// ignored, matching pgstore: a bare Go bool cannot tell "wants an inactive
+// user" apart from "never heard of this field," and the second case must
+// never silently create a deactivated account. A caller that genuinely needs
+// a freshly-created user to start deactivated makes a separate
+// UpdateUserActive call right after.
 func (m *Memstore) CreateUser(_ context.Context, u *store.User) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1385,6 +1393,7 @@ func (m *Memstore) CreateUser(_ context.Context, u *store.User) error {
 	}
 	u.ID = m.id()
 	u.CreatedAt = time.Now().UTC()
+	u.Active = true
 	m.users[u.ID] = *u
 	return nil
 }
@@ -1457,6 +1466,68 @@ func (m *Memstore) GetUserByTokenHash(_ context.Context, tokenHashHex string) (*
 		}
 	}
 	return nil, store.ErrNotFound
+}
+
+// GetUserByUsername returns the user with the given username, or ErrNotFound.
+func (m *Memstore) GetUserByUsername(_ context.Context, username string) (*store.User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, u := range m.users {
+		if u.Username == username {
+			return &u, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+// GetUserByExternalID returns the user with the given SCIM externalId, or
+// ErrNotFound. An empty externalID always misses, matching pgstore.
+func (m *Memstore) GetUserByExternalID(_ context.Context, externalID string) (*store.User, error) {
+	if externalID == "" {
+		return nil, store.ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, u := range m.users {
+		if u.ExternalID == externalID {
+			return &u, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+// UpdateUserActive sets a user's SCIM active flag (Phase 149); ErrNotFound if absent.
+func (m *Memstore) UpdateUserActive(_ context.Context, id int64, active bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	u.Active = active
+	m.users[id] = u
+	return nil
+}
+
+// UpdateUserExternalID sets a user's SCIM externalId (Phase 149); ErrNotFound
+// if absent, ErrConflict if another user already claims the same non-empty value.
+func (m *Memstore) UpdateUserExternalID(_ context.Context, id int64, externalID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.users[id]; !ok {
+		return store.ErrNotFound
+	}
+	if externalID != "" {
+		for otherID, other := range m.users {
+			if otherID != id && other.ExternalID == externalID {
+				return store.ErrConflict
+			}
+		}
+	}
+	u := m.users[id]
+	u.ExternalID = externalID
+	m.users[id] = u
+	return nil
 }
 
 // DeleteUser removes a user by ID; ErrNotFound if absent.
@@ -2063,6 +2134,59 @@ func (m *Memstore) DeleteAppKey(_ context.Context, id int64) error {
 			delete(m.appGrants, gid)
 		}
 	}
+	return nil
+}
+
+// CreateScimKey inserts a SCIM client identity key, assigning its ID and
+// CreatedAt; ErrConflict if the token hash is taken.
+func (m *Memstore) CreateScimKey(_ context.Context, k *store.ScimKey) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range m.scimKeys {
+		if existing.TokenHash == k.TokenHash {
+			return store.ErrConflict
+		}
+	}
+	k.ID = m.id()
+	k.CreatedAt = time.Now().UTC()
+	m.scimKeys[k.ID] = *k
+	return nil
+}
+
+// GetScimKeyByTokenHash returns the enabled SCIM key whose token hash
+// matches, or ErrNotFound (a disabled key is treated as not found).
+func (m *Memstore) GetScimKeyByTokenHash(_ context.Context, tokenHashHex string) (*store.ScimKey, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, k := range m.scimKeys {
+		if k.TokenHash == tokenHashHex && !k.Disabled {
+			out := k
+			return &out, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+// ListScimKeys returns all SCIM client keys ordered by ID.
+func (m *Memstore) ListScimKeys(_ context.Context) ([]store.ScimKey, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]store.ScimKey, 0, len(m.scimKeys))
+	for _, k := range m.scimKeys {
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// DeleteScimKey removes a SCIM key by ID, or ErrNotFound.
+func (m *Memstore) DeleteScimKey(_ context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.scimKeys[id]; !ok {
+		return store.ErrNotFound
+	}
+	delete(m.scimKeys, id)
 	return nil
 }
 

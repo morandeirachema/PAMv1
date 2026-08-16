@@ -1234,6 +1234,13 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.CreateUser(ctx, u); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
+	// CreateUser always creates an active user (Phase 149) — Active on the
+	// input struct (the zero value here, since the literal above never set
+	// it) is ignored, not read; a caller who has never heard of this field
+	// must never silently create a deactivated account.
+	if !u.Active {
+		t.Fatal("CreateUser must always create an active user, regardless of the input struct's Active field")
+	}
 	if err := st.CreateUser(ctx, &store.User{Username: "u1", Role: "user", TokenHash: "x"}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("duplicate username: want ErrConflict, got %v", err)
 	}
@@ -1291,8 +1298,100 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.UpdateUserDeviceFingerprint(ctx, 999999, "aa:bb:cc:dd"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("UpdateUserDeviceFingerprint missing: want ErrNotFound, got %v", err)
 	}
+	// GetUserByUsername / GetUserByExternalID (Phase 149): the two lookups
+	// SCIM's idempotent-provisioning filter depends on.
+	if by, err := st.GetUserByUsername(ctx, "u1"); err != nil || by.ID != u.ID {
+		t.Fatalf("GetUserByUsername: %+v err %v", by, err)
+	}
+	if _, err := st.GetUserByUsername(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetUserByUsername missing: want ErrNotFound, got %v", err)
+	}
+	// A fresh user's ExternalID is empty, and empty must never resolve —
+	// every non-SCIM user shares that same default, so it must not be a
+	// usable lookup key.
+	if _, err := st.GetUserByExternalID(ctx, ""); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetUserByExternalID(\"\") must always miss, got %v", err)
+	}
+	if err := st.UpdateUserExternalID(ctx, u.ID, "idp-ext-1"); err != nil {
+		t.Fatalf("UpdateUserExternalID: %v", err)
+	}
+	if by, err := st.GetUserByExternalID(ctx, "idp-ext-1"); err != nil || by.ID != u.ID {
+		t.Fatalf("GetUserByExternalID: %+v err %v", by, err)
+	}
+	if err := st.UpdateUserExternalID(ctx, 999999, "idp-ext-2"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateUserExternalID missing: want ErrNotFound, got %v", err)
+	}
+	// A second user cannot claim the same non-empty ExternalID.
+	u2 := &store.User{Username: "u2-ext", Role: "user", TokenHash: "tokhash-ext2"}
+	if err := st.CreateUser(ctx, u2); err != nil {
+		t.Fatalf("CreateUser u2: %v", err)
+	}
+	if err := st.UpdateUserExternalID(ctx, u2.ID, "idp-ext-1"); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate ExternalID: want ErrConflict, got %v", err)
+	}
+	// ...but two users may each keep the shared empty default — the partial
+	// unique index must exclude "", not just deduplicate non-empty values.
+	if err := st.UpdateUserExternalID(ctx, u2.ID, ""); err != nil {
+		t.Fatalf("clearing ExternalID back to empty: %v", err)
+	}
+	if err := st.DeleteUser(ctx, u2.ID); err != nil {
+		t.Fatalf("DeleteUser u2: %v", err)
+	}
+	// UpdateUserActive (Phase 149): SCIM's deprovisioning switch.
+	if err := st.UpdateUserActive(ctx, u.ID, false); err != nil {
+		t.Fatalf("UpdateUserActive(false): %v", err)
+	}
+	if by, err := st.GetUser(ctx, u.ID); err != nil || by.Active {
+		t.Fatalf("after UpdateUserActive(false): %+v err %v", by, err)
+	}
+	if err := st.UpdateUserActive(ctx, u.ID, true); err != nil {
+		t.Fatalf("UpdateUserActive(true): %v", err)
+	}
+	if by, err := st.GetUser(ctx, u.ID); err != nil || !by.Active {
+		t.Fatalf("after UpdateUserActive(true): %+v err %v", by, err)
+	}
+	if err := st.UpdateUserActive(ctx, 999999, false); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateUserActive missing: want ErrNotFound, got %v", err)
+	}
 	if err := st.DeleteUser(ctx, u.ID); err != nil {
 		t.Fatalf("DeleteUser: %v", err)
+	}
+
+	// --- SCIM client keys (Phase 149) ---
+	sk := &store.ScimKey{Name: "okta", Owner: "idp-team", TokenHash: "scimhash1"}
+	if err := st.CreateScimKey(ctx, sk); err != nil {
+		t.Fatalf("CreateScimKey: %v", err)
+	}
+	if err := st.CreateScimKey(ctx, &store.ScimKey{Name: "dup", TokenHash: "scimhash1"}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate scim token hash: want ErrConflict, got %v", err)
+	}
+	if by, err := st.GetScimKeyByTokenHash(ctx, "scimhash1"); err != nil || by.Name != "okta" {
+		t.Fatalf("GetScimKeyByTokenHash: %+v err %v", by, err)
+	}
+	if _, err := st.GetScimKeyByTokenHash(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetScimKeyByTokenHash missing: want ErrNotFound, got %v", err)
+	}
+	keys, err := st.ListScimKeys(ctx)
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("ListScimKeys: %+v err %v", keys, err)
+	}
+	if err := st.DeleteScimKey(ctx, sk.ID); err != nil {
+		t.Fatalf("DeleteScimKey: %v", err)
+	}
+	if _, err := st.GetScimKeyByTokenHash(ctx, "scimhash1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetScimKeyByTokenHash after delete: want ErrNotFound, got %v", err)
+	}
+	if err := st.DeleteScimKey(ctx, 999999); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("DeleteScimKey missing: want ErrNotFound, got %v", err)
+	}
+	// A disabled key is treated as not found, the same fail-closed shape
+	// AgentKey/AppKey already use.
+	dk := &store.ScimKey{Name: "disabled-one", TokenHash: "scimhash-disabled", Disabled: true}
+	if err := st.CreateScimKey(ctx, dk); err != nil {
+		t.Fatalf("CreateScimKey(disabled): %v", err)
+	}
+	if _, err := st.GetScimKeyByTokenHash(ctx, "scimhash-disabled"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("disabled scim key must resolve as not found, got %v", err)
 	}
 
 	// --- sessions (with expiry) ---
