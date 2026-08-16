@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–151 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–152 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,30 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 152 — v0.39.0 ✅
+
+Releases Phase 151 (SAML 2.0 SSO, Service Provider) — a genuine minor: one
+new capability. No schema change (migration high-water mark stays `0041`).
+
+- [x] **v0.39.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-16 as `ghcr.io/morandeirachema/pamv1:0.39.0` (also
+  `latest`), digest `PENDING` (recorded once the tag's publish workflow has
+  run and the anonymous pull is verified)
+- [x] All five pins via the sweep (Helm `appVersion`, the two k8s
+  `deployment.yaml` images, the Flux `GitRepository` tag, the README
+  quickstart `TAG`); Helm chart `version` 0.29.0 -> **0.30.0** (minor,
+  alongside the `appVersion` minor)
+- [x] Both READMEs restated (the Tier-6 parity table row already landed in
+  Phase 151's own PR — this pass covers every scattered version/phase-count
+  mention, not just the hub lines)
+- [x] `docs/README.md`'s currency line, `docs/NIS2-COMPLIANCE.md`'s
+  compliance-evidence row and ROADMAP.md's top-banner phase count all
+  caught proactively; `CHANGELOG.md` gains the release entry (the per-phase
+  story stays in Phase 151's own entry below)
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging:
+  `gofmt`, `go vet`, `staticcheck`, `gosec`, `govulncheck`, `go test -race
+  ./...`, `go run ./cmd/archgen` (no schema/route drift)
 
 ## Phase 151 — SAML 2.0 SSO (Service Provider) ✅
 
