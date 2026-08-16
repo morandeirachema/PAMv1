@@ -111,6 +111,12 @@ type Options struct {
 	// SecretTypeFile credential's content at creation — refused over the cap,
 	// not truncated.
 	CredentialFileMaxKB int
+	// ExtensionTokenTTL (Phase 147, PAM_EXTENSION_TOKEN_TTL_HOURS) bounds how
+	// long a browser-extension autofill token stays valid before its holder
+	// must mint a new one from the portal. Deliberately hours-to-days, not
+	// rdpTokenTTL's seconds: this token lives in the extension's own local
+	// storage, not a URL, so it needs to survive more than one page load.
+	ExtensionTokenTTL time.Duration
 	// CheckoutMaxExtend (Phase 120) bounds how long a checkout lease may run in
 	// total, measured from CheckedOutAt — the ceiling POST
 	// /api/checkouts/{id}/extend enforces. Restart-only, like CertRemindDays:
@@ -368,6 +374,7 @@ type Server struct {
 	passwordPolicy       rotate.PasswordPolicy
 	passwordHistoryCount int
 	credentialFileMaxKB  int
+	extensionTokenTTL    time.Duration
 	checkoutMaxExtend    time.Duration
 	requireRecording     bool
 	portalURL            string
@@ -603,6 +610,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		passwordPolicy:       opts.PasswordPolicy,
 		passwordHistoryCount: opts.PasswordHistoryCount,
 		credentialFileMaxKB:  opts.CredentialFileMaxKB,
+		extensionTokenTTL:    opts.ExtensionTokenTTL,
 		checkoutMaxExtend:    opts.CheckoutMaxExtend,
 		requireRecording:     opts.RequireRecording,
 		portalURL:            portalURL,
@@ -856,10 +864,11 @@ func (s *Server) routes() {
 	s.mux.Handle("DELETE /api/safes/{id}/members/{mid}", s.authz(auth.CapReadInventory, s.deleteSafeMember))
 
 	s.mux.Handle("POST /api/targets/{id}/winrm", s.authz(auth.CapConnect, s.runWinRM))
-	s.mux.Handle("POST /api/rdp-token", s.authz(auth.CapConnect, s.rdpToken)) // mint a short-lived WS token for the viewer
-	s.mux.Handle("POST /api/vnc-token", s.authz(auth.CapConnect, s.vncToken)) // same, for the VNC viewer
-	s.mux.HandleFunc("GET /api/targets/{id}/rdp", s.rdpTunnel)                // WebSocket; auths via query token
-	s.mux.HandleFunc("GET /api/targets/{id}/vnc", s.vncTunnel)                // WebSocket; auths via query token
+	s.mux.Handle("POST /api/rdp-token", s.authz(auth.CapConnect, s.rdpToken))                  // mint a short-lived WS token for the viewer
+	s.mux.Handle("POST /api/vnc-token", s.authz(auth.CapConnect, s.vncToken))                  // same, for the VNC viewer
+	s.mux.Handle("POST /api/extension-token", s.authz(auth.CapRevealSecret, s.extensionToken)) // mint a browser-extension autofill token (Phase 147)
+	s.mux.HandleFunc("GET /api/targets/{id}/rdp", s.rdpTunnel)                                 // WebSocket; auths via query token
+	s.mux.HandleFunc("GET /api/targets/{id}/vnc", s.vncTunnel)                                 // WebSocket; auths via query token
 
 	// Zero Standing Privilege (Phase 22): publish the SSH CA public key so an
 	// operator can install it in a target's TrustedUserCAKeys. 404 when ZSP is off.
@@ -873,7 +882,7 @@ func (s *Server) routes() {
 
 	s.mux.Handle("POST /api/credentials", s.authz(auth.CapManageCredentials, s.createCredential))
 	s.mux.Handle("GET /api/credentials", s.authz(auth.CapReadInventory, s.listCredentials))
-	s.mux.Handle("POST /api/credentials/{id}/reveal", s.authz(auth.CapRevealSecret, s.revealCredential))
+	s.mux.Handle("POST /api/credentials/{id}/reveal", s.authzExtOK(auth.CapRevealSecret, s.revealCredential)) // browser-extension tokens (Phase 147) reach only this route
 	s.mux.Handle("POST /api/credentials/{id}/doublelock", s.authz(auth.CapRevealSecret, s.setDoubleLock))
 	s.mux.Handle("DELETE /api/credentials/{id}/doublelock", s.authz(auth.CapRevealSecret, s.clearDoubleLock))
 	s.mux.Handle("POST /api/credentials/{id}/rotate", s.authz(auth.CapManageCredentials, s.rotateCredentialHandler))
@@ -1075,6 +1084,25 @@ func (s *Server) routes() {
 // made with the emergency key appends a "breakglass.access" audit event and
 // logs a warning.
 func (s *Server) authz(cap auth.Capability, next http.HandlerFunc) http.Handler {
+	return s.authzCore(cap, false, next)
+}
+
+// authzExtOK is authz's twin for the one route a browser-extension token
+// (auth.SessionScopeExtension, Phase 147) may reach — currently only
+// revealCredential. It runs every check authz does, in the same order,
+// except it does not blanket-refuse ExtensionOnly: Can(cap) below still
+// gates it normally, since a minted extension token inherits the minting
+// user's own role/capabilities (issueSessionTTL), so a principal who could
+// never reveal a secret still cannot via this route either.
+func (s *Server) authzExtOK(cap auth.Capability, next http.HandlerFunc) http.Handler {
+	return s.authzCore(cap, true, next)
+}
+
+// authzCore is authz and authzExtOK's shared body; allowExtension is the one
+// difference between them. Keeping it in one place is deliberate — two
+// near-identical copies of this checklist is exactly how a future gate added
+// to one and not the other goes unnoticed.
+func (s *Server) authzCore(cap auth.Capability, allowExtension bool, next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := s.resolver.Resolve(r.Context(), r.Header.Get("X-API-Key"))
 		if err != nil {
@@ -1102,6 +1130,15 @@ func (s *Server) authz(cap auth.Capability, next http.HandlerFunc) http.Handler 
 			// so a copy leaked from a proxy log cannot act or re-mint itself.
 			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:tunnel-only-token")
 			writeError(w, http.StatusForbidden, "this token is only valid for the RDP tunnel")
+			return
+		}
+		if p.ExtensionOnly && !allowExtension {
+			// A browser-extension token reaching any route but the one it was
+			// minted for (see authzExtOK) — refused the same way a leaked
+			// RDP-tunnel token is, so a copy pulled from extension storage is
+			// useless anywhere else in the API.
+			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:extension-token-scope")
+			writeError(w, http.StatusForbidden, "this token is only valid for the extension reveal endpoint")
 			return
 		}
 		// Source-address restriction (Phase 118): a principal with a non-empty
@@ -1209,6 +1246,13 @@ func (s *Server) authenticated(next http.HandlerFunc) http.Handler {
 			// token exists only to finish the pending WebAuthn login ceremony,
 			// via mfaPendingOnly — not /me, /logout, or self-service MFA.
 			writeError(w, http.StatusForbidden, "complete WebAuthn sign-in to continue")
+			return
+		}
+		if p.ExtensionOnly {
+			// No authenticated-only route (/me, /logout, ...) is the reveal
+			// endpoint, so an extension token is refused here unconditionally —
+			// authzExtOK, not authenticated, is the one exception this scope gets.
+			writeError(w, http.StatusForbidden, "this token is only valid for the extension reveal endpoint")
 			return
 		}
 		next(w, r.WithContext(ctx))

@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "pamv1 Autofill",
+  "version": "1.0.0",
+  "description": "Fill a login form from a credential vaulted in pamv1, using the same audited reveal path the portal itself uses.",
+  "permissions": ["storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "action": {
+    "default_title": "pamv1 Autofill — click to open settings"
+  }
+}

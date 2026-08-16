@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-08-15 · Reflects: Phases 0–145. **Phase 53 added the first new
+> Last updated: 2026-08-16 · Reflects: Phases 0–147. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; nothing after
 > it adds a port or listener (55–94 ride the existing listeners and flows: the
 > live-monitor relay and the step-up decision bus ride the server ↔ PostgreSQL
@@ -91,6 +91,11 @@
 > `POST /api/credentials/{id}/reveal` routes on `:8080`, not a new route; the
 > content rides the same request/response bodies every other secret type
 > already does.
+> **Phase 147 adds no port, listener or flow either** — the new
+> `POST /api/extension-token` and the browser extension's calls to the
+> existing reveal route both ride `:8080`, from the operator's own browser,
+> exactly like every portal request already does; no new ingress, no new
+> egress purpose, nothing new on the wire.
 > Everything from 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
 > **no new listeners**: certification/ticketing/approvals (19–21), threat analytics
