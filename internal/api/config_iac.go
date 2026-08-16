@@ -20,6 +20,7 @@ func (s *Server) effectiveConfig(w http.ResponseWriter, r *http.Request) {
 		"backends": map[string]bool{
 			"password_login":      rt.authn != nil,
 			"oidc_login":          rt.oidc != nil,
+			"saml_login":          rt.saml != nil,
 			"directory_reconcile": rt.directory != nil,
 			"mfa_required":        rt.mfaRequired,
 			"reveal_disabled":     rt.revealDisabled,

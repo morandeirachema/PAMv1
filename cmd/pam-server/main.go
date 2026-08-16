@@ -57,6 +57,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/proxy"
 	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/rotate"
+	"github.com/morandeirachema/pamv1/internal/saml"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/shamir"
 	"github.com/morandeirachema/pamv1/internal/sshca"
@@ -728,6 +729,56 @@ func buildOIDC(ctx context.Context, cfg *config.Config, log *slog.Logger) (*oidc
 	return p, nil
 }
 
+// buildSAML constructs the SAML 2.0 Service Provider when PAM_SAML_SP_URL is set
+// (Phase 151) — the same "presence enables" idiom buildOIDC uses. The IdP
+// metadata comes from exactly one of PAM_SAML_IDP_METADATA_URL (fetched here,
+// the SP's only outbound call) or PAM_SAML_IDP_METADATA_FILE; the optional
+// PAM_SAML_SP_KEY_FILE/_CERT_FILE pair turns on AuthnRequest signing and
+// encrypted-assertion decryption. Any misconfiguration is a startup (or
+// hot-swap) error rather than a first-login surprise.
+func buildSAML(ctx context.Context, cfg *config.Config, log *slog.Logger) (*saml.Provider, error) {
+	if cfg.SAMLSPURL == "" {
+		return nil, nil
+	}
+	sc := saml.Config{
+		RootURL:        cfg.SAMLSPURL,
+		EntityID:       cfg.SAMLSPEntityID,
+		IDPMetadataURL: cfg.SAMLIDPMetadataURL,
+		NameAttr:       cfg.SAMLNameAttr,
+	}
+	if cfg.SAMLGroupAttr != "" {
+		sc.GroupAttrs = splitAndTrim(cfg.SAMLGroupAttr)
+	}
+	if cfg.SAMLIDPMetadataFile != "" {
+		b, err := os.ReadFile(cfg.SAMLIDPMetadataFile) // #nosec G304 -- operator-supplied path from PAM_SAML_IDP_METADATA_FILE (env/IaC-only, never a stored override)
+		if err != nil {
+			return nil, fmt.Errorf("saml: read idp metadata file: %w", err)
+		}
+		sc.IDPMetadataXML = b
+	}
+	if cfg.SAMLSPKeyFile != "" || cfg.SAMLSPCertFile != "" {
+		if cfg.SAMLSPKeyFile == "" || cfg.SAMLSPCertFile == "" {
+			return nil, fmt.Errorf("saml: PAM_SAML_SP_KEY_FILE and PAM_SAML_SP_CERT_FILE must be set together")
+		}
+		key, err := os.ReadFile(cfg.SAMLSPKeyFile) // #nosec G304 -- operator-supplied path from PAM_SAML_SP_KEY_FILE (env/IaC-only, never a stored override)
+		if err != nil {
+			return nil, fmt.Errorf("saml: read sp key file: %w", err)
+		}
+		cert, err := os.ReadFile(cfg.SAMLSPCertFile) // #nosec G304 -- operator-supplied path from PAM_SAML_SP_CERT_FILE (env/IaC-only, never a stored override)
+		if err != nil {
+			return nil, fmt.Errorf("saml: read sp certificate file: %w", err)
+		}
+		sc.SPKeyPEM, sc.SPCertPEM = key, cert
+	}
+	p, err := saml.New(ctx, sc)
+	if err != nil {
+		return nil, err
+	}
+	log.Info("saml login enabled", "sp_entity_id", p.EntityID(), "idp_entity_id", p.IDPEntityID(),
+		"acs", p.ACSURL(), "signs_requests", p.SignsRequests())
+	return p, nil
+}
+
 // buildWebAuthn constructs the WebAuthn relying party when PAM_WEBAUTHN_RP_ID
 // is set — the same "presence enables" idiom buildOIDC uses, deliberately
 // with no separate boolean flag.
@@ -837,6 +888,10 @@ func run() error {
 	}
 
 	oidcProvider, err := buildOIDC(ctx, cfg, log)
+	if err != nil {
+		return err
+	}
+	samlProvider, err := buildSAML(ctx, cfg, log)
 	if err != nil {
 		return err
 	}
@@ -1039,11 +1094,17 @@ func run() error {
 		if err != nil {
 			return nil, err
 		}
+		sp, err := buildSAML(ctx, &c, log)
+		if err != nil {
+			return nil, err
+		}
 		return &api.RuntimeConfig{
 			Authn:            an,
 			Directory:        dir,
 			OIDC:             op,
 			OIDCRoleMap:      roleMap(c.OIDCRoleAdmin, c.OIDCRoleUser, c.OIDCRoleAuditor, c.OIDCRoleApprover),
+			SAML:             sp,
+			SAMLRoleMap:      roleMap(c.SAMLRoleAdmin, c.SAMLRoleUser, c.SAMLRoleAuditor, c.SAMLRoleApprover),
 			MFARequired:      c.MFARequired,
 			RevealDisabled:   c.RevealDisabled,
 			ApprovalRequired: c.RequireApproval,
@@ -1165,6 +1226,8 @@ func run() error {
 		OIDC:                    oidcProvider,
 		WebAuthn:                webAuthnProvider,
 		OIDCRoleMap:             roleMap(cfg.OIDCRoleAdmin, cfg.OIDCRoleUser, cfg.OIDCRoleAuditor, cfg.OIDCRoleApprover),
+		SAML:                    samlProvider,
+		SAMLRoleMap:             roleMap(cfg.SAMLRoleAdmin, cfg.SAMLRoleUser, cfg.SAMLRoleAuditor, cfg.SAMLRoleApprover),
 		PortalURL:               cfg.PortalURL,
 		GuacdAddr:               cfg.GuacdAddr,
 		GuacdRecordingPath:      cfg.GuacdRecordingPath,

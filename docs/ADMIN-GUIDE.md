@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-16 · Reflects: Phases 0–149 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-16 · Reflects: Phases 0–151 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -315,7 +315,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_POSTURE_ATTEST_URL` | | (off) | Live device-posture webhook, checked on every connect and every authenticated call, not just once at approval (Phase 133). See §7. |
 | `PAM_DEVICE_HEADER` | | (off) | Name of an HTTP header a trusted reverse proxy injects with a terminated client certificate's fingerprint; once set, a user with an enrolled `device_fingerprint` must present a matching value (Phase 133). See §7. |
 | `PAM_VENDOR_SWEEP_INTERVAL_MIN` | | `0` (off) | How often the sweeper cuts a vendor's **live** session once its contract grant's window closes (`vendor.session_expired`), so access ends with the contract rather than at the next connect. |
-| `PAM_OT_AIRGAP` | | `false` | Air-gapped sites. Forces the no-op alerter **and refuses to start** alongside anything that would call out of the enclave — the ITSM webhook, vendor attestation, the SIEM forwarder, Conjur, the alert webhook and `PAM_OIDC_ISSUER` — and rejects `PAM_KEK_PROVIDER=aws-kms` and `PAM_ENTRA_TENANT_ID` outright. It is a fail-closed startup gate, not a mute switch. |
+| `PAM_OT_AIRGAP` | | `false` | Air-gapped sites. Forces the no-op alerter **and refuses to start** alongside anything that would call out of the enclave — the ITSM webhook, vendor attestation, the SIEM forwarder, Conjur, the alert webhook, `PAM_OIDC_ISSUER` and `PAM_SAML_IDP_METADATA_URL` (use `PAM_SAML_IDP_METADATA_FILE` inside the enclave) — and rejects `PAM_KEK_PROVIDER=aws-kms` and `PAM_ENTRA_TENANT_ID` outright. It is a fail-closed startup gate, not a mute switch. |
 | `PAM_OT_AIRGAP_ALLOW` | | — | Comma-separated variable names you certify resolve **inside** the enclave, re-permitting them under air-gap. Without this the gate has no escape hatch, which is why an air-gapped site with an internal SIEM could not start. |
 | `PAM_ALERT_WEBHOOK` | | (off) | HTTP endpoint POSTed a JSON alert on break-glass access/unseal and newly flagged risk (Slack/PagerDuty/…). Use HTTPS — a plaintext or non-loopback `http://` URL is warned about at startup. |
 | `PAM_ALERT_SYSLOG` | | (off) | Syslog collector for the same alerts — `udp://host:port` or `tcp://host:port` (a bare `host:port` is treated as UDP). This is per-*alert*; to stream the whole trail use `PAM_AUDIT_FORWARD_ADDR`. |
@@ -346,7 +346,7 @@ HTTPS endpoint of your ingress instead of `http://localhost:8080`.
 ### 4.1 Runtime configuration console (Phase 12)
 
 The **identity, SSO, and operational-policy** settings (the `PAM_LDAP_*`,
-`PAM_ENTRA_*`, `PAM_OIDC_*`, `PAM_MFA_REQUIRED`, `PAM_REQUIRE_APPROVAL`,
+`PAM_ENTRA_*`, `PAM_OIDC_*`, `PAM_SAML_*` (except the three `_FILE` paths), `PAM_MFA_REQUIRED`, `PAM_REQUIRE_APPROVAL`,
 `PAM_REVEAL_DISABLED`, `PAM_ALLOWED_PROTOCOLS`, … keys) can also be set from the
 console at runtime and are persisted in the database, overriding the environment.
 Secret values (bind password, client secrets) are **vault-encrypted at rest** and
@@ -1605,6 +1605,81 @@ role or group claim. Users click
 the callback issues a pamv1 session and returns to the portal. Note: pamv1's own
 TOTP is not layered on OIDC (the IdP owns MFA there). The OIDC login state is
 held in a shared store (Phase 10), so the callback can land on any replica in HA.
+
+### SAML 2.0 single sign-on (Phase 151 — ADFS, Okta, OneLogin, Entra SAML apps)
+
+For an IdP that speaks **SAML 2.0 but not OIDC** — on-prem **AD FS** being the
+canonical case — pamv1 can act as a SAML **Service Provider** (Web Browser SSO
+profile, **SP-initiated** flow). The user authenticates *at the IdP*; the IdP
+posts a signed `<Response>` back to pamv1's Assertion Consumer Service (ACS),
+pamv1 verifies the **XML-DSig signature** against the certificate in the IdP's
+metadata, checks the audience, destination, issuer, timing and request binding,
+maps the group/role attribute to a pamv1 role and issues a session — the same
+landing the OIDC callback uses, so the console needs nothing SAML-specific.
+Enable it:
+
+```bash
+PAM_SAML_SP_URL=https://pam.example.com                 # pamv1's PUBLIC base URL (presence enables SAML)
+PAM_SAML_IDP_METADATA_URL=https://adfs.corp.example/FederationMetadata/2007-06/FederationMetadata.xml
+#   …or, air-gapped / metadata endpoint unreachable from pamv1:
+# PAM_SAML_IDP_METADATA_FILE=/etc/pamv1/idp-metadata.xml
+PAM_SAML_ROLE_ADMIN=PAM-Admins                          # group / role attribute VALUE -> role
+PAM_SAML_ROLE_USER=PAM-Users
+PAM_SAML_ROLE_AUDITOR=PAM-Auditors                      # optional, same mapping for the other two roles
+PAM_SAML_ROLE_APPROVER=PAM-Approvers
+```
+
+Then register pamv1 at the IdP by importing its SP metadata from
+**`https://pam.example.com/api/auth/saml/metadata`** (ADFS: *Add Relying Party
+Trust → Import data about the relying party published online*; Okta/Entra:
+upload the metadata file, or enter the values by hand — entity ID
+`https://pam.example.com/api/auth/saml/metadata`, ACS URL
+`https://pam.example.com/api/auth/saml/acs`, HTTP-POST binding). Configure the
+IdP to emit a **group or role claim**: pamv1 reads, by default, any attribute
+named `groups`, `memberOf`, `role`, ADFS's Token-Groups
+(`http://schemas.xmlsoap.org/claims/Group`) or Role
+(`http://schemas.microsoft.com/ws/2008/06/identity/claims/role`) claim types,
+or Entra's SAML `…/claims/groups`; set `PAM_SAML_GROUP_ATTR` (comma-separated
+attribute names, matched by `Name` or `FriendlyName`) to be explicit. The
+username defaults to the assertion's **NameID**; `PAM_SAML_NAME_ATTR` names an
+attribute to use instead (e.g. ADFS's UPN claim
+`http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn`). Users open
+**Single sign-on (SAML)** on the sign-on screen (or hit `/api/auth/saml/start`).
+
+Options and boundaries:
+
+- **`PAM_SAML_SP_ENTITY_ID`** overrides the SP entity ID (default: the metadata
+  URL, the SAML convention). **`PAM_SAML_SP_KEY_FILE` + `PAM_SAML_SP_CERT_FILE`**
+  (an RSA key pair, PEM, set together) make pamv1 **sign its AuthnRequests**
+  (RSA-SHA256, for an IdP configured to require signed requests) and **publish
+  the certificate for encryption**, so an IdP that encrypts assertions to the SP
+  works; without them the SP still verifies every IdP signature — the pair only
+  adds those two SP-side operations.
+- The IdP metadata is fetched **once** at startup (and again on every hot-swap
+  of a `PAM_SAML_*` setting); that fetch is the SP's **only outbound call** —
+  the login itself is browser-mediated (HTTP-Redirect out, HTTP-POST back).
+  `PAM_OT_AIRGAP` therefore refuses `PAM_SAML_IDP_METADATA_URL` and expects the
+  `_FILE` form. Metadata is not auto-refreshed: when the IdP rotates its signing
+  certificate, restart (or re-save the SAML config in the console).
+- **SP-initiated only.** An unsolicited (IdP-initiated) `<Response>` is refused:
+  it carries no `InResponseTo` to bind to the browser that started the login,
+  which is exactly the login-CSRF hole the state cookie closes. Single Logout,
+  the artifact binding and IdP-initiated SSO are not implemented.
+- The ACS is a **cross-site POST** from the IdP's page, so the state cookie is
+  `SameSite=None; Secure` — which browsers only honour over **HTTPS**. Over
+  plain HTTP (dev only) the attribute is left unset and the browser's default
+  handling applies; every real deployment terminates TLS anyway.
+- Like OIDC, a SAML identity has **no local user row**: no per-user IP
+  allowlist, no local TOTP/WebAuthn (the IdP owns MFA), and a login whose
+  attributes map to **no role is refused** (`no_role`) — there is no default.
+- The three `_FILE` settings are **env/IaC-only** (not hot-swappable): a stored
+  console override must never be able to point the server at a file on its host.
+- Verification: the SP is proven against a **real in-process SAML IdP** in the
+  test suite (signed and encrypted assertions accepted; tampered attributes,
+  swapped subjects, stripped signatures, wrong audience/issuer, expired
+  conditions and signature-wrapping decoys refused; replay and cross-browser
+  posts refused). **Interop with a live ADFS/Okta/Entra tenant is not
+  verified in this environment** — see [EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md).
 
 ### Multi-factor authentication (TOTP)
 
@@ -3253,6 +3328,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-16 | **Phase 151 — SAML 2.0 single sign-on (Service Provider).** For IdPs with no OIDC endpoint (on-prem AD FS, SAML-only Okta/OneLogin/Entra apps): SP-initiated Web Browser SSO — `GET /api/auth/saml/start` (AuthnRequest, HTTP-Redirect), `POST /api/auth/saml/acs` (the IdP's signed Response, HTTP-POST), `GET /api/auth/saml/metadata` (the SP descriptor an IdP admin imports). `PAM_SAML_SP_URL` enables it (presence, like `PAM_OIDC_ISSUER`); IdP metadata from `PAM_SAML_IDP_METADATA_URL` or `_FILE`; group/role attribute → role via `PAM_SAML_ROLE_*`; optional `PAM_SAML_SP_KEY_FILE`/`_CERT_FILE` sign AuthnRequests and accept encrypted assertions; `PAM_SAML_NAME_ATTR`/`_GROUP_ATTR` pick the attributes. Hot-swappable except the three `_FILE` paths; `PAM_OT_AIRGAP` refuses the metadata URL. XML-DSig verification is delegated to a well-audited library (the WebAuthn precedent — see PROTOCOLS-AND-CRYPTO.md §"SAML"). Login state rides the same single-use store the OIDC flow uses, so the ACS can land on any replica. Login audited as `login … via:saml`. No schema change. **Not verified against a live IdP** — proven against a real in-process SAML IdP instead. See the "SAML 2.0 single sign-on" section above |
 | 2026-08-16 | **Phase 149 — SCIM 2.0 user provisioning.** New `/scim/v2/Users` (RFC 7643/7644), authenticated by a new non-human `ScimKey` bearer identity (`POST /v1/scim-keys`, `manage_users` to mint), never a human principal — every SCIM-provisioned user gets the fixed `user` role, no way to request more. `store.User` gains `ExternalID` and `Active`; deactivating (`PATCH active:false` or `DELETE`, which is a soft-delete) now actually blocks that user's local token from authenticating, not just a flag — proven end to end. Reactivation restores the same token, nothing re-minted. Complements the existing pull-based `POST /api/identity/reconcile`. `PAM_SCIM_ENABLED` (default off). **Not interactively verified against a real IdP** — no Okta/Azure AD/OneLogin account in this environment; both RFC 7644's standard `PATCH` shape and Azure AD's documented no-path variant are implemented and tested against a fake. See §7 |
 | 2026-08-16 | **Phase 147 — browser-extension password autofill.** New `extension/` (Manifest V3) calls the existing `POST /api/credentials/{id}/reveal` with a new `POST /api/extension-token`-minted bearer token (`CapRevealSecret` required to mint) that inherits the caller's own role/capabilities but is refused on every route except reveal — a new `ExtensionOnly` principal flag, narrower than the RDP/VNC viewer scope's blanket refusal. `PAM_EXTENSION_TOKEN_TTL_HOURS` (default 24, max 720). Reveal audits gain a `via:extension` marker; new audit action `extension.token_issued`. No schema change, no way for the extension to browse the vault (one hostname → one credential ID, configured manually). **Not interactively verified against a real browser** — no GUI browser in this environment; JS syntax-checked, manifest JSON-validated. See §6 |
 | 2026-08-15 | **Phase 145 — generic file-attachment secrets.** New `secret_type: "file"` for license keys, cert bundles and short documents — the same `POST /api/credentials` route and `vault.Encrypt`/`Decrypt` pathway every other secret type already uses, base64-encoded by the client. `PAM_CREDENTIAL_FILE_MAX_KB` (default 1024, max 10240, never "0 = unlimited") refuses an over-cap upload before it is ever encrypted or a row inserted. No schema change (`secret_type` is a plain `TEXT` column) and no new REST surface. **A near-miss along the way**: the plan's own stated fix — stop `ListCredentials` from selecting `secret_enc`, since it's `json:"-"` — passed a store-layer contract test and then broke the PostgreSQL session proxy's real JIT credential injection, because `dbproxy.go`'s `lookupTargetCred` deliberately lists first and decrypts from the result afterward, so every gate can run before any plaintext exists; a repo-wide check found nine such internal callers (also `-rotate-kek`, the lifecycle reconciler, the RDP/VNC viewer, REST WinRM, the broker's exec tools). Fixed by leaving `ListCredentials` untouched and adding a separate `ListCredentialsMeta` for the four callers that never touch the secret (the REST list endpoint among them). See §6 |

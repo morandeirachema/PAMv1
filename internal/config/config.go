@@ -535,6 +535,26 @@ type Config struct {
 	OIDCRoleAuditor  string
 	OIDCRoleApprover string
 	PortalURL        string
+
+	// SAML* configure the SAML 2.0 SP-initiated browser login flow (Phase 151),
+	// for IdPs with no OIDC endpoint (on-prem ADFS, or a SAML-only Okta/
+	// OneLogin/Entra application). Empty SP URL disables it — the same
+	// presence-enables idiom as OIDCIssuer. Exactly one of the two IdP-metadata
+	// sources must be set when enabled. The two *_FILE settings are env/IaC-only
+	// (not hot-swappable): a stored override must never be able to point the
+	// server at an arbitrary file on its own host.
+	SAMLSPURL           string // pamv1's public base URL, e.g. https://pam.example.com
+	SAMLSPEntityID      string // optional; defaults to <SP URL>/api/auth/saml/metadata
+	SAMLIDPMetadataURL  string // fetched once at build (and on hot-swap)
+	SAMLIDPMetadataFile string // or the metadata document on disk (air-gapped sites)
+	SAMLSPKeyFile       string // optional PEM RSA key: signs AuthnRequests, decrypts assertions
+	SAMLSPCertFile      string // its certificate; published in the SP metadata
+	SAMLNameAttr        string // optional assertion attribute for the username (default NameID)
+	SAMLGroupAttr       string // optional comma-separated group attribute names (default: the common set)
+	SAMLRoleAdmin       string
+	SAMLRoleUser        string
+	SAMLRoleAuditor     string
+	SAMLRoleApprover    string
 }
 
 // Load reads configuration from the PAM_* environment variables, applying
@@ -822,6 +842,19 @@ func Load() (*Config, error) {
 		OIDCRoleAuditor:  os.Getenv("PAM_OIDC_ROLE_AUDITOR"),
 		OIDCRoleApprover: os.Getenv("PAM_OIDC_ROLE_APPROVER"),
 		PortalURL:        os.Getenv("PAM_PORTAL_URL"),
+
+		SAMLSPURL:           os.Getenv("PAM_SAML_SP_URL"),
+		SAMLSPEntityID:      os.Getenv("PAM_SAML_SP_ENTITY_ID"),
+		SAMLIDPMetadataURL:  os.Getenv("PAM_SAML_IDP_METADATA_URL"),
+		SAMLIDPMetadataFile: os.Getenv("PAM_SAML_IDP_METADATA_FILE"),
+		SAMLSPKeyFile:       os.Getenv("PAM_SAML_SP_KEY_FILE"),
+		SAMLSPCertFile:      os.Getenv("PAM_SAML_SP_CERT_FILE"),
+		SAMLNameAttr:        os.Getenv("PAM_SAML_NAME_ATTR"),
+		SAMLGroupAttr:       os.Getenv("PAM_SAML_GROUP_ATTR"),
+		SAMLRoleAdmin:       os.Getenv("PAM_SAML_ROLE_ADMIN"),
+		SAMLRoleUser:        os.Getenv("PAM_SAML_ROLE_USER"),
+		SAMLRoleAuditor:     os.Getenv("PAM_SAML_ROLE_AUDITOR"),
+		SAMLRoleApprover:    os.Getenv("PAM_SAML_ROLE_APPROVER"),
 	}
 	// Normalize the disable sentinel so "off"/"OFF"/"Off" all disable the proxy.
 	if strings.EqualFold(cfg.SSHAddr, "off") {
@@ -1128,6 +1161,7 @@ func airGapConflicts(cfg *Config) []string {
 		{"PAM_ICAP_URL", cfg.ICAPURL},
 		{"PAM_AUDIT_FORWARD_ADDR", cfg.AuditForwardAddr},
 		{"PAM_OIDC_ISSUER", cfg.OIDCIssuer},
+		{"PAM_SAML_IDP_METADATA_URL", cfg.SAMLIDPMetadataURL},
 		{"PAM_CONJUR_URL", os.Getenv("PAM_CONJUR_URL")},
 		{"PAM_ALERT_WEBHOOK", cfg.AlertWebhook},
 	} {
