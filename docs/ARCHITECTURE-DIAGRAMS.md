@@ -78,6 +78,8 @@ flowchart LR
     n_posture[posture]
     n_ratelimit[ratelimit]
     n_recording[recording]
+    n_saml[saml]
+    n_samltest[samltest]
     n_sshca[sshca]
     n_testutil[testutil]
     n_ticket[ticket]
@@ -115,6 +117,7 @@ flowchart LR
   n_api --> n_ratelimit
   n_api --> n_recording
   n_api --> n_rotate
+  n_api --> n_saml
   n_api --> n_session
   n_api --> n_shamir
   n_api --> n_sshca
@@ -168,6 +171,7 @@ flowchart LR
   n_pam_server --> n_proxy
   n_pam_server --> n_recording
   n_pam_server --> n_rotate
+  n_pam_server --> n_saml
   n_pam_server --> n_session
   n_pam_server --> n_shamir
   n_pam_server --> n_sshca
@@ -501,7 +505,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 173 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 176 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -523,6 +527,9 @@ The 173 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/audit/verify` | CapReadAudit |
 | GET | `/api/auth/oidc/callback` | public (rate-limited) |
 | GET | `/api/auth/oidc/start` | public (rate-limited) |
+| POST | `/api/auth/saml/acs` | public (rate-limited) |
+| GET | `/api/auth/saml/metadata` | public (rate-limited) |
+| GET | `/api/auth/saml/start` | public (rate-limited) |
 | POST | `/api/blast/analyze` | CapReadAudit |
 | POST | `/api/breakglass/unseal` | public (rate-limited) |
 | GET | `/api/ca/ssh` | CapReadInventory |

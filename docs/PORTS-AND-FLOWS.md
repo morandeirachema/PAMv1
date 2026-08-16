@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-08-16 · Reflects: Phases 0–149. **Phase 53 added the first new
+> Last updated: 2026-08-16 · Reflects: Phases 0–151. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; nothing after
 > it adds a port or listener (55–94 ride the existing listeners and flows: the
 > live-monitor relay and the step-up decision bus ride the server ↔ PostgreSQL
@@ -100,6 +100,15 @@
 > `/scim/v2/Users` both ride the existing `:8080`; SCIM is push, an IdP
 > calling *in* to pamv1, so there is no new egress purpose either, unlike
 > the ITSM/posture/vendor webhooks that call *out*.
+> **Phase 151 adds no port or listener, and one new egress purpose on an
+> existing flow** — the SAML SP's three routes ride `:8080`; the login itself
+> is browser-mediated (the operator's browser carries the AuthnRequest to the
+> IdP and the signed Response back to pamv1's ACS), so, unlike OIDC's
+> server-side token exchange, **no per-login server↔IdP call exists**. The
+> only outbound call is one HTTPS fetch of the IdP metadata document at
+> startup and on hot-swap (`PAM_SAML_IDP_METADATA_URL`, folded into E5's
+> identity-zone `:443` egress) — or none at all with
+> `PAM_SAML_IDP_METADATA_FILE`, which is what `PAM_OT_AIRGAP` requires.
 > Everything from 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
 > **no new listeners**: certification/ticketing/approvals (19–21), threat analytics
@@ -161,7 +170,7 @@ add `5433 → 5433` and/or `1433 → 1433` when the database proxies are enabled
 | E4a | pam-server | guacd (control plane) | 4822 | Guacamole | RDP broker handshake (JIT credential) | ✅ |
 | E4b | guacd | Windows target | 3389 | RDP | Rendered RDP session | ✅ |
 | E4c | guacd | VNC target (any OS) | 5900 | RFB (VNC) | Rendered VNC session. **Plaintext with no server authentication** — the protocol offers neither; keep this hop inside a trusted segment (see [PROTOCOLS-AND-CRYPTO §3.5](PROTOCOLS-AND-CRYPTO.md)) | ✅ P54 |
-| E5 | pam-server | Active Directory / Entra / OIDC (identity zone) | **636** / 443 | **LDAPS** / HTTPS | Authn + group→role mapping (LDAPS, Entra ROPC, OIDC) | ✅ |
+| E5 | pam-server | Active Directory / Entra / OIDC / SAML IdP (identity zone) | **636** / 443 | **LDAPS** / HTTPS | Authn + group→role mapping (LDAPS, Entra ROPC, OIDC); the SAML IdP metadata fetch (Phase 151 — the SAML login itself is browser-mediated, no server-side call) | ✅ |
 | E6 | pam-server | Active Directory (identity zone) | 88 | Kerberos | Optional Kerberos auth | 🔷 P3b |
 | E7 | pam-server | AD / target | 636 / 22 / 5986 | LDAPS / SSH / WinRM | Credential rotation (password change), reconciliation | ✅ P7 |
 | E8 | pam-server | SIEM / syslog collector (mgmt zone) | 514 / 6514 | Syslog **UDP** (default) / TCP / **TLS** | **Continuous** audit→SIEM forwarding from a durable cursor — RFC 5424, CEF or LEEF (`PAM_AUDIT_FORWARD_ADDR`, `_PROTO` default `udp`, `_FORMAT`, `_CA` pins the collector for TLS) | ✅ P35/P47 |

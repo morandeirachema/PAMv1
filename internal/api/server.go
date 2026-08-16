@@ -31,6 +31,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
 	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/rotate"
+	"github.com/morandeirachema/pamv1/internal/saml"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/sshca"
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -136,6 +137,12 @@ type Options struct {
 	WebAuthn *webauthn.WebAuthn
 	// OIDCRoleMap maps OIDC app-role/group claims to roles.
 	OIDCRoleMap map[string]auth.Role
+	// SAML (optional, Phase 151) enables the SAML 2.0 SP-initiated browser login
+	// flow — for IdPs with no OIDC endpoint (on-prem ADFS). Hot-swappable like
+	// OIDC, since it is identity configuration, not transport.
+	SAML *saml.Provider
+	// SAMLRoleMap maps SAML group/role attribute values to roles.
+	SAMLRoleMap map[string]auth.Role
 	// PortalURL is where the OIDC callback redirects (default "/").
 	PortalURL string
 	// GuacdAddr enables RDP brokering via an Apache Guacamole guacd daemon
@@ -479,6 +486,8 @@ type RuntimeConfig struct {
 	Directory        auth.DirectorySource
 	OIDC             *oidc.Provider
 	OIDCRoleMap      map[string]auth.Role
+	SAML             *saml.Provider
+	SAMLRoleMap      map[string]auth.Role
 	MFARequired      bool
 	RevealDisabled   bool
 	ApprovalRequired bool
@@ -499,6 +508,8 @@ type runtimeConf struct {
 	directory        auth.DirectorySource
 	oidc             *oidc.Provider
 	oidcRoleMap      map[string]auth.Role
+	saml             *saml.Provider
+	samlRoleMap      map[string]auth.Role
 	mfaRequired      bool
 	revealDisabled   bool
 	approvalRequired bool
@@ -522,6 +533,8 @@ func snapshot(rc RuntimeConfig) *runtimeConf {
 		directory:        rc.Directory,
 		oidc:             rc.OIDC,
 		oidcRoleMap:      rc.OIDCRoleMap,
+		saml:             rc.SAML,
+		samlRoleMap:      rc.SAMLRoleMap,
 		mfaRequired:      rc.MFARequired,
 		revealDisabled:   rc.RevealDisabled,
 		approvalRequired: rc.ApprovalRequired,
@@ -679,6 +692,8 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		Directory:        opts.Directory,
 		OIDC:             opts.OIDC,
 		OIDCRoleMap:      opts.OIDCRoleMap,
+		SAML:             opts.SAML,
+		SAMLRoleMap:      opts.SAMLRoleMap,
 		MFARequired:      opts.MFARequired,
 		RevealDisabled:   opts.RevealDisabled,
 		ApprovalRequired: opts.RequireApproval,
@@ -816,6 +831,11 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/logout", s.authenticated(s.logout))
 	s.mux.Handle("GET /api/auth/oidc/start", s.rateLimit(http.HandlerFunc(s.oidcStart)))
 	s.mux.Handle("GET /api/auth/oidc/callback", s.rateLimit(http.HandlerFunc(s.oidcCallback)))
+	// SAML 2.0 SP (Phase 151): start = AuthnRequest redirect, acs = the IdP's
+	// HTTP-POST Response, metadata = the SP descriptor an IdP admin imports.
+	s.mux.Handle("GET /api/auth/saml/start", s.rateLimit(http.HandlerFunc(s.samlStart)))
+	s.mux.Handle("POST /api/auth/saml/acs", s.rateLimit(http.HandlerFunc(s.samlACS)))
+	s.mux.Handle("GET /api/auth/saml/metadata", s.rateLimit(http.HandlerFunc(s.samlMetadata)))
 	s.mux.Handle("POST /api/breakglass/unseal", s.rateLimit(http.HandlerFunc(s.breakGlassUnseal)))
 
 	// Identity of the caller (drives the portal's role-aware menu).

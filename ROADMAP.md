@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–150 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–151 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,156 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 151 — SAML 2.0 SSO (Service Provider) ✅
+
+**Closes:** Delinea's SAML 2.0 support — Okta/OneLogin/Azure AD and,
+specifically, on-prem **AD FS** shops that have no OIDC endpoint at all.
+Second phase of the batch's back half (149–157). pamv1 becomes a SAML
+Service Provider in the SP-initiated Web Browser SSO profile: `GET
+/api/auth/saml/start` mints an AuthnRequest (HTTP-Redirect binding), the IdP
+posts a signed `<Response>` to `POST /api/auth/saml/acs` (HTTP-POST
+binding), and `GET /api/auth/saml/metadata` serves the SP descriptor an IdP
+administrator imports. Follows `internal/oidc`'s exact wiring shape:
+`buildSAML` beside `buildOIDC` in `main.go`, presence of `PAM_SAML_SP_URL`
+enables, hot-swappable through the same `reconfigure` closure, group/role
+attribute → role through the same `auth.MatchedRoles`, the same portal
+landing (`pam_token` in the URL fragment) — so the console needed only a
+second sign-on link and one effective-config line.
+
+**The deliberate exception to this codebase's hand-roll-every-protocol
+posture, reasoned explicitly — the WebAuthn precedent, applied a second
+time.** OIDC's RS256 JWT verification is hand-rolled here and is genuinely
+small: split on `.`, verify one signature over exact fixed bytes, decode
+JSON, done. SAML's XML-DSig has no equivalent "exact fixed bytes" step: the
+signature covers a *canonicalized* (Exclusive C14N) form of the XML, and
+canonicalization plus `<Reference URI="#id">` resolution plus the
+enveloped-signature transform is exactly where the well-known **XML
+Signature Wrapping** vulnerability class lives — a validly-signed decoy
+assertion travels alongside a forged one, and the code that verifies and the
+code that processes walk the DOM differently. That is a different order of
+problem than "a JWT with more steps," and it clears this codebase's own
+stated bar for reaching for a library ("where crypto-verification risk is
+high") more clearly than WebAuthn did. So `internal/saml` delegates the XML
+round-trip validation, the XML-DSig verification, `<EncryptedAssertion>`
+decryption and the assertion condition checks to `github.com/crewjam/saml`
+(+ `russellhaering/goxmldsig`, upgraded to their latest releases,
+`govulncheck` clean) and keeps for itself only the pamv1-specific decisions:
+what enables the feature, how the IdP metadata is sourced (URL fetch or
+inline file — the fetch is the SP's **only** outbound call, ever), which
+attribute is the username, which attributes carry the group claims, and how
+the resulting `Claims` are shaped so the API layer treats OIDC and SAML
+identically. Nothing in the package re-implements a signature check. The
+library's `samlsp` middleware (its own cookie/JWT session machinery) is
+deliberately *not* used — pamv1 already has sessions; only the
+`ServiceProvider` core is.
+
+**Design decisions that mattered:**
+
+- **No schema change.** The AuthnRequest ID needs exactly what an OIDC
+  `state` needs — a single-use, expiring, cross-replica record keyed by an
+  opaque random ID — so it rides the existing `oidc_states` table through
+  `PutOIDCState`/`TakeOIDCState`, with the fixed marker `"saml"` in the
+  verifier slot. The ACS refuses a row without that marker, and the OIDC
+  callback now refuses a row *with* it (a real PKCE verifier is 43 chars of
+  base64; `"saml"` can never be one) — a cross-protocol guard added in the
+  same change rather than left implicit. A dedicated table would have meant
+  a migration, four store implementations and a method-set pin bump for a
+  semantically identical row.
+- **The state cookie is `SameSite=None; Secure` over TLS**, not `Lax` like
+  OIDC's. The OIDC callback is a top-level GET the IdP redirects to; the SAML
+  ACS is a **cross-site top-level POST** from the IdP's auto-submit page, on
+  which a `Lax` cookie is not sent at all — the flow would simply always fail
+  with `invalid_state` in production. Over plain HTTP `SameSite=None` is
+  refused outright by browsers, so there the attribute is left unset and the
+  browser's default handling applies (Chrome's two-minute "Lax+POST"
+  allowance carries a dev login round trip). Documented in the code and the
+  ADMIN-GUIDE, since it is the one place the two SSO flows honestly differ.
+- **SP-initiated only, `AllowIDPInitiated=false`.** An unsolicited
+  `<Response>` has no `InResponseTo` to bind to the browser that started the
+  login — which is exactly the login-CSRF hole the state cookie closes.
+  Refusing IdP-initiated SSO is what makes the cookie a real defence rather
+  than a formality. The artifact binding is refused too (`ParseXMLResponse`
+  is called directly, never `ParseResponse`, so a `SAMLart` never triggers a
+  server-side resolution call), and there is no Single Logout — all three
+  documented as v1 boundaries, not oversights.
+- **The SP metadata is cut down to what the code accepts.** The library
+  advertises HTTP-POST *and* artifact ACS endpoints and an SLO endpoint;
+  `Metadata()` strips everything but the one HTTP-POST ACS, so an IdP cannot
+  be configured to send what pamv1 refuses.
+- **Optional SP key pair, off by default.** `PAM_SAML_SP_KEY_FILE` +
+  `_CERT_FILE` (RSA, PEM, set together — one half alone is a config error,
+  not a silent downgrade) turn on AuthnRequest signing (RSA-SHA256) and
+  publish the certificate for encryption, so an IdP configured to require
+  signed requests or to encrypt assertions works. Without them the SP still
+  verifies every IdP signature. The three `_FILE` settings are env/IaC-only
+  — deliberately excluded from the hot-swap whitelist, since a stored console
+  override must never be able to make the server read a file on its host.
+- **Group attributes default to a well-known set** (`groups`, `memberOf`,
+  `role`, ADFS's Token-Groups and Role claim types, Entra's SAML groups
+  claim), matched by `Name` *or* `FriendlyName`, case-insensitively, so the
+  common ADFS/Okta/Entra configurations work without guessing an attribute
+  name — `PAM_SAML_GROUP_ATTR` makes it explicit. The username defaults to
+  the NameID; `PAM_SAML_NAME_ATTR` picks an attribute (an ADFS UPN claim)
+  instead. A login whose attributes map to **no** role is refused with
+  `no_role` — same as OIDC, no default role.
+- **`PAM_OT_AIRGAP` refuses the metadata URL** (it joins the same
+  `airGapConflicts` list as the OIDC issuer and the webhooks) and expects
+  the `_FILE` form — the metadata document carried in on media, no network
+  fetch at all; and since the login itself is browser-mediated, a SAML-enabled
+  air-gapped server makes no per-login call anywhere.
+
+**Proven end-to-end against a real IdP, not a canned XML fixture.** New
+`internal/saml/samltest` runs the library's own `IdentityProvider` in
+process — real RSA-2048 self-signed signing key, real metadata endpoint,
+driven through exactly the parse → validate → make-assertion → POST-binding
+steps its `ServeSSO` handler runs — so every Response the tests consume is
+genuinely XML-DSig-signed and, when the SP publishes an encryption
+certificate, genuinely encrypted (`xmlenc`). Package tests: happy path
+(NameID, default and explicit group attributes, `NameAttr`, session index),
+request-ID binding, SP metadata shape, signed AuthnRequest, **encrypted
+assertion decrypted and its signature still verified**, and the refusals
+that are the whole point — a **tampered attribute value** (the group
+escalation an attacker actually wants), a **swapped subject**, **all
+signatures stripped**, **wrong audience**, **wrong issuer**, **expired
+conditions**, and **both signature-wrapping shapes**: an unsigned escalated
+twin of the assertion inserted beside the signed one, once with the
+Response-level signature intact (refused — it covers the whole document) and
+once with only the assertion signed, the shape most real IdPs emit (the
+forged claims are never the ones returned). API tests: the whole browser
+flow (start 302 → IdP → ACS POST → session with the mapped admin role,
+audited `login … via:saml`), **replay** of the same Response refused (state
+consumed, cookie cleared), a tampered Response refused with no session, no
+login audit row and its state burnt, a **cross-browser POST** (no state
+cookie) refused *without* burning the legitimate browser's still-pending
+login — a real test-harness gotcha here: `httptest.Server.Client()` returns
+one shared client, so the OIDC test's jar swap would have made two
+"browsers" share cookies; the SAML test builds genuinely independent clients
+so the second half of that assertion actually means something — unmapped
+groups → `no_role`, the metadata endpoint, `saml_login` in the effective
+config, and 404 on all three routes without SAML. `cmd/pam-server`'s
+`TestBuildSAML` covers the wiring: off without an SP URL, metadata from URL
+and from file, the key pair (and one half alone refused), unreachable
+metadata and a missing file both fatal.
+
+**Not verified against a live IdP** — no AD FS farm or Okta/OneLogin/Entra
+tenant is available in this environment. The mechanism is proven; what a
+live tenant would surface is vendor-specific claim-rule configuration
+(which attribute name the group claim actually arrives under), recorded in
+EXTERNAL-INFRA-GAPS.md alongside every other external-IdP-requiring
+capability. Full CI-gate sweep clean: `gofmt`, `go vet`, `staticcheck`,
+`gosec`, `govulncheck` (the only module-level advisory, `x/crypto/openpgp`,
+predates this phase and is not called), `go test -race ./...`, `go run
+./cmd/archgen` (173 → **176** routes, no schema drift).
+
+**Critical files:** new `internal/saml/saml.go` (+ `samltest/`), new
+`internal/api/saml_handlers.go`, `internal/api/server.go`
+(`Options`/`RuntimeConfig`/routes), `internal/api/oidc_handlers.go` (the
+cross-protocol marker guard), `internal/config/config.go` + `settings.go`
+(twelve `PAM_SAML_*` vars, nine hot-swappable, the metadata URL in the
+air-gap list), `cmd/pam-server/main.go` (`buildSAML`),
+`internal/web/static/index.html` (sign-on link, effective-config line),
+`go.mod` (`crewjam/saml`, `goxmldsig`, `etree`).
 
 ## Phase 150 — v0.38.0 ✅
 

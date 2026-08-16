@@ -37,6 +37,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/morandeirachema/pamv1/internal/alert"
 	"github.com/morandeirachema/pamv1/internal/config"
+	"github.com/morandeirachema/pamv1/internal/saml/samltest"
 	"github.com/morandeirachema/pamv1/internal/shamir"
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/store/memstore"
@@ -587,6 +588,82 @@ func TestBuildAuthenticator(t *testing.T) {
 		}
 		if dir == nil {
 			t.Fatal("LDAP did not become the directory source")
+		}
+	})
+}
+
+// TestBuildSAML checks the SAML SP assembly (Phase 151): off when no SP URL,
+// metadata from a URL or a file, the optional key pair (which must come as a
+// pair), and fail-loud on an unreachable metadata URL or a missing file.
+func TestBuildSAML(t *testing.T) {
+	ctx := context.Background()
+	log := discardLogger()
+	idp := samltest.New(t)
+	t.Run("disabled", func(t *testing.T) {
+		p, err := buildSAML(ctx, &config.Config{}, log)
+		if p != nil || err != nil {
+			t.Fatalf("want nil,nil, got %v %v", p, err)
+		}
+	})
+	t.Run("metadata url", func(t *testing.T) {
+		cfg := &config.Config{SAMLSPURL: "https://pam.example", SAMLIDPMetadataURL: idp.MetadataURL(),
+			SAMLGroupAttr: "groups, memberOf", SAMLNameAttr: "uid"}
+		p, err := buildSAML(ctx, cfg, log)
+		if err != nil || p == nil {
+			t.Fatalf("metadata url path failed: %v %v", p, err)
+		}
+		if p.EntityID() != "https://pam.example/api/auth/saml/metadata" || p.SignsRequests() {
+			t.Fatalf("unexpected sp: entity=%q signs=%v", p.EntityID(), p.SignsRequests())
+		}
+	})
+	t.Run("metadata file + key pair", func(t *testing.T) {
+		res, err := http.Get(idp.MetadataURL())
+		if err != nil {
+			t.Fatal(err)
+		}
+		md, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		dir := t.TempDir()
+		mdFile := filepath.Join(dir, "idp.xml")
+		if err := os.WriteFile(mdFile, md, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		key, cert := samltest.SelfSigned(t, "sp")
+		k, c := samltest.PEM(key, cert)
+		keyFile, certFile := filepath.Join(dir, "sp.key"), filepath.Join(dir, "sp.crt")
+		_ = os.WriteFile(keyFile, k, 0o600)
+		_ = os.WriteFile(certFile, c, 0o600)
+		cfg := &config.Config{SAMLSPURL: "https://pam.example", SAMLIDPMetadataFile: mdFile,
+			SAMLSPKeyFile: keyFile, SAMLSPCertFile: certFile, SAMLSPEntityID: "urn:pam"}
+		p, err := buildSAML(ctx, cfg, log)
+		if err != nil || p == nil {
+			t.Fatalf("metadata file path failed: %v %v", p, err)
+		}
+		if p.EntityID() != "urn:pam" || !p.SignsRequests() {
+			t.Fatalf("unexpected sp: entity=%q signs=%v", p.EntityID(), p.SignsRequests())
+		}
+		// Only one half of the pair is a config error, not a silent downgrade.
+		cfg.SAMLSPCertFile = ""
+		if _, err := buildSAML(ctx, cfg, log); err == nil {
+			t.Fatal("lone key file accepted")
+		}
+	})
+	t.Run("metadata unreachable", func(t *testing.T) {
+		cfg := &config.Config{SAMLSPURL: "https://pam.example", SAMLIDPMetadataURL: "http://127.0.0.1:1/md"}
+		if _, err := buildSAML(ctx, cfg, log); err == nil {
+			t.Fatal("unreachable metadata accepted")
+		}
+	})
+	t.Run("metadata file missing", func(t *testing.T) {
+		cfg := &config.Config{SAMLSPURL: "https://pam.example", SAMLIDPMetadataFile: filepath.Join(t.TempDir(), "nope.xml")}
+		if _, err := buildSAML(ctx, cfg, log); err == nil {
+			t.Fatal("missing metadata file accepted")
+		}
+	})
+	t.Run("both sources", func(t *testing.T) {
+		cfg := &config.Config{SAMLSPURL: "https://pam.example", SAMLIDPMetadataURL: idp.MetadataURL(), SAMLIDPMetadataFile: "x"}
+		if _, err := buildSAML(ctx, cfg, log); err == nil {
+			t.Fatal("both metadata sources accepted")
 		}
 	})
 }

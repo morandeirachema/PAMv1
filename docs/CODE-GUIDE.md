@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-16 · Reflects: Phases 0–149 + the 2026-07 hardening passes.
+> Last updated: 2026-08-16 · Reflects: Phases 0–151 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -153,6 +153,7 @@ flowchart TB
   subgraph identity["Identity"]
     ldap["auth/ldap · entra · chain"]
     oidc["oidc"]
+    saml["saml — SAML 2.0 SP (crewjam/saml)"]
     mfa["mfa (TOTP)"]
   end
   subgraph lifecycle["Credential lifecycle"]
@@ -705,6 +706,23 @@ sequenceDiagram
     pinned to RS256 (rejecting `none`/HMAC confusion), then iss/aud/nonce/exp are
     checked. `VerifyRS256` (reused by the Entra path) treats a token with *no*
     expiry as invalid — fail-closed, never "never-expires".
+  - **SAML 2.0** (`internal/saml`, Phase 151) — the same browser flow for IdPs
+    with no OIDC endpoint (AD FS). `saml.New` builds a `crewjam/saml`
+    `ServiceProvider` from `Config` (root URL → ACS + metadata URLs, IdP
+    metadata fetched or inline, optional RSA key pair); `StartURL` mints the
+    AuthnRequest and returns its ID; `ParseResponse` hands the base64
+    Response to the library's `ParseXMLResponse` (XML round-trip validation,
+    XML-DSig, decryption, Destination/Issuer/InResponseTo/timing/Audience)
+    and reduces the assertion to `Claims` (NameID, `NameAttr`, group values,
+    session index). The API handlers (`saml_handlers.go`) own the browser
+    binding: request ID → `PutOIDCState` with marker `"saml"` + a
+    `SameSite=None; Secure` cookie (the ACS is a cross-site POST), taken
+    single-use at the ACS before parsing. **Why a library here and not for
+    OIDC**: XML-DSig verifies a *canonicalized* form of the XML, and
+    canonicalization + `Reference URI` resolution is exactly where the
+    signature-wrapping vulnerability class lives — see the package doc comment
+    and PROTOCOLS-AND-CRYPTO.md §2.8. `saml/samltest` runs a real IdP
+    in-process for tests (`New`, `TrustSP`, `SetSession`, `Login`, `Tamper`).
 - **MFA** (`internal/mfa`, TOTP RFC 6238) — self-service `/api/mfa/*`: enroll
   (secret returned once, stored vault-encrypted with AAD `mfa:<user>`), confirm,
   recovery codes (10 single-use, stored as hashes), disable. `checkSecondFactor`
