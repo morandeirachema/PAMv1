@@ -2427,7 +2427,7 @@ capability. New migration `0041`.
 - [x] **v0.38.0** through the test-gated pipeline, rehearsed on `main` first.
   Published 2026-08-16 as `ghcr.io/morandeirachema/pamv1:0.38.0` (also
   `latest`), digest
-  `sha256:PENDING`,
+  `sha256:aa49b0d3a8b84475c77e40453e6131b7322ef4fc0f88c2c4b4addb0ee40d31ec`,
   **public** (anonymous pull 200, verified via the GHCR anonymous
   token-exchange flow)
 - [x] All five pins via the sweep; Helm chart `version` 0.28.0 -> **0.29.0**
