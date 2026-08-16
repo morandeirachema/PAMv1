@@ -2426,9 +2426,14 @@ capability and a second deployable binary. New migration `0042`.
 
 - [x] **v0.40.0** through the test-gated pipeline, rehearsed on `main` first.
   Published 2026-08-16 as `ghcr.io/morandeirachema/pamv1:0.40.0` (also
-  `latest`), digest `PENDING` (recorded once the tag's publish workflow has
-  run and the anonymous pull is verified); **first release to also attach
-  `pam-agent_linux_{amd64,arm64}` + `SHA256SUMS`** to the GitHub Release
+  `latest`), digest
+  `sha256:46777d55ed4f8f9a7572744da99bb73dcd1bd163f5f6983547339d3383811735`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow); **first release to also attach
+  `pam-agent_linux_{amd64,arm64}` + `SHA256SUMS`** to the GitHub Release —
+  the amd64 asset downloaded back, its checksum verified against
+  `SHA256SUMS`, and `-version` reports `0.40.0 (81b49b8…)`, the release
+  merge commit
 - [x] All five pins via the sweep (Helm `appVersion`, the two k8s
   `deployment.yaml` images, the Flux `GitRepository` tag, the README
   quickstart `TAG`); Helm chart `version` 0.30.0 -> **0.31.0** (minor,
