@@ -2427,7 +2427,7 @@ one new capability, plus the `ListCredentialsMeta` fix. No schema change.
 - [x] **v0.36.0** through the test-gated pipeline, rehearsed on `main` first.
   Published 2026-08-16 as `ghcr.io/morandeirachema/pamv1:0.36.0` (also
   `latest`), digest
-  `sha256:PENDING`,
+  `sha256:cc31cf8726ffd1fb7338f7ca7cd554de30be267e07b0e23b70c468ceb7449af3`,
   **public** (anonymous pull 200, verified via the GHCR anonymous
   token-exchange flow)
 - [x] All five pins via the sweep; Helm chart `version` 0.26.0 -> **0.27.0**
