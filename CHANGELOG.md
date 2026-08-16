@@ -9,6 +9,28 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.38.0] — 2026-08-16
+
+A minor: one new capability.
+
+### Added
+
+- **SCIM 2.0 user provisioning.** New `/scim/v2/Users` (RFC 7643/7644),
+  authenticated by a new non-human `ScimKey` bearer identity mirroring
+  `AgentKey`/`AppKey`, for push-based IdP user lifecycle — complementing
+  the existing pull-based `POST /api/identity/reconcile`. Every
+  SCIM-provisioned user gets the fixed, least-privileged `user` role.
+  `PAM_SCIM_ENABLED` (default off).
+
+### Changed
+
+- `store.User` gains `ExternalID` and `Active`. Deactivating (`PATCH
+  active:false` or `DELETE`, a soft-delete) now actually blocks that
+  user's own local token from authenticating —
+  `auth.Resolver.Resolve()` fails closed, proven end to end.
+  `CreateUser` in both backends now always creates an active user
+  regardless of the input struct's `Active` field.
+
 ## [0.37.0] — 2026-08-16
 
 A minor: one new capability.
