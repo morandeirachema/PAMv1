@@ -226,9 +226,23 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 	if cs, err := st.ListCredentials(ctx, tgt.ID, 0, 0); err != nil || len(cs) != 1 {
 		t.Fatalf("ListCredentials: %d err %v", len(cs), err)
+	} else if cs[0].SecretEnc != "v2:one" {
+		// ListCredentials MUST stay full-fidelity — real internal callers
+		// (findProvisioner, lookupTargetCred, the lifecycle reconciler,
+		// -rotate-kek) list first and decrypt from the result afterward.
+		// Regression guard: Phase 145 briefly stripped this and broke every
+		// one of them before the mistake was caught by the proxy test suite.
+		t.Fatalf("ListCredentials must return SecretEnc, got %q", cs[0].SecretEnc)
 	}
 	if cs, err := st.ListCredentials(ctx, tgt.ID, 5, cred.ID); err != nil || len(cs) != 0 {
 		t.Fatalf("ListCredentials(after=last): %d err %v", len(cs), err)
+	}
+	// ListCredentialsMeta (Phase 145) is the narrower, display-only sibling —
+	// SecretEnc must be empty here, the opposite of ListCredentials above.
+	if cs, err := st.ListCredentialsMeta(ctx, tgt.ID, 0, 0); err != nil || len(cs) != 1 {
+		t.Fatalf("ListCredentialsMeta: %d err %v", len(cs), err)
+	} else if cs[0].SecretEnc != "" {
+		t.Fatalf("ListCredentialsMeta must not populate SecretEnc, got %q", cs[0].SecretEnc)
 	}
 	if err := st.RotateCredentialSecret(ctx, cred.ID, "v2:two", now); err != nil {
 		t.Fatalf("RotateCredentialSecret: %v", err)
@@ -252,6 +266,22 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	got, _ = st.GetCredential(ctx, cred.ID)
 	if got.DoubleLockHolder != "alice" || got.DoubleLockVerifier != "verifier-1" || got.DoubleLockEnc != "dl-enc-1" {
 		t.Fatalf("after SetCredentialDoubleLock: %+v", got)
+	}
+	// ListCredentials must carry the DoubleLock fields too (the reconciler and
+	// -rotate-kek's callers see the same struct shape either way).
+	if cs, err := st.ListCredentials(ctx, tgt.ID, 0, 0); err != nil || len(cs) != 1 {
+		t.Fatalf("ListCredentials: %d err %v", len(cs), err)
+	} else if cs[0].DoubleLockHolder != "alice" || cs[0].DoubleLockVerifier != "verifier-1" || cs[0].DoubleLockEnc != "dl-enc-1" {
+		t.Fatalf("ListCredentials DoubleLock fields: holder=%q verifier=%q enc=%q", cs[0].DoubleLockHolder, cs[0].DoubleLockVerifier, cs[0].DoubleLockEnc)
+	}
+	// ListCredentialsMeta strips DoubleLockVerifier/DoubleLockEnc (proven
+	// non-empty above, so this is the query actually doing its job, not a
+	// coincidence of zero values) but keeps DoubleLockHolder — the one
+	// DoubleLock field that is json-visible and meant for display.
+	if cs, err := st.ListCredentialsMeta(ctx, tgt.ID, 0, 0); err != nil || len(cs) != 1 {
+		t.Fatalf("ListCredentialsMeta: %d err %v", len(cs), err)
+	} else if cs[0].DoubleLockHolder != "alice" || cs[0].DoubleLockVerifier != "" || cs[0].DoubleLockEnc != "" {
+		t.Fatalf("ListCredentialsMeta DoubleLock fields: holder=%q verifier=%q enc=%q", cs[0].DoubleLockHolder, cs[0].DoubleLockVerifier, cs[0].DoubleLockEnc)
 	}
 	if err := st.SetCredentialDoubleLock(ctx, 999999, "x", "y", "z"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("SetCredentialDoubleLock missing: want ErrNotFound, got %v", err)

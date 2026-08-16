@@ -17,7 +17,7 @@ var (
 	// extended to databases in Phase 129): neither stores a secret — the proxy
 	// mints a short-lived certificate, or provisions-and-drops an ephemeral
 	// database role, just-in-time instead.
-	validSecret = map[string]bool{store.SecretTypePassword: true, store.SecretTypeSSHKey: true, store.SecretTypeSSHCA: true, store.SecretTypeDBZSP: true}
+	validSecret = map[string]bool{store.SecretTypePassword: true, store.SecretTypeSSHKey: true, store.SecretTypeSSHCA: true, store.SecretTypeDBZSP: true, store.SecretTypeFile: true}
 )
 
 // validOverride reports whether v is "" (inherit) or a mode the rank map knows.
@@ -143,7 +143,8 @@ func (s *Server) updateTarget(w http.ResponseWriter, r *http.Request) {
 	// change can't strand one on a target that can no longer serve it — the SSH
 	// proxy is the only path that mints its certificate JIT.
 	if in.Protocol != "ssh" {
-		creds, err := s.store.ListCredentials(r.Context(), id, 0, 0)
+		// hasZSPCredential only checks SecretType, so metadata-only is enough.
+		creds, err := s.store.ListCredentialsMeta(r.Context(), id, 0, 0)
 		if err != nil {
 			storeError(w, err)
 			return

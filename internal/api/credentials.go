@@ -43,7 +43,7 @@ func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "username "+validName(in.Username).Error())
 		return
 	case !validSecret[in.SecretType]:
-		writeError(w, http.StatusUnprocessableEntity, `secret_type must be "password", "ssh_key", "ssh_ca" or "db_zsp"`)
+		writeError(w, http.StatusUnprocessableEntity, `secret_type must be "password", "ssh_key", "ssh_ca", "db_zsp" or "file"`)
 		return
 	case !zsp && in.Secret == "":
 		writeError(w, http.StatusUnprocessableEntity, "secret is required")
@@ -53,6 +53,12 @@ func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	case zsp && in.Provisioner:
 		writeError(w, http.StatusUnprocessableEntity, "a zero standing privilege credential cannot itself be a provisioner")
+		return
+	// A credential is not general object storage — refused outright over the
+	// cap, never silently truncated, the same posture PAM_SSH_SFTP_CAPTURE_MAX_MB
+	// already established for captured file content (Phase 145).
+	case in.SecretType == store.SecretTypeFile && len(in.Secret) > s.credentialFileMaxKB*1024:
+		writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("file secret exceeds the %d KB limit (PAM_CREDENTIAL_FILE_MAX_KB)", s.credentialFileMaxKB))
 		return
 	}
 	target, err := s.store.GetTarget(r.Context(), in.TargetID)
@@ -126,7 +132,7 @@ func (s *Server) listCredentials(w http.ResponseWriter, r *http.Request) {
 		targetID = id
 	}
 	limit, after := listWindow(r)
-	creds, err := s.store.ListCredentials(r.Context(), targetID, limit, after)
+	creds, err := s.store.ListCredentialsMeta(r.Context(), targetID, limit, after)
 	if err != nil {
 		storeError(w, err)
 		return

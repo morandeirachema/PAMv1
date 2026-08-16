@@ -380,6 +380,15 @@ const (
 	SecretTypeSSHKey   = "ssh_key"
 	SecretTypeSSHCA    = "ssh_ca"
 	SecretTypeDBZSP    = "db_zsp"
+	// SecretTypeFile (Phase 145) holds arbitrary file content — a license
+	// key, a cert bundle, a short document — client-encoded (base64) before
+	// it ever reaches this struct, vaulted and revealed exactly like any
+	// other secret. The one thing that IS special-cased for it is size: a
+	// credential is not general object storage, so `internal/api` refuses a
+	// file secret over PAM_CREDENTIAL_FILE_MAX_KB before it is ever
+	// encrypted, the same hard-refuse-not-truncate posture the SFTP capture
+	// byte cap already established.
+	SecretTypeFile = "file"
 )
 
 // IsZSP reports whether this is a Zero Standing Privilege credential
@@ -813,8 +822,28 @@ type CredentialStore interface {
 	// CreateCredential inserts a credential for a target, or ErrNotFound if the target is missing.
 	CreateCredential(ctx context.Context, c *Credential) error
 	// ListCredentials returns credentials for one target (or all when targetID
-	// is 0) in the (limit, afterID) window, id-ascending.
+	// is 0) in the (limit, afterID) window, id-ascending, WITH SecretEnc
+	// populated. That is deliberate, not an oversight: several real internal
+	// callers — -rotate-kek's exhaustive re-wrap, the credential lifecycle
+	// reconciler, findProvisioner (db_zsp), and every JIT-decrypt path that
+	// resolves "the target's credential" by username rather than by ID
+	// (dbproxy.lookupTargetCred, the RDP/VNC viewer, REST WinRM, the broker's
+	// ssh_exec/winrm_exec tools) — all list first and decrypt from the result
+	// afterward, exactly so every authorization gate can run before any
+	// plaintext exists. Stripping the secret here would silently break every
+	// one of them. A caller that only needs to DISPLAY a list — the REST
+	// inventory endpoint, the broker's own list_credentials tool — uses
+	// ListCredentialsMeta instead (Phase 145).
 	ListCredentials(ctx context.Context, targetID int64, limit int, afterID int64) ([]Credential, error)
+	// ListCredentialsMeta is ListCredentials without SecretEnc, DoubleLockVerifier
+	// or DoubleLockEnc (Phase 145) — all three are json:"-" and unbounded, so a
+	// caller that only lists credentials for display (never decrypts one from
+	// the result) uses this instead and skips paying for ciphertext it will
+	// never read. A file-attachment secret makes that cost real: it is no
+	// longer a small fixed-size token, potentially up to PAM_CREDENTIAL_FILE_MAX_KB
+	// per row. Getting this wrong in the other direction is the dangerous one —
+	// see ListCredentials's own doc comment before pointing a new caller here.
+	ListCredentialsMeta(ctx context.Context, targetID int64, limit int, afterID int64) ([]Credential, error)
 	// GetCredential returns one credential by ID, or ErrNotFound.
 	GetCredential(ctx context.Context, id int64) (*Credential, error)
 	// UpdateCredentialSecretEnc replaces a credential's encrypted secret (used
