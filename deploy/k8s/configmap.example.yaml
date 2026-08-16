@@ -136,7 +136,7 @@ data:
   # PAM_SSH_CERT_TTL_MIN: "2"
   # PAM_SSH_OPERATOR_CERT_TTL_MIN: "10"
 
-  # --- Identity: LDAP / Entra / OIDC (non-secret halves) -------------------
+  # --- Identity: LDAP / Entra / OIDC / SAML (non-secret halves) --------------
   # Bind passwords and client secrets belong in the Secret, not here.
   # PAM_LDAP_URL: "ldaps://dc1.corp.example:636"
   # PAM_LDAP_BIND_DN: "CN=svc-pam,OU=Service,DC=corp,DC=example"
@@ -152,6 +152,12 @@ data:
   # PAM_OIDC_CLIENT_ID: "pamv1"
   # PAM_OIDC_REDIRECT_URL: "https://pam.example.com/api/auth/oidc/callback"
   # PAM_OIDC_ROLE_ADMIN: "pam-admins"
+  # SAML 2.0 SP (Phase 151; ADFS and other SAML-only IdPs) — no secrets: the
+  # optional SP key pair is mounted as files, not env values.
+  # PAM_SAML_SP_URL: "https://pam.example.com"
+  # PAM_SAML_IDP_METADATA_URL: "https://adfs.corp.example/FederationMetadata/2007-06/FederationMetadata.xml"
+  # PAM_SAML_ROLE_ADMIN: "PAM-Admins"
+  # PAM_SAML_ROLE_USER: "PAM-Users"
   # PAM_PORTAL_URL: "https://pam.example.com"
   # PAM_MFA_REQUIRED: "false"
 

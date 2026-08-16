@@ -87,7 +87,10 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		s.redirectPortal(w, r, "pam_error=login_failed")
 		return
 	}
-	if code == "" || !ok {
+	// A SAML request ID lives in the same single-use table (marked by its
+	// verifier slot); it is never a valid OIDC state, so refuse it here rather
+	// than let a cross-protocol row reach the token exchange.
+	if code == "" || !ok || verifier == samlStateMarker {
 		s.log.Warn("oidc callback: invalid state", "remote", r.RemoteAddr)
 		s.redirectPortal(w, r, "pam_error=invalid_state")
 		return
