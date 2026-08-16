@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-08-16 · Reflects: Phases 0–151. **Phase 53 added the first new
+> Last updated: 2026-08-16 · Reflects: Phases 0–153. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; nothing after
 > it adds a port or listener (55–94 ride the existing listeners and flows: the
 > live-monitor relay and the step-up decision bus ride the server ↔ PostgreSQL
@@ -109,6 +109,15 @@
 > startup and on hot-swap (`PAM_SAML_IDP_METADATA_URL`, folded into E5's
 > identity-zone `:443` egress) — or none at all with
 > `PAM_SAML_IDP_METADATA_FILE`, which is what `PAM_OT_AIRGAP` requires.
+> **Phase 153 adds one genuinely new flow — the first whose direction is
+> the reverse of everything above it.** An **outbound-only endpoint agent**
+> (`pam-agent`, on a target pamv1 cannot dial into) connects *in* to the
+> EXISTING `:2222` SSH listener (**I8**) and holds a reverse tunnel; the
+> proxy then reaches that target *through the agent's connection* instead
+> of egress flow E2. No new listener, no new port, no new egress from
+> pam-server: E2 simply does not happen for an agent-bound target, and the
+> firewall rule that used to be "pam-server → target:22" becomes
+> "endpoint → pam-server:2222" (§6). Opt-in (`PAM_ENDPOINT_AGENTS_ENABLED`).
 > Everything from 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
 > **no new listeners**: certification/ticketing/approvals (19–21), threat analytics
@@ -158,6 +167,7 @@ add `5433 → 5433` and/or `1433 → 1433` when the database proxies are enabled
 | I4 | Prometheus (mgmt) | pam-server | 8080 | HTTP | Scrape `/metrics` | ✅ P10 |
 | I5 | User (operator zone) | pam-server | 5433 | PostgreSQL | Brokered `psql` session to a `postgres` target | ✅ P15 |
 | I6 | User (operator zone) | pam-server | 1433 | TDS | Brokered SQL Server session to a `mssql` target (`sqlcmd`, SSMS, drivers) | ✅ P53 |
+| I8 | **Endpoint agent** (`pam-agent`, on a NAT'd/firewalled target — target zone, or wherever the endpoint sits) | pam-server | 2222 | SSH | Outbound-only reverse tunnel: authenticates as `endpoint-agent:<name>` with its own bearer key, requests one `tcpip-forward`, then only carries streams pam-server opens toward it. Replaces E2 for that target (Phase 153) | ✅ P153 |
 | I7 | Session-share guest (**untrusted** — no zone; wherever the emailed link/QR reaches) | pam-server | 8080/443 | HTTPS | Redeem a session-share invite and stream/control the shared session it names — **unauthenticated** (`/share.html`, `POST /api/share/redeem/{token}`), then a minted guest key on every further call (`GET /api/share/stream`, `POST /api/share/input`), never `X-API-Key` | ✅ P116 |
 
 ## 3. Egress — what pamv1 connects **to**
@@ -165,7 +175,7 @@ add `5433 → 5433` and/or `1433 → 1433` when the database proxies are enabled
 | # | Source | → Destination (zone) | Port | Proto | Purpose | Status |
 |---|--------|----------------------|-----:|-------|---------|--------|
 | E1 | pam-server | PostgreSQL (data zone) | 5432 | TCP/TLS | Inventory, vaulted secrets, audit, users; the cross-replica kill, live-monitor and step-up decision buses (LISTEN/NOTIFY) | ✅ |
-| E2 | pam-server (proxy) | Linux target (target zone) | 22 | SSH | JIT-injected privileged session | ✅ |
+| E2 | pam-server (proxy) | Linux target (target zone) | 22 | SSH | JIT-injected privileged session. **Not used** for a target bound to an endpoint agent — that session rides I8's tunnel instead (Phase 153) | ✅ |
 | E3 | pam-server | Windows target | 5985 / **5986** | WinRM / WinRM-TLS | JIT command execution (`/api/targets/{id}/winrm`) | ✅ |
 | E4a | pam-server | guacd (control plane) | 4822 | Guacamole | RDP broker handshake (JIT credential) | ✅ |
 | E4b | guacd | Windows target | 3389 | RDP | Rendered RDP session | ✅ |
@@ -213,6 +223,9 @@ flowchart LR
         PG[("PostgreSQL target<br/>:5432")]
         MS[("SQL Server target<br/>:1433")]
     end
+    subgraph NAT["Unreachable endpoint (NAT / no inbound)"]
+        EA["pam-agent + local sshd :22"]
+    end
     ID["AD / Entra / OIDC<br/>:636 / :443 / :88"]
     CJ["CyberArk Conjur<br/>:443 (optional)"]
     TK["ITSM: ServiceNow / Jira / webhook<br/>:443 (optional)"]
@@ -233,6 +246,7 @@ flowchart LR
     S -->|"E5 636/443"| ID
     S -->|"E11 443"| CJ
     S -->|"E14 443"| TK
+    EA -->|"I8 2222 reverse tunnel"| S
 ```
 
 Solid = implemented · dashed = planned.
@@ -247,6 +261,7 @@ allow  <operator-cidr>      -> pam-server:8080   (or :443 at ingress)   # portal
 allow  <operator-cidr>      -> pam-server:2222   tcp                    # ssh proxy
 allow  <operator-cidr>      -> pam-server:5433   tcp                    # db proxy (if enabled)
 allow  <operator-cidr>      -> pam-server:1433   tcp                    # mssql proxy (if enabled)
+allow  <endpoint-cidr>      -> pam-server:2222   tcp                    # outbound-only endpoint agents (if enabled) — the endpoint needs NO inbound rule
 deny   any                  -> pam-server:*                             # default deny
 
 # Egress from pam-server
@@ -333,6 +348,7 @@ specific target hosts and protocols, and default-deny everything else across the
 
 | Date | Change |
 |---|---|
+| 2026-08-16 | **Phase 153 — outbound-only endpoint agents: a genuinely new INGRESS flow, and the first that reverses the proxy's direction.** New **I8**: `pam-agent`, installed on a target pamv1 cannot dial into (NAT, CGNAT, no inbound firewall rule), connects *in* to the existing `:2222` SSH listener as `endpoint-agent:<name>` with its own bearer key, requests one RFC 4254 `tcpip-forward`, and thereafter only carries `forwarded-tcpip` streams pam-server opens toward it — each of which lands on the ONE local address the agent is configured with (its own sshd). The proxy's ordinary upstream SSH handshake runs over that stream, so E2 is simply not used for an agent-bound target: no new listener, port or egress. In §6 the rule "pam-server → target:22" is replaced, for such endpoints, by "endpoint → pam-server:2222"; the endpoint itself needs no inbound rule at all. Per-replica: an agent's TCP connection terminates on one process, so in HA the agent lists every replica (`PAM_AGENT_SERVERS`) and holds one tunnel to each. Opt-in via `PAM_ENDPOINT_AGENTS_ENABLED`; the agent pins pam-server's SSH host key (`PAM_AGENT_SERVER_HOST_KEY`), which is one key cluster-wide under shared custody |
 | 2026-08-15 | **Phase 143 — ICAP AV/DLP scanning, a genuinely new egress destination and protocol.** New **E15**: `PAM_ICAP_URL` submits a finalized SFTP transfer's captured bytes to an ICAP (RFC 3507) RESPMOD gateway on `1344` by default, plaintext, no TLS option in v1. Not a session-brokering flow like E4a/E13 — it is a side-channel scan that runs only *after* the file has already crossed E2 (or E10/E13) in either direction, so a firewall rule for it protects visibility, not the transfer itself. Off unless configured; joins the `PAM_OT_AIRGAP` conflict list. §6 and §7 updated |
 | 2026-08-15 | **Phase 141 — port-forwarding widens an existing flow, no new listener or destination.** A client `ssh -L` forward rides E2 (the same `:2222`-admitted host the session already reaches) but on WHATEVER port the operator requests, not just the target's SSH port — a firewall/NetworkPolicy scoped to exactly `target:22` egress needs widening for forwarding to work. `PAM_SSH_PORT_FORWARD=false` keeps the egress surface exactly as narrow as before this phase; no table row changes, since E2 already covers the destination host |
 | 2026-08-13 | **Phase 116 — live session-sharing, no new listener.** Adds a new *ingress* row rather than a new port: **I7**, an unauthenticated external/vendor guest redeeming an emailed invite at `/share.html` and streaming/controlling the shared session with a minted guest key — reaches the existing `:8080`. Adds a new *egress* row too: **E9b**, the invite email itself — same `PAM_ALERT_EMAIL_*` SMTP config as E9 but a different recipient (the guest, not an admin) and, worth flagging for OT sites, **not** covered by `PAM_OT_AIRGAP`'s alert no-op, since it bypasses the alerter abstraction that gets silenced. The internal-invite `join:<token>` SSH form rides the existing I2 ingress with ordinary PAM password auth, so it gets no new row. §6 and §7 updated with the exposure this implies |

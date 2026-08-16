@@ -1638,6 +1638,62 @@ func (s *PGStore) DeleteScimKey(ctx context.Context, id int64) error {
 	return execExpectingRow(ctx, s.pool, `DELETE FROM scim_keys WHERE id = $1`, id)
 }
 
+// CreateEndpointAgent inserts an endpoint agent, populating ID and CreatedAt.
+// A duplicate key hash or a second live agent for the target is ErrConflict;
+// a missing target is ErrNotFound.
+func (s *PGStore) CreateEndpointAgent(ctx context.Context, a *store.EndpointAgent) error {
+	err := s.pool.QueryRow(ctx,
+		`INSERT INTO endpoint_agents (name, target_id, key_hash, created_by)
+		 VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
+		a.Name, a.TargetID, a.KeyHash, a.CreatedBy,
+	).Scan(&a.ID, &a.CreatedAt)
+	switch pgCode(err) {
+	case pgUniqueViolation:
+		return store.ErrConflict
+	case pgForeignKeyViolation:
+		return store.ErrNotFound
+	}
+	return err
+}
+
+// GetEndpointAgentByKeyHash returns the agent (revoked or not) whose key hash
+// matches, or ErrNotFound.
+func (s *PGStore) GetEndpointAgentByKeyHash(ctx context.Context, keyHashHex string) (*store.EndpointAgent, error) {
+	return getOne(ctx, s.pool, scanEndpointAgent,
+		`SELECT id, name, target_id, key_hash, created_by, created_at, last_seen, revoked_at
+		 FROM endpoint_agents WHERE key_hash = $1`, keyHashHex)
+}
+
+// GetEndpointAgentForTarget returns the target's unrevoked agent, or ErrNotFound.
+func (s *PGStore) GetEndpointAgentForTarget(ctx context.Context, targetID int64) (*store.EndpointAgent, error) {
+	return getOne(ctx, s.pool, scanEndpointAgent,
+		`SELECT id, name, target_id, key_hash, created_by, created_at, last_seen, revoked_at
+		 FROM endpoint_agents WHERE target_id = $1 AND revoked_at IS NULL`, targetID)
+}
+
+// ListEndpointAgents returns every endpoint agent ordered by ID.
+func (s *PGStore) ListEndpointAgents(ctx context.Context) ([]store.EndpointAgent, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, name, target_id, key_hash, created_by, created_at, last_seen, revoked_at
+		 FROM endpoint_agents ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanEndpointAgent)
+}
+
+// RevokeEndpointAgent stamps revoked_at (left alone if already set); ErrNotFound if absent.
+func (s *PGStore) RevokeEndpointAgent(ctx context.Context, id int64, at time.Time) error {
+	return execExpectingRow(ctx, s.pool,
+		`UPDATE endpoint_agents SET revoked_at = COALESCE(revoked_at, $2) WHERE id = $1`, id, at)
+}
+
+// TouchEndpointAgent records the agent's last connection time; ErrNotFound if absent.
+func (s *PGStore) TouchEndpointAgent(ctx context.Context, id int64, at time.Time) error {
+	return execExpectingRow(ctx, s.pool,
+		`UPDATE endpoint_agents SET last_seen = $2 WHERE id = $1`, id, at)
+}
+
 // GrantAppSecret authorizes an app to retrieve a credential's secret.
 func (s *PGStore) GrantAppSecret(ctx context.Context, g *store.AppSecretGrant) error {
 	err := s.pool.QueryRow(ctx,
@@ -2467,6 +2523,13 @@ func scanScimKey(row pgx.CollectableRow) (store.ScimKey, error) {
 	var k store.ScimKey
 	err := row.Scan(&k.ID, &k.Name, &k.Owner, &k.TokenHash, &k.Disabled, &k.CreatedAt)
 	return k, err
+}
+
+// scanEndpointAgent maps one result row into a store.EndpointAgent.
+func scanEndpointAgent(row pgx.CollectableRow) (store.EndpointAgent, error) {
+	var a store.EndpointAgent
+	err := row.Scan(&a.ID, &a.Name, &a.TargetID, &a.KeyHash, &a.CreatedBy, &a.CreatedAt, &a.LastSeen, &a.RevokedAt)
+	return a, err
 }
 
 // scanSession maps one result row into a store.Session.

@@ -34,9 +34,10 @@ import (
 // because real internal callers decrypt from its result, and Meta is the
 // narrow, display-only sibling for the few callers that do not. Phase 149
 // added UserStore.{GetUserByUsername,GetUserByExternalID,UpdateUserActive,
-// UpdateUserExternalID} (4) and the new ScimStore role (4).
+// UpdateUserExternalID} (4) and the new ScimStore role (4). Phase 153 added
+// the new EndpointAgentStore role (6).
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 190
+	const want = 196
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

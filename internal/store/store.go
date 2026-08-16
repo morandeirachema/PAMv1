@@ -593,6 +593,36 @@ type ScimKey struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// EndpointAgent is an OUTBOUND-ONLY connectivity agent installed on a target
+// endpoint that pamv1 cannot dial into — a NAT'd branch box, a CGNAT'd
+// contractor laptop, an unattended host with no inbound firewall rule (Phase
+// 153, BeyondTrust "Jump Client"-style). The agent (cmd/pam-agent) dials OUT
+// to pam-server's SSH listener as "endpoint-agent:<Name>" with the bearer key
+// whose SHA-256 hash is stored here, requests a reverse forward, and from then
+// on the proxy reaches the target by opening channels back through that
+// connection instead of dialing Target.Host. One agent per target: while an
+// unrevoked EndpointAgent row exists for a target, that target is reached ONLY
+// through it — never dialed directly — so an offline agent means "target
+// unreachable", not "fall back to a direct dial".
+//
+// Not to be confused with AgentKey, the AI-agent identity for the access
+// broker: an endpoint agent is infrastructure (a tunnel), holds no capability
+// set, is never an auth.Principal, and can open nothing toward pamv1 — its
+// connection only ever carries channels pamv1 opens toward IT.
+type EndpointAgent struct {
+	ID        int64      `json:"id"`
+	Name      string     `json:"name"`
+	TargetID  int64      `json:"target_id"`
+	KeyHash   string     `json:"-"`
+	CreatedBy string     `json:"created_by"`
+	CreatedAt time.Time  `json:"created_at"`
+	LastSeen  *time.Time `json:"last_seen,omitempty"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+}
+
+// Active reports whether the agent may still authenticate (not revoked).
+func (a *EndpointAgent) Active() bool { return a.RevokedAt == nil }
+
 // AgentKey is an AI-agent identity for the access broker: a bearer key whose
 // SHA-256 hash is stored, granting only the ability to request brokered tool
 // calls (never a credential). Owner is the accountable human/service recorded in
@@ -1421,6 +1451,31 @@ type ScimStore interface {
 	DeleteScimKey(ctx context.Context, id int64) error
 }
 
+// EndpointAgentStore is the registry of outbound-only endpoint agents (Phase
+// 153). Live connectivity (which agents are connected right now) is NOT here —
+// it is in-process state in session.EndpointAgents; this is the durable half:
+// identity, key hash, target binding, revocation and last-seen.
+type EndpointAgentStore interface {
+	// CreateEndpointAgent inserts an agent, populating ID and CreatedAt.
+	// ErrConflict if the key hash is taken or the target already has an
+	// unrevoked agent (one agent per target); ErrNotFound if the target does
+	// not exist.
+	CreateEndpointAgent(ctx context.Context, a *EndpointAgent) error
+	// GetEndpointAgentByKeyHash returns the agent whose key hash matches,
+	// revoked or not (the caller checks Active so a revoked key's attempt can
+	// be audited as such), or ErrNotFound.
+	GetEndpointAgentByKeyHash(ctx context.Context, keyHashHex string) (*EndpointAgent, error)
+	// GetEndpointAgentForTarget returns the target's unrevoked agent, or
+	// ErrNotFound when the target is dialed directly.
+	GetEndpointAgentForTarget(ctx context.Context, targetID int64) (*EndpointAgent, error)
+	// ListEndpointAgents returns every agent (revoked included) ordered by ID.
+	ListEndpointAgents(ctx context.Context) ([]EndpointAgent, error)
+	// RevokeEndpointAgent stamps RevokedAt (idempotent), or ErrNotFound.
+	RevokeEndpointAgent(ctx context.Context, id int64, at time.Time) error
+	// TouchEndpointAgent records when the agent last connected, or ErrNotFound.
+	TouchEndpointAgent(ctx context.Context, id int64, at time.Time) error
+}
+
 // VendorStore is the third-party vendor access gate.
 type VendorStore interface {
 	// Third-party vendor access gate (Phase 29).
@@ -1653,6 +1708,7 @@ type Store interface {
 	BrokerStore
 	AppSecretStore
 	ScimStore
+	EndpointAgentStore
 	VendorStore
 	ShareInviteStore
 	ApprovalInviteStore

@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-08-16 · Reflects: Phases 0–151. Phases 66–70 add one more
+> Last updated: 2026-08-16 · Reflects: Phases 0–153. Phases 66–70 add one more
 > background worker (the hourly, leader-locked certification scheduler); Phase 78
 > adds an optional per-replica Conjur refresh worker (off unless
 > `PAM_CONJUR_REFRESH_MIN` is set); 71–94 add no port, resource floor or
@@ -84,6 +84,16 @@
 > register pamv1's SP metadata with. Three new Go dependencies
 > (`crewjam/saml`, `russellhaering/goxmldsig`, `beevik/etree`) are compiled
 > in — no runtime library, no CGO.
+> **Phase 153 adds one env var** (`PAM_ENDPOINT_AGENTS_ENABLED`, default off), one
+> migration (`0042`, `endpoint_agents`), no new listener or port on pam-server, and
+> a **second deployable binary**, `pam-agent` (static, CGO-free, ~10 MB, linux
+> amd64/arm64 from the Release assets or `go build ./cmd/pam-agent`) that runs ON
+> each unreachable endpoint — configured by `PAM_AGENT_SERVERS`/`_NAME`/`_KEY`/
+> `_LOCAL_ADDR`/`_SERVER_HOST_KEY`, needing only outbound TCP to pam-server:2222 and
+> a few MB of RAM per tunnel. On pam-server each connected agent is one idle SSH
+> connection (goroutine + keepalive every 30 s) — the resource floor is unchanged
+> for deployments that leave the flag off, and negligible per agent when on. In HA
+> the agent holds one connection per listed replica.
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** These are the
 > specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate

@@ -1394,6 +1394,77 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("disabled scim key must resolve as not found, got %v", err)
 	}
 
+	// --- endpoint agents (Phase 153) ---
+	eaTarget := &store.Target{Name: "branch-box", Host: "127.0.0.1", Port: 22, OSType: "linux", Protocol: "ssh"}
+	if err := st.CreateTarget(ctx, eaTarget); err != nil {
+		t.Fatalf("CreateTarget(endpoint-agent): %v", err)
+	}
+	ea := &store.EndpointAgent{Name: "branch-agent", TargetID: eaTarget.ID, KeyHash: "eahash1", CreatedBy: "admin"}
+	if err := st.CreateEndpointAgent(ctx, ea); err != nil || ea.ID == 0 || ea.CreatedAt.IsZero() {
+		t.Fatalf("CreateEndpointAgent: %+v err %v", ea, err)
+	}
+	// One live agent per target, unique key hash, and the target must exist.
+	if err := st.CreateEndpointAgent(ctx, &store.EndpointAgent{Name: "second", TargetID: eaTarget.ID, KeyHash: "eahash2"}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("second live agent for the same target: want ErrConflict, got %v", err)
+	}
+	if err := st.CreateEndpointAgent(ctx, &store.EndpointAgent{Name: "dup-key", TargetID: tgt.ID, KeyHash: "eahash1"}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate endpoint agent key hash: want ErrConflict, got %v", err)
+	}
+	if err := st.CreateEndpointAgent(ctx, &store.EndpointAgent{Name: "orphan", TargetID: 999999, KeyHash: "eahash3"}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("endpoint agent for a missing target: want ErrNotFound, got %v", err)
+	}
+	if by, err := st.GetEndpointAgentByKeyHash(ctx, "eahash1"); err != nil || by.ID != ea.ID || !by.Active() {
+		t.Fatalf("GetEndpointAgentByKeyHash: %+v err %v", by, err)
+	}
+	if _, err := st.GetEndpointAgentByKeyHash(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetEndpointAgentByKeyHash missing: want ErrNotFound, got %v", err)
+	}
+	if by, err := st.GetEndpointAgentForTarget(ctx, eaTarget.ID); err != nil || by.ID != ea.ID {
+		t.Fatalf("GetEndpointAgentForTarget: %+v err %v", by, err)
+	}
+	if _, err := st.GetEndpointAgentForTarget(ctx, tgt.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetEndpointAgentForTarget(direct target): want ErrNotFound, got %v", err)
+	}
+	seenAt := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
+	if err := st.TouchEndpointAgent(ctx, ea.ID, seenAt); err != nil {
+		t.Fatalf("TouchEndpointAgent: %v", err)
+	}
+	if err := st.TouchEndpointAgent(ctx, 999999, seenAt); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("TouchEndpointAgent missing: want ErrNotFound, got %v", err)
+	}
+	if by, _ := st.GetEndpointAgentByKeyHash(ctx, "eahash1"); by.LastSeen == nil || !by.LastSeen.Equal(seenAt) {
+		t.Fatalf("LastSeen not recorded: %+v", by)
+	}
+	if err := st.RevokeEndpointAgent(ctx, ea.ID, time.Now()); err != nil {
+		t.Fatalf("RevokeEndpointAgent: %v", err)
+	}
+	if err := st.RevokeEndpointAgent(ctx, 999999, time.Now()); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("RevokeEndpointAgent missing: want ErrNotFound, got %v", err)
+	}
+	// A revoked agent still resolves by key hash (so the refusal can be
+	// audited as "revoked"), but is no longer the target's agent — and the
+	// target may now bind a fresh one.
+	if by, err := st.GetEndpointAgentByKeyHash(ctx, "eahash1"); err != nil || by.Active() {
+		t.Fatalf("revoked agent should resolve inactive: %+v err %v", by, err)
+	}
+	if _, err := st.GetEndpointAgentForTarget(ctx, eaTarget.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetEndpointAgentForTarget after revoke: want ErrNotFound, got %v", err)
+	}
+	ea2 := &store.EndpointAgent{Name: "branch-agent-2", TargetID: eaTarget.ID, KeyHash: "eahash2"}
+	if err := st.CreateEndpointAgent(ctx, ea2); err != nil {
+		t.Fatalf("CreateEndpointAgent after revoke: %v", err)
+	}
+	if list, err := st.ListEndpointAgents(ctx); err != nil || len(list) != 2 || list[0].ID != ea.ID || list[1].ID != ea2.ID {
+		t.Fatalf("ListEndpointAgents: %+v err %v", list, err)
+	}
+	// Deleting the target cascades to its agents.
+	if err := st.DeleteTarget(ctx, eaTarget.ID); err != nil {
+		t.Fatalf("DeleteTarget(endpoint-agent): %v", err)
+	}
+	if list, _ := st.ListEndpointAgents(ctx); len(list) != 0 {
+		t.Fatalf("endpoint agents should cascade with their target: %+v", list)
+	}
+
 	// --- sessions (with expiry) ---
 	sess := &store.Session{Username: "u1", Role: "admin", TokenHash: "sesshash", ExpiresAt: future}
 	if err := st.CreateSession(ctx, sess); err != nil {

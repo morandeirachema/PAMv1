@@ -38,6 +38,7 @@ type Memstore struct {
 	appKeys         map[int64]store.AppKey
 	appGrants       map[int64]store.AppSecretGrant
 	scimKeys        map[int64]store.ScimKey
+	endpointAgents  map[int64]store.EndpointAgent
 	brokerLog       []store.BrokerAuditEvent
 	brokerTok       map[string]store.BrokerToken
 	settings        map[string]store.Setting
@@ -88,6 +89,7 @@ func New() *Memstore {
 		appKeys:         make(map[int64]store.AppKey),
 		appGrants:       make(map[int64]store.AppSecretGrant),
 		scimKeys:        make(map[int64]store.ScimKey),
+		endpointAgents:  make(map[int64]store.EndpointAgent),
 		brokerTok:       make(map[string]store.BrokerToken),
 		settings:        make(map[string]store.Setting),
 		keyMaterial:     make(map[string]string),
@@ -237,6 +239,12 @@ func (m *Memstore) DeleteTarget(_ context.Context, id int64) error {
 	for aid, ar := range m.accessReq {
 		if ar.TargetID == id {
 			delete(m.accessReq, aid)
+		}
+	}
+	// endpoint_agents.target_id cascades in pgstore (Phase 153) — match it.
+	for eid, ea := range m.endpointAgents {
+		if ea.TargetID == id {
+			delete(m.endpointAgents, eid)
 		}
 	}
 	// pgstore FKs cascade checkouts on target delete — match it so an orphaned
@@ -2187,6 +2195,95 @@ func (m *Memstore) DeleteScimKey(_ context.Context, id int64) error {
 		return store.ErrNotFound
 	}
 	delete(m.scimKeys, id)
+	return nil
+}
+
+// CreateEndpointAgent inserts an endpoint agent, assigning ID and CreatedAt;
+// ErrConflict on a duplicate key hash or a second live agent for the target,
+// ErrNotFound if the target does not exist.
+func (m *Memstore) CreateEndpointAgent(_ context.Context, a *store.EndpointAgent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.targets[a.TargetID]; !ok {
+		return store.ErrNotFound
+	}
+	for _, existing := range m.endpointAgents {
+		if existing.KeyHash == a.KeyHash || (existing.TargetID == a.TargetID && existing.RevokedAt == nil) {
+			return store.ErrConflict
+		}
+	}
+	a.ID = m.id()
+	a.CreatedAt = time.Now().UTC()
+	m.endpointAgents[a.ID] = *a
+	return nil
+}
+
+// GetEndpointAgentByKeyHash returns the agent (revoked or not) whose key hash
+// matches, or ErrNotFound.
+func (m *Memstore) GetEndpointAgentByKeyHash(_ context.Context, keyHashHex string) (*store.EndpointAgent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, a := range m.endpointAgents {
+		if a.KeyHash == keyHashHex {
+			out := a
+			return &out, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+// GetEndpointAgentForTarget returns the target's unrevoked agent, or ErrNotFound.
+func (m *Memstore) GetEndpointAgentForTarget(_ context.Context, targetID int64) (*store.EndpointAgent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, a := range m.endpointAgents {
+		if a.TargetID == targetID && a.RevokedAt == nil {
+			out := a
+			return &out, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+// ListEndpointAgents returns every endpoint agent ordered by ID.
+func (m *Memstore) ListEndpointAgents(_ context.Context) ([]store.EndpointAgent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]store.EndpointAgent, 0, len(m.endpointAgents))
+	for _, a := range m.endpointAgents {
+		out = append(out, a)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// RevokeEndpointAgent stamps RevokedAt (left alone if already set); ErrNotFound if absent.
+func (m *Memstore) RevokeEndpointAgent(_ context.Context, id int64, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.endpointAgents[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	if a.RevokedAt == nil {
+		t := at.UTC()
+		a.RevokedAt = &t
+		m.endpointAgents[id] = a
+	}
+	return nil
+}
+
+// TouchEndpointAgent records the agent's last connection time; ErrNotFound if absent.
+func (m *Memstore) TouchEndpointAgent(_ context.Context, id int64, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.endpointAgents[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	t := at.UTC()
+	a.LastSeen = &t
+	m.endpointAgents[id] = a
 	return nil
 }
 
