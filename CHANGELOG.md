@@ -9,6 +9,29 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.36.0] — 2026-08-16
+
+A minor: one new capability.
+
+### Added
+
+- **Generic file-attachment secrets.** A new `secret_type: "file"` for
+  license keys, cert bundles and short documents — the same
+  `vault.Encrypt`/`Decrypt` pathway and `POST /api/credentials` route every
+  other secret type already uses, base64-encoded by the client.
+  `PAM_CREDENTIAL_FILE_MAX_KB` (default 1024, max 10240) refuses an
+  over-cap file secret before it is ever encrypted or a row is ever
+  inserted. No migration (`secret_type` is a plain `TEXT` column).
+
+### Fixed
+
+- `store.Store` gained `ListCredentialsMeta`, a metadata-only sibling to
+  `ListCredentials` used only by callers that display a credential list and
+  never decrypt from it. `ListCredentials` itself is unchanged and stays
+  full-fidelity — several real internal callers (`-rotate-kek`, the
+  credential lifecycle reconciler, the PostgreSQL/RDP/VNC/WinRM JIT-decrypt
+  paths) depend on that.
+
 ## [0.35.0] — 2026-08-15
 
 A minor: one new capability.
