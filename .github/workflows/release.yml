@@ -131,9 +131,38 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
+      # The outbound-only endpoint agent (Phase 153) runs ON endpoints, not in
+      # the pam-server image, so it ships as static binaries on the Release —
+      # built here from the same checkout the image was built from, stamped
+      # with the same version/commit, with a SHA256SUMS file to verify against.
+      # Built in the rehearsal too (the step that can break), attached only on
+      # a real tag push like everything else with an outward effect.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26"
+          check-latest: true
+      - name: Build pam-agent binaries
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH="$arch" go build -trimpath \
+              -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${GITHUB_SHA}" \
+              -o "dist/pam-agent_linux_${arch}" ./cmd/pam-agent
+          done
+          (cd dist && sha256sum pam-agent_linux_* > SHA256SUMS)
+          ls -l dist
+
       - name: Create GitHub Release
         if: env.REAL
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           generate_release_notes: true
-          files: sbom.spdx.json
+          files: |
+            sbom.spdx.json
+            dist/pam-agent_linux_amd64
+            dist/pam-agent_linux_arm64
+            dist/SHA256SUMS

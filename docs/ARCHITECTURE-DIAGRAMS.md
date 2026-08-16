@@ -71,10 +71,12 @@ flowchart LR
     n_blast[blast]
     n_cmdguard[cmdguard]
     n_conjur[conjur]
+    n_endpointagent[endpointagent]
     n_icap[icap]
     n_jwtutil[jwtutil]
     n_keycustody[keycustody]
     n_ocsf[ocsf]
+    n_pam_agent[pam-agent]
     n_posture[posture]
     n_ratelimit[ratelimit]
     n_recording[recording]
@@ -149,6 +151,8 @@ flowchart LR
   n_memstore --> n_store
   n_ocsf --> n_store
   n_oidc --> n_jwtutil
+  n_pam_agent --> n_endpointagent
+  n_pam_agent --> n_logging
   n_pam_server --> n_agentid
   n_pam_server --> n_alert
   n_pam_server --> n_analytics
@@ -344,6 +348,15 @@ erDiagram
     string Name
     int64 ManagementCredentialID
   }
+  EndpointAgent {
+    int64 ID
+    string Name
+    int64 TargetID
+    string CreatedBy
+    time_Time CreatedAt
+    ptr_time_Time LastSeen
+    ptr_time_Time RevokedAt
+  }
   KeyMaterial {
     string Name
   }
@@ -498,6 +511,7 @@ erDiagram
   Target ||--o{ AccessRequest : "has"
   Target ||--o{ Checkout : "has"
   Target ||--o{ Credential : "has"
+  Target ||--o{ EndpointAgent : "has"
   Target ||--o{ TargetGrant : "has"
   Target ||--o{ VendorGrant : "has"
   Vendor ||--o{ VendorGrant : "has"
@@ -505,7 +519,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 176 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 179 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -567,6 +581,9 @@ The 176 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/credentials/{id}/reveal` | CapRevealSecret |
 | POST | `/api/credentials/{id}/rotate` | CapManageCredentials |
 | POST | `/api/discovery/scan` | CapManageTargets |
+| GET | `/api/endpoint-agents` | CapReadInventory |
+| POST | `/api/endpoint-agents` | CapManageTargets |
+| DELETE | `/api/endpoint-agents/{id}` | CapManageTargets |
 | POST | `/api/extension-token` | CapRevealSecret |
 | POST | `/api/identity/reconcile` | CapManageUsers |
 | POST | `/api/login` | public (rate-limited) |

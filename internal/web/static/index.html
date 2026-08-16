@@ -170,6 +170,7 @@
   // Phase 45: the remaining console screens.
   let vendors = [], vendorGrants = [], grantsVendor = 0, newVendor = null, editVendor = null;
   let sshCerts = [], caInfo = null, loginSessions = [], agents = [], newAgent = null;
+  let endpointAgents = [], newEndpointAgent = null; // Phase 153: outbound-only endpoint agents
   let deps = [], depsCred = null, blastResult = null, auditHead = null, nis2Report = null;
   let nis2Since = "", nis2Until = "";
   let campaigns = [], campView = null, risk = null, riskMin = "", riskWin = "";
@@ -573,6 +574,14 @@
     try { agents = await api("GET", "/v1/agents"); }
     catch (e) { if (e.status === 404) say("AI-AGENT BROKER IS DISABLED (set PAM_BROKER_POLICY_FILE)."); }
     go("agents");
+  }
+  // Phase 153: outbound-only endpoint agents (menu 28). The list carries this
+  // replica's live connectivity; targets are fetched alongside for the F6 form.
+  async function openEndpointAgents() {
+    endpointAgents = [];
+    try { [endpointAgents, targets] = await Promise.all([api("GET", "/api/endpoint-agents"), apiAll("/api/targets").catch(() => targets)]); }
+    catch (e) { if (e.status === 404) say("ENDPOINT AGENTS ARE DISABLED (set PAM_ENDPOINT_AGENTS_ENABLED=true)."); }
+    go("endpointagents");
   }
   async function openDeps(credID) {
     depsCred = creds.find((c) => c.id === credID) || { id: credID };
@@ -1063,6 +1072,7 @@ ${fkeys("")}
           line(25, can("manage_users"), "Work with login sessions") +
           line(26, can("manage_users"), "Work with AI-agent keys") +
           line(27, can("read_audit"), "Delegated agent tokens (RFC 8693)") +
+          line(28, can("read_inventory"), "Work with endpoint agents (outbound-only)") +
           "90. Sign off\n";
         term.innerHTML = `${head("PAMMAIN", "PAMV1 Main Menu")}
 Select one of the following:
@@ -1083,6 +1093,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
             "19": openRecordings, "20": openBrokerApprovals, "21": openStepUps,
             "22": openVendors, "23": openSSHCerts, "24": () => go("blast"),
             "25": openLoginSessions, "26": openAgents, "27": openTokenExchange,
+            "28": openEndpointAgents,
             "90": signoff,
           };
           if (routes[c]) { try { await routes[c](); } catch (e) { say("CPF9999: " + e.message, true); render(); } }
@@ -1898,6 +1909,82 @@ ${rows}
 trail above is the only record that a delegation existed. It is bounded by the delegator's
 own expiry, and its chain is capped by PAM_BROKER_MAX_DELEGATION_DEPTH.</div>
 ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
+      },
+
+      // Menu 28 — outbound-only endpoint agents (Phase 153): a target pamv1
+      // cannot dial into runs pam-agent, which dials OUT and holds a reverse
+      // tunnel; while an unrevoked agent exists the target is reached ONLY
+      // through it. Status is this replica's live view.
+      endpointagents() {
+        back = "main";
+        const canManage = can("manage_targets");
+        const status = (a) => a.revoked_at ? '<span class="red">revoked  </span>' : a.connected ? '<span class="green">connected</span>' : '<span class="cyan">offline  </span>';
+        term.innerHTML = `${head("PAMWRKEPA", "Work with Endpoint Agents")}
+Outbound-only agents (pam-agent) for targets pamv1 cannot dial into: the agent dials OUT
+to the SSH listener and holds a reverse tunnel; the target is then reached ONLY through it.
+Type options, press Enter.  <span class="cyan">${canManage ? "4=Revoke (key stops resolving, live tunnel dropped)" : "(read-only role)"}</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>ID</th><th>Name</th><th>Target</th><th>Status</th><th>Since / last seen</th><th>Remote</th></tr>
+${endpointAgents.map((a) => `<tr><td>${canManage ? opt(a.id) : "  "}</td><td>${esc(a.id)}</td><td class="white">${cell(a.name, 16)}</td><td>${cell(a.target_name || a.target_id, 16)}</td><td>${status(a)}</td><td class="cyan">${fmtTime(a.connected_since || a.last_seen)}</td><td>${cell(a.remote || "-", 21)}</td></tr>`).join("")}
+</table>${endpointAgents.length ? "" : `<div class="cyan indent">(No endpoint agents. Press F6 to register one for an SSH target — requires PAM_ENDPOINT_AGENTS_ENABLED.)</div>`}
+<input type="submit" hidden></form>
+<div class="cyan">Status is this replica's live view; in HA, point pam-agent at every replica (PAM_AGENT_SERVERS).</div>
+${fkeys("F3=Exit   F5=Refresh" + (canManage ? "   F6=Register agent" : "") + "   F12=Cancel")}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const a of endpointAgents) {
+              const o = optVal(ev.target, a.id);
+              if (o === "4") { await api("DELETE", `/api/endpoint-agents/${a.id}`); say(`ENDPOINT AGENT ${String(a.name).toUpperCase()} REVOKED.`); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openEndpointAgents();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      endpointagentadd() {
+        back = "endpointagents";
+        const sshTargets = (targets || []).filter((t) => (t.protocol || "ssh") === "ssh");
+        term.innerHTML = `${head("PAMADDEPA", "Register Endpoint Agent")}
+Binds an outbound-only agent to ONE SSH target (key shown once). From then on the target
+is reached only through the agent — never dialed directly — until the agent is revoked.
+
+<form id="f-add" class="indent">
+<label>Agent name  . . . . :  <input name="name" size="20" required autofocus></label>
+<label>Target  . . . . . . :  <select name="target_id" required>${sshTargets.map((t) => `<option value="${esc(t.id)}">${esc(t.name)} (${esc(t.host)}:${esc(t.port)})</option>`).join("")}</select></label>
+<input type="submit" hidden>
+</form>
+${sshTargets.length ? "" : `<div class="red indent">No SSH targets to bind. Create the target first (menu 1) — its host:port is the address AS SEEN FROM THE ENDPOINT, e.g. 127.0.0.1:22.</div>`}
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-add").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          f.target_id = Number(f.target_id);
+          try { newEndpointAgent = await api("POST", "/api/endpoint-agents", f); go("endpointagentcreated"); }
+          catch (e) { say("CPF9898: " + (e.status === 404 ? "ENDPOINT AGENTS ARE DISABLED (set PAM_ENDPOINT_AGENTS_ENABLED=true)." : e.message), true); render(); }
+        };
+      },
+
+      endpointagentcreated() {
+        back = "endpointagents";
+        const a = newEndpointAgent || {};
+        term.innerHTML = `${head("PAMEPAKEY", "Endpoint Agent Key")}
+<span class="red blink">COPY THIS KEY NOW — IT IS SHOWN ONLY ONCE.</span>
+
+<div class="indent">
+Agent . . . . . . . :  <span class="white">${esc(a.name)}</span>
+Target  . . . . . . :  <span class="white">${esc(a.target_name)}</span>
+SSH login . . . . . :  <span class="white">${esc(a.login)}</span>
+
+Agent key . . . . . :  <span class="white">${esc(a.key)}</span>
+</div>
+<div class="cyan indent">On the endpoint, run pam-agent with:
+  PAM_AGENT_SERVERS=&lt;pam-host&gt;:2222   PAM_AGENT_NAME=${esc(a.name)}   PAM_AGENT_KEY=&lt;the key above&gt;
+  PAM_AGENT_LOCAL_ADDR=127.0.0.1:22       PAM_AGENT_SERVER_HOST_KEY="$(ssh-keyscan -p 2222 &lt;pam-host&gt; | cut -d' ' -f2-)"
+Only the key's hash is stored here.</div>
+${fkeys("F3=Exit   F12=Cancel")}`;
       },
 
       agentadd() {
@@ -3097,7 +3184,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   }
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
-  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid) };
+  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, endpointagents: openEndpointAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid) };
   // cycleTheme rotates green → amber → slate → green, persists the choice, and
   // re-renders so the F-key hint's confirmation message shows immediately.
   function cycleTheme() {
@@ -3110,7 +3197,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
     render();
   }
 
-  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, mfawebauthn: () => go("mfawebauthnadd") };
+  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, mfawebauthn: () => go("mfawebauthnadd") };
 
   window.addEventListener("keydown", async (ev) => {
     // While the RDP viewer is open it owns the keyboard (its own capture-phase

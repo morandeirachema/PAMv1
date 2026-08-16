@@ -371,6 +371,12 @@ type Options struct {
 	// ScimEnabled turns on the SCIM 2.0 provisioning API (Phase 149): the SCIM
 	// key admin routes and the /scim/v2/Users surface.
 	ScimEnabled bool
+	// EndpointAgents (Phase 153) is the SHARED live registry of connected
+	// outbound-only endpoint agents — the same instance the SSH proxy
+	// registers into — so GET /api/endpoint-agents can report connectivity and
+	// a revoke can drop the live tunnel. nil disables the feature (routes not
+	// registered).
+	EndpointAgents *session.EndpointAgents
 }
 
 type Server struct {
@@ -451,6 +457,7 @@ type Server struct {
 	analyticsAlerted    map[string]analyticsAlert // actor → last alert (score + time)
 	appSecretsEnabled   bool
 	scimEnabled         bool
+	endpointAgents      *session.EndpointAgents
 	metrics             *metrics.Metrics
 	log                 *slog.Logger
 	mux                 *http.ServeMux
@@ -680,6 +687,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		analyticsAlerted:     make(map[string]analyticsAlert),
 		appSecretsEnabled:    opts.AppSecretsEnabled,
 		scimEnabled:          opts.ScimEnabled,
+		endpointAgents:       opts.EndpointAgents,
 		metrics:              metrics.New(),
 		log:                  logging.Component("api"),
 		mux:                  http.NewServeMux(),
@@ -1036,6 +1044,13 @@ func (s *Server) routes() {
 	// authenticated by a narrowly-scoped bearer key (never a human's own
 	// capability set — the same non-human shape appAuth already uses). Key
 	// admin routes reuse human RBAC, matching the app-secrets pattern above.
+	// Outbound-only endpoint agents (Phase 153): target infrastructure, so
+	// managed under the target-management capability; the list is inventory.
+	if s.endpointAgents != nil {
+		s.mux.Handle("POST /api/endpoint-agents", s.authz(auth.CapManageTargets, s.createEndpointAgent))
+		s.mux.Handle("GET /api/endpoint-agents", s.authz(auth.CapReadInventory, s.listEndpointAgents))
+		s.mux.Handle("DELETE /api/endpoint-agents/{id}", s.authz(auth.CapManageTargets, s.revokeEndpointAgent))
+	}
 	if s.scimEnabled {
 		s.mux.Handle("POST /v1/scim-keys", s.authz(auth.CapManageUsers, s.createScimKey))
 		s.mux.Handle("GET /v1/scim-keys", s.authz(auth.CapManageUsers, s.listScimKeys))
