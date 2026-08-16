@@ -9,6 +9,41 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.40.0] — 2026-08-16
+
+A minor: one new capability and a second deployable binary. New migration
+`0042`.
+
+### Added
+
+- **Outbound-only endpoint agents (Jump Client-style reachability).** For
+  targets pamv1 cannot dial into — NAT'd branch boxes, CGNAT'd contractor
+  laptops, hosts with no inbound firewall rule — a new `pam-agent` binary
+  (published on this Release as `pam-agent_linux_amd64` /
+  `pam-agent_linux_arm64` + `SHA256SUMS`) dials OUT to the existing `:2222`
+  SSH listener as `endpoint-agent:<name>` with its own bearer key, holds an
+  RFC 4254 reverse tunnel, and the proxy reaches the bound target through it
+  — JIT injection, known_hosts pinning, recording, monitoring and every
+  admission gate unchanged inside the tunnel. `PAM_ENDPOINT_AGENTS_ENABLED`
+  (default off); `POST/GET /api/endpoint-agents`, `DELETE
+  /api/endpoint-agents/{id}`; console menu 28. One live agent per target;
+  a bound target is tunnel-or-nothing (never a silent direct fallback);
+  revoke drops the live tunnel at once; SSH targets only. The agent alone
+  chooses the one local address it exposes, pins pam-server's SSH host key
+  (`PAM_AGENT_SERVER_HOST_KEY`, required) and can carry nothing toward
+  pamv1. Per replica: list every replica in `PAM_AGENT_SERVERS`. New audit
+  family `endpoint_agent.*` and a `via:endpoint-agent:<name>` marker on
+  `session.start`. Not verified across a real NAT path (see
+  EXTERNAL-INFRA-GAPS.md).
+
+### Changed
+
+- New migration `0042` (`endpoint_agents`); `store.Store` grows a
+  `EndpointAgentStore` role (190 → 196 methods).
+- The SSH proxy accepts one `tcpip-forward` global request — from an
+  endpoint-agent identity only; every other connection's global requests
+  are still discarded, and an operator connection cannot register a forward.
+
 ## [0.39.0] — 2026-08-16
 
 A minor: one new capability. No schema change.
