@@ -2426,8 +2426,10 @@ new capability. No schema change (migration high-water mark stays `0041`).
 
 - [x] **v0.39.0** through the test-gated pipeline, rehearsed on `main` first.
   Published 2026-08-16 as `ghcr.io/morandeirachema/pamv1:0.39.0` (also
-  `latest`), digest `PENDING` (recorded once the tag's publish workflow has
-  run and the anonymous pull is verified)
+  `latest`), digest
+  `sha256:8c8a8c71530c5cca9ca508c1425d85488e769ad9a90db28efec44e2a6fae61e3`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow)
 - [x] All five pins via the sweep (Helm `appVersion`, the two k8s
   `deployment.yaml` images, the Flux `GitRepository` tag, the README
   quickstart `TAG`); Helm chart `version` 0.29.0 -> **0.30.0** (minor,
