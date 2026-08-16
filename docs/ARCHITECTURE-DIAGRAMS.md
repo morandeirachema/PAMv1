@@ -382,6 +382,13 @@ erDiagram
     bool CanManage
     string CreatedBy
   }
+  ScimKey {
+    int64 ID
+    string Name
+    string Owner
+    bool Disabled
+    time_Time CreatedAt
+  }
   Session {
     int64 ID
     string Username
@@ -439,6 +446,8 @@ erDiagram
     string Role
     string IPAllowlist
     string DeviceFingerprint
+    string ExternalID
+    bool Active
     time_Time CreatedAt
   }
   Vendor {
@@ -492,7 +501,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 163 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 173 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -635,6 +644,13 @@ The 163 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/mcp` | public |
 | GET | `/metrics` | public |
 | GET | `/readyz` | public |
+| GET | `/scim/v2/ServiceProviderConfig` | public |
+| GET | `/scim/v2/Users` | public |
+| POST | `/scim/v2/Users` | public |
+| DELETE | `/scim/v2/Users/{id}` | public |
+| GET | `/scim/v2/Users/{id}` | public |
+| PATCH | `/scim/v2/Users/{id}` | public |
+| PUT | `/scim/v2/Users/{id}` | public |
 | GET | `/share.html` | public |
 | GET | `/static/guacamole-common.min.js` | public |
 | GET | `/v1/agents` | CapManageUsers |
@@ -653,6 +669,9 @@ The 163 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/v1/audit/head` | CapReadAudit |
 | GET | `/v1/audit/jwks` | CapReadAudit |
 | GET | `/v1/audit/verify` | CapReadAudit |
+| GET | `/v1/scim-keys` | CapManageUsers |
+| POST | `/v1/scim-keys` | CapManageUsers |
+| DELETE | `/v1/scim-keys/{id}` | CapManageUsers |
 | POST | `/v1/token` | public |
 | GET | `/v1/token/jwks` | CapReadAudit |
 | POST | `/v1/tool-calls` | public |

@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–148 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–149 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,108 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 149 — SCIM 2.0 user provisioning ✅
+
+**Closes:** StrongDM's SCIM server — push-based IdP user provisioning, vs.
+pamv1's pull-only `POST /api/identity/reconcile` today. First phase of the
+batch's back half (149–157).
+
+**What shipped.** `/scim/v2/Users` (RFC 7643/7644), authenticated by a new
+non-human `store.ScimKey` bearer identity — the same shape `AgentKey`/
+`AppKey` already use, never an `auth.Principal`, so a SCIM client cannot
+reach anything a human's own capability set would. Full CRUD: `POST`
+(create), `GET` (single + `?filter=` + `?startIndex=&count=` paging),
+`PUT` (replace), `PATCH` (partial update), `DELETE` — plus a static
+`GET .../ServiceProviderConfig` for an IdP's own "test connection" step.
+
+**The real design decision was `store.User` gaining two fields,** not the
+REST surface itself: `ExternalID` (the IdP's own correlation key — a new
+partial-unique-index column, `WHERE external_id <> ''`, so every existing
+row sharing the empty default doesn't collide) and `Active` (SCIM's
+deprovisioning switch). Making `Active` actually mean something is the
+whole point of the phase: `auth.Resolver.Resolve()` now refuses a local
+user token outright when `!u.Active`, fail-closed, the load-bearing
+property proven end-to-end (`GET /api/me` with a real token, before and
+after a real `PATCH .../active:false` call — not a store-layer assertion
+alone). Directory/SSO logins are unaffected — they resolve through
+`GetSessionByTokenHash`, never this row's `Active` flag.
+
+**`CreateUser` ignores `Active` on the input struct entirely, deliberately,
+at the store layer** — a bare Go `bool` cannot distinguish "the caller
+wants an inactive user" from "the caller has never heard of this field,"
+and the second case must never silently create a deactivated account. Both
+`pgstore` and `memstore` hardcode active-on-create and let a caller who
+genuinely needs otherwise (a SCIM `POST` whose own body says
+`active:false`) make a separate `UpdateUserActive` call right after. This
+is a stronger safety property than auditing every call site by hand: the
+two production callers this phase found by grep (`internal/api/users.go`'s
+human `createUser`, `internal/api/vendor_handlers.go`'s vendor-login
+provisioning) needed **no changes at all** — and a future third call site
+gets the same guarantee for free. **A quieter but real regression this
+same design choice caught**: `internal/auth/auth_test.go`'s hand-rolled
+`fakeDir` test double builds `store.User` fixtures directly (never through
+`CreateUser`), so its existing fixtures — untouched since long before this
+phase — started failing `Resolve()` the moment the `!u.Active` gate landed,
+since their zero-value `Active` was now `false` by construction. Fixed by
+adding `Active: true` to both fixture maps; a real near-miss the full test
+suite caught immediately, not a store-layer contract test written to prove
+the fix worked.
+
+**DELETE is a deliberate divergence from `DELETE /api/users/{id}`.** The
+human REST route stays exactly what it always was — a hard row delete.
+SCIM's own `DELETE /scim/v2/Users/{id}` instead sets `Active=false`, the
+same as `PATCH active:false`: SCIM's whole provisioning model is built
+around being able to reactivate a deprovisioned identity later, which a
+hard delete forecloses. Documented explicitly rather than silently changed,
+since it means the two DELETE-shaped routes now do genuinely different
+things to the same row.
+
+**Role assignment is a fixed floor, not a field an IdP can set.** Every
+SCIM-provisioned user gets `auth.RoleUser`, full stop — no role in the
+request body is even read. `POST /api/users`'s own privilege-escalation
+guard ("cannot assign a role... capabilities you do not hold") compares a
+requested role against the *calling principal's* capabilities; a SCIM key
+holds none, since it is not an `auth.Principal` at all, so there is no
+caller capability set to bound a requested role against — a fixed,
+least-privileged floor is the only safe universal choice.
+
+**A SCIM-provisioned user's local access token is minted but never
+returned via SCIM** — every `store.User` row needs one, but SCIM's core
+schema has no field for a bearer secret, and the realistic expectation is
+that a SCIM-provisioned identity authenticates through the same IdP doing
+the provisioning (AD/Entra/OIDC), not a standalone pamv1 token. Documented,
+not silently dropped.
+
+**PATCH honors two real wire shapes**, not a hypothetical one: RFC 7644
+§3.5.2's path-based form (`{"op":"replace","path":"active","value":false}`)
+and Azure AD's documented no-path variant, where the changed attributes
+arrive directly as an object in `value`
+(`{"op":"Replace","value":{"active":false}}`) — a well-known, real SCIM
+interop gotcha, proven by a dedicated test exercising both shapes against
+the same deactivate/reactivate flow.
+
+**The `filter` query parameter implements the one shape real IdPs actually
+send** for an idempotent-provisioning existence check — `<attr> eq
+"value"` against `userName` or `externalId` — not RFC 7644 §3.4.2.2's full
+filter grammar. A filter matching nothing returns an empty `ListResponse`
+(`totalResults:0`), not a 404 — the normal, successful shape a
+"does-this-user-already-exist" check depends on.
+
+**V1 scope:** `/Users` only — `/Groups` needs an entirely new store concept
+(a named group + roster) with no existing backing, closer to its own phase
+than an add-on to this one. Not interactively verified against a real IdP
+(Okta/Azure AD/OneLogin) in this environment — no such account available —
+so interop is proven against the documented wire shapes (including the
+Azure AD PATCH quirk) and a hand-rolled fake, the same honesty this project
+already applies to every external-IdP-requiring capability (see
+EXTERNAL-INFRA-GAPS.md).
+
+**Critical files:** `internal/store/store.go` (`User.ExternalID`/`Active`,
+new `ScimKey`/`ScimStore`), `internal/store/pgstore/migrations/0041_scim.sql`,
+`internal/auth/auth.go` (`Resolve`'s new fail-closed check), new
+`internal/api/scim_handlers.go`, `internal/config/config.go`
+(`PAM_SCIM_ENABLED`).
 
 ## Phase 148 — v0.37.0 ✅
 

@@ -381,6 +381,16 @@ type Config struct {
 	// it delivers plaintext secrets to machines — front it with TLS.
 	AppSecretsEnabled bool
 
+	// ScimEnabled turns on the SCIM 2.0 provisioning API (Phase 149):
+	// /scim/v2/Users, authenticated by a narrowly-scoped bearer key (never a
+	// human's own capability set), for push-based IdP user lifecycle —
+	// create, deactivate, reactivate — as the real-time complement to the
+	// existing pull-based POST /api/identity/reconcile. Opt-in (default
+	// off): most deployments have no SCIM-speaking IdP, and this is a new
+	// unauthenticated-until-bearer-key-checked surface not worth exposing
+	// by default.
+	ScimEnabled bool
+
 	// Broker (Phase 13, AI-agent access broker). Setting BrokerPolicyFile enables
 	// the broker. The audit key + seed may be set explicitly — that is also how a
 	// signing-key rotation is driven — and when left unset each is generated under
@@ -731,6 +741,7 @@ func Load() (*Config, error) {
 		AnalyticsBusinessEnd:   integer("PAM_ANALYTICS_BUSINESS_END", 20),
 		AnalyticsTimezone:      os.Getenv("PAM_ANALYTICS_TIMEZONE"),
 		AppSecretsEnabled:      boolean("PAM_APP_SECRETS_ENABLED", false),
+		ScimEnabled:            boolean("PAM_SCIM_ENABLED", false),
 		BrokerPolicyFile:       os.Getenv("PAM_BROKER_POLICY_FILE"),
 		BrokerAuditKey:         os.Getenv("PAM_BROKER_AUDIT_KEY"),
 		BrokerAuditSignSeed:    os.Getenv("PAM_BROKER_AUDIT_SIGN_SEED"),

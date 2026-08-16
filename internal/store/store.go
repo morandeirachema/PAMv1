@@ -559,9 +559,38 @@ type User struct {
 	// Checked against the configured header's value at HTTP authz time; not a
 	// secret (derived from a public certificate), so an ordinary equality
 	// check is enough — no constant-time comparison needed.
-	DeviceFingerprint string    `json:"device_fingerprint,omitempty"`
-	TokenHash         string    `json:"-"`
-	CreatedAt         time.Time `json:"created_at"`
+	DeviceFingerprint string `json:"device_fingerprint,omitempty"`
+	// ExternalID is an IdP's own correlation key for this user (SCIM's
+	// "externalId", Phase 149) — distinct from Username, which is this
+	// user's own login identity. Empty (the default) for every user not
+	// provisioned through /scim/v2/Users; unique among non-empty values.
+	ExternalID string `json:"external_id,omitempty"`
+	// Active is SCIM's deprovisioning switch (Phase 149): false blocks this
+	// user's own local access token from resolving (see
+	// auth.Resolver.Resolve) without deleting the row, so re-activating (or
+	// an IdP re-provisioning the same externalId) restores access without a
+	// new token ever needing to be minted or distributed. True (the
+	// default) for every user created before this field existed and for
+	// every user created outside SCIM, so nothing already-working changes.
+	Active    bool      `json:"active"`
+	TokenHash string    `json:"-"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ScimKey is a non-human client identity for the SCIM 2.0 provisioning API
+// (Phase 149): a bearer key whose SHA-256 hash is stored, scoped only to
+// /scim/v2/Users — an IdP holding one can provision/deprovision the user
+// roster but never anything a human's own capability set would reach (it is
+// not an auth.Principal at all, the same non-human shape AgentKey/AppKey
+// already use). Owner is the accountable human/team recorded in the audit
+// trail.
+type ScimKey struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Owner     string    `json:"owner"`
+	TokenHash string    `json:"-"`
+	Disabled  bool      `json:"disabled"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // AgentKey is an AI-agent identity for the access broker: a bearer key whose
@@ -1176,6 +1205,24 @@ type UserStore interface {
 	UpdateUserDeviceFingerprint(ctx context.Context, id int64, fingerprint string) error
 	// DeleteUser removes a user by ID, or ErrNotFound.
 	DeleteUser(ctx context.Context, id int64) error
+	// GetUserByUsername returns one user by username, or ErrNotFound — the
+	// lookup SCIM's idempotent-provisioning filter (Phase 149,
+	// `filter=userName eq "..."`) needs, the same attribute an IdP checks
+	// before deciding whether to POST a create or treat a user as existing.
+	GetUserByUsername(ctx context.Context, username string) (*User, error)
+	// GetUserByExternalID returns one user by their IdP-assigned ExternalID
+	// (Phase 149), or ErrNotFound. An empty externalID always misses — the
+	// column's own default, shared by every non-SCIM user, must never
+	// resolve to an arbitrary one of them.
+	GetUserByExternalID(ctx context.Context, externalID string) (*User, error)
+	// UpdateUserActive sets a user's SCIM active flag (Phase 149, see
+	// User.Active), or ErrNotFound. false blocks the user's own local
+	// access token from resolving; see auth.Resolver.Resolve.
+	UpdateUserActive(ctx context.Context, id int64, active bool) error
+	// UpdateUserExternalID sets a user's IdP correlation key (Phase 149, see
+	// User.ExternalID), or ErrNotFound. ErrConflict if another user already
+	// claims the same non-empty value.
+	UpdateUserExternalID(ctx context.Context, id int64, externalID string) error
 
 	// CreateProfile inserts a custom permission profile; ErrConflict on a
 	// duplicate name.
@@ -1355,6 +1402,23 @@ type AppSecretStore interface {
 	DeleteAppSecretGrant(ctx context.Context, id int64) error
 	// AppMayAccessCredential reports whether app appID has a grant for credentialID.
 	AppMayAccessCredential(ctx context.Context, appID, credentialID int64) (bool, error)
+}
+
+// ScimStore is the SCIM 2.0 provisioning API's client-key registry (Phase
+// 149) — the IdP-facing counterpart to UserStore's own CRUD, which the SCIM
+// handlers call directly for the user roster itself (no separate SCIM-side
+// user table).
+type ScimStore interface {
+	// CreateScimKey inserts a SCIM client identity key, populating ID and
+	// CreatedAt (ErrConflict on a duplicate token hash).
+	CreateScimKey(ctx context.Context, k *ScimKey) error
+	// GetScimKeyByTokenHash returns the enabled SCIM key whose token hash
+	// matches, or ErrNotFound (a disabled key is treated as not found).
+	GetScimKeyByTokenHash(ctx context.Context, tokenHashHex string) (*ScimKey, error)
+	// ListScimKeys returns all SCIM client keys.
+	ListScimKeys(ctx context.Context) ([]ScimKey, error)
+	// DeleteScimKey removes a SCIM key by ID, or ErrNotFound.
+	DeleteScimKey(ctx context.Context, id int64) error
 }
 
 // VendorStore is the third-party vendor access gate.
@@ -1588,6 +1652,7 @@ type Store interface {
 	MFAStore
 	BrokerStore
 	AppSecretStore
+	ScimStore
 	VendorStore
 	ShareInviteStore
 	ApprovalInviteStore
