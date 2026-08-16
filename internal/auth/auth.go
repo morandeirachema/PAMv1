@@ -708,6 +708,15 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (*Principal, error) 
 	if r.dir != nil {
 		// Per-user access token (local identity).
 		if u, err := r.dir.GetUserByTokenHash(ctx, hash); err == nil {
+			// SCIM deprovisioning (Phase 149): a user an IdP has pushed
+			// active:false for is refused exactly like an unknown token —
+			// deactivating must actually cut access, not just change a
+			// flag nothing reads. Directory/SSO logins are unaffected: they
+			// resolve through GetSessionByTokenHash below, governed by the
+			// directory's own membership, not this local row's Active flag.
+			if !u.Active {
+				return nil, ErrUnauthorized
+			}
 			p, perr := r.principalFor(ctx, u.Username, u.Role, false)
 			if perr == nil {
 				p.IPAllowlist = u.IPAllowlist

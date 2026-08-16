@@ -1178,22 +1178,33 @@ func nullableTime(t time.Time) *time.Time {
 }
 
 // CreateUser inserts a user, populating its ID and CreatedAt; ErrConflict if the username is taken.
+// CreateUser always creates an active user — Active on the input struct is
+// ignored, deliberately, not read. A bare Go bool cannot tell "the caller
+// wants an inactive user" apart from "the caller has never heard of this
+// field and left it at its zero value," and the second case must never
+// silently create a deactivated account. A caller that genuinely needs a
+// freshly-created user to start deactivated (a SCIM POST whose body already
+// says active:false) makes a separate UpdateUserActive call right after.
 func (s *PGStore) CreateUser(ctx context.Context, u *store.User) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO users (username, role, ip_allowlist, device_fingerprint, token_hash)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
-		u.Username, u.Role, u.IPAllowlist, u.DeviceFingerprint, u.TokenHash,
+		`INSERT INTO users (username, role, ip_allowlist, device_fingerprint, external_id, active, token_hash)
+		 VALUES ($1, $2, $3, $4, $5, TRUE, $6) RETURNING id, created_at`,
+		u.Username, u.Role, u.IPAllowlist, u.DeviceFingerprint, u.ExternalID, u.TokenHash,
 	).Scan(&u.ID, &u.CreatedAt)
-	if pgCode(err) == pgUniqueViolation {
-		return store.ErrConflict
+	if err != nil {
+		if pgCode(err) == pgUniqueViolation {
+			return store.ErrConflict
+		}
+		return err
 	}
-	return err
+	u.Active = true
+	return nil
 }
 
 // ListUsers returns users in the (limit, afterID) window, ordered by ID.
 func (s *PGStore) ListUsers(ctx context.Context, limit int, afterID int64) ([]store.User, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, username, role, ip_allowlist, device_fingerprint, token_hash, created_at FROM users WHERE id > $1 ORDER BY id LIMIT $2`,
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, active, token_hash, created_at FROM users WHERE id > $1 ORDER BY id LIMIT $2`,
 		afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
@@ -1204,7 +1215,40 @@ func (s *PGStore) ListUsers(ctx context.Context, limit int, afterID int64) ([]st
 // GetUser returns the user with the given ID, or ErrNotFound.
 func (s *PGStore) GetUser(ctx context.Context, id int64) (*store.User, error) {
 	return getOne(ctx, s.pool, scanUser,
-		`SELECT id, username, role, ip_allowlist, device_fingerprint, token_hash, created_at FROM users WHERE id = $1`, id)
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, active, token_hash, created_at FROM users WHERE id = $1`, id)
+}
+
+// GetUserByUsername returns the user with the given username, or ErrNotFound.
+func (s *PGStore) GetUserByUsername(ctx context.Context, username string) (*store.User, error) {
+	return getOne(ctx, s.pool, scanUser,
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, active, token_hash, created_at FROM users WHERE username = $1`, username)
+}
+
+// GetUserByExternalID returns the user with the given SCIM externalId, or
+// ErrNotFound. An empty externalID always misses — WHERE excludes it
+// explicitly rather than relying on callers to never pass "", since the
+// column's own default is empty and shared by every non-SCIM user.
+func (s *PGStore) GetUserByExternalID(ctx context.Context, externalID string) (*store.User, error) {
+	if externalID == "" {
+		return nil, store.ErrNotFound
+	}
+	return getOne(ctx, s.pool, scanUser,
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, active, token_hash, created_at FROM users WHERE external_id = $1`, externalID)
+}
+
+// UpdateUserActive sets a user's SCIM active flag (Phase 149); ErrNotFound if absent.
+func (s *PGStore) UpdateUserActive(ctx context.Context, id int64, active bool) error {
+	return execExpectingRow(ctx, s.pool, `UPDATE users SET active = $1 WHERE id = $2`, active, id)
+}
+
+// UpdateUserExternalID sets a user's SCIM externalId (Phase 149); ErrNotFound
+// if absent, ErrConflict if another user already claims the same non-empty value.
+func (s *PGStore) UpdateUserExternalID(ctx context.Context, id int64, externalID string) error {
+	err := execExpectingRow(ctx, s.pool, `UPDATE users SET external_id = $1 WHERE id = $2`, externalID, id)
+	if pgCode(err) == pgUniqueViolation {
+		return store.ErrConflict
+	}
+	return err
 }
 
 // UpdateUserRole changes a user's role, leaving username and token untouched;
@@ -1228,7 +1272,7 @@ func (s *PGStore) UpdateUserDeviceFingerprint(ctx context.Context, id int64, fin
 // GetUserByTokenHash returns the user whose token hash matches, or ErrNotFound.
 func (s *PGStore) GetUserByTokenHash(ctx context.Context, tokenHashHex string) (*store.User, error) {
 	return getOne(ctx, s.pool, scanUser,
-		`SELECT id, username, role, ip_allowlist, device_fingerprint, token_hash, created_at FROM users WHERE token_hash = $1`,
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, active, token_hash, created_at FROM users WHERE token_hash = $1`,
 		tokenHashHex)
 }
 
@@ -1556,6 +1600,42 @@ func (s *PGStore) ListAppKeys(ctx context.Context) ([]store.AppKey, error) {
 // DeleteAppKey removes an app key by ID (its grants cascade); ErrNotFound if absent.
 func (s *PGStore) DeleteAppKey(ctx context.Context, id int64) error {
 	return execExpectingRow(ctx, s.pool, `DELETE FROM app_keys WHERE id = $1`, id)
+}
+
+// CreateScimKey inserts a SCIM client identity key, populating ID and CreatedAt.
+func (s *PGStore) CreateScimKey(ctx context.Context, k *store.ScimKey) error {
+	err := s.pool.QueryRow(ctx,
+		`INSERT INTO scim_keys (name, owner, token_hash, disabled)
+		 VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
+		k.Name, k.Owner, k.TokenHash, k.Disabled,
+	).Scan(&k.ID, &k.CreatedAt)
+	if pgCode(err) == pgUniqueViolation {
+		return store.ErrConflict
+	}
+	return err
+}
+
+// GetScimKeyByTokenHash returns the enabled SCIM key whose token hash
+// matches, or ErrNotFound (a disabled key is treated as not found).
+func (s *PGStore) GetScimKeyByTokenHash(ctx context.Context, tokenHashHex string) (*store.ScimKey, error) {
+	return getOne(ctx, s.pool, scanScimKey,
+		`SELECT id, name, owner, token_hash, disabled, created_at
+		 FROM scim_keys WHERE token_hash = $1 AND disabled = FALSE`, tokenHashHex)
+}
+
+// ListScimKeys returns all SCIM client keys ordered by ID.
+func (s *PGStore) ListScimKeys(ctx context.Context) ([]store.ScimKey, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, name, owner, token_hash, disabled, created_at FROM scim_keys ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanScimKey)
+}
+
+// DeleteScimKey removes a SCIM key by ID; ErrNotFound if absent.
+func (s *PGStore) DeleteScimKey(ctx context.Context, id int64) error {
+	return execExpectingRow(ctx, s.pool, `DELETE FROM scim_keys WHERE id = $1`, id)
 }
 
 // GrantAppSecret authorizes an app to retrieve a credential's secret.
@@ -2378,8 +2458,15 @@ func scanCredentialMeta(row pgx.CollectableRow) (store.Credential, error) {
 // scanUser maps one result row into a store.User.
 func scanUser(row pgx.CollectableRow) (store.User, error) {
 	var u store.User
-	err := row.Scan(&u.ID, &u.Username, &u.Role, &u.IPAllowlist, &u.DeviceFingerprint, &u.TokenHash, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.Role, &u.IPAllowlist, &u.DeviceFingerprint, &u.ExternalID, &u.Active, &u.TokenHash, &u.CreatedAt)
 	return u, err
+}
+
+// scanScimKey maps one result row into a store.ScimKey.
+func scanScimKey(row pgx.CollectableRow) (store.ScimKey, error) {
+	var k store.ScimKey
+	err := row.Scan(&k.ID, &k.Name, &k.Owner, &k.TokenHash, &k.Disabled, &k.CreatedAt)
+	return k, err
 }
 
 // scanSession maps one result row into a store.Session.

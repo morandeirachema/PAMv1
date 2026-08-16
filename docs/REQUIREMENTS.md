@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-08-16 · Reflects: Phases 0–147. Phases 66–70 add one more
+> Last updated: 2026-08-16 · Reflects: Phases 0–149. Phases 66–70 add one more
 > background worker (the hourly, leader-locked certification scheduler); Phase 78
 > adds an optional per-replica Conjur refresh worker (off unless
 > `PAM_CONJUR_REFRESH_MIN` is set); 71–94 add no port, resource floor or
@@ -69,6 +69,11 @@
 > is one more row in the existing `sessions` table, not a standing cost; the
 > only new runtime dependency is the browser extension itself, which is not
 > part of `pam-server` and has no server-side resource footprint.
+> **Phase 149 adds one env var** (`PAM_SCIM_ENABLED`, default off) and no
+> new worker, port or resource floor — SCIM is an inbound REST surface on
+> the existing `:8080` listener; the only new runtime dependency, when
+> enabled, is a SCIM-speaking IdP to push requests from, which you must
+> supply.
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** These are the
 > specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate

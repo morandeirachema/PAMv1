@@ -199,9 +199,9 @@ func TestResolve(t *testing.T) {
 	bg := sha256.Sum256([]byte("emergency"))
 	dir := fakeDir{
 		users: map[string]*store.User{
-			hashOf("alice-token"): {Username: "alice", Role: "user"},
-			hashOf("theo-token"):  {Username: "theo", Role: "auditor"},
-			hashOf("broken"):      {Username: "bad", Role: "wizard"},
+			hashOf("alice-token"): {Username: "alice", Role: "user", Active: true},
+			hashOf("theo-token"):  {Username: "theo", Role: "auditor", Active: true},
+			hashOf("broken"):      {Username: "bad", Role: "wizard", Active: true},
 		},
 		sessions: map[string]*store.Session{
 			hashOf("ad-session"): {Username: "ad-alice", Role: "approver"},
@@ -373,8 +373,8 @@ func TestValidateCIDRList(t *testing.T) {
 func TestResolveThreadsIPAllowlist(t *testing.T) {
 	dir := fakeDir{
 		users: map[string]*store.User{
-			hashOf("alice-token"): {Username: "alice", Role: "user", IPAllowlist: "10.0.0.0/8"},
-			hashOf("bob-token"):   {Username: "bob", Role: "user"}, // no allowlist
+			hashOf("alice-token"): {Username: "alice", Role: "user", IPAllowlist: "10.0.0.0/8", Active: true},
+			hashOf("bob-token"):   {Username: "bob", Role: "user", Active: true}, // no allowlist
 		},
 	}
 	r, err := NewResolver(dir, "bootstrap", "")
