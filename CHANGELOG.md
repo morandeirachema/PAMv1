@@ -9,6 +9,27 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.37.0] — 2026-08-16
+
+A minor: one new capability.
+
+### Added
+
+- **Browser-extension password autofill.** A real Manifest V3 extension
+  (`extension/`) calls the existing, already-audited
+  `POST /api/credentials/{id}/reveal` — no new secrets-disclosure surface.
+  Authenticates with a new narrow bearer-token shape
+  (`auth.SessionScopeExtension`/`Principal.ExtensionOnly`, minted via
+  `POST /api/extension-token`, `reveal_secret` required) refused on every
+  other route. `PAM_EXTENSION_TOKEN_TTL_HOURS` (default 24, max 720).
+
+### Changed
+
+- `authz` is now a thin wrapper over a new `authzCore(cap, allowExtension,
+  next)`, with a second wrapper `authzExtOK` used at exactly the reveal
+  route — the shared checklist lives in one place instead of a second,
+  driftable copy of it.
+
 ## [0.36.0] — 2026-08-16
 
 A minor: one new capability.
