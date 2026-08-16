@@ -78,7 +78,8 @@ func (s *Server) samlStart(w http.ResponseWriter, r *http.Request) {
 // the portal with the token in the URL fragment — the same landing the OIDC
 // callback uses, so the portal needs no SAML-specific code.
 func (s *Server) samlACS(w http.ResponseWriter, r *http.Request) {
-	sp := s.rt().saml
+	rt := s.rt() // snapshot once: provider and role map from the same config generation
+	sp := rt.saml
 	if sp == nil {
 		writeError(w, http.StatusNotFound, "SAML login is not configured")
 		return
@@ -116,7 +117,6 @@ func (s *Server) samlACS(w http.ResponseWriter, r *http.Request) {
 		s.redirectPortal(w, r, "pam_error=login_failed")
 		return
 	}
-	rt := s.rt()
 	role, roles, ok := auth.MatchedRoles(claims.Groups, rt.samlRoleMap)
 	if !ok {
 		s.log.Warn("saml login: no mapped role", "user", claims.Name)
