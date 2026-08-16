@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-08-15 · Reflects: Phases 0–143. Phases 66–70 add one more
+> Last updated: 2026-08-15 · Reflects: Phases 0–145. Phases 66–70 add one more
 > background worker (the hourly, leader-locked certification scheduler); Phase 78
 > adds an optional per-replica Conjur refresh worker (off unless
 > `PAM_CONJUR_REFRESH_MIN` is set); 71–94 add no port, resource floor or
@@ -60,6 +60,10 @@
 > external dependency: a genuine ICAP-speaking AV/DLP gateway (c-icap or a
 > commercial equivalent), which you must supply and reach on `1344` (default).
 > Off, this requirement does not apply.
+> **Phase 145 adds one env var** (`PAM_CREDENTIAL_FILE_MAX_KB`, default 1024,
+> max 10240) and no new worker, port or external dependency — a file-attachment
+> secret is capped in KB, not MB, so its per-request memory footprint stays
+> well inside the resource requests already sized for this workload.
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** These are the
 > specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate

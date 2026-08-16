@@ -390,7 +390,9 @@ func (t *listCredentialsTool) Execute(ctx context.Context, _ *auth.Principal, ar
 		}
 		targetID = target.ID
 	}
-	creds, err := t.s.store.ListCredentials(ctx, targetID, 0, 0)
+	// This tool reports id/target_id/username/secret_type only — never a
+	// secret — so the metadata-only listing is enough.
+	creds, err := t.s.store.ListCredentialsMeta(ctx, targetID, 0, 0)
 	if err != nil {
 		return broker.Result{}, err
 	}

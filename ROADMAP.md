@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–144 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–145 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,90 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 145 — Generic file-attachment secrets ✅
+
+Eighth phase of the BeyondTrust/Delinea/Teleport/StrongDM batch. Closes
+Delinea's file-upload secret fields — license keys, cert bundles, short
+documents — by adding `SecretTypeFile` alongside the existing
+password/ssh_key/ssh_ca/db_zsp types. Mechanically it is nothing new:
+`Credential.SecretEnc` is unbounded `TEXT` already, so a file's base64
+content flows through the exact same `vault.Encrypt`/`Decrypt` pathway,
+`POST /api/credentials`, and `POST /api/credentials/{id}/reveal` every
+other secret type already uses — no new route, no migration (`secret_type`
+is a plain `TEXT` column, not a `CHECK`-constrained enum). The one thing
+that IS special-cased is size: `PAM_CREDENTIAL_FILE_MAX_KB` (default 1024,
+capped at 10240, never "0 = unlimited" like the SFTP capture cap — a new
+storage class starts bounded rather than opening unbounded and needing to
+be dialed back later) refuses an over-cap file secret outright, before it
+is ever encrypted or a row is ever inserted — the same hard-refuse-not-
+truncate posture Phase 59's SFTP byte cap already established.
+
+**A near-miss that the plan's own premise walked straight past, caught only
+by the proxy test suite failing.** The plan's stated fix — folded in as
+"newly relevant, not a nice-to-have" — was that `ListCredentials` and
+`GetCredential` both select the full `secret_enc` for every row even though
+it's `json:"-"` and never serialized, a cost that "gets materially worse
+the moment attachments exist," and that `ListCredentials` should stop
+selecting it. Implementing that literally — stripping `secret_enc` (and,
+by the same reasoning, the equally unbounded `double_lock_verifier`/
+`double_lock_enc`) from `ListCredentials`'s query — passed every test that
+exists at the store layer alone, including a first-draft contract test
+written to *prove* the stripping. It broke the PostgreSQL session proxy's
+own JIT credential injection: `TestPostureGateProxy` and three
+session-sharing tests failed with `credential decryption failed`, and one
+paniced outright. The reason: `dbproxy.go`'s `lookupTargetCred` — a
+function whose own doc comment already says "WITHOUT decrypting the
+secret, so every authorization gate can run before any plaintext exists" —
+deliberately calls `ListCredentials`, not `GetCredential`, specifically so
+`SecretEnc` stays on the returned struct for a later, separate
+`jitDecrypt` call once every gate has passed. A grep across the whole repo
+(not just `internal/api`, where the plan's own file list pointed) found
+sixteen real call sites; nine of them — `-rotate-kek`'s exhaustive re-wrap,
+the credential lifecycle reconciler (both its scheduled and on-demand
+paths), `findProvisioner` (db_zsp), the RDP/VNC viewer's JIT injection,
+REST WinRM's JIT injection, and the broker's `ssh_exec`/`winrm_exec`
+tools — list first and decrypt from the result exactly the same way, for
+the exact same reason. Stripping the shared method would have silently
+broken all nine in production while looking correct in every test that
+didn't happen to exercise one of them end-to-end.
+
+**Resolved by NOT changing `ListCredentials` at all, and adding a
+genuinely separate `ListCredentialsMeta` instead** — the safer shape once
+the real caller graph was known, not merely a differently-worded version
+of the original plan. `ListCredentials` stays exactly as it always was,
+full-fidelity, and its own doc comment on the `store.Store` interface now
+names every caller that depends on that so the next person touching it
+does not have to rediscover this the same way. `ListCredentialsMeta` is
+the new, narrow, display-only sibling — same query shape the aborted
+first draft used, wired only at the four call sites individually verified
+to never touch `.SecretEnc`: the REST `GET /api/credentials` list
+endpoint, the broker's own `list_credentials` tool (which already builds
+its response from named fields only), `sshca_handlers.go`'s
+username-existence check, and `targets.go`'s ZSP-credential check on
+protocol change. `store.Store` grew by exactly one method (181 → 182,
+`TestStoreMethodSetIsUnchanged` updated) rather than changing one's
+contract.
+
+**V1 scope.** `GetCredential` (singular) is untouched, a deliberate
+scope decision after checking every one of its eight call sites
+individually: every one already decrypts or dials with the result, so the
+plan's parenthetical mention of a "GetCredential query fix" doesn't survive
+contact with its actual callers — and the performance concern the plan
+raised ("round-trips full ciphertext... materially worse the moment
+attachments exist") is specifically about *list* calls scaling with
+credential count, which a single-row `GetCredential` fetch never does
+regardless of caller.
+
+**Critical files:** `internal/store/store.go` (`SecretTypeFile`,
+`ListCredentialsMeta`), `internal/store/pgstore/pgstore.go`
+(`ListCredentialsMeta`, `scanCredentialMeta`), `internal/store/memstore/memstore.go`,
+`internal/store/storetest/storetest.go` (contract tests for both methods,
+proving the split rather than assuming it), `internal/store/methodset_test.go`,
+`internal/api/credentials.go` (the cap check, `listCredentials`),
+`internal/api/targets.go`, `internal/api/sshca_handlers.go`,
+`internal/api/broker_tools.go`, `internal/config/config.go`
+(`PAM_CREDENTIAL_FILE_MAX_KB`), new `internal/api/fileattachment_test.go`.
 
 ## Phase 144 — v0.35.0 ✅
 

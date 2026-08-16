@@ -144,8 +144,9 @@ func (s *Server) signOperatorCert(w http.ResponseWriter, r *http.Request) {
 	// The principal must be a managed account on the target, so an operator can't
 	// mint a cert for an arbitrary login (e.g. root) the vault doesn't govern.
 	// Checked BEFORE the approval gate below, so a bad principal is rejected without
-	// consuming a one-time access approval.
-	creds, err := s.store.ListCredentials(r.Context(), target.ID, 0, 0)
+	// consuming a one-time access approval. Only the username is checked, so the
+	// metadata-only listing is enough — no secret is ever decrypted on this path.
+	creds, err := s.store.ListCredentialsMeta(r.Context(), target.ID, 0, 0)
 	if err != nil {
 		storeError(w, err)
 		return

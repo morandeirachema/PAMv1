@@ -406,6 +406,15 @@ type Config struct {
 	// are checked to refuse reissuing a recently-used password
 	// (PAM_PASSWORD_HISTORY_COUNT, default 0 = off).
 	PasswordHistoryCount int
+	// CredentialFileMaxKB caps a SecretTypeFile credential's (base64) content
+	// at creation (Phase 145, PAM_CREDENTIAL_FILE_MAX_KB). Refused over the
+	// cap, not truncated — the same posture PAM_SSH_SFTP_CAPTURE_MAX_MB
+	// already established — because a credential is not general object
+	// storage, only somewhere small like a cert bundle or a license key
+	// belongs. Unlike the SFTP cap, this one is never "unlimited": a new
+	// storage class defaults to a sane ceiling from day one rather than
+	// opening one up that has to be dialed back later.
+	CredentialFileMaxKB int
 	// ConjurRefreshMin is how often, in minutes, the refreshable bootstrap
 	// secrets are re-read from Conjur (0 = off, the default). Only the secrets
 	// that can be adopted by a running server are refreshed; see internal/conjur.
@@ -726,6 +735,7 @@ func Load() (*Config, error) {
 		PasswordMinDigit:       integer("PAM_PASSWORD_MIN_DIGIT", 1),
 		PasswordMinSymbol:      integer("PAM_PASSWORD_MIN_SYMBOL", 1),
 		PasswordHistoryCount:   integer("PAM_PASSWORD_HISTORY_COUNT", 0),
+		CredentialFileMaxKB:    integer("PAM_CREDENTIAL_FILE_MAX_KB", 1024),
 		ConjurRefreshMin:       integer("PAM_CONJUR_REFRESH_MIN", 0),
 		BrokerMaxArgBytes:      integer("PAM_BROKER_MAX_ARG_BYTES", 16384),
 		BrokerRatePerMin:       integer("PAM_BROKER_RATE_PER_MIN", 0),
@@ -933,6 +943,14 @@ func Load() (*Config, error) {
 	}
 	if cfg.PasswordHistoryCount < 0 || cfg.PasswordHistoryCount > 50 {
 		errs = append(errs, "PAM_PASSWORD_HISTORY_COUNT must be between 0 (off) and 50")
+	}
+	// No "0 = unlimited" escape hatch here, unlike the SFTP capture cap: this
+	// caps a brand-new storage class rather than tightening an existing one,
+	// so it starts bounded rather than opening unbounded and needing to be
+	// dialed back later. The 10 MB ceiling is generous for a cert bundle or a
+	// short document and still nowhere near "general file storage."
+	if cfg.CredentialFileMaxKB < 1 || cfg.CredentialFileMaxKB > 10240 {
+		errs = append(errs, "PAM_CREDENTIAL_FILE_MAX_KB must be between 1 and 10240")
 	}
 	// A checkout is meant to stay time-boxed even when extended, so the ceiling
 	// itself is bounded — a week is generous for any legitimate maintenance
