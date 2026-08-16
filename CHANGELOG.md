@@ -9,6 +9,38 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.41.0] — 2026-08-16
+
+A minor: one new capability. No schema change.
+
+### Added
+
+- **Kubernetes targets (discrete operations).** A new `kubernetes` target
+  protocol — a cluster's API server rather than a host, so there is no
+  session to proxy — with a vaulted service-account bearer token
+  (`k8s_token`) and `POST /api/targets/{id}/kubectl` brokering ONE audited
+  operation at a time: `get`, `logs`, `apply` (server-side apply,
+  `fieldManager=pamv1`) and `delete`. The token is injected just-in-time
+  and never shown to the operator; what it may do inside the cluster is
+  decided by the cluster's own RBAC, whose refusal comes back as its own
+  `403` in the response envelope. Same gates, command control (`kubectl …`
+  is what deny/allow patterns match), transcript, live-session registry and
+  audit contract as the WinRM REST endpoint. New `PAM_K8S_CA_FILE`,
+  `PAM_K8S_INSECURE_SKIP_VERIFY`, `PAM_K8S_TIMEOUT_SEC`,
+  `PAM_K8S_MAX_RESPONSE_KB`; new `k8s.*` audit family; console option 6 on
+  *Work with Targets*. The client is hand-rolled on the standard library
+  (no `client-go`, no discovery walk). `exec`/`attach`/`port-forward`,
+  client-certificate credentials and API discovery are documented v1
+  exclusions. Not verified against a real cluster.
+
+### Fixed
+
+- A target's protocol change could **strand a protocol-bound credential**:
+  the guard keyed off "is the new protocol ssh", so `postgres` → `mssql`
+  (where a `db_zsp` credential stays valid) was wrongly refused, while
+  `postgres` → `ssh` was wrongly allowed and left a `db_zsp` credential no
+  code path could serve. Both ends now derive from one table.
+
 ## [0.40.0] — 2026-08-16
 
 A minor: one new capability and a second deployable binary. New migration

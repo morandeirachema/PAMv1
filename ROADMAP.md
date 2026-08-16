@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–155 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–156 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,30 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 156 — v0.41.0 ✅
+
+Releases Phase 155 (Kubernetes targets, discrete operations) — a genuine
+minor: one new capability, plus the protocol-change strand-guard fix that
+phase's call-site review turned up. No schema change (migration high-water
+mark stays `0042`).
+
+- [x] **v0.41.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-16 as `ghcr.io/morandeirachema/pamv1:0.41.0` (also
+  `latest`), digest `PENDING` (recorded once the tag's publish workflow has
+  run and the anonymous pull is verified), with the `pam-agent` binaries
+  attached as in v0.40.0
+- [x] All five pins via the sweep; Helm chart `version` 0.31.0 -> **0.32.0**
+  (minor, alongside the `appVersion` minor)
+- [x] Both READMEs restated (the Tier-6 parity table row already landed in
+  Phase 155's own PR — this pass covers every scattered version/phase-count
+  mention)
+- [x] `docs/README.md`'s currency line, `docs/NIS2-COMPLIANCE.md`'s
+  compliance-evidence row and ROADMAP.md's top-banner phase count all
+  caught proactively; `CHANGELOG.md` gains the release entry
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging:
+  `gofmt`, `go vet`, `staticcheck`, `gosec`, `govulncheck`, `go test -race
+  ./...`, `go run ./cmd/archgen` (no schema/route drift)
 
 ## Phase 155 — Kubernetes target support (discrete operations) ✅
 
