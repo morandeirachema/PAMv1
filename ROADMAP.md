@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–152 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–153 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,170 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 153 — Outbound-only endpoint agent (Jump Client-style reachability) ✅
+
+**Closes:** BeyondTrust's Jump Client / Jumpoint — the most architecturally
+different item in the whole batch, and the third-from-last. Every other phase
+adds a gate, a protocol or a store concept to pamv1's existing dial-out model;
+this one **inverts it** for endpoints pamv1 can never reach directly: a NAT'd
+branch box, a CGNAT'd contractor laptop, an unattended host behind a firewall
+that admits nothing inbound. A jump host (`PAM_SSH_JUMP_*`) does not help
+there — the bastion still has to be able to reach the target — and neither
+does any amount of firewall pleading in an environment where "open 22 from
+the PAM" is not an option.
+
+**What shipped.** A third `cmd/` binary, **`cmd/pam-agent`** (static, CGO-free,
+env-configured, `-version`, published as `pam-agent_linux_{amd64,arm64}` +
+`SHA256SUMS` on the GitHub Release by `release.yml`, built from the same
+checkout as the image), over a new leaf `internal/endpointagent`. Installed on
+the endpoint, it dials OUT to pamv1's *existing* `:2222` SSH listener as
+`endpoint-agent:<name>` with its own bearer key, requests one RFC 4254 §7.1
+`tcpip-forward` (the real `ssh -R` mechanism), and holds the connection open.
+When an operator connects to that target, the proxy opens a `forwarded-tcpip`
+channel **back through the agent's connection** and runs its ordinary
+upstream SSH handshake over it — JIT credential injection, `PAM_SSH_KNOWN_HOSTS`
+pinning by the target row's address, recording, live monitoring, command
+control and every admission gate are exactly as for a directly dialed target,
+and the operator's `ssh -p 2222 root@branch-box@pam-host` is unchanged. New:
+`store.EndpointAgent` + `EndpointAgentStore` (migration `0042`, six methods,
+store surface 190 → **196**), the shared per-replica `session.EndpointAgents`
+registry, `POST/GET /api/endpoint-agents` + `DELETE /api/endpoint-agents/{id}`
+(`manage_targets` to create/revoke, `read_inventory` to list; `archgen` 176 →
+**179**), `PAM_ENDPOINT_AGENTS_ENABLED` (default off), console menu **28**
+(three screens, all under the width harness), audit family `endpoint_agent.*`
+plus `via:endpoint-agent:<name>` on the operator's `session.start` row.
+
+**The plan's own architecture note held up exactly.** The *client-side*
+transport primitive was free: `golang.org/x/crypto/ssh` — an existing direct
+dependency — already implements RFC 4254 §7 reverse forwarding client-side
+(`(*Client).Listen`), so `endpointagent.Run` is an `ssh.Client` that dials,
+calls `Listen("tcp", "127.0.0.1:0")`, and pipes every accepted stream to one
+local address; zero new third-party code. The *server side* was the real
+work, and it was where the plan said it would be: pam-server's SSH listener
+unconditionally discarded every global request from every peer
+(`ssh.DiscardRequests`), including the `tcpip-forward` an agent sends. That
+required genuine new server code — recognizing the request from an
+agent-class identity, tracking the resulting "listener" (there is no socket;
+the registration in `session.EndpointAgents` *is* the listener), and
+originating `forwarded-tcpip` channels back through the connection — plus a
+new SSH authentication identity structurally distinct from "operator wants a
+session against target T". `authenticate` now branches on the
+colon-carrying `endpoint-agent:<name>` login form (target names refuse `:`
+since Phase 77, so it can never be mistaken for `creduser@target`, exactly
+as `join:<token>` already relies on) into `authenticateEndpointAgent`, which
+resolves the key by SHA-256 hash against `endpoint_agents` and **never calls
+the human resolver** — an operator's key under the agent login is refused,
+and an agent's key as an operator password resolves to nothing; the two
+identity kinds cannot be swapped for one another, and both directions are
+tested. An authenticated agent-class connection goes to `serveEndpointAgent`,
+which owns the global-request stream `handleConn` still discards for
+everyone else.
+
+**Design decisions that mattered — decided before code, then proven:**
+
+- **The agent is the authority on what it exposes.** pam-server never tells
+  the agent where to dial: the address/port in the `tcpip-forward` request are
+  nominal labels echoed back on each channel (the client library matches
+  channels against them, and refuses port 0 as an originator — one real
+  round-trip finding), and every stream lands on the agent's own
+  `PAM_AGENT_LOCAL_ADDR` (default `127.0.0.1:22`). A compromised pam-server
+  therefore cannot use an agent as a pivot into the endpoint's network. The
+  target row's `host:port` is the address *as seen from the endpoint* — pinned
+  in known_hosts and written to the audit trail, never dialed by pamv1.
+- **The agent's connection carries nothing toward pamv1.** It may open no
+  channels (`rejectAll` on the agent's channel stream — a session or a
+  `direct-tcpip` attempt is refused, tested), may request only one
+  `tcpip-forward` (a second is refused), `cancel-tcpip-forward` and
+  `keepalive@openssh.com`; it holds no capability set and is never an
+  `auth.Principal`. And the mirror: an operator's connection still cannot
+  register a forward at all (tested) — its global requests are discarded as
+  before.
+- **Tunnel-or-nothing.** While an unrevoked `EndpointAgent` row exists for a
+  target, that target is reached ONLY through it: an offline agent is
+  `session.error … endpoint agent "x": endpoint agent is not connected`, never
+  a silent fallback to a direct dial that would then succeed for the wrong
+  reason if the endpoint were reachable after all. Enforced structurally: the
+  lookup happens once, inside admit's `session.start` audit closure (so the
+  row records `via:endpoint-agent:<name>`), and the result is handed to
+  `dialUpstream` as a `via` parameter that replaces the dial function
+  outright. Migration `0042`'s partial unique index makes "which agent do I
+  tunnel through" unambiguous by construction (one live agent per target,
+  revoked rows accumulate as history), and the memstore matches the FK
+  cascade on target delete.
+- **The agent pins pam-server's host key or refuses to run.**
+  `PAM_AGENT_SERVER_HOST_KEY` (an authorized_keys line — `ssh-keyscan -p 2222
+  pam-host`) is required; the only way around it is an explicit, loudly
+  logged demo-only `PAM_AGENT_INSECURE_SKIP_HOST_KEY=true`. Without this a
+  network attacker who could impersonate pam-server would harvest the agent
+  key. Since the SSH host key is one key cluster-wide under shared custody,
+  a single pinned value covers every replica — which is what makes the next
+  point cheap.
+- **Per replica, honestly.** An agent's TCP connection terminates on exactly
+  one process, so `session.EndpointAgents` is per-replica by design and a
+  replica the agent is not connected to reports it offline. Rather than build
+  a cross-replica relay nobody asked for, `PAM_AGENT_SERVERS` takes a **list**
+  and the agent holds one tunnel per replica — the registry's
+  supersede-on-reconnect (a newer registration for the same target closes and
+  replaces the older one; a stale release never removes a newer link) covers
+  the reconnect-after-blip case cleanly.
+- **Reply before Register.** The client only starts accepting
+  `forwarded-tcpip` channels for its address once it has the server's reply,
+  so registering the link first would let an operator's dial reach the client
+  a hair too early and be refused at its end. The tiny window in the other
+  order is fail-closed ("offline"), which is the right way round.
+- **Revoke kicks.** `DELETE /api/endpoint-agents/{id}` stamps `revoked_at` and
+  `Kick`s the live link at once — a revoked agent must not keep serving until
+  its next reconnect; the reconnect is then refused as `reason:revoked`
+  (tested end to end).
+- **SSH targets only, v1.** `POST /api/endpoint-agents` refuses any other
+  protocol (422), and `handleConn` refuses defensively too, so a WinRM
+  target's agent row can never be silently ignored by a direct HTTP dial. The
+  seam is protocol-agnostic (a raw byte stream), so extending it to the
+  database proxies is a small later step, not a redesign. No gateway /
+  "Jumpoint" mode covering a whole LAN from one install (the plan's own v1
+  boundary): one agent, one target, one local port.
+
+**Proven end-to-end, not mocked.** `TestEndpointAgentTunnelJITInjection`
+binds the target to a **closed** loopback port — a direct dial cannot succeed
+— runs the REAL `internal/endpointagent` client against the REAL proxy (host
+key pinned, backoff/keepalive tuned down), exposing the in-process upstream
+sshd that accepts ONLY the vaulted password, and an operator's `whoami`
+through the proxy returns the upstream's output: the credential the operator
+never held was injected just-in-time over the tunnel. It then checks the
+`endpoint_agent.connected` and `via:endpoint-agent:` audit rows and the
+last-seen stamp, revokes + kicks, and shows the agent's automatic reconnect
+refused as `reason:revoked` with the target no longer reachable. Around it:
+offline agent → fail-closed `session.error` naming it; every auth refusal
+with its audited reason (unknown key, name mismatch, an operator key under
+the agent login, an agent key as an operator password, revoked, feature
+disabled); the connection-is-inbound-only test (no session channel, no
+`direct-tcpip`, no second forward, and no forward from an operator); the
+registry contract; the API surface (key once, SSH-only, one live per target,
+name validation, live status from a registered link, auditor may list but
+not create/revoke, idempotent revoke that kicks, 404 with the feature off);
+`cmd/pam-agent`'s env fail-loud rules; and the storetest contract on both
+backends (conflict/not-found shapes, revoke semantics, cascade).
+
+**Not verified across a real NAT / CGNAT path** — no such network is
+available in this environment; the mechanism is proven in-process and the
+30 s keepalive is sized for common middlebox idle timeouts but was not
+measured against one (recorded in EXTERNAL-INFRA-GAPS.md). Full CI-gate
+sweep clean: `gofmt`, `go vet`, `staticcheck` (one unused-assignment finding
+in a new test, fixed), `gosec`, `govulncheck`, `go test -race ./...`, `go run
+./cmd/archgen` (176 → **179** routes, schema drift recorded).
+
+**Critical files:** new `cmd/pam-agent/main.go`, new
+`internal/endpointagent/endpointagent.go`, new
+`internal/proxy/endpointagent.go` (+ `proxy.go`: `authenticate` branch,
+`handleConn` dispatch, `dialUpstream(..., via)`), new
+`internal/session/endpointagents.go`, `internal/store/store.go`
+(`EndpointAgent`, `EndpointAgentStore`), `pgstore/migrations/0042_endpoint_agents.sql`,
+`memstore`/`pgstore`/`storetest`, new `internal/api/endpointagent_handlers.go`
+(+ `server.go` routes/Options), `internal/config/config.go`
+(`PAM_ENDPOINT_AGENTS_ENABLED`), `cmd/pam-server/main.go` (the one shared
+registry), `internal/web/static/index.html` (menu 28),
+`.github/workflows/release.yml` (agent binaries as Release assets).
 
 ## Phase 152 — v0.39.0 ✅
 

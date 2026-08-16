@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-16 · Reflects: Phases 0–151 + the 2026-07 hardening passes.
+> Last updated: 2026-08-16 · Reflects: Phases 0–153 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -130,6 +130,10 @@ It is a **single Go binary** (`cmd/pam-server`) that runs several listeners:
 - optionally a **PostgreSQL proxy** (`:5433`) for database sessions.
 
 Everything under `internal/` is a focused package the binary wires together.
+Since Phase 153 there is a second, much smaller deployable — `cmd/pam-agent`,
+the outbound-only endpoint agent that runs ON a target pamv1 cannot dial into
+and holds a reverse tunnel to the SSH proxy (`internal/endpointagent`); it is
+a client of pam-server, not a server of anything.
 
 ### Package map
 
@@ -174,7 +178,8 @@ flowchart TB
     blast["blast — identity blast radius (CIEM)"]
   end
   subgraph support["Supporting"]
-    session["session — registry + live hub"]
+    session["session — registry + live hub + endpoint-agent registry"]
+    endpointagent["endpointagent — outbound-only agent client (cmd/pam-agent)"]
     winrm["winrm"]
     guacd["guacd (RDP)"]
     alert["alert"]
@@ -558,6 +563,23 @@ makes a session that can't be recorded fail closed.
   bastion by tunneling a `direct-tcpip` channel (`jumpDial`).
 - **Upstream host-key pinning** (`PAM_SSH_KNOWN_HOSTS`) — the proxy verifies the
   target's host key against a known_hosts file (unset ⇒ trust-any + loud warning).
+- **Outbound-only endpoint agents** (Phase 153, `endpointagent.go` +
+  `internal/endpointagent`, `PAM_ENDPOINT_AGENTS_ENABLED`) — the inverse of the
+  jump host: for a target pamv1 cannot dial at all, a `pam-agent` process ON
+  the target dials in to this same listener as `endpoint-agent:<name>` (its
+  own bearer key, resolved by hash — `authenticateEndpointAgent`, never the
+  human resolver), and `serveEndpointAgent` accepts one `tcpip-forward`,
+  refuses every channel the agent opens, and registers an `endpointTunnel` in
+  the shared `session.EndpointAgents`. In Python terms: the agent is a client
+  that keeps a socket open so the server can later "call it back". When an
+  operator's admitted target has an unrevoked `EndpointAgent` row,
+  `dialUpstream` receives it as `via` and its dial becomes
+  `endpointAgents.Dial(targetID)` → `OpenChannel("forwarded-tcpip")` wrapped
+  as a `net.Conn` (`channelConn`) — everything after (`ssh.NewClientConn`,
+  JIT auth, recording) is the same code. Offline agent ⇒ error, never a
+  direct dial. The agent side (`endpointagent.Run`) is `(*ssh.Client).Listen`
+  + `Accept` + pipe to ONE local address, host key pinned, reconnect with
+  backoff.
 
 ### 5.4 The PostgreSQL proxy (`dbproxy.go`, Phase 15)
 

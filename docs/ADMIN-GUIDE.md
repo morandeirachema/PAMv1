@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-16 · Reflects: Phases 0–151 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-16 · Reflects: Phases 0–153 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -290,6 +290,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_SSH_CERT_TTL_MIN` | | `2` | Validity (minutes) of a minted ZSP certificate. |
 | `PAM_SSH_OPERATOR_CERT_TTL_MIN` | | `10` | Cap (minutes) on an operator-issued SSH certificate (Phase 28: `POST /api/ca/ssh/sign`). See §6. |
 | `PAM_SSH_KNOWN_HOSTS` | | (trust-any + warn) | OpenSSH known_hosts file pinning **upstream target** host keys. |
+| `PAM_ENDPOINT_AGENTS_ENABLED` | | `false` | (Phase 153) Accept **outbound-only endpoint agents** on the SSH listener (`endpoint-agent:<name>` login with the agent's own bearer key) and register the `/api/endpoint-agents` routes; a target bound to an agent is then reached only through its reverse tunnel, never dialed. Off = the login is refused and the routes are absent. See "Outbound-only endpoint agents" under §6. |
 | `PAM_SSH_JUMP_HOST` / `_USER` / `_KEY` | | (direct) | Reach SSH targets only routable through a **bastion** (Phase 8): the proxy opens a `direct-tcpip` channel through the jump host, authenticating to it with the private key at `_KEY` (public-key only). Set all three; leave unset for a direct dial. |
 | `PAM_GUACD_ADDR` | | (RDP off) | `host:port` of the `guacd` daemon that brokers RDP (the Docker/K8s/Helm deploys ship one). See §5 → *RDP*. |
 | `PAM_GUACD_RECORDING_PATH` | | (off) | Directory where **guacd** writes its own server-side RDP session recordings; the recording's name lands in the `rdp.connect` audit event. Separate from `PAM_RECORDING_DIR`, which holds the SSH/WinRM/PostgreSQL asciicasts. |
@@ -795,6 +796,116 @@ curl -s -H "X-API-Key: $KEY" $PAM/api/ca/ssh/krl -o pamv1-ssh.krl   # install as
 
 Audit: `ssh.cert_issued` / `ssh.cert_denied` (bad proof of possession) /
 `ssh.cert_revoked`.
+
+### Outbound-only endpoint agents — reaching targets pamv1 cannot dial (Phase 153)
+
+Every session path above has pamv1 **dialing out** to the target. For a target
+that has no reachable listening port at all — a NAT'd branch box, a CGNAT'd
+contractor laptop, an unattended host behind a firewall that admits nothing
+inbound, a machine on a network where "open 22 from the PAM" is not an option
+— that model cannot work, and a jump host (`PAM_SSH_JUMP_*`) does not help
+either: the bastion still has to be able to reach the target. Phase 153
+inverts the direction for exactly that endpoint (BeyondTrust "Jump
+Client"-style): a small **`pam-agent`** binary on the endpoint dials **out** to
+pamv1's existing SSH listener (`:2222`), authenticates as
+`endpoint-agent:<name>` with its own bearer key, requests a **reverse tunnel**
+(RFC 4254 `tcpip-forward`, the mechanism behind `ssh -R`), and holds it open.
+From then on, when an operator connects to that target, the proxy opens a
+stream **back through the agent's connection** instead of dialing the target,
+and runs its ordinary upstream SSH handshake over it — JIT credential
+injection, recording, live monitoring, command control and every admission
+gate are exactly as for a directly dialed target. The operator's experience
+is unchanged (`ssh -p 2222 root@branch-box@pam-host`).
+
+**Turn it on** with `PAM_ENDPOINT_AGENTS_ENABLED=true` (default off, the same
+posture as `PAM_SCIM_ENABLED`: a new bearer-key identity on a public listener
+is not accepted by default). Then, per endpoint:
+
+1. Create the target as usual (menu 1 / `POST /api/targets`, protocol `ssh`)
+   with the host:port **as seen from the endpoint itself** — normally
+   `127.0.0.1:22`, since the agent delivers each tunneled stream to its own
+   local sshd. That address is what pamv1 pins in `PAM_SSH_KNOWN_HOSTS` and
+   writes in the audit trail; it is never dialed by pamv1.
+2. Register the agent — menu **28** (*Work with endpoint agents*), F6, or:
+
+   ```bash
+   curl -s -XPOST -H "X-API-Key: $KEY" $PAM/api/endpoint-agents \
+     -d '{"name":"branch-agent","target_id":42}'
+   # → {"id":7,"name":"branch-agent","target_id":42,"key":"<shown once>","login":"endpoint-agent:branch-agent",...}
+   ```
+
+   The key is shown **once**; only its SHA-256 hash is stored. **One live agent
+   per target**: a second registration is refused (409) until the first is
+   revoked, and while an unrevoked agent exists the target is reached **only**
+   through it — an offline agent means "target unreachable" (`session.error
+   … endpoint agent "branch-agent": endpoint agent is not connected`), never a
+   silent fallback to a direct dial. SSH targets only in v1.
+3. On the endpoint, run `pam-agent` (a static binary from the GitHub Release
+   assets — `pam-agent_linux_amd64` / `_arm64` with `SHA256SUMS` — or `go
+   build ./cmd/pam-agent`), configured by environment:
+
+   ```bash
+   PAM_AGENT_SERVERS=pam.example.com:2222        # comma-separated; HA: list EVERY replica (one tunnel each)
+   PAM_AGENT_NAME=branch-agent
+   PAM_AGENT_KEY=<the key shown once>
+   PAM_AGENT_LOCAL_ADDR=127.0.0.1:22             # the ONE address tunneled streams are delivered to (default)
+   PAM_AGENT_SERVER_HOST_KEY="$(ssh-keyscan -p 2222 pam.example.com 2>/dev/null | cut -d' ' -f2-)"
+   ./pam-agent
+   ```
+
+   `PAM_AGENT_SERVER_HOST_KEY` is **required**: the agent verifies pamv1's SSH
+   host key (one key cluster-wide, under shared custody, so a single value
+   covers every replica) and refuses to run without it — a network attacker
+   who could impersonate pam-server would otherwise harvest the agent key.
+   `PAM_AGENT_INSECURE_SKIP_HOST_KEY=true` exists for demos only and is
+   logged loudly. The agent reconnects with exponential backoff (1 s → 60 s)
+   after any failure, sends `keepalive@openssh.com` every 30 s so a silently
+   dropped NAT mapping is noticed, and logs to stdout
+   (`PAM_AGENT_LOG_LEVEL`/`_FORMAT`, like pam-server).
+
+Menu 28 lists every agent with **this replica's** live view — `connected`
+(with remote address and since-when), `offline`, or `revoked` — plus last-seen.
+`GET /api/endpoint-agents` returns the same (never a key hash). **Revoke** with
+option 4 / `DELETE /api/endpoint-agents/{id}`: the key stops authenticating,
+the live tunnel on this replica is dropped at once (not left to linger until
+the next reconnect), and the target is free to bind a fresh agent — or, once
+no unrevoked agent remains, is dialed directly again. Revocation is a
+soft-delete (history is kept); deleting the target cascades to its agents.
+
+What the design guarantees, and what it does not:
+
+- **The agent is the authority on what it exposes.** pam-server never tells it
+  where to dial; it can only open a stream that lands on the agent's own
+  `PAM_AGENT_LOCAL_ADDR`. A compromised pam-server therefore cannot use an
+  agent as a pivot into the endpoint's network.
+- **The agent's connection carries nothing toward pamv1.** It may open no
+  channels (a session or `direct-tcpip` attempt is refused), may request only
+  one `tcpip-forward` (a second is refused), `cancel-tcpip-forward` and
+  keepalives; it holds no capability set and is never an `auth.Principal`.
+  Conversely an operator's connection cannot register a forward — its global
+  requests are discarded as before.
+- **The credential never reaches the agent.** The tunnel carries the proxy's
+  own encrypted SSH handshake to the local sshd; the vaulted secret is inside
+  it. `PAM_SSH_KNOWN_HOSTS` still pins the target's host key by the address on
+  the target row.
+- **Per replica.** An agent's TCP connection terminates on one process, so a
+  replica the agent is not connected to reports it offline and cannot reach
+  it — which is why `PAM_AGENT_SERVERS` takes a list. Point every agent at
+  every replica.
+- Not an "endpoint privilege management" agent (pamv1's documented non-goal):
+  it elevates nothing, installs nothing, and does nothing on the endpoint but
+  pipe bytes to one local port. Not to be confused with the AI-agent broker's
+  agent keys (menu 26) either.
+- Not verified against a real NAT/CGNAT path in this environment — the whole
+  mechanism is proven in-process against a real upstream sshd (see
+  [EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md)).
+
+Audit: `endpoint_agent.create` / `endpoint_agent.revoke` (admin actions),
+`endpoint_agent.connected` / `endpoint_agent.disconnected` /
+`endpoint_agent.auth_failed` (the agent's own connection, actor
+`endpoint-agent:<name>`, with `reason:` unknown-key / name-mismatch / revoked /
+disabled on a refusal), and the operator's `session.start` row gains
+`via:endpoint-agent:<name>` when the session rode a tunnel.
 
 ### Windows targets (WinRM)
 
@@ -3328,6 +3439,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-16 | **Phase 153 — outbound-only endpoint agents (Jump Client-style reachability).** For targets pamv1 cannot dial into: a new `pam-agent` binary (Release assets `pam-agent_linux_{amd64,arm64}` + `SHA256SUMS`) dials OUT to the existing `:2222` listener as `endpoint-agent:<name>` with its own bearer key, holds an RFC 4254 reverse tunnel, and the proxy reaches the bound target through it — never dialing it. `PAM_ENDPOINT_AGENTS_ENABLED` (default off); `POST/GET /api/endpoint-agents`, `DELETE /api/endpoint-agents/{id}` (`manage_targets` to create/revoke, `read_inventory` to list); console menu 28. One live agent per target; revoke kicks the live tunnel; SSH targets only. New migration `0042` (`endpoint_agents`). New audit family `endpoint_agent.*` plus `via:endpoint-agent:<name>` on `session.start`. The agent pins pam-server's host key (`PAM_AGENT_SERVER_HOST_KEY`, required), exposes exactly one local address, may open nothing toward pamv1, and lists every replica in HA. Proven end to end against a real upstream sshd through the tunnel; not verified across a real NAT. See "Outbound-only endpoint agents" under §6 |
 | 2026-08-16 | **Phase 151 — SAML 2.0 single sign-on (Service Provider).** For IdPs with no OIDC endpoint (on-prem AD FS, SAML-only Okta/OneLogin/Entra apps): SP-initiated Web Browser SSO — `GET /api/auth/saml/start` (AuthnRequest, HTTP-Redirect), `POST /api/auth/saml/acs` (the IdP's signed Response, HTTP-POST), `GET /api/auth/saml/metadata` (the SP descriptor an IdP admin imports). `PAM_SAML_SP_URL` enables it (presence, like `PAM_OIDC_ISSUER`); IdP metadata from `PAM_SAML_IDP_METADATA_URL` or `_FILE`; group/role attribute → role via `PAM_SAML_ROLE_*`; optional `PAM_SAML_SP_KEY_FILE`/`_CERT_FILE` sign AuthnRequests and accept encrypted assertions; `PAM_SAML_NAME_ATTR`/`_GROUP_ATTR` pick the attributes. Hot-swappable except the three `_FILE` paths; `PAM_OT_AIRGAP` refuses the metadata URL. XML-DSig verification is delegated to a well-audited library (the WebAuthn precedent — see PROTOCOLS-AND-CRYPTO.md §"SAML"). Login state rides the same single-use store the OIDC flow uses, so the ACS can land on any replica. Login audited as `login … via:saml`. No schema change. **Not verified against a live IdP** — proven against a real in-process SAML IdP instead. See the "SAML 2.0 single sign-on" section above |
 | 2026-08-16 | **Phase 149 — SCIM 2.0 user provisioning.** New `/scim/v2/Users` (RFC 7643/7644), authenticated by a new non-human `ScimKey` bearer identity (`POST /v1/scim-keys`, `manage_users` to mint), never a human principal — every SCIM-provisioned user gets the fixed `user` role, no way to request more. `store.User` gains `ExternalID` and `Active`; deactivating (`PATCH active:false` or `DELETE`, which is a soft-delete) now actually blocks that user's local token from authenticating, not just a flag — proven end to end. Reactivation restores the same token, nothing re-minted. Complements the existing pull-based `POST /api/identity/reconcile`. `PAM_SCIM_ENABLED` (default off). **Not interactively verified against a real IdP** — no Okta/Azure AD/OneLogin account in this environment; both RFC 7644's standard `PATCH` shape and Azure AD's documented no-path variant are implemented and tested against a fake. See §7 |
 | 2026-08-16 | **Phase 147 — browser-extension password autofill.** New `extension/` (Manifest V3) calls the existing `POST /api/credentials/{id}/reveal` with a new `POST /api/extension-token`-minted bearer token (`CapRevealSecret` required to mint) that inherits the caller's own role/capabilities but is refused on every route except reveal — a new `ExtensionOnly` principal flag, narrower than the RDP/VNC viewer scope's blanket refusal. `PAM_EXTENSION_TOKEN_TTL_HOURS` (default 24, max 720). Reveal audits gain a `via:extension` marker; new audit action `extension.token_issued`. No schema change, no way for the extension to browse the vault (one hostname → one credential ID, configured manually). **Not interactively verified against a real browser** — no GUI browser in this environment; JS syntax-checked, manifest JSON-validated. See §6 |

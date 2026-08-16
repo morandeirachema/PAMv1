@@ -233,6 +233,21 @@ const screens = [
       },
     }),
   },
+  {
+    name: "endpointagents",
+    src: /\n {6}endpointagents\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      // name, target_name and remote are the free-text columns, all through
+      // cell(); status is one of three fixed-width markers by construction and
+      // the time column is fmtTime, so neither can widen with data.
+      endpointAgents: [
+        { id: 1, name: long ? LONGNAME : "branch-agent", target_name: long ? LONGNAME : "branch-box",
+          connected: true, connected_since: "2026-08-16T12:00:00Z", remote: long ? LONG : "203.0.113.7:51234" },
+        { id: 2, name: long ? LONGNAME : "old-agent", target_name: long ? LONGNAME : "old-box",
+          connected: false, last_seen: "2026-08-15T12:00:00Z", revoked_at: "2026-08-16T12:00:00Z" },
+      ],
+    }),
+  },
 ];
 
 // --- render ------------------------------------------------------------------

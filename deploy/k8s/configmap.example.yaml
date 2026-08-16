@@ -234,6 +234,9 @@ data:
   # --- Application-secrets API ---------------------------------------------
   # PAM_APP_SECRETS_ENABLED: "false"     # vends plaintext to machines; front with TLS
 
+  # --- Outbound-only endpoint agents (Phase 153) --------------------------
+  # PAM_ENDPOINT_AGENTS_ENABLED: "false" # accept pam-agent reverse tunnels on :2222 (the agents run ON endpoints, not here)
+
   # --- KEK provider (the local key and provider tokens go in the Secret) ---
   # PAM_KEK_PROVIDER: "local"            # local | vault-transit | aws-kms | pkcs11
   # PAM_KEK_TRANSIT_ADDR: "https://vault.internal:8200"

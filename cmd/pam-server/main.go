@@ -908,6 +908,16 @@ func run() error {
 	// supervisor's SSE pane reports the end instead of going silent forever.
 	sessions.AttachHub(liveHub)
 	shares := session.NewShareRegistry() // Phase 116: live session-sharing input mux
+	// Phase 153: the ONE live registry of connected outbound-only endpoint
+	// agents, shared by the SSH proxy (which registers tunnels and dials
+	// through them) and the API (which reports status and kicks on revoke).
+	// nil keeps the feature off end to end: the agent login is refused and
+	// the routes are not registered.
+	var endpointAgents *session.EndpointAgents
+	if cfg.EndpointAgentsEnabled {
+		endpointAgents = session.NewEndpointAgents()
+		log.Info("outbound-only endpoint agents enabled (PAM_ENDPOINT_AGENTS_ENABLED)")
+	}
 	replicaName, _ := os.Hostname()
 	// The step-up coordinator exists before the buses because the decision bus
 	// shares their custody key; its guard file is compiled further down with the
@@ -1290,6 +1300,7 @@ func run() error {
 		AnalyticsAutoStepUp:  cfg.AnalyticsAutoStepUp,
 		AppSecretsEnabled:    cfg.AppSecretsEnabled,
 		ScimEnabled:          cfg.ScimEnabled,
+		EndpointAgents:       endpointAgents,
 	})
 	if err != nil {
 		return err
@@ -1430,6 +1441,7 @@ func run() error {
 			CommandAllowGuard:    cmdAllowGuard,
 			Live:                 liveHub,
 			Shares:               shares,
+			EndpointAgents:       endpointAgents,
 			CA:                   sshCA,
 			CertTTL:              cfg.SSHCertTTL,
 			AuthRatePerMin:       cfg.ProxyAuthRatePerMin,
