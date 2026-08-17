@@ -59,9 +59,9 @@ type Config struct {
 	// exceed to count as an outlier. The median, not the mean: the mean is
 	// dragged up by the very outlier being looked for.
 	PeerFactor int
-	// PeerMinActors is the smallest peer group worth comparing against. Below
-	// it the signal is skipped rather than guessed — two people are not a
-	// distribution.
+	// PeerMinActors is the smallest peer group worth comparing against, applied
+	// to each actor class separately. Below it the signal is skipped rather than
+	// guessed — two people are not a distribution, and neither are two agents.
 	PeerMinActors int
 	// Location is the timezone the business hours are interpreted in. Audit
 	// timestamps are stored in UTC, so an operator whose business hours are local
@@ -204,10 +204,43 @@ func New(cfg Config) *Engine {
 }
 
 // signal action classification.
+//
+// Membership in these maps is the ONLY thing that makes an audit action visible
+// to the scorer: an action in none of them contributes nothing, whatever it did.
+// That is why the AI-agent broker's actions are listed here (Phase 161) — until
+// they were, an agent could execute brokered privileged calls at any rate, at
+// any hour, against targets it had never touched, and score exactly zero.
+//
+// The classifying switch in ScoreWithBaseline is FIRST-MATCH (`switch { case
+// ... }` in Go runs the first case whose condition is true and then stops, like
+// an if/elif chain in Python), so an action listed in two of these maps lands in
+// whichever case comes first. Ordering there is part of the semantics.
 var (
 	breakGlassActions = map[string]bool{"breakglass.access": true, "breakglass.unseal": true}
-	cmdBlockedActions = map[string]bool{"command.blocked": true}
-	authFailActions   = map[string]bool{
+	// cmdBlockedActions means "an already-authenticated actor's privileged
+	// attempt was refused by policy". Besides the command guard it covers the
+	// three ways the AI-agent broker says no: a tool call the policy denied, an
+	// approval attempted by a human outside the rule's separation-of-duties
+	// group, and a suspended/quarantined agent identity turned away when it tried
+	// to authenticate.
+	//
+	// Those three belong here and deliberately NOT in authFailActions, even
+	// though "refused" sounds like an authentication failure. auth_failure is the
+	// one signal excluded from driving an automated response (see
+	// responseExcludedSignals) because a failed login records the name that was
+	// PRESENTED, so an unauthenticated stranger can pile risk onto a victim's
+	// account and trigger a response against them. None of these three can be
+	// forged that way: each requires the actor to have already proved who they
+	// are — the agent presented a valid identity, the approver was logged in —
+	// before the refusal was recorded. The actor really is the actor, so the
+	// signal should be allowed to drive a response.
+	cmdBlockedActions = map[string]bool{
+		"command.blocked":          true,
+		"broker.tool_call.denied":  true,
+		"broker.approval.refused":  true,
+		"agent.quarantine_refused": true,
+	}
+	authFailActions = map[string]bool{
 		"proxy.auth_failed": true, "login.failed": true, "authz.denied": true,
 		"session.denied": true, "access.denied": true, "db.session.denied": true,
 		// A rejected bearer credential on the REST/broker/app-secrets surfaces
@@ -219,6 +252,13 @@ var (
 	activityActions = map[string]bool{
 		"session.start": true, "db.session.start": true, "session.cert_issued": true,
 		"ssh.exec": true, "winrm.run": true, "rdp.connect": true,
+		// A brokered tool call that actually RAN is privileged work against a
+		// target, the same as opening a session, so it feeds velocity, the peer
+		// comparison and new-target novelty. Only the executed outcome counts:
+		// a call that was denied, is still awaiting approval or failed did no
+		// work, and counting it would let a rejected agent inflate its own
+		// volume. Executed calls are exempt from off-hours — see offHoursExempt.
+		"broker.tool_call.executed": true,
 	}
 )
 
@@ -230,6 +270,48 @@ type perActor struct {
 	lastTS  time.Time
 	// newTargets is a SET, so repeated use of one new host counts once.
 	newTargets map[string]struct{}
+	// brokerActivity is how many of this actor's activity events were brokered
+	// tool calls, tracked alongside the total so the actor's class can be
+	// derived from behaviour. See perActor.class.
+	brokerActivity int
+}
+
+// actorClass is the kind of actor a finding is about — a person or an AI agent.
+// It is DERIVED from behaviour rather than read from a field, because the engine
+// scores audit events and an audit event carries no actor type.
+type actorClass string
+
+const (
+	classHuman actorClass = "human"
+	classAgent actorClass = "agent"
+)
+
+// class reports which peer pool this actor belongs to, and whether they belong
+// to one at all.
+//
+// An actor whose activity is ENTIRELY brokered tool calls is an agent. Entirely,
+// not merely mostly, on purpose: the cost of the two mistakes is not symmetric.
+// Misreading a person as an agent moves them into a pool of high-volume software
+// where nothing they could plausibly do looks unusual, which is exactly the
+// blindness this partition exists to prevent — so a human whose trail happens to
+// contain a single brokered row stays a human. The strict rule costs nothing in
+// practice, because an agent identity cannot open an interactive session, a
+// database session or an RDP connection at all (the broker is its only path to a
+// target), so a real agent's activity is 100% brokered.
+//
+// An actor with NO activity events — someone who only failed to log in, say —
+// has no class and takes no part in peer comparison in either direction. There
+// is nothing to compare: a volume signal needs volume, and zero is not a
+// quantity of work, it is the absence of any.
+func (pa *perActor) class() (actorClass, bool) {
+	total := pa.counts["activity"]
+	if total <= 0 {
+		return "", false
+	}
+	if pa.brokerActivity == total {
+		return classAgent, true
+	}
+	return classHuman, true
 }
 
 // Score computes a risk finding per actor from events (the caller chooses the
@@ -275,7 +357,12 @@ func (e *Engine) ScoreWithBaseline(events []store.AuditEvent, baseline *Baseline
 		}
 		if activityActions[ev.Action] {
 			pa.counts["activity"]++
-			if e.offHours(ev.TS) {
+			if brokerAction(ev.Action) {
+				// Tallied separately from the total so the peer pass can tell an
+				// agent from a person (perActor.class).
+				pa.brokerActivity++
+			}
+			if !offHoursExempt(ev.Action) && e.offHours(ev.TS) {
 				pa.counts["off_hours"]++
 			}
 			// Novelty needs BOTH a baseline and history for this actor. Without
@@ -293,14 +380,42 @@ func (e *Engine) ScoreWithBaseline(events []store.AuditEvent, baseline *Baseline
 	}
 
 	// Peer comparison is a second pass, because it needs every actor's totals.
-	activity := make(map[string]int, len(byActor))
+	//
+	// Actors are compared only against others of their own KIND — agents against
+	// agents, people against people — because a peer group is only a peer group
+	// if its members are comparable, and an AI agent is not comparable to a
+	// person by volume. Agents make brokered calls continuously; people open a
+	// handful of sessions a day. Pooling them puts the median where the software
+	// is, and a human doing ten times their normal volume then sails under a
+	// threshold set by machines: the volume signal would go quiet for exactly the
+	// insider it exists to catch. The mirror image is just as wrong — one busy
+	// person among many idle agents is not evidence about the person.
+	//
+	// Each pool applies the PeerMinActors guard independently, so a deployment
+	// with two agents gets NO agent comparison rather than a nonsense one against
+	// humans. A class too small to compare falls silent, which is the right
+	// direction to fail: a comparison not made can be made later with more data,
+	// while a confident comparison against an unrelated population produces a
+	// finding an operator cannot tell from a real one.
+	pools := map[actorClass]map[string]int{}
 	for actor, pa := range byActor {
-		activity[actor] = pa.counts["activity"]
+		class, ok := pa.class()
+		if !ok {
+			continue
+		}
+		if pools[class] == nil {
+			pools[class] = map[string]int{}
+		}
+		pools[class][actor] = pa.counts["activity"]
 	}
-	if threshold, ok := peerVolumes(activity, e.cfg.PeerFactor, e.cfg.PeerMinActors); ok {
-		for _, pa := range byActor {
-			if pa.counts["activity"] > threshold {
-				pa.counts["peer_outlier"] = 1
+	for _, pool := range pools {
+		threshold, ok := peerVolumes(pool, e.cfg.PeerFactor, e.cfg.PeerMinActors)
+		if !ok {
+			continue
+		}
+		for actor, count := range pool {
+			if count > threshold {
+				byActor[actor].counts["peer_outlier"] = 1
 			}
 		}
 	}
@@ -394,6 +509,45 @@ func (e *Engine) offHours(ts time.Time) bool {
 	}
 	h := ts.Hour()
 	return h < e.cfg.BusinessStart || h >= e.cfg.BusinessEnd
+}
+
+// offHoursExempt reports whether an action must be left OUT of the off_hours
+// signal even though it counts as activity.
+//
+// (For a reader coming from Python: this is a plain package-level function
+// rather than a method on Engine, because the answer depends only on WHAT was
+// done — never on the clock, the config or the actor — so it needs no state.)
+//
+// The whole `broker.` family is exempt, because the off-hours signal encodes an
+// assumption that is true of people and false of software: that working at 03:00
+// is unusual and therefore worth a look. An AI agent has no working day. It runs
+// whenever its queue has work, which is as likely to be 03:00 on a Sunday as
+// 14:00 on a Tuesday. Scoring that would mark EVERY agent, permanently, and —
+// because off-hours points accumulate per event up to the per-signal cap — at
+// close to the maximum the signal can give. A detector that fires on every
+// member of a class every day is one operators learn to scroll past, which is
+// the same failure the novelty signal avoids by staying silent for a new joiner
+// with no history.
+//
+// So the trade is explicit: brokered calls count as activity — velocity, peer
+// comparison and new-target novelty all say something real about an agent,
+// because "far more calls than the other agents" and "a host it has never
+// touched" are genuine anomalies for software — but the hour of the day says
+// nothing about one, so it scores nothing.
+func offHoursExempt(action string) bool {
+	return brokerAction(action)
+}
+
+// brokerAction reports whether an audit action was produced by the AI-agent
+// access broker, which is the one thing in the trail that tells an agent's
+// behaviour apart from a person's.
+//
+// It is a prefix test on the action name rather than a list of names on purpose:
+// every action the broker emits is in scope for both of its callers — the
+// off-hours exemption and the actor-class derivation — so a new broker action
+// added later is classified correctly without anyone remembering to come here.
+func brokerAction(action string) bool {
+	return strings.HasPrefix(action, "broker.")
 }
 
 // LevelRank returns an ordinal for a level so callers can filter "high and

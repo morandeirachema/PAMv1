@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/morandeirachema/pamv1/internal/broker"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
@@ -78,5 +79,84 @@ func TestFromAuditShape(t *testing.T) {
 	}
 	if _, ok := ev["finding_info"]; ok {
 		t.Fatal("API-activity event must not carry finding_info")
+	}
+}
+
+// TestSuffixSeparatorsBothMatch pins the dot/underscore rule in isFinding so a
+// later "simplification" back to a single separator fails here instead of in
+// production. pamv1 writes both shapes — `proxy.auth_failed` and
+// `agent.disable.failed` — and for a long while only the underscore form was
+// recognised, so dotted failures were exported as routine API Activity. Each
+// verb is therefore asserted with BOTH separators.
+//
+// The negative cases matter just as much: the separator is required, so a name
+// that merely ends in the letters "denied"/"failed" must stay routine. (For a
+// Python reader: `cases` below is a list of small structs, the Go equivalent of
+// a list of tuples, and t.Run makes each row its own named subtest.)
+func TestSuffixSeparatorsBothMatch(t *testing.T) {
+	cases := []struct {
+		action string
+		want   bool
+	}{
+		{"proxy.auth_failed", true},       // underscore, real
+		{"agent.disable.failed", true},    // dot, real — the case that was misclassified
+		{"vault.rotate_denied", true},     // underscore, shape
+		{"policy.check.denied", true},     // dot, shape
+		{"broker.tool_call.failed", true}, // dot, real (internal/broker, Phase 161)
+		{"broker.tool_call.denied", true}, // dot, real
+		{"targetdenied", false},           // no separator: must not match
+		{"jobfailed", false},              // no separator: must not match
+		{"credential.create", false},
+		{"session.start", false},
+	}
+	for _, c := range cases {
+		t.Run(c.action, func(t *testing.T) {
+			if got := isFinding(c.action); got != c.want {
+				t.Fatalf("isFinding(%q) = %v, want %v", c.action, got, c.want)
+			}
+		})
+	}
+}
+
+// TestBrokerToolCallOutcomesClassified checks how the broker's per-outcome audit
+// names (exported by internal/broker since Phase 161, now written to the PRIMARY
+// trail this exporter reads) come out of the mapping. It imports those constants
+// rather than retyping the strings, so renaming one in internal/broker breaks
+// this test instead of silently unclassifying the event.
+//
+// Denied and failed must be Detection Findings — failed via the dotted suffix
+// rule alone, with no findingExact entry, which is the behaviour this test
+// exists to prove. Requested, executed, pending_approval and resumed must stay
+// routine API Activity: a record of intent, of success, or of a call waiting on
+// a human is not a detection.
+func TestBrokerToolCallOutcomesClassified(t *testing.T) {
+	findings := []string{broker.ActionToolCallDenied, broker.ActionToolCallFailed}
+	routine := []string{
+		broker.ActionToolCallRequested, broker.ActionToolCallExecuted,
+		broker.ActionToolCallPending, broker.ActionToolCallResumed,
+		broker.ActionToolCallWithdrawn,
+	}
+	for _, a := range findings {
+		if !isFinding(a) {
+			t.Errorf("%s must map to a Detection Finding", a)
+		}
+		if got := FromAudit(store.AuditEvent{Action: a, TS: time.Now()})["class_uid"]; got != ClassDetectionFinding {
+			t.Errorf("%s: class_uid = %v, want %d", a, got, ClassDetectionFinding)
+		}
+	}
+	for _, a := range routine {
+		if isFinding(a) {
+			t.Errorf("%s must stay routine API Activity, not a finding", a)
+		}
+		if got := FromAudit(store.AuditEvent{Action: a, TS: time.Now()})["class_uid"]; got != ClassAPIActivity {
+			t.Errorf("%s: class_uid = %v, want %d", a, got, ClassAPIActivity)
+		}
+	}
+	// Pinned deliberately: broker.tool_call.failed is covered by the dotted
+	// suffix rule, so an explicit findingExact entry would be redundant. If a
+	// future change adds one, this assertion is the note explaining why it was
+	// left out — decide consciously, do not add it by reflex.
+	if findingExact[broker.ActionToolCallFailed] {
+		t.Errorf("%s has a findingExact entry that duplicates the .failed suffix rule; keep one mechanism, not two", broker.ActionToolCallFailed)
 	}
 }

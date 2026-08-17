@@ -39,8 +39,13 @@ type mcpSession struct {
 	out           chan []byte
 	closed        chan struct{}
 	elicitCapable atomic.Bool
-	mu            sync.Mutex
-	pending       map[string]chan elicitResult
+	// client is what the peer called itself at `initialize` ("claude-code/2.1").
+	// atomic.Value rather than a plain string because the SSE stream and the POST
+	// that carries `initialize` run on different goroutines; it holds a string and
+	// is empty until the client declares one.
+	client  atomic.Value
+	mu      sync.Mutex
+	pending map[string]chan elicitResult
 }
 
 // ownedBy reports whether an authenticated agent identity owns this session, so a

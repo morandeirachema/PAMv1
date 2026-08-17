@@ -21,6 +21,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/agentid"
 	"github.com/morandeirachema/pamv1/internal/alert"
 	"github.com/morandeirachema/pamv1/internal/auditchain"
+	"github.com/morandeirachema/pamv1/internal/auditfmt"
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/policy"
@@ -40,6 +41,48 @@ const (
 // terminal reports whether the status is a final outcome (not awaiting a human).
 func (s Status) terminal() bool {
 	return s == StatusExecuted || s == StatusDenied || s == StatusFailed
+}
+
+// The audit action names for a tool call's lifecycle, spelled once here and used
+// by BOTH trails — the hash-chained broker audit and the primary audit trail the
+// SIEM export and the risk engine read.
+//
+// They are constants, not concatenations, for a reason that has bitten this
+// project twice: `internal/ocsf` classifies actions by exact name, and a name no
+// code can emit is a classification that can never fire while reading to a SIEM
+// author as coverage. `broker.tool_call.denied` sat in that map from Phase 27 to
+// Phase 161 matching nothing, because the only place it was ever written was the
+// chain — the primary trail got a flat `broker.tool_call` with the outcome buried
+// in the detail text. Naming them here makes the literals greppable, which is
+// what the guard test in internal/ocsf now checks.
+const (
+	ActionToolCallRequested = "broker.tool_call.requested"
+	ActionToolCallExecuted  = "broker.tool_call.executed"
+	ActionToolCallPending   = "broker.tool_call.pending_approval"
+	ActionToolCallDenied    = "broker.tool_call.denied"
+	ActionToolCallFailed    = "broker.tool_call.failed"
+	ActionToolCallWithdrawn = "broker.tool_call.withdrawn"
+	ActionToolCallResumed   = "broker.tool_call.resumed"
+)
+
+// ActionFor returns the audit action name for a call outcome's status.
+//
+// An unrecognised status still yields a well-formed name rather than an empty or
+// wrong one: recording a status pamv1 does not know about as "failed" would be a
+// lie in the authoritative log, so the name is built from the status itself and
+// simply goes unclassified.
+func ActionFor(s Status) string {
+	switch s {
+	case StatusExecuted:
+		return ActionToolCallExecuted
+	case StatusPendingApproval:
+		return ActionToolCallPending
+	case StatusDenied:
+		return ActionToolCallDenied
+	case StatusFailed:
+		return ActionToolCallFailed
+	}
+	return "broker.tool_call." + string(s)
 }
 
 // Args are a tool call's arguments (decoded from JSON).
@@ -101,14 +144,35 @@ func (r *Registry) List() []Tool {
 
 // Call is a tool-call request from an agent.
 type Call struct {
+	// SessionID is the agent's own run/conversation identifier, and Client is its
+	// self-declared software and model ("claude-code/2.1 (some-model-id)").
+	//
+	// Both are DECLARED BY THE CALLER and neither is verified, so neither may ever
+	// influence a decision — they exist so an investigator can reconstruct one
+	// agent run out of a trail that otherwise records each tool call as an
+	// unrelated event. That is the whole point: a human session has a session
+	// recording tying its actions together, and until Phase 161 an agent run had
+	// nothing. They are quoted and bounded before reaching the trail (see
+	// runFields), because an unverified string that reaches an audit detail is
+	// exactly how a `key:value` record gets forged.
 	SessionID string
+	Client    string
 	Tool      string
 	Args      Args
 }
 
 // Outcome is the terminal (or pending) result of a tool call.
 type Outcome struct {
-	CallID      string         `json:"call_id"`
+	CallID string `json:"call_id"`
+	// Tool is the tool this call asked for. Carried on the outcome so a status
+	// poll and the audit written when a parked call is finally collected can name
+	// it: by then the parked call itself has been consumed and is gone.
+	Tool string `json:"tool,omitempty"`
+	// SessionID echoes back the caller's own run identifier (Call.SessionID). An
+	// agent that fires several tool calls concurrently, or collects a parked one
+	// much later, gets its correlation key back with the answer instead of having
+	// to remember which call id belonged to which run.
+	SessionID   string         `json:"session_id,omitempty"`
 	Status      Status         `json:"status"`
 	Result      map[string]any `json:"result,omitempty"`
 	Reason      string         `json:"reason,omitempty"`
@@ -116,6 +180,14 @@ type Outcome struct {
 	Scope       string         `json:"scope,omitempty"`
 	ApprovalID  string         `json:"approval_id,omitempty"`
 	ResumeToken string         `json:"resume_token,omitempty"` // single-use ticket to collect a post-approval result
+
+	// jti is the SHA-256 of the resume token — the id its `broker_tokens` row is
+	// keyed by. It is unexported, so it never reaches the agent through JSON; it
+	// travels with the remembered outcome purely so the park event and the later
+	// resume event can be joined to the same token in the trail. Recording it is
+	// safe: it is the token's HASH, so it identifies the ticket without being
+	// spendable.
+	jti string
 }
 
 const (
@@ -145,6 +217,10 @@ type parkedCall struct {
 	reason    string
 	approvers []string
 	requested time.Time
+	// jti is the SHA-256 of this call's single-use resume token (see Outcome.jti).
+	// Held so the events written when the call is decided, withdrawn or collected
+	// name the same ticket the park event named.
+	jti string
 }
 
 // PendingApproval is an approver-facing view of a parked call (no credential).
@@ -258,7 +334,7 @@ func (b *Broker) Tools() []Tool { return b.registry.List() }
 // returning only the result. Deny and (for now) require_approval are terminal
 // here; the approval decision + resume flow lands in a later increment.
 func (b *Broker) ProcessCall(ctx context.Context, id *agentid.Identity, c Call) Outcome {
-	out := Outcome{CallID: newCallID()}
+	out := Outcome{CallID: newCallID(), SessionID: c.SessionID, Tool: c.Tool}
 
 	// Reject an oversized argument set before doing any work — the cap bounds both
 	// audit-row bloat and a hostile payload. Recorded as a failure, still audited.
@@ -266,7 +342,7 @@ func (b *Broker) ProcessCall(ctx context.Context, id *agentid.Identity, c Call) 
 		if raw, _ := json.Marshal(c.Args); len(raw) > b.maxArgBytes {
 			out.Status, out.Reason = StatusFailed, fmt.Sprintf("arguments exceed %d-byte limit", b.maxArgBytes)
 			b.remember(out)
-			if err := b.chainEvent(ctx, id, c, "broker.tool_call.failed", out, out.Reason); err != nil {
+			if err := b.chainEvent(ctx, id, c, ActionToolCallFailed, out, out.Reason); err != nil {
 				b.log.Error("broker audit chain append failed", "call", out.CallID, "err", err)
 			}
 			return out
@@ -301,7 +377,7 @@ func (b *Broker) ProcessCall(ctx context.Context, id *agentid.Identity, c Call) 
 		// side-effecting action, so an executed action can never be missing from
 		// the authoritative log. If the chain is unavailable, refuse to run (fail
 		// closed) rather than execute unauditably.
-		if err := b.chainEvent(ctx, id, c, "broker.tool_call.requested", out, ""); err != nil {
+		if err := b.chainEvent(ctx, id, c, ActionToolCallRequested, out, ""); err != nil {
 			b.log.Error("broker audit chain unavailable; refusing tool call", "call", out.CallID, "err", err)
 			out.Status, out.Reason = StatusFailed, "audit log unavailable; call refused"
 			break
@@ -326,7 +402,7 @@ func (b *Broker) ProcessCall(ctx context.Context, id *agentid.Identity, c Call) 
 	b.remember(stored)
 	// Record the terminal outcome (best-effort: for a side-effecting call the
 	// "requested" event above already durably captured it in the chain).
-	if err := b.chainEvent(ctx, id, c, "broker.tool_call."+string(out.Status), out, out.Reason); err != nil {
+	if err := b.chainEvent(ctx, id, c, ActionFor(out.Status), out, out.Reason); err != nil {
 		b.log.Error("broker audit chain append failed", "call", out.CallID, "err", err)
 	}
 	return out
@@ -355,7 +431,14 @@ func (b *Broker) park(ctx context.Context, id *agentid.Identity, c Call, approve
 		if err := b.tokens.CreateBrokerToken(ctx, &bt); err != nil {
 			b.log.Error("broker resume token mint failed", "call", out.CallID, "err", err)
 		} else {
-			out.ResumeToken = token
+			out.ResumeToken, out.jti = token, bt.JTI
+			// The parked call was inserted before the token existed, so stamp it now.
+			// Under the lock: a human approver may already be deciding this call.
+			b.mu.Lock()
+			if pc, ok := b.parked[out.CallID]; ok {
+				pc.jti = bt.JTI
+			}
+			b.mu.Unlock()
 		}
 	}
 	b.notifier.Notify(ctx, alert.Event{
@@ -400,7 +483,7 @@ func (b *Broker) Decide(ctx context.Context, callID string, approver Approver, a
 	// by an authorized approver rather than silently discarding it.
 	if !approverPermitted(approver, p.approvers) {
 		b.mu.Unlock()
-		refused := Outcome{CallID: callID, RuleID: p.ruleID, Scope: p.scope}
+		refused := Outcome{CallID: callID, SessionID: p.call.SessionID, Tool: p.call.Tool, RuleID: p.ruleID, Scope: p.scope}
 		b.chainApproval(ctx, p, approver.Name, "broker.approval.refused", refused)
 		b.log.Warn("broker approval refused: approver not in rule's group",
 			"call", callID, "approver", approver.Name, "required", strings.Join(p.approvers, ","))
@@ -409,7 +492,7 @@ func (b *Broker) Decide(ctx context.Context, callID string, approver Approver, a
 	delete(b.parked, callID)
 	b.mu.Unlock()
 
-	out := Outcome{CallID: callID, RuleID: p.ruleID, Scope: p.scope}
+	out := Outcome{CallID: callID, SessionID: p.call.SessionID, Tool: p.call.Tool, RuleID: p.ruleID, Scope: p.scope, jti: p.jti}
 	if !approve {
 		out.Status, out.Reason = StatusDenied, "rejected by "+approver.Name
 		b.chainApproval(ctx, p, approver.Name, "broker.approval.denied", out)
@@ -422,7 +505,7 @@ func (b *Broker) Decide(ctx context.Context, callID string, approver Approver, a
 	if !exists {
 		out.Status, out.Reason = StatusFailed, "unknown tool: "+p.call.Tool
 		b.remember(out)
-		_ = b.chainEvent(ctx, p.id, p.call, "broker.tool_call.failed", out, out.Reason)
+		_ = b.chainEvent(ctx, p.id, p.call, ActionToolCallFailed, out, out.Reason)
 		return out, true, nil
 	}
 	// Capability backstop: the principal must hold the tool's capability (auth is
@@ -430,7 +513,7 @@ func (b *Broker) Decide(ctx context.Context, callID string, approver Approver, a
 	if !p.id.Principal().Can(tool.Capability()) {
 		out.Status, out.Reason = StatusDenied, "principal lacks the capability for this tool"
 		b.remember(out)
-		_ = b.chainEvent(ctx, p.id, p.call, "broker.tool_call.denied", out, out.Reason)
+		_ = b.chainEvent(ctx, p.id, p.call, ActionToolCallDenied, out, out.Reason)
 		return out, true, nil
 	}
 	// Re-check the agent is still valid: a call parked before its key was revoked
@@ -438,11 +521,11 @@ func (b *Broker) Decide(ctx context.Context, callID string, approver Approver, a
 	if b.revalidate != nil && !b.revalidate(ctx, p.id) {
 		out.Status, out.Reason = StatusDenied, "agent identity is no longer valid (revoked or expired)"
 		b.remember(out)
-		_ = b.chainEvent(ctx, p.id, p.call, "broker.tool_call.denied", out, out.Reason)
+		_ = b.chainEvent(ctx, p.id, p.call, ActionToolCallDenied, out, out.Reason)
 		return out, true, nil
 	}
 	// Record intent before the side effect, fail closed if the chain is down.
-	if err := b.chainEvent(ctx, p.id, p.call, "broker.tool_call.requested", out, ""); err != nil {
+	if err := b.chainEvent(ctx, p.id, p.call, ActionToolCallRequested, out, ""); err != nil {
 		out.Status, out.Reason = StatusFailed, "audit log unavailable; call refused"
 		b.remember(out)
 		return out, true, nil
@@ -455,7 +538,7 @@ func (b *Broker) Decide(ctx context.Context, callID string, approver Approver, a
 		out.Status, out.Result = StatusExecuted, res.Data
 	}
 	b.remember(out) // full outcome — the agent collects it once via the resume token
-	if err := b.chainEvent(ctx, p.id, p.call, "broker.tool_call."+string(out.Status), out, out.Reason); err != nil {
+	if err := b.chainEvent(ctx, p.id, p.call, ActionFor(out.Status), out, out.Reason); err != nil {
 		b.log.Error("broker audit chain append failed", "call", out.CallID, "err", err)
 	}
 	// The approver receives the decision status, never a secret-bearing result; a
@@ -501,9 +584,9 @@ func (b *Broker) Withdraw(ctx context.Context, callID string, requester *agentid
 	}
 	delete(b.parked, callID)
 	b.mu.Unlock()
-	out := Outcome{CallID: callID, RuleID: p.ruleID, Scope: p.scope, Status: StatusDenied, Reason: "withdrawn by requester"}
+	out := Outcome{CallID: callID, SessionID: p.call.SessionID, Tool: p.call.Tool, RuleID: p.ruleID, Scope: p.scope, jti: p.jti, Status: StatusDenied, Reason: "withdrawn by requester"}
 	b.remember(out)
-	if err := b.chainEvent(ctx, p.id, p.call, "broker.tool_call.withdrawn", out, out.Reason); err != nil {
+	if err := b.chainEvent(ctx, p.id, p.call, ActionToolCallWithdrawn, out, out.Reason); err != nil {
 		b.log.Error("broker withdraw audit append failed", "call", callID, "err", err)
 	}
 	return out, true
@@ -552,7 +635,7 @@ func (b *Broker) SweepExpiredParked(ctx context.Context, now time.Time) int {
 	for _, p := range expired {
 		out := Outcome{CallID: p.callID, RuleID: p.ruleID, Scope: p.scope, Status: StatusFailed, Reason: "approval expired before a decision"}
 		b.remember(out)
-		if err := b.chainEvent(ctx, p.id, p.call, "broker.tool_call.failed", out, out.Reason); err != nil {
+		if err := b.chainEvent(ctx, p.id, p.call, ActionToolCallFailed, out, out.Reason); err != nil {
 			b.log.Error("broker sweep audit append failed", "call", p.callID, "err", err)
 		}
 	}
@@ -568,7 +651,7 @@ func (b *Broker) SweepExpiredParked(ctx context.Context, now time.Time) int {
 // outcome is actually returned. A mismatched, used, expired, unknown token, or a
 // still-pending call yields ok=false. A collected Sensitive result is then
 // stripped from the cache so the secret does not linger past its single delivery.
-func (b *Broker) Resume(ctx context.Context, token, wantCallID string) (Outcome, bool) {
+func (b *Broker) Resume(ctx context.Context, id *agentid.Identity, token, wantCallID string) (Outcome, bool) {
 	if b.tokens == nil {
 		return Outcome{}, false
 	}
@@ -588,6 +671,16 @@ func (b *Broker) Resume(ctx context.Context, token, wantCallID string) (Outcome,
 		return Outcome{}, false // lost the single-use race
 	}
 	b.stripSensitive(callID)
+	// Record the collection in the tamper-evident chain, not only in the primary
+	// trail. The chain is the authoritative record, and until Phase 161 it ended
+	// at the approval decision: the moment the agent actually TOOK the result —
+	// which for reveal_credential is the moment a secret left pamv1 — appeared
+	// nowhere in it. The event names the token by its id, so it joins to the park
+	// event that minted it and to the broker_tokens row that was spent.
+	out.jti = jti
+	if err := b.chainEvent(ctx, id, Call{SessionID: out.SessionID, Tool: out.Tool}, ActionToolCallResumed, out, ""); err != nil {
+		b.log.Error("broker resume audit append failed", "call", callID, "err", err)
+	}
 	return out, true
 }
 
@@ -630,7 +723,7 @@ func (b *Broker) remember(out Outcome) {
 // caller can fail closed. The request arguments (never a credential — the broker
 // injects that) are recorded so the trail shows what was asked.
 func (b *Broker) chainEvent(ctx context.Context, id *agentid.Identity, c Call, action string, out Outcome, reason string) error {
-	detail := fmt.Sprintf("tool:%s call:%s rule:%s args:%s", c.Tool, out.CallID, out.RuleID, argsSummary(c.Args))
+	detail := fmt.Sprintf("tool:%s call:%s rule:%s%s args:%s", c.Tool, out.CallID, out.RuleID, runFields(c, out), argsSummary(c.Args))
 	if reason != "" {
 		detail += " reason:" + reason
 	}
@@ -644,6 +737,36 @@ func (b *Broker) chainEvent(ctx context.Context, id *agentid.Identity, c Call, a
 	})
 	return err
 }
+
+// runFields renders the correlation fields that let an investigator reassemble
+// one agent run: the caller's declared run id, its declared client/model, and the
+// resume token's id when the call was parked for approval.
+//
+// Each is emitted only when present, so an event about a call that declared
+// nothing is not padded with empty keys. The two caller-declared values go
+// through auditfmt.Field — quoted and bounded — because they are unverified text
+// from the agent, and an unquoted value in a `key:value` detail lets whoever
+// controls it invent fields (a session id of `x actor:admin` would otherwise read
+// as a second, forged key). The jti is a hex hash pamv1 computed itself, so it
+// needs no quoting.
+func runFields(c Call, out Outcome) string {
+	var b strings.Builder
+	if c.SessionID != "" {
+		b.WriteString(" session:" + auditfmt.Field(c.SessionID, maxRunFieldBytes))
+	}
+	if c.Client != "" {
+		b.WriteString(" client:" + auditfmt.Field(c.Client, maxRunFieldBytes))
+	}
+	if out.jti != "" {
+		b.WriteString(" jti:" + out.jti)
+	}
+	return b.String()
+}
+
+// maxRunFieldBytes bounds each caller-declared correlation value. Generous enough
+// for a UUID, a model name or a client version string, and far too small to make
+// the audit trail a place to store data.
+const maxRunFieldBytes = 128
 
 // argsSummary renders the call arguments as compact JSON, capped so a large or
 // hostile argument can't bloat an audit row.
@@ -696,7 +819,7 @@ func (b *Broker) chainApproval(ctx context.Context, p *parkedCall, approver, act
 		OnBehalfOf: p.id.AgentName,
 		ActorChain: chainJSON(p.id.ActorChain),
 		Action:     action,
-		Detail:     fmt.Sprintf("tool:%s call:%s rule:%s args:%s", p.call.Tool, out.CallID, out.RuleID, argsSummary(p.call.Args)),
+		Detail:     fmt.Sprintf("tool:%s call:%s rule:%s%s args:%s", p.call.Tool, out.CallID, out.RuleID, runFields(p.call, out), argsSummary(p.call.Args)),
 		Scope:      out.Scope,
 	}); err != nil {
 		b.log.Error("broker approval audit append failed", "call", out.CallID, "err", err)
