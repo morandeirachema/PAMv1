@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-16 · Reflects: Phases 0–155 + the 2026-07 hardening passes.
+> Last updated: 2026-08-17 · Reflects: Phases 0–157 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -197,6 +197,7 @@ flowchart TB
     posture["posture — device/EDR posture attestation webhook"]
     icap["icap — ICAP AV/DLP scan client (RFC 3507)"]
     k8sc["k8s — Kubernetes API client (brokered kubectl ops)"]
+    sforensics["sessionforensics — post-session exec reconstruction (parsing)"]
     metrics["metrics"]
     config["config"]
     logging["logging"]
