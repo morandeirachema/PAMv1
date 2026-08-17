@@ -9,6 +9,67 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.44.0] — 2026-08-17
+
+A minor: agent behaviour becomes visible to detection and an agent run becomes
+reconstructible. **No schema change** (migration high-water mark stays `0043`).
+One **audit-vocabulary change** and one **SIEM wire-format change** — see
+*Changed* below before upgrading if you have rules keyed on either.
+
+### Added
+
+- **A brokered tool call's outcome is now in its audit action.** The primary
+  trail records `broker.tool_call.executed` / `.denied` / `.pending_approval` /
+  `.failed` / `.resumed` / `.withdrawn` / `.requested` instead of a flat
+  `broker.tool_call` with the outcome buried in the detail text. Declared once
+  as exported `broker.ActionToolCall*` constants, so the hash chain, the primary
+  trail and the OCSF classifier cannot drift apart.
+- **AI agents are scored by the risk engine.** An executed brokered call counts
+  as *activity* (session velocity, peer-outlier comparison, new-target novelty);
+  a denied call, an approval refused for separation of duties, and a quarantined
+  agent that keeps knocking count as *blocked command* — the signal class that
+  may drive an automated response. **Agents are deliberately exempt from the
+  off-hours signal**: an agent at 03:00 is normal operation, and scoring it
+  would flag every agent permanently. The peer comparison is computed **per
+  actor class** (agents against agents, people against people), so a crowd of
+  busy agents cannot raise the bar far enough to hide a human outlier.
+- **An agent run can be reconstructed.** `POST /v1/tool-calls` accepts an
+  optional `client` alongside the `session_id` it has accepted since Phase 13,
+  and both now reach the trail as `session:` / `client:` — **declared by the
+  caller, never verified, and never consulted for a decision**. Over MCP they
+  come from the protocol session and `initialize`'s `clientInfo`. A brokered
+  call's detail also carries `target:` when the arguments name one, and `jti:`,
+  the resume token's id, joining a parked call to its approval and its eventual
+  collection. The response gained `session_id` and `tool` so an async caller can
+  correlate its own concurrent calls.
+- **The hash chain records collection.** `broker.tool_call.resumed` is now
+  appended to the tamper-evident chain, which previously ended at the human's
+  approval decision — the moment an agent actually *took* a result (for
+  `reveal_credential`, the moment a secret left pamv1) was recorded only in the
+  ordinary trail.
+- Regression guard `ocsf.TestFindingExactActionsAreEmittable`: walks the source
+  tree and fails on any action classified for SIEM export that no code can emit.
+
+### Changed
+
+- **Audit vocabulary.** `broker.tool_call` is no longer written. SIEM rules,
+  saved audit filters and dashboards keyed on that exact name must move to the
+  outcome-bearing names above.
+- **OCSF export.** `isFinding` now matches `.denied` / `.failed` as well as
+  `_denied` / `_failed`. Dotted failure actions therefore export as **Detection
+  Finding (2004, severity 3, status 2)** instead of API Activity (6003).
+
+### Fixed
+
+- `internal/ocsf` classified `broker.tool_call.denied` as a Detection Finding
+  while no code could write that name to the trail the exporter reads — the rule
+  had **never fired** since 0.14.0. The same file's header warns about exactly
+  this: a classification for an unemittable action reads to a SIEM author as
+  coverage that does not exist.
+- The `_failed` suffix rule never matched dotted action names, so 0.43.0's
+  `agent.disable.failed` (an agent suspension that did not stick while
+  offboarding its owner) exported as routine API Activity rather than a finding.
+
 ## [0.43.0] — 2026-08-17
 
 A minor: one new capability, and the first release driven by gap research
@@ -1327,7 +1388,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.43.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.44.0
 [0.43.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.43.0
 [0.42.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.42.0
 [0.41.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.41.0
