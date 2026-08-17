@@ -2427,10 +2427,13 @@ pamv1's **own AI-agent broker** rather than at its human-operator paths.
 **Schema change** — the migration high-water mark moves `0042` -> `0043`
 (additive columns plus one new table, applied on startup, no backfill).
 
-- [ ] **v0.43.0** through the test-gated pipeline, rehearsed on `main` first.
-  Published as `ghcr.io/morandeirachema/pamv1:0.43.0` (also `latest`), digest
-  recorded here once the publish workflow runs, verified **public** by
-  anonymous pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] **v0.43.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-17 as `ghcr.io/morandeirachema/pamv1:0.43.0` (also
+  `latest`), digest
+  `sha256:2d78018a4bbe18ec7c73eb5843b3dfd57af62962f5c69f013afba7a525246c83`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow), with the `pam-agent` binaries attached as since
+  v0.40.0
 - [x] All five pins via the sweep; Helm chart `version` 0.33.0 -> **0.34.0**
   (minor, alongside the `appVersion` minor)
 - [x] Both READMEs restated (Phase 159's own PR landed the parity-table row —
