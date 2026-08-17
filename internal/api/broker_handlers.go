@@ -95,9 +95,59 @@ func bearerToken(r *http.Request) string {
 }
 
 type toolCallIn struct {
+	// SessionID and Client are the agent's own run identifier and its
+	// self-declared software/model. Both are unverified provenance, recorded so a
+	// run can be reconstructed, never consulted for a decision — see broker.Call.
 	SessionID string         `json:"session_id"`
+	Client    string         `json:"client"`
 	Tool      string         `json:"tool"`
 	Args      map[string]any `json:"args"`
+}
+
+// brokerCallDetail renders the primary-trail audit detail for a brokered tool
+// call: what was asked for, what happened, and the fields that let an
+// investigator stitch this one event back into a whole agent run.
+//
+// `target:` is included when the arguments name one, because the risk engine's
+// baseline reads exactly that key to notice an actor touching a host it never
+// touched before — without it, an agent's first-ever reach into a new system
+// looks identical to its thousandth routine call. Every caller-supplied value is
+// quoted and bounded (auditField): these come straight off the wire, and an
+// unquoted value in a `key:value` detail lets whoever controls it forge fields.
+func brokerCallDetail(in toolCallIn, out broker.Outcome) string {
+	detail := fmt.Sprintf("tool:%s status:%s call:%s", auditField(in.Tool, 64), out.Status, out.CallID)
+	if t := targetArg(in.Args); t != "" {
+		detail += " target:" + auditField(t, 128)
+	}
+	if in.SessionID != "" {
+		detail += " session:" + auditField(in.SessionID, 128)
+	}
+	if in.Client != "" {
+		detail += " client:" + auditField(in.Client, 128)
+	}
+	return detail
+}
+
+// runField renders one optional correlation field for an audit detail, or ""
+// when the value is absent — so an event about a call that declared no run id is
+// not padded with an empty `session:""` key. The value is quoted and bounded
+// because it is caller-declared text.
+func runField(key, value string) string {
+	if value == "" {
+		return ""
+	}
+	return " " + key + ":" + auditField(value, 128)
+}
+
+// targetArg returns the tool call's `target` argument when it is a string.
+//
+// Go's map[string]any holds values of unknown type, so the comma-ok type
+// assertion below is the equivalent of asking "is this actually a str?" before
+// using it — a non-string target (a number, an object) simply yields "" rather
+// than a panic or a mangled record.
+func targetArg(args map[string]any) string {
+	t, _ := args["target"].(string)
+	return t
 }
 
 // processToolCall runs an agent tool call through the broker's policy loop. It
@@ -113,11 +163,18 @@ func (s *Server) processToolCall(w http.ResponseWriter, r *http.Request, id *age
 		writeError(w, http.StatusUnprocessableEntity, "tool is required")
 		return
 	}
-	out := s.broker.ProcessCall(r.Context(), id, broker.Call{SessionID: in.SessionID, Tool: in.Tool, Args: in.Args})
+	out := s.broker.ProcessCall(r.Context(), id, broker.Call{SessionID: in.SessionID, Client: in.Client, Tool: in.Tool, Args: in.Args})
 	// Surface broker activity in the unified audit trail too; the hash chain
 	// remains the authoritative, verifiable record.
-	s.auditAs(r.Context(), id.AgentName, "broker.tool_call",
-		fmt.Sprintf("tool:%s status:%s call:%s", in.Tool, out.Status, out.CallID))
+	//
+	// The action carries the OUTCOME (`broker.tool_call.denied`, not a flat
+	// `broker.tool_call` with the outcome buried in the detail text), because both
+	// consumers of this trail key on the action name: the OCSF export classifies a
+	// denial as a Detection Finding, and the risk engine counts a denial and an
+	// execution as different signals. Phase 161 — before it, an agent could be
+	// refused a privileged tool call every minute for a week and neither surface
+	// would show anything but routine activity.
+	s.auditAs(r.Context(), id.AgentName, broker.ActionFor(out.Status), brokerCallDetail(in, out))
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -152,13 +209,13 @@ func (s *Server) resumeToolCall(w http.ResponseWriter, r *http.Request, id *agen
 	// Pass the path id so the token is checked against the call it unlocks BEFORE it
 	// is spent — a wrong/stale id no longer burns the single-use token (leaving the
 	// post-approval result, possibly a secret, permanently uncollectable).
-	out, ok := s.broker.Resume(r.Context(), in.Token, r.PathValue("id"))
+	out, ok := s.broker.Resume(r.Context(), id, in.Token, r.PathValue("id"))
 	if !ok {
 		writeError(w, http.StatusNotFound, "invalid, expired, or already-used resume token")
 		return
 	}
-	s.auditAs(r.Context(), id.AgentName, "broker.tool_call.resumed",
-		fmt.Sprintf("call:%s status:%s", out.CallID, out.Status))
+	s.auditAs(r.Context(), id.AgentName, broker.ActionToolCallResumed,
+		fmt.Sprintf("tool:%s call:%s status:%s%s", auditField(out.Tool, 64), out.CallID, out.Status, runField("session", out.SessionID)))
 	writeJSON(w, http.StatusOK, out)
 }
 

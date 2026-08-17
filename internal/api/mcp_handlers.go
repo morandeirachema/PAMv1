@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/morandeirachema/pamv1/internal/agentid"
 	"github.com/morandeirachema/pamv1/internal/broker"
@@ -79,6 +80,32 @@ func (s *Server) routeElicitationResponse(sess *mcpSession, body []byte) bool {
 	return sess.resolveElicit(reqID, res)
 }
 
+// mcpRunID returns the correlation id for tool calls arriving over MCP: the
+// protocol session the client opened. MCP has no per-call run field, so the
+// session IS the run — every call on one stream belongs to one agent
+// conversation. A bare POST /mcp with no SSE stream has no session, hence "".
+func mcpRunID(sess *mcpSession) string {
+	if sess == nil {
+		return ""
+	}
+	return sess.id
+}
+
+// mcpClient returns the client software the peer declared at `initialize`, or ""
+// if it declared none (or there is no session).
+//
+// The comma-ok assertion on atomic.Value is required in Go: Load returns an
+// empty interface, which is nil until something is stored, so asserting it to a
+// string without the second return value would panic on a session that never
+// saw an initialize.
+func mcpClient(sess *mcpSession) string {
+	if sess == nil {
+		return ""
+	}
+	v, _ := sess.client.Load().(string)
+	return v
+}
+
 // mcpDispatcher builds the JSON-RPC method table bound to the authenticated agent
 // and (optionally) its open SSE session, which enables server-initiated
 // elicitation on approval-gated calls.
@@ -92,9 +119,23 @@ func (s *Server) mcpDispatcher(id *agentid.Identity, sess *mcpSession) mcp.Dispa
 					Capabilities struct {
 						Elicitation *json.RawMessage `json:"elicitation"`
 					} `json:"capabilities"`
+					ClientInfo struct {
+						Name    string `json:"name"`
+						Version string `json:"version"`
+					} `json:"clientInfo"`
 				}
-				if json.Unmarshal(params, &p) == nil && p.Capabilities.Elicitation != nil {
-					sess.elicitCapable.Store(true)
+				if json.Unmarshal(params, &p) == nil {
+					if p.Capabilities.Elicitation != nil {
+						sess.elicitCapable.Store(true)
+					}
+					// Keep the client's self-description for the audit trail. MCP
+					// puts provenance here, once per session, rather than on each
+					// call — so this is the only chance to learn what software is
+					// driving the agent, and it is recorded as declared, never
+					// checked.
+					if p.ClientInfo.Name != "" {
+						sess.client.Store(strings.TrimSuffix(p.ClientInfo.Name+"/"+p.ClientInfo.Version, "/"))
+					}
 				}
 			}
 			return map[string]any{
@@ -130,8 +171,13 @@ func (s *Server) mcpDispatcher(id *agentid.Identity, sess *mcpSession) mcp.Dispa
 			if err := json.Unmarshal(params, &p); err != nil || p.Name == "" {
 				return nil, mcp.Errorf(mcp.CodeInvalidParams, "tools/call requires a name")
 			}
-			out := s.broker.ProcessCall(ctx, id, broker.Call{Tool: p.Name, Args: p.Arguments})
-			s.auditAs(ctx, id.AgentName, "broker.tool_call", fmt.Sprintf("tool:%s status:%s call:%s via:mcp", p.Name, out.Status, out.CallID))
+			// The MCP transport has no per-call session field, so the run id is the
+			// protocol session the client established at `initialize`, and the client
+			// provenance is the `clientInfo` it declared there — the same two facts
+			// the REST caller passes explicitly, taken from where MCP puts them.
+			in := toolCallIn{SessionID: mcpRunID(sess), Client: mcpClient(sess), Tool: p.Name, Args: p.Arguments}
+			out := s.broker.ProcessCall(ctx, id, broker.Call{SessionID: in.SessionID, Client: in.Client, Tool: in.Tool, Args: in.Args})
+			s.auditAs(ctx, id.AgentName, broker.ActionFor(out.Status), brokerCallDetail(in, out)+" via:mcp")
 			// Elicitation (Phase 27): if the call parked for approval and the client
 			// declared elicitation support, ask the running user to confirm over the
 			// SSE stream. A decline WITHDRAWS the requester's own pending call (no
@@ -168,11 +214,12 @@ func (s *Server) mcpDispatcher(id *agentid.Identity, sess *mcpSession) mcp.Dispa
 			if err := json.Unmarshal(params, &p); err != nil || p.Token == "" {
 				return nil, mcp.Errorf(mcp.CodeInvalidParams, "broker/resume requires a token")
 			}
-			out, ok := s.broker.Resume(ctx, p.Token, "") // MCP resume has no path id to check against
+			out, ok := s.broker.Resume(ctx, id, p.Token, "") // MCP resume has no path id to check against
 			if !ok {
 				return nil, mcp.Errorf(mcp.CodeInvalidParams, "invalid, expired, or already-used resume token")
 			}
-			s.auditAs(ctx, id.AgentName, "broker.tool_call.resumed", fmt.Sprintf("call:%s status:%s via:mcp", out.CallID, out.Status))
+			s.auditAs(ctx, id.AgentName, broker.ActionToolCallResumed,
+				fmt.Sprintf("tool:%s call:%s status:%s%s via:mcp", auditField(out.Tool, 64), out.CallID, out.Status, runField("session", out.SessionID)))
 			return toolResult(out), nil
 		},
 	}
