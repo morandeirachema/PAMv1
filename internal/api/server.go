@@ -1157,6 +1157,15 @@ func (s *Server) routes() {
 		s.mux.Handle("POST /v1/agents", s.authz(auth.CapManageUsers, s.createAgentKey))
 		s.mux.Handle("GET /v1/agents", s.authz(auth.CapManageUsers, s.listAgentKeys))
 		s.mux.Handle("DELETE /v1/agents/{id}", s.authz(auth.CapManageUsers, s.deleteAgentKey))
+		// Containment (Phase 159): suspend/resume one key, and the subject-keyed
+		// quarantine that also covers an SVID agent with no key row. The literal
+		// "quarantine" segment is registered before "{id}" only for readability —
+		// ServeMux prefers the more specific pattern regardless of order.
+		s.mux.Handle("POST /v1/agents/quarantine", s.authz(auth.CapManageUsers, s.quarantineAgent))
+		s.mux.Handle("GET /v1/agents/quarantine", s.authz(auth.CapManageUsers, s.listAgentQuarantine))
+		s.mux.Handle("DELETE /v1/agents/quarantine/{id}", s.authz(auth.CapManageUsers, s.releaseAgentQuarantine))
+		s.mux.Handle("POST /v1/agents/{id}/disable", s.authz(auth.CapManageUsers, s.disableAgentKey))
+		s.mux.Handle("POST /v1/agents/{id}/enable", s.authz(auth.CapManageUsers, s.enableAgentKey))
 		s.mux.Handle("GET /v1/audit", s.authz(auth.CapReadAudit, s.listBrokerAudit))
 		s.mux.Handle("GET /v1/audit/verify", s.authz(auth.CapReadAudit, s.verifyBrokerAudit))
 		s.mux.Handle("GET /v1/audit/head", s.authz(auth.CapReadAudit, s.brokerAuditHead))

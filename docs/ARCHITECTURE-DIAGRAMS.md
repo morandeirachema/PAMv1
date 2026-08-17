@@ -245,6 +245,15 @@ erDiagram
     string Owner
     bool Disabled
     time_Time CreatedAt
+    ptr_time_Time ExpiresAt
+    ptr_time_Time LastUsedAt
+  }
+  AgentQuarantine {
+    int64 ID
+    string Subject
+    string Reason
+    string CreatedBy
+    time_Time CreatedAt
   }
   AppKey {
     int64 ID
@@ -524,7 +533,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 180 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 185 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -685,7 +694,12 @@ The 180 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/static/guacamole-common.min.js` | public |
 | GET | `/v1/agents` | CapManageUsers |
 | POST | `/v1/agents` | CapManageUsers |
+| GET | `/v1/agents/quarantine` | CapManageUsers |
+| POST | `/v1/agents/quarantine` | CapManageUsers |
+| DELETE | `/v1/agents/quarantine/{id}` | CapManageUsers |
 | DELETE | `/v1/agents/{id}` | CapManageUsers |
+| POST | `/v1/agents/{id}/disable` | CapManageUsers |
+| POST | `/v1/agents/{id}/enable` | CapManageUsers |
 | GET | `/v1/app-secrets/{id}` | public |
 | GET | `/v1/approvals` | CapApprove |
 | POST | `/v1/approvals/{id}/decision` | CapApprove |
