@@ -56,8 +56,10 @@ type StaticVerifier struct{ st keyLister }
 // NewStaticVerifier returns a verifier backed by st.
 func NewStaticVerifier(st keyLister) *StaticVerifier { return &StaticVerifier{st: st} }
 
-// Verify resolves a bearer key to an Identity, or ErrUnauthenticated. A disabled
-// or unknown key is indistinguishable (fail-closed, no oracle).
+// Verify resolves a bearer key to an Identity, or ErrUnauthenticated. A
+// disabled, expired or unknown key is indistinguishable (fail-closed, no
+// oracle): every failure returns the same error, so a caller cannot probe which
+// of the three a bearer hit and learn that a name exists at all.
 func (v *StaticVerifier) Verify(ctx context.Context, bearer string) (*Identity, error) {
 	bearer = strings.TrimSpace(bearer)
 	if bearer == "" {
@@ -67,5 +69,24 @@ func (v *StaticVerifier) Verify(ctx context.Context, bearer string) (*Identity, 
 	if err != nil {
 		return nil, ErrUnauthenticated
 	}
-	return &Identity{AgentName: k.Name, OnBehalfOf: k.Owner, KeyID: k.ID}, nil
+	// Active() is the single definition of "this key may still authenticate"
+	// (not suspended AND not past its expiry). The store filters disabled rows
+	// out of this lookup already, but the expiry half has no such filter — and
+	// deliberately so: it is checked here so an expired key fails on the same
+	// code path a suspended one does, and so the rule lives in one place rather
+	// than being half a SQL predicate and half a Go condition.
+	if !k.Active(time.Now()) {
+		return nil, ErrUnauthenticated
+	}
+	id := &Identity{AgentName: k.Name, OnBehalfOf: k.Owner, KeyID: k.ID}
+	// Carry the key's expiry into the Identity so the broker's post-park
+	// revalidation (api.revalidateAgent) covers static keys too. That check was
+	// written for SVIDs, whose expiry is in the token; a static key's lives in
+	// the row, and without copying it here a call parked before the key expired
+	// would still execute after it — the exact window revalidation exists to
+	// close. Left zero when the key never expires.
+	if k.ExpiresAt != nil {
+		id.ExpiresAt = *k.ExpiresAt
+	}
+	return id, nil
 }

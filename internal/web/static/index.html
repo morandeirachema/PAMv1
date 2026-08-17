@@ -171,6 +171,7 @@
   let vendors = [], vendorGrants = [], grantsVendor = 0, newVendor = null, editVendor = null;
   let sshCerts = [], caInfo = null, loginSessions = [], agents = [], newAgent = null;
   let endpointAgents = [], newEndpointAgent = null; // Phase 153: outbound-only endpoint agents
+  let quarantine = []; // Phase 159: quarantined agent identities (agent-key name, or a full SPIFFE ID)
   let kubeTarget = null, kubeResult = null, kubeErr = ""; // Phase 155: brokered kubectl operations
   let deps = [], depsCred = null, blastResult = null, auditHead = null, nis2Report = null;
   let nis2Since = "", nis2Until = "";
@@ -575,6 +576,18 @@
     try { agents = await api("GET", "/v1/agents"); }
     catch (e) { if (e.status === 404) say("AI-AGENT BROKER IS DISABLED (set PAM_BROKER_POLICY_FILE)."); }
     go("agents");
+  }
+  // Phase 159: the quarantine list, reached with F7 from the agent-key screen.
+  // It is keyed by the agent's CANONICAL SUBJECT — the agent-key name for a
+  // static key, the full SPIFFE ID for an agent that authenticates with an SVID.
+  // An SVID agent has no key row here to revoke or suspend (its identity is
+  // minted by the workload API, not by pamv1), so quarantining its subject is
+  // the ONLY stop button it has.
+  async function openQuarantine() {
+    quarantine = [];
+    try { quarantine = await api("GET", "/v1/agents/quarantine"); }
+    catch (e) { if (e.status === 404) say("AI-AGENT BROKER IS DISABLED (set PAM_BROKER_POLICY_FILE)."); }
+    go("quarantine");
   }
   // Phase 155: one brokered Kubernetes operation against a kubernetes target.
   // The form is the whole vocabulary — there is no free-text kubectl here,
@@ -1836,26 +1849,47 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         };
       },
 
+      // Menu 26 — agent keys. Phase 159 gives a key a LIFECYCLE rather than just
+      // an on/off existence: it may carry an expiry, it records its last use,
+      // and it can be suspended (a pause the owner can undo) as well as revoked
+      // (permanent, the token is gone). A key past its expires_at is already
+      // dead server-side, so it is shown as `expired` — the row explains itself
+      // instead of looking active.
       agents() {
         back = "main";
+        const nowMs = Date.now();
+        const expired = (a) => !!a.expires_at && Date.parse(a.expires_at) <= nowMs;
+        // Three fixed-width markers, so the status column cannot widen with data.
+        const status = (a) => a.disabled ? '<span class="red">suspended</span>'
+          : expired(a) ? '<span class="red">expired  </span>'
+          : '<span class="green">active   </span>';
+        // Three timestamps on one 5250 row would run past the 980px terminal, so
+        // Created is shown day-precision (its clock time carries nothing here)
+        // and the two lifecycle columns minute-precision. Both are fmtTime's
+        // output, sliced — never a second date format.
+        const day = (t) => pad(fmtTime(t).slice(0, 10), 10);
+        const mins = (t) => pad(fmtTime(t).slice(0, 16), 16);
         term.innerHTML = `${head("PAMWRKAGT", "Work with AI-Agent Keys")}
 Non-human identities for the access broker: an agent may only request brokered tool
 calls — never a credential. Every call is attributed to its accountable owner.
-Type options, press Enter.  <span class="cyan">4=Revoke (the bearer token stops resolving)</span>
+Type options, press Enter.  <span class="cyan">4=Revoke (permanent)   5=Suspend   6=Resume</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Name</th><th>Owner (accountable)</th><th>Status</th><th>Created</th></tr>
-${agents.map((a) => `<tr><td>${opt(a.id)}</td><td>${esc(a.id)}</td><td class="white">${pad(a.name, 16)}</td><td>${pad(a.owner || "-", 18)}</td><td>${a.disabled ? '<span class="red">disabled</span>' : "active"}</td><td class="cyan">${fmtTime(a.created_at)}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Name</th><th>Owner</th><th>Status</th><th>Created</th><th>Expires</th><th>Last used</th></tr>
+${agents.map((a) => `<tr><td>${opt(a.id)}</td><td>${esc(a.id)}</td><td class="white">${cell(a.name, 14)}</td><td>${cell(a.owner || "-", 14)}</td><td>${status(a)}</td><td class="cyan">${day(a.created_at)}</td><td class="${a.expires_at ? (expired(a) ? "red" : "amber") : "cyan"}">${mins(a.expires_at || "never")}</td><td class="cyan">${mins(a.last_used_at || "never used")}</td></tr>`).join("")}
 </table>${agents.length ? "" : `<div class="cyan indent">(No agent keys. Press F6 to mint one — requires the broker to be enabled.)</div>`}
 <input type="submit" hidden></form>
-<div class="cyan">Parked calls awaiting a human are on menu 20. The broker audit chain is verified at /v1/audit/verify.</div>
-${fkeys("F3=Exit   F5=Refresh   F6=Mint agent key   F12=Cancel")}`;
+<div class="cyan">Suspend is reversible (5/6); revoke is not. An agent that presents a SPIFFE SVID has no key row
+here at all — stop that one with F7=Quarantine list. Parked calls awaiting a human are on menu 20.</div>
+${fkeys("F3=Exit   F5=Refresh   F6=Mint agent key   F7=Quarantine list   F12=Cancel")}`;
         document.getElementById("f-list").onsubmit = async (ev) => {
           ev.preventDefault();
           try {
             for (const a of agents) {
               const o = optVal(ev.target, a.id);
               if (o === "4") { await api("DELETE", `/v1/agents/${a.id}`); say(`AGENT ${String(a.name).toUpperCase()} REVOKED.`); }
+              else if (o === "5") { await api("POST", `/v1/agents/${a.id}/disable`, {}); say(`AGENT ${String(a.name).toUpperCase()} SUSPENDED — ITS TOKEN STOPS RESOLVING UNTIL RESUMED.`); }
+              else if (o === "6") { await api("POST", `/v1/agents/${a.id}/enable`, {}); say(`AGENT ${String(a.name).toUpperCase()} RESUMED.`); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
             await openAgents();
@@ -2045,16 +2079,27 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         term.innerHTML = `${head("PAMADDAGT", "Mint Agent Key")}
 A bearer key for an AI agent (token shown once). Owner is the accountable human or
 service recorded in every audit entry the agent produces.
+<span class="cyan">Expiry is optional but recommended: an agent key that never expires outlives the task it was
+minted for. Leave it blank for a key that never expires.</span>
 
 <form id="f-add" class="indent">
 <label>Agent name  . . . . :  <input name="name" size="20" required autofocus></label>
 <label>Owner . . . . . . . :  <input name="owner" size="20" required></label>
+<label>Expires in (days) . :  <input name="expires_in_days" size="6" inputmode="numeric" placeholder="never"></label>
 <input type="submit" hidden>
 </form>
 ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-add").onsubmit = async (ev) => {
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
+          // Blank means "never expires", and the API reads that as the field
+          // being absent — a "" would not survive its number decoding — so the
+          // key is only sent, as a number, when the operator typed one.
+          const days = String(f.expires_in_days || "").trim();
+          if (days) f.expires_in_days = Number(days); else delete f.expires_in_days;
+          if (days && !(Number.isFinite(f.expires_in_days) && f.expires_in_days > 0)) {
+            say("CPF0002: EXPIRES IN (DAYS) MUST BE A POSITIVE NUMBER, OR BLANK FOR NEVER.", true); return render();
+          }
           try { newAgent = await api("POST", "/v1/agents", f); go("agentcreated"); }
           catch (e) { say("CPF9898: " + (e.status === 404 ? "AI-AGENT BROKER IS DISABLED (set PAM_BROKER_POLICY_FILE)." : e.message), true); render(); }
         };
@@ -2074,6 +2119,69 @@ Access token  . . . :  <span class="white">${esc(a.token)}</span>
 </div>
 <div class="cyan indent">The agent presents it on /v1/tool-calls or /mcp; only its hash is stored.</div>
 ${fkeys("F3=Exit   F12=Cancel")}`;
+      },
+
+      // Phase 159 — the quarantine list. Entries are keyed by the agent's
+      // CANONICAL SUBJECT: the agent-key NAME for a static key, and the FULL
+      // SPIFFE ID (spiffe://trust-domain/path) for an agent that authenticates
+      // with an SVID. That distinction is the whole point of this screen: an
+      // SVID agent has no key row on PAMWRKAGT — its identity is minted by the
+      // workload API, not by pamv1 — so there is nothing to revoke or suspend,
+      // and quarantining its subject is the ONLY stop button it has. A
+      // quarantined subject is refused at the door, before any tool call is
+      // matched against policy.
+      quarantine() {
+        back = "agents";
+        term.innerHTML = `${head("PAMAGTQAR", "Quarantine Agent Identities")}
+A quarantined subject is refused at the broker door — before policy, before any tool call.
+Subject is the agent-key NAME for a static key, or the FULL SPIFFE ID for an SVID agent
+(an SVID agent has no key to revoke, so this is the only way to stop one).
+Type options, press Enter.  <span class="cyan">4=Release (the subject may call again)</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>ID</th><th>Subject</th><th>Reason</th><th>By</th><th>When</th></tr>
+${quarantine.map((q) => `<tr><td>${opt(q.id)}</td><td>${esc(q.id)}</td><td class="white">${cell(q.subject, 32)}</td><td class="amber">${cell(q.reason || "-", 20)}</td><td>${cell(q.created_by || "-", 10)}</td><td class="cyan">${fmtTime(q.created_at)}</td></tr>`).join("")}
+</table>${quarantine.length ? "" : `<div class="cyan indent">(Nothing quarantined. Press F6 to stop an identity — it takes effect on its next call.)</div>`}
+<input type="submit" hidden></form>
+<div class="cyan">Quarantine is a containment switch, not a lifecycle change: a static key stays minted (suspend it
+on PAMWRKAGT to pause the key), and an SVID keeps being issued — it just stops being served here.</div>
+${fkeys("F3=Exit   F5=Refresh   F6=Quarantine an identity   F12=Cancel")}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const q of quarantine) {
+              const o = optVal(ev.target, q.id);
+              if (o === "4") { await api("DELETE", `/v1/agents/quarantine/${q.id}`); say(`SUBJECT ${String(q.subject).toUpperCase()} RELEASED FROM QUARANTINE.`); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openQuarantine();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      quarantineadd() {
+        back = "quarantine";
+        term.innerHTML = `${head("PAMADDQAR", "Quarantine an Identity")}
+Stops one agent identity at the broker door. The subject must be written exactly as the
+broker sees it: the <span class="white">agent-key name</span> for a static key, or the
+<span class="white">full SPIFFE ID</span> for an SVID agent, e.g. spiffe://example.org/ns/prod/sa/planner.
+The reason is carried into the audit trail, so write it for whoever reads it next.
+
+<form id="f-add" class="indent">
+<label>Subject . . . . . . :  <input name="subject" size="52" required autofocus></label>
+<label>Reason  . . . . . . :  <input name="reason" size="52" required></label>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-add").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          try {
+            await api("POST", "/v1/agents/quarantine", { subject: String(f.subject || "").trim(), reason: String(f.reason || "").trim() });
+            say(`SUBJECT ${String(f.subject).trim().toUpperCase()} QUARANTINED.`);
+            await openQuarantine();
+          } catch (e) { say("CPF9898: " + (e.status === 404 ? "AI-AGENT BROKER IS DISABLED (set PAM_BROKER_POLICY_FILE)." : e.message), true); render(); }
+        };
       },
 
       deps() {
@@ -3237,7 +3345,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   }
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
-  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, endpointagents: openEndpointAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid) };
+  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, endpointagents: openEndpointAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid) };
   // cycleTheme rotates green → amber → slate → green, persists the choice, and
   // re-renders so the F-key hint's confirmation message shows immediately.
   function cycleTheme() {
@@ -3250,7 +3358,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
     render();
   }
 
-  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, mfawebauthn: () => go("mfawebauthnadd") };
+  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), quarantine: () => go("quarantineadd"), endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, mfawebauthn: () => go("mfawebauthnadd") };
 
   window.addEventListener("keydown", async (ev) => {
     // While the RDP viewer is open it owns the keyboard (its own capture-phase
@@ -3296,7 +3404,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
       else if (k === "F4") { if (screen === "recordings") openRecSearch(); }
       else if (k === "F5") { const r = refreshers[screen]; if (r) await r(); else render(); }
       else if (k === "F6") { if (screen === "effective") await exportIaC("env"); else if (screen === "audit") await verifyChain(); else { const a = adders[screen]; if (a) a(); } }
-      else if (k === "F7") { if (screen === "effective") await exportIaC("helm"); else if (screen === "audit") await fetchAuditHead(); else if (screen === "campaigns" && can("approve")) await openMyQueue(); else if (screen === "sesswatch" && watchSess) await openShareInvites(watchSess.id); }
+      else if (k === "F7") { if (screen === "effective") await exportIaC("helm"); else if (screen === "agents") await openQuarantine(); else if (screen === "audit") await fetchAuditHead(); else if (screen === "campaigns" && can("approve")) await openMyQueue(); else if (screen === "sesswatch" && watchSess) await openShareInvites(watchSess.id); }
       else if (k === "F8") { if (screen === "effective") await exportIaC("terraform"); else if (screen === "audit") await openNIS2Report(); else if (screen === "sesswatch" && watchSess && can("approve")) await toggleSuspend(); }
       else if (k === "F9") { if (screen === "audit") await exportAudit(); else if (screen === "users") await reconcileIdentities(); else if (screen === "sshcerts") await download("/api/ca/ssh/krl", "pamv1-revoked-certs.krl", "KRL"); else if (screen === "nis2report") await download("/api/compliance/nis2" + (nis2Query() ? "?" + nis2Query() : ""), "pamv1-nis2-report.json", "NIS2 REPORT"); }
       else if (k === "F10") { if (screen === "audit") await download("/api/audit/ocsf", "pamv1-audit-ocsf.json", "OCSF"); }

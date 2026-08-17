@@ -253,6 +253,61 @@ const screens = [
     }),
   },
   {
+    // Phase 159 gave the agent key a lifecycle, and with it three more columns
+    // (status, expires, last used). name and owner are the free-text ones, both
+    // through cell(); status is one of three fixed-width markers; the three
+    // timestamps are fmtTime's output padded to a fixed width, and the
+    // "never" / "never used" placeholders go through the same pad, so an unset
+    // expiry cannot change the row's width either.
+    name: "agents",
+    src: /\n {6}agents\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      agents: [
+        { id: 1, name: long ? LONGNAME : "planner", owner: long ? LONGNAME : "alice",
+          disabled: false, created_at: "2026-08-01T12:00:00Z",
+          expires_at: "2099-01-01T00:00:00Z", last_used_at: "2026-08-16T09:30:00Z" },
+        { id: 2, name: long ? LONGNAME : "suspended-bot", owner: long ? LONGNAME : "bob",
+          disabled: true, created_at: "2026-08-02T12:00:00Z" },
+        { id: 3, name: long ? LONGNAME : "old-bot", owner: long ? LONGNAME : "carol",
+          disabled: false, created_at: "2026-01-02T12:00:00Z",
+          expires_at: "2026-02-01T00:00:00Z", last_used_at: "2026-01-31T23:59:00Z" },
+      ],
+    }),
+  },
+  {
+    // The quarantine list (Phase 159). Its subject column is the pathological
+    // case by nature: for an SVID agent the subject IS a full SPIFFE ID, which
+    // is exactly the value that once pushed a column off the terminal.
+    name: "quarantine",
+    src: /\n {6}quarantine\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      quarantine: [
+        { id: 1, subject: long ? LONG : "planner", reason: long ? LONGNAME : "leaked token",
+          created_by: long ? LONGNAME : "alice", created_at: "2026-08-16T12:00:00Z" },
+        { id: 2, subject: long ? LONG + "/and/more" : "spiffe://e.org/ns/prod/sa/x",
+          reason: long ? LONG : "-", created_by: long ? LONGNAME : "bob",
+          created_at: "2026-08-16T13:00:00Z" },
+      ],
+    }),
+  },
+  {
+    // Both agent forms are forms, not subfiles: there is no row to measure and
+    // no screen state to feed them (their inputs are typed by the operator, not
+    // rendered from data), so short and long are the same render — what these
+    // fixtures prove is that the screens evaluate at all, which is the failure
+    // that otherwise reaches a live console.
+    name: "agentadd",
+    noRows: true,
+    src: /\n {6}agentadd\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: () => ({}),
+  },
+  {
+    name: "quarantineadd",
+    noRows: true,
+    src: /\n {6}quarantineadd\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: () => ({}),
+  },
+  {
     name: "endpointagents",
     src: /\n {6}endpointagents\(\) \{\n[\s\S]*?\n {6}\},\n/,
     state: (long) => ({
