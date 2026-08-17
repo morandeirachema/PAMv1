@@ -2143,6 +2143,72 @@ things worth knowing before you turn it on:
 `GET /v1/token/jwks` (needs `read_audit`) publishes the signing key, so an
 auditor holding a delegated token from the trail can confirm which key signed it.
 
+### Agent identity lifecycle and the stop button (Phase 159)
+
+Everything above governs what an agent may *do*. This governs the identity
+itself — how long it lives, whether anyone still uses it, and how you stop it at
+02:40 when it starts behaving badly.
+
+**Suspend, don't destroy.** `POST /v1/agents/{id}/disable` suspends an agent key:
+it stops authenticating immediately, and every parked call awaiting approval
+fails re-validation at decision time. `POST /v1/agents/{id}/enable` puts it back.
+Before this, the only lever was `DELETE` — which destroys the row an
+investigator wants to keep and silently invalidates whatever was parked. Suspend
+is reversible and loud (`agent.disable` / `agent.enable`); delete is still there
+when you mean it.
+
+**Quarantine covers the identity kind that has no row.** An agent authenticated
+by a SPIFFE **SVID** has no `agent_keys` row at all, so disable cannot reach it —
+its containment used to be "wait for the SVID to expire". `POST
+/v1/agents/quarantine` takes a **subject** and stops it everywhere:
+
+```bash
+# a static-key agent: the subject is its agent name
+curl -s -XPOST -H "X-API-Key: $KEY" $PAM/v1/agents/quarantine \
+  -d '{"subject":"deploy-bot","reason":"anomalous rotate_credential volume, ticket INC-4471"}'
+
+# an SVID agent: the subject is its full SPIFFE ID
+curl -s -XPOST -H "X-API-Key: $KEY" $PAM/v1/agents/quarantine \
+  -d '{"subject":"spiffe://corp.example/ns/prod/sa/planner","reason":"suspected prompt injection"}'
+
+curl -s -H "X-API-Key: $KEY" $PAM/v1/agents/quarantine            # who is quarantined
+curl -s -XDELETE -H "X-API-Key: $KEY" $PAM/v1/agents/quarantine/7 # release
+```
+
+One list covers both identity kinds because an SVID agent's canonical name *is*
+its SPIFFE ID, and a quarantined subject is refused at the broker's front door
+(`agent.quarantine_refused`) **and** at approval time for anything already
+parked. A store failure while checking fails **closed** — a stop button that
+stops working when the database hiccups is not a stop button. All of this needs
+`manage_users`, like every other agent-key route, and appears on console menu
+**26** (options `5=Suspend` / `6=Resume`, `F7` for the quarantine list).
+
+**Expiry and dormancy.** `POST /v1/agents` accepts `expires_in_days` (absent or
+`0` = never expires, which is what every existing key stays). An expired key
+stops authenticating exactly as a suspended one does, and the expiry is carried
+on the identity so a parked call whose key expired in the meantime is refused at
+approval time too. Every successful authentication records **last use**, so the
+agent list answers the question a PAM should always be able to answer about a
+standing credential: *is anyone still using this?* An agent that has not called
+in months is a finding, not a footnote.
+
+**Offboarding cascades.** Deleting a human user now **suspends** every agent key
+they owned, audited per key as `agent.disable … reason:owner-offboarded`. It
+suspends rather than deletes for the same reason as above: the accountable human
+is gone, so the agent must stop — but the record must not.
+
+**Why this is its own phase.** Humans in pamv1 get certification campaigns,
+checkout leases and revocation; agent identities held an immortal standing
+bearer credential that nothing reviewed, nothing expired and nothing could
+pause. Phase 153's endpoint agents — a much newer non-human identity — already
+had last-seen and revocation; the oldest one was the weakest. EU AI Act
+Art. 14(4)(e) calls the missing control a "stop button"; CyberArk, Microsoft
+Entra Agent ID, BeyondTrust and Teleport all ship the lifecycle half.
+
+Audit: `agent.disable` · `agent.enable` · `agent.quarantine` ·
+`agent.quarantine_release` · `agent.quarantine_refused` (plus the existing
+`agent.create` / `agent.revoke`).
+
 ### Application-secrets API (Phase 24, Tier-4)
 
 For a **non-agent application** (a CI job, a legacy service) that just needs to

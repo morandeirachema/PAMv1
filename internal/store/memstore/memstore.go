@@ -32,6 +32,7 @@ type Memstore struct {
 	audit           []store.AuditEvent
 	auditKey        []byte // set ⇒ chain the primary audit trail
 	agentKeys       map[int64]store.AgentKey
+	agentQuarantine map[int64]store.AgentQuarantine
 	sshCerts        map[int64]store.SSHCert
 	vendors         map[int64]store.Vendor
 	vendorGrants    map[int64]store.VendorGrant
@@ -83,6 +84,7 @@ func New() *Memstore {
 		accessReq:       make(map[int64]store.AccessRequest),
 		checkouts:       make(map[int64]store.Checkout),
 		agentKeys:       make(map[int64]store.AgentKey),
+		agentQuarantine: make(map[int64]store.AgentQuarantine),
 		sshCerts:        make(map[int64]store.SSHCert),
 		vendors:         make(map[int64]store.Vendor),
 		vendorGrants:    make(map[int64]store.VendorGrant),
@@ -1585,9 +1587,97 @@ func (m *Memstore) ListAgentKeys(_ context.Context) ([]store.AgentKey, error) {
 	return out, nil
 }
 
+// ListAgentKeysByOwner returns one owner's agent keys ordered by ID (empty, not
+// nil, when the owner has none).
+func (m *Memstore) ListAgentKeysByOwner(_ context.Context, owner string) ([]store.AgentKey, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]store.AgentKey, 0, len(m.agentKeys))
+	for _, k := range m.agentKeys {
+		if k.Owner == owner {
+			out = append(out, k)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
 // DeleteAgentKey removes an agent key by ID; ErrNotFound if absent.
 func (m *Memstore) DeleteAgentKey(_ context.Context, id int64) error {
 	return deleteRow(m, m.agentKeys, id)
+}
+
+// SetAgentKeyDisabled suspends or restores an agent key (idempotent);
+// ErrNotFound if absent.
+func (m *Memstore) SetAgentKeyDisabled(_ context.Context, id int64, disabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k, ok := m.agentKeys[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	k.Disabled = disabled
+	m.agentKeys[id] = k
+	return nil
+}
+
+// TouchAgentKey records when the agent key last authenticated; ErrNotFound if absent.
+func (m *Memstore) TouchAgentKey(_ context.Context, id int64, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k, ok := m.agentKeys[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	t := at.UTC()
+	k.LastUsedAt = &t
+	m.agentKeys[id] = k
+	return nil
+}
+
+// QuarantineAgent stops one agent by subject, assigning ID and CreatedAt;
+// ErrConflict if that subject is already quarantined.
+func (m *Memstore) QuarantineAgent(_ context.Context, q *store.AgentQuarantine) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range m.agentQuarantine {
+		if existing.Subject == q.Subject {
+			return store.ErrConflict
+		}
+	}
+	q.ID = m.id()
+	q.CreatedAt = time.Now().UTC()
+	m.agentQuarantine[q.ID] = *q
+	return nil
+}
+
+// IsAgentQuarantined reports whether the subject is currently quarantined.
+func (m *Memstore) IsAgentQuarantined(_ context.Context, subject string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, q := range m.agentQuarantine {
+		if q.Subject == subject {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// ListAgentQuarantine returns every quarantine entry ordered by ID.
+func (m *Memstore) ListAgentQuarantine(_ context.Context) ([]store.AgentQuarantine, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]store.AgentQuarantine, 0, len(m.agentQuarantine))
+	for _, q := range m.agentQuarantine {
+		out = append(out, q)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// ReleaseAgentQuarantine lifts one quarantine by ID; ErrNotFound if absent.
+func (m *Memstore) ReleaseAgentQuarantine(_ context.Context, id int64) error {
+	return deleteRow(m, m.agentQuarantine, id)
 }
 
 // RecordSSHCert stores an issued operator SSH certificate (Phase 28); ErrConflict

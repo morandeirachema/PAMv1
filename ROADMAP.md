@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–158 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–159 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,82 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 159 — Agent identity lifecycle and the stop button ✅
+
+**Opens a new batch** — the first gap research ever aimed at pamv1's own
+**AI-agent access broker** (Phases 13/27/57), commissioned the moment the
+129–158 batch closed. Four parallel read-only passes, same methodology as the
+vendor rounds (read `docs/AGENT-THREAT-MODEL.md`, the broker's own roadmap
+phases and `EXTERNAL-INFRA-GAPS.md` FIRST so nothing shipped or already-deferred
+comes back as a finding; primary sources only; verify every candidate against
+real code with `file:line` before reporting it): **MCP specification security**,
+**agent-identity and delegation standards**, **what PAM vendors now ship for AI
+agents**, and **agentic-AI threat frameworks**. The sharpest claims were then
+re-verified by hand before anything was built.
+
+This phase closes the **two findings that separate passes reached
+independently** — the strongest signal this project's research method produces.
+
+**Finding 1: you cannot stop an agent.** `store.AgentKey.Disabled` is honoured
+on read in both backends — and **no code path could ever set it**. Create
+hardcodes `false`, there is no update method, and the only lever was `DELETE`,
+which destroys the row an incident responder wants and silently invalidates
+whatever that agent had parked awaiting approval. A dead field that reads like a
+control is worse than an absent one. Worse still, `revalidateAgent` gated its
+store check on `id.KeyID > 0`, and an SVID identity carries `KeyID == 0` — so in
+the **intended production posture** (SPIFFE) there was no local containment at
+all: the answer to "an agent is misbehaving, stop it" was "wait for the SVID to
+expire". Found by the vendor pass (BeyondTrust's suspend-the-agent-identity,
+Aembit's pausable-mid-workflow) and the framework pass (EU AI Act Art. 14(4)(e)
+"stop button", CSA's agentic IAM lifecycle).
+
+**Finding 2: agent identities had no lifecycle** — no expiry, no last-used, no
+offboarding cascade. The least-trusted actor class in the system held an
+**immortal standing bearer credential** that nothing reviewed and nothing could
+age out, while humans get certification campaigns, checkout leases and
+revocation. The internal contrast settled it: Phase 153's `EndpointAgent` — the
+*newest* non-human identity here — already carries `LastSeen` and `RevokedAt`;
+the oldest one was the weakest. Confirmed by three vendors independently
+(CyberArk's create-to-decommission lifecycle, Microsoft Entra Agent ID
+governance with access reviews and a responsible person, Teleport's short-lived
+credentials) and, separately, by OWASP's NHI Top 10 "improper offboarding".
+
+**What shipped.**
+
+- **Suspend/resume, not just destroy**: `POST /v1/agents/{id}/disable` and
+  `/enable` make `Disabled` reachable at last — reversible, audited
+  (`agent.disable`/`agent.enable`), and effective both at the front door and at
+  approval time for already-parked calls. `DELETE` remains for when you mean it.
+  This mirrors what pamv1 already does for vendors (`SetVendorDisabled`) and for
+  SCIM users (soft-delete, Phase 149); agents were the outlier.
+- **Quarantine, keyed on the canonical subject**, which is the design decision
+  that makes one list cover **both** identity kinds: a static key's subject is
+  its agent name, and an SVID agent's `Identity.AgentName` **is** its SPIFFE ID
+  (`internal/agentid/svid.go`), so `agent_quarantine.subject` reaches the
+  identity kind that has no row to disable. Checked in `agentAuth` and again in
+  `revalidateAgent`; a store error **fails closed**, because a stop button that
+  stops working when the database hiccups is not a stop button.
+- **Expiry** (`expires_in_days` at creation, absent/0 = never, so every existing
+  key is unaffected), enforced in `StaticVerifier.Verify` *and* surfaced as
+  `Identity.ExpiresAt` — which means the expiry logic that already existed for
+  SVIDs now covers static keys for free, including the parked-call re-validation.
+- **Last-used**, recorded best-effort on every successful authentication and
+  never allowed to block or fail one, so "is anyone still using this key?" — the
+  question a PAM must always be able to answer about a standing credential — has
+  an answer.
+- **Offboarding cascade**: deleting a human suspends every agent key they owned
+  (`agent.disable … reason:owner-offboarded`). Suspend, not delete: the
+  accountable human is gone, so the agent must stop — but the record must not.
+- New migration `0043`; `BrokerStore` gains seven methods (store surface 196 →
+  **203**); console menu 26 gains status/expiry/last-used columns, `5=Suspend`,
+  `6=Resume` and `F7` for the quarantine list.
+
+**Built with three parallel subagents to a fixed interface contract** — store
+layer, auth+API layer, console — each confined to a disjoint file set, with git,
+the gates, the docs and the release kept in the main session (the boundary this
+project learned to state explicitly after a docs-only subagent once opened its
+own PR).
 
 ## Phase 158 — v0.42.0 ✅
 

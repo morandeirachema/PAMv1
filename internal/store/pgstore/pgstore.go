@@ -1284,9 +1284,9 @@ func (s *PGStore) DeleteUser(ctx context.Context, id int64) error {
 // CreateAgentKey inserts an agent key, populating its ID and CreatedAt.
 func (s *PGStore) CreateAgentKey(ctx context.Context, k *store.AgentKey) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO agent_keys (name, owner, token_hash, disabled)
-		 VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
-		k.Name, k.Owner, k.TokenHash, k.Disabled,
+		`INSERT INTO agent_keys (name, owner, token_hash, disabled, expires_at)
+		 VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
+		k.Name, k.Owner, k.TokenHash, k.Disabled, k.ExpiresAt,
 	).Scan(&k.ID, &k.CreatedAt)
 	if pgCode(err) == pgUniqueViolation {
 		return store.ErrConflict
@@ -1295,23 +1295,39 @@ func (s *PGStore) CreateAgentKey(ctx context.Context, k *store.AgentKey) error {
 }
 
 // GetAgentKeyByTokenHash returns the enabled agent key whose token hash matches,
-// or ErrNotFound (a disabled key is treated as not found).
+// or ErrNotFound (a disabled key is treated as not found). Expiry is NOT
+// filtered here: the caller checks AgentKey.Active so an expired key's attempt
+// can be audited as an expired key rather than as an unknown one.
 func (s *PGStore) GetAgentKeyByTokenHash(ctx context.Context, tokenHashHex string) (*store.AgentKey, error) {
 	return getOne(ctx, s.pool, scanAgentKey,
-		`SELECT id, name, owner, token_hash, disabled, created_at
+		`SELECT id, name, owner, token_hash, disabled, created_at, expires_at, last_used_at
 		 FROM agent_keys WHERE token_hash = $1 AND disabled = FALSE`, tokenHashHex)
 }
 
 // GetAgentKey returns an agent key by ID (regardless of disabled), or ErrNotFound.
 func (s *PGStore) GetAgentKey(ctx context.Context, id int64) (*store.AgentKey, error) {
 	return getOne(ctx, s.pool, scanAgentKey,
-		`SELECT id, name, owner, token_hash, disabled, created_at FROM agent_keys WHERE id = $1`, id)
+		`SELECT id, name, owner, token_hash, disabled, created_at, expires_at, last_used_at
+		 FROM agent_keys WHERE id = $1`, id)
 }
 
 // ListAgentKeys returns all agent keys ordered by ID.
 func (s *PGStore) ListAgentKeys(ctx context.Context) ([]store.AgentKey, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, owner, token_hash, disabled, created_at FROM agent_keys ORDER BY id`)
+		`SELECT id, name, owner, token_hash, disabled, created_at, expires_at, last_used_at
+		 FROM agent_keys ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanAgentKey)
+}
+
+// ListAgentKeysByOwner returns one owner's agent keys ordered by ID (empty, not
+// nil, when the owner has none).
+func (s *PGStore) ListAgentKeysByOwner(ctx context.Context, owner string) ([]store.AgentKey, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, name, owner, token_hash, disabled, created_at, expires_at, last_used_at
+		 FROM agent_keys WHERE owner = $1 ORDER BY id`, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -1321,6 +1337,56 @@ func (s *PGStore) ListAgentKeys(ctx context.Context) ([]store.AgentKey, error) {
 // DeleteAgentKey removes an agent key by ID; ErrNotFound if absent.
 func (s *PGStore) DeleteAgentKey(ctx context.Context, id int64) error {
 	return execExpectingRow(ctx, s.pool, `DELETE FROM agent_keys WHERE id = $1`, id)
+}
+
+// SetAgentKeyDisabled suspends or restores an agent key (idempotent);
+// ErrNotFound if absent.
+func (s *PGStore) SetAgentKeyDisabled(ctx context.Context, id int64, disabled bool) error {
+	return execExpectingRow(ctx, s.pool,
+		`UPDATE agent_keys SET disabled = $2 WHERE id = $1`, id, disabled)
+}
+
+// TouchAgentKey records when the agent key last authenticated; ErrNotFound if absent.
+func (s *PGStore) TouchAgentKey(ctx context.Context, id int64, at time.Time) error {
+	return execExpectingRow(ctx, s.pool,
+		`UPDATE agent_keys SET last_used_at = $2 WHERE id = $1`, id, at)
+}
+
+// QuarantineAgent stops one agent by subject, populating ID and CreatedAt;
+// ErrConflict if that subject is already quarantined.
+func (s *PGStore) QuarantineAgent(ctx context.Context, q *store.AgentQuarantine) error {
+	err := s.pool.QueryRow(ctx,
+		`INSERT INTO agent_quarantine (subject, reason, created_by)
+		 VALUES ($1, $2, $3) RETURNING id, created_at`,
+		q.Subject, q.Reason, q.CreatedBy,
+	).Scan(&q.ID, &q.CreatedAt)
+	if pgCode(err) == pgUniqueViolation {
+		return store.ErrConflict
+	}
+	return err
+}
+
+// IsAgentQuarantined reports whether the subject is currently quarantined.
+func (s *PGStore) IsAgentQuarantined(ctx context.Context, subject string) (bool, error) {
+	var found bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM agent_quarantine WHERE subject = $1)`, subject).Scan(&found)
+	return found, err
+}
+
+// ListAgentQuarantine returns every quarantine entry ordered by ID.
+func (s *PGStore) ListAgentQuarantine(ctx context.Context) ([]store.AgentQuarantine, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, subject, reason, created_by, created_at FROM agent_quarantine ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanAgentQuarantine)
+}
+
+// ReleaseAgentQuarantine lifts one quarantine by ID; ErrNotFound if absent.
+func (s *PGStore) ReleaseAgentQuarantine(ctx context.Context, id int64) error {
+	return execExpectingRow(ctx, s.pool, `DELETE FROM agent_quarantine WHERE id = $1`, id)
 }
 
 // RecordSSHCert stores an issued operator SSH certificate (Phase 28); ErrConflict
@@ -2542,8 +2608,15 @@ func scanSession(row pgx.CollectableRow) (store.Session, error) {
 // scanAgentKey maps one result row into a store.AgentKey.
 func scanAgentKey(row pgx.CollectableRow) (store.AgentKey, error) {
 	var k store.AgentKey
-	err := row.Scan(&k.ID, &k.Name, &k.Owner, &k.TokenHash, &k.Disabled, &k.CreatedAt)
+	err := row.Scan(&k.ID, &k.Name, &k.Owner, &k.TokenHash, &k.Disabled, &k.CreatedAt, &k.ExpiresAt, &k.LastUsedAt)
 	return k, err
+}
+
+// scanAgentQuarantine maps one result row into a store.AgentQuarantine.
+func scanAgentQuarantine(row pgx.CollectableRow) (store.AgentQuarantine, error) {
+	var q store.AgentQuarantine
+	err := row.Scan(&q.ID, &q.Subject, &q.Reason, &q.CreatedBy, &q.CreatedAt)
+	return q, err
 }
 
 // scanSetting maps one result row into a store.Setting.

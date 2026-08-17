@@ -62,15 +62,34 @@ func (s *Server) setupBroker(opts Options) error {
 }
 
 // revalidateAgent reports whether a parked call's agent identity is still valid at
-// approval time: an SVID must not have expired, and a static agent key must not
-// have been revoked or disabled since the call was parked.
+// approval time: it must not be quarantined, its credential must not have
+// expired, and a static agent key must not have been revoked or disabled since
+// the call was parked.
+//
+// The quarantine check is deliberately FIRST and unconditional, because it is the
+// only one of the three that covers every identity kind. The key checks below it
+// are gated on KeyID > 0, and an SVID identity has KeyID == 0 — so for a
+// SPIFFE deployment (the intended production posture) those checks are no-ops and
+// the token's own expiry was the only thing that could ever stop a parked call.
+// Quarantining the subject is what gives an incident responder a same-second stop
+// for an attested agent, at the two moments an agent's identity is consulted:
+// ingress (agentAuth) and approval-time revalidation (here). Without this half, a
+// call parked before the quarantine would still execute after it.
 func (s *Server) revalidateAgent(ctx context.Context, id *agentid.Identity) bool {
+	quarantined, err := s.store.IsAgentQuarantined(ctx, id.AgentName)
+	if err != nil || quarantined {
+		if err != nil {
+			s.log.Error("agent quarantine re-check failed; refusing the parked call (fail closed)",
+				"agent", id.AgentName, "err", err)
+		}
+		return false
+	}
 	if !id.ExpiresAt.IsZero() && time.Now().After(id.ExpiresAt) {
 		return false
 	}
 	if id.KeyID > 0 {
 		k, err := s.store.GetAgentKey(ctx, id.KeyID)
-		if err != nil || k.Disabled {
+		if err != nil || !k.Active(time.Now()) {
 			return false
 		}
 	}
