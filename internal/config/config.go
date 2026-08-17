@@ -391,6 +391,22 @@ type Config struct {
 	// by default.
 	ScimEnabled bool
 
+	// SessionForensics turns on post-session forensic reconstruction (Phase
+	// 157): after an interactive SSH session ends, pamv1 runs ONE fixed,
+	// read-only command over that target's own vaulted credential to pull the
+	// TARGET's kernel audit record (auditd) of what actually executed during
+	// the session window, and stores it beside the recording — the only way a
+	// PROXY can answer "what really ran" for a PTY it deliberately never
+	// parses. Off by default: it runs an extra command on every target after
+	// every session, which a site must consent to, and it needs the credential
+	// to be able to read the target's audit log.
+	SessionForensics bool
+	// SessionForensicsMaxEvents caps the execs one artifact carries (a cap that
+	// bites is reported as truncation, never silently), and
+	// SessionForensicsTimeoutSec bounds the whole post-session collection.
+	SessionForensicsMaxEvents  int
+	SessionForensicsTimeoutSec int
+
 	// K8sCAFile is a PEM CA bundle used to VERIFY a Kubernetes API server's TLS
 	// certificate on the brokered-operation leg (Phase 155). Unset verifies
 	// against the system roots, which is right for a managed cluster with a
@@ -781,36 +797,39 @@ func Load() (*Config, error) {
 		// nil baseline simply removes the signal — it never produces a false
 		// positive — and because the first-run alert storm it might have caused
 		// is already prevented by only scoring actors that HAVE history.
-		AnalyticsBaselineDays:  integer("PAM_ANALYTICS_BASELINE_DAYS", 30),
-		AnalyticsAutoStepUp:    boolean("PAM_ANALYTICS_AUTO_STEPUP", false),
-		AnalyticsBusinessStart: integer("PAM_ANALYTICS_BUSINESS_START", 7),
-		AnalyticsBusinessEnd:   integer("PAM_ANALYTICS_BUSINESS_END", 20),
-		AnalyticsTimezone:      os.Getenv("PAM_ANALYTICS_TIMEZONE"),
-		AppSecretsEnabled:      boolean("PAM_APP_SECRETS_ENABLED", false),
-		ScimEnabled:            boolean("PAM_SCIM_ENABLED", false),
-		EndpointAgentsEnabled:  boolean("PAM_ENDPOINT_AGENTS_ENABLED", false),
-		K8sCAFile:              os.Getenv("PAM_K8S_CA_FILE"),
-		K8sInsecureSkipVerify:  boolean("PAM_K8S_INSECURE_SKIP_VERIFY", false),
-		K8sTimeoutSec:          integer("PAM_K8S_TIMEOUT_SEC", 30),
-		K8sMaxResponseKB:       integer("PAM_K8S_MAX_RESPONSE_KB", 1024),
-		BrokerPolicyFile:       os.Getenv("PAM_BROKER_POLICY_FILE"),
-		BrokerAuditKey:         os.Getenv("PAM_BROKER_AUDIT_KEY"),
-		BrokerAuditSignSeed:    os.Getenv("PAM_BROKER_AUDIT_SIGN_SEED"),
-		BrokerTokenTTL:         time.Duration(integer("PAM_BROKER_TOKEN_TTL_MIN", 15)) * time.Minute,
-		CertRemindDays:         integer("PAM_CERT_REMIND_DAYS", 7),
-		PasswordMinLength:      integer("PAM_PASSWORD_MIN_LENGTH", 24),
-		PasswordMinLower:       integer("PAM_PASSWORD_MIN_LOWER", 1),
-		PasswordMinUpper:       integer("PAM_PASSWORD_MIN_UPPER", 1),
-		PasswordMinDigit:       integer("PAM_PASSWORD_MIN_DIGIT", 1),
-		PasswordMinSymbol:      integer("PAM_PASSWORD_MIN_SYMBOL", 1),
-		PasswordHistoryCount:   integer("PAM_PASSWORD_HISTORY_COUNT", 0),
-		CredentialFileMaxKB:    integer("PAM_CREDENTIAL_FILE_MAX_KB", 1024),
-		ExtensionTokenTTLHours: integer("PAM_EXTENSION_TOKEN_TTL_HOURS", 24),
-		ConjurRefreshMin:       integer("PAM_CONJUR_REFRESH_MIN", 0),
-		BrokerMaxArgBytes:      integer("PAM_BROKER_MAX_ARG_BYTES", 16384),
-		BrokerRatePerMin:       integer("PAM_BROKER_RATE_PER_MIN", 0),
-		BrokerCheckpointEvery:  integer("PAM_BROKER_AUDIT_CHECKPOINT_EVERY", 0),
-		BrokerAuditSignPrev:    getenv("PAM_BROKER_AUDIT_SIGN_PREV", ""),
+		AnalyticsBaselineDays:      integer("PAM_ANALYTICS_BASELINE_DAYS", 30),
+		AnalyticsAutoStepUp:        boolean("PAM_ANALYTICS_AUTO_STEPUP", false),
+		AnalyticsBusinessStart:     integer("PAM_ANALYTICS_BUSINESS_START", 7),
+		AnalyticsBusinessEnd:       integer("PAM_ANALYTICS_BUSINESS_END", 20),
+		AnalyticsTimezone:          os.Getenv("PAM_ANALYTICS_TIMEZONE"),
+		AppSecretsEnabled:          boolean("PAM_APP_SECRETS_ENABLED", false),
+		ScimEnabled:                boolean("PAM_SCIM_ENABLED", false),
+		EndpointAgentsEnabled:      boolean("PAM_ENDPOINT_AGENTS_ENABLED", false),
+		SessionForensics:           boolean("PAM_SESSION_FORENSICS", false),
+		SessionForensicsMaxEvents:  integer("PAM_SESSION_FORENSICS_MAX_EVENTS", 500),
+		SessionForensicsTimeoutSec: integer("PAM_SESSION_FORENSICS_TIMEOUT_SEC", 30),
+		K8sCAFile:                  os.Getenv("PAM_K8S_CA_FILE"),
+		K8sInsecureSkipVerify:      boolean("PAM_K8S_INSECURE_SKIP_VERIFY", false),
+		K8sTimeoutSec:              integer("PAM_K8S_TIMEOUT_SEC", 30),
+		K8sMaxResponseKB:           integer("PAM_K8S_MAX_RESPONSE_KB", 1024),
+		BrokerPolicyFile:           os.Getenv("PAM_BROKER_POLICY_FILE"),
+		BrokerAuditKey:             os.Getenv("PAM_BROKER_AUDIT_KEY"),
+		BrokerAuditSignSeed:        os.Getenv("PAM_BROKER_AUDIT_SIGN_SEED"),
+		BrokerTokenTTL:             time.Duration(integer("PAM_BROKER_TOKEN_TTL_MIN", 15)) * time.Minute,
+		CertRemindDays:             integer("PAM_CERT_REMIND_DAYS", 7),
+		PasswordMinLength:          integer("PAM_PASSWORD_MIN_LENGTH", 24),
+		PasswordMinLower:           integer("PAM_PASSWORD_MIN_LOWER", 1),
+		PasswordMinUpper:           integer("PAM_PASSWORD_MIN_UPPER", 1),
+		PasswordMinDigit:           integer("PAM_PASSWORD_MIN_DIGIT", 1),
+		PasswordMinSymbol:          integer("PAM_PASSWORD_MIN_SYMBOL", 1),
+		PasswordHistoryCount:       integer("PAM_PASSWORD_HISTORY_COUNT", 0),
+		CredentialFileMaxKB:        integer("PAM_CREDENTIAL_FILE_MAX_KB", 1024),
+		ExtensionTokenTTLHours:     integer("PAM_EXTENSION_TOKEN_TTL_HOURS", 24),
+		ConjurRefreshMin:           integer("PAM_CONJUR_REFRESH_MIN", 0),
+		BrokerMaxArgBytes:          integer("PAM_BROKER_MAX_ARG_BYTES", 16384),
+		BrokerRatePerMin:           integer("PAM_BROKER_RATE_PER_MIN", 0),
+		BrokerCheckpointEvery:      integer("PAM_BROKER_AUDIT_CHECKPOINT_EVERY", 0),
+		BrokerAuditSignPrev:        getenv("PAM_BROKER_AUDIT_SIGN_PREV", ""),
 
 		BrokerTrustDomainJWKS: os.Getenv("PAM_BROKER_TRUST_DOMAIN_JWKS"),
 		BrokerTrustDomain:     os.Getenv("PAM_BROKER_TRUST_DOMAIN"),

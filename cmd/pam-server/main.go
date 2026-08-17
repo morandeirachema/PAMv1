@@ -1311,24 +1311,27 @@ func run() error {
 			MinLength: cfg.PasswordMinLength, MinLower: cfg.PasswordMinLower,
 			MinUpper: cfg.PasswordMinUpper, MinDigit: cfg.PasswordMinDigit, MinSymbol: cfg.PasswordMinSymbol,
 		},
-		PasswordHistoryCount: cfg.PasswordHistoryCount,
-		CredentialFileMaxKB:  cfg.CredentialFileMaxKB,
-		ExtensionTokenTTL:    time.Duration(cfg.ExtensionTokenTTLHours) * time.Hour,
-		BrokerMaxDelegation:  cfg.BrokerMaxDelegation,
-		CA:                   sshCA,
-		SSHOperatorCertTTL:   cfg.SSHOperatorCertTTL,
-		VendorAttestor:       vendor.NewAttestor(cfg.VendorAttestURL),
-		PostureAttestor:      postureAttestor,
-		DeviceHeader:         cfg.DeviceHeader,
-		Analytics:            analyticsEngine,
-		AnalyticsWindow:      cfg.AnalyticsWindow,
-		AnalyticsAutoKill:    cfg.AnalyticsAutoKill,
-		AnalyticsBaseline:    time.Duration(cfg.AnalyticsBaselineDays) * 24 * time.Hour,
-		AnalyticsAutoStepUp:  cfg.AnalyticsAutoStepUp,
-		AppSecretsEnabled:    cfg.AppSecretsEnabled,
-		ScimEnabled:          cfg.ScimEnabled,
-		EndpointAgents:       endpointAgents,
-		K8s:                  k8sCfg,
+		PasswordHistoryCount:      cfg.PasswordHistoryCount,
+		CredentialFileMaxKB:       cfg.CredentialFileMaxKB,
+		ExtensionTokenTTL:         time.Duration(cfg.ExtensionTokenTTLHours) * time.Hour,
+		BrokerMaxDelegation:       cfg.BrokerMaxDelegation,
+		CA:                        sshCA,
+		SSHOperatorCertTTL:        cfg.SSHOperatorCertTTL,
+		VendorAttestor:            vendor.NewAttestor(cfg.VendorAttestURL),
+		PostureAttestor:           postureAttestor,
+		DeviceHeader:              cfg.DeviceHeader,
+		Analytics:                 analyticsEngine,
+		AnalyticsWindow:           cfg.AnalyticsWindow,
+		AnalyticsAutoKill:         cfg.AnalyticsAutoKill,
+		AnalyticsBaseline:         time.Duration(cfg.AnalyticsBaselineDays) * 24 * time.Hour,
+		AnalyticsAutoStepUp:       cfg.AnalyticsAutoStepUp,
+		AppSecretsEnabled:         cfg.AppSecretsEnabled,
+		ScimEnabled:               cfg.ScimEnabled,
+		EndpointAgents:            endpointAgents,
+		K8s:                       k8sCfg,
+		SessionForensics:          cfg.SessionForensics,
+		SessionForensicsMaxEvents: cfg.SessionForensicsMaxEvents,
+		SessionForensicsTimeout:   time.Duration(cfg.SessionForensicsTimeoutSec) * time.Second,
 	})
 	if err != nil {
 		return err
@@ -1438,6 +1441,20 @@ func run() error {
 			onSessionEnd = func(credID int64) { handler.RotateCredentialByID(context.Background(), credID) }
 			log.Info("post-session credential rotation enabled")
 		}
+		// Post-session forensic reconstruction (Phase 157). Wired only when
+		// enabled, so a deployment that has not opted in has no hook at all
+		// rather than a hook that returns early.
+		var onForensics func(proxy.SessionForensics)
+		if cfg.SessionForensics {
+			onForensics = func(f proxy.SessionForensics) {
+				handler.CollectSessionForensics(context.Background(), api.SessionForensicsRequest{
+					TargetID: f.TargetID, CredentialID: f.CredentialID, Actor: f.Actor,
+					SessionID: f.SessionID, Started: f.Started, Ended: f.Ended,
+				})
+			}
+			log.Info("post-session forensic reconstruction enabled (PAM_SESSION_FORENSICS)",
+				"max_events", cfg.SessionForensicsMaxEvents, "timeout_sec", cfg.SessionForensicsTimeoutSec)
+		}
 		var proxyWinRM winrm.Runner
 		if cfg.ProxyWinRM {
 			proxyWinRM = winrmClient
@@ -1458,6 +1475,7 @@ func run() error {
 			RequireApproval:      cfg.RequireApproval,
 			UpstreamHostKey:      upstreamHostKey,
 			OnSessionEnd:         onSessionEnd,
+			OnSessionForensics:   onForensics,
 			OnBreakGlass:         handler.NoteBreakGlassSignal,
 			AllowedProtocols:     splitAndTrim(cfg.AllowedProtocols),
 			WinRMRunner:          proxyWinRM,

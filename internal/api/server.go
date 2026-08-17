@@ -372,6 +372,18 @@ type Options struct {
 	// ScimEnabled turns on the SCIM 2.0 provisioning API (Phase 149): the SCIM
 	// key admin routes and the /scim/v2/Users surface.
 	ScimEnabled bool
+	// SessionForensics (Phase 157) turns on post-session forensic
+	// reconstruction: after an interactive SSH session ends, pamv1 runs one
+	// fixed, read-only command over that target's own vaulted credential to
+	// pull the TARGET's kernel audit record of what actually executed during
+	// the session window, and stores it beside the recording. Off by default —
+	// it runs an extra command on the target after every session, which a site
+	// must consent to. SessionForensicsMaxEvents caps the events an artifact
+	// carries (0 = the package default), SessionForensicsTimeout bounds the
+	// whole collection.
+	SessionForensics          bool
+	SessionForensicsMaxEvents int
+	SessionForensicsTimeout   time.Duration
 	// K8s (Phase 155) is the TEMPLATE for every brokered Kubernetes call: TLS
 	// trust (PAM_K8S_CA_FILE / PAM_K8S_INSECURE_SKIP_VERIFY) and the request
 	// bounds. Server and Token are filled per operation — the API server URL
@@ -466,6 +478,9 @@ type Server struct {
 	scimEnabled         bool
 	endpointAgents      *session.EndpointAgents
 	k8sConfig           k8s.Config
+	forensics           bool
+	forensicsMaxEvents  int
+	forensicsTimeout    time.Duration
 	metrics             *metrics.Metrics
 	log                 *slog.Logger
 	mux                 *http.ServeMux
@@ -697,6 +712,9 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		scimEnabled:          opts.ScimEnabled,
 		endpointAgents:       opts.EndpointAgents,
 		k8sConfig:            opts.K8s,
+		forensics:            opts.SessionForensics,
+		forensicsMaxEvents:   opts.SessionForensicsMaxEvents,
+		forensicsTimeout:     opts.SessionForensicsTimeout,
 		metrics:              metrics.New(),
 		log:                  logging.Component("api"),
 		mux:                  http.NewServeMux(),

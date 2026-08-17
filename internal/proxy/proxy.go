@@ -168,12 +168,33 @@ type Config struct {
 	// Detection only, not prevention — see sftpcapture.go's finalizeLocked
 	// for why a whole-file scan cannot block a transfer before it lands.
 	ICAPClient *icap.Client
+	// OnSessionForensics, if set, is called after an interactive SSH session
+	// ends (Phase 157) with the facts needed to reconstruct what actually
+	// executed on the target: pamv1 cannot see inside a PTY, and the target's
+	// own kernel audit records are the only place that answer exists for a
+	// proxy. It runs as a tracked background task, like the post-session
+	// rotation callback, and must not block.
+	OnSessionForensics func(SessionForensics)
 	// EndpointAgents (optional, Phase 153) is the SHARED registry of connected
 	// outbound-only endpoint agents — the same instance handed to api.Options,
 	// since the API reports live status from it. nil disables the feature:
 	// the "endpoint-agent:<name>" login is refused and a target bound to an
 	// agent row is unreachable (never silently dialed direct).
 	EndpointAgents *session.EndpointAgents
+}
+
+// SessionForensics describes one finished interactive session to the
+// post-session reconstruction hook: which target and credential it used, who
+// the operator was, and the window whose execs belong to it. The window is what
+// scopes the reconstruction — a target's audit log holds every session's execs,
+// including other operators'.
+type SessionForensics struct {
+	TargetID     int64
+	CredentialID int64
+	Actor        string
+	SessionID    string
+	Started      time.Time
+	Ended        time.Time
 }
 
 // JumpConfig configures reaching SSH targets through an SSH bastion.
@@ -231,6 +252,9 @@ type Proxy struct {
 	// endpointAgents is the shared live registry of connected endpoint agents
 	// (Phase 153); nil = feature disabled.
 	endpointAgents *session.EndpointAgents
+	// onForensics is the post-session reconstruction hook (Phase 157); nil =
+	// disabled.
+	onForensics func(SessionForensics)
 
 	// pending carries the resolved *auth.Principal from authenticate (where the
 	// SSH password is available) to handleConn (which runs the gates), keyed by a
@@ -300,6 +324,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		live:           cfg.Live,
 		shares:         cfg.Shares,
 		endpointAgents: cfg.EndpointAgents,
+		onForensics:    cfg.OnSessionForensics,
 		ca:             cfg.CA,
 		certTTL:        cfg.CertTTL,
 		authLimiter:    ratelimit.New(cfg.AuthRatePerMin),
@@ -751,18 +776,35 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		p.shares.Open(sid)
 		defer p.shares.Close(sid)
 	}
+	// Whether an interactive channel was ever opened. A connection that is
+	// admitted and then closed without opening one (a client that gave up, a
+	// session refused by mandatory supervision) ran nothing on the target, so
+	// reconstructing "what ran" for it would only produce noise.
+	var interactive atomic.Bool
+	started := time.Now()
 	defer func() {
 		p.log.Info("session ended", "actor", actor, "target", target.Name)
 		p.auditClosing(ctx, actor, "session.end", "target:"+target.Name)
 		// Force post-session credential rotation, if configured, so a secret
 		// used in one session cannot be reused in the next.
 		p.fireSessionEnd(cred.ID)
+		// Post-session forensic reconstruction (Phase 157): pamv1 never parses
+		// the PTY, so what actually ran is only knowable from the target's own
+		// kernel audit records — pulled here, after the session, over the same
+		// credential on a fresh connection.
+		if interactive.Load() {
+			p.fireForensics(SessionForensics{
+				TargetID: target.ID, CredentialID: cred.ID, Actor: actor, SessionID: sid,
+				Started: started, Ended: time.Now(),
+			})
+		}
 	}()
 
 	var wg sync.WaitGroup
 	for nc := range chans {
 		switch nc.ChannelType() {
 		case "session":
+			interactive.Store(true)
 			wg.Add(1)
 			go func(nc ssh.NewChannel) {
 				defer wg.Done()
@@ -2021,6 +2063,23 @@ func protocolSet(ps []string) map[string]bool {
 		}
 	}
 	return m
+}
+
+// fireForensics runs the post-session reconstruction hook as a tracked
+// background task, so a graceful shutdown drains it rather than killing a
+// collection halfway (which would leave an artifact half-written and
+// unaudited). It must not block the caller: the session's connection is
+// already closing.
+func (p *Proxy) fireForensics(f SessionForensics) {
+	if p.onForensics == nil {
+		return
+	}
+	p.bg.Add(1)
+	go func() {
+		defer p.bg.Done()
+		defer recoverPanicLog(p.log, "session forensics")
+		p.onForensics(f)
+	}()
 }
 
 // rejectAll rejects every channel the client opens with reason and msg, used to
