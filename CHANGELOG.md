@@ -9,6 +9,40 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.42.0] — 2026-08-17
+
+A minor: one new capability, and the close of the 15-phase
+BeyondTrust/Delinea/Teleport/StrongDM batch (phases 129–158). No schema change.
+
+### Added
+
+- **Post-session forensic reconstruction.** After an interactive SSH session
+  ends, pamv1 runs ONE fixed, read-only command over that target's own
+  vaulted credential on a fresh connection, pulls the TARGET's own kernel
+  audit records (auditd), filters them to that session's window and stores
+  them beside the recording as a hash-chained, replayable `.forensics.log`.
+  A session recording shows what was **typed**; this shows what **ran** — an
+  obfuscated `… | base64 -d | sh` or an unechoed command is reconstructed
+  decoded. `PAM_SESSION_FORENSICS` (off by default),
+  `PAM_SESSION_FORENSICS_MAX_EVENTS`, `PAM_SESSION_FORENSICS_TIMEOUT_SEC`;
+  new `session.forensics` / `_unavailable` / `_failed` audit actions. "The
+  target could not tell us" (no auditd, no permission) is an audited
+  **finding**, never silence. Audit-only, interactive SSH only, and only as
+  trustworthy as the target's own logs — which the artifact states.
+
+  This replaces the eBPF mechanism the phase was planned around, which a
+  **go/no-go established is architecturally impossible for a proxy**: an
+  operator's shell runs in the target's kernel, so a probe on the pam-server
+  host observes zero events per brokered session. That limitation is now
+  documented in `docs/EXTERNAL-INFRA-GAPS.md` rather than carried as a to-do.
+
+### Fixed
+
+- Session artifacts written by the Kubernetes broker (`.k8s.log`, 0.41.0)
+  were audited but **invisible** to the recordings listing and unreachable by
+  the playback route. Both it and the new `.forensics.log` are now listed,
+  classified and servable, so an auditor can actually reach the evidence.
+
 ## [0.41.0] — 2026-08-16
 
 A minor: one new capability. No schema change.
