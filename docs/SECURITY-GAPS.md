@@ -9,17 +9,27 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-08-17 · Reflects: Phases 0–159 + the 2026-07 hardening
+> Last updated: 2026-08-17 · Reflects: Phases 0–161 + the 2026-07 hardening
 > passes, including the **post-beta sweep of 2026-07-27** (thirty findings, all
 > closed), the **sweep of 2026-08-07** over phases 56–61a (nine findings: two
 > closed by Phase 62, six by Phase 63, half of one withdrawn as a false
 > positive), the **per-phase reviews of 56–61a**, and the **2026-08-12 audit
 > sweep** (two findings, both closed by Phase 108) — the section immediately
-> below. **Nothing since has added a new self-audit finding here** — 109–159
-> are feature phases, not review sweeps; their security-relevant properties are
-> described where they ship ([ADMIN-GUIDE.md](ADMIN-GUIDE.md),
+> below. 109–161 are feature phases, not review sweeps; their security-relevant
+> properties are described where they ship ([ADMIN-GUIDE.md](ADMIN-GUIDE.md),
 > [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md)) rather than re-audited
-> here.
+> here — with **one exception worth recording, because it is a
+> detection-integrity finding rather than a feature**: the 2026-08-17 research
+> pass aimed at the AI-agent broker found that `internal/ocsf` classified
+> `broker.tool_call.denied` as a Detection Finding while no code could write
+> that name to the trail the exporter reads, and that `isFinding`'s
+> `_denied`/`_failed` suffix rules never matched pamv1's DOTTED action names, so
+> `agent.disable.failed` exported as routine activity. Both are the same class
+> of defect — **a control that reads as coverage and provides none**, which is
+> worse than a missing control because nobody goes looking for it. Both were
+> closed in Phase 161, and the class is now guarded by
+> `ocsf.TestFindingExactActionsAreEmittable`, which walks `internal/` and `cmd/`
+> and fails on any classified action no code can emit.
 
 ## How the review was run
 

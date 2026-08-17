@@ -46,6 +46,15 @@ var findingExact = map[string]bool{
 	"access.ticket_rejected": true, "access.decision_denied": true,
 	"broker.tool_call.denied": true, "broker.approval.refused": true,
 	"app.secret_denied": true, "session.revoked": true, "session.killed": true,
+	// Agent containment (Phase 159): a quarantined or suspended agent identity
+	// that is still knocking (internal/api/broker_handlers.go). It needs an
+	// entry because `_refused` is not a suffix rule at all — unlike
+	// `agent.disable.failed`, which the dotted `.failed` suffix rule in
+	// isFinding now covers on its own and which therefore deliberately does NOT
+	// appear here. Entries that duplicate a suffix rule are not free: they are a
+	// second place to keep in step, and `broker.tool_call.failed` is left out
+	// for the same reason.
+	"agent.quarantine_refused": true,
 }
 
 // isFinding reports whether an action maps to a Detection Finding.
@@ -59,7 +68,28 @@ func isFinding(action string) bool {
 		strings.HasPrefix(action, "analytics.auto"):
 		return true
 	}
-	return strings.HasSuffix(action, "_denied") || strings.HasSuffix(action, "_failed")
+	// Denial and failure suffixes, matched with EITHER separator. pamv1's action
+	// vocabulary genuinely uses both — `proxy.auth_failed`, where the outcome is
+	// part of one compound verb, and `agent.disable.failed`, where the outcome is
+	// its own dotted segment — so a rule that recognised only one of them was
+	// always going to lose events. It did: this code required an underscore, and
+	// `agent.disable.failed` (an agent suspension that did not stick while
+	// offboarding its owner) was emitted as routine API Activity rather than a
+	// finding, for exactly as long as nobody noticed the separator.
+	//
+	// The separator stays REQUIRED. Matching a bare "denied"/"failed" ending
+	// would be looser than it looks — any future action whose last word merely
+	// finishes in those letters would silently become a Detection Finding, which
+	// is the same class of quiet mistake in the other direction.
+	//
+	// `broker.tool_call.failed` (internal/broker, Phase 161) is one of the names
+	// this covers, which is why it is not listed in findingExact above.
+	switch {
+	case strings.HasSuffix(action, "_denied"), strings.HasSuffix(action, ".denied"),
+		strings.HasSuffix(action, "_failed"), strings.HasSuffix(action, ".failed"):
+		return true
+	}
+	return false
 }
 
 // activityID classifies an API-activity action into the OCSF activity ids

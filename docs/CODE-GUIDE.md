@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-17 · Reflects: Phases 0–159 + the 2026-07 hardening passes.
+> Last updated: 2026-08-17 · Reflects: Phases 0–161 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -915,8 +915,19 @@ only the result. "Trust the chokepoint, not the agent." Opt-in via
   static key disabled/revoked or an SVID expired since parking is refused). The
   agent collects a post-approval result exactly once via
   `POST /v1/tool-calls/{id}/resume`: `Resume` *peeks* the token, refuses until the
-  outcome is terminal, then *atomically consumes* the JTI (replays lose the race).
+  outcome is terminal, then *atomically consumes* the JTI (replays lose the race),
+  and — since Phase 161 — appends `broker.tool_call.resumed` to the chain naming
+  that JTI, so the authoritative record covers the moment the agent actually
+  **took** the result rather than stopping at the human's decision.
   Self-approval is refused (`ApprovalOwner` vs approver).
+- **The audit action names** are constants (`broker.ActionToolCall*`,
+  `broker.ActionFor(status)`), not concatenations, and the same names go to BOTH
+  trails. That is not tidiness: `internal/ocsf` classifies by exact action name, so
+  a name only one trail can emit is a SIEM rule that never fires — which is exactly
+  what `broker.tool_call.denied` was between Phase 27 and Phase 161. A brokered
+  call's detail also carries `session:`/`client:` (caller-declared run provenance,
+  quoted and bounded, never used for a decision), `target:` when the arguments name
+  one, and `jti:` when a resume token exists.
 - **Tools** (`broker_tools.go`) — `winrm_exec`, `ssh_exec`, `list_targets`,
   `list_credentials`, `rotate_credential`, and `reveal_credential` (shipped
   **default-deny**). Each honors the same target gates (protocol allowlist, grants,
@@ -950,6 +961,7 @@ sequenceDiagram
     B-->>Ag: pending + single-use resume token
     Hu->>B: POST /v1/approvals/{id}/decision (revalidate → execute)
     Ag->>B: POST /v1/tool-calls/{id}/resume (spend token) → result
+    B->>Ch: append broker.tool_call.resumed (jti joins park → collect)
   else deny
     B-->>Ag: denied (implicit deny)
   end

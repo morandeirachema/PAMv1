@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–160 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–161 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,85 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 161 — Agent run visibility (detection parity + run correlation) ✅
+
+**Closes:** the agent-broker research's findings 3 and 5 — the two that separate
+passes reached independently after Phase 159's pair. Both are about what the
+broker *writes*, not what it allows, and they compounded: an agent's behaviour
+was invisible to both of pamv1's detection surfaces at once, and no investigator
+could reassemble a single agent run out of the trail.
+
+**The defect, in two halves.** Every brokered tool call — executed, denied,
+parked — was written to the primary audit trail as one action, `broker.tool_call`,
+with the outcome buried in the detail text. Both consumers of that trail key on
+the action name, so both were blind. `internal/ocsf` classified
+`broker.tool_call.denied` as a Detection Finding, but that name was only ever
+written to the hash chain, which the OCSF exporter does not read — the
+classification had **never once fired** since Phase 27, which is precisely the
+failure mode that file's own header warns about twice from earlier incidents.
+And `internal/analytics`, the behavioural risk engine, had **no agent action in
+any signal map at all**: an agent could execute privileged calls at any rate, at
+any hour, against hosts it had never touched, and score exactly zero. Meanwhile
+`broker.Call.SessionID` had been accepted by the API since Phase 13 and written
+**nowhere**.
+
+- [x] **Outcome-bearing actions.** The primary trail records
+  `broker.tool_call.{requested,executed,denied,pending_approval,failed,resumed,withdrawn}`,
+  spelled once as exported `broker.ActionToolCall*` constants plus
+  `broker.ActionFor(Status)` — so the two trails and the SIEM classifier cannot
+  drift, and the literals are greppable, which is what the new guard test needs
+- [x] **Analytics covers agents.** `broker.tool_call.executed` counts as
+  `activity`, so velocity, peer-outlier and new-target novelty all reach agents;
+  `broker.tool_call.denied`, `broker.approval.refused` and Phase 159's
+  `agent.quarantine_refused` count as `command_blocked` — the signal class
+  permitted to drive an **automated response**, unlike `auth_failure`, which is
+  deliberately excluded because an unauthenticated party can pin it on a
+  victim's name
+- [x] **One deliberate exemption.** A new `offHoursExempt` predicate keeps the
+  `broker.` family out of the off-hours signal: an AI agent working at 03:00 is
+  normal operation, and scoring it would mark every agent permanently and near
+  the per-signal cap — a detector that fires on every member of a class every
+  day is one operators learn to scroll past. Activity yes, off-hours no
+- [x] **A regression the phase nearly shipped, caught in review.** Adding agents
+  to `activityActions` also added them to the peer-outlier comparison pool, and
+  agents are high-volume by nature — ten agents at ~100 calls each beside five
+  humans at ~5 sessions raises the median 20×, hiding a human doing ten times
+  their normal work. The comparison is now **per class** (agents vs agents,
+  humans vs humans), each pool keeping its own `PeerMinActors` guard so a class
+  too small falls silent rather than being compared against an unrelated
+  population; an actor counts as an agent only if their activity is *entirely*
+  brokered. Pinned by `analytics.TestPeerOutlierComparesLikeWithLike`, confirmed
+  to fail against the intermediate code first
+- [x] **A systemic classifier bug found on the way.** `isFinding`'s suffix rules
+  matched `_denied`/`_failed` but not the dotted forms, so `agent.disable.failed`
+  (Phase 159) was exporting as routine API Activity. Both separators now match —
+  pamv1's vocabulary genuinely uses both shapes — and dotted failures export as
+  Detection Finding 2004 instead of API Activity 6003. **Wire-format change**,
+  recorded in the low-level doc
+- [x] **The bug class is now guarded.** `ocsf.TestFindingExactActionsAreEmittable`
+  walks `internal/` + `cmd/` and fails on any classified action no code can emit.
+  Verified to bite by re-inserting the historical `proxy.auth_rate_limited`
+- [x] **A run can be reconstructed.** `session:` (the agent's declared run id),
+  `client:` (its declared software/model — over MCP both come from the protocol
+  session and `initialize`'s `clientInfo`) and `target:` reach the trail, each
+  caller-supplied value quoted and bounded through `auditfmt.Field`. They are
+  provenance, recorded and **never consulted for a decision**; the phase's test
+  fires a run id of `r1 actor:admin status:executed` at it and proves it survives
+  only inside one quoted token
+- [x] **The chain now records collection.** `Broker.Resume` takes the collecting
+  identity and appends `broker.tool_call.resumed` to the hash chain with the
+  token's `jti`. Until now the authoritative record ended at the human's approval
+  decision — the moment the agent actually **took** the result, which for
+  `reveal_credential` is the moment a secret left pamv1, appeared only in the
+  primary trail
+- [x] No schema change, no new env var, no route change. `Outcome` gained
+  `session_id` and `tool` (echoed back so an async caller can correlate its own
+  concurrent calls) and an unexported `jti` that is never serialised to the agent
+- [x] Built with two parallel file-disjoint subagents (analytics, OCSF) to a
+  fixed contract, with the broker/API half, git, the gates, the docs and the
+  release kept in the main session. The flagship test was verified to **fail**
+  with the rename reverted, not merely to pass with it present
 
 ## Phase 160 — v0.43.0 ✅
 

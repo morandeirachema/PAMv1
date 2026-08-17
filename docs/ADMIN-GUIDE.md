@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-17 · Reflects: Phases 0–157 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-17 · Reflects: Phases 0–161 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -2209,6 +2209,44 @@ Audit: `agent.disable` · `agent.enable` · `agent.quarantine` ·
 `agent.quarantine_release` · `agent.quarantine_refused` (plus the existing
 `agent.create` / `agent.revoke`).
 
+### Watching an agent run (Phase 161)
+
+Phase 159 gave you the stop button. This is how you see whether you need it.
+
+Three things changed in what the broker writes. First, the audit **action** now
+says how a tool call went — `broker.tool_call.executed`, `.denied`,
+`.pending_approval`, `.failed`, `.resumed` — instead of one flat
+`broker.tool_call` with the outcome buried in the detail text. If you have SIEM
+rules or saved audit filters keyed on the old flat name, **update them**: it is no
+longer written. In exchange, your SIEM finally sees a denied agent tool call as an
+OCSF **Detection Finding** rather than routine API activity (it was classified all
+along; nothing could emit the classified name, so the rule had never fired).
+
+Second, the risk engine now scores agents — see §9.7 above.
+
+Third, an agent run can be **reconstructed**. Encourage whoever writes your agents
+to send the two optional fields on `POST /v1/tool-calls`:
+
+```bash
+curl -s https://pam.example/v1/tool-calls -H "Authorization: Bearer $AGENT_TOKEN" \
+  -d '{"session_id":"run-2f9c","client":"claude-code/2.1 (some-model)",
+       "tool":"ssh_exec","args":{"target":"db-01","command":"systemctl status pg"}}'
+```
+
+`session_id` is the agent's own run/conversation id and `client` is what software
+and model is driving it. Both appear in the trail as `session:` and `client:`, and
+both are **declared by the caller and never verified** — pamv1 records them so an
+investigator can group a run, and never consults them for a decision. Treat them
+as provenance, not evidence. Over MCP you do not send them: the protocol session
+is the run id and `clientInfo` from `initialize` is the client.
+
+You also get `jti:` on parked calls, which pamv1 computes itself: it is the resume
+token's id, so the "parked for approval", "approved", and "the agent collected the
+result" events all name the same ticket. That last event is new to the
+hash-chained broker audit — the authoritative record used to end at the human's
+decision, which meant the moment a `reveal_credential` result actually left pamv1
+was recorded only in the ordinary trail.
+
 ### Application-secrets API (Phase 24, Tier-4)
 
 For a **non-agent application** (a CI job, a legacy service) that just needs to
@@ -3573,6 +3611,30 @@ curl -s "https://pam.example/api/analytics/risk?min_level=high&window_min=1440" 
 
 The same view is in the console as **Risk analytics** (menu 18), with the
 minimum-level and window filters on-screen.
+
+**AI agents are scored too, since Phase 161** — before it they were not, at all.
+An executed brokered tool call counts as *activity*, so an agent shows up under
+session velocity, peer-outlier comparison and new-target novelty exactly as a
+human does; a denied tool call, a refused approval and a quarantined agent that
+keeps knocking (`agent.quarantine_refused`) count as *blocked command*, the
+signal class that is allowed to drive the automated response, so an agent going
+off the rails can be cut off like anyone else.
+
+The peer comparison stays meaningful because it is computed **per class** —
+agents are compared against other agents and people against other people. Pooling
+them would let a crowd of busy agents raise the bar so far that a person working
+ten times their normal volume no longer stands out. A class needs at
+least five actors before it is compared at all, so if you run fewer than five
+agents (or fewer than five people) that class simply gets no peer comparison,
+which is the safer failure: a comparison you did not make can be made
+later, while a confident comparison against the wrong population produces a
+finding nobody can tell from a real one.
+
+One exemption is deliberate and worth knowing about before you go looking for it:
+**an agent is never scored for off-hours activity**. An AI agent working at 03:00
+is normal operation. Scoring it would put every agent you run permanently near the
+per-signal cap, and a detector that fires on every member of a class every day is
+one your team learns to scroll past. Off-hours remains a human signal.
 
 To run it continuously, enable the background worker. Each pass scores the window
 and, for a **newly elevated** high/critical actor, appends an
