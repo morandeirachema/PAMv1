@@ -142,6 +142,7 @@ flowchart LR
   n_broker --> n_agentid
   n_broker --> n_alert
   n_broker --> n_auditchain
+  n_broker --> n_auditfmt
   n_broker --> n_auth
   n_broker --> n_logging
   n_broker --> n_policy

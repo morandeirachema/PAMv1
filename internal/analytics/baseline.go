@@ -127,7 +127,10 @@ func targetOf(ev store.AuditEvent) string {
 	return rest
 }
 
-// peerVolumes computes the outlier threshold for a scoring window.
+// peerVolumes computes the outlier threshold for ONE peer pool in a scoring
+// window. Since Phase 161 the caller runs it once per actor class (agents and
+// people are pooled separately, see perActor.class), so `activity` holds only
+// comparable actors and every guard below applies to that class alone.
 //
 // The comparison is against the MEDIAN of the peer group rather than the mean,
 // because the mean is dragged up by exactly the outlier being looked for — one
