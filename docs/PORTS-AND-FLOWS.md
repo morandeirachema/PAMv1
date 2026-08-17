@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-08-16 · Reflects: Phases 0–155. **Phase 53 added the first new
+> Last updated: 2026-08-17 · Reflects: Phases 0–157. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; nothing after
 > it adds a port or listener (55–94 ride the existing listeners and flows: the
 > live-monitor relay and the step-up decision bus ride the server ↔ PostgreSQL
@@ -123,6 +123,10 @@
 > verified). It is an ordinary outbound request per brokered operation, from
 > pam-server, on the same `:8080` control plane the operator already talks to;
 > there is no session proxy and therefore no new inbound flow.
+> **Phase 157 adds no port, listener or flow at all** — the post-session
+> forensic reconstruction is one more SSH connection to a target pamv1 already
+> dials (flow **E2**, `:22`), made after the session ends with the same
+> credential; nothing new is opened, and nothing new is reachable.
 > Everything from 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
 > **no new listeners**: certification/ticketing/approvals (19–21), threat analytics

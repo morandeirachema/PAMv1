@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-08-16 · Reflects: Phases 0–155. Phases 66–70 add one more
+> Last updated: 2026-08-17 · Reflects: Phases 0–157. Phases 66–70 add one more
 > background worker (the hourly, leader-locked certification scheduler); Phase 78
 > adds an optional per-replica Conjur refresh worker (off unless
 > `PAM_CONJUR_REFRESH_MIN` is set); 71–94 add no port, resource floor or
@@ -101,6 +101,14 @@
 > HTTPS request whose response is capped (1 MiB by default), so the memory
 > floor is unchanged; the runtime dependency, when used, is a reachable
 > cluster API server on `:6443` and a service-account token you supply.
+> **Phase 157 adds three env vars** (`PAM_SESSION_FORENSICS`, `_MAX_EVENTS`,
+> `_TIMEOUT_SEC`), no migration, no listener, no worker and no new Go
+> dependency. When enabled it costs ONE extra short SSH connection per
+> interactive session (bounded by `_TIMEOUT_SEC`) and one artifact per session
+> in `PAM_RECORDING_DIR` — a few KB each, capped by `_MAX_EVENTS`, so budget
+> recording storage accordingly. It requires the TARGET to run `auditd` with
+> exec auditing and the vaulted credential to be able to read its log; without
+> that pamv1 records the finding rather than failing.
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** These are the
 > specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate

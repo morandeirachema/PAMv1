@@ -234,6 +234,11 @@ data:
   # --- Application-secrets API ---------------------------------------------
   # PAM_APP_SECRETS_ENABLED: "false"     # vends plaintext to machines; front with TLS
 
+  # --- Post-session forensic reconstruction (Phase 157) -------------------
+  # PAM_SESSION_FORENSICS: "false"       # one extra read-only command per interactive SSH session
+  # PAM_SESSION_FORENSICS_MAX_EVENTS: "500"
+  # PAM_SESSION_FORENSICS_TIMEOUT_SEC: "30"
+
   # --- Kubernetes targets (Phase 155) --------------------------------------
   # PAM_K8S_CA_FILE: "/etc/pamv1/cluster-ca.pem"   # mount the cluster CA; unset = system roots
   # PAM_K8S_TIMEOUT_SEC: "30"

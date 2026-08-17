@@ -23,7 +23,9 @@ import (
 // --- session-recording playback (Phase 26) ---
 //
 // Recordings are written to disk by the SSH/WinRM/PostgreSQL proxies (asciicast
-// .cast), the WinRM run endpoint (.winrm.log transcripts) and, with SFTP
+// .cast), the WinRM run endpoint (.winrm.log transcripts), the Kubernetes
+// broker (.k8s.log, Phase 155), post-session forensic reconstructions
+// (.forensics.log, Phase 157) and, with SFTP
 // content capture on, per-transferred-file .sftp chunk logs (Phase 59); their
 // SHA-256 is written to the audit trail as they close. These handlers are the
 // replay side: list what is stored and serve one recording, recomputing its
@@ -40,7 +42,7 @@ const recordingMaxList = 500
 // alphabet plus the .cast / .winrm.log / .sftp suffixes). Anything else — a
 // path separator, a dotfile like the .chain head — is refused, which also
 // forecloses traversal: no accepted name can leave the recording directory.
-var recordingNameRe = regexp.MustCompile(`^[A-Za-z0-9_@-][A-Za-z0-9._@-]*\.(cast|winrm\.log|sftp)$`)
+var recordingNameRe = regexp.MustCompile(`^[A-Za-z0-9_@-][A-Za-z0-9._@-]*\.(cast|winrm\.log|k8s\.log|forensics\.log|sftp)$`)
 
 // recordingInfo is one stored session recording in the playback listing.
 // Target and Actor are resolved from the audit trail rather than parsed out of
@@ -135,8 +137,10 @@ func (s *Server) recordingOwners(r *http.Request, want map[string]bool) map[stri
 // entries are captured SFTP file content, offered as a download.
 func recordingKind(name string) string {
 	switch {
-	case strings.HasSuffix(name, ".winrm.log"):
+	case strings.HasSuffix(name, ".winrm.log"), strings.HasSuffix(name, ".k8s.log"):
 		return "transcript"
+	case strings.HasSuffix(name, ".forensics.log"):
+		return "forensics"
 	case strings.HasSuffix(name, ".sftp"):
 		return "file"
 	}
