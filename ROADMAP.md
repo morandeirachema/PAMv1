@@ -2430,9 +2430,11 @@ recorded as a permanent limitation.
 
 - [x] **v0.42.0** through the test-gated pipeline, rehearsed on `main` first.
   Published 2026-08-17 as `ghcr.io/morandeirachema/pamv1:0.42.0` (also
-  `latest`), digest `PENDING` (recorded once the tag's publish workflow has
-  run and the anonymous pull is verified), with the `pam-agent` binaries
-  attached as in v0.40.0/v0.41.0
+  `latest`), digest
+  `sha256:0562b828f585840047cb6d19c9a336a166e000cf537af3f8065afe543f785cd0`,
+  **public** (anonymous pull 200, verified via the GHCR anonymous
+  token-exchange flow), with the `pam-agent` binaries attached as in
+  v0.40.0/v0.41.0
 - [x] All five pins via the sweep; Helm chart `version` 0.32.0 -> **0.33.0**
   (minor, alongside the `appVersion` minor)
 - [x] Both READMEs restated (the Tier-6 parity table row already landed in
