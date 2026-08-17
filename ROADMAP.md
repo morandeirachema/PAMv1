@@ -2430,10 +2430,15 @@ dotted `.failed`/`.denied` actions now export as OCSF Detection Finding 2004
 instead of API Activity 6003. Both are in the CHANGELOG's *Changed* section
 rather than buried in *Added*, which is what that section is for.
 
-- [ ] **v0.44.0** through the test-gated pipeline, rehearsed on `main` first.
-  Published as `ghcr.io/morandeirachema/pamv1:0.44.0` (also `latest`), digest
-  recorded here once the publish workflow runs, verified **public** by anonymous
-  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] **v0.44.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-17 as `ghcr.io/morandeirachema/pamv1:0.44.0` (also
+  `latest`), digest
+  `sha256:bf9cd8c0ceead7dd71f2fb6bc5abe4e7f065281e67d70777a1e55158b39505b0`,
+  **public** (anonymous pull 200 on both tags, verified via the GHCR anonymous
+  token-exchange flow), with the `pam-agent` binaries, the SPDX SBOM and
+  `SHA256SUMS` attached. GitHub's API was 503-ing throughout this release: the
+  CI fuzz smoke and the `Create GitHub Release` step each needed one re-run,
+  neither for a defect in the build
 - [x] All five pins via the sweep; Helm chart `version` 0.34.0 -> **0.35.0**
   (minor, alongside the `appVersion` minor)
 - [x] Both READMEs restated (Phase 161's own PR landed the parity-table row —
