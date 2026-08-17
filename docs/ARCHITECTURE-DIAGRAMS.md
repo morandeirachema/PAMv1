@@ -83,6 +83,7 @@ flowchart LR
     n_recording[recording]
     n_saml[saml]
     n_samltest[samltest]
+    n_sessionforensics[sessionforensics]
     n_sshca[sshca]
     n_testutil[testutil]
     n_ticket[ticket]
@@ -123,6 +124,7 @@ flowchart LR
   n_api --> n_rotate
   n_api --> n_saml
   n_api --> n_session
+  n_api --> n_sessionforensics
   n_api --> n_shamir
   n_api --> n_sshca
   n_api --> n_store
