@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-17 · Reflects: Phases 0–161 + the 2026-07 hardening passes.
+> Last updated: 2026-08-17 · Reflects: Phases 0–163 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -895,8 +895,12 @@ only the result. "Trust the chokepoint, not the agent." Opt-in via
   delegation capped by `PAM_BROKER_MAX_DELEGATION_DEPTH`. A `MultiVerifier` accepts
   either.
 - **Policy engine** (`policy`) — sudoers-style ordered YAML rules; a `Condition`
-  is exactly one of `eq`/`not`/`in`/`not_in` over the tool name and each argument
-  *value*; `Evaluate` scans top-to-bottom, ANDs all conditions of a rule, and the
+  is exactly one of `eq`/`not`/`in`/`not_in`/`present`/`gte`/`gt`/`lte`/`lt` over
+  the tool name and each argument *value*, and **every one of them requires the
+  argument to be present** (Phase 163 — the negative operators used to be
+  satisfied by absence, which made a block-list bypassable by omitting the
+  argument it guarded; `present: true|false` is how absence is now expressed
+  deliberately); `Evaluate` scans top-to-bottom, ANDs all conditions of a rule, and the
   first full match wins; no match is **implicit deny**. The loader is fail-loud
   (`KnownFields(true)`, a required id + valid effect per rule, ≥1 approver on an
   approval rule) — a typo'd operator key fails at load rather than silently

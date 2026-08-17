@@ -373,8 +373,14 @@ func (t *listCredentialsTool) Description() string {
 }
 
 // InputSchema declares the tool's arguments (optional target name filter).
+// InputSchema declares `target` as OPTIONAL — the "?" is load-bearing here, and
+// this is the tool the Phase 163 marker exists for. Omitting the filter lists
+// EVERY credential's metadata, so a policy rule that block-lists a few targets
+// used to be bypassable by simply not sending the argument. The marker keeps the
+// unfiltered form callable (it is a legitimate inventory read) while making it
+// something an operator can name and refuse with `target: { present: true }`.
 func (t *listCredentialsTool) InputSchema() map[string]string {
-	return map[string]string{"target": "string"}
+	return map[string]string{"target": "string?"}
 }
 
 // Capability is the capability an agent must hold to invoke any tool.

@@ -3,12 +3,32 @@
 # The broker evaluates this on every agent tool call. First matching rule wins;
 # a call that matches no rule is an implicit deny (fail-closed). Conditions match
 # the tool's arguments as args.<field> with:
-#   value            equality
-#   { not: X }       differs or absent
-#   { in: [A, B] }   present and in the allow-list  (prefer allow-lists)
-#   { not_in: [X] }  absent or not in the block-list
-# There is deliberately no regex, numeric comparison, OR, or nesting. Keep this
-# file in version control; policy changes take effect on restart.
+#   value                equality
+#   { not: X }           present and differs
+#   { in: [A, B] }       present and in the allow-list  (prefer allow-lists)
+#   { not_in: [X] }      present and not in the block-list
+#   { present: true }    the argument was supplied (any value)
+#   { present: false }   the argument was NOT supplied
+#   { gte|gt|lte|lt: N } present, numeric, and compares that way
+# There is deliberately no regex, OR, or nesting. Keep this file in version
+# control; policy changes take effect on restart.
+#
+# EVERY value operator needs the argument to be there — the negative ones, `not`
+# and `not_in`, included. That is worth stating because it used to be otherwise,
+# and the old behaviour was a trap: `{ not_in: [vault-prod] }` also matched when
+# the agent sent no such argument at all, so a rule written to keep an agent away
+# from a target was defeated by simply omitting the target. Tools with an
+# OPTIONAL filter argument — list_credentials is one; no `target` means "list
+# every credential" — turned that into a full bypass. An omitted argument now
+# fails the condition, and the call falls through to the next rule and finally to
+# the default deny.
+#
+# `present` is how you talk about the argument itself rather than its value, and
+# `{ present: false }` is the direct way to write "the unscoped, list-everything
+# form of this call is not allowed". Careful: present means SUPPLIED, not
+# non-empty — an argument sent as "" is present. So a block-list over an optional
+# filter is still weaker than an allow-list (an empty string passes `not_in` and
+# may still mean "no filter" to the tool); prefer `{ in: [...] }` when you can.
 #
 # Tools available to agents: winrm_exec, ssh_exec (one-shot command; JIT
 # credential, only the output returns), list_targets, list_credentials (metadata
@@ -29,6 +49,16 @@ rules:
   - id: read-inventory
     tool: list_targets
     effect: allow
+  # Credential metadata never includes a secret, but `list_credentials` with no
+  # `target` lists EVERY credential in the system — inventory an agent has no
+  # reason to hold. Deny the unscoped form first (this is what `present: false`
+  # is for), then allow the scoped one.
+  - id: no-unscoped-credential-listing
+    tool: list_credentials
+    when:
+      args.target: { present: false }
+    effect: deny
+    reason: list_credentials must name a target
   - id: read-credentials-metadata
     tool: list_credentials
     effect: allow
