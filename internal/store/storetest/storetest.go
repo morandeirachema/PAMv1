@@ -1834,6 +1834,166 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatal("a deleted agent key must not resolve")
 	}
 
+	// --- agent key lifecycle: suspend, expiry, last-used (Phase 159) ---
+	// Before this an agent identity could only be created or destroyed:
+	// Disabled was honoured on read but nothing could set it, and a key had no
+	// end date and no record of use.
+	akLive := &store.AgentKey{Name: "lifecycle", Owner: "carol", TokenHash: "agenthash3"}
+	if err := st.CreateAgentKey(ctx, akLive); err != nil {
+		t.Fatalf("CreateAgentKey(lifecycle): %v", err)
+	}
+	// Default shape — not disabled, no expiry — is active forever, which is
+	// what every pre-Phase-159 row looks like: adding the fields must not
+	// retire keys that already exist.
+	if !akLive.Active(now) {
+		t.Fatal("a fresh agent key with no expiry must be active")
+	}
+	if akLive.ExpiresAt != nil || akLive.LastUsedAt != nil {
+		t.Fatalf("a fresh agent key must have no expiry and no last-use: %+v", akLive)
+	}
+	// Expiry is carried through the store, not just held in the caller's
+	// struct — otherwise a restart would resurrect an expired key.
+	// Truncated to microsecond precision: PostgreSQL's TIMESTAMPTZ has no finer
+	// resolution, so an untruncated wall clock would not compare equal.
+	agentExpiry := past.Truncate(time.Microsecond)
+	expiring := &store.AgentKey{Name: "expiring", Owner: "carol", TokenHash: "agenthash4", ExpiresAt: &agentExpiry}
+	if err := st.CreateAgentKey(ctx, expiring); err != nil {
+		t.Fatalf("CreateAgentKey(expiring): %v", err)
+	}
+	expGot, expErr := st.GetAgentKey(ctx, expiring.ID)
+	if expErr != nil || expGot.ExpiresAt == nil || !expGot.ExpiresAt.Equal(agentExpiry) {
+		t.Fatalf("GetAgentKey(expiring): %+v err %v", expGot, expErr)
+	}
+	// Both halves of Active() are independent: an unsuspended key past its
+	// expiry is dead on the clock alone, with no operator involved.
+	if expGot.Disabled {
+		t.Fatal("the expiring key was never disabled")
+	}
+	if expGot.Active(now) {
+		t.Fatal("a key past ExpiresAt must be inactive even though it is not disabled")
+	}
+	// ...and the other half: suspension kills a key that has not expired.
+	if err := st.SetAgentKeyDisabled(ctx, akLive.ID, true); err != nil {
+		t.Fatalf("SetAgentKeyDisabled(true): %v", err)
+	}
+	if got, err := st.GetAgentKey(ctx, akLive.ID); err != nil || !got.Disabled || got.Active(now) {
+		t.Fatalf("a suspended key must read back disabled and inactive: %+v err %v", got, err)
+	}
+	// A suspended key must stop authenticating — the whole point of the
+	// control is that it takes effect on the lookup path, not just in the UI.
+	if _, err := st.GetAgentKeyByTokenHash(ctx, "agenthash3"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("a suspended agent key must not resolve by token hash")
+	}
+	// Idempotent: re-suspending an already-suspended key is a no-op success,
+	// so a retried or duplicated admin action is never an error.
+	if err := st.SetAgentKeyDisabled(ctx, akLive.ID, true); err != nil {
+		t.Fatalf("SetAgentKeyDisabled(true, again): %v", err)
+	}
+	// Suspension is reversible — that is what makes it different from delete:
+	// the row, its ID and its audit history survive.
+	if err := st.SetAgentKeyDisabled(ctx, akLive.ID, false); err != nil {
+		t.Fatalf("SetAgentKeyDisabled(false): %v", err)
+	}
+	if got, err := st.GetAgentKey(ctx, akLive.ID); err != nil || got.Disabled || !got.Active(now) {
+		t.Fatalf("a restored key must be enabled and active again: %+v err %v", got, err)
+	}
+	if err := st.SetAgentKeyDisabled(ctx, 999999, true); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("SetAgentKeyDisabled(missing): want ErrNotFound, got %v", err)
+	}
+	// Last-used is what makes a dormant-agent report possible; it must
+	// round-trip the exact instant, not merely be non-nil.
+	agentUsedAt := now.Truncate(time.Microsecond)
+	if err := st.TouchAgentKey(ctx, akLive.ID, agentUsedAt); err != nil {
+		t.Fatalf("TouchAgentKey: %v", err)
+	}
+	if got, err := st.GetAgentKey(ctx, akLive.ID); err != nil || got.LastUsedAt == nil || !got.LastUsedAt.Equal(agentUsedAt) {
+		t.Fatalf("TouchAgentKey did not record the instant: %+v err %v", got, err)
+	}
+	if err := st.TouchAgentKey(ctx, 999999, agentUsedAt); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("TouchAgentKey(missing): want ErrNotFound, got %v", err)
+	}
+	// Owner filtering: an owner sees their own agents and nobody else's, and
+	// an owner with none gets an empty slice rather than a nil the caller
+	// would have to special-case when serialising.
+	if keys, err := st.ListAgentKeysByOwner(ctx, "carol"); err != nil || len(keys) != 2 ||
+		keys[0].ID != akLive.ID || keys[1].ID != expiring.ID {
+		t.Fatalf("ListAgentKeysByOwner(carol): %+v err %v", keys, err)
+	}
+	if keys, err := st.ListAgentKeysByOwner(ctx, "nobody"); err != nil || keys == nil || len(keys) != 0 {
+		t.Fatalf("ListAgentKeysByOwner(nobody): want empty non-nil, got %+v err %v", keys, err)
+	}
+
+	// --- agent quarantine (Phase 159) ---
+	// Keyed by subject, not by agent_keys ID, because an SVID-authenticated
+	// agent has no key row at all — a SPIFFE ID must be quarantinable even
+	// though pamv1 never issued it anything to disable.
+	if q, err := st.IsAgentQuarantined(ctx, "spiffe://example.org/agent/planner"); err != nil || q {
+		t.Fatalf("IsAgentQuarantined(clean): %v err %v", q, err)
+	}
+	if list, err := st.ListAgentQuarantine(ctx); err != nil || list == nil || len(list) != 0 {
+		t.Fatalf("ListAgentQuarantine(empty): want empty non-nil, got %+v err %v", list, err)
+	}
+	qz := &store.AgentQuarantine{Subject: "spiffe://example.org/agent/planner", Reason: "exfil attempt", CreatedBy: "alice"}
+	if err := st.QuarantineAgent(ctx, qz); err != nil {
+		t.Fatalf("QuarantineAgent: %v", err)
+	}
+	if qz.ID == 0 || qz.CreatedAt.IsZero() {
+		t.Fatalf("QuarantineAgent did not populate ID/CreatedAt: %+v", qz)
+	}
+	if q, err := st.IsAgentQuarantined(ctx, "spiffe://example.org/agent/planner"); err != nil || !q {
+		t.Fatalf("IsAgentQuarantined(quarantined): %v err %v", q, err)
+	}
+	// Quarantine is per-subject: stopping one agent must not stop another.
+	if q, err := st.IsAgentQuarantined(ctx, "lifecycle"); err != nil || q {
+		t.Fatal("quarantining one subject must not quarantine a different one")
+	}
+	// Set membership, not a log: a duplicate is a conflict, so releasing once
+	// really releases (no stacked rows needing reference counting).
+	dup := &store.AgentQuarantine{Subject: "spiffe://example.org/agent/planner", Reason: "again", CreatedBy: "bob"}
+	if err := st.QuarantineAgent(ctx, dup); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("QuarantineAgent(duplicate subject): want ErrConflict, got %v", err)
+	}
+	// A static agent-key name is just as valid a subject as a SPIFFE ID —
+	// one control covering both authentication paths.
+	qk := &store.AgentQuarantine{Subject: "lifecycle", Reason: "under review", CreatedBy: "alice"}
+	if err := st.QuarantineAgent(ctx, qk); err != nil {
+		t.Fatalf("QuarantineAgent(key name): %v", err)
+	}
+	// Ordered by ID, and the reason/actor round-trip — quarantine is an
+	// accountable act, so "who stopped this agent and why" must survive.
+	if list, err := st.ListAgentQuarantine(ctx); err != nil || len(list) != 2 ||
+		list[0].ID != qz.ID || list[1].ID != qk.ID ||
+		list[0].Reason != "exfil attempt" || list[0].CreatedBy != "alice" {
+		t.Fatalf("ListAgentQuarantine: %+v err %v", list, err)
+	}
+	if err := st.ReleaseAgentQuarantine(ctx, qz.ID); err != nil {
+		t.Fatalf("ReleaseAgentQuarantine: %v", err)
+	}
+	if q, err := st.IsAgentQuarantined(ctx, "spiffe://example.org/agent/planner"); err != nil || q {
+		t.Fatal("a released subject must no longer be quarantined")
+	}
+	// Releasing quarantine leaves the key's own disabled/expiry state alone:
+	// two independent controls, neither overwriting the other.
+	if got, err := st.GetAgentKey(ctx, akLive.ID); err != nil || got.Disabled {
+		t.Fatalf("releasing quarantine must not touch the agent key row: %+v err %v", got, err)
+	}
+	if err := st.ReleaseAgentQuarantine(ctx, qz.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ReleaseAgentQuarantine(already released): want ErrNotFound, got %v", err)
+	}
+	if err := st.ReleaseAgentQuarantine(ctx, 999999); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ReleaseAgentQuarantine(missing): want ErrNotFound, got %v", err)
+	}
+	// Clean up so later sections (and ListAgentKeys counts) see a tidy set.
+	if err := st.ReleaseAgentQuarantine(ctx, qk.ID); err != nil {
+		t.Fatalf("ReleaseAgentQuarantine(cleanup): %v", err)
+	}
+	if err := st.DeleteAgentKey(ctx, akLive.ID); err != nil {
+		t.Fatalf("DeleteAgentKey(lifecycle): %v", err)
+	}
+	if err := st.DeleteAgentKey(ctx, expiring.ID); err != nil {
+		t.Fatalf("DeleteAgentKey(expiring): %v", err)
+	}
+
 	// --- operator SSH certificates + KRL revocation (Phase 28) ---
 	vb := future
 	c1 := &store.SSHCert{Serial: 1001, KeyID: "pamv1:alice@web", Principal: "root", Actor: "alice", ValidBefore: &vb}

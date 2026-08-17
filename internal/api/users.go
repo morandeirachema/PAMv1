@@ -167,10 +167,20 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, u)
 }
 
-// deleteUser removes a user by id and audits it.
+// deleteUser removes a user by id, suspends every agent identity that human
+// owned, and audits both.
+//
+// The user row is read BEFORE the delete because the agent keys are keyed on the
+// owner's username, which the row is the only source of — after the delete there
+// is nothing left to look it up from.
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	id, ok := idParam(w, r)
 	if !ok {
+		return
+	}
+	u, err := s.store.GetUser(r.Context(), id)
+	if err != nil {
+		storeError(w, err)
 		return
 	}
 	if err := s.store.DeleteUser(r.Context(), id); err != nil {
@@ -178,7 +188,43 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r.Context(), "user.delete", strconv.FormatInt(id, 10))
+	s.suspendOwnedAgents(r.Context(), u.Username)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// suspendOwnedAgents disables every agent key owned by a departing human.
+//
+// Offboarding a person used to leave their agents running with nobody
+// accountable for them — and, worse, with nobody left to fail the broker's
+// four-eyes check, which is keyed on that owner's name. Suspension (not
+// deletion) is deliberate: the keys, their names and their audit history stay
+// intact for the investigation, and a successor can re-enable them.
+//
+// It runs AFTER the user row is gone and never reports failure to the caller:
+// the deletion has already happened and must not be reversed by a follow-up
+// problem. Every failure is logged and audited so a half-finished offboarding is
+// visible in the system of record rather than silently swallowed.
+func (s *Server) suspendOwnedAgents(ctx context.Context, username string) {
+	keys, err := s.store.ListAgentKeysByOwner(ctx, username)
+	if err != nil {
+		s.log.Error("could not list agent keys for a deleted user", "user", username, "err", err)
+		s.audit(ctx, "agent.disable.failed",
+			fmt.Sprintf("owner:%s reason:list-failed", auditField(username, 128)))
+		return
+	}
+	for _, k := range keys {
+		if k.Disabled {
+			continue
+		}
+		if err := s.store.SetAgentKeyDisabled(ctx, k.ID, true); err != nil {
+			s.log.Error("could not suspend an agent key of a deleted user", "agent", k.Name, "err", err)
+			s.audit(ctx, "agent.disable.failed",
+				fmt.Sprintf("agent:%d owner:%s reason:suspend-failed", k.ID, auditField(username, 128)))
+			continue
+		}
+		s.audit(ctx, "agent.disable",
+			fmt.Sprintf("agent:%d owner:%s reason:owner-offboarded", k.ID, auditField(username, 128)))
+	}
 }
 
 // listLoginSessions returns all active password/SSO login sessions (never their

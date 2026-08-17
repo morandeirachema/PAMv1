@@ -35,9 +35,14 @@ import (
 // narrow, display-only sibling for the few callers that do not. Phase 149
 // added UserStore.{GetUserByUsername,GetUserByExternalID,UpdateUserActive,
 // UpdateUserExternalID} (4) and the new ScimStore role (4). Phase 153 added
-// the new EndpointAgentStore role (6).
+// the new EndpointAgentStore role (6). Phase 159 added
+// BrokerStore.{SetAgentKeyDisabled,TouchAgentKey,ListAgentKeysByOwner,
+// QuarantineAgent,IsAgentQuarantined,ListAgentQuarantine,
+// ReleaseAgentQuarantine} (7) — agent-key lifecycle: an AI-agent identity
+// could previously only be created or destroyed, never suspended, expired or
+// reported as dormant.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 196
+	const want = 203
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

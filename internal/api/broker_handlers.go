@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/morandeirachema/pamv1/internal/agentid"
 	"github.com/morandeirachema/pamv1/internal/auditchain"
@@ -30,6 +31,35 @@ func (s *Server) agentAuth(next agentHandler) http.HandlerFunc {
 			s.authFailed(w, r, "agent", "invalid or missing agent credential")
 			return
 		}
+		// Quarantine is the incident responder's stop button, and it is keyed on
+		// the agent's canonical NAME rather than on an agent_keys row id on
+		// purpose: an SVID-authenticated agent has no row to disable (its
+		// identity is attested by SPIFFE, pamv1 never issued it a key), and for
+		// that identity kind AgentName IS the full SPIFFE ID — see svid.go, where
+		// the JWT subject is assigned to both AgentName and SPIFFEID. Keying on
+		// the name is therefore the one containment control that covers BOTH
+		// authentication paths. A store failure refuses the call: an unverifiable
+		// quarantine must never read as "not quarantined".
+		quarantined, qerr := s.store.IsAgentQuarantined(r.Context(), id.AgentName)
+		if qerr != nil {
+			s.log.Error("agent quarantine check failed; refusing the call (fail closed)",
+				"agent", id.AgentName, "err", qerr)
+			_ = s.auditAs(r.Context(), id.AgentName, "agent.quarantine_refused",
+				"agent:"+auditField(id.AgentName, 200)+" reason:quarantine-check-failed")
+			s.authFailed(w, r, "agent", "invalid or missing agent credential")
+			return
+		}
+		if quarantined {
+			// Refused through authFailed, the same path a bad bearer takes: the
+			// response, the throttling and the api.auth_failed record are
+			// identical, so a quarantined agent learns nothing from the reply
+			// about why it stopped working. The reason is in the audit trail,
+			// where the responder looks, not in the 401 body.
+			_ = s.auditAs(r.Context(), id.AgentName, "agent.quarantine_refused",
+				"agent:"+auditField(id.AgentName, 200)+" path:"+auditField(r.URL.Path, 200))
+			s.authFailed(w, r, "agent", "invalid or missing agent credential")
+			return
+		}
 		// Per-agent rate limit (keyed by agent name) bounds tool-call volume.
 		if s.brokerLimiter != nil && !s.brokerLimiter.Allow(id.AgentName) {
 			w.Header().Set("Retry-After", "60")
@@ -41,6 +71,16 @@ func (s *Server) agentAuth(next agentHandler) http.HandlerFunc {
 		// "unknown" fallback, and the access log records the agent.
 		r = r.WithContext(withPrincipal(r.Context(), id.Principal()))
 		setActor(r.Context(), id.AgentName)
+		// Stamp last use on a static key so a dormant agent identity is visible
+		// (the "this key has not been used in 90 days" report an owner needs
+		// before deciding to retire it). Best-effort by design: this is
+		// bookkeeping, not authorization, so a write failure must never turn an
+		// authenticated call into a refused one. SVIDs have no row (KeyID 0).
+		if id.KeyID > 0 {
+			if err := s.store.TouchAgentKey(r.Context(), id.KeyID, time.Now()); err != nil {
+				s.log.Debug("agent key last-use stamp failed", "key_id", id.KeyID, "err", err)
+			}
+		}
 		next(w, r, id)
 	}
 }
@@ -182,7 +222,16 @@ func (s *Server) decideBrokerApproval(w http.ResponseWriter, r *http.Request) {
 type agentKeyIn struct {
 	Name  string `json:"name"`
 	Owner string `json:"owner"`
+	// ExpiresInDays optionally retires the key automatically. Absent or 0 keeps
+	// the historical behaviour (never expires) so existing callers are
+	// unaffected; a positive value is bounded by maxAgentKeyDays.
+	ExpiresInDays int `json:"expires_in_days,omitempty"`
 }
+
+// maxAgentKeyDays bounds an agent key's requested lifetime (~10 years). An
+// unbounded value would let a caller push the expiry far enough out to be
+// indistinguishable from "never" while looking like it had one.
+const maxAgentKeyDays = 3650
 
 // createAgentKey mints a new agent identity key for an admin; the token is shown
 // once and only its SHA-256 hash is stored.
@@ -208,20 +257,32 @@ func (s *Server) createAgentKey(w http.ResponseWriter, r *http.Request) {
 	if !checkName(w, "owner", strings.TrimSpace(in.Owner)) {
 		return
 	}
+	if in.ExpiresInDays < 0 || in.ExpiresInDays > maxAgentKeyDays {
+		writeError(w, http.StatusUnprocessableEntity,
+			fmt.Sprintf("expires_in_days must be between 1 and %d (omit it, or 0, for a key that never expires)", maxAgentKeyDays))
+		return
+	}
 	token, err := generateToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token generation failed")
 		return
 	}
 	k := store.AgentKey{Name: in.Name, Owner: in.Owner, TokenHash: hashHex(token)}
+	expiryDetail := "never"
+	if in.ExpiresInDays > 0 {
+		exp := time.Now().Add(time.Duration(in.ExpiresInDays) * 24 * time.Hour)
+		k.ExpiresAt = &exp
+		expiryDetail = exp.UTC().Format(time.RFC3339)
+	}
 	if err := s.store.CreateAgentKey(r.Context(), &k); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "agent.create", fmt.Sprintf("%s owner:%s", k.Name, k.Owner))
+	s.audit(r.Context(), "agent.create", fmt.Sprintf("%s owner:%s expires:%s", k.Name, k.Owner, expiryDetail))
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": k.ID, "name": k.Name, "owner": k.Owner, "token": token,
-		"note": "Give this token to the agent; only its hash is stored.",
+		"expires_at": k.ExpiresAt,
+		"note":       "Give this token to the agent; only its hash is stored.",
 	})
 }
 
@@ -247,6 +308,142 @@ func (s *Server) deleteAgentKey(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), "agent.revoke", fmt.Sprintf("agent:%d", id))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// disableAgentKey suspends an agent identity: its bearer token stops
+// authenticating immediately, but the row — and therefore the agent's name, its
+// owner and every audit event that resolves through it — survives.
+//
+// This is the control that was missing: until now the only answer to "this agent
+// is behaving strangely, stop it while we look" was DELETE, which destroys the
+// very row an incident responder wants to keep. Suspension is reversible;
+// revocation is not.
+func (s *Server) disableAgentKey(w http.ResponseWriter, r *http.Request) {
+	s.setAgentKeyDisabled(w, r, true)
+}
+
+// enableAgentKey restores a suspended agent identity so its existing token
+// authenticates again. The token itself never changed — only the row's flag —
+// so resuming an agent does not mean re-issuing its credential.
+func (s *Server) enableAgentKey(w http.ResponseWriter, r *http.Request) {
+	s.setAgentKeyDisabled(w, r, false)
+}
+
+// setAgentKeyDisabled is the shared body of disable/enable: parse the id, flip
+// the flag, audit under the matching action name, 204.
+func (s *Server) setAgentKeyDisabled(w http.ResponseWriter, r *http.Request, disabled bool) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	if err := s.store.SetAgentKeyDisabled(r.Context(), id, disabled); err != nil {
+		storeError(w, err)
+		return
+	}
+	action := "agent.enable"
+	if disabled {
+		action = "agent.disable"
+	}
+	s.audit(r.Context(), action, fmt.Sprintf("agent:%d", id))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// maxQuarantineSubjectLen bounds a quarantine subject. It is larger than
+// nameMaxLen because a subject may be a full SPIFFE ID
+// ("spiffe://trust.domain/agent/name"), and checkName cannot be used on it at
+// all: a SPIFFE ID contains colons, which checkName refuses precisely because
+// they separate fields in an audit detail. The subject is quoted with
+// auditField at every audit sink instead.
+const maxQuarantineSubjectLen = 256
+
+// maxQuarantineReasonLen bounds the free-text reason an operator types.
+const maxQuarantineReasonLen = 512
+
+type quarantineIn struct {
+	Subject string `json:"subject"`
+	Reason  string `json:"reason"`
+}
+
+// quarantineAgent stops one agent identity dead, by canonical name: the
+// agent-key name for a static key, the full SPIFFE ID for an attested one. It is
+// checked both at ingress (agentAuth) and when a parked call is approved
+// (revalidateAgent), so it covers an agent that is mid-workflow as well as one
+// making fresh calls — and, unlike disable, it works for an SVID agent that has
+// no key row to suspend.
+func (s *Server) quarantineAgent(w http.ResponseWriter, r *http.Request) {
+	var in quarantineIn
+	if !readJSON(w, r, &in) {
+		return
+	}
+	in.Subject = strings.TrimSpace(in.Subject)
+	if !checkBoundedText(w, "subject", in.Subject, maxQuarantineSubjectLen, true) {
+		return
+	}
+	if !checkBoundedText(w, "reason", in.Reason, maxQuarantineReasonLen, false) {
+		return
+	}
+	q := store.AgentQuarantine{Subject: in.Subject, Reason: in.Reason, CreatedBy: actorFrom(r.Context())}
+	if err := s.store.QuarantineAgent(r.Context(), &q); err != nil {
+		storeError(w, err)
+		return
+	}
+	s.audit(r.Context(), "agent.quarantine",
+		fmt.Sprintf("subject:%s reason:%s", auditField(q.Subject, maxQuarantineSubjectLen), auditField(q.Reason, 200)))
+	writeJSON(w, http.StatusCreated, q)
+}
+
+// listAgentQuarantine returns every agent identity currently quarantined.
+func (s *Server) listAgentQuarantine(w http.ResponseWriter, r *http.Request) {
+	list, err := s.store.ListAgentQuarantine(r.Context())
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+// releaseAgentQuarantine lifts one quarantine so the agent can act again. It is
+// audited as loudly as imposing it: releasing a stop button is the more
+// dangerous of the two decisions.
+func (s *Server) releaseAgentQuarantine(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	if err := s.store.ReleaseAgentQuarantine(r.Context(), id); err != nil {
+		storeError(w, err)
+		return
+	}
+	s.audit(r.Context(), "agent.quarantine_release", fmt.Sprintf("quarantine:%d", id))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// checkBoundedText validates a free-text field that checkName cannot police
+// because it may legitimately contain a colon (a SPIFFE ID, an operator's
+// sentence). It enforces only what the audit trail actually needs — a length
+// bound and no control characters, since a newline would split one audit record
+// into what reads as two — and writes the 422 itself. required says whether an
+// empty value is acceptable.
+func checkBoundedText(w http.ResponseWriter, field, value string, max int, required bool) bool {
+	if value == "" {
+		if required {
+			writeError(w, http.StatusUnprocessableEntity, field+" is required")
+			return false
+		}
+		return true
+	}
+	if len(value) > max {
+		writeError(w, http.StatusUnprocessableEntity,
+			fmt.Sprintf("%s must be at most %d bytes (got %d)", field, max, len(value)))
+		return false
+	}
+	for _, c := range value {
+		if unicode.IsControl(c) {
+			writeError(w, http.StatusUnprocessableEntity, field+" must not contain control characters")
+			return false
+		}
+	}
+	return true
 }
 
 // listBrokerAudit returns recent broker audit events (oldest-first, chain order).

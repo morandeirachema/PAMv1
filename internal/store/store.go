@@ -635,12 +635,61 @@ func (a *EndpointAgent) Active() bool { return a.RevokedAt == nil }
 // SHA-256 hash is stored, granting only the ability to request brokered tool
 // calls (never a credential). Owner is the accountable human/service recorded in
 // every audit entry the agent produces.
+//
+// Lifecycle (Phase 159) mirrors EndpointAgent's: a key can be suspended
+// (Disabled) without destroying it, can be given a hard end date, and records
+// when it was last used — so an agent identity is a managed credential rather
+// than an immortal standing bearer token.
 type AgentKey struct {
 	ID        int64     `json:"id"`
 	Name      string    `json:"name"`
 	Owner     string    `json:"owner"`
 	TokenHash string    `json:"-"`
 	Disabled  bool      `json:"disabled"`
+	CreatedAt time.Time `json:"created_at"`
+	// ExpiresAt is the instant the key stops authenticating. Nil means "never
+	// expires", which is the behaviour every key had before this field existed
+	// — so rows created earlier keep working unchanged.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// LastUsedAt is when the key last authenticated a broker call, stamped by
+	// TouchAgentKey. Nil means it has never been used since the field was
+	// added, which is exactly what a dormant-credential report wants to see.
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+}
+
+// Active reports whether the key may still authenticate at the given instant.
+//
+// Both halves matter and neither implies the other: Disabled is an explicit
+// human act (suspend this agent now, keep the row so it can be re-enabled and
+// so its audit history still resolves), while ExpiresAt is a policy clock that
+// retires the key with no operator involved. A key can be enabled but expired,
+// or unexpired but suspended; only "neither" means it still works. A nil
+// ExpiresAt is treated as "never expires" rather than "expired long ago", so
+// pre-Phase-159 rows stay usable.
+func (k *AgentKey) Active(now time.Time) bool {
+	if k.Disabled {
+		return false
+	}
+	return k.ExpiresAt == nil || now.Before(*k.ExpiresAt)
+}
+
+// AgentQuarantine is a local stop-switch on one AI agent's identity, keyed by
+// Subject — the agent's canonical identity name as the broker sees it: the
+// agent-key name for a static bearer key, or the full SPIFFE ID (e.g.
+// "spiffe://example.org/agent/planner") for an SVID-authenticated agent.
+//
+// It is keyed by name rather than by agent_keys row ID precisely because an
+// SVID-authenticated agent has NO row in agent_keys at all — its identity is
+// attested by the SPIFFE workload API, and pamv1 never issued it a key it
+// could disable. Without a subject-keyed quarantine there would be no local
+// way to stop such an agent short of changing the trust domain itself.
+// Quarantine is therefore the one containment control that covers every agent
+// authentication path, static or attested.
+type AgentQuarantine struct {
+	ID        int64     `json:"id"`
+	Subject   string    `json:"subject"`
+	Reason    string    `json:"reason"`
+	CreatedBy string    `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -1377,6 +1426,32 @@ type BrokerStore interface {
 	ListAgentKeys(ctx context.Context) ([]AgentKey, error)
 	// DeleteAgentKey removes an agent key by ID, or ErrNotFound.
 	DeleteAgentKey(ctx context.Context, id int64) error
+	// SetAgentKeyDisabled suspends (true) or restores (false) an agent key,
+	// or ErrNotFound. Idempotent: setting the value it already has succeeds.
+	// Suspension is the reversible alternative to DeleteAgentKey — the row
+	// survives, so the agent can be brought back and its identity still
+	// resolves for anything reading the audit trail.
+	SetAgentKeyDisabled(ctx context.Context, id int64, disabled bool) error
+	// TouchAgentKey records when the key last authenticated, or ErrNotFound.
+	// Called on every successful agent authentication, which is what makes a
+	// dormant-agent report possible at all.
+	TouchAgentKey(ctx context.Context, id int64, at time.Time) error
+	// ListAgentKeysByOwner returns the agent keys belonging to one owner
+	// (the accountable human/service), ordered by ID; an empty slice, never
+	// nil, when that owner has none. Owner match is exact.
+	ListAgentKeysByOwner(ctx context.Context, owner string) ([]AgentKey, error)
+	// QuarantineAgent stops one agent by subject, populating ID and CreatedAt;
+	// ErrConflict if that subject is already quarantined (quarantine is a
+	// set-membership fact, so re-adding is a caller error, not a no-op).
+	QuarantineAgent(ctx context.Context, q *AgentQuarantine) error
+	// IsAgentQuarantined reports whether the subject is currently quarantined
+	// — the check every agent authentication path makes, static key or SVID.
+	IsAgentQuarantined(ctx context.Context, subject string) (bool, error)
+	// ListAgentQuarantine returns every quarantine entry ordered by ID; an
+	// empty slice, never nil, when nothing is quarantined.
+	ListAgentQuarantine(ctx context.Context) ([]AgentQuarantine, error)
+	// ReleaseAgentQuarantine lifts one quarantine by ID, or ErrNotFound.
+	ReleaseAgentQuarantine(ctx context.Context, id int64) error
 
 	// CreateBrokerToken stores a single-use resume token (its JTI is the token's
 	// SHA-256 hash) for a parked, approval-pending tool call.
