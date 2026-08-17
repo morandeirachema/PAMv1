@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -101,7 +102,15 @@ type Result struct {
 type Tool interface {
 	Name() string
 	Description() string
-	InputSchema() map[string]string // field -> "string|int|bool" (validation + MCP tools/list)
+	// InputSchema declares each argument's name and type: "string", "int" or
+	// "bool", with a trailing "?" marking the argument OPTIONAL ("string?").
+	// Everything without the marker is required.
+	//
+	// This is a contract, not documentation: ValidateArgs enforces it before the
+	// policy engine ever sees the call, and the MCP `tools/list` schema is
+	// rendered from it. An argument the tool does not declare is refused rather
+	// than ignored.
+	InputSchema() map[string]string
 	Capability() auth.Capability
 	Execute(ctx context.Context, p *auth.Principal, args Args) (Result, error)
 }
@@ -349,7 +358,28 @@ func (b *Broker) ProcessCall(ctx context.Context, id *agentid.Identity, c Call) 
 		}
 	}
 
-	// Policy decides first: deny and require_approval need no tool, and an unknown
+	// Arguments are checked against the tool's own declared schema BEFORE the
+	// policy engine sees them, so a rule is always evaluated against the same
+	// types the tool will act on, and an argument no rule could inspect never
+	// reaches one (Phase 163).
+	//
+	// Only when the tool is known: an unknown tool has no schema to check
+	// against, and it must keep falling through to the policy decision below so
+	// that "unknown tool with no matching rule" stays a DENIAL rather than
+	// becoming a validation failure — the fail-closed default is the more
+	// important of the two answers.
+	if tool, known := b.registry.Get(c.Tool); known {
+		if err := ValidateArgs(tool, c.Args); err != nil {
+			out.Status, out.Reason = StatusFailed, err.Error()
+			b.remember(out)
+			if err := b.chainEvent(ctx, id, c, ActionToolCallFailed, out, out.Reason); err != nil {
+				b.log.Error("broker audit chain append failed", "call", out.CallID, "err", err)
+			}
+			return out
+		}
+	}
+
+	// Policy decides next: deny and require_approval need no tool, and an unknown
 	// tool with no matching rule is denied by default (fail-closed), never run.
 	d := b.engine.Evaluate(c.Tool, c.Args)
 	out.RuleID, out.Scope, out.Reason = d.RuleID, d.Scope, d.Reason
@@ -767,6 +797,127 @@ func runFields(c Call, out Outcome) string {
 // for a UUID, a model name or a client version string, and far too small to make
 // the audit trail a place to store data.
 const maxRunFieldBytes = 128
+
+// ArgSpec is one declared argument, parsed out of the InputSchema shorthand.
+type ArgSpec struct {
+	Type     string // "string", "int" or "bool"
+	Required bool
+}
+
+// ParseSchema turns a tool's InputSchema map into specs, reading the trailing
+// "?" as "optional". An unrecognised type is treated as "string", which is what
+// the MCP schema renderer has always done for it.
+func ParseSchema(schema map[string]string) map[string]ArgSpec {
+	out := make(map[string]ArgSpec, len(schema))
+	for name, typ := range schema {
+		required := !strings.HasSuffix(typ, "?")
+		out[name] = ArgSpec{Type: strings.TrimSuffix(typ, "?"), Required: required}
+	}
+	return out
+}
+
+// ValidateArgs checks a call's arguments against the tool's declared schema,
+// returning a human-readable reason on the first problem and nil when they fit.
+//
+// It refuses three things, all fail-closed (Phase 163):
+//
+//   - an argument the tool does not declare. Ignoring it would be friendlier and
+//     worse: the policy engine only inspects fields a rule names, so an
+//     undeclared argument is a value that reached the system without passing any
+//     guard. Refusing it also means a typo ("targt") fails loudly instead of
+//     silently becoming "no target given", which for a tool with an optional
+//     filter is the difference between listing one thing and listing everything;
+//   - a required argument that is missing. The tools themselves read arguments
+//     with Go's comma-ok assertion, so a missing string quietly became "" —
+//     which is exactly how omitting an argument turned into a wider action than
+//     the caller asked for;
+//   - an argument of the wrong type. This one is not cosmetic: the policy engine
+//     compares a STRINGIFIED value, and the tool reads the raw JSON type, so a
+//     value the two disagree about is a value a rule can be made to match while
+//     the tool does something else with it.
+//
+// The check runs before the policy decision, so the engine always evaluates the
+// same types the tool will act on.
+func ValidateArgs(t Tool, args Args) error {
+	specs := ParseSchema(t.InputSchema())
+	// Sorted so the same bad call always reports the same first problem — an
+	// error message that changes between identical requests is one nobody trusts.
+	names := make([]string, 0, len(args))
+	for name := range args {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		spec, declared := specs[name]
+		if !declared {
+			return fmt.Errorf("unknown argument %q for tool %s", name, t.Name())
+		}
+		if err := checkArgType(name, spec.Type, args[name]); err != nil {
+			return err
+		}
+	}
+	required := make([]string, 0, len(specs))
+	for name, spec := range specs {
+		if spec.Required {
+			required = append(required, name)
+		}
+	}
+	sort.Strings(required)
+	for _, name := range required {
+		if _, ok := args[name]; !ok {
+			return fmt.Errorf("missing required argument %q for tool %s", name, t.Name())
+		}
+	}
+	return nil
+}
+
+// checkArgType reports whether one decoded JSON value matches a declared type.
+//
+// JSON numbers decode into Go as float64 (or json.Number when a decoder asks for
+// it), which is why "int" accepts a float that happens to be whole and rejects
+// one that is not: 3 arrives as 3.0 and is a perfectly good integer, while 3.5
+// is not an integer whatever it decoded into.
+func checkArgType(name, typ string, v any) error {
+	switch typ {
+	case "int":
+		switch n := v.(type) {
+		case float64:
+			if n != math.Trunc(n) {
+				return fmt.Errorf("argument %q must be a whole number", name)
+			}
+			return nil
+		case json.Number:
+			if _, err := n.Int64(); err != nil {
+				return fmt.Errorf("argument %q must be a whole number", name)
+			}
+			return nil
+		}
+		return fmt.Errorf("argument %q must be a number", name)
+	case "bool":
+		if _, ok := v.(bool); !ok {
+			return fmt.Errorf("argument %q must be true or false", name)
+		}
+		return nil
+	default: // "string" and anything the schema did not spell correctly
+		str, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("argument %q must be a string", name)
+		}
+		// A supplied-but-empty string is refused, and this is the subtle half of
+		// the omission fix rather than tidiness. `list_credentials` treats an
+		// empty `target` as "no filter" and lists everything, while the policy
+		// engine sees an argument that IS present — so `target: ""` satisfies both
+		// a `not_in` block-list and a `present: true` guard while producing the
+		// widest possible call. That is the omission bypass again, surviving with
+		// one character. There is no request "" expresses that omitting the
+		// argument does not express better, so it is refused outright and the
+		// engine's two presence checks keep meaning what they say.
+		if str == "" {
+			return fmt.Errorf("argument %q must not be empty (omit it instead)", name)
+		}
+		return nil
+	}
+}
 
 // argsSummary renders the call arguments as compact JSON, capped so a large or
 // hostile argument can't bloat an audit row.
