@@ -9,6 +9,47 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.43.0] — 2026-08-17
+
+A minor: one new capability, and the first release driven by gap research
+aimed at pamv1's **own AI-agent broker** rather than at its human-operator
+paths. Schema change — new migration `0043` (additive; applied on startup).
+
+### Added
+
+- **Agent identity lifecycle and a stop button.** An AI-agent identity can now
+  be **suspended and resumed** (`POST /v1/agents/{id}/disable` and `/enable`),
+  given an **expiry** at creation (`expires_in_days`, enforced at
+  authentication), and **quarantined by subject**
+  (`POST`/`GET /v1/agents/quarantine`, `DELETE /v1/agents/quarantine/{id}`) —
+  a list that stops an identity in **both** authentication paths, including
+  SPIFFE/SVID agents that have no local row to disable, because an SVID
+  agent's canonical name *is* its SPIFFE ID. Quarantine is checked at the
+  front door **and** again when a parked call comes up for approval, and a
+  store error **fails closed**: a stop button that stops working when the
+  database hiccups is not a stop button. Every successful authentication also
+  stamps `last_used_at`, so a dormant agent credential is reportable, and
+  deleting a human user now **suspends** every agent key they owned
+  (`reason:owner-offboarded`).
+
+  Suspend, never delete: the agent must stop, the record must not. Deletion
+  was previously the *only* way to stop an agent — it destroyed the row an
+  investigation needs and silently invalidated that agent's parked approvals.
+
+  New `agent.disable` / `agent.enable` / `agent.quarantine` /
+  `agent.quarantine_released` / `agent.quarantine_refused` audit actions;
+  console menu 26 gains status, expiry and last-used columns, `5=Suspend`,
+  `6=Resume` and `F7` for the quarantine screens. No new env var.
+
+### Fixed
+
+- `AgentKey.Disabled` was honoured on read by both store backends while **no
+  code path could ever set it** — dead state that read as a control.
+- `revalidateAgent` gated its store check on `KeyID > 0`, which a SPIFFE/SVID
+  identity never is, so in the intended production posture a parked call from
+  a revoked agent revalidated **true**. The quarantine check now runs first
+  and unconditionally.
+
 ## [0.42.0] — 2026-08-17
 
 A minor: one new capability, and the close of the 15-phase
@@ -1286,7 +1327,28 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.43.0
+[0.42.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.42.0
+[0.41.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.41.0
+[0.40.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.40.0
+[0.39.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.39.0
+[0.38.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.38.0
+[0.37.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.37.0
+[0.36.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.36.0
+[0.35.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.35.0
+[0.34.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.34.0
+[0.33.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.33.0
+[0.32.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.32.0
+[0.31.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.31.0
+[0.30.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.30.0
+[0.29.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.29.0
+[0.28.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.28.0
+[0.27.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.27.0
+[0.26.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.26.0
+[0.25.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.25.0
+[0.24.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.24.0
+[0.23.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.23.0
 [0.22.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.22.0
 [0.21.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.21.0
 [0.20.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.20.0
