@@ -9,6 +9,95 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.48.0] — 2026-08-18
+
+A minor that closes **three live defects in the AI-agent broker**, all found by
+re-reading the tree at HEAD after the 159–167 batch shipped. Two of them made a
+control that reads as covering every agent silently inert for the identity kind
+pamv1 does not issue keys to — a SPIFFE/SVID-authenticated agent, which is the
+intended production posture. **Schema change** — new migration `0045` (a new
+table; applied on startup, no backfill). Four new routes, no new env var.
+
+**Two upgrade notes below.** Both are the consequence of a control finally
+working, not a workaround.
+
+### Fixed
+
+- **Quarantine now follows a delegated token's whole actor chain** (Phase 169).
+  It was checked against the presenter's subject only, while a delegated
+  JWT-SVID names its delegator solely in the RFC 8693 `act` claim — so
+  quarantining a compromised root left every sub-agent token it had already
+  minted working until that token's TTL expired. An incident responder pressed
+  the stop button and watched the compromise continue. The check now walks the
+  presenter plus every actor in the chain, at both moments an agent identity is
+  consulted: the front door (`agentAuth`) and the approval-time re-check
+  (`revalidateAgent`) — the second being precisely the parked call a responder is
+  racing. The refusal names which link stopped the call
+  (`agent.quarantine_refused … subject:<id>`). A static key's owner is
+  deliberately not in that set: it is a person's username, and stopping every
+  agent one human owns is offboarding, a different action with its own trail.
+- **Four-eyes self-approval prevention now works on the SPIFFE path**
+  (Phase 170). The gate compares a parked call's accountable owner against the
+  approving human's username; for an SVID that owner is a SPIFFE ID, which can
+  never equal a person's name — so the refusal could not fire and **the human
+  operating an agent could approve their own agent's privileged call**. Nothing
+  mapped a SPIFFE ID to a person, so pamv1 now records one (below), and the gate
+  resolves owners for the **whole delegation chain**: whoever owns any link is on
+  the requesting side of four-eyes.
+- **A policy rule's `ttl_seconds` is a real bound** (Phase 171). It was parsed
+  and read by nothing: a rule advertising a 60-second grant got
+  `PAM_BROKER_TOKEN_TTL_MIN` (15 minutes), and the shipped example policy
+  marketed exactly that setting as "a scoped, short-lived grant". It now bounds
+  how long a `require_approval` call stays decidable and its resume token stays
+  spendable, and may only *narrow* the deployment-wide limit, never extend it.
+- **A long value no longer pushes columns off the approvals screen** (Phase 171).
+  Four user-controlled cells on console menu 20 used a pad that does not
+  truncate.
+
+### Added
+
+- **An owner registry for SPIFFE-attested agents** (Phase 170):
+  `POST`/`GET /v1/agents/identities`, `POST /v1/agents/identities/{id}/owner`
+  (handover keeps the row, so first-registered-by/when survives) and
+  `DELETE /v1/agents/identities/{id}`, all `manage_users`; console menu 26 → **F8**.
+  It is an owner registry, **not enrollment and not attestation**: registering
+  admits no workload — your trust domain already decided who may authenticate —
+  and proves nothing about one.
+- **The offboarding cascade reaches both identity kinds** (Phase 170). Deleting a
+  human suspends the agent keys they owned, and now quarantines the SPIFFE
+  identities they owned — an attested agent has no key to suspend.
+- **The approval deadline is visible** (Phase 171): `expires_at` on a parked
+  call's outcome and on every entry of `GET /v1/approvals`, and a **DECIDE BY**
+  column on console menu 20.
+
+### Changed
+
+- **Broker inventory tools answer only for the targets the calling agent may
+  reach** (Phase 169). `list_targets` discarded its principal entirely and
+  returned every target's name, host, OS and protocol; the unfiltered
+  `list_credentials` added every account name on them. Both now apply the same
+  direct-grant ∪ safe-membership check every acting tool applies. Ungated targets
+  (no grants, no safe) stay visible to everyone, as everywhere else in pamv1;
+  naming an ungranted target explicitly is refused rather than answered with an
+  empty list. **An agent whose estate is gated by grants now sees less than it
+  did.**
+- New audit actions: `agent.identity_register`, `agent.identity_owner_set`,
+  `agent.identity_remove`, `agent.quarantine_failed`.
+
+### Upgrade notes
+
+- **Register owners for your SPIFFE agents before upgrading a deployment that
+  uses them.** A SPIFFE identity with no recorded owner cannot have its parked
+  calls approved by anyone: four-eyes cannot be established, so the decision is
+  refused (403) and the call **stays parked** — recording the owner unblocks it.
+  Register every identity in a delegation chain, since the gate resolves all of
+  them. Static agent keys are unaffected; their owner has been mandatory since
+  v0.42.0.
+- **A policy carrying `ttl_seconds` on an `allow` or `deny` rule now fails to
+  load.** The setting never did anything there — an allow executes and returns in
+  the same request — and the error says where it belongs. Move it onto the
+  `require_approval` rule whose window you meant to bound, or delete it.
+
 ## [0.47.0] — 2026-08-18
 
 A minor: AI-agent identities gain a **cumulative call budget**, the volume

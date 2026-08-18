@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–171 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–172 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,34 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 172 — v0.48.0 ✅
+
+Releases phases 169, 170 and 171 — the three live defects the agent-broker
+follow-on research found at HEAD. A minor, and the first release in a while
+whose CHANGELOG leads with **Fixed**: two of the three made a control that reads
+as covering every agent silently inert for the SPIFFE-attested identity kind,
+which the roadmap calls the intended production posture. **Schema change** — the
+migration high-water mark moves `0044` -> `0045` (a new table, applied on
+startup, no backfill). Four new routes, no new env var, **two upgrade notes**.
+
+- [ ] **v0.48.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published as `ghcr.io/morandeirachema/pamv1:0.48.0` (also `latest`), digest
+  recorded here once the publish workflow runs, verified **public** by anonymous
+  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] All five pins via the sweep; Helm chart `version` 0.38.0 -> **0.39.0**
+- [x] Both READMEs restated; `docs/README.md`, `docs/NIS2-COMPLIANCE.md` (whose
+  control-mapping note absorbs 169–171: a new `subject:` detail on an existing
+  action, four new names inside the `agent.*` family already counted by prefix,
+  and no new action at all for 171) and ROADMAP.md's top-banner phase count
+- [x] `CHANGELOG.md` gains the release entry, with both **upgrade notes** stated
+  where an operator will hit them: a SPIFFE deployment must register agent owners
+  before parked calls can be approved, and a policy carrying `ttl_seconds` on an
+  allow/deny rule now fails to load
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging: `gofmt`,
+  `go vet`, `staticcheck`, `gosec`, `govulncheck`, `go test -race ./...`,
+  `go run ./cmd/archgen` (schema + route drift, both of which this release has)
 
 ## Phase 171 — The dead controls: a TTL that binds, a scope that is honest ✅
 
