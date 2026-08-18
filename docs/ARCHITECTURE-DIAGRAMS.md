@@ -248,6 +248,7 @@ erDiagram
     time_Time CreatedAt
     ptr_time_Time ExpiresAt
     ptr_time_Time LastUsedAt
+    ptr_int BudgetPerDay
   }
   AgentQuarantine {
     int64 ID
@@ -534,7 +535,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 185 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 186 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -699,6 +700,7 @@ The 185 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/v1/agents/quarantine` | CapManageUsers |
 | DELETE | `/v1/agents/quarantine/{id}` | CapManageUsers |
 | DELETE | `/v1/agents/{id}` | CapManageUsers |
+| POST | `/v1/agents/{id}/budget` | CapManageUsers |
 | POST | `/v1/agents/{id}/disable` | CapManageUsers |
 | POST | `/v1/agents/{id}/enable` | CapManageUsers |
 | GET | `/v1/app-secrets/{id}` | public |

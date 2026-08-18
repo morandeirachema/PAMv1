@@ -631,6 +631,20 @@ type EndpointAgent struct {
 // Active reports whether the agent may still authenticate (not revoked).
 func (a *EndpointAgent) Active() bool { return a.RevokedAt == nil }
 
+// The two audit actions a brokered tool call spends budget on, spelled here so
+// both store backends charge for exactly the same thing.
+//
+// They are a deliberate DUPLICATE of `broker.ActionToolCallExecuted` and
+// `broker.ActionToolCallResumed`, because `internal/store` cannot import
+// `internal/broker` — the broker imports the store, so the dependency only runs
+// one way. Duplicated constants drift, so the copy is not left to discipline:
+// an external test (`store_test`, which may import the broker without creating
+// a cycle) asserts these are byte-identical to the broker's own names.
+const (
+	AuditActionToolCallExecuted = "broker.tool_call.executed"
+	AuditActionToolCallResumed  = "broker.tool_call.resumed"
+)
+
 // AgentKey is an AI-agent identity for the access broker: a bearer key whose
 // SHA-256 hash is stored, granting only the ability to request brokered tool
 // calls (never a credential). Owner is the accountable human/service recorded in
@@ -655,6 +669,25 @@ type AgentKey struct {
 	// TouchAgentKey. Nil means it has never been used since the field was
 	// added, which is exactly what a dormant-credential report wants to see.
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	// BudgetPerDay is this agent's cumulative cap on brokered tool calls per
+	// day (Phase 167) — the "how much in total" control a per-minute rate
+	// limit cannot express, since 60 calls/minute still allows 86,400 a day.
+	//
+	// It is a POINTER because three states must stay distinguishable, and
+	// conflating any two of them is a security bug:
+	//
+	//   nil  — no per-agent setting; the server-wide default budget applies.
+	//          (In Python terms: the key is absent, not set to zero.)
+	//   0    — a deliberate hard stop: this agent may make NO calls at all.
+	//          This is an explicit administrative decision and must never be
+	//          read as "unset" and quietly replaced by the server default.
+	//   > 0  — exactly that many brokered tool calls per day.
+	//
+	// A plain int cannot hold that: Go zero-values an absent int to 0, so
+	// "nobody configured this" and "forbid everything" would arrive at the
+	// enforcement gate looking identical. Test the pointer for nil first, then
+	// dereference; never compare *BudgetPerDay before the nil check.
+	BudgetPerDay *int `json:"budget_per_day,omitempty"`
 }
 
 // Active reports whether the key may still authenticate at the given instant.
@@ -1440,6 +1473,44 @@ type BrokerStore interface {
 	// (the accountable human/service), ordered by ID; an empty slice, never
 	// nil, when that owner has none. Owner match is exact.
 	ListAgentKeysByOwner(ctx context.Context, owner string) ([]AgentKey, error)
+	// SetAgentKeyBudget sets (or clears, with nil) an agent key's daily call
+	// budget, or ErrNotFound for an unknown id. Idempotent: writing the value
+	// the key already holds succeeds.
+	//
+	// Passing nil clears the per-agent setting so the server-wide default
+	// applies again; passing a pointer to 0 is the opposite — an explicit
+	// "this agent may make no calls at all". See AgentKey.BudgetPerDay: the
+	// two must never be conflated, which is why this takes *int and not an
+	// int plus a "clear" flag.
+	SetAgentKeyBudget(ctx context.Context, id int64, budgetPerDay *int) error
+	// CountAgentToolCallsSince counts the brokered tool calls the named agent
+	// has actually SPENT since `since` (inclusive), reading the primary audit
+	// trail — the same record an auditor would count by hand, so the budget
+	// and the audit report can never disagree.
+	//
+	// Exactly two actions count, and no others:
+	//
+	//   broker.tool_call.executed — a call that did privileged work
+	//     immediately.
+	//   broker.tool_call.resumed  — the agent collecting the result of a call
+	//     a human approved. This is the OTHER way work gets done: the call was
+	//     parked for approval rather than run on the spot, and if it were not
+	//     counted, routing every call through the approval path would make an
+	//     agent's whole day of work free.
+	//
+	// Denied and failed calls are deliberately NOT counted. A budget answers
+	// "how much was this agent allowed to DO", and letting refusals consume it
+	// would mean a misconfigured agent burns its own quota on rejections and
+	// then a legitimate call is refused for the wrong reason — the budget
+	// would report exhaustion where the real fault is configuration. Bounding
+	// refusal storms is the per-minute rate limit's job, not the budget's.
+	//
+	// The actor must match `agent` exactly (agent names are case-sensitive
+	// throughout this store) and the two action names are matched literally,
+	// never as a `broker.tool_call.%` prefix: a prefix match would silently
+	// start charging the budget for any future broker.tool_call.* action
+	// somebody adds, including outcomes that did no work.
+	CountAgentToolCallsSince(ctx context.Context, agent string, since time.Time) (int, error)
 	// QuarantineAgent stops one agent by subject, populating ID and CreatedAt;
 	// ErrConflict if that subject is already quarantined (quarantine is a
 	// set-membership fact, so re-adding is a caller error, not a no-op).

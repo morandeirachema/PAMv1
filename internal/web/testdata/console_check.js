@@ -69,6 +69,10 @@ const helpers = [
 
 const LONG = "spiffe://example.org/a-very-long-workload-path/that-keeps-going/and-going";
 const LONGNAME = "an-extremely-long-name-that-nobody-would-choose-but-somebody-will";
+// The pathological COUNTER, for columns built from numbers rather than names
+// (Phase 167's call budget): the largest integer JavaScript represents exactly,
+// so a cell that is padded but never truncated shows up as 16 digits of drift.
+const BIG = Number.MAX_SAFE_INTEGER;
 
 const screens = [
   {
@@ -254,23 +258,49 @@ const screens = [
   },
   {
     // Phase 159 gave the agent key a lifecycle, and with it three more columns
-    // (status, expires, last used). name and owner are the free-text ones, both
-    // through cell(); status is one of three fixed-width markers; the three
-    // timestamps are fmtTime's output padded to a fixed width, and the
-    // "never" / "never used" placeholders go through the same pad, so an unset
-    // expiry cannot change the row's width either.
+    // (status, expires, last used); Phase 167 added a fourth, the daily call
+    // budget. name and owner are the free-text ones, both through cell(); status
+    // is one of three fixed-width markers; the timestamps are fmtTime's output
+    // padded to a fixed width, and the "never" / "never used" placeholders go
+    // through the same pad, so an unset expiry cannot change the row's width
+    // either.
+    //
+    // The budget cell is the one that could: it is built from two COUNTERS, and a
+    // counter has no natural length — a busy agent's used-today is a real value
+    // that grows every call. So the three rows cover the three shapes it takes
+    // (an agent's own cap, an inherited one in brackets, an unlimited one) and
+    // the long variant drives all of them with the largest integer JavaScript
+    // has. If the fraction ever stops going through cell(), this is what fails.
     name: "agents",
     src: /\n {6}agents\(\) \{\n[\s\S]*?\n {6}\},\n/,
     state: (long) => ({
       agents: [
         { id: 1, name: long ? LONGNAME : "planner", owner: long ? LONGNAME : "alice",
           disabled: false, created_at: "2026-08-01T12:00:00Z",
-          expires_at: "2099-01-01T00:00:00Z", last_used_at: "2026-08-16T09:30:00Z" },
+          expires_at: "2099-01-01T00:00:00Z", last_used_at: "2026-08-16T09:30:00Z",
+          // Its own cap, four fifths spent — the amber "about to run out" row.
+          budget_per_day: long ? BIG : 500, budget_used_today: long ? BIG : 430,
+          budget_limit_effective: long ? BIG : 500 },
         { id: 2, name: long ? LONGNAME : "suspended-bot", owner: long ? LONGNAME : "bob",
-          disabled: true, created_at: "2026-08-02T12:00:00Z" },
+          disabled: true, created_at: "2026-08-02T12:00:00Z",
+          // No budget_per_day AT ALL: the API omits the field when the agent
+          // inherits, which is exactly the distinction the brackets render. This
+          // one is also exhausted, so it carries the trailing FULL marker.
+          budget_used_today: long ? BIG : 100, budget_limit_effective: long ? BIG : 100 },
         { id: 3, name: long ? LONGNAME : "old-bot", owner: long ? LONGNAME : "carol",
           disabled: false, created_at: "2026-01-02T12:00:00Z",
-          expires_at: "2026-02-01T00:00:00Z", last_used_at: "2026-01-31T23:59:00Z" },
+          expires_at: "2026-02-01T00:00:00Z", last_used_at: "2026-01-31T23:59:00Z",
+          // Inheriting a server default of 0, which means NO LIMIT — the infinity
+          // glyph. budget_per_day is absent, and that absence is the only thing
+          // separating this row from the blocked one below it.
+          budget_used_today: long ? BIG : 12, budget_limit_effective: 0 },
+        { id: 4, name: long ? LONGNAME : "blocked-bot", owner: long ? LONGNAME : "dave",
+          disabled: false, created_at: "2026-08-03T12:00:00Z",
+          last_used_at: "2026-08-17T08:00:00Z",
+          // Its OWN cap of zero: a hard stop, the opposite of the row above.
+          // Same two zeroes on the wire, opposite meanings — see the dedicated
+          // assertion below, which is what actually pins them apart.
+          budget_per_day: 0, budget_used_today: long ? BIG : 3, budget_limit_effective: 0 },
       ],
     }),
   },
@@ -306,6 +336,26 @@ const screens = [
     noRows: true,
     src: /\n {6}quarantineadd\(\) \{\n[\s\S]*?\n {6}\},\n/,
     state: () => ({}),
+  },
+  {
+    // Phase 167's budget prompt (option 7 on PAMWRKAGT). A form, not a subfile,
+    // so it declares noRows — but unlike the two forms above it DOES render from
+    // screen state: it reports the agent's used-today and the limit in force, and
+    // it decides in three places whether the agent has a cap of its own or is
+    // riding the server default. Feeding it both shapes is what proves those
+    // branches evaluate; the long variant drives the counters to MAX_SAFE_INTEGER
+    // for the same reason the list fixture does.
+    name: "agentbudget",
+    noRows: true,
+    src: /\n {6}agentbudget\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      budgetAgent: long
+        // long: no cap of its own, so the prompt has to name the server default
+        // it would fall back to.
+        ? { id: 3, name: LONGNAME, owner: LONGNAME, budget_used_today: BIG, budget_limit_effective: BIG }
+        : { id: 3, name: "planner", owner: "alice", budget_per_day: 500,
+            budget_used_today: 430, budget_limit_effective: 500 },
+    }),
   },
   {
     name: "endpointagents",
@@ -404,6 +454,86 @@ for (const screen of screens) {
   }
 }
 if (rendered === 0) fail("no screen rendered at all — the harness is not testing anything");
+
+// --- zero, which means opposite things on the two sides of one field --------
+//
+// Everything above measures WIDTH. This measures MEANING, because the budget
+// column has one pair of states that a width check can never separate and that
+// would be wrong silently: an agent INHERITING a server default of 0 has no
+// limit at all, while an agent whose OWN budget_per_day is 0 is a hard stop that
+// may make no brokered call. Both arrive as `budget_limit_effective: 0`; the
+// only thing telling them apart is whether budget_per_day is present, and a
+// renderer that reads the effective number alone shows the strictest setting in
+// the feature as the most permissive one. That is the failure this block exists
+// for, and it is the reason the assertion is on the RENDERED TEXT rather than on
+// the state that produced it.
+
+function renderOne(name, src, state) {
+  return render({ name, src, state: () => state }, false);
+}
+const agentsSrc = (screens.find((s) => s.name === "agents") || {}).src;
+const budgetSrc = (screens.find((s) => s.name === "agentbudget") || {}).src;
+if (!agentsSrc || !budgetSrc) {
+  fail("the agents / agentbudget fixtures are gone, so the hard-stop assertion cannot run");
+} else {
+  // Only the DATA row is inspected. The screen's own legend spells the markers
+  // out in prose ("430/[500]", "3/0 STOP", "∞"), so matching the whole render
+  // would find every marker on every screen and assert nothing at all.
+  const row = (extra) => {
+    const out = renderOne("agents", agentsSrc, { agents: [Object.assign(
+      { id: 1, name: "bot", owner: "alice", disabled: false, created_at: "2026-08-01T12:00:00Z" }, extra)] });
+    return out && (out.match(/<tr><td>[\s\S]*?<\/tr>/) || [""])[0];
+  };
+
+  // An agent's own cap of zero: BLOCKED. It must say so, and it must not be
+  // wearing the unlimited glyph.
+  const blocked = row({ budget_per_day: 0, budget_used_today: 3, budget_limit_effective: 0 });
+  if (blocked && !/3\/0\s+STOP/.test(blocked)) {
+    fail(`an agent with its OWN budget_per_day of 0 does not render as a hard stop (expected "3/0 ... STOP"): ${blocked}`);
+  }
+  if (blocked && blocked.includes("\u221e")) {
+    fail("an agent BLOCKED at 0 renders the unlimited glyph — the strictest setting is showing as the most permissive one");
+  }
+
+  // The same zero, inherited: NO LIMIT. Opposite meaning, so it must read
+  // opposite — the glyph, and no stop marker.
+  const inheritedZero = row({ budget_used_today: 3, budget_limit_effective: 0 });
+  if (inheritedZero && !inheritedZero.includes("\u221e")) {
+    fail("an agent INHERITING a server default of 0 (unlimited) does not render the infinity glyph");
+  }
+  if (inheritedZero && /STOP/.test(inheritedZero)) {
+    fail("an agent INHERITING an unlimited default renders STOP — unlimited is showing as blocked");
+  }
+  if (blocked && inheritedZero && blocked === inheritedZero) {
+    fail("blocked-at-zero and inherited-unlimited render IDENTICALLY; the two zeroes have been collapsed");
+  }
+
+  // The other half of the distinction: an inherited limit is bracketed, an
+  // agent's own is bare. Both carry the same number, so only the brackets say
+  // whether anyone chose it.
+  const ownCap = row({ budget_per_day: 500, budget_used_today: 10, budget_limit_effective: 500 });
+  const inherited = row({ budget_used_today: 10, budget_limit_effective: 500 });
+  if (ownCap && !/10\/500/.test(ownCap)) fail("an agent's OWN cap should render bare as 10/500");
+  if (ownCap && ownCap.includes("[500]")) fail("an agent's OWN cap is rendered bracketed, which means inherited");
+  if (inherited && !inherited.includes("[500]")) fail("an INHERITED cap should render bracketed as 10/[500]");
+  // And exhaustion, which is a third red thing and not either of the above.
+  const spent = row({ budget_per_day: 500, budget_used_today: 500, budget_limit_effective: 500 });
+  if (spent && !/500\/500\s+FULL/.test(spent)) fail("a spent cap should render as 500/500 FULL");
+  if (spent && /STOP/.test(spent)) fail("a spent cap renders STOP, which is reserved for a cap of 0");
+
+  // The prompt screen owes the operator the same three answers in words.
+  const promptBlocked = renderOne("agentbudget", budgetSrc, { budgetAgent: { id: 1, name: "bot", owner: "alice", budget_per_day: 0, budget_used_today: 3, budget_limit_effective: 0 } });
+  if (promptBlocked && !/BLOCKED/.test(promptBlocked)) fail("PAMAGTBGT does not say BLOCKED for an agent capped at 0");
+  const promptUnlimited = renderOne("agentbudget", budgetSrc, { budgetAgent: { id: 1, name: "bot", owner: "alice", budget_used_today: 3, budget_limit_effective: 0 } });
+  if (promptUnlimited && !/unlimited/.test(promptUnlimited)) fail("PAMAGTBGT does not say unlimited for an agent inheriting a default of 0");
+  if (promptUnlimited && /BLOCKED, no brokered calls/.test(promptUnlimited)) fail("PAMAGTBGT calls an unlimited agent BLOCKED");
+  // Blank clearing the cap is the one thing an operator cannot guess, so the
+  // prompt has to say it — and say that 0 is not the same answer.
+  for (const [what, out] of [["blocked", promptBlocked], ["unlimited", promptUnlimited]]) {
+    if (out && !/EMPTY/.test(out)) fail(`PAMAGTBGT (${what}) never tells the operator that an empty field clears the cap`);
+    if (out && !/is a BLOCK, not/.test(out)) fail(`PAMAGTBGT (${what}) never warns that 0 blocks rather than unlimits`);
+  }
+}
 
 // --- the audit-detail parser, which has been wrong once ----------------------
 

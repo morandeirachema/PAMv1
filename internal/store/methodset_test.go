@@ -40,9 +40,12 @@ import (
 // QuarantineAgent,IsAgentQuarantined,ListAgentQuarantine,
 // ReleaseAgentQuarantine} (7) — agent-key lifecycle: an AI-agent identity
 // could previously only be created or destroyed, never suspended, expired or
-// reported as dormant.
+// reported as dormant. Phase 167 added
+// BrokerStore.{SetAgentKeyBudget,CountAgentToolCallsSince} (2) — the
+// cumulative daily call budget, the "how much in total" control the existing
+// per-minute rate limit cannot express.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 203
+	const want = 205
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

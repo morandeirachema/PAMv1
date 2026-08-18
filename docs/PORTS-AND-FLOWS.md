@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-08-18 · Reflects: Phases 0–165. **Phase 53 added the first new
+> Last updated: 2026-08-18 · Reflects: Phases 0–167. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; nothing after
 > it adds a port or listener (55–94 ride the existing listeners and flows: the
 > live-monitor relay and the step-up decision bus ride the server ↔ PostgreSQL
@@ -127,7 +127,7 @@
 > forensic reconstruction is one more SSH connection to a target pamv1 already
 > dials (flow **E2**, `:22`), made after the session ends with the same
 > credential; nothing new is opened, and nothing new is reachable.
-> **Phases 159, 161, 163 and 165 add none either** — the agent-broker batch so far changes
+> **Phases 159–167 add none either** — the agent-broker batch so far changes
 > who may call the existing `/v1/*` and `/mcp` surface and what pamv1 writes down
 > about it, never where anything listens or dials.
 > Everything from 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
