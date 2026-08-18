@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-18 · Reflects: Phases 0–171 + the 2026-07 hardening passes.
+> Last updated: 2026-08-18 · Reflects: Phases 0–173 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -894,7 +894,15 @@ only the result. "Trust the chokepoint, not the agent." Opt-in via
   SPIFFE subject + audience + expiry (fail-closed), with nested RFC 8693 `act`
   delegation capped by `PAM_BROKER_MAX_DELEGATION_DEPTH`. A `MultiVerifier` accepts
   either.
-- **Policy engine** (`policy`) — sudoers-style ordered YAML rules; a `Condition`
+- **Policy engine** (`policy`) — sudoers-style ordered YAML rules, and since
+  Phase 173 the analogy is complete: a rule has a **principal side**
+  (`agents:` / `not_agents:`, empty = every agent) and `Evaluate` takes the
+  VERIFIED `policy.Caller` alongside the tool and args, so a condition can read
+  the reserved `caller.*` namespace (`caller.agent`, `caller.spiffe_id`,
+  `caller.on_behalf_of`, `caller.delegation_depth`, `caller.identity_kind`) —
+  values that come from authentication and can never be forged by sending an
+  argument of the same name, because a `caller.` key is a different lookup that
+  never touches the argument map. A `Condition`
   is exactly one of `eq`/`not`/`in`/`not_in`/`present`/`gte`/`gt`/`lte`/`lt` over
   the tool name and each argument *value*, and **every one of them requires the
   argument to be present** (Phase 163 — the negative operators used to be

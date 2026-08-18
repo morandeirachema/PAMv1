@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–172 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–173 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,64 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 173 — Policy with a principal side, and an identity it can trust ✅
+
+**Closes:** the agent-broker research pass's findings B (policy has no principal
+side — three vendors model it and pamv1 did not) and 3 (policy is identity-blind
+— the verified identity was in scope one line above `Evaluate` and never passed).
+They are one defect from two directions: the engine's whole input was
+`(tool, args)`.
+
+**What that cost.** A rule could say *what*, never *who*: one `allow` for
+`reveal_credential` enabled that tool for **every** agent the deployment
+authenticates. And because a condition could only read `args`, any rule keyed on
+"which agent is this" was keyed on a string the agent chose to send — a control
+whose subject is picked by the party it constrains. The package's own sudoers
+analogy was incomplete the whole time: sudoers has a user column.
+
+- [x] **`Evaluate(caller policy.Caller, tool, args)`.** `Caller{Agent, SPIFFEID,
+  OnBehalfOf, Chain}` is projected from the verified `*agentid.Identity` by
+  `broker.callerOf` — a projection rather than a shared type, so `internal/policy`
+  still imports nothing from the identity layer and keeps deciding over facts
+  rather than over an authentication mechanism
+- [x] **`agents:` and `not_agents:` on a rule.** Empty matches every agent, so
+  every policy written before this phase behaves exactly as it did. `agents:`
+  matches the **presenter** only — a call delegated from a listed agent arrives
+  under the delegate's own identity and needs its own rule — while `not_agents:`
+  matches **any** identity the call is attributable to (presenter, delegation
+  chain, accountable party), so an exclusion cannot be escaped by delegating one
+  hop, the gap Phase 169 closed for quarantine. The asymmetry is deliberate:
+  both directions narrow what a rule admits, which is where a mistake should fall
+- [x] **A reserved `caller.*` condition namespace**: `caller.agent`,
+  `caller.spiffe_id`, `caller.on_behalf_of`, `caller.delegation_depth` and
+  `caller.identity_kind`. Depth counts **hops**, so 0 is an undelegated call for
+  both identity kinds and `{ gte: 1 }` reads as "arrived through a delegated
+  token"; an empty value reads as absent, so `caller.spiffe_id: { present: false }`
+  is how a rule says "a static agent key"
+- [x] **It cannot be forged by the party it constrains.** A `caller.` key is a
+  different lookup that never touches the argument map, so an argument named
+  `caller.agent` cannot satisfy `caller.agent` — and over the wire the tool's
+  argument schema (Phase 163) refuses the undeclared argument before policy even
+  runs. Two independent gates, pinned by one test each
+- [x] **An unknown `caller.*` attribute is a load error**, not a condition that
+  silently never matches — Phase 171's lesson applied to the new namespace — and
+  so is an empty entry in either principal list
+- [x] **Tests, each verified to FAIL against the pre-fix engine** (where the
+  second agent executed the same call): `policy.TestRulePrincipalSide`,
+  `policy.TestNotAgentsExcludesTheWholeChain`,
+  `policy.TestCallerConditions`,
+  `policy.TestCallerAttributesCannotBeForgedByArguments`,
+  `policy.TestUnknownCallerAttributeIsRefusedAtLoad`, plus
+  `api.TestBrokerPolicyHasAPrincipalSide` and
+  `api.TestCallerConditionCannotBeForgedOverTheWire` end to end over HTTP
+- [x] **Honest remainder**: a rule cannot match on the *registry* owner Phase 170
+  records for a SPIFFE identity — `caller.on_behalf_of` is the accountable party
+  as the identity carries it. Resolving the registry inside the engine would make
+  it read the store, which it deliberately does not do
+- [x] No schema change (high-water stays `0045`), no new env var, no route
+  change; the shipped `deploy/broker-policy.example.yaml` gains both new shapes,
+  and the admin guide, code guide and threat model document them
 
 ## Phase 172 — v0.48.0 ✅
 
