@@ -2427,10 +2427,16 @@ through an ordinary policy-allowed tool call, and bounds how much data an AI
 agent can pull through the broker. No schema change (high-water mark stays
 `0043`); one new env var, `PAM_BROKER_MAX_RESULT_BYTES`.
 
-- [ ] **v0.46.0** through the test-gated pipeline, rehearsed on `main` first.
-  Published as `ghcr.io/morandeirachema/pamv1:0.46.0` (also `latest`), digest
-  recorded here once the publish workflow runs, verified **public** by anonymous
-  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] **v0.46.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-18 as `ghcr.io/morandeirachema/pamv1:0.46.0` (also
+  `latest`), digest
+  `sha256:f43d072b6539759619d78380a2a95e485e58f368ca99f5bf8457a5bd484569d3`,
+  **public** (anonymous pull 200 on both tags, verified via the GHCR anonymous
+  token-exchange flow), with the `pam-agent` binaries, the SPDX SBOM and
+  `SHA256SUMS` attached. CI's SoftHSM job hung on its `apt-get install` step
+  twice during this phase (once for ~28 minutes before being cancelled), which
+  is a GitHub runner problem, not a build one — noted here because the same
+  symptom will look alarming next time
 - [x] All five pins via the sweep; Helm chart `version` 0.36.0 -> **0.37.0**
 - [x] Both READMEs restated; `docs/README.md`, `docs/NIS2-COMPLIANCE.md` (whose
   own "Reflects" header is re-synced again) and ROADMAP.md's top-banner phase
