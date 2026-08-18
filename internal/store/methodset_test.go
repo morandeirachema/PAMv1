@@ -48,9 +48,13 @@ import (
 // ListAgentIdentitiesByOwner,SetAgentIdentityOwner,DeleteAgentIdentity} (6) —
 // the owner registry for SPIFFE-attested agents, the one fact four-eyes
 // approval and the offboarding cascade both needed and neither could read for
-// an identity kind that has no agent_keys row.
+// an identity kind that has no agent_keys row. Phase 174 added
+// BrokerStore.{SeeAgentIdentity,EnrollAgentIdentity} (2) — the inventory half:
+// any workload in the trust domain can authenticate, and until it pamv1 knew
+// only about the ones an admin had typed in; enrolling is how a human claims one
+// pamv1 discovered without losing when it was first seen.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 211
+	const want = 213
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

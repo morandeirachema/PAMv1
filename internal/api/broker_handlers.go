@@ -64,6 +64,11 @@ func (s *Server) agentAuth(next agentHandler) http.HandlerFunc {
 			s.authFailed(w, r, "agent", "invalid or missing agent credential")
 			return
 		}
+		// Inventory the attested identity (Phase 174), and — when the deployment
+		// asks for it — require that somebody has claimed it. See noteSVID.
+		if id.SPIFFEID != "" && !s.noteSVID(w, r, id) {
+			return
+		}
 		// Per-agent rate limit (keyed by agent name) bounds tool-call volume.
 		if s.brokerLimiter != nil && !s.brokerLimiter.Allow(id.AgentName) {
 			w.Header().Set("Retry-After", "60")
@@ -153,6 +158,68 @@ func quarantineHitField(id *agentid.Identity, hit string) string {
 		return ""
 	}
 	return " subject:" + auditField(hit, 200)
+}
+
+// noteSVID records that an attested identity authenticated and, when
+// PAM_BROKER_REQUIRE_ENROLLED_SVID is set, refuses one nobody has enrolled. It
+// reports whether the call may proceed, writing the refusal itself when not.
+//
+// **Why an inventory at all.** A static agent key exists because pamv1 minted
+// it, so the set of static agents is knowable by definition. An SVID is the
+// opposite: any workload the trust domain vouches for can authenticate, and
+// until Phase 174 pamv1 knew only about the ones an admin had happened to type
+// into the owner registry. There was no list to review, no first-seen, no
+// last-seen — and the containment built in 159/169/170 all keys on a SUBJECT a
+// responder has to be able to name. Recording every identity that calls is what
+// makes those controls usable on the identity kind they were built for.
+//
+// **Recording is best-effort; refusing is fail-closed.** The sighting is
+// bookkeeping, so a store failure must not turn an authenticated call into a
+// refused one (the same stance TouchAgentKey takes for static keys). The
+// enrollment CHECK is the opposite: if the deployment has said only enrolled
+// identities may call, an unreadable registry cannot be read as "enrolled".
+//
+// A first sighting is audited once, not per call: a workload nobody enrolled
+// calling for the first time is worth telling an operator about, and the same
+// workload's thousandth call is not.
+func (s *Server) noteSVID(w http.ResponseWriter, r *http.Request, id *agentid.Identity) bool {
+	if s.brokerRequireEnrolledSVID {
+		reg, err := s.store.GetAgentIdentity(r.Context(), id.SPIFFEID)
+		switch {
+		case err != nil && !errors.Is(err, store.ErrNotFound):
+			s.log.Error("agent enrollment check failed; refusing the call (fail closed)",
+				"spiffe_id", id.SPIFFEID, "err", err)
+			_ = s.auditAs(r.Context(), id.AgentName, "agent.not_enrolled",
+				"agent:"+auditField(id.AgentName, maxSPIFFEIDLen)+" reason:enrollment-check-failed")
+			s.authFailed(w, r, "agent", "invalid or missing agent credential")
+			return false
+		case err != nil || !reg.Enrolled:
+			// Record the sighting anyway, so the identity that knocked appears in
+			// the inventory an operator enrolls FROM. Refused first, listed
+			// second: the refusal is the control, the row is the evidence.
+			s.seeSVID(r, id)
+			_ = s.auditAs(r.Context(), id.AgentName, "agent.not_enrolled",
+				"agent:"+auditField(id.AgentName, maxSPIFFEIDLen)+" path:"+auditField(r.URL.Path, 200))
+			s.authFailed(w, r, "agent", "invalid or missing agent credential")
+			return false
+		}
+	}
+	s.seeSVID(r, id)
+	return true
+}
+
+// seeSVID stamps the inventory row for an attested identity, creating it on a
+// first sighting and auditing that once. Best-effort by design — see noteSVID.
+func (s *Server) seeSVID(r *http.Request, id *agentid.Identity) {
+	created, err := s.store.SeeAgentIdentity(r.Context(), id.SPIFFEID, time.Now())
+	if err != nil {
+		s.log.Debug("agent identity sighting not recorded", "spiffe_id", id.SPIFFEID, "err", err)
+		return
+	}
+	if created {
+		_ = s.auditAs(r.Context(), id.AgentName, "agent.identity_first_seen",
+			"spiffe_id:"+auditField(id.SPIFFEID, maxSPIFFEIDLen)+" enrolled:false")
+	}
 }
 
 // bearerToken extracts a Bearer token from the Authorization header.

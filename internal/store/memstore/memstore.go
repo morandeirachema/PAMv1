@@ -1755,8 +1755,37 @@ func (m *Memstore) CreateAgentIdentity(_ context.Context, a *store.AgentIdentity
 	}
 	a.ID = m.id()
 	a.CreatedAt = time.Now().UTC()
+	a.Enrolled = true // an operator recorded it deliberately
 	m.agentIdentities[a.ID] = *a
 	return nil
+}
+
+// SeeAgentIdentity records that a SPIFFE identity authenticated, creating an
+// unenrolled row on the first sighting and stamping last-seen after that.
+func (m *Memstore) SeeAgentIdentity(_ context.Context, spiffeID string, seen time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	at := seen.UTC()
+	for id, a := range m.agentIdentities {
+		if a.SPIFFEID != spiffeID {
+			continue
+		}
+		if a.FirstSeen == nil {
+			first := at
+			a.FirstSeen = &first
+		}
+		last := at
+		a.LastSeen = &last
+		m.agentIdentities[id] = a
+		return false, nil
+	}
+	first, last := at, at
+	a := store.AgentIdentity{
+		ID: m.id(), SPIFFEID: spiffeID, CreatedBy: "first-seen",
+		Enrolled: false, FirstSeen: &first, LastSeen: &last, CreatedAt: time.Now().UTC(),
+	}
+	m.agentIdentities[a.ID] = a
+	return true, nil
 }
 
 // GetAgentIdentity returns one SPIFFE ID's registration, or ErrNotFound.
@@ -1799,6 +1828,19 @@ func (m *Memstore) ListAgentIdentitiesByOwner(_ context.Context, owner string) (
 	return out, nil
 }
 
+// EnrollAgentIdentity claims a discovered identity: owner, note, enrolled.
+func (m *Memstore) EnrollAgentIdentity(_ context.Context, id int64, owner, note string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.agentIdentities[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	a.Owner, a.Note, a.Enrolled = owner, note, true
+	m.agentIdentities[id] = a
+	return nil
+}
+
 // SetAgentIdentityOwner reassigns one registration's owner; ErrNotFound if absent.
 func (m *Memstore) SetAgentIdentityOwner(_ context.Context, id int64, owner string) error {
 	m.mu.Lock()
@@ -1807,7 +1849,9 @@ func (m *Memstore) SetAgentIdentityOwner(_ context.Context, id int64, owner stri
 	if !ok {
 		return store.ErrNotFound
 	}
+	// Naming an owner IS enrolling — see the pgstore twin.
 	a.Owner = owner
+	a.Enrolled = true
 	m.agentIdentities[id] = a
 	return nil
 }

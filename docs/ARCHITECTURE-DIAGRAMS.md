@@ -245,6 +245,9 @@ erDiagram
     string SPIFFEID
     string Owner
     string Note
+    bool Enrolled
+    ptr_time_Time FirstSeen
+    ptr_time_Time LastSeen
     string CreatedBy
     time_Time CreatedAt
   }
