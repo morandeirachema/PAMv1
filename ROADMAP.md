@@ -2429,10 +2429,14 @@ which the roadmap calls the intended production posture. **Schema change** — t
 migration high-water mark moves `0044` -> `0045` (a new table, applied on
 startup, no backfill). Four new routes, no new env var, **two upgrade notes**.
 
-- [ ] **v0.48.0** through the test-gated pipeline, rehearsed on `main` first.
-  Published as `ghcr.io/morandeirachema/pamv1:0.48.0` (also `latest`), digest
-  recorded here once the publish workflow runs, verified **public** by anonymous
-  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] **v0.48.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-18 as `ghcr.io/morandeirachema/pamv1:0.48.0` (also
+  `latest`), digest
+  `sha256:71f2ec734b1b4c4391cbe4a1f77e04c0bdc01d568f2e0184734488631c44852c`,
+  **public** (anonymous pull 200 on both tags via the GHCR token-exchange flow,
+  both resolving to the same digest), with the `pam-agent` binaries (amd64 +
+  arm64), the SPDX SBOM and `SHA256SUMS` attached. The release workflow's own
+  test job gated the tag and passed first time, as it did for v0.47.0
 - [x] All five pins via the sweep; Helm chart `version` 0.38.0 -> **0.39.0**
 - [x] Both READMEs restated; `docs/README.md`, `docs/NIS2-COMPLIANCE.md` (whose
   control-mapping note absorbs 169–171: a new `subject:` detail on an existing
