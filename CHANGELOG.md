@@ -9,6 +9,77 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.45.0] — 2026-08-18
+
+A minor that closes a **real authorization bypass** in the AI-agent broker's
+policy engine. No schema change (migration high-water mark stays `0043`).
+
+**Read the *Changed* section before upgrading**: policy semantics change, and a
+rule that relied on the old behaviour will now match fewer calls (which is the
+point — it was matching calls it should not have).
+
+### Fixed
+
+- **A negative policy guard could be bypassed by omitting the argument it
+  guards.** A `not` / `not_in` condition was satisfied when the argument was
+  **absent**. Combined with a tool whose filter is optional, that inverts the
+  guard: `list_credentials` lists **every** credential's metadata when `target`
+  is omitted, so
+
+  ```yaml
+  - id: not-the-vault
+    tool: list_credentials
+    effect: allow
+    when: { args.target: { not_in: [vault-prod, hsm-root] } }
+  ```
+
+  admitted exactly the call it existed to stop — omit `target`, satisfy the
+  block-list by absence, list the two targets the rule names. No injection, no
+  stolen credential: a smaller JSON object. Every condition operator now requires
+  the argument to be **present**, matching `eq` / `in` / the numeric comparators,
+  which always did. An omitted argument matches no condition, so the call falls
+  through to the implicit deny.
+- **The same bypass with an empty string.** `target: ""` is *present* as far as
+  policy is concerned — satisfying both a block-list and a presence check — while
+  a tool with an optional filter reads it as "no filter" and returns everything.
+  A supplied-but-empty string argument is now refused outright; omit the argument
+  instead.
+- **An MCP client was told a policy denial was not an error** (`isError: false`),
+  so a client that trusts the flag read a refusal as a successful call that
+  returned some text. A denial is now flagged. A call parked for approval is
+  deliberately still *not* an error: it has not failed, it is waiting for a
+  human.
+
+### Added
+
+- **`present: true|false` policy operator.** With absence no longer satisfying
+  the negative operators, this is how a rule says "this argument must be
+  supplied" or "this argument must NOT be supplied" — the latter being how an
+  operator writes "the unscoped, list-everything form of this call is not
+  allowed". The shipped example policy gains exactly that rule for
+  `list_credentials`. Presence means *supplied*, not non-empty.
+- **Tool arguments are validated against the tool's own declared schema**, before
+  the policy engine evaluates the call. An argument the tool does not declare is
+  **refused rather than ignored** (a typo like `targt` used to become "not
+  supplied" silently, which for an optional filter is the difference between
+  listing one thing and listing everything); a missing required argument is
+  refused instead of arriving as an empty string; and a wrong type is refused,
+  which matters because the policy engine compares a *stringified* value while
+  the tool reads the raw JSON one. An unregistered tool still falls through to
+  the implicit deny rather than becoming a validation failure.
+- **`required` in the MCP `tools/list` schema**, so a well-behaved client gets a
+  call right the first time instead of learning the contract from a refusal.
+
+### Changed
+
+- **Policy semantics**: every condition operator now requires the argument to be
+  present. Rules using `not` / `not_in` that were (knowingly or not) relying on
+  absence to match must add an explicit `present: false` rule to keep that
+  behaviour.
+- Tool calls carrying undeclared, missing, mistyped or empty-string arguments now
+  come back `failed` with a reason, where they previously ran with the offending
+  value silently defaulted.
+
 ## [0.44.0] — 2026-08-17
 
 A minor: agent behaviour becomes visible to detection and an agent run becomes
@@ -1388,7 +1459,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.44.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.45.0...HEAD
+[0.45.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.45.0
 [0.44.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.44.0
 [0.43.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.43.0
 [0.42.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.42.0
