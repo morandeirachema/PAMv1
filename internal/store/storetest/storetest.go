@@ -1987,6 +1987,73 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.ReleaseAgentQuarantine(ctx, qk.ID); err != nil {
 		t.Fatalf("ReleaseAgentQuarantine(cleanup): %v", err)
 	}
+
+	// --- SPIFFE agent-owner registry (Phase 170) ---
+	// The fact an SVID-authenticated agent had nowhere to record: who is
+	// accountable for it. Four-eyes approval and the offboarding cascade both
+	// read this, and both were inert for that identity kind without it.
+	if list, err := st.ListAgentIdentities(ctx); err != nil || list == nil || len(list) != 0 {
+		t.Fatalf("ListAgentIdentities(empty): want empty non-nil, got %+v err %v", list, err)
+	}
+	if _, err := st.GetAgentIdentity(ctx, "spiffe://example.org/agent/planner"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetAgentIdentity(unregistered): want ErrNotFound, got %v", err)
+	}
+	ai := &store.AgentIdentity{
+		SPIFFEID: "spiffe://example.org/agent/planner", Owner: "carol",
+		Note: "release planner", CreatedBy: "alice",
+	}
+	if err := st.CreateAgentIdentity(ctx, ai); err != nil {
+		t.Fatalf("CreateAgentIdentity: %v", err)
+	}
+	if ai.ID == 0 || ai.CreatedAt.IsZero() {
+		t.Fatalf("CreateAgentIdentity did not populate ID/CreatedAt: %+v", ai)
+	}
+	if got, err := st.GetAgentIdentity(ctx, "spiffe://example.org/agent/planner"); err != nil ||
+		got.Owner != "carol" || got.Note != "release planner" || got.CreatedBy != "alice" {
+		t.Fatalf("GetAgentIdentity: %+v err %v", got, err)
+	}
+	// One identity, one owner: a second registration for the same SPIFFE ID
+	// would make "who is accountable" ambiguous at the four-eyes decision.
+	dupID := &store.AgentIdentity{SPIFFEID: "spiffe://example.org/agent/planner", Owner: "dave"}
+	if err := st.CreateAgentIdentity(ctx, dupID); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("CreateAgentIdentity(duplicate spiffe_id): want ErrConflict, got %v", err)
+	}
+	secondIdent := &store.AgentIdentity{SPIFFEID: "spiffe://example.org/agent/worker", Owner: "dave", CreatedBy: "alice"}
+	if err := st.CreateAgentIdentity(ctx, secondIdent); err != nil {
+		t.Fatalf("CreateAgentIdentity(second): %v", err)
+	}
+	// Owner filtering is the offboarding cascade's query.
+	if list, err := st.ListAgentIdentitiesByOwner(ctx, "carol"); err != nil || len(list) != 1 || list[0].ID != ai.ID {
+		t.Fatalf("ListAgentIdentitiesByOwner(carol): %+v err %v", list, err)
+	}
+	if list, err := st.ListAgentIdentitiesByOwner(ctx, "nobody"); err != nil || list == nil || len(list) != 0 {
+		t.Fatalf("ListAgentIdentitiesByOwner(nobody): want empty non-nil, got %+v err %v", list, err)
+	}
+	// Ownership outlives people: reassignment keeps the row, so when the
+	// identity was first registered and by whom survives the handover.
+	if err := st.SetAgentIdentityOwner(ctx, ai.ID, "dave"); err != nil {
+		t.Fatalf("SetAgentIdentityOwner: %v", err)
+	}
+	if got, err := st.GetAgentIdentity(ctx, "spiffe://example.org/agent/planner"); err != nil ||
+		got.Owner != "dave" || got.CreatedBy != "alice" || !got.CreatedAt.Equal(ai.CreatedAt) {
+		t.Fatalf("reassignment must change only the owner: %+v err %v", got, err)
+	}
+	if err := st.SetAgentIdentityOwner(ctx, 999999, "dave"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("SetAgentIdentityOwner(missing): want ErrNotFound, got %v", err)
+	}
+	if list, err := st.ListAgentIdentities(ctx); err != nil || len(list) != 2 ||
+		list[0].ID != ai.ID || list[1].ID != secondIdent.ID {
+		t.Fatalf("ListAgentIdentities: %+v err %v", list, err)
+	}
+	if err := st.DeleteAgentIdentity(ctx, ai.ID); err != nil {
+		t.Fatalf("DeleteAgentIdentity: %v", err)
+	}
+	if err := st.DeleteAgentIdentity(ctx, ai.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("DeleteAgentIdentity(twice): want ErrNotFound, got %v", err)
+	}
+	if err := st.DeleteAgentIdentity(ctx, secondIdent.ID); err != nil {
+		t.Fatalf("DeleteAgentIdentity(cleanup): %v", err)
+	}
 	if err := st.DeleteAgentKey(ctx, akLive.ID); err != nil {
 		t.Fatalf("DeleteAgentKey(lifecycle): %v", err)
 	}

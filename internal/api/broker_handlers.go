@@ -316,25 +316,49 @@ func (s *Server) decideBrokerApproval(w http.ResponseWriter, r *http.Request) {
 	}
 	p := principalFrom(r.Context())
 	approver := actorFrom(r.Context())
-	// Four-eyes: the human who owns the agent may not approve their own agent's
-	// call (mirrors the human access-request self-approval refusal).
-	if owner, ok := s.broker.ApprovalOwner(r.PathValue("id")); ok {
-		// Fail closed on an UNKNOWN owner as well as a matching one. Agent creation
-		// now requires an owner, but rows created before that could have none — and
-		// for those the old `owner != ""` guard silently disabled four-eyes
-		// entirely, letting one principal both request and approve. An unattributed
-		// agent is exactly the case where a second pair of eyes cannot be proven,
-		// so the decision is refused rather than waved through.
-		if owner == "" {
+	// Four-eyes: a human who owns any agent in the chain that made this call may
+	// not approve it (mirrors the human access-request self-approval refusal).
+	//
+	// Resolving the owner is not a field read, because the two agent identity
+	// kinds keep it in different places — an agent key on its row, a SPIFFE
+	// identity in the Phase 170 registry. Before that registry existed this gate
+	// compared a SPIFFE ID against a username, which can never match, so on the
+	// attested path (the intended production posture) four-eyes was INERT: the
+	// human operating an agent could approve their own agent's privileged call.
+	if ident, ok := s.broker.ApprovalIdentity(r.PathValue("id")); ok {
+		owners, unattributed, err := s.accountableOwners(r.Context(), ident)
+		switch {
+		case err != nil:
+			// Fail closed: an owner registry that cannot be read is not evidence
+			// that nobody owns this agent.
+			s.log.Error("could not resolve a parked call's accountable owner; refusing the decision (fail closed)",
+				"call", r.PathValue("id"), "err", err)
 			s.audit(r.Context(), "broker.approval.refused",
-				fmt.Sprintf("call:%s reason:agent-has-no-owner", auditField(r.PathValue("id"), 64)))
+				fmt.Sprintf("call:%s reason:owner-lookup-failed", auditField(r.PathValue("id"), 64)))
+			writeError(w, http.StatusServiceUnavailable,
+				"the agent owner registry is unavailable, so four-eyes cannot be established; the call stays parked")
+			return
+		case unattributed != "":
+			// Fail closed on an UNKNOWN owner as well as a matching one. Agent
+			// creation requires an owner, but a SPIFFE identity is admitted by the
+			// trust domain rather than created here, so it has one only if somebody
+			// recorded it. An unattributed agent is exactly the case where a second
+			// pair of eyes cannot be proven, so the decision is refused rather than
+			// waved through — the call stays parked and decidable once an owner
+			// exists.
+			s.audit(r.Context(), "broker.approval.refused",
+				fmt.Sprintf("call:%s reason:agent-has-no-owner subject:%s",
+					auditField(r.PathValue("id"), 64), auditField(unattributed, maxSPIFFEIDLen)))
 			writeError(w, http.StatusForbidden,
-				"this call's agent has no recorded owner, so four-eyes cannot be established; set an owner on the agent")
+				"this call's agent identity "+unattributed+" has no recorded owner, so four-eyes cannot be established; "+
+					"register one with POST /v1/agents/identities (or set an owner on the agent key)")
 			return
 		}
-		if strings.EqualFold(owner, approver) {
-			writeError(w, http.StatusForbidden, "cannot approve a call for an agent you own (four-eyes)")
-			return
+		for _, owner := range owners {
+			if strings.EqualFold(owner, approver) {
+				writeError(w, http.StatusForbidden, "cannot approve a call for an agent you own (four-eyes)")
+				return
+			}
 		}
 	}
 	out, ok, err := s.broker.Decide(r.Context(), r.PathValue("id"),

@@ -338,6 +338,43 @@ const screens = [
     state: () => ({}),
   },
   {
+    // Phase 170's SPIFFE owner registry (F8 on PAMWRKAGT). Like the quarantine
+    // list its widest column is a full SPIFFE ID, the value that once pushed a
+    // column off the terminal — and here a second wide column (the owner) sits
+    // beside it, so the long variant is what proves both fit.
+    name: "identities",
+    src: /\n {6}identities\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      identities: [
+        { id: 1, spiffe_id: long ? LONG : "spiffe://e.org/ns/prod/sa/planner",
+          owner: long ? LONGNAME : "alice", note: long ? LONG : "release planner",
+          created_by: long ? LONGNAME : "boss", created_at: "2026-08-18T12:00:00Z" },
+        { id: 2, spiffe_id: long ? LONG + "/and/more" : "spiffe://e.org/ns/prod/sa/worker",
+          owner: long ? LONGNAME : "carol", note: "", created_by: long ? LONGNAME : "boss",
+          created_at: "2026-08-18T13:00:00Z" },
+      ],
+    }),
+  },
+  {
+    name: "identityadd",
+    noRows: true,
+    src: /\n {6}identityadd\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: () => ({}),
+  },
+  {
+    // The owner-handover prompt: a form, but one that renders from screen state
+    // (it shows the identity being reassigned and its current owner), so both
+    // shapes are fed for the same reason agentbudget's are.
+    name: "identityowner",
+    noRows: true,
+    src: /\n {6}identityowner\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      ownerIdentity: long
+        ? { id: 2, spiffe_id: LONG + "/and/more", owner: LONGNAME }
+        : { id: 2, spiffe_id: "spiffe://e.org/ns/prod/sa/worker", owner: "carol" },
+    }),
+  },
+  {
     // Phase 167's budget prompt (option 7 on PAMWRKAGT). A form, not a subfile,
     // so it declares noRows — but unlike the two forms above it DOES render from
     // screen state: it reports the agent's used-today and the limit in force, and

@@ -43,9 +43,14 @@ import (
 // reported as dormant. Phase 167 added
 // BrokerStore.{SetAgentKeyBudget,CountAgentToolCallsSince} (2) — the
 // cumulative daily call budget, the "how much in total" control the existing
-// per-minute rate limit cannot express.
+// per-minute rate limit cannot express. Phase 170 added
+// BrokerStore.{CreateAgentIdentity,GetAgentIdentity,ListAgentIdentities,
+// ListAgentIdentitiesByOwner,SetAgentIdentityOwner,DeleteAgentIdentity} (6) —
+// the owner registry for SPIFFE-attested agents, the one fact four-eyes
+// approval and the offboarding cascade both needed and neither could read for
+// an identity kind that has no agent_keys row.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 205
+	const want = 211
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

@@ -189,6 +189,9 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), "user.delete", strconv.FormatInt(id, 10))
 	s.suspendOwnedAgents(r.Context(), u.Username)
+	// The same cascade for the identity kind that has no key to suspend: a
+	// SPIFFE-attested agent is stopped by quarantining its subject (Phase 170).
+	s.suspendOwnedIdentities(r.Context(), u.Username)
 	w.WriteHeader(http.StatusNoContent)
 }
 
