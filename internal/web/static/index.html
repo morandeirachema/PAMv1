@@ -172,6 +172,8 @@
   let sshCerts = [], caInfo = null, loginSessions = [], agents = [], newAgent = null;
   let endpointAgents = [], newEndpointAgent = null; // Phase 153: outbound-only endpoint agents
   let quarantine = []; // Phase 159: quarantined agent identities (agent-key name, or a full SPIFFE ID)
+  let identities = []; // Phase 170: SPIFFE agent identities and the human accountable for each
+  let ownerIdentity = null; // the registration whose owner is being reassigned
   let budgetAgent = null; // Phase 167: the agent whose daily call budget option 7 is editing
   let kubeTarget = null, kubeResult = null, kubeErr = ""; // Phase 155: brokered kubectl operations
   let deps = [], depsCred = null, blastResult = null, auditHead = null, nis2Report = null;
@@ -589,6 +591,16 @@
     try { quarantine = await api("GET", "/v1/agents/quarantine"); }
     catch (e) { if (e.status === 404) say("AI-AGENT BROKER IS DISABLED (set PAM_BROKER_POLICY_FILE)."); }
     go("quarantine");
+  }
+  // Phase 170: the SPIFFE owner registry, reached with F8 from the agent-key
+  // screen. It answers the one question an attested agent could not answer —
+  // who is accountable for it — which is what the broker's four-eyes refusal
+  // compares an approver against, and what the offboarding cascade follows.
+  async function openIdentities() {
+    identities = [];
+    try { identities = await api("GET", "/v1/agents/identities"); }
+    catch (e) { if (e.status === 404) say("AI-AGENT BROKER IS DISABLED (set PAM_BROKER_POLICY_FILE)."); }
+    go("identities");
   }
   // Phase 155: one brokered Kubernetes operation against a kubernetes target.
   // The form is the whole vocabulary — there is no free-text kubectl here,
@@ -1927,9 +1939,10 @@ ${agents.map((a) => `<tr><td>${opt(a.id)}</td><td>${esc(a.id)}</td><td class="wh
 </table>${agents.length ? "" : `<div class="cyan indent">(No agent keys. Press F6 to mint one — requires the broker to be enabled.)</div>`}
 <input type="submit" hidden></form>
 <div class="cyan">Suspend is reversible (5/6); revoke is not. An agent that presents a SPIFFE SVID has no key row
-here at all — stop that one with F7=Quarantine list. Parked calls awaiting a human are on menu 20.
+here at all — stop that one with F7=Quarantine list, and record who owns it with F8=SPIFFE owners
+(without an owner its parked calls cannot be approved). Parked calls awaiting a human are on menu 20.
 Option 7 sets or clears the daily budget: a rate limit bounds a burst, a budget bounds the day.</div>
-${fkeys("F3=Exit   F5=Refresh   F6=Mint agent key   F7=Quarantine list   F12=Cancel")}`;
+${fkeys("F3=Exit   F5=Refresh   F6=Mint agent key   F7=Quarantine list   F8=SPIFFE owners   F12=Cancel")}`;
         document.getElementById("f-list").onsubmit = async (ev) => {
           ev.preventDefault();
           try {
@@ -2311,6 +2324,99 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
             say(`SUBJECT ${String(f.subject).trim().toUpperCase()} QUARANTINED.`);
             await openQuarantine();
           } catch (e) { say("CPF9898: " + (e.status === 404 ? "AI-AGENT BROKER IS DISABLED (set PAM_BROKER_POLICY_FILE)." : e.message), true); render(); }
+        };
+      },
+
+      // Phase 170 — who owns a SPIFFE-attested agent. A static key carries its
+      // owner on its own row (PAMWRKAGT); an SVID agent has no row at all, so
+      // until this registry existed nothing recorded the human accountable for
+      // it — and the broker's four-eyes refusal, which compares that owner
+      // against the approver, could never fire on the attested path.
+      identities() {
+        back = "agents";
+        term.innerHTML = `${head("PAMAGTOWN", "SPIFFE Agent Owners")}
+Who pamv1 holds accountable for each SPIFFE-attested agent. The broker refuses an approval
+from a human who owns any agent in the calling chain (four-eyes), and deleting a human
+quarantines the identities they owned — both read this list.
+<span class="cyan">An identity with no owner here cannot have its parked calls approved by anyone: four-eyes
+cannot be established, so the decision is refused and the call stays parked.</span>
+Type options, press Enter.  <span class="cyan">4=Remove   5=Change owner</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>ID</th><th>SPIFFE ID</th><th>Owner</th><th>Note</th><th>By</th><th>When</th></tr>
+${identities.map((a) => `<tr><td>${opt(a.id)}</td><td>${esc(a.id)}</td><td class="white">${cell(a.spiffe_id, 34)}</td><td class="green">${cell(a.owner, 12)}</td><td>${cell(a.note || "-", 16)}</td><td>${cell(a.created_by || "-", 10)}</td><td class="cyan">${fmtTime(a.created_at)}</td></tr>`).join("")}
+</table>${identities.length ? "" : `<div class="cyan indent">(No SPIFFE identities registered. Press F6 to record one — the owner is a pamv1 username.)</div>`}
+<input type="submit" hidden></form>
+<div class="cyan">Registering is NOT enrollment: it admits nothing and attests nothing — the trust domain already
+decided who may authenticate. It records only who answers for the agent.</div>
+${fkeys("F3=Exit   F5=Refresh   F6=Register an identity   F12=Cancel")}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const a of identities) {
+              const o = optVal(ev.target, a.id);
+              if (o === "4") { await api("DELETE", `/v1/agents/identities/${a.id}`); say(`IDENTITY ${String(a.spiffe_id).toUpperCase()} REMOVED.`); }
+              else if (o === "5") { ownerIdentity = a; return go("identityowner"); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openIdentities();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      identityadd() {
+        back = "identities";
+        term.innerHTML = `${head("PAMADDOWN", "Register a SPIFFE Identity")}
+Record the human accountable for an agent that authenticates with a SPIFFE SVID. Write the
+SPIFFE ID exactly as the broker sees it, e.g. spiffe://example.org/ns/prod/sa/planner.
+Register every identity in a delegation chain: a call made by a sub-agent is refused at
+approval time if any link in its chain has no owner.
+
+<form id="f-add" class="indent">
+<label>SPIFFE ID . . . . . :  <input name="spiffe_id" size="52" required autofocus></label>
+<label>Owner (username)  . :  <input name="owner" size="20" required></label>
+<label>Note  . . . . . . . :  <input name="note" size="40"></label>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-add").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          try {
+            await api("POST", "/v1/agents/identities", {
+              spiffe_id: String(f.spiffe_id || "").trim(),
+              owner: String(f.owner || "").trim(),
+              note: String(f.note || "").trim(),
+            });
+            say(`IDENTITY ${String(f.spiffe_id).trim().toUpperCase()} REGISTERED.`);
+            await openIdentities();
+          } catch (e) { say("CPF9898: " + (e.status === 404 ? "AI-AGENT BROKER IS DISABLED (set PAM_BROKER_POLICY_FILE)." : e.message), true); render(); }
+        };
+      },
+
+      identityowner() {
+        back = "identities";
+        const a = ownerIdentity || {};
+        term.innerHTML = `${head("PAMCHGOWN", "Change Accountable Owner")}
+Hand one SPIFFE identity to a different human. The row is kept, so when it was first
+registered and by whom survives the handover.
+
+<div class="indent">SPIFFE ID . . . . . :  <span class="white">${esc(a.spiffe_id || "")}</span>
+Current owner . . . :  <span class="green">${esc(a.owner || "")}</span></div>
+
+<form id="f-add" class="indent">
+<label>New owner . . . . . :  <input name="owner" size="20" required autofocus></label>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-add").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          try {
+            await api("POST", `/v1/agents/identities/${a.id}/owner`, { owner: String(f.owner || "").trim() });
+            say(`IDENTITY ${String(a.spiffe_id).toUpperCase()} NOW OWNED BY ${String(f.owner).trim().toUpperCase()}.`);
+            await openIdentities();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
         };
       },
 
@@ -3475,7 +3581,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   }
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
-  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, endpointagents: openEndpointAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid) };
+  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, identities: openIdentities, endpointagents: openEndpointAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid) };
   // cycleTheme rotates green → amber → slate → green, persists the choice, and
   // re-renders so the F-key hint's confirmation message shows immediately.
   function cycleTheme() {
@@ -3488,7 +3594,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
     render();
   }
 
-  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), quarantine: () => go("quarantineadd"), endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, mfawebauthn: () => go("mfawebauthnadd") };
+  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), quarantine: () => go("quarantineadd"), identities: () => go("identityadd"), endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, mfawebauthn: () => go("mfawebauthnadd") };
 
   window.addEventListener("keydown", async (ev) => {
     // While the RDP viewer is open it owns the keyboard (its own capture-phase
@@ -3535,7 +3641,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
       else if (k === "F5") { const r = refreshers[screen]; if (r) await r(); else render(); }
       else if (k === "F6") { if (screen === "effective") await exportIaC("env"); else if (screen === "audit") await verifyChain(); else { const a = adders[screen]; if (a) a(); } }
       else if (k === "F7") { if (screen === "effective") await exportIaC("helm"); else if (screen === "agents") await openQuarantine(); else if (screen === "audit") await fetchAuditHead(); else if (screen === "campaigns" && can("approve")) await openMyQueue(); else if (screen === "sesswatch" && watchSess) await openShareInvites(watchSess.id); }
-      else if (k === "F8") { if (screen === "effective") await exportIaC("terraform"); else if (screen === "audit") await openNIS2Report(); else if (screen === "sesswatch" && watchSess && can("approve")) await toggleSuspend(); }
+      else if (k === "F8") { if (screen === "effective") await exportIaC("terraform"); else if (screen === "audit") await openNIS2Report(); else if (screen === "agents") await openIdentities(); else if (screen === "sesswatch" && watchSess && can("approve")) await toggleSuspend(); }
       else if (k === "F9") { if (screen === "audit") await exportAudit(); else if (screen === "users") await reconcileIdentities(); else if (screen === "sshcerts") await download("/api/ca/ssh/krl", "pamv1-revoked-certs.krl", "KRL"); else if (screen === "nis2report") await download("/api/compliance/nis2" + (nis2Query() ? "?" + nis2Query() : ""), "pamv1-nis2-report.json", "NIS2 REPORT"); }
       else if (k === "F10") { if (screen === "audit") await download("/api/audit/ocsf", "pamv1-audit-ocsf.json", "OCSF"); }
       else if (k === "F12") { go(back); }

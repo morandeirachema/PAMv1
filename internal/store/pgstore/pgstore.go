@@ -1438,6 +1438,60 @@ func (s *PGStore) ReleaseAgentQuarantine(ctx context.Context, id int64) error {
 	return execExpectingRow(ctx, s.pool, `DELETE FROM agent_quarantine WHERE id = $1`, id)
 }
 
+// CreateAgentIdentity records the owner of a SPIFFE-attested agent, populating
+// ID and CreatedAt; ErrConflict if that SPIFFE ID is already registered.
+func (s *PGStore) CreateAgentIdentity(ctx context.Context, a *store.AgentIdentity) error {
+	err := s.pool.QueryRow(ctx,
+		`INSERT INTO agent_identities (spiffe_id, owner, note, created_by)
+		 VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
+		a.SPIFFEID, a.Owner, a.Note, a.CreatedBy,
+	).Scan(&a.ID, &a.CreatedAt)
+	if pgCode(err) == pgUniqueViolation {
+		return store.ErrConflict
+	}
+	return err
+}
+
+// GetAgentIdentity returns one SPIFFE ID's registration, or ErrNotFound.
+func (s *PGStore) GetAgentIdentity(ctx context.Context, spiffeID string) (*store.AgentIdentity, error) {
+	return getOne(ctx, s.pool, scanAgentIdentity,
+		`SELECT id, spiffe_id, owner, note, created_by, created_at
+		   FROM agent_identities WHERE spiffe_id = $1`, spiffeID)
+}
+
+// ListAgentIdentities returns every registration ordered by ID.
+func (s *PGStore) ListAgentIdentities(ctx context.Context) ([]store.AgentIdentity, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, spiffe_id, owner, note, created_by, created_at
+		   FROM agent_identities ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanAgentIdentity)
+}
+
+// ListAgentIdentitiesByOwner returns one owner's registrations ordered by ID.
+func (s *PGStore) ListAgentIdentitiesByOwner(ctx context.Context, owner string) ([]store.AgentIdentity, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, spiffe_id, owner, note, created_by, created_at
+		   FROM agent_identities WHERE owner = $1 ORDER BY id`, owner)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanAgentIdentity)
+}
+
+// SetAgentIdentityOwner reassigns one registration's owner; ErrNotFound if absent.
+func (s *PGStore) SetAgentIdentityOwner(ctx context.Context, id int64, owner string) error {
+	return execExpectingRow(ctx, s.pool,
+		`UPDATE agent_identities SET owner = $2 WHERE id = $1`, id, owner)
+}
+
+// DeleteAgentIdentity removes one registration by ID; ErrNotFound if absent.
+func (s *PGStore) DeleteAgentIdentity(ctx context.Context, id int64) error {
+	return execExpectingRow(ctx, s.pool, `DELETE FROM agent_identities WHERE id = $1`, id)
+}
+
 // RecordSSHCert stores an issued operator SSH certificate (Phase 28); ErrConflict
 // if the serial is already recorded.
 func (s *PGStore) RecordSSHCert(ctx context.Context, c *store.SSHCert) error {
@@ -2659,6 +2713,13 @@ func scanAgentKey(row pgx.CollectableRow) (store.AgentKey, error) {
 	var k store.AgentKey
 	err := row.Scan(&k.ID, &k.Name, &k.Owner, &k.TokenHash, &k.Disabled, &k.CreatedAt, &k.ExpiresAt, &k.LastUsedAt, &k.BudgetPerDay)
 	return k, err
+}
+
+// scanAgentIdentity maps one result row into a store.AgentIdentity.
+func scanAgentIdentity(row pgx.CollectableRow) (store.AgentIdentity, error) {
+	var a store.AgentIdentity
+	err := row.Scan(&a.ID, &a.SPIFFEID, &a.Owner, &a.Note, &a.CreatedBy, &a.CreatedAt)
+	return a, err
 }
 
 // scanAgentQuarantine maps one result row into a store.AgentQuarantine.

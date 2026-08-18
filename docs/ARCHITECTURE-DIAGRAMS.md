@@ -240,6 +240,14 @@ erDiagram
     int RecurDays
     ptr_time_Time NextRunAt
   }
+  AgentIdentity {
+    int64 ID
+    string SPIFFEID
+    string Owner
+    string Note
+    string CreatedBy
+    time_Time CreatedAt
+  }
   AgentKey {
     int64 ID
     string Name
@@ -535,7 +543,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 186 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 190 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -696,6 +704,10 @@ The 186 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/static/guacamole-common.min.js` | public |
 | GET | `/v1/agents` | CapManageUsers |
 | POST | `/v1/agents` | CapManageUsers |
+| GET | `/v1/agents/identities` | CapManageUsers |
+| POST | `/v1/agents/identities` | CapManageUsers |
+| DELETE | `/v1/agents/identities/{id}` | CapManageUsers |
+| POST | `/v1/agents/identities/{id}/owner` | CapManageUsers |
 | GET | `/v1/agents/quarantine` | CapManageUsers |
 | POST | `/v1/agents/quarantine` | CapManageUsers |
 | DELETE | `/v1/agents/quarantine/{id}` | CapManageUsers |

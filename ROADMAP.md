@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–169 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–170 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,75 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 170 — An owner for the identity pamv1 never issued ✅
+
+**Closes:** the agent-broker research pass's first and sharpest defect —
+**four-eyes self-approval prevention was inert on the SPIFFE path**.
+
+**The defect.** `decideBrokerApproval` refuses the human who owns an agent from
+approving that agent's own parked call, by comparing the call's
+`Identity.OnBehalfOf` against the approver's username. For an SVID-authenticated
+agent that field is a SPIFFE ID, which can never equal a person's name — so the
+comparison was always false and the gate never fired. The human operating an
+agent could approve its privileged calls single-handed, in the deployment
+posture the roadmap calls the intended production one. It is the Phase 159
+defect's shape for the third time in this batch: a control written against the
+identity kind pamv1 issues, silently inert for the kind it merely verifies.
+Nothing in the tree mapped a SPIFFE ID to a person, so the comparison had
+nothing to be right about.
+
+- [x] **`agent_identities`** (migration `0045`, high-water `0044` → **`0045`**):
+  `spiffe_id` UNIQUE → `owner`, plus a note, who registered it and when. UNIQUE
+  because one identity has exactly one accountable owner; a second row would make
+  "who is accountable" ambiguous at the precise moment it must not be. An owner
+  index serves the offboarding query. `BrokerStore` +6 methods (store surface
+  205 → **211**), both backends plus the shared contract suite
+- [x] **It is an owner registry, not enrollment and not attestation.** Recording
+  an owner admits no workload — the trust domain already decided who may
+  authenticate — and proves nothing about one; SPIRE workload attestation stays
+  infra-bound. It records who pamv1 holds responsible, which is exactly what the
+  two broken controls were asking for. Said plainly in the code, the threat model
+  and the admin guide, so nobody reads it as a stronger claim than it is
+- [x] **Four routes** (`CapManageUsers`, like the rest of the agent surface):
+  `POST`/`GET /v1/agents/identities`, `POST /v1/agents/identities/{id}/owner`
+  (handover keeps the row, so first-registered-by/when survives the change), and
+  `DELETE /v1/agents/identities/{id}`
+- [x] **The gate resolves the WHOLE delegation chain**, not just the accountable
+  party at its end — `broker.ApprovalOwner` became `broker.ApprovalIdentity`,
+  which also carries `ActorChain`. A call made by a sub-agent was requested,
+  transitively, by whoever owns the agents it acts for, so an approver who owns
+  any link is on the requesting side of four-eyes. Same reasoning as Phase 169's
+  chain-following quarantine: an identity's delegates are its reach
+- [x] **Fails closed twice over.** An unattributed identity refuses the decision
+  (403, `reason:agent-has-no-owner subject:<spiffe-id>`) and an unreadable
+  registry refuses it too (503, `reason:owner-lookup-failed`). In both cases the
+  call **stays parked**, so recording an owner unblocks the decision rather than
+  making the agent ask again
+- [x] **The offboarding cascade gained its other half.** Deleting a human
+  suspends the agent keys they owned (Phase 159) and now quarantines the SPIFFE
+  identities they owned — the only stop that identity kind has. An
+  already-quarantined subject is left alone, so a second cascade cannot overwrite
+  who stopped it and why; failures are audited (`agent.quarantine_failed`), never
+  reported to the caller, exactly as its key-side sibling does
+- [x] **Console parity**: menu 26 gains **F8** — `PAMAGTOWN` (the registry, with
+  `4=Remove`/`5=Change owner`), `PAMADDOWN` and `PAMCHGOWN` — plus fixtures in
+  `console_check.js` for all three, driven with a full-length SPIFFE ID beside a
+  full-length owner, the pair that would push a column off a 5250 screen
+- [x] **Upgrade note, operator-visible**: a SPIFFE deployment must register
+  owners before parked calls can be approved. That is the fail-closed consequence
+  of the gate finally working, not a side effect to route around
+- [x] **Tests, verified to FAIL against the pre-fix gate** (where the
+  self-approval executed): `api.TestFourEyesHoldsOnTheSPIFFEPath` (the approver
+  owns the chain's root, not the calling agent; refused, call still parked; after
+  a handover the same approver may decide),
+  `api.TestApprovalRefusedWhenSPIFFEAgentHasNoOwner` (refused, audited, then
+  unblocked by registering owners), plus
+  `api.TestOffboardingQuarantinesOwnedSPIFFEIdentities` and
+  `api.TestAgentIdentityRegistryValidation` (only a SPIFFE ID may be registered,
+  one owner per identity, every route needs `manage_users`)
+- [x] New audit actions in the low-level doc §5; no new env var; four new routes;
+  one new migration
 
 ## Phase 169 — Containment that follows the chain, inventory that respects a grant ✅
 
