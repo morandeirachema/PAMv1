@@ -2432,10 +2432,13 @@ change** (every condition operator now requires the argument to be present), and
 tool calls with undeclared, missing, mistyped or empty-string arguments now come
 back `failed` where they previously ran with the value silently defaulted.
 
-- [ ] **v0.45.0** through the test-gated pipeline, rehearsed on `main` first.
-  Published as `ghcr.io/morandeirachema/pamv1:0.45.0` (also `latest`), digest
-  recorded here once the publish workflow runs, verified **public** by anonymous
-  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] **v0.45.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-18 as `ghcr.io/morandeirachema/pamv1:0.45.0` (also
+  `latest`), digest
+  `sha256:18334e910e5e321102e906e35d90cce7fddba310c2497319c9e27d50564e729e`,
+  **public** (anonymous pull 200 on both tags, verified via the GHCR anonymous
+  token-exchange flow), with the `pam-agent` binaries, the SPDX SBOM and
+  `SHA256SUMS` attached
 - [x] All five pins via the sweep; Helm chart `version` 0.35.0 -> **0.36.0**
   (minor, alongside the `appVersion` minor)
 - [x] Both READMEs restated (Phase 163's own PR landed the parity-table row —
