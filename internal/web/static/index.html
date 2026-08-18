@@ -2336,21 +2336,31 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
       // against the approver, could never fire on the attested path.
       identities() {
         back = "agents";
-        term.innerHTML = `${head("PAMAGTOWN", "SPIFFE Agent Owners")}
-Who pamv1 holds accountable for each SPIFFE-attested agent. The broker refuses an approval
-from a human who owns any agent in the calling chain (four-eyes), and deleting a human
-quarantines the identities they owned — both read this list.
-<span class="cyan">An identity with no owner here cannot have its parked calls approved by anyone: four-eyes
-cannot be established, so the decision is refused and the call stays parked.</span>
-Type options, press Enter.  <span class="cyan">4=Remove   5=Change owner</span>
+        // ENROLLED means a human claimed this identity; SEEN means pamv1 created
+        // the row itself the first time that SPIFFE ID authenticated (Phase 174)
+        // — an inventory that only held what somebody remembered to type would
+        // not be one. A SEEN row has no owner, and an identity with no owner
+        // cannot have its parked calls approved by anyone.
+        const state = (a) => a.enrolled
+          ? `<span class="green">${pad("enrolled", 8)}</span>`
+          : `<span class="amber">${pad("seen", 8)}</span>`;
+        const seenAt = (t) => pad(fmtTime(t).slice(0, 16), 16);
+        term.innerHTML = `${head("PAMAGTOWN", "SPIFFE Agent Identities")}
+Every SPIFFE-attested agent pamv1 has seen, and who is accountable for each. The broker refuses
+an approval from a human who owns any agent in the calling chain (four-eyes), and deleting a
+human quarantines the identities they owned — both read this list.
+<span class="cyan">SEEN rows are workloads that authenticated but nobody has claimed: their parked calls cannot be
+approved by anyone until an owner is set (option 5, which also enrols them). Where
+PAM_BROKER_REQUIRE_ENROLLED_SVID is on, a SEEN identity is refused at the door entirely.</span>
+Type options, press Enter.  <span class="cyan">4=Remove   5=Set owner (enrols)</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>SPIFFE ID</th><th>Owner</th><th>Note</th><th>By</th><th>When</th></tr>
-${identities.map((a) => `<tr><td>${opt(a.id)}</td><td>${esc(a.id)}</td><td class="white">${cell(a.spiffe_id, 34)}</td><td class="green">${cell(a.owner, 12)}</td><td>${cell(a.note || "-", 16)}</td><td>${cell(a.created_by || "-", 10)}</td><td class="cyan">${fmtTime(a.created_at)}</td></tr>`).join("")}
-</table>${identities.length ? "" : `<div class="cyan indent">(No SPIFFE identities registered. Press F6 to record one — the owner is a pamv1 username.)</div>`}
+<tr><th>Opt</th><th>ID</th><th>SPIFFE ID</th><th>Owner</th><th>State</th><th>Note</th><th>Last seen</th></tr>
+${identities.map((a) => `<tr><td>${opt(a.id)}</td><td>${esc(a.id)}</td><td class="white">${cell(a.spiffe_id, 32)}</td><td class="green">${cell(a.owner || "-", 11)}</td><td>${state(a)}</td><td>${cell(a.note || "-", 12)}</td><td class="cyan">${seenAt(a.last_seen || "never")}</td></tr>`).join("")}
+</table>${identities.length ? "" : `<div class="cyan indent">(No SPIFFE identities yet — none has called, and none is registered. Press F6 to record one ahead of its first call.)</div>`}
 <input type="submit" hidden></form>
-<div class="cyan">Registering is NOT enrollment: it admits nothing and attests nothing — the trust domain already
-decided who may authenticate. It records only who answers for the agent.</div>
+<div class="cyan">Enrolling is NOT attestation: it admits nothing and proves nothing about the workload — the trust
+domain already decided who may authenticate. It records who answers for the agent.</div>
 ${fkeys("F3=Exit   F5=Refresh   F6=Register an identity   F12=Cancel")}`;
         document.getElementById("f-list").onsubmit = async (ev) => {
           ev.preventDefault();

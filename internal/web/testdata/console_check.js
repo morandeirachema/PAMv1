@@ -367,10 +367,15 @@ const screens = [
       identities: [
         { id: 1, spiffe_id: long ? LONG : "spiffe://e.org/ns/prod/sa/planner",
           owner: long ? LONGNAME : "alice", note: long ? LONG : "release planner",
+          enrolled: true, first_seen: "2026-08-18T11:00:00Z", last_seen: "2026-08-18T12:30:00Z",
           created_by: long ? LONGNAME : "boss", created_at: "2026-08-18T12:00:00Z" },
+        // Phase 174's discovered row: seen, never claimed, no owner and — the
+        // shape that would otherwise slip past a fixture — no last_seen at all
+        // on a row registered ahead of its first call.
         { id: 2, spiffe_id: long ? LONG + "/and/more" : "spiffe://e.org/ns/prod/sa/worker",
-          owner: long ? LONGNAME : "carol", note: "", created_by: long ? LONGNAME : "boss",
-          created_at: "2026-08-18T13:00:00Z" },
+          owner: "", note: "", enrolled: false, first_seen: "2026-08-18T13:00:00Z",
+          last_seen: long ? "2026-08-18T13:05:00Z" : null,
+          created_by: "first-seen", created_at: "2026-08-18T13:00:00Z" },
       ],
     }),
   },

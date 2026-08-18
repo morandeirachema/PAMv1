@@ -499,6 +499,14 @@ type Config struct {
 	BrokerTrustDomain     string // PAM_BROKER_TRUST_DOMAIN — SPIFFE trust domain host (e.g. example.org)
 	BrokerAudience        string // PAM_BROKER_AUDIENCE — required SVID audience
 	BrokerMaxDelegation   int    // PAM_BROKER_MAX_DELEGATION_DEPTH — RFC 8693 act-chain cap (default 1)
+	// BrokerRequireEnrolledSVID — PAM_BROKER_REQUIRE_ENROLLED_SVID — refuse an
+	// SVID whose SPIFFE ID has not been enrolled in agent_identities (Phase 174).
+	// Off by default, because turning it on is a policy decision about the trust
+	// domain: with it off, any workload the trust domain vouches for may call and
+	// pamv1 records that it did; with it on, the trust domain's word is necessary
+	// but no longer sufficient, and somebody has to have claimed the identity
+	// first. Static agent keys are unaffected — pamv1 issued those itself.
+	BrokerRequireEnrolledSVID bool
 
 	// Token exchange (Phase 57): the MINTING half of delegation. Off by default —
 	// issuing delegated identities is a privilege an operator opts into, separate
@@ -840,6 +848,7 @@ func Load() (*Config, error) {
 		BrokerMaxArgBytes:          integer("PAM_BROKER_MAX_ARG_BYTES", 16384),
 		BrokerMaxResultBytes:       integer("PAM_BROKER_MAX_RESULT_BYTES", 65536),
 		BrokerBudgetPerDay:         integer("PAM_BROKER_BUDGET_PER_DAY", 0),
+		BrokerRequireEnrolledSVID:  boolean("PAM_BROKER_REQUIRE_ENROLLED_SVID", false),
 		BrokerRatePerMin:           integer("PAM_BROKER_RATE_PER_MIN", 0),
 		BrokerCheckpointEvery:      integer("PAM_BROKER_AUDIT_CHECKPOINT_EVERY", 0),
 		BrokerAuditSignPrev:        getenv("PAM_BROKER_AUDIT_SIGN_PREV", ""),
