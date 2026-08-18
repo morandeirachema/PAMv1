@@ -217,6 +217,20 @@ const screens = [
     }),
   },
   {
+    // The MFA screen renders from state (Phase 177 added the recovery-code
+    // count), and its three interesting shapes are none-left, a low count and
+    // an unavailable count — the last of which must not read as zero.
+    name: "mfa",
+    noRows: true,
+    src: /\n {6}mfa\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      mfaInfo: long
+        ? { enrolled: true, confirmed: true, recovery_codes_remaining: -1 }
+        : { enrolled: true, confirmed: true, recovery_codes_remaining: 2 },
+      webauthnCreds: [],
+    }),
+  },
+  {
     name: "mfawebauthn",
     src: /\n {6}mfawebauthn\(\) \{\n[\s\S]*?\n {6}\},\n/,
     state: (long) => ({

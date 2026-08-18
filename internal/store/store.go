@@ -1719,11 +1719,9 @@ type VendorStore interface {
 	GetVendorByUsername(ctx context.Context, username string) (*Vendor, error)
 	// ListVendors returns vendors in the (limit, afterID) window, id-ascending.
 	ListVendors(ctx context.Context, limit int, afterID int64) ([]Vendor, error)
-	// SetVendorDisabled enables/disables a vendor by id, or ErrNotFound.
-	SetVendorDisabled(ctx context.Context, id int64, disabled bool) error
 	// UpdateVendorOrg changes a vendor's organization label, or ErrNotFound. The
 	// username is immutable (it links the vendor to its users row); disabling is
-	// SetVendorDisabled / OffboardVendor, never an edit.
+	// OffboardVendor, never an edit.
 	UpdateVendorOrg(ctx context.Context, id int64, org string) error
 	// UpdateVendorEmail sets the vendor's on-file contact address (Phase 116),
 	// or ErrNotFound. Empty clears it.
