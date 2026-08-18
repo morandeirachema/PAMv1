@@ -208,19 +208,72 @@ func (s *Server) noteSVID(w http.ResponseWriter, r *http.Request, id *agentid.Id
 	return true
 }
 
-// seeSVID stamps the inventory row for an attested identity, creating it on a
-// first sighting and auditing that once. Best-effort by design — see noteSVID.
+// seeSVID stamps the inventory row for the presented identity AND for every
+// actor in its delegation chain, creating rows on a first sighting and auditing
+// each once. Best-effort by design — see noteSVID.
+//
+// The chain is included (Phase 176) because those identities are verified facts
+// inside a signed token, and the controls that read the inventory read the whole
+// chain: quarantine walks it (169) and four-eyes resolves an owner for every
+// link (170). Without this, a delegating root that never calls pamv1 directly
+// has no row, so an operator cannot enrol it from the list — they have to know
+// the SPIFFE ID and type it — and every approval of a call it delegated is
+// refused as unattributed until they do.
 func (s *Server) seeSVID(r *http.Request, id *agentid.Identity) {
-	created, err := s.store.SeeAgentIdentity(r.Context(), id.SPIFFEID, time.Now())
-	if err != nil {
-		s.log.Debug("agent identity sighting not recorded", "spiffe_id", id.SPIFFEID, "err", err)
-		return
-	}
-	if created {
-		_ = s.auditAs(r.Context(), id.AgentName, "agent.identity_first_seen",
-			"spiffe_id:"+auditField(id.SPIFFEID, maxSPIFFEIDLen)+" enrolled:false")
+	for _, subject := range quarantineSubjects(id) {
+		if !isSPIFFEID(subject) || !s.sightingDue(subject) {
+			continue
+		}
+		created, err := s.store.SeeAgentIdentity(r.Context(), subject, time.Now())
+		if err != nil {
+			s.log.Debug("agent identity sighting not recorded", "spiffe_id", subject, "err", err)
+			s.forgetSighting(subject)
+			continue
+		}
+		if created {
+			_ = s.auditAs(r.Context(), id.AgentName, "agent.identity_first_seen",
+				"spiffe_id:"+auditField(subject, maxSPIFFEIDLen)+" enrolled:false"+
+					viaField(id, subject))
+		}
 	}
 }
+
+// viaField names the presenting agent when the identity being recorded is one it
+// merely acts for, so the trail says how pamv1 came to know about it.
+func viaField(id *agentid.Identity, subject string) string {
+	if subject == id.AgentName {
+		return ""
+	}
+	return " via:" + auditField(id.AgentName, maxSPIFFEIDLen)
+}
+
+// sightingInterval is how often one identity's last-seen stamp is rewritten.
+//
+// The stamp answers "is this workload still active?", which nobody asks to the
+// second — but the write happens on the authentication path, so an agent at the
+// default rate limit would rewrite its row sixty times a minute, every minute,
+// forever. A minute of granularity keeps the answer useful and the writes rare;
+// a FIRST sighting is never throttled, because that one is the signal.
+const sightingInterval = time.Minute
+
+// sightingDue reports whether subject's stamp is due to be written, recording
+// the attempt. In-process and per-replica by design: it is a write-rate damper,
+// not a distributed lock, and a second replica stamping the same identity a few
+// seconds later costs one row write and loses nothing.
+func (s *Server) sightingDue(subject string) bool {
+	now := time.Now()
+	if last, ok := s.svidSeen.Load(subject); ok {
+		if t, _ := last.(time.Time); now.Sub(t) < sightingInterval {
+			return false
+		}
+	}
+	s.svidSeen.Store(subject, now)
+	return true
+}
+
+// forgetSighting drops a damper entry after a failed write, so the next call
+// retries instead of waiting out an interval it never actually recorded.
+func (s *Server) forgetSighting(subject string) { s.svidSeen.Delete(subject) }
 
 // bearerToken extracts a Bearer token from the Authorization header.
 func bearerToken(r *http.Request) string {
@@ -426,6 +479,32 @@ func (s *Server) decideBrokerApproval(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusForbidden, "cannot approve a call for an agent you own (four-eyes)")
 				return
 			}
+		}
+		// An owner nobody holds cannot be compared to anybody (Phase 176). The
+		// gate refuses when owner == approver, so an owner of "caro1" — a typo,
+		// or a team address that is not a pamv1 account — can never match, and
+		// carol may approve her own agent's call while the row still reads as
+		// though somebody were accountable. That is four-eyes silently not
+		// applying, which is worse than four-eyes visibly absent.
+		//
+		// pamv1 records it rather than guessing: the decision is audited as
+		// unverified, naming the owner, so the trail says the second pair of eyes
+		// could not be established. A deployment that wants the stricter reading
+		// sets PAM_BROKER_REQUIRE_KNOWN_OWNER and the decision is refused instead
+		// — off by default, because a team-owned agent is a legitimate
+		// arrangement and turning this on without warning would block approvals
+		// that have been working.
+		if unknown := s.unknownOwners(r.Context(), owners); len(unknown) > 0 {
+			detail := fmt.Sprintf("call:%s owner:%s reason:owner-not-a-pamv1-user",
+				auditField(r.PathValue("id"), 64), auditField(strings.Join(unknown, ","), 200))
+			if s.brokerRequireKnownOwner {
+				s.audit(r.Context(), "broker.approval.refused", detail)
+				writeError(w, http.StatusForbidden,
+					"this call's agent is owned by "+strings.Join(unknown, ", ")+
+						", which is not a pamv1 user, so four-eyes cannot be established")
+				return
+			}
+			s.audit(r.Context(), "broker.approval.four_eyes_unverified", detail)
 		}
 	}
 	out, ok, err := s.broker.Decide(r.Context(), r.PathValue("id"),

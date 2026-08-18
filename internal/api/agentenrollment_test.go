@@ -168,3 +168,57 @@ func TestDiscoveredIdentityIsUnattributedForFourEyes(t *testing.T) {
 		t.Fatalf("once owned, the parked call is decidable: %d %s", st, d)
 	}
 }
+
+// TestDelegationChainIsInventoried covers the inventory gap a fresh pass found
+// in Phase 174's own code: only the presenting identity was recorded.
+//
+// The controls that read the inventory read the whole chain — quarantine walks
+// it (169), four-eyes resolves an owner for every link (170) — so a delegating
+// root that never calls pamv1 directly had no row at all. An operator could not
+// enrol it from the list, and every approval of a call it delegated was refused
+// as unattributed until they typed the SPIFFE ID by hand.
+func TestDelegationChainIsInventoried(t *testing.T) {
+	const (
+		root = "spiffe://example.org/ns/prod/sa/root-planner"
+		sub  = "spiffe://example.org/ns/prod/sa/sub-worker"
+	)
+	svid, verifier := mintDelegatedSVID(t, sub, root)
+	opts := brokerOpts(t, &fakeWinRM{result: winrm.Result{Stdout: "ok"}}, toolsetRules)
+	opts.BrokerSVIDVerifier = verifier
+	srv, _ := newTestServerOpts(t, nil, opts)
+
+	if st, d := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", svid,
+		map[string]any{"tool": "list_targets"}); st != http.StatusOK {
+		t.Fatalf("delegated call: %d %s", st, d)
+	}
+
+	_, ld := do(t, srv, http.MethodGet, "/v1/agents/identities", testAPIKey, nil)
+	seen := map[string]bool{}
+	for _, row := range jsonRows(t, ld) {
+		seen[row["spiffe_id"].(string)] = true
+	}
+	if !seen[sub] || !seen[root] {
+		t.Fatalf("both the presenter and the actor it acts for should be inventoried: %s", ld)
+	}
+	// The trail says how pamv1 learned about an identity that never called it.
+	_, aud := do(t, srv, http.MethodGet, "/api/audit?limit=50", testAPIKey, nil)
+	if !strings.Contains(string(aud), "via:") {
+		t.Fatalf("a chain member's first sighting should name the presenter: %s", aud)
+	}
+
+	// The last-seen stamp is damped, so a busy agent does not rewrite its rows
+	// on every call: a second call within the interval changes nothing and adds
+	// no second first-sighting record.
+	if st, _ := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", svid,
+		map[string]any{"tool": "list_targets"}); st != http.StatusOK {
+		t.Fatal("second call should work")
+	}
+	_, aud2 := do(t, srv, http.MethodGet, "/api/audit?limit=80", testAPIKey, nil)
+	if n := strings.Count(string(aud2), "agent.identity_first_seen"); n != 2 {
+		t.Fatalf("two identities, one first sighting each, got %d", n)
+	}
+	_, ld2 := do(t, srv, http.MethodGet, "/v1/agents/identities", testAPIKey, nil)
+	if len(jsonRows(t, ld2)) != 2 {
+		t.Fatalf("no extra rows from a repeat call: %s", ld2)
+	}
+}

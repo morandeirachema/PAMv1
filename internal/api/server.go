@@ -326,7 +326,11 @@ type Options struct {
 	// itself, and with it on the trust domain's word stops being sufficient on
 	// its own.
 	BrokerRequireEnrolledSVID bool
-	BrokerRatePerMin          int
+	// BrokerRequireKnownOwner refuses a broker approval when the calling agent's
+	// owner is not a pamv1 user, rather than auditing it as unverified (Phase
+	// 176). Off by default.
+	BrokerRequireKnownOwner bool
+	BrokerRatePerMin        int
 	// BrokerCheckpointEvery emits a signed in-chain audit checkpoint every N broker
 	// events (0 = off). BrokerAuditSignPrevKeys are rotated-out ed25519 public keys
 	// still trusted to verify older checkpoints during a signing-key rotation
@@ -521,7 +525,13 @@ type Server struct {
 	// brokerRequireEnrolledSVID refuses an SVID whose SPIFFE ID has no enrolled
 	// row (Phase 174). Read on the agent authentication path.
 	brokerRequireEnrolledSVID bool
-	mcpSessions               *mcpSessionRegistry // open MCP SSE streams for elicitation (Phase 27)
+	// brokerRequireKnownOwner refuses an approval whose agent owner matches no
+	// pamv1 user (Phase 176). Read on the approval-decision path.
+	brokerRequireKnownOwner bool
+	// svidSeen damps the inventory's last-seen writes to one per identity per
+	// sightingInterval (Phase 176). Keyed by SPIFFE ID; values are time.Time.
+	svidSeen    sync.Map
+	mcpSessions *mcpSessionRegistry // open MCP SSE streams for elicitation (Phase 27)
 }
 
 // RuntimeConfig is the set of settings PUT /api/config can change without a

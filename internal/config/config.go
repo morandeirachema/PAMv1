@@ -507,6 +507,12 @@ type Config struct {
 	// but no longer sufficient, and somebody has to have claimed the identity
 	// first. Static agent keys are unaffected — pamv1 issued those itself.
 	BrokerRequireEnrolledSVID bool
+	// BrokerRequireKnownOwner — PAM_BROKER_REQUIRE_KNOWN_OWNER — refuse a broker
+	// approval when the calling agent's owner matches no pamv1 user (Phase 176).
+	// Off by default: a team address is a legitimate owner, and an owner that is
+	// merely unrecognised is audited rather than blocked. On, the deployment is
+	// saying that four-eyes it cannot verify is four-eyes it will not accept.
+	BrokerRequireKnownOwner bool
 
 	// Token exchange (Phase 57): the MINTING half of delegation. Off by default —
 	// issuing delegated identities is a privilege an operator opts into, separate
@@ -849,6 +855,7 @@ func Load() (*Config, error) {
 		BrokerMaxResultBytes:       integer("PAM_BROKER_MAX_RESULT_BYTES", 65536),
 		BrokerBudgetPerDay:         integer("PAM_BROKER_BUDGET_PER_DAY", 0),
 		BrokerRequireEnrolledSVID:  boolean("PAM_BROKER_REQUIRE_ENROLLED_SVID", false),
+		BrokerRequireKnownOwner:    boolean("PAM_BROKER_REQUIRE_KNOWN_OWNER", false),
 		BrokerRatePerMin:           integer("PAM_BROKER_RATE_PER_MIN", 0),
 		BrokerCheckpointEvery:      integer("PAM_BROKER_AUDIT_CHECKPOINT_EVERY", 0),
 		BrokerAuditSignPrev:        getenv("PAM_BROKER_AUDIT_SIGN_PREV", ""),
