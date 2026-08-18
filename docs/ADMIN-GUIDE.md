@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-18 · Reflects: Phases 0–169 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-18 · Reflects: Phases 0–170 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -2252,7 +2252,59 @@ in months is a finding, not a footnote.
 **Offboarding cascades.** Deleting a human user now **suspends** every agent key
 they owned, audited per key as `agent.disable … reason:owner-offboarded`. It
 suspends rather than deletes for the same reason as above: the accountable human
-is gone, so the agent must stop — but the record must not.
+is gone, so the agent must stop — but the record must not. Since Phase 170 the
+cascade also **quarantines every SPIFFE identity** that person owned — an
+attested agent has no key to suspend, so quarantine is the stop it has.
+
+### Who owns a SPIFFE agent (Phase 170)
+
+An agent that authenticates with a SPIFFE SVID is admitted by your trust domain,
+not minted here, so pamv1 had nowhere to record the human accountable for it.
+Two shipped controls read that owner, and both were silently inert for this
+identity kind:
+
+- **Four-eyes approval.** The broker refuses an approval from the human who owns
+  the calling agent. For an SVID the owner it compared was a SPIFFE ID, which can
+  never equal a username — so the refusal never fired, and the person operating
+  an agent could approve their own agent's privileged calls alone.
+- **The offboarding cascade** above, which had no key row to reach.
+
+Register the owner once per SPIFFE ID:
+
+```bash
+curl -s -XPOST -H "X-API-Key: $KEY" $PAM/v1/agents/identities \
+  -d '{"spiffe_id":"spiffe://corp.example/ns/prod/sa/planner",
+       "owner":"carol","note":"release planner"}'
+
+curl -s -H "X-API-Key: $KEY" $PAM/v1/agents/identities            # who owns what
+curl -s -XPOST -H "X-API-Key: $KEY" $PAM/v1/agents/identities/3/owner \
+  -d '{"owner":"dave"}'                                          # handover
+curl -s -XDELETE -H "X-API-Key: $KEY" $PAM/v1/agents/identities/3 # de-register
+```
+
+Console menu **26**, key **F8** (`PAMAGTOWN`). All four routes need
+`manage_users`, like the rest of the agent surface.
+
+**Register every identity in a delegation chain.** The gate resolves owners for
+the whole chain, because a call made by a sub-agent was requested, transitively,
+by whoever owns the agents it acts for.
+
+**Two fail-closed behaviours to plan for**, both new and both deliberate:
+
+- A SPIFFE identity with **no recorded owner** cannot have its parked calls
+  approved by anyone — the decision is refused (`agent-has-no-owner`) and the
+  call **stays parked**, so registering the owner unblocks it. If you run agents
+  on SVIDs, register owners *before* the first call needs approving.
+- If the registry cannot be read at all, the decision is refused too (503). An
+  unreadable table is not evidence that nobody owns the agent.
+
+**What this is not.** It is not enrollment and not attestation: recording an
+owner admits no workload and proves nothing about one. Any workload in your trust
+domain can still authenticate; this records who answers for the ones you named.
+
+Audit: `agent.identity_register` · `agent.identity_owner_set` ·
+`agent.identity_remove` · `agent.quarantine_failed` (the cascade's failure
+record, the quarantine twin of `agent.disable.failed`).
 
 **Why this is its own phase.** Humans in pamv1 get certification campaigns,
 checkout leases and revocation; agent identities held an immortal standing

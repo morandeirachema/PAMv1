@@ -655,16 +655,35 @@ func sameAgent(a, b *agentid.Identity) bool {
 	return strings.EqualFold(a.AgentName, b.AgentName)
 }
 
-// ApprovalOwner returns the accountable owner (on-behalf-of) of a parked call, so
-// the operator layer can refuse a self-approval (owner approving their own agent).
-func (b *Broker) ApprovalOwner(callID string) (string, bool) {
+// ApprovalIdentity is what the operator layer needs about a parked call's
+// requester to decide whether the human in front of it may approve: the agent
+// that made the call, the accountable party it named, and the delegation chain
+// between them.
+//
+// The chain is part of it because self-approval is not only about the outermost
+// actor. A call made by a sub-agent was requested, transitively, by whoever owns
+// the agents it acts for — so an approver who owns any link is on the requesting
+// side of the four-eyes rule, not the deciding one.
+type ApprovalIdentity struct {
+	Agent      string   // the identity that presented the call (key name or SPIFFE ID)
+	OnBehalfOf string   // accountable party: a human owner (static key) or the outermost SPIFFE ID
+	Chain      []string // RFC 8693 delegation chain, innermost..outermost; empty for a static key
+}
+
+// ApprovalIdentity returns the requester behind a parked call, so the operator
+// layer can refuse a self-approval (someone approving their own agent's call).
+func (b *Broker) ApprovalIdentity(callID string) (ApprovalIdentity, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	p, ok := b.parked[callID]
 	if !ok {
-		return "", false
+		return ApprovalIdentity{}, false
 	}
-	return p.id.OnBehalfOf, true
+	return ApprovalIdentity{
+		Agent:      p.id.AgentName,
+		OnBehalfOf: p.id.OnBehalfOf,
+		Chain:      append([]string(nil), p.id.ActorChain...),
+	}, true
 }
 
 // SweepExpiredParked drops parked approvals older than the resume-token TTL (the
