@@ -18,9 +18,14 @@
 > below. 109–161 are feature phases, not review sweeps; their security-relevant
 > properties are described where they ship ([ADMIN-GUIDE.md](ADMIN-GUIDE.md),
 > [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md)) rather than re-audited
-> here — with **one exception worth recording, because it is a
-> detection-integrity finding rather than a feature**: the 2026-08-17 research
-> pass aimed at the AI-agent broker found that `internal/ocsf` classified
+> here — **except where a research pass found a live defect rather than a gap in
+> capability**, which the 2026-08-17/18 passes aimed at the AI-agent broker did
+> five times over (section below: four-eyes inert on the SPIFFE path, a
+> quarantine that stopped at the presenter, an inventory tool that discarded its
+> principal, two advertised policy controls that enforced nothing, and a policy
+> engine with no principal side — all closed by phases 169–173). The first of
+> those passes had already produced **one detection-integrity finding**: it found
+> that `internal/ocsf` classified
 > `broker.tool_call.denied` as a Detection Finding while no code could write
 > that name to the trail the exporter reads, and that `isFinding`'s
 > `_denied`/`_failed` suffix rules never matched pamv1's DOTTED action names, so
@@ -197,6 +202,44 @@ roadmap is the plan.
 | ~~F~~ | ~~**Certification decisions have no separation of duties.**~~ | Was: only `CapManageUsers` (i.e. an admin) could certify or revoke, so the principal who grants access was the only one who could attest to it. | **Fixed in Phases 39 + 46** — Phase 39 moved the decision to `CapApprove`, so a dedicated `approver` runs the recertification without holding the access-granting capability (creating/closing a campaign stay `CapManageUsers`). Phase 46 closed the remaining hole with **per-item four-eyes**: every grant records its creator (`target_grants.created_by`, `safe_members.created_by`, migration `0023`), the campaign snapshot carries it (`campaign_items.granted_by`, shown as "granted by X" in the item detail), and certifying an item you granted yourself is refused 403 + audited `certification.decision_denied`. Self-revoke stays allowed (it reduces access); pre-migration rows with no recorded creator are not blocked retroactively. Tests: `api.TestCertificationAuthz`, `api.TestCertificationFourEyes`, the store contract. |
 | ~~G~~ | ~~**Console parity has drifted since Phase 25.**~~ | Was: nine capabilities had no screen. Two of them — a parked agent tool call and a paused SQL statement — are human decisions **with a deadline**, which is what made curl-only actually cost something. | **Fixed across Phases 43 + 45** — Phase 43 shipped the two time-critical screens (*Approve AI-agent tool calls*, menu 20, showing the arguments the policy matched on; *In-session step-up decisions*, menu 21). Phase 45 shipped the other seven: vendors & contract grants (22), operator SSH certificates (23), identity blast radius (24), login-session revocation (25), agent keys (26), credential dependencies (option 9 on a credential), and the audit chain verify / signed head / OCSF export on the audit screen. One deliberate new route: `GET /api/ca/ssh/certs` (CapReadInventory) — the issued-cert serials a revocation needs were listable in the store but invisible over HTTP. All verified against a running server; the console is back at **full parity**. |
 | ~~H~~ | ~~**No update endpoints and no pagination.**~~ | Was: the `Store` interface had create/delete but no update for targets, safes, users or vendors — fixing a target's port meant delete + recreate, cascading away its credentials, grants, dependencies and safe assignment — and no list method except the audit reads was bounded (an authenticated memory-exhaustion vector). | **Fixed in Phase 44** — `UpdateTarget`/`UpdateSafe`/`UpdateUserRole`/`UpdateVendorOrg` + `PUT` routes with create-equivalent validation and authorization (the user edit re-runs the privilege-escalation guard; tokens survive a role change), audited `*.update`; the seven top-level list reads take an id-ascending `(limit, afterID)` window and every list endpoint clamps `?limit=&after=` to 1..500 (default 100) the way `listAudit` already did. Grants and safe members deliberately stay create + delete (no dependents to lose; two audited events beat one mutated row), and usernames stay immutable (they are the subject key in grants/sessions/vendor rows). Console: cursor-draining fetches + 2=Change screens. Tests: the store contract (both stores, live PostgreSQL in CI) + `api/update_test.go`. |
+
+## The 2026-08-17/18 AI-agent-broker research — five passes, five findings
+
+The first read-only passes aimed at the **broker itself** rather than at the
+tree as a whole: MCP specification security, agent-identity standards, vendor
+AI-agent controls, agentic threat frameworks, and a follow-on pass re-read at
+HEAD *after* the first phases of the batch had shipped. Every claim carried a
+`file:line`; the standards citations were fetched rather than recalled.
+
+Two of the five are the reason this section exists rather than the findings
+being left in the roadmap as feature work: they are **live authorization
+defects**, not missing capability. Both have the same shape, and it is the shape
+Phase 159 had already found once — **a control written against the identity kind
+pamv1 issues, silently inert for the kind it merely verifies**. A SPIFFE/SVID
+agent has no `agent_keys` row and its canonical name is a URI, so any check keyed
+on a row id or compared against a username passes it through while reading, in
+code and in documentation, as though it covered everything.
+
+The other three are the class this document keeps returning to from a different
+angle: **a field that reads like a control and enforces nothing**. `ttl_seconds`
+was parsed and ignored for six phases while the shipped example policy marketed
+it; `scope` was described as a grant when it is an audit label; and an inventory
+tool answered for the whole estate because it discarded the principal.
+
+| # | Finding | Why it matters | Status |
+|---|---|---|---|
+| ~~CI~~ | ~~**Four-eyes self-approval prevention was inert on the SPIFFE path.**~~ `decideBrokerApproval` compared the parked call's `Identity.OnBehalfOf` against the approving human's username. For an SVID that value is a SPIFFE ID, which can never equal a person's name — and nothing in the tree mapped one to the other. | The human operating an agent could approve their own agent's privileged tool call single-handed, in the deployment posture the roadmap calls the intended production one. The only test of the invariant covered static keys. | **Fixed** — Phase 170. New `agent_identities` owner registry (migration `0045`, four `manage_users` routes, console menu 26 → F8); the gate resolves owners for the **whole delegation chain** and fails closed twice over — an unattributed identity refuses the decision (403, the call stays parked) and an unreadable registry refuses it too (503). `api.TestFourEyesHoldsOnTheSPIFFEPath` + `TestApprovalRefusedWhenSPIFFEAgentHasNoOwner`, both verified to fail against the pre-fix gate, where the self-approval executed. |
+| ~~CJ~~ | ~~**Quarantine was not chain-aware.**~~ `IsAgentQuarantined` was asked about the presenter's subject only, while a delegated JWT-SVID names its delegator solely in the RFC 8693 `act` chain. | Quarantining a compromised root left every sub-agent token it had already minted working until that token's TTL expired — an incident responder pressing the stop button and watching the compromise continue. Aggravating: the verifier allows 60s of clock leeway past `exp`, which is ordinary JWT practice but runs permissive when a delegated token's TTL is the *other* containment. | **Fixed** — Phase 169. Both gates (`agentAuth` at ingress, `revalidateAgent` at approval time — the parked call a responder is actually racing) now walk the presenter plus every chain actor, deduped, still fail-closed on a store error, and the refusal names the link that stopped it. A static key's `OnBehalfOf` is deliberately excluded: it is a human's username, and stopping every agent one person owns is offboarding. `api.TestAgentQuarantineFollowsDelegationChain` + the in-package parked-call twin. |
+| ~~CK~~ | ~~**`list_targets` leaked the whole estate.**~~ Its principal parameter was literally `_`; `list_credentials` without its optional `target` did the same for account names. | An agent with zero grants learned every hostname, OS, protocol and privileged login name pamv1 knows — the reconnaissance step of an attack path, handed to the least-trusted actor in the system. It was the only place in `broker_tools.go` that skipped the grant check its siblings enforce. | **Fixed** — Phase 169. Both tools answer through `agentCanSeeTarget`/`agentVisibleTargets`, the same direct-grant ∪ safe-membership evaluation the acting tools use; the acting helpers were refactored onto it so the two cannot drift. Naming an ungranted target explicitly is refused rather than answered with an empty list. |
+| ~~CL~~ | ~~**`ttl_seconds` and `scope` were advertised controls that constrained nothing.**~~ `Rule.TTLSeconds` reached `Decision.TTL` and no non-test caller ever read it; `Scope` was rendered only into audit text. | A rule advertising a 60-second grant got the deployment-wide `PAM_BROKER_TOKEN_TTL_MIN` — fifteen minutes — and the shipped `deploy/broker-policy.example.yaml` presented exactly that setting as "a scoped, short-lived grant". A dead field that reads like a control is worse than an absent one, and worst of all when the example teaches operators to rely on it. | **Fixed** — Phase 171. `ttl_seconds` now narrows the deployment window per call (narrow only, never extend), one deadline drives both the parked call and its resume token, the sweep evicts per call, and on an `allow`/`deny` rule — where there is no window — it is a **load error**. `scope` is documented for what it is: an audit label whose template failure is a deny, i.e. a fail-closed required-argument check. |
+| ~~CM~~ | ~~**Policy was identity-blind, and had no principal side.**~~ `Evaluate(tool, args)` never received the verified identity, which sat one line above the call site; `Rule` had no agent field. | One `allow` for `reveal_credential` enabled it for **every** agent the deployment authenticates, and any rule keyed on "which agent is this" was really keyed on a string the agent chose to send — a control whose subject is picked by the party it constrains. | **Fixed** — Phase 173. `Evaluate(caller, tool, args)` with `agents:`/`not_agents:` on a rule (empty matches all; `agents` matches the presenter, `not_agents` the whole lineage) and a reserved `caller.*` condition namespace that arguments cannot forge, since a `caller.` key never touches the argument map. An unknown `caller.*` attribute is a load error. |
+
+What the same research left as **capability rather than defect** — SVID
+enrollment and inventory, a subject-indexed "what can this agent reach?",
+recertification for non-human identities, posture on the agent path, `may_act`
+emission, and the approver's view of a delegation chain — is tracked in
+[ROADMAP §3b](../ROADMAP.md#3b-the-ai-agent-broker-batch-2026-08-1718-research)
+rather than here, because none of it is a control that is wrong today.
 
 ## The 2026-08-12 audit sweep (Phase 108)
 
