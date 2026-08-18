@@ -1937,10 +1937,12 @@ Type options, press Enter.  <span class="cyan">4=Revoke (permanent)   5=Suspend 
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Name</th><th>Owner</th><th>Status</th><th>Budget</th><th>Created</th><th>Expires</th><th>Last used</th></tr>
-${agents.map((a) => `<tr><td>${opt(a.id)}</td><td>${esc(a.id)}</td><td class="white">${cell(a.name, 13)}</td><td>${cell(a.owner || "-", 11)}</td><td>${status(a)}</td>${budgetCell(a)}<td class="cyan">${day(a.created_at)}</td><td class="${a.expires_at ? (expired(a) ? "red" : "amber") : "cyan"}">${day(a.expires_at || "never")}</td><td class="cyan">${mins(a.last_used_at || "never used")}</td></tr>`).join("")}
+${agents.map((a) => `<tr><td>${opt(a.id)}</td><td>${esc(a.id)}</td><td class="white">${cell(a.name, 13)}</td><td class="${a.owner_known === false ? "red" : ""}">${cell((a.owner || "-") + (a.owner_known === false ? " ?" : ""), 11)}</td><td>${status(a)}</td>${budgetCell(a)}<td class="cyan">${day(a.created_at)}</td><td class="${a.expires_at ? (expired(a) ? "red" : "amber") : "cyan"}">${day(a.expires_at || "never")}</td><td class="cyan">${mins(a.last_used_at || "never used")}</td></tr>`).join("")}
 </table>${agents.length ? "" : `<div class="cyan indent">(No agent keys. Press F6 to mint one — requires the broker to be enabled.)</div>`}
 <input type="submit" hidden></form>
-<div class="cyan">Suspend is reversible (5/6); revoke is not. An agent that presents a SPIFFE SVID has no key row
+<div class="cyan">An owner shown in red with a <span class="red">?</span> matches no pamv1 user, so deleting that human will
+never suspend this agent — usually a typo. Fix it by re-minting under the right owner.
+Suspend is reversible (5/6); revoke is not. An agent that presents a SPIFFE SVID has no key row
 here at all — stop that one with F7=Quarantine list, and record who owns it with F8=SPIFFE owners
 (without an owner its parked calls cannot be approved). Parked calls awaiting a human are on menu 20.
 Option 7 sets or clears the daily budget: a rate limit bounds a burst, a budget bounds the day.</div>
@@ -2356,7 +2358,7 @@ Type options, press Enter.  <span class="cyan">4=Remove   5=Set owner (enrols)</
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>SPIFFE ID</th><th>Owner</th><th>State</th><th>Note</th><th>Last seen</th></tr>
-${identities.map((a) => `<tr><td>${opt(a.id)}</td><td>${esc(a.id)}</td><td class="white">${cell(a.spiffe_id, 32)}</td><td class="green">${cell(a.owner || "-", 11)}</td><td>${state(a)}</td><td>${cell(a.note || "-", 12)}</td><td class="cyan">${seenAt(a.last_seen || "never")}</td></tr>`).join("")}
+${identities.map((a) => `<tr><td>${opt(a.id)}</td><td>${esc(a.id)}</td><td class="white">${cell(a.spiffe_id, 32)}</td><td class="${a.owner_known === false ? "red" : "green"}">${cell((a.owner || "-") + (a.owner_known === false ? " ?" : ""), 11)}</td><td>${state(a)}</td><td>${cell(a.note || "-", 12)}</td><td class="cyan">${seenAt(a.last_seen || "never")}</td></tr>`).join("")}
 </table>${identities.length ? "" : `<div class="cyan indent">(No SPIFFE identities yet — none has called, and none is registered. Press F6 to record one ahead of its first call.)</div>`}
 <input type="submit" hidden></form>
 <div class="cyan">Enrolling is NOT attestation: it admits nothing and proves nothing about the workload — the trust
@@ -3421,7 +3423,7 @@ Decide them from the campaign they belong to (menu 17, option 5 on a campaign).
 
 <table>
 <tr><th>Item</th><th>Campaign</th><th>Kind</th><th>Subject</th><th>Access</th></tr>
-${myQueue.map((i) => `<tr><td>${esc(i.id)}</td><td>${esc(i.campaign_id)}</td><td>${pad(i.kind, 12)}</td><td>${cell(i.subject_type + ":" + i.subject, 18)}</td><td class="detail">${esc(i.detail)}</td></tr>`).join("")}
+${myQueue.map((i) => `<tr><td>${esc(i.id)}</td><td>${esc(i.campaign_id)}</td><td>${cell(i.kind, 14)}</td><td>${cell(i.subject_type + ":" + i.subject, 18)}</td><td class="detail">${esc(i.detail)}</td></tr>`).join("")}
 </table>${myQueue.length ? "" : `<div class="cyan indent">(Nothing is waiting on you.)</div>`}
 ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
       },
@@ -3440,12 +3442,12 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         const dcls = { certified: "green", revoked: "red", pending: "amber" };
         term.innerHTML = `${head("PAMCMPITM", "Review Campaign Items")}
 Campaign <span class="white">${esc(c.name)}</span> (id ${esc(c.id)}) — <span class="${open ? "amber" : "cyan"}">${esc(c.status)}</span>, ${decided}/${items.length} decided.
-${canDecide || canAssign ? `Type options, press Enter.  <span class="cyan">${[canDecide ? "5=Certify (keep)" : "", canDecide ? "6=Revoke (DELETES the underlying grant)" : "", canAssign ? "7=Assign reviewer" : ""].filter(Boolean).join("   ")}</span>` : `<span class="cyan">${open ? "(read-only — deciding needs approve)" : "(campaign closed — decisions are final)"}</span>`}
+${canDecide || canAssign ? `Type options, press Enter.  <span class="cyan">${[canDecide ? "5=Certify (keep)" : "", canDecide ? "6=Revoke (removes a grant; STOPS an agent identity)" : "", canAssign ? "7=Assign reviewer" : ""].filter(Boolean).join("   ")}</span>` : `<span class="cyan">${open ? "(read-only — deciding needs approve)" : "(campaign closed — decisions are final)"}</span>`}
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>Item</th><th>Kind</th><th>Subject</th><th>Reviewer</th><th>Access</th><th>Decision</th><th>By</th></tr>
 ${items.map((i) => `<tr><td>${(canDecide || canAssign) && i.decision === "pending" ? opt(i.id) : ""}</td><td>${esc(i.id)}</td><td>${pad(i.kind, 12)}</td><td>${cell(i.subject_type + ":" + i.subject, 16)}</td><td class="${i.reviewer ? "white" : "cyan"}">${cell(i.reviewer || "unassigned", 12)}</td><td class="detail">${esc(i.detail)}</td><td class="${dcls[i.decision] || ""}">${esc(i.decision)}</td><td>${cell(i.decided_by || "-", 10)}</td></tr>`).join("")}
-</table>${items.length ? "" : `<div class="cyan indent">(No items — there were no target grants or safe members to review when the campaign was created.)</div>`}
+</table>${items.length ? "" : `<div class="cyan indent">(No items — there were no target grants, safe members or agent identities to review when the campaign was created.)</div>`}
 <input type="submit" hidden></form>
 ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         document.getElementById("f-list").onsubmit = async (ev) => {
@@ -3454,7 +3456,7 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
             for (const i of items) {
               const o = optVal(ev.target, i.id);
               if (o === "5") { await api("POST", `/api/campaigns/${c.id}/items/${i.id}/decision`, { decision: "certify" }); say(`ITEM ${i.id} CERTIFIED.`); }
-              else if (o === "6") { await api("POST", `/api/campaigns/${c.id}/items/${i.id}/decision`, { decision: "revoke" }); say(`ITEM ${i.id} REVOKED — GRANT DELETED.`); }
+              else if (o === "6") { await api("POST", `/api/campaigns/${c.id}/items/${i.id}/decision`, { decision: "revoke" }); say(`ITEM ${i.id} REVOKED — ${String(i.kind).startsWith("agent") ? "AGENT IDENTITY STOPPED" : "GRANT DELETED"}.`); }
               else if (o === "7") { assignItem = i; go("campassign"); return; }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }

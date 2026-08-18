@@ -527,9 +527,15 @@ func (s *Server) listAgentKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	since := time.Now().Add(-budgetWindow)
+	known := s.knownUsernames(r.Context())
 	out := make([]agentWithBudget, 0, len(keys))
 	for _, k := range keys {
-		row := agentWithBudget{AgentKey: k, BudgetLimitEffective: s.brokerBudgetPerDay}
+		row := agentWithBudget{
+			AgentKey: k, BudgetLimitEffective: s.brokerBudgetPerDay,
+			// Phase 175: an owner the offboarding cascade could never match is
+			// worth seeing on the screen where owners are read.
+			OwnerKnown: ownerIsKnown(known, k.Owner),
+		}
 		if k.BudgetPerDay != nil {
 			row.BudgetLimitEffective = *k.BudgetPerDay
 		}

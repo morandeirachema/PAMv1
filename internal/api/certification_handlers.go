@@ -302,7 +302,105 @@ func (s *Server) snapshotAccess(ctx context.Context, c *store.Campaign) (int, er
 			n++
 		}
 	}
+	// Non-human identities are reviewed too (Phase 175). A campaign snapshotted
+	// only target grants and safe membership, so the AI-agent identities — which
+	// hold brokered access to the same estate — were never certified by anyone,
+	// and the one place they did surface (a grant naming an agent) was filed
+	// under subject type "user", reviewed as though it were a person.
+	//
+	// Safe-scoped campaigns skip them: an agent identity is not a member of a
+	// safe, and padding a safe review with unrelated rows is the "list you were
+	// not asked to review" failure this function's own header warns about.
+	if c.ScopeKind == store.CampaignScopeSafe {
+		return n, nil
+	}
+	agents, err := s.snapshotAgents(ctx, c)
+	if err != nil {
+		return 0, err
+	}
+	return n + agents, nil
+}
+
+// snapshotAgents adds one campaign item per AI-agent identity, of both kinds:
+// the static keys pamv1 issued and the SPIFFE identities it has seen or
+// enrolled. The reviewer's question is the one nobody was being asked — "should
+// this non-human identity still exist, and is the human named beside it really
+// the one accountable for it?" — so the detail carries the owner, the state and
+// the dormancy signal that make it answerable.
+func (s *Server) snapshotAgents(ctx context.Context, c *store.Campaign) (int, error) {
+	known := s.knownUsernames(ctx)
+	n := 0
+	keys, err := s.store.ListAgentKeys(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, k := range keys {
+		if !campaignCovers(c, k.Name) {
+			continue
+		}
+		detail := fmt.Sprintf("AI-agent key, %s, last used %s", agentKeyState(k), stampOrNever(k.LastUsedAt))
+		if !ownerIsKnown(known, k.Owner) {
+			detail += ownerUnknownNote
+		}
+		if err := s.store.AddCampaignItem(ctx, &store.CampaignItem{
+			CampaignID: c.ID, Kind: "agent_key", RefID: k.ID,
+			SubjectType: "agent", Subject: k.Name,
+			Detail: itemDetail(detail, k.Owner), GrantedBy: k.Owner, Reviewer: c.Reviewer,
+		}); err != nil {
+			return 0, err
+		}
+		n++
+	}
+	ids, err := s.store.ListAgentIdentities(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, a := range ids {
+		if !campaignCovers(c, a.SPIFFEID) {
+			continue
+		}
+		state := "enrolled"
+		if !a.Enrolled {
+			state = "SEEN, never claimed"
+		}
+		detail := fmt.Sprintf("SPIFFE agent identity, %s, last seen %s", state, stampOrNever(a.LastSeen))
+		if a.Attributed() && !ownerIsKnown(known, a.Owner) {
+			detail += ownerUnknownNote
+		}
+		if err := s.store.AddCampaignItem(ctx, &store.CampaignItem{
+			CampaignID: c.ID, Kind: "agent_identity", RefID: a.ID,
+			SubjectType: "agent", Subject: a.SPIFFEID,
+			Detail: itemDetail(detail, a.Owner), GrantedBy: a.Owner, Reviewer: c.Reviewer,
+		}); err != nil {
+			return 0, err
+		}
+		n++
+	}
 	return n, nil
+}
+
+// ownerUnknownNote is appended to an item whose owner matches no pamv1 user —
+// the state in which offboarding can never reach this agent.
+const ownerUnknownNote = " — WARNING: owner is not a pamv1 user, so offboarding cannot reach this agent"
+
+// agentKeyState renders a key's lifecycle for a reviewer in three words.
+func agentKeyState(k store.AgentKey) string {
+	switch {
+	case k.Disabled:
+		return "suspended"
+	case !k.Active(time.Now()):
+		return "expired"
+	default:
+		return "active"
+	}
+}
+
+// stampOrNever renders an optional timestamp for a reviewer.
+func stampOrNever(t *time.Time) string {
+	if t == nil {
+		return "never"
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // campaignCovers reports whether a grant held by subject belongs in c. Only the
@@ -441,6 +539,14 @@ func (s *Server) revokeAccess(ctx context.Context, item *store.CampaignItem) err
 		err = s.store.DeleteTargetGrant(ctx, item.RefID)
 	case "safe_member":
 		err = s.store.DeleteSafeMember(ctx, item.RefID)
+	case "agent_key", "agent_identity":
+		// Revoking a non-human identity STOPS it; it never deletes it (Phase
+		// 175, following 159's stance). A reviewer's "this should not exist" is
+		// a containment decision, and the row is the evidence an investigation
+		// needs afterwards — so a static key is suspended and an attested
+		// identity is quarantined, both reversible, both loudly audited, and
+		// both using the control that already exists for that identity kind.
+		return s.revokeAgentIdentity(ctx, item)
 	default:
 		return fmt.Errorf("unknown campaign item kind %q", item.Kind)
 	}
@@ -472,6 +578,44 @@ func (s *Server) revokeAccess(ctx context.Context, item *store.CampaignItem) err
 			fmt.Sprintf("user:%s target:%s killed_here:%d reason:certification-revoked", item.Subject, name, killed))
 	}
 	return nil
+}
+
+// revokeAgentIdentity applies a reviewer's revocation to an AI-agent identity:
+// suspend the static key, quarantine the attested subject. Neither deletes.
+//
+// An identity already stopped is success, not an error: the goal state is "this
+// cannot act", which already holds — the same reasoning the grant path uses for
+// a grant that is already gone. For quarantine that means ErrConflict (the
+// subject is already on the list) is swallowed deliberately, and the existing
+// entry, with whoever imposed it and why, is left untouched rather than
+// overwritten by this one.
+func (s *Server) revokeAgentIdentity(ctx context.Context, item *store.CampaignItem) error {
+	if item.Kind == "agent_key" {
+		if err := s.store.SetAgentKeyDisabled(ctx, item.RefID, true); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil
+			}
+			return err
+		}
+		s.audit(ctx, "agent.disable",
+			fmt.Sprintf("agent:%d subject:%s reason:certification-revoked", item.RefID, auditField(item.Subject, 200)))
+		return nil
+	}
+	q := store.AgentQuarantine{
+		Subject:   item.Subject,
+		Reason:    "certification revoked",
+		CreatedBy: actorFrom(ctx),
+	}
+	switch err := s.store.QuarantineAgent(ctx, &q); {
+	case err == nil:
+		s.audit(ctx, "agent.quarantine",
+			fmt.Sprintf("subject:%s reason:certification-revoked", auditField(item.Subject, maxSPIFFEIDLen)))
+		return nil
+	case errors.Is(err, store.ErrConflict):
+		return nil // already stopped
+	default:
+		return err
+	}
 }
 
 // targetsGrantedBy returns the names of the targets a campaign item's grant
