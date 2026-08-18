@@ -9,6 +9,50 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.46.0] — 2026-08-18
+
+A minor that closes a **memory-exhaustion vector against the pamv1 host** and
+bounds how much data an AI agent can pull through the broker. No schema change
+(migration high-water mark stays `0043`). One new env var.
+
+### Fixed
+
+- **One-shot SSH command output was unbounded.** `rotate.SSHConnector.Exec` read
+  remote output with `CombinedOutput`, which grows a buffer until the command
+  stops — and it is the primitive behind the broker's `ssh_exec`, authenticated
+  account discovery, credential-rotation verification and the post-session
+  forensic pull. A policy-allowed `cat /var/log/huge` (or a hostile target
+  answering a routine command with an endless stream) pulled the whole thing
+  into pam-server's heap. Now capped at **4 MiB**, matching the WinRM path,
+  which has had exactly that cap since 0.14.0 — with the truncation visible in
+  the output and reported as `ExecResult.Truncated`.
+- **A truncated read is now reported rather than inferred from silence.** This
+  matters most for account discovery: a shortened `/etc/passwd` parses perfectly
+  and simply lists fewer accounts, so an unmanaged — possibly privileged —
+  account would have gone unreported while the scan looked like a clean bill of
+  health. `GET /api/targets/{id}/accounts` now returns `partial: true` and the
+  `target.accounts_scanned` audit event carries `partial:true`. The forensic
+  artifact marks itself truncated, and `ssh_exec` sets a structural `truncated`
+  field rather than leaving an agent to match a marker inside output the remote
+  host controls.
+
+### Added
+
+- **`PAM_BROKER_MAX_RESULT_BYTES`** (default `65536`) caps how much of a tool's
+  result reaches the agent. Oversized results are **shortened, never refused** —
+  by the time a result exists the command has already run, so failing the call
+  would hide the output while keeping the side effect. The agent is told plainly
+  (a visible marker in the text plus `truncated: true` and `original_bytes`),
+  the shortening is deterministic, and a **secret-bearing result is never
+  truncated**: a secret cut in half is not a smaller secret, it is a broken one.
+  Set to `0` to restore the previous unbounded behaviour.
+- **`ssh_exec` now writes a durable `.ssh.log` transcript**, the last brokered
+  command path without one (WinRM since 0.10.0, Kubernetes since 0.41.0, the
+  forensic reconstruction since 0.42.0, human SSH sessions since the beginning).
+  It carries the **full** output, which is what makes capping the agent's copy
+  honest rather than lossy, and it is listed, classified and replayable from the
+  console like every other transcript.
+
 ## [0.45.0] — 2026-08-18
 
 A minor that closes a **real authorization bypass** in the AI-agent broker's
@@ -1459,7 +1503,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.45.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.46.0...HEAD
+[0.46.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.46.0
 [0.45.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.45.0
 [0.44.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.44.0
 [0.43.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.43.0
