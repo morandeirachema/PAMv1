@@ -484,7 +484,13 @@ type Config struct {
 	// still holds the full output; this bounds the copy that reaches the model's
 	// context, which is both a cost and a prompt-injection surface.
 	BrokerMaxResultBytes int
-	BrokerRatePerMin     int // PAM_BROKER_RATE_PER_MIN — per-agent tool-call rate limit (0 = off)
+	// BrokerBudgetPerDay — PAM_BROKER_BUDGET_PER_DAY — default cumulative cap on
+	// brokered tool calls per agent over a ROLLING 24 hours (0 = unlimited). A
+	// per-agent budget on the key overrides it. The rate limit bounds bursts;
+	// this bounds the total, which a rate limit cannot express: 60/minute is
+	// still 86,400 privileged calls a day that nobody chose.
+	BrokerBudgetPerDay int
+	BrokerRatePerMin   int // PAM_BROKER_RATE_PER_MIN — per-agent tool-call rate limit (0 = off)
 	// Audit-chain checkpoints + signing-key rotation (Phase 27).
 	BrokerCheckpointEvery int    // PAM_BROKER_AUDIT_CHECKPOINT_EVERY — emit a signed in-chain checkpoint every N events (0 = off)
 	BrokerAuditSignPrev   string // PAM_BROKER_AUDIT_SIGN_PREV — comma-separated base64 ed25519 PUBLIC keys still trusted after a signing-key rotation (overlap window)
@@ -833,6 +839,7 @@ func Load() (*Config, error) {
 		ConjurRefreshMin:           integer("PAM_CONJUR_REFRESH_MIN", 0),
 		BrokerMaxArgBytes:          integer("PAM_BROKER_MAX_ARG_BYTES", 16384),
 		BrokerMaxResultBytes:       integer("PAM_BROKER_MAX_RESULT_BYTES", 65536),
+		BrokerBudgetPerDay:         integer("PAM_BROKER_BUDGET_PER_DAY", 0),
 		BrokerRatePerMin:           integer("PAM_BROKER_RATE_PER_MIN", 0),
 		BrokerCheckpointEvery:      integer("PAM_BROKER_AUDIT_CHECKPOINT_EVERY", 0),
 		BrokerAuditSignPrev:        getenv("PAM_BROKER_AUDIT_SIGN_PREV", ""),
@@ -1150,8 +1157,8 @@ func Load() (*Config, error) {
 	if cfg.MaxSessionsPerUser < 0 || cfg.MaxSessionsTotal < 0 || cfg.MaxRecordingMB < 0 {
 		errs = append(errs, "PAM_MAX_SESSIONS_PER_USER / PAM_MAX_SESSIONS_TOTAL / PAM_MAX_RECORDING_MB must be >= 0 (0 disables)")
 	}
-	if cfg.BrokerRatePerMin < 0 || cfg.BrokerMaxArgBytes < 0 || cfg.BrokerMaxResultBytes < 0 {
-		errs = append(errs, "PAM_BROKER_RATE_PER_MIN, PAM_BROKER_MAX_ARG_BYTES and PAM_BROKER_MAX_RESULT_BYTES must be >= 0")
+	if cfg.BrokerRatePerMin < 0 || cfg.BrokerMaxArgBytes < 0 || cfg.BrokerMaxResultBytes < 0 || cfg.BrokerBudgetPerDay < 0 {
+		errs = append(errs, "PAM_BROKER_RATE_PER_MIN, PAM_BROKER_MAX_ARG_BYTES, PAM_BROKER_MAX_RESULT_BYTES and PAM_BROKER_BUDGET_PER_DAY must be >= 0")
 	}
 	// Email alerting is all-or-nothing: a partial config silently drops the
 	// detective break-glass alert channel while the operator believes it is armed.

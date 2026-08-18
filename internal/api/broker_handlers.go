@@ -163,6 +163,13 @@ func (s *Server) processToolCall(w http.ResponseWriter, r *http.Request, id *age
 		writeError(w, http.StatusUnprocessableEntity, "tool is required")
 		return
 	}
+	// Cumulative budget (Phase 167). Checked here rather than in agentAuth so it
+	// bounds NEW work only: collecting the result of a call a human already
+	// approved must not be refused for budget, because the work is done and
+	// withholding the result would hide it while keeping the side effect.
+	if s.refuseOverBudget(w, r, id, in.Tool) {
+		return
+	}
 	out := s.broker.ProcessCall(r.Context(), id, broker.Call{SessionID: in.SessionID, Client: in.Client, Tool: in.Tool, Args: in.Args})
 	// Surface broker activity in the unified audit trail too; the hash chain
 	// remains the authoritative, verifiable record.
@@ -343,14 +350,36 @@ func (s *Server) createAgentKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// listAgentKeys returns the registered agent identities (never their token hash).
+// listAgentKeys returns the registered agent identities (never their token hash),
+// each with its live budget usage.
+//
+// Usage is counted per agent, so this is one query per row. That is acceptable
+// here and nowhere near a hot path — this is an administrative screen listing
+// the handful of agent identities an installation has, not something an agent
+// itself calls. A counting failure degrades to zero used rather than failing the
+// whole listing: an operator looking at the agent screen during a database
+// hiccup should still see who exists.
 func (s *Server) listAgentKeys(w http.ResponseWriter, r *http.Request) {
 	keys, err := s.store.ListAgentKeys(r.Context())
 	if err != nil {
 		storeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, keys)
+	since := time.Now().Add(-budgetWindow)
+	out := make([]agentWithBudget, 0, len(keys))
+	for _, k := range keys {
+		row := agentWithBudget{AgentKey: k, BudgetLimitEffective: s.brokerBudgetPerDay}
+		if k.BudgetPerDay != nil {
+			row.BudgetLimitEffective = *k.BudgetPerDay
+		}
+		if used, cerr := s.store.CountAgentToolCallsSince(r.Context(), k.Name, since); cerr == nil {
+			row.BudgetUsedToday = used
+		} else {
+			s.log.Debug("agent budget usage count failed", "agent", k.Name, "err", cerr)
+		}
+		out = append(out, row)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // deleteAgentKey revokes an agent identity so its bearer token stops resolving.

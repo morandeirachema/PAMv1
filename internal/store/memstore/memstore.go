@@ -1635,6 +1635,67 @@ func (m *Memstore) TouchAgentKey(_ context.Context, id int64, at time.Time) erro
 	return nil
 }
 
+// SetAgentKeyBudget sets an agent key's daily brokered-call budget, or clears
+// it with nil so the server-wide default applies again; ErrNotFound if absent.
+//
+// The pointer is copied, not dereferenced, so all three states survive: nil
+// stays nil ("no per-agent setting"), a pointer to 0 stays a pointer to 0
+// ("this agent may make no calls at all"), and a positive value is kept as is.
+// A copy of the pointed-to value is stored rather than the caller's pointer:
+// in Go the caller still holds a reference to that int and could otherwise
+// change a stored budget after the fact just by assigning through it, which
+// pgstore (where the value is written to a column) would never do.
+func (m *Memstore) SetAgentKeyBudget(_ context.Context, id int64, budgetPerDay *int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k, ok := m.agentKeys[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	if budgetPerDay == nil {
+		k.BudgetPerDay = nil
+	} else {
+		v := *budgetPerDay
+		k.BudgetPerDay = &v
+	}
+	m.agentKeys[id] = k
+	return nil
+}
+
+// CountAgentToolCallsSince counts the brokered tool calls one agent has spent
+// since `since` (inclusive), scanning the primary audit trail.
+//
+// Only `broker.tool_call.executed` (work done immediately) and
+// `broker.tool_call.resumed` (the agent collecting the result of a call a
+// human approved) count -- denied and failed calls do not, because a budget
+// measures what the agent was allowed to DO, and refusals must not eat it. The
+// action names are compared for exact equality, never by prefix, so a future
+// broker.tool_call.* outcome cannot start charging the budget by accident.
+// See BrokerStore's interface doc for the full reasoning; the constants live
+// in internal/broker, which this package cannot import without an import
+// cycle, so the strings are repeated here and must be kept in step.
+//
+// The actor comparison is ==, i.e. exact and case-sensitive, matching pgstore.
+func (m *Memstore) CountAgentToolCallsSince(_ context.Context, agent string, since time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, e := range m.audit {
+		if e.Actor != agent {
+			continue
+		}
+		if e.Action != store.AuditActionToolCallExecuted && e.Action != store.AuditActionToolCallResumed {
+			continue
+		}
+		// !Before rather than After: `since` is inclusive, so an event
+		// stamped at exactly that instant counts.
+		if !e.TS.Before(since) {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // QuarantineAgent stops one agent by subject, assigning ID and CreatedAt;
 // ErrConflict if that subject is already quarantined.
 func (m *Memstore) QuarantineAgent(_ context.Context, q *store.AgentQuarantine) error {

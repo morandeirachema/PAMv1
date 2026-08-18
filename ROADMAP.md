@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–166 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–167 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,66 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 167 — Cumulative budgets for agents ✅
+
+**Closes:** the agent-broker research's finding 4 — the only volume control on an
+AI agent was an opt-in per-minute rate limit, and `internal/policy` had no
+counting operator at all.
+
+**Why a rate limit is not a budget.** `PAM_BROKER_RATE_PER_MIN` bounds bursts and
+nothing else: an agent capped at 60 calls a minute may still make **86,400
+privileged tool calls a day**, and nobody chose that number — it is what falls
+out of the only knob that existed. A budget is the question a rate limit cannot
+express: *how much, in total, is this agent allowed to do?*
+
+- [x] **`PAM_BROKER_BUDGET_PER_DAY`** (default 0 = unlimited) caps brokered tool
+  calls per agent, with a **per-agent override** on the key
+  (`POST /v1/agents/{id}/budget`, `manage_users`). The per-agent value is a
+  pointer in the store precisely so three states stay distinguishable: unset
+  (inherit the default), `0` (a deliberate hard stop — this agent may make no
+  calls at all), and a number. In a plain `int` the first two would be the same
+  value, and the difference is between "no limit" and "no calls"
+- [x] **A rolling 24-hour window, not a calendar day.** A calendar reset hands
+  every agent a predictable instant at which its quota refills — exactly when
+  queued work would land — and forces pamv1 to pick a timezone for something
+  that has nothing to do with anyone's working day. A rolling window needs no
+  reset job, no timezone and no midnight
+- [x] **Counted from the audit trail**, not a side counter: `executed` and
+  `resumed` calls, both and only. `executed` is work done immediately;
+  `resumed` is the agent collecting the result of a call a human approved, which
+  is the *other* way work gets done and would otherwise be free. Denials and
+  failures deliberately do **not** consume budget — a budget is "how much this
+  agent was allowed to DO", and letting refusals burn it would mean a
+  misconfigured agent exhausts its own quota and then a legitimate call is
+  refused for the wrong reason. The rate limit is what bounds refusal storms.
+  Counting from the trail also means the number an operator sees and the number
+  the gate enforces cannot drift apart
+- [x] **Bounds new work only.** The check sits on the tool-call path, not in
+  `agentAuth`: refusing to hand over the result of a call a human already
+  approved would hide the output while keeping the side effect — the same trap
+  Phase 165's result cap avoids by truncating rather than failing
+- [x] **Enforced on both transports.** REST and MCP share one decision function;
+  a limit only one transport honours is not a limit, and MCP is the one an agent
+  framework actually speaks
+- [x] **Fails closed.** A counting failure refuses the call. That reads harsh for
+  a resource control until you notice what the count is read FROM: if the audit
+  trail cannot be read, the call could not have been recorded either, and the
+  broker already refuses to execute what it cannot audit — so failing closed
+  costs nothing that was not already lost, and "just this once, unmeasured" is
+  precisely what a budget exists to prevent
+- [x] **Visible before it bites.** `GET /v1/agents` reports `budget_used_today`
+  and the effective limit per agent, and console menu 26 shows usage against the
+  limit, so an operator can see who is close to their ceiling rather than
+  learning about it from a refused call. Exhaustion is audited under its own
+  action (`agent.budget_exhausted`) — as often the signal that a budget is set
+  too low as that an agent is running away
+- [x] **Honest limitation:** a SPIFFE/SVID-authenticated agent has no key row and
+  so inherits the server default with no per-agent override. Stated in the code
+  and the threat model rather than hidden; the fix is per-identity budgets keyed
+  on the SPIFFE ID, the shape Phase 159's quarantine already uses to cover both
+  identity kinds
+- [x] Migration `0044` (additive); one new env var; one new route
 
 ## Phase 166 — v0.46.0 ✅
 
