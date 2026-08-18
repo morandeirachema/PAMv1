@@ -726,6 +726,34 @@ type AgentQuarantine struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// AgentIdentity records the accountable human behind an agent identity pamv1
+// never issued a key to: a SPIFFE/SVID-authenticated workload, whose credential
+// is attested by the trust domain rather than minted here.
+//
+// It exists because "who owns this agent" is load-bearing in two places that
+// both silently no-opped for an attested agent. Four-eyes approval refuses the
+// human who owns an agent from approving that agent's own parked call — a
+// comparison against `Identity.OnBehalfOf`, which for an SVID is the outermost
+// SPIFFE ID in its delegation chain and can never equal a person's username, so
+// the refusal could not fire and the human operating an agent could approve its
+// privileged calls alone. And deleting a human suspends every agent key they
+// owned, which reaches nothing when the agent has no key row. Both need one
+// fact pamv1 had nowhere to record: the person accountable for a SPIFFE ID.
+//
+// This is an OWNER registry, not enrollment or attestation. Recording an owner
+// does not admit a workload (the trust domain already did that) and does not
+// attest it (SPIRE workload attestation stays infra-bound, see
+// docs/EXTERNAL-INFRA-GAPS.md). It answers "who do we hold responsible", which
+// is the question both controls above were asking.
+type AgentIdentity struct {
+	ID        int64     `json:"id"`
+	SPIFFEID  string    `json:"spiffe_id"`
+	Owner     string    `json:"owner"`
+	Note      string    `json:"note,omitempty"`
+	CreatedBy string    `json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // AppKey is a non-human application identity for the application-secrets API
 // (Phase 24, Tier-4 Conjur-style secret delivery): a bearer key whose SHA-256
 // hash is stored, letting an application retrieve only the specific secrets it
@@ -1523,6 +1551,27 @@ type BrokerStore interface {
 	ListAgentQuarantine(ctx context.Context) ([]AgentQuarantine, error)
 	// ReleaseAgentQuarantine lifts one quarantine by ID, or ErrNotFound.
 	ReleaseAgentQuarantine(ctx context.Context, id int64) error
+	// CreateAgentIdentity records the accountable owner of a SPIFFE-attested
+	// agent, populating ID and CreatedAt; ErrConflict if that SPIFFE ID is
+	// already registered (one identity has one owner — a second row would make
+	// "who is accountable" ambiguous at the exact moment it must not be).
+	CreateAgentIdentity(ctx context.Context, a *AgentIdentity) error
+	// GetAgentIdentity returns the registration for one SPIFFE ID, or
+	// ErrNotFound. The four-eyes gate reads it on every approval decision.
+	GetAgentIdentity(ctx context.Context, spiffeID string) (*AgentIdentity, error)
+	// ListAgentIdentities returns every registration ordered by ID; an empty
+	// slice, never nil.
+	ListAgentIdentities(ctx context.Context) ([]AgentIdentity, error)
+	// ListAgentIdentitiesByOwner returns the registrations one human is
+	// accountable for — the offboarding cascade's query, mirroring
+	// ListAgentKeysByOwner for the identity kind that has no key row.
+	ListAgentIdentitiesByOwner(ctx context.Context, owner string) ([]AgentIdentity, error)
+	// SetAgentIdentityOwner reassigns one registration's owner, or ErrNotFound.
+	// Ownership outlives people: reassigning must not require deleting the row
+	// and losing when it was first recorded and by whom.
+	SetAgentIdentityOwner(ctx context.Context, id int64, owner string) error
+	// DeleteAgentIdentity removes one registration by ID, or ErrNotFound.
+	DeleteAgentIdentity(ctx context.Context, id int64) error
 
 	// CreateBrokerToken stores a single-use resume token (its JTI is the token's
 	// SHA-256 hash) for a parked, approval-pending tool call.

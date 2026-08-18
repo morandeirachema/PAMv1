@@ -1174,6 +1174,15 @@ func (s *Server) routes() {
 		s.mux.Handle("POST /v1/agents/quarantine", s.authz(auth.CapManageUsers, s.quarantineAgent))
 		s.mux.Handle("GET /v1/agents/quarantine", s.authz(auth.CapManageUsers, s.listAgentQuarantine))
 		s.mux.Handle("DELETE /v1/agents/quarantine/{id}", s.authz(auth.CapManageUsers, s.releaseAgentQuarantine))
+		// Accountability for the identity kind pamv1 never issued a key to
+		// (Phase 170): who owns a SPIFFE-attested agent. Read by the broker's
+		// four-eyes refusal and by the offboarding cascade. Like "quarantine",
+		// the literal "identities" segment is registered before "{id}" only for
+		// readability — ServeMux prefers the more specific pattern regardless.
+		s.mux.Handle("POST /v1/agents/identities", s.authz(auth.CapManageUsers, s.createAgentIdentity))
+		s.mux.Handle("GET /v1/agents/identities", s.authz(auth.CapManageUsers, s.listAgentIdentities))
+		s.mux.Handle("POST /v1/agents/identities/{id}/owner", s.authz(auth.CapManageUsers, s.setAgentIdentityOwner))
+		s.mux.Handle("DELETE /v1/agents/identities/{id}", s.authz(auth.CapManageUsers, s.deleteAgentIdentity))
 		s.mux.Handle("POST /v1/agents/{id}/disable", s.authz(auth.CapManageUsers, s.disableAgentKey))
 		s.mux.Handle("POST /v1/agents/{id}/enable", s.authz(auth.CapManageUsers, s.enableAgentKey))
 		s.mux.Handle("POST /v1/agents/{id}/budget", s.authz(auth.CapManageUsers, s.setAgentBudget))

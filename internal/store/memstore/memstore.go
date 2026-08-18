@@ -33,6 +33,7 @@ type Memstore struct {
 	auditKey        []byte // set ⇒ chain the primary audit trail
 	agentKeys       map[int64]store.AgentKey
 	agentQuarantine map[int64]store.AgentQuarantine
+	agentIdentities map[int64]store.AgentIdentity
 	sshCerts        map[int64]store.SSHCert
 	vendors         map[int64]store.Vendor
 	vendorGrants    map[int64]store.VendorGrant
@@ -85,6 +86,7 @@ func New() *Memstore {
 		checkouts:       make(map[int64]store.Checkout),
 		agentKeys:       make(map[int64]store.AgentKey),
 		agentQuarantine: make(map[int64]store.AgentQuarantine),
+		agentIdentities: make(map[int64]store.AgentIdentity),
 		sshCerts:        make(map[int64]store.SSHCert),
 		vendors:         make(map[int64]store.Vendor),
 		vendorGrants:    make(map[int64]store.VendorGrant),
@@ -1739,6 +1741,80 @@ func (m *Memstore) ListAgentQuarantine(_ context.Context) ([]store.AgentQuaranti
 // ReleaseAgentQuarantine lifts one quarantine by ID; ErrNotFound if absent.
 func (m *Memstore) ReleaseAgentQuarantine(_ context.Context, id int64) error {
 	return deleteRow(m, m.agentQuarantine, id)
+}
+
+// CreateAgentIdentity records the owner of a SPIFFE-attested agent, assigning ID
+// and CreatedAt; ErrConflict if that SPIFFE ID is already registered.
+func (m *Memstore) CreateAgentIdentity(_ context.Context, a *store.AgentIdentity) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range m.agentIdentities {
+		if existing.SPIFFEID == a.SPIFFEID {
+			return store.ErrConflict
+		}
+	}
+	a.ID = m.id()
+	a.CreatedAt = time.Now().UTC()
+	m.agentIdentities[a.ID] = *a
+	return nil
+}
+
+// GetAgentIdentity returns one SPIFFE ID's registration, or ErrNotFound.
+func (m *Memstore) GetAgentIdentity(_ context.Context, spiffeID string) (*store.AgentIdentity, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, a := range m.agentIdentities {
+		if a.SPIFFEID == spiffeID {
+			out := a
+			return &out, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+// ListAgentIdentities returns every registration ordered by ID.
+func (m *Memstore) ListAgentIdentities(_ context.Context) ([]store.AgentIdentity, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]store.AgentIdentity, 0, len(m.agentIdentities))
+	for _, a := range m.agentIdentities {
+		out = append(out, a)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// ListAgentIdentitiesByOwner returns one owner's registrations ordered by ID
+// (empty, not nil, when they own none).
+func (m *Memstore) ListAgentIdentitiesByOwner(_ context.Context, owner string) ([]store.AgentIdentity, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]store.AgentIdentity, 0, len(m.agentIdentities))
+	for _, a := range m.agentIdentities {
+		if a.Owner == owner {
+			out = append(out, a)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// SetAgentIdentityOwner reassigns one registration's owner; ErrNotFound if absent.
+func (m *Memstore) SetAgentIdentityOwner(_ context.Context, id int64, owner string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.agentIdentities[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	a.Owner = owner
+	m.agentIdentities[id] = a
+	return nil
+}
+
+// DeleteAgentIdentity removes one registration by ID; ErrNotFound if absent.
+func (m *Memstore) DeleteAgentIdentity(_ context.Context, id int64) error {
+	return deleteRow(m, m.agentIdentities, id)
 }
 
 // RecordSSHCert stores an issued operator SSH certificate (Phase 28); ErrConflict
