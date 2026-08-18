@@ -407,7 +407,14 @@ func (b *Broker) ProcessCall(ctx context.Context, id *agentid.Identity, c Call) 
 
 	// Policy decides next: deny and require_approval need no tool, and an unknown
 	// tool with no matching rule is denied by default (fail-closed), never run.
-	d := b.engine.Evaluate(c.Tool, c.Args)
+	//
+	// The VERIFIED identity goes in with the call (Phase 173). It was in scope
+	// here from the beginning and was not passed, which left a rule unable to
+	// name who it applied to — one `allow` for `reveal_credential` enabled it for
+	// every agent — and made any identity a condition matched a value the agent
+	// had asserted itself. Everything in policy.Caller comes from agentid's
+	// verification, nothing from c.Args.
+	d := b.engine.Evaluate(callerOf(id), c.Tool, c.Args)
 	out.RuleID, out.Scope, out.Reason = d.RuleID, d.Scope, d.Reason
 	var sensitive bool // the executed result carries a secret (reveal_credential)
 	switch d.Effect {
@@ -467,6 +474,22 @@ func (b *Broker) ProcessCall(ctx context.Context, id *agentid.Identity, c Call) 
 		b.log.Error("broker audit chain append failed", "call", out.CallID, "err", err)
 	}
 	return out
+}
+
+// callerOf projects a verified agent identity onto the policy engine's view of
+// it. It is a projection rather than a shared type so `internal/policy` stays
+// free of the identity package: the engine decides over facts, not over an
+// authentication mechanism.
+func callerOf(id *agentid.Identity) policy.Caller {
+	if id == nil {
+		return policy.Caller{}
+	}
+	return policy.Caller{
+		Agent:      id.AgentName,
+		SPIFFEID:   id.SPIFFEID,
+		OnBehalfOf: id.OnBehalfOf,
+		Chain:      id.ActorChain,
+	}
 }
 
 // effectiveTTL is how long one parked call stays decidable: the deployment's
