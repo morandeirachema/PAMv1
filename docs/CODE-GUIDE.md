@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-17 · Reflects: Phases 0–163 + the 2026-07 hardening passes.
+> Last updated: 2026-08-18 · Reflects: Phases 0–165 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -908,7 +908,11 @@ only the result. "Trust the chokepoint, not the agent." Opt-in via
   a missing argument still **denies** (never runs with an unfillable scope), and
   numeric args stringify in plain decimal so `10000000` can't miss as `1e+07`.
 - **The broker** (`broker.ProcessCall` / `Resume`) — the one loop both REST and MCP
-  share. It caps argument size *before* any work, evaluates policy, and then:
+  share. It caps argument size *before* any work, validates the arguments against
+  the tool's own declared schema (Phase 163), caps the RESULT after a tool runs
+  (Phase 165 — shortened with a visible marker rather than refused, since by then
+  the command has already run, and never for a secret-bearing result; the full
+  output lives in the stored transcript), evaluates policy, and then:
   `allow` → a **capability backstop** re-checks `principal.Can(tool.Capability())`
   (policy YAML is never the sole authority), records a tamper-evident
   `broker.tool_call.requested` **before** the side effect and refuses to run if the

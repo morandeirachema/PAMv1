@@ -102,6 +102,16 @@ func (s *Server) CollectSessionForensics(ctx context.Context, in SessionForensic
 		return
 	}
 	rep := sessionforensics.Parse(res.Output, in.Started, in.Ended, s.forensicsMaxEvents)
+	// A pull cut short by the exec output cap is a PARTIAL reconstruction, and it
+	// must say so: the parser is perfectly happy with a truncated record set and
+	// would otherwise produce an artifact that reads as a complete account of what
+	// ran. The command already asks the target for a bounded slice
+	// (`tail -c 1048576`), so this fires only when a target answers with more than
+	// the connector will hold — but "the evidence is incomplete" is exactly the
+	// kind of thing that must never be inferred from silence.
+	if res.Truncated {
+		rep.Truncated = true
+	}
 	rep.Target, rep.Actor, rep.SessionID = target.Name, actor, in.SessionID
 	rep.Started, rep.Ended = in.Started.UTC(), in.Ended.UTC()
 

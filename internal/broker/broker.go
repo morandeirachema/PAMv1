@@ -268,11 +268,12 @@ type Broker struct {
 	chain    *auditchain.Chain
 	log      *slog.Logger
 
-	tokens      TokenStore
-	notifier    alert.Notifier
-	tokenTTL    time.Duration
-	maxArgBytes int
-	revalidate  func(ctx context.Context, id *agentid.Identity) bool // agent still valid?
+	tokens         TokenStore
+	notifier       alert.Notifier
+	tokenTTL       time.Duration
+	maxArgBytes    int
+	maxResultBytes int
+	revalidate     func(ctx context.Context, id *agentid.Identity) bool // agent still valid?
 
 	mu     sync.Mutex
 	calls  map[string]Outcome     // call_id -> latest outcome (in-memory)
@@ -318,6 +319,16 @@ func (b *Broker) WithRevalidator(fn func(ctx context.Context, id *agentid.Identi
 // before policy evaluation.
 func (b *Broker) WithArgCap(n int) *Broker {
 	b.maxArgBytes = n
+	return b
+}
+
+// WithResultCap bounds how many bytes of a tool's result reach the agent
+// (0 = unbounded). The full output still goes to the durable transcript; this
+// caps only the copy that travels back through the API and into the agent's
+// context. See capResult for why an oversized result is shortened rather than
+// refused.
+func (b *Broker) WithResultCap(n int) *Broker {
+	b.maxResultBytes = n
 	return b
 }
 
@@ -416,6 +427,11 @@ func (b *Broker) ProcessCall(ctx context.Context, id *agentid.Identity, c Call) 
 		if err != nil {
 			out.Status, out.Reason = StatusFailed, err.Error()
 		} else {
+			res, cut := capResult(res, b.maxResultBytes)
+			if cut {
+				b.log.Info("brokered tool result truncated for the agent; the transcript keeps the full output",
+					"call", out.CallID, "tool", c.Tool, "cap", b.maxResultBytes)
+			}
 			out.Status, out.Result, sensitive = StatusExecuted, res.Data, res.Sensitive
 		}
 	default:
@@ -565,7 +581,12 @@ func (b *Broker) Decide(ctx context.Context, callID string, approver Approver, a
 	if err != nil {
 		out.Status, out.Reason = StatusFailed, err.Error()
 	} else {
-		out.Status, out.Result = StatusExecuted, res.Data
+		capped, cut := capResult(res, b.maxResultBytes)
+		if cut {
+			b.log.Info("brokered tool result truncated for the agent; the transcript keeps the full output",
+				"call", out.CallID, "tool", p.call.Tool, "cap", b.maxResultBytes)
+		}
+		out.Status, out.Result = StatusExecuted, capped.Data
 	}
 	b.remember(out) // full outcome — the agent collects it once via the resume token
 	if err := b.chainEvent(ctx, p.id, p.call, ActionFor(out.Status), out, out.Reason); err != nil {
@@ -918,6 +939,90 @@ func checkArgType(name, typ string, v any) error {
 		return nil
 	}
 }
+
+// capResult bounds what a tool hands back to an agent, returning the (possibly
+// shortened) result and whether anything was cut.
+//
+// Arguments have been capped since Phase 13; results never were, which is the
+// wrong way round for a system whose callers are language models. A single
+// `ssh_exec` of `cat /var/log/…` returns whatever the file holds — through the
+// JSON response, through the broker's in-memory outcome cache, and into the
+// agent's context window, where a few megabytes of log is both a cost and a
+// prompt-injection surface far larger than anything the agent asked for.
+//
+// Truncation, not refusal, is the right answer here and the choice is worth
+// stating: by the time a result exists the command has ALREADY RUN. Failing the
+// call would hide the output while keeping the side effect — the worst of both.
+// So the agent gets a bounded slice, is told plainly that it is one, and the
+// full output is in the durable transcript beside the recording, which is what
+// makes the truncation acceptable rather than merely convenient.
+//
+// A Sensitive result (reveal_credential) is NEVER truncated. A secret cut in
+// half is not a smaller secret, it is a broken one, and an agent that pastes it
+// into a login gets a failure it cannot diagnose. Those results are bounded
+// where they are created instead (a vaulted file secret has its own size cap).
+func capResult(res Result, max int) (Result, bool) {
+	if max <= 0 || res.Sensitive || len(res.Data) == 0 {
+		return res, false
+	}
+	raw, err := json.Marshal(res.Data)
+	if err != nil || len(raw) <= max {
+		return res, false
+	}
+	// Only string fields are shortened: they are where the bulk lives (command
+	// output, file content) and the only values that mean anything partially.
+	// Sorted so an oversized result is cut the same way every time.
+	var strKeys []string
+	strBytes := 0
+	for k, v := range res.Data {
+		if sv, ok := v.(string); ok {
+			strKeys = append(strKeys, k)
+			strBytes += len(sv)
+		}
+	}
+	sort.Strings(strKeys)
+	out := make(map[string]any, len(res.Data)+2)
+	for k, v := range res.Data {
+		out[k] = v
+	}
+	// What the non-string fields and the JSON punctuation already cost. If they
+	// alone exceed the cap there is nothing useful left to shorten, so the result
+	// is replaced wholesale rather than shipped over the limit.
+	overhead := len(raw) - strBytes
+	budget := max - overhead - len(strKeys)*truncationNoteBytes
+	if len(strKeys) == 0 || budget <= 0 {
+		return Result{Data: map[string]any{
+			"truncated":      true,
+			"original_bytes": len(raw),
+			"note":           "result exceeded the configured size limit; see the stored transcript for the full output",
+		}}, true
+	}
+	per := budget / len(strKeys)
+	for _, k := range strKeys {
+		sv := res.Data[k].(string)
+		if len(sv) > per {
+			out[k] = sv[:per] + truncationNote
+		}
+	}
+	// Never overwrite a field the tool itself set: a tool that returns its own
+	// `truncated` means something by it, and silently redefining a tool's own
+	// vocabulary is how two layers end up disagreeing in an audit trail.
+	if _, taken := out["truncated"]; !taken {
+		out["truncated"] = true
+	}
+	if _, taken := out["original_bytes"]; !taken {
+		out["original_bytes"] = len(raw)
+	}
+	return Result{Data: out}, true
+}
+
+// truncationNote is appended to every shortened string so a reader (human or
+// model) can never mistake a cut result for a complete one.
+const truncationNote = "\n…[truncated by pamv1 — full output is in the stored transcript]"
+
+// truncationNoteBytes is the note's own length, reserved out of the budget so
+// adding it cannot push the result back over the cap.
+const truncationNoteBytes = len(truncationNote)
 
 // argsSummary renders the call arguments as compact JSON, capped so a large or
 // hostile argument can't bloat an audit row.
