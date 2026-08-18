@@ -9,6 +9,93 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.49.0] — 2026-08-19
+
+A minor that finishes the AI-agent-broker batch's identity work and then audits
+its own output. Policy learns **who** is calling, attested identities get an
+inventory pamv1 builds itself, non-human identities are **recertified** like
+everyone else — and a sweep over those very phases found one live defect and
+fixed it here rather than shipping it. **Schema change** — new migration `0046`
+(three additive columns; applied on startup, no backfill). Two new env vars,
+both default-off. **Three upgrade notes below.**
+
+### Added
+
+- **Policy rules have a principal side** (Phase 173). `agents:` restricts a rule
+  to the listed presenting identities, `not_agents:` excludes a whole delegation
+  lineage, and an empty list still matches everyone — so every policy you run
+  today behaves exactly as it did. Conditions also gain a reserved `caller.*`
+  namespace read from the **verified** identity (`caller.agent`,
+  `caller.spiffe_id`, `caller.on_behalf_of`, `caller.delegation_depth` in hops,
+  `caller.identity_kind`). Until now one `allow` for `reveal_credential` enabled
+  it for **every** agent the deployment authenticates, and any rule keyed on
+  "which agent is this" was keyed on a string the agent chose to send.
+- **An inventory of attested identities** (Phase 174). Every SPIFFE identity that
+  authenticates is recorded on sight — an unowned **seen** row with first- and
+  last-seen stamps, audited once — so the list an operator reviews is what
+  actually calls rather than what somebody remembered to type. Claiming one (an
+  owner) is what **enrolled** means, and registering a discovered identity adopts
+  its row instead of colliding with it.
+- **`PAM_BROKER_REQUIRE_ENROLLED_SVID`** (default `false`): with it on, an
+  identity nobody has claimed is refused at the door, fail-closed, while still
+  being recorded — you enrol *from* that list.
+- **Agent identities are recertified** (Phase 175). Certification campaigns now
+  snapshot AI-agent identities of both kinds as items of their own, carrying the
+  owner, the lifecycle state and the dormancy signal (*last used* / *last seen*).
+- **`recovery_codes_remaining`** on `GET /api/mfa`, and on console `PAMMFA`
+  (Phase 177) — the question a person asks right after spending a single-use
+  code. `-1` means the count is unavailable, deliberately not `0`.
+- **A vendor's contact address is editable** (Phase 177): `PUT /api/vendors/{id}`
+  accepts `email`, validated and audited. It could be set at creation and never
+  corrected, and it is where magic-link approval invites are sent.
+- **`PAM_BROKER_REQUIRE_KNOWN_OWNER`** (default `false`, Phase 176): refuse a
+  broker approval when the calling agent's owner matches no pamv1 user.
+
+### Fixed
+
+- **A flag that claimed a reachability the control does not have** (Phase 176).
+  `owner_known` — new in this release — compared owners case-insensitively while
+  every owner lookup in pamv1 is a literal match. An agent owned by `Carol` while
+  the user is `carol` reported as fine and is unreachable: deleting that user
+  suspends nothing. Now exact-case. The four-eyes comparison stays
+  case-insensitive on purpose, because there matching more broadly *refuses* more.
+- **Four-eyes that could not be checked now says so** (Phase 176). The gate
+  refuses `owner == approver`, so an owner nobody holds — a typo, or a team
+  address — can never match, and the real owner could approve their own agent's
+  call. Such a decision is now audited `broker.approval.four_eyes_unverified`.
+- **The identity inventory missed delegation chains and wrote too often**
+  (Phase 176): every verified actor in a presented chain is now recorded (marked
+  `via:` when learned indirectly), and the last-seen stamp is damped to one write
+  per identity per minute instead of one per call.
+
+### Changed
+
+- **Revoking an agent identity in a campaign stops it rather than deleting it**
+  (Phase 175): a static key is suspended, an attested identity quarantined —
+  reversible, audited `reason:certification-revoked`, and the row survives as
+  evidence. Revoking a *human's* grant is unchanged.
+- **An owner that matches no pamv1 user is reported** wherever owners are read:
+  `owner_known` on both agent listings, a red owner with `?` on console menus 26
+  and F8, and a WARNING inside the campaign item.
+- `SetVendorDisabled` is removed from the store surface (Phase 177) — a second,
+  weaker way to half-stop a vendor, when `OffboardVendor` disables and revokes
+  every grant atomically. No route ever exposed it.
+
+### Upgrade notes
+
+- **Campaign reviewers will see new rows.** A certification campaign created
+  after this release includes every AI-agent identity (subject type `agent`)
+  unless the campaign is safe-scoped. That is the point — nobody was reviewing
+  them — but a review queue that suddenly grows is worth expecting.
+- **Enrol your SPIFFE agents before turning enrollment on.** With
+  `PAM_BROKER_REQUIRE_ENROLLED_SVID=true`, an identity with no enrolled row is
+  refused. Leave it off, let the inventory build itself from real traffic, claim
+  what you recognise, then switch it on.
+- **Check the owner flags before setting `PAM_BROKER_REQUIRE_KNOWN_OWNER`.** With
+  it on, approvals for agents owned by a team address — or by a typo'd username —
+  are refused rather than audited as unverified. The listings tell you which
+  agents those are.
+
 ## [0.48.0] — 2026-08-18
 
 A minor that closes **three live defects in the AI-agent broker**, all found by
