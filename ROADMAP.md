@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–163 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–164 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,39 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 164 — v0.45.0 ✅
+
+Releases Phase 163 (policy that cannot be bypassed by omission) — a minor that
+closes a **real authorization bypass**, not a hardening nicety: a `not_in`
+block-list over an optional argument admitted the exact call it existed to stop.
+No schema change (migration high-water mark stays `0043`).
+
+Like v0.44.0 it carries operator-visible changes, and for the same reason they
+go in the CHANGELOG's *Changed* section rather than *Added*: **policy semantics
+change** (every condition operator now requires the argument to be present), and
+tool calls with undeclared, missing, mistyped or empty-string arguments now come
+back `failed` where they previously ran with the value silently defaulted.
+
+- [ ] **v0.45.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published as `ghcr.io/morandeirachema/pamv1:0.45.0` (also `latest`), digest
+  recorded here once the publish workflow runs, verified **public** by anonymous
+  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] All five pins via the sweep; Helm chart `version` 0.35.0 -> **0.36.0**
+  (minor, alongside the `appVersion` minor)
+- [x] Both READMEs restated (Phase 163's own PR landed the parity-table row —
+  this pass covers every scattered version/phase-count mention), and every
+  release-date mention moved to 2026-08-18
+- [x] `docs/README.md`'s currency line, `docs/NIS2-COMPLIANCE.md`'s
+  compliance-evidence row (whose own "Reflects" header had drifted to 0–159) and
+  ROADMAP.md's top-banner phase count all caught proactively; `CHANGELOG.md`
+  gains the release entry
+- [x] The tag is pushed only **after** the release PR is confirmed merged (the
+  v0.43.0 lesson: a merge that 503s while the tag push succeeds puts the tag on
+  the wrong commit)
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging:
+  `gofmt`, `go vet`, `staticcheck`, `gosec`, `govulncheck`, `go test -race
+  ./...`, `go run ./cmd/archgen` (no schema/route drift)
 
 ## Phase 163 — Policy that cannot be bypassed by omission ✅
 
