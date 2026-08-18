@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–170 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–171 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,61 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 171 — The dead controls: a TTL that binds, a scope that is honest ✅
+
+**Closes:** the agent-broker research pass's finding A — `ttl_seconds` and
+`scope` were advertised controls that constrained nothing, and the **shipped
+example policy marketed one of them**.
+
+**The defect.** `policy.Rule.TTLSeconds` was parsed into `Decision.TTL` and read
+by no non-test caller anywhere in the tree. A rule saying `ttl_seconds: 60` got
+`PAM_BROKER_TOKEN_TTL_MIN` — fifteen minutes by default — and
+`deploy/broker-policy.example.yaml` presented exactly that setting as "a scoped,
+short-lived grant". That is the failure class Phase 159 named: **a dead field
+that reads like a control is worse than an absent one**, and worse still when the
+example teaches operators to rely on it.
+
+- [x] **`ttl_seconds` binds.** `Broker.effectiveTTL` narrows the deployment's
+  window with the matched rule's value; `park` computes **one** deadline and uses
+  it for both the parked call and its single-use resume token, so the reported
+  window and the enforced one cannot drift apart; `SweepExpiredParked` evicts per
+  call rather than against one global TTL
+- [x] **Narrow only, never extend.** A policy file is edited far more often, and
+  by more people, than a deployment's configuration. If a line of YAML could
+  out-rank `PAM_BROKER_TOKEN_TTL_MIN`, the deployment-wide bound would be
+  advisory — so a rule may shorten the window and nothing more
+- [x] **Refused where it would mean nothing.** On an `allow` rule the call
+  executes and returns in the same request; on a `deny` there is nothing to bound.
+  `ttl_seconds` on either is now a **policy load error** (as is a negative value),
+  the same fail-loud stance the engine already took for an approval rule with no
+  approvers. **Upgrade note**: a policy carrying that setting today fails to load
+  — it never did anything, and the error says where it belongs
+- [x] **`scope` is described, not promoted.** It renders a template into the
+  audit record and cannot narrow what a call does: the arguments are fixed before
+  policy runs and the broker executes exactly those. What it *does* do is assert
+  presence — a template naming `{target}` fails to render for a call without that
+  argument, and a render failure is a deny. So: a label with a fail-closed
+  required-argument check. Enforcing it into more would be theatre; saying so
+  plainly is the honest half of the phase, and it is said in the code, the
+  example policy, the admin guide and the threat model
+- [x] **Visible before it bites.** `Outcome.ExpiresAt` (`expires_at`) tells the
+  agent when its parked call lapses, `PendingApproval.ExpiresAt` tells the
+  approver, and console menu 20 gains a **DECIDE BY** column. An agent told only
+  "pending" cannot otherwise tell a decision worth waiting for from one that can
+  no longer happen
+- [x] **A console defect found while adding that column**: the approvals row used
+  `pad()` — which does not truncate — on four user-controlled cells, so one long
+  agent name or argument blob pushed the later columns off the terminal. Now
+  `cell()`, with arguments rendered as `k=v` pairs instead of a JSON blob, and the
+  screen joins `console_check.js`'s row-width harness for the first time
+- [x] **Tests, the first verified to FAIL against the pre-fix code:**
+  `broker.TestRuleTTLBoundsTheApprovalWindow` (a 60-second rule under a 30-minute
+  deployment TTL — reported deadline, approver queue and sweep all follow the
+  rule), `broker.TestRuleTTLCannotExceedTheDeploymentTTL`,
+  `broker.TestNoRuleTTLKeepsTheDeploymentWindow`, and
+  `policy.TestTTLIsRefusedWhereItBoundsNothing`
+- [x] No schema change (high-water stays `0045`), no new env var, no route change
 
 ## Phase 170 — An owner for the identity pamv1 never issued ✅
 

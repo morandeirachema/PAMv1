@@ -1563,11 +1563,13 @@ Parked calls awaiting a human decision. Type options, press Enter.
   <span class="cyan">5=Approve (executes server-side)   6=Reject</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>Call</th><th>Agent</th><th>On behalf of</th><th>Tool</th><th>Arguments</th><th>Rule</th><th>Approvers</th><th>Waiting since</th></tr>
-${brokerApprovals.map((a) => `<tr><td>${opt(a.call_id)}</td><td>${pad(String(a.call_id).slice(0, 8), 9)}</td><td class="white">${pad(a.agent, 10)}</td><td>${pad(a.on_behalf_of || "-", 10)}</td><td class="amber">${pad(a.tool, 14)}</td><td>${pad(JSON.stringify(a.args || {}), 34)}</td><td>${pad(a.rule_id || "-", 10)}</td><td class="cyan">${pad((a.approvers || []).join(",") || "any", 12)}</td><td class="cyan">${fmtTime(a.requested_at)}</td></tr>`).join("")}
+<tr><th>Opt</th><th>Call</th><th>Agent</th><th>On behalf of</th><th>Tool</th><th>Arguments</th><th>Rule</th><th>Approvers</th><th>Waiting since</th><th>Decide by</th></tr>
+${brokerApprovals.map((a) => `<tr><td>${opt(a.call_id)}</td><td>${pad(String(a.call_id).slice(0, 8), 9)}</td><td class="white">${cell(a.agent, 10)}</td><td>${cell(a.on_behalf_of || "-", 10)}</td><td class="amber">${cell(a.tool, 14)}</td><td>${cell(Object.entries(a.args || {}).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join(" ") || "-", 30)}</td><td>${cell(a.rule_id || "-", 10)}</td><td class="cyan">${cell((a.approvers || []).join(",") || "any", 12)}</td><td class="cyan">${fmtTime(a.requested_at)}</td><td class="amber">${fmtTime(a.expires_at)}</td></tr>`).join("")}
 </table>${brokerApprovals.length ? "" : `<div class="cyan indent">(No parked tool calls.)</div>`}
 <input type="submit" hidden></form>
-<span class="cyan">Four-eyes: you cannot approve a call made by an agent you own. Separation of duties: the rule's approver groups decide.</span>
+<span class="cyan">Four-eyes: you cannot approve a call made by an agent you own — including one that acts for an agent
+you own. Separation of duties: the rule's approver groups decide. DECIDE BY is the deadline: after it the
+call is swept and reported to the agent as failed. A rule's ttl_seconds sets it, else the server default.</span>
 ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         document.getElementById("f-list").onsubmit = async (ev) => {
           ev.preventDefault();

@@ -224,5 +224,4 @@ rules:
     tool: ssh_exec
     effect: allow
     scope: "target:{target}:exec"
-    ttl_seconds: 60
 `
