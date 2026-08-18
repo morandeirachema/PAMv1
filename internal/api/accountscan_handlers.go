@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/accountscan"
@@ -20,6 +21,13 @@ type discoverAccountsResult struct {
 	Managed             map[string]bool       `json:"managed"`
 	UnmanagedCount      int                   `json:"unmanaged_count"`
 	PrivilegedUnmanaged int                   `json:"privileged_unmanaged_count"`
+	// Partial marks a scan whose target answer was cut short by the exec output
+	// cap, so the account list is a subset of what the host actually has. It is
+	// reported rather than hidden because the failure is invisible otherwise: a
+	// truncated `/etc/passwd` parses cleanly and simply lists fewer accounts, so
+	// an unmanaged — possibly privileged — account would go unreported while the
+	// result looked like a clean bill of health.
+	Partial bool `json:"partial,omitempty"`
 }
 
 // discoverAccounts runs a fixed, read-only enumeration command over a target's
@@ -71,7 +79,7 @@ func (s *Server) discoverAccounts(w http.ResponseWriter, r *http.Request) {
 	cred := creds[0]
 	actor := actorFrom(r.Context())
 
-	accounts, err := s.runAccountScan(r.Context(), target, &cred, actor)
+	accounts, partial, err := s.runAccountScan(r.Context(), target, &cred, actor)
 	if err != nil {
 		switch err {
 		case errCommandBlocked:
@@ -94,9 +102,12 @@ func (s *Server) discoverAccounts(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	s.audit(r.Context(), "target.accounts_scanned", fmt.Sprintf(
-		"target:%s protocol:%s found:%d unmanaged:%d privileged_unmanaged:%d",
-		target.Name, target.Protocol, len(accounts), unmanaged, privilegedUnmanaged))
+	detail := fmt.Sprintf("target:%s protocol:%s found:%d unmanaged:%d privileged_unmanaged:%d",
+		target.Name, target.Protocol, len(accounts), unmanaged, privilegedUnmanaged)
+	if partial {
+		detail += " partial:true"
+	}
+	s.audit(r.Context(), "target.accounts_scanned", detail)
 
 	writeJSON(w, http.StatusOK, discoverAccountsResult{
 		Target:              target.Name,
@@ -106,6 +117,7 @@ func (s *Server) discoverAccounts(w http.ResponseWriter, r *http.Request) {
 		Managed:             managed,
 		UnmanagedCount:      unmanaged,
 		PrivilegedUnmanaged: privilegedUnmanaged,
+		Partial:             partial,
 	})
 }
 
@@ -119,44 +131,53 @@ func (s *Server) discoverAccounts(w http.ResponseWriter, r *http.Request) {
 // pamv1's own fixed literals, not operator input, but an operator-configured
 // deny pattern that happens to match must still refuse the scan rather than
 // silently bypass policy.
-func (s *Server) runAccountScan(ctx context.Context, target *store.Target, cred *store.Credential, actor string) ([]accountscan.Account, error) {
+// It returns partial=true when the target's answer was cut short by the exec
+// output cap (Phase 165). That distinction matters more here than anywhere else
+// in the product: a truncated `/etc/passwd` parses perfectly and simply lists
+// fewer accounts, so an unmanaged — possibly privileged — account would go
+// unreported while the scan looked clean. A scan that cannot see everything must
+// say so rather than be filed as authoritative.
+func (s *Server) runAccountScan(ctx context.Context, target *store.Target, cred *store.Credential, actor string) ([]accountscan.Account, bool, error) {
 	if target.Protocol == "ssh" {
 		const cmd = "cat /etc/passwd"
 		if err := s.guardCommand(ctx, actor, target.Name, "discovery", cmd); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		secret, err := s.vault.Decrypt(ctx, cred.SecretEnc, store.CredentialAAD(target.ID, cred.ID))
 		if err != nil {
 			s.audit(ctx, "credential.decrypt_failed", fmt.Sprintf("credential:%d target:%s op:discovery", cred.ID, target.Name))
-			return nil, errDecryptFailed
+			return nil, false, errDecryptFailed
 		}
 		res, err := s.sshConnector.Exec(ctx, *target, cred.Username, secret, cmd)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		return accountscan.ParseUnixAccounts(res.Output), nil
+		return accountscan.ParseUnixAccounts(res.Output), res.Truncated, nil
 	}
 
 	const cmdUsers = "net user"
 	const cmdAdmins = "net localgroup Administrators"
 	if err := s.guardCommand(ctx, actor, target.Name, "discovery", cmdUsers); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if err := s.guardCommand(ctx, actor, target.Name, "discovery", cmdAdmins); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	secret, err := s.vault.Decrypt(ctx, cred.SecretEnc, store.CredentialAAD(target.ID, cred.ID))
 	if err != nil {
 		s.audit(ctx, "credential.decrypt_failed", fmt.Sprintf("credential:%d target:%s op:discovery", cred.ID, target.Name))
-		return nil, errDecryptFailed
+		return nil, false, errDecryptFailed
 	}
 	users, err := s.winrm.Run(ctx, target.Host, target.Port, cred.Username, secret, cmdUsers)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// The admins listing is a refinement (which accounts are privileged), not
 	// a precondition for reporting the account list itself — a failure here
 	// degrades to "nothing flagged privileged" rather than losing the scan.
 	admins, _ := s.winrm.Run(ctx, target.Host, target.Port, cred.Username, secret, cmdAdmins)
-	return accountscan.ParseWindowsAccounts(users.Stdout, admins.Stdout), nil
+	// WinRM has capped its own output since Phase 13 and reports it in the text
+	// rather than a flag, so the marker is the only signal available here.
+	partial := strings.Contains(users.Stdout, "truncated") && strings.Contains(users.Stdout, "pamv1")
+	return accountscan.ParseWindowsAccounts(users.Stdout, admins.Stdout), partial, nil
 }

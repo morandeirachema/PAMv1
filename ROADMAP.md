@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–164 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–165 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,55 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 165 — Bounded results, and the transcript that makes bounding safe ✅
+
+**Closes:** the agent-broker research's finding 6 — arguments capped since Phase
+13, results never; and no durable record of what a brokered command returned.
+Building it turned up a third thing neither the research nor the plan named: the
+SSH exec primitive read remote output with **no bound at all**.
+
+**Three defects, one shape — nobody decided how much data an agent could pull.**
+
+- [x] **SSH exec output is bounded at the source.** `rotate.SSHConnector.Exec`
+  used `sess.CombinedOutput`, which grows a buffer until the remote command
+  stops. That is the primitive behind `ssh_exec`, account discovery, rotation
+  verification and the post-session forensics pull — so `cat /var/log/huge`
+  through a policy-allowed tool call was a memory-exhaustion vector against the
+  PAM host itself. Now capped at 4 MiB, mirroring the WinRM twin that has had
+  exactly that cap since Phase 13, with the truncation **visible in the output**
+  and reported as `ExecResult.Truncated`. The asymmetry was the tell: Phase 157's
+  forensics command worked around the missing cap in the command string itself
+  (`| tail -c 1048576`), which protected only the caller that thought of it
+- [x] **A tool's result is capped before it reaches the agent**
+  (`PAM_BROKER_MAX_RESULT_BYTES`, default 64 KiB). Truncated, never refused —
+  by the time a result exists the command has ALREADY RUN, so failing the call
+  would hide the output while keeping the side effect. The agent gets a bounded
+  slice, is told so both in the text and as `truncated: true`, and the shortening
+  is deterministic (Go randomises map iteration; two identical calls that return
+  differently are impossible to reason about in an audit trail)
+- [x] **A secret-bearing result is never truncated.** A secret cut in half is not
+  a smaller secret, it is a broken one, and an agent that pastes it into a login
+  gets a failure it cannot diagnose
+- [x] **`ssh_exec` writes a durable transcript** (`.ssh.log`), the last member of
+  the brokered-command family without one: WinRM has had `.winrm.log` since
+  Phase 13, Kubernetes `.k8s.log` since 155, the forensic reconstruction
+  `.forensics.log` since 157, and a human's SSH session an asciicast since Phase
+  2. The single path where an AI agent runs a command on a Linux host was the one
+  place the output existed only in the agent's own context. **This is what makes
+  capping acceptable** — the agent's copy may be a slice, but nothing is lost
+- [x] The new suffix is registered in the recordings listing regex **and** the
+  classifier, not just the writer — the pair Phase 155 got half of. The test now
+  pins every suffix in the family at once
+- [x] **Three callers now react to a truncated read**, rather than only being
+  protected by it. Account discovery reports `partial: true` (a truncated
+  `/etc/passwd` parses cleanly and simply lists fewer accounts — an unmanaged,
+  possibly privileged account would go unreported while the scan looked like a
+  clean bill of health); the forensic reconstruction marks the artifact
+  truncated; and `ssh_exec` sets a structural `truncated` field rather than
+  leaving an agent to substring-match a marker that travels inside output the
+  **remote host controls**
+- [x] No schema change, no route change. One new env var
 
 ## Phase 164 — v0.45.0 ✅
 

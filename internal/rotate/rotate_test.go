@@ -173,6 +173,112 @@ func TestSSHConnectorExec(t *testing.T) {
 	}
 }
 
+// startExecOutputServer starts the in-process SSH server used by the
+// output-bounding tests: every exec request answers with out and then exits
+// with code, so a test can make a "remote command" print an arbitrary number of
+// bytes.
+func startExecOutputServer(t *testing.T, user, pass string, out []byte, code uint32) *sshServer {
+	t.Helper()
+	srv := startSSHServer(t, user, pass)
+	srv.setOutput(out, code)
+	return srv
+}
+
+// TestSSHExecTruncatesOversizeOutput proves Exec cannot be used to pull an
+// unbounded amount of remote output into pam-server's heap: a command printing
+// well past the cap comes back capped, flagged, and honest about it. Before the
+// cap existed this was a memory-exhaustion vector reachable through a normal,
+// policy-allowed ssh_exec ("cat /var/log/huge").
+func TestSSHExecTruncatesOversizeOutput(t *testing.T) {
+	const user, pass = "svc-pam", "old-Secret.1"
+	huge := bytes.Repeat([]byte("a"), maxOutputBytes+1<<20) // 1 MiB past the cap
+	srv := startExecOutputServer(t, user, pass, huge, 0)
+	target := store.Target{Host: srv.host, Port: srv.port, Protocol: "ssh"}
+
+	res, err := (SSHConnector{}).Exec(context.Background(), target, user, pass, "cat /var/log/huge")
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if !res.Truncated {
+		t.Fatal("Truncated = false, want true for output past the cap")
+	}
+	if want := maxOutputBytes + len(truncationMarker); len(res.Output) != want {
+		t.Fatalf("output length = %d, want %d (cap plus marker)", len(res.Output), want)
+	}
+	if !strings.HasSuffix(res.Output, truncationMarker) {
+		t.Fatal("truncated output must SAY it was truncated; marker missing")
+	}
+	if kept := res.Output[:maxOutputBytes]; kept != string(huge[:maxOutputBytes]) {
+		t.Fatal("the kept prefix is not the remote output byte-for-byte")
+	}
+}
+
+// TestSSHExecKeepsSmallOutputIntact proves the common case is untouched:
+// ordinary output is returned byte-for-byte with no marker and no flag, so the
+// cap changes nothing about normal transcripts.
+func TestSSHExecKeepsSmallOutputIntact(t *testing.T) {
+	const user, pass = "svc-pam", "old-Secret.1"
+	out := []byte("root:x:0:0:root:/root:/bin/bash\nsvc-pam:x:1001:1001::/home/svc-pam:/bin/sh\n")
+	srv := startExecOutputServer(t, user, pass, out, 0)
+	target := store.Target{Host: srv.host, Port: srv.port, Protocol: "ssh"}
+
+	res, err := (SSHConnector{}).Exec(context.Background(), target, user, pass, "cat /etc/passwd")
+	if err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if res.Truncated {
+		t.Fatal("Truncated = true for output well under the cap")
+	}
+	if res.Output != string(out) {
+		t.Fatalf("output = %q, want it byte-for-byte identical to %q", res.Output, out)
+	}
+	if strings.Contains(res.Output, "truncated") {
+		t.Fatalf("untruncated output must carry no marker: %q", res.Output)
+	}
+}
+
+// TestSSHExecTruncatedKeepsExitCode proves truncation does not change the
+// error contract: a non-zero remote exit is still a RESULT carrying the code,
+// never a transport error, even when the command's output had to be cut.
+func TestSSHExecTruncatedKeepsExitCode(t *testing.T) {
+	const user, pass = "svc-pam", "old-Secret.1"
+	huge := bytes.Repeat([]byte("z"), maxOutputBytes+4096)
+	srv := startExecOutputServer(t, user, pass, huge, 7)
+	target := store.Target{Host: srv.host, Port: srv.port, Protocol: "ssh"}
+
+	res, err := (SSHConnector{}).Exec(context.Background(), target, user, pass, "journalctl --no-pager")
+	if err != nil {
+		t.Fatalf("a non-zero remote exit must be a result, not an error: %v", err)
+	}
+	if res.ExitCode != 7 {
+		t.Fatalf("exit code = %d, want 7", res.ExitCode)
+	}
+	if !res.Truncated {
+		t.Fatal("Truncated = false, want true")
+	}
+}
+
+// TestLimitedBufferBoundary checks the exact-cap edge directly: output that
+// fills the cap precisely is complete, not truncated, so the marker never
+// appears on a transcript that lost nothing.
+func TestLimitedBufferBoundary(t *testing.T) {
+	b := &limitedBuffer{max: 8}
+	n, err := b.Write([]byte("12345678"))
+	if err != nil || n != 8 {
+		t.Fatalf("Write = (%d, %v), want (8, nil)", n, err)
+	}
+	if b.String() != "12345678" {
+		t.Fatalf("output = %q, want %q", b.String(), "12345678")
+	}
+	// One more byte: dropped, reported as written, and now flagged.
+	if n, err := b.Write([]byte("9")); err != nil || n != 1 {
+		t.Fatalf("over-cap Write = (%d, %v), want (1, nil) so the copy loop finishes", n, err)
+	}
+	if got, want := b.String(), "12345678"+truncationMarker; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
 // TestSSHConnectorRejectsUnsafeUsername checks Rotate refuses a username
 // containing ':' (or newlines) that could corrupt the chpasswd payload.
 // TestSSHConnectorRotateKey proves ssh_key rotation: authenticate with the old
@@ -300,6 +406,23 @@ type sshServer struct {
 	port int
 	mu   sync.Mutex
 	last string
+	out  []byte // canned stdout written back for every exec request
+	exit uint32 // exit status reported for every exec request
+}
+
+// setOutput makes every exec request reply with out and then exit with code.
+// It takes the mutex because serve reads these fields from another goroutine.
+func (s *sshServer) setOutput(out []byte, code uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.out, s.exit = out, code
+}
+
+// output returns the canned exec reply set by setOutput (nil, 0 by default).
+func (s *sshServer) output() ([]byte, uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.out, s.exit
 }
 
 // lastStdin returns the stdin the server last captured from an exec channel.
@@ -391,7 +514,11 @@ func (s *sshServer) serve(conn net.Conn, cfg *ssh.ServerConfig) {
 					s.mu.Lock()
 					s.last = string(data)
 					s.mu.Unlock()
-					ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{0}))
+					out, code := s.output()
+					if len(out) > 0 {
+						_, _ = ch.Write(out)
+					}
+					ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{code}))
 					ch.Close()
 				default:
 					if req.WantReply {

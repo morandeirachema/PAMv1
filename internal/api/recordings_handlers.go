@@ -39,10 +39,11 @@ import (
 const recordingMaxList = 500
 
 // recordingNameRe matches the filenames the recorders produce (the sanitized
-// alphabet plus the .cast / .winrm.log / .sftp suffixes). Anything else — a
+// alphabet plus the .cast / .winrm.log / .ssh.log / .k8s.log / .forensics.log
+// / .sftp suffixes). Anything else — a
 // path separator, a dotfile like the .chain head — is refused, which also
 // forecloses traversal: no accepted name can leave the recording directory.
-var recordingNameRe = regexp.MustCompile(`^[A-Za-z0-9_@-][A-Za-z0-9._@-]*\.(cast|winrm\.log|k8s\.log|forensics\.log|sftp)$`)
+var recordingNameRe = regexp.MustCompile(`^[A-Za-z0-9_@-][A-Za-z0-9._@-]*\.(cast|winrm\.log|ssh\.log|k8s\.log|forensics\.log|sftp)$`)
 
 // recordingInfo is one stored session recording in the playback listing.
 // Target and Actor are resolved from the audit trail rather than parsed out of
@@ -137,7 +138,7 @@ func (s *Server) recordingOwners(r *http.Request, want map[string]bool) map[stri
 // entries are captured SFTP file content, offered as a download.
 func recordingKind(name string) string {
 	switch {
-	case strings.HasSuffix(name, ".winrm.log"), strings.HasSuffix(name, ".k8s.log"):
+	case strings.HasSuffix(name, ".winrm.log"), strings.HasSuffix(name, ".ssh.log"), strings.HasSuffix(name, ".k8s.log"):
 		return "transcript"
 	case strings.HasSuffix(name, ".forensics.log"):
 		return "forensics"
