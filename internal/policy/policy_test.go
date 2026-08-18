@@ -29,18 +29,17 @@ rules:
     tool: get_repo
     effect: allow
     scope: "repo:{repo}:read"
-    ttl_seconds: 60
   - id: merge-safe
     tool: merge_pr
     when: { args.base: { in: [develop, staging] } }
     effect: allow
     scope: "repo:{repo}:write"
-    ttl_seconds: 30
   - id: merge-human
     tool: merge_pr
     effect: require_approval
     approvers: [platform-team]
     scope: "repo:{repo}:write"
+    ttl_seconds: 60
   - id: block-prod-repo
     tool: tag
     when: { args.repo: { not_in: [acme/payments] } }
@@ -61,9 +60,9 @@ rules:
 		wantTTL    time.Duration
 	}{
 		{"deny wins", "delete_repo", map[string]any{"repo": "acme/x"}, "no-delete", EffectDeny, "", 0},
-		{"read renders scope", "get_repo", map[string]any{"repo": "acme/x"}, "read-free", EffectAllow, "repo:acme/x:read", 60 * time.Second},
-		{"in matches safe branch", "merge_pr", map[string]any{"repo": "acme/x", "base": "develop"}, "merge-safe", EffectAllow, "repo:acme/x:write", 30 * time.Second},
-		{"first-match falls through to approval", "merge_pr", map[string]any{"repo": "acme/x", "base": "main"}, "merge-human", EffectRequireApproval, "repo:acme/x:write", 0},
+		{"read renders scope", "get_repo", map[string]any{"repo": "acme/x"}, "read-free", EffectAllow, "repo:acme/x:read", 0},
+		{"in matches safe branch", "merge_pr", map[string]any{"repo": "acme/x", "base": "develop"}, "merge-safe", EffectAllow, "repo:acme/x:write", 0},
+		{"first-match falls through to approval", "merge_pr", map[string]any{"repo": "acme/x", "base": "main"}, "merge-human", EffectRequireApproval, "repo:acme/x:write", 60 * time.Second},
 		{"not_in allows non-blocked", "tag", map[string]any{"repo": "acme/site"}, "block-prod-repo", EffectAllow, "repo:acme/site:tag", 0},
 		{"missing tool rule matches all", "anything", map[string]any{}, "global-audit-note", EffectAllow, "", 0},
 		{"scope template failure denies", "get_repo", map[string]any{}, "read-free", EffectDeny, "", 0},

@@ -220,6 +220,22 @@ func numeric(val string, present bool) (float64, bool) {
 }
 
 // Rule is one policy entry. A missing Tool matches every tool (global rule).
+//
+// Two fields need their exact power stated, because both once read stronger than
+// they were (Phase 171):
+//
+//   - Scope is a TEMPLATE RENDERED INTO THE AUDIT RECORD, not an execution
+//     constraint. It cannot narrow what a call does — the call's arguments are
+//     already fixed and the broker executes exactly those. What it does do is
+//     assert presence: a template naming {target} fails to render when the call
+//     has no `target` argument, and a render failure is a DENY. So it is a label
+//     with a fail-closed required-argument check attached, and describing it as
+//     "a scoped grant" oversells it.
+//   - TTLSeconds bounds how long a require_approval call stays decidable and its
+//     resume token stays spendable. It may only NARROW the deployment-wide
+//     PAM_BROKER_TOKEN_TTL_MIN, never extend it. On any other effect it bounds
+//     nothing — an allow executes immediately and a deny is already over — so
+//     Load REFUSES it there rather than accepting a setting that does nothing.
 type Rule struct {
 	ID         string               `yaml:"id"`
 	Tool       string               `yaml:"tool"`
@@ -232,6 +248,11 @@ type Rule struct {
 }
 
 // Decision is the engine's verdict for a tool call.
+//
+// TTL is the matched rule's ttl_seconds, zero when it sets none; the broker
+// narrows its own token TTL with it when parking the call (Broker.effectiveTTL).
+// Scope is the rendered audit label — see Rule for what each of the two can and
+// cannot do.
 type Decision struct {
 	RuleID    string
 	Effect    Effect
@@ -274,6 +295,21 @@ func Load(r io.Reader) (*Engine, error) {
 		}
 		if r.Effect == EffectRequireApproval && len(r.Approvers) == 0 {
 			return nil, fmt.Errorf("policy: rule %q requires approval but lists no approvers", r.ID)
+		}
+		// ttl_seconds bounds an APPROVAL WINDOW. On an allow rule there is no
+		// window — the call runs and returns in the same request — and on a deny
+		// there is nothing to bound at all, so a value there has never meant
+		// anything. Refusing it at load is the point of this phase: the field was
+		// parsed and ignored everywhere for six phases, and a setting that reads
+		// like a control while doing nothing is worse than no setting. A negative
+		// value is refused for the same reason rather than silently clamped.
+		switch {
+		case r.TTLSeconds < 0:
+			return nil, fmt.Errorf("policy: rule %q has a negative ttl_seconds", r.ID)
+		case r.TTLSeconds > 0 && r.Effect != EffectRequireApproval:
+			return nil, fmt.Errorf(
+				"policy: rule %q sets ttl_seconds on an %q rule, where it bounds nothing; "+
+					"ttl_seconds limits how long a require_approval call stays decidable", r.ID, r.Effect)
 		}
 	}
 	return &Engine{rules: f.Rules}, nil

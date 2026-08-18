@@ -189,6 +189,11 @@ type Outcome struct {
 	Scope       string         `json:"scope,omitempty"`
 	ApprovalID  string         `json:"approval_id,omitempty"`
 	ResumeToken string         `json:"resume_token,omitempty"` // single-use ticket to collect a post-approval result
+	// ExpiresAt is when a parked call stops being decidable and its resume token
+	// stops being spendable (Phase 171). Reported because a rule's ttl_seconds now
+	// really bounds the window: an agent that is told "pending" and nothing else
+	// cannot tell a decision it should wait for from one that can no longer happen.
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
 
 	// jti is the SHA-256 of the resume token — the id its `broker_tokens` row is
 	// keyed by. It is unexported, so it never reaches the agent through JSON; it
@@ -226,6 +231,12 @@ type parkedCall struct {
 	reason    string
 	approvers []string
 	requested time.Time
+	// expiresAt is when this parked call stops being decidable: the deployment's
+	// resume-token TTL, narrowed by the matched rule's own ttl_seconds when it
+	// sets one (Phase 171). Held per call rather than recomputed from a single
+	// deployment-wide TTL because two calls parked a second apart can now carry
+	// different windows — that is the point of a per-rule TTL.
+	expiresAt time.Time
 	// jti is the SHA-256 of this call's single-use resume token (see Outcome.jti).
 	// Held so the events written when the call is decided, withdrawn or collected
 	// name the same ticket the park event named.
@@ -244,6 +255,10 @@ type PendingApproval struct {
 	Reason     string    `json:"reason,omitempty"`
 	Approvers  []string  `json:"approvers,omitempty"` // groups permitted to decide (SoD)
 	Requested  time.Time `json:"requested_at"`
+	// ExpiresAt is the deadline this decision has to be made by — the rule's own
+	// ttl_seconds when it sets one, else the deployment's resume-token TTL. An
+	// approver looking at a queue needs to know which entry is about to lapse.
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
 }
 
 // Approver identifies the human deciding a parked call, for separation of duties
@@ -401,7 +416,7 @@ func (b *Broker) ProcessCall(ctx context.Context, id *agentid.Identity, c Call) 
 	case policy.EffectRequireApproval:
 		out.Status = StatusPendingApproval
 		out.ApprovalID = out.CallID
-		b.park(ctx, id, c, d.Approvers, &out)
+		b.park(ctx, id, c, d.Approvers, d.TTL, &out)
 	case policy.EffectAllow:
 		tool, ok := b.registry.Get(c.Tool)
 		if !ok {
@@ -454,14 +469,40 @@ func (b *Broker) ProcessCall(ctx context.Context, id *agentid.Identity, c Call) 
 	return out
 }
 
+// effectiveTTL is how long one parked call stays decidable: the deployment's
+// resume-token TTL (PAM_BROKER_TOKEN_TTL_MIN, default 15 minutes), narrowed by
+// the matched rule's ttl_seconds when it sets a shorter one.
+//
+// A rule may only NARROW the window, never widen it. A policy file is edited far
+// more often, and by more people, than a deployment's configuration; letting a
+// line of YAML hand an agent a longer-lived approval than the deployment allows
+// would make the deployment-wide bound advisory. Narrowing is the direction that
+// cannot be abused.
+//
+// Until Phase 171 `ttl_seconds` was parsed into `Decision.TTL` and read by
+// nothing at all: a rule advertising a 60-second grant got the deployment's 15
+// minutes, and the shipped example policy marketed the field as "a scoped,
+// short-lived grant". A dead field that reads like a control is worse than an
+// absent one — worse still when the example teaches operators to rely on it.
+func (b *Broker) effectiveTTL(ruleTTL time.Duration) time.Duration {
+	if ruleTTL > 0 && ruleTTL < b.tokenTTL {
+		return ruleTTL
+	}
+	return b.tokenTTL
+}
+
 // park stores an approval-pending call, notifies an approver, and (when a token
 // store is wired) mints a single-use resume token returned in out.ResumeToken.
-// approvers is the rule's approver-group set, enforced at decision time (SoD).
-func (b *Broker) park(ctx context.Context, id *agentid.Identity, c Call, approvers []string, out *Outcome) {
+// approvers is the rule's approver-group set, enforced at decision time (SoD);
+// ruleTTL is the matched rule's own ttl_seconds (0 when it sets none).
+func (b *Broker) park(ctx context.Context, id *agentid.Identity, c Call, approvers []string, ruleTTL time.Duration, out *Outcome) {
+	now := time.Now().UTC()
+	ttl := b.effectiveTTL(ruleTTL)
+	expires := now.Add(ttl)
 	b.mu.Lock()
 	full := len(b.parked) >= maxParked
 	if !full {
-		b.parked[out.CallID] = &parkedCall{callID: out.CallID, id: id, call: c, scope: out.Scope, ruleID: out.RuleID, reason: out.Reason, approvers: approvers, requested: time.Now().UTC()}
+		b.parked[out.CallID] = &parkedCall{callID: out.CallID, id: id, call: c, scope: out.Scope, ruleID: out.RuleID, reason: out.Reason, approvers: approvers, requested: now, expiresAt: expires}
 	}
 	b.mu.Unlock()
 	// Fail closed rather than let unbounded pending approvals exhaust memory.
@@ -473,7 +514,7 @@ func (b *Broker) park(ctx context.Context, id *agentid.Identity, c Call, approve
 
 	if b.tokens != nil {
 		token := newOpaqueToken()
-		bt := store.BrokerToken{JTI: hashToken(token), CallID: out.CallID, ExpiresAt: time.Now().Add(b.tokenTTL).UTC()}
+		bt := store.BrokerToken{JTI: hashToken(token), CallID: out.CallID, ExpiresAt: expires}
 		if err := b.tokens.CreateBrokerToken(ctx, &bt); err != nil {
 			b.log.Error("broker resume token mint failed", "call", out.CallID, "err", err)
 		} else {
@@ -487,6 +528,7 @@ func (b *Broker) park(ctx context.Context, id *agentid.Identity, c Call, approve
 			b.mu.Unlock()
 		}
 	}
+	out.ExpiresAt = expires
 	b.notifier.Notify(ctx, alert.Event{
 		Type:   "broker.approval.pending",
 		Actor:  id.AgentName,
@@ -505,6 +547,7 @@ func (b *Broker) PendingApprovals() []PendingApproval {
 			CallID: callID, Tool: p.call.Tool, Args: p.call.Args,
 			Agent: p.id.AgentName, OnBehalfOf: p.id.OnBehalfOf, Scope: p.scope,
 			RuleID: p.ruleID, Reason: p.reason, Approvers: p.approvers, Requested: p.requested,
+			ExpiresAt: p.expiresAt,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Requested.Before(out[j].Requested) })
@@ -686,9 +729,10 @@ func (b *Broker) ApprovalIdentity(callID string) (ApprovalIdentity, bool) {
 	}, true
 }
 
-// SweepExpiredParked drops parked approvals older than the resume-token TTL (the
-// token they'd resume with has expired anyway), so an abandoned backlog can't
-// permanently hold the parked cap. Each swept call is recorded as a terminal
+// SweepExpiredParked drops parked approvals past their own expiry (the token
+// they'd resume with has expired at exactly the same instant, since Phase 171
+// mints both from one deadline), so an abandoned backlog can't permanently hold
+// the parked cap. Each swept call is recorded as a terminal
 // failed outcome (so an agent polling its status sees a resolution instead of an
 // eternal pending) and appended to the tamper-evident chain (so the trail shows
 // how the parked call ended). Returns the number evicted.
@@ -696,7 +740,10 @@ func (b *Broker) SweepExpiredParked(ctx context.Context, now time.Time) int {
 	b.mu.Lock()
 	var expired []*parkedCall
 	for id, p := range b.parked {
-		if now.Sub(p.requested) > b.tokenTTL {
+		// Per call, not one deployment-wide TTL: a rule's ttl_seconds can make
+		// this call's window shorter than its neighbour's, and the sweep is what
+		// makes that window real rather than merely reported.
+		if now.After(p.expiresAt) {
 			expired = append(expired, p)
 			delete(b.parked, id)
 		}
