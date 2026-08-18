@@ -103,7 +103,19 @@ func (s *Server) mfaVerify(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"confirmed": true})
 }
 
-// mfaStatus reports whether the caller has enrolled/confirmed MFA.
+// mfaStatus reports whether the caller has enrolled/confirmed MFA, and how many
+// recovery codes they have left.
+//
+// The count is the question a person asks right after using one — recovery codes
+// are single-use, and the set is only regenerated deliberately, so an account
+// silently reaching zero is an account one lost phone away from a support
+// ticket. The store could answer it since Phase 3b and nothing asked (Phase
+// 177). It is the caller's OWN count: this route is self-service, never a
+// lookup of somebody else.
+//
+// A counting failure reports -1 rather than failing the status call: knowing
+// whether MFA is confirmed still matters when the count is unavailable, and a
+// screen that refuses to load teaches nothing.
 func (s *Server) mfaStatus(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r.Context())
 	e, err := s.store.GetMFAEnrollment(r.Context(), p.Name)
@@ -115,7 +127,14 @@ func (s *Server) mfaStatus(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"enrolled": true, "confirmed": e.Confirmed})
+	remaining, cerr := s.store.CountMFARecoveryCodes(r.Context(), p.Name)
+	if cerr != nil {
+		s.log.Debug("recovery-code count failed", "user", p.Name, "err", cerr)
+		remaining = -1
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enrolled": true, "confirmed": e.Confirmed, "recovery_codes_remaining": remaining,
+	})
 }
 
 // mfaDisable removes the caller's TOTP enrollment (and recovery codes). Removing

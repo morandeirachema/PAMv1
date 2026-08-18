@@ -2945,13 +2945,26 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
       mfa() {
         back = "main";
         const m = mfaInfo || {};
+        // Recovery codes are single-use and only regenerated deliberately, so
+        // the count is the thing to see right after spending one (Phase 177).
+        // -1 means the server could not count them; that is not zero, and
+        // showing "0 left" for a failed count would send someone to regenerate
+        // codes they still have.
+        const codesLeft = (i) => {
+          if (!("recovery_codes_remaining" in i)) return '<span class="cyan">-</span>';
+          const n = Number(i.recovery_codes_remaining);
+          if (n < 0) return '<span class="cyan">(count unavailable)</span>';
+          if (n === 0) return '<span class="red">NONE LEFT — generate a new set</span>';
+          return `<span class="${n <= 2 ? "amber" : "white"}">${n}</span> left`;
+        };
         const status = m.enrolled ? (m.confirmed ? '<span class="green">enrolled & confirmed</span>' : '<span class="amber">enrolled, NOT confirmed</span>') : '<span class="red">not enrolled</span>';
         term.innerHTML = `${head("PAMMFA", "Multi-Factor Authentication")}
 Manage your own second factor — TOTP (an authenticator app) or WebAuthn (a
 hardware key or platform authenticator). Either satisfies MFA on its own.
 
 <div class="indent">TOTP status  . . . :  ${status}
-WebAuthn keys  . . :  <span class="white">${webauthnCreds.length}</span> registered</div>
+WebAuthn keys  . . :  <span class="white">${webauthnCreds.length}</span> registered
+Recovery codes . . :  ${codesLeft(m)}</div>
 
 <form id="f-mfa" class="indent">
 <label>Action  . . . . . . :  <select name="act">
