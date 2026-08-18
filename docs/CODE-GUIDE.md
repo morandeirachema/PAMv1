@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-18 · Reflects: Phases 0–167 + the 2026-07 hardening passes.
+> Last updated: 2026-08-18 · Reflects: Phases 0–169 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -940,6 +940,10 @@ only the result. "Trust the chokepoint, not the agent." Opt-in via
   `list_credentials`, `rotate_credential`, and `reveal_credential` (shipped
   **default-deny**). Each honors the same target gates (protocol allowlist, grants,
   four-eyes) and never returns a secret except the deliberate, policy-gated reveal.
+  The grant half is one function, `agentCanSeeTarget` — the tools that ACT on a
+  target and the two that merely LIST one call the same check, since Phase 169;
+  before it the listings ignored the principal entirely and answered for the whole
+  estate.
 - **Verifiable audit** (`auditchain`) — a keyed-HMAC per-event hash chain
   (`broker_audit_events`): each row's HMAC covers the previous row's HMAC, so any
   edit or truncation breaks the chain; an ed25519-signed head checkpoint detects

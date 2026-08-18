@@ -77,12 +77,20 @@ func (s *Server) setupBroker(opts Options) error {
 // for an attested agent, at the two moments an agent's identity is consulted:
 // ingress (agentAuth) and approval-time revalidation (here). Without this half, a
 // call parked before the quarantine would still execute after it.
+//
+// It is the same chain-following check the ingress gate runs
+// (quarantinedSubject): a call parked by a sub-agent must stop when the root it
+// acts for is quarantined, which is precisely the call a responder is racing —
+// one already waiting for a human to press approve.
 func (s *Server) revalidateAgent(ctx context.Context, id *agentid.Identity) bool {
-	quarantined, err := s.store.IsAgentQuarantined(ctx, id.AgentName)
-	if err != nil || quarantined {
+	hit, err := s.quarantinedSubject(ctx, id)
+	if err != nil || hit != "" {
 		if err != nil {
 			s.log.Error("agent quarantine re-check failed; refusing the parked call (fail closed)",
 				"agent", id.AgentName, "err", err)
+		} else if hit != id.AgentName {
+			s.log.Warn("parked call refused: an actor in its delegation chain is quarantined",
+				"agent", id.AgentName, "subject", hit)
 		}
 		return false
 	}
