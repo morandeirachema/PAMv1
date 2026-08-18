@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–165 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–166 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,28 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 166 — v0.46.0 ✅
+
+Releases Phase 165 (bounded results + the `.ssh.log` transcript) — a minor that
+closes a **memory-exhaustion vector against the pamv1 host itself**, reachable
+through an ordinary policy-allowed tool call, and bounds how much data an AI
+agent can pull through the broker. No schema change (high-water mark stays
+`0043`); one new env var, `PAM_BROKER_MAX_RESULT_BYTES`.
+
+- [ ] **v0.46.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published as `ghcr.io/morandeirachema/pamv1:0.46.0` (also `latest`), digest
+  recorded here once the publish workflow runs, verified **public** by anonymous
+  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] All five pins via the sweep; Helm chart `version` 0.36.0 -> **0.37.0**
+- [x] Both READMEs restated; `docs/README.md`, `docs/NIS2-COMPLIANCE.md` (whose
+  own "Reflects" header is re-synced again) and ROADMAP.md's top-banner phase
+  count caught proactively; `CHANGELOG.md` gains the release entry, leading with
+  *Fixed* because the headline is a defect, not a feature
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging:
+  `gofmt`, `go vet`, `staticcheck`, `gosec`, `govulncheck`, `go test -race
+  ./...`, `go run ./cmd/archgen` (no schema/route drift)
 
 ## Phase 165 — Bounded results, and the transcript that makes bounding safe ✅
 
