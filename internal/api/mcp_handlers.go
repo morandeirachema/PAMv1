@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/morandeirachema/pamv1/internal/agentid"
@@ -229,26 +230,54 @@ func (s *Server) mcpDispatcher(id *agentid.Identity, sess *mcpSession) mcp.Dispa
 // for MCP tools/list.
 func jsonSchema(fields map[string]string) map[string]any {
 	props := map[string]any{}
-	for name, typ := range fields {
+	var required []string
+	for name, spec := range broker.ParseSchema(fields) {
 		jt := "string"
-		switch typ {
+		switch spec.Type {
 		case "int":
 			jt = "integer"
 		case "bool":
 			jt = "boolean"
 		}
 		props[name] = map[string]any{"type": jt}
+		if spec.Required {
+			required = append(required, name)
+		}
 	}
-	return map[string]any{"type": "object", "properties": props}
+	// Sorted because JSON Schema's `required` is a list and Go map iteration is
+	// deliberately randomised: without this the same toolset would advertise a
+	// different-looking schema on every call, which breaks client-side caching and
+	// makes two captures of the same server look like two different servers.
+	sort.Strings(required)
+	out := map[string]any{"type": "object", "properties": props}
+	// Emitted only when there is something to require — an empty `required: []`
+	// is legal JSON Schema but reads to a client author as "nothing is required"
+	// stated deliberately, which for a tool with no arguments at all is noise.
+	if len(required) > 0 {
+		out["required"] = required
+	}
+	return out
 }
 
 // toolResult renders a broker outcome as an MCP tools/call result: the outcome as
-// a JSON text block plus structured content, flagged isError only on a failure.
+// a JSON text block plus structured content, flagged isError when the call did
+// not do what was asked.
+//
+// A DENIAL counts (Phase 163). It previously did not, so an MCP client was told
+// `isError: false` for a policy refusal — and a client that trusts that flag,
+// which is what the flag is for, reads a refusal as a successful call that
+// happened to return some text. An agent looping on "did that work?" would
+// conclude yes. A denial is a real outcome, not an error in the transport sense,
+// but the question the flag answers is "did the tool do the thing", and there
+// the honest answer is no.
+//
+// `pending_approval` is deliberately NOT an error: the call has not failed, it is
+// waiting for a human, and the agent has a resume token to collect it with.
 func toolResult(out broker.Outcome) map[string]any {
 	raw, _ := json.Marshal(out)
 	return map[string]any{
 		"content":           []map[string]any{{"type": "text", "text": string(raw)}},
 		"structuredContent": out,
-		"isError":           out.Status == broker.StatusFailed,
+		"isError":           out.Status == broker.StatusFailed || out.Status == broker.StatusDenied,
 	}
 }
