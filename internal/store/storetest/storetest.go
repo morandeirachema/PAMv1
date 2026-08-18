@@ -2054,6 +2054,54 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.DeleteAgentIdentity(ctx, secondIdent.ID); err != nil {
 		t.Fatalf("DeleteAgentIdentity(cleanup): %v", err)
 	}
+	// --- SVID enrollment and inventory (Phase 174) ---
+	// An operator-created row is ENROLLED; a row pamv1 creates on first sight is
+	// not, and that difference is what an inventory review reads.
+	enrolledIdent := &store.AgentIdentity{SPIFFEID: "spiffe://example.org/agent/enrolled", Owner: "carol", CreatedBy: "alice"}
+	if err := st.CreateAgentIdentity(ctx, enrolledIdent); err != nil {
+		t.Fatalf("CreateAgentIdentity(enrolled): %v", err)
+	}
+	if got, gerr := st.GetAgentIdentity(ctx, enrolledIdent.SPIFFEID); gerr != nil || !got.Enrolled || got.FirstSeen != nil {
+		t.Fatalf("an operator-created registration must be enrolled and unseen: %+v err %v", got, gerr)
+	}
+	const stranger = "spiffe://example.org/agent/stranger"
+	firstSeenAt := now.Truncate(time.Microsecond)
+	if fresh, serr := st.SeeAgentIdentity(ctx, stranger, firstSeenAt); serr != nil || !fresh {
+		t.Fatalf("SeeAgentIdentity(first): created=%v err %v", fresh, serr)
+	}
+	sighted, gerr := st.GetAgentIdentity(ctx, stranger)
+	if gerr != nil || sighted.Enrolled || sighted.Attributed() ||
+		sighted.FirstSeen == nil || !sighted.FirstSeen.Equal(firstSeenAt) ||
+		sighted.LastSeen == nil || !sighted.LastSeen.Equal(firstSeenAt) {
+		t.Fatalf("a first sighting must record an unenrolled, unattributed row with both stamps: %+v err %v", sighted, gerr)
+	}
+	// A second sighting moves last-seen and leaves first-seen alone: the pair is
+	// what answers "new here" versus "dormant".
+	seenAgainAt := firstSeenAt.Add(90 * time.Minute)
+	if fresh, serr := st.SeeAgentIdentity(ctx, stranger, seenAgainAt); serr != nil || fresh {
+		t.Fatalf("SeeAgentIdentity(second): created=%v err %v, want false", fresh, serr)
+	}
+	again, gerr2 := st.GetAgentIdentity(ctx, stranger)
+	if gerr2 != nil || again.ID != sighted.ID || !again.FirstSeen.Equal(firstSeenAt) || !again.LastSeen.Equal(seenAgainAt) {
+		t.Fatalf("a later sighting must move only last_seen: %+v err %v", again, gerr2)
+	}
+	// Naming an owner IS enrolling — the act by which a human takes it on — and
+	// a later sighting must never undo that.
+	if err := st.SetAgentIdentityOwner(ctx, sighted.ID, "carol"); err != nil {
+		t.Fatalf("SetAgentIdentityOwner(enrol): %v", err)
+	}
+	if _, serr := st.SeeAgentIdentity(ctx, stranger, seenAgainAt.Add(time.Minute)); serr != nil {
+		t.Fatalf("SeeAgentIdentity(enrolled): %v", serr)
+	}
+	if got, gerr3 := st.GetAgentIdentity(ctx, stranger); gerr3 != nil || !got.Enrolled || got.Owner != "carol" ||
+		got.LastSeen == nil || !got.LastSeen.Equal(seenAgainAt.Add(time.Minute)) {
+		t.Fatalf("a sighting must stamp an enrolled row without downgrading it: %+v err %v", got, gerr3)
+	}
+	for _, id := range []int64{sighted.ID, enrolledIdent.ID} {
+		if err := st.DeleteAgentIdentity(ctx, id); err != nil {
+			t.Fatalf("DeleteAgentIdentity(cleanup %d): %v", id, err)
+		}
+	}
 	if err := st.DeleteAgentKey(ctx, akLive.ID); err != nil {
 		t.Fatalf("DeleteAgentKey(lifecycle): %v", err)
 	}

@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–173 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–174 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,68 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 174 — The inventory an attested identity never had ✅
+
+**Closes:** the agent-broker research pass's finding 2 (SVID agents have no
+enrollment) and the inventory half of E.
+
+**The gap.** A static agent key is knowable by definition — pamv1 minted it. An
+SVID is the opposite: **any workload the trust domain vouches for may
+authenticate**, and pamv1 knew only about the ones an admin had happened to type
+into Phase 170's owner registry. No list to review, no first-seen, no last-seen,
+and no way to say "only identities somebody has claimed may call". That is
+awkward on its own and worse in context: every containment control built for this
+identity kind — quarantine (159, 169), four-eyes (170), the offboarding cascade
+(170) — keys on a **subject a responder must be able to name**, and nothing told
+them which subjects existed.
+
+- [x] **The inventory builds itself.** `agentAuth` records every attested
+  authentication (`noteSVID` → the new `SeeAgentIdentity` upsert): a first
+  sighting inserts an **unenrolled, unowned** row with both stamps and is audited
+  once as `agent.identity_first_seen`; every call after moves `last_seen` only.
+  Auditing the first sighting rather than each call is the difference between a
+  signal an operator reads and a flood they filter
+- [x] **Recording is best-effort, refusing is fail-closed.** A sighting is
+  bookkeeping, so a store failure must never turn an authenticated call into a
+  refused one — the stance `TouchAgentKey` already takes for static keys. The
+  enrollment *check* is the opposite: if the deployment has said only enrolled
+  identities may call, an unreadable registry cannot be read as "enrolled"
+- [x] **`PAM_BROKER_REQUIRE_ENROLLED_SVID`** (default off) makes the claim
+  mandatory: an unenrolled identity is refused through the same `authFailed` path
+  a bad bearer takes, so it learns nothing from the reply, and audited
+  `agent.not_enrolled`. **The sighting is still recorded on refusal** — an
+  operator enrols FROM the inventory, so an identity that knocked and was turned
+  away has to appear in the list they are looking at
+- [x] **Registering a discovered identity ADOPTS it.** `POST /v1/agents/identities`
+  naming a SPIFFE ID that already has an unenrolled row sets its owner and note
+  and marks it enrolled (`EnrollAgentIdentity`), keeping `first_seen`; only a
+  second registration of an already-enrolled row is a conflict. Without this the
+  inventory would tell an operator about an identity they then could not claim.
+  Naming an owner is what enrolling *means*, so the handover route enrols too
+- [x] **A row is not an attribution.** An unowned row is exactly as unattributed
+  as no row at all: `accountableOwners` refuses the approval rather than
+  comparing an approver against an empty string — which would have been a
+  four-eyes gate satisfied by `""`, a regression hidden inside a feature
+- [x] **Static keys are untouched** by all of it: pamv1 issued them, so there is
+  nothing to enrol and requiring enrollment must not lock the other identity kind
+  out. Pinned in the same test as the refusal
+- [x] **Console parity**: menu 26 → F8 now shows **state** (enrolled / seen) and
+  **last seen**, `5=Set owner (enrols)`, and says plainly what a seen row means
+  for approvals; the `console_check.js` fixture drives a discovered row with a
+  null `last_seen`, the shape a row registered ahead of its first call has
+- [x] **Tests, each verified to FAIL against the pre-fix code**:
+  `api.TestSVIDInventoryBuildsItself`,
+  `api.TestRequireEnrolledSVIDRefusesTheUnclaimed`,
+  `api.TestDiscoveredIdentityIsUnattributedForFourEyes`, plus the store contract
+  suite's enrollment block (first sighting, repeat sighting, adoption, and that a
+  later sighting never downgrades an enrolled row)
+- [x] **Honest limit, unchanged**: enrolling is **not attestation**. It admits no
+  workload — the trust domain already did — and proves nothing about the process
+  holding the SVID. SPIRE workload attestation stays infra-bound
+- [x] Migration `0046` (three additive columns; `enrolled` defaults TRUE so every
+  operator-created row stays truthful); store surface 211 → **213**; one new env
+  var; no new route
 
 ## Phase 173 — Policy with a principal side, and an identity it can trust ✅
 
@@ -7934,15 +7996,15 @@ principal side + the `caller.*` namespace).
 **Both live defects are closed.** What is left is capability, ordered by what it
 buys:
 
-- **SVID enrollment and inventory** — any workload in the trust domain *is* an
-  agent. Quarantine is a denylist and Phase 170's registry records owners for the
-  identities somebody named; neither enumerates the ones nobody did, so there is
-  no list to review and no "only enrolled workloads may call" posture. The cheap
-  half-step is recording first-seen/last-seen on every verified SVID so the
-  inventory exists before it gates anything, then an opt-in
-  `PAM_BROKER_REQUIRE_ENROLLED_SVID`. Aggravated by `CanConnectTarget` returning
-  open for a target with zero grants. Enrollment is not attestation — SPIRE
-  workload attestation stays in §5.
+- ~~**SVID enrollment and inventory**~~ — ✅ closed 2026-08-18 (Phase 174): every
+  attested identity that authenticates is recorded on sight (unowned, first- and
+  last-seen stamped, audited once), claiming one is what enrolling means, and
+  `PAM_BROKER_REQUIRE_ENROLLED_SVID` makes the claim mandatory. Enrollment is
+  still not attestation — SPIRE stays in §5. **What remains of the original
+  bullet**: `CanConnectTarget` returns open for a target with zero grants, so an
+  enrolled-but-ungranted agent still reaches an ungated target; that is a
+  deliberate estate-wide default, not an agent-specific one, and changing it
+  belongs to a phase that decides it for humans too.
 - **"What can this agent reach?" has no query.** Every grant lookup is
   target-indexed (direct rows plus safe membership), which is also the honest
   cost Phase 169 accepted for its scoped inventory: two reads per target. A

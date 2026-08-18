@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/session"
@@ -745,14 +746,30 @@ type AgentQuarantine struct {
 // attest it (SPIRE workload attestation stays infra-bound, see
 // docs/EXTERNAL-INFRA-GAPS.md). It answers "who do we hold responsible", which
 // is the question both controls above were asking.
+// Enrolled (Phase 174) separates the two ways a row gets here, which mean
+// opposite things to an operator: an ENROLLED row was recorded deliberately by
+// an admin, and an unenrolled one was created by pamv1 the first time that
+// SPIFFE ID authenticated — a workload nobody has claimed, listed so it can be
+// reviewed rather than discovered from a refused approval. FirstSeen/LastSeen
+// exist for the same reason: an inventory that only holds what somebody
+// remembered to type is not an inventory.
 type AgentIdentity struct {
-	ID        int64     `json:"id"`
-	SPIFFEID  string    `json:"spiffe_id"`
-	Owner     string    `json:"owner"`
-	Note      string    `json:"note,omitempty"`
-	CreatedBy string    `json:"created_by"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        int64      `json:"id"`
+	SPIFFEID  string     `json:"spiffe_id"`
+	Owner     string     `json:"owner"`
+	Note      string     `json:"note,omitempty"`
+	Enrolled  bool       `json:"enrolled"`
+	FirstSeen *time.Time `json:"first_seen,omitempty"`
+	LastSeen  *time.Time `json:"last_seen,omitempty"`
+	CreatedBy string     `json:"created_by"`
+	CreatedAt time.Time  `json:"created_at"`
 }
+
+// Attributed reports whether this registration names an accountable human. An
+// auto-discovered row has none, which is exactly the state the four-eyes gate
+// must treat as unattributed — a row existing is not the same as somebody
+// answering for it.
+func (a *AgentIdentity) Attributed() bool { return strings.TrimSpace(a.Owner) != "" }
 
 // AppKey is a non-human application identity for the application-secrets API
 // (Phase 24, Tier-4 Conjur-style secret delivery): a bearer key whose SHA-256
@@ -1566,12 +1583,26 @@ type BrokerStore interface {
 	// accountable for — the offboarding cascade's query, mirroring
 	// ListAgentKeysByOwner for the identity kind that has no key row.
 	ListAgentIdentitiesByOwner(ctx context.Context, owner string) ([]AgentIdentity, error)
+	// EnrollAgentIdentity claims an identity pamv1 discovered for itself: it sets
+	// the owner and note and marks the row enrolled. It is the "adopt what you
+	// saw" half of the inventory — a first sighting creates an unowned row, and
+	// enrolling it is how a human takes responsibility for it without losing
+	// when it was first seen. ErrNotFound if the row is gone.
+	EnrollAgentIdentity(ctx context.Context, id int64, owner, note string) error
 	// SetAgentIdentityOwner reassigns one registration's owner, or ErrNotFound.
 	// Ownership outlives people: reassigning must not require deleting the row
 	// and losing when it was first recorded and by whom.
 	SetAgentIdentityOwner(ctx context.Context, id int64, owner string) error
 	// DeleteAgentIdentity removes one registration by ID, or ErrNotFound.
 	DeleteAgentIdentity(ctx context.Context, id int64) error
+	// SeeAgentIdentity records that a SPIFFE identity authenticated, creating an
+	// UNENROLLED row (no owner) the first time one does and stamping last-seen
+	// every time after. It reports whether the row was created, so the caller
+	// can audit a first sighting — a workload nobody enrolled calling for the
+	// first time is a thing an operator should be told about once, not on every
+	// call. Idempotent and safe to call concurrently: the upsert is keyed on the
+	// SPIFFE ID's unique index.
+	SeeAgentIdentity(ctx context.Context, spiffeID string, seen time.Time) (created bool, err error)
 
 	// CreateBrokerToken stores a single-use resume token (its JTI is the token's
 	// SHA-256 hash) for a parked, approval-pending tool call.

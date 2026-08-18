@@ -320,7 +320,13 @@ type Options struct {
 	// agent over a rolling 24 hours (0 = unlimited). A per-agent budget on the
 	// key overrides it. A rate limit bounds bursts; this bounds the total.
 	BrokerBudgetPerDay int
-	BrokerRatePerMin   int
+	// BrokerRequireEnrolledSVID refuses an SVID-authenticated agent whose SPIFFE
+	// ID has no enrolled row in agent_identities (Phase 174). Off by default:
+	// with it off pamv1 records every identity it sees so the inventory builds
+	// itself, and with it on the trust domain's word stops being sufficient on
+	// its own.
+	BrokerRequireEnrolledSVID bool
+	BrokerRatePerMin          int
 	// BrokerCheckpointEvery emits a signed in-chain audit checkpoint every N broker
 	// events (0 = off). BrokerAuditSignPrevKeys are rotated-out ed25519 public keys
 	// still trusted to verify older checkpoints during a signing-key rotation
@@ -512,7 +518,10 @@ type Server struct {
 	// brokerBudgetPerDay is the default cumulative per-agent call budget over a
 	// rolling 24h (0 = unlimited); a per-agent value on the key overrides it.
 	brokerBudgetPerDay int
-	mcpSessions        *mcpSessionRegistry // open MCP SSE streams for elicitation (Phase 27)
+	// brokerRequireEnrolledSVID refuses an SVID whose SPIFFE ID has no enrolled
+	// row (Phase 174). Read on the agent authentication path.
+	brokerRequireEnrolledSVID bool
+	mcpSessions               *mcpSessionRegistry // open MCP SSE streams for elicitation (Phase 27)
 }
 
 // RuntimeConfig is the set of settings PUT /api/config can change without a
