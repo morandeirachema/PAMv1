@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–175 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–176 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,66 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 176 — A gap sweep over the batch's own code ✅
+
+A read-only pass over what phases 159–175 had just shipped, run the way the
+earlier sweeps were: mechanical scans first — config fields with no consumer,
+store methods with no caller, documented audit actions with no emitter,
+fail-open error branches in every gate-shaped function, bool flags honoured on
+read but never set — then a close read of the newest code. **One live defect and
+four weaknesses, all of them in this batch's own work.**
+
+- [x] **The live one: a flag that claimed a reachability the control does not
+  have.** Phase 175's `owner_known` lowercased both sides of the comparison,
+  while every owner lookup in pamv1 is a literal match (`WHERE owner = $1`,
+  `WHERE username = $1`). An agent owned by `Carol` while the user is `carol` was
+  reported as fine and is unreachable: deleting `carol` suspends nothing. That is
+  the same class as a dead field that reads like a control — a report that is
+  wrong in the reassuring direction. Now exact-case, and the asymmetry is written
+  down: the four-eyes comparison stays case-INSENSITIVE on purpose, because
+  matching more broadly there **refuses** more, which is the safe direction
+- [x] **Four-eyes could not be verified, and did not say so.** The gate refuses
+  `owner == approver`, so an owner nobody holds — a typo, or a team address —
+  can never match, and the real owner may approve their own agent's call. pamv1
+  now records `broker.approval.four_eyes_unverified` naming the owner, and
+  **`PAM_BROKER_REQUIRE_KNOWN_OWNER`** (default off) refuses the decision
+  instead. Off by default because a team-owned agent is a legitimate
+  arrangement; the trail is honest either way
+- [x] **The inventory missed the delegation chain.** Phase 174 recorded only the
+  presenting identity, though the controls that read the inventory read every
+  actor in the chain — quarantine walks it (169), four-eyes resolves an owner for
+  each link (170). A delegating root that never called pamv1 directly had no row,
+  so an operator could not enrol it from the list. `seeSVID` now records every
+  verified chain member, and an indirect sighting is marked `via:<presenter>` so
+  the trail says how pamv1 learned about it
+- [x] **And it wrote on every call.** The last-seen stamp was rewritten per
+  authentication — sixty writes a minute for one agent at the default rate limit,
+  forever. A per-replica in-process damper (`sightingInterval`, one minute) makes
+  it one write per identity per minute; a **first** sighting is never damped
+  because that one is the signal, and a failed write forgets its entry so the
+  next call retries rather than waiting out an interval it never recorded
+- [x] **Micro, but on the hot path**: `policy.Rule.matchesCaller` built the
+  caller's identity list for every rule even when `not_agents` was empty — the
+  ordinary case, on every tool call. Both lists short-circuit now
+- [x] **Recorded, not fixed**: six store methods have no production caller
+  (`CountMFARecoveryCodes`, `GetApprovalInvite`, `GetCheckout`,
+  `GetVendorByUsername`, `SetVendorDisabled`, `UpdateVendorEmail`). None is a
+  defect — but `SetVendorDisabled` *reads* like a control when the real one is
+  `OffboardVendor`, and `CountMFARecoveryCodes` is a signal a user could use
+  ("how many codes are left"). Tracked in [What is left](#what-is-left-) §3c
+- [x] **Also checked and clean**: no config field is parsed and unread
+  (`BreakGlassShares` is read by `-split-key` directly); every documented audit
+  action is emitted, including the fifteen built by concatenation that a literal
+  scan flags as missing; no gate-shaped function has a fail-open error branch;
+  and no store bool is honoured on read while nothing can set it — the Phase 159
+  defect class has no instances left
+- [x] Tests, each verified to FAIL against the code before it:
+  `api.TestOwnerKnownMatchesTheControlItReportsOn` (which proves the claim by
+  deleting the user and watching which agent is suspended),
+  `api.TestFourEyesRecordsWhatItCouldNotVerify`,
+  `api.TestDelegationChainIsInventoried`
+- [x] No schema change (high-water stays `0046`); one new env var; no new route
 
 ## Phase 175 — The identities nobody was reviewing ✅
 
@@ -8098,6 +8158,20 @@ buys:
 **Out of scope, not missing**: CyberArk's and StrongDM's agent brokers are
 *egress* proxies governing which third-party MCP servers an agent may call.
 pamv1 is an MCP **server**. Different product shape, not a gap.
+
+#### 3c. Cleanup the 2026-08-19 sweep recorded
+
+Not defects, and not worth interrupting a batch for — written down so they are
+not rediscovered as findings later:
+
+- **Six store methods have no production caller**: `CountMFARecoveryCodes`,
+  `GetApprovalInvite`, `GetCheckout`, `GetVendorByUsername`, `SetVendorDisabled`,
+  `UpdateVendorEmail`. Each is implemented twice (memstore + pgstore) and held to
+  the contract suite, so the cost is real but small. Two deserve a decision
+  rather than deletion: `SetVendorDisabled` reads like a control when the real
+  one is `OffboardVendor`, and `CountMFARecoveryCodes` is a signal a user would
+  benefit from — "how many recovery codes do I have left" is exactly what a
+  person asks after using one.
 
 #### 4. Repo furniture — ✅ closed 2026-07-28
 
