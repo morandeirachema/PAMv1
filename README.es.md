@@ -38,9 +38,9 @@ de fósforo verde** sin concesiones, porque tocar un PAM debe *sentirse* serio.
 
 Construido fase a fase con una regla: **cada fase es funcional de principio a fin** — arranca,
 pasa los tests y se despliega como Infraestructura-como-Código. El **[roadmap](ROADMAP.md)**
-abarca de la 0 a la 167, **se han entregado todas las fases**, y la release etiquetada y
+abarca de la 0 a la 168, **se han entregado todas las fases**, y la release etiquetada y
 firmada con cosign vigente es la
-**[v0.46.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.46.0)** (2026-08-18;
+**[v0.47.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.47.0)** (2026-08-18;
 la primera fue la v0.10.0, el 2026-07-28). Lo que eso suma:
 **intermediación de sesiones JIT** para SSH, PostgreSQL, WinRM y RDP en el portal;
 **RBAC + perfiles a medida** con login AD/Entra/OIDC y MFA TOTP; **break-glass** con quórum
@@ -225,7 +225,7 @@ Opcional vía `PAM_BROKER_POLICY_FILE`.
 
 - **Almacenamiento PostgreSQL** con [pgx](https://github.com/jackc/pgx) y migraciones embebidas y versionadas; un almacén en memoria para tests y demos; **alta disponibilidad con [CloudNativePG](https://cloudnative-pg.io/)** opcional.
 - **Observabilidad** — un endpoint [Prometheus](https://prometheus.io/) `/metrics` sin dependencias (conteos por estado, volumen de auditoría, uso de break-glass, rotaciones, gauge de sesiones activas), más una separación liveness/readiness (`/healthz`, `/readyz` que comprueba la BD).
-- **Despliegue como código** — [Docker](https://docs.docker.com/) (distroless, sin root), [docker-compose](https://docs.docker.com/compose/) con Postgres endurecida, manifiestos [Kubernetes](https://kubernetes.io/) bajo el PSS restringido, un **[chart de Helm](deploy/helm/pamv1)** y un módulo de [Terraform](https://developer.hashicorp.com/terraform). El pipeline de release construye por digest con **[SBOM](https://www.cisa.gov/sbom), firma keyless [cosign](https://docs.sigstore.dev/) y procedencia SLSA**. *Release vigente: **[v0.46.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.46.0)** (2026-08-18; la primera fue la v0.10.0) — la imagen firmada es pública en `ghcr.io/morandeirachema/pamv1:0.46.0`, que es la que fijan todos los manifiestos, así que las rutas de instalación por artefacto publicado ya funcionan.*
+- **Despliegue como código** — [Docker](https://docs.docker.com/) (distroless, sin root), [docker-compose](https://docs.docker.com/compose/) con Postgres endurecida, manifiestos [Kubernetes](https://kubernetes.io/) bajo el PSS restringido, un **[chart de Helm](deploy/helm/pamv1)** y un módulo de [Terraform](https://developer.hashicorp.com/terraform). El pipeline de release construye por digest con **[SBOM](https://www.cisa.gov/sbom), firma keyless [cosign](https://docs.sigstore.dev/) y procedencia SLSA**. *Release vigente: **[v0.47.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.47.0)** (2026-08-18; la primera fue la v0.10.0) — la imagen firmada es pública en `ghcr.io/morandeirachema/pamv1:0.47.0`, que es la que fijan todos los manifiestos, así que las rutas de instalación por artefacto publicado ya funcionan.*
 - **Secretos cifrados en git** — el manifiesto de Secret de Kubernetes puede sellarse con **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: los valores se cifran mientras `kind`/`metadata` quedan legibles, y se descifra al desplegar (`sops -d | kubectl apply -f -`, el texto plano nunca toca el disco) o de forma nativa con Flux / Argo / helm-secrets — así los secretos viven en el **mismo repo de IaC** sin filtrarse. Ver **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **O aprovisiona los secretos desde CyberArk Conjur** — como alternativa en tiempo de ejecución a SOPS, define `PAM_CONJUR_URL` y pamv1 obtiene sus secretos de arranque (clave maestra, clave de API, URL de la BD, …) de **[Conjur](https://www.conjur.org/)** al arrancar, autenticándose con una clave de API de host o un token proyectado de Kubernetes (**`authn-jwt`**) — de modo que ningún secreto de arranque vive en Git. Con `PAM_CONJUR_REFRESH_MIN` (Fase 78), los secretos que honestamente pueden cambiar con el servidor en marcha (`PAM_API_KEY`, `PAM_BREAK_GLASS_KEY_HASH`) se **releen periódicamente sin reiniciar**; la KEK, la URL de la base de datos y las claves de la cadena de auditoría quedan ancladas a un reinicio por diseño. Ambos mecanismos se entregan; SOPS sigue siendo el predeterminado sin dependencias. Ver **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
 
@@ -368,7 +368,7 @@ del backlog de hallazgos abiertos (89), y una revisión adversarial de las
 joyas de la corona (91–93) que corrigió una brecha de contención en el SFTP de
 solo lectura y confirmó sólidos el vault, los proxies de base de datos y los
 cuatro ojos del bróker — publicado de forma continua como **v0.10.0 →
-v0.46.0**. Las releases quedan registradas en **[CHANGELOG.md](CHANGELOG.md)**;
+v0.47.0**. Las releases quedan registradas en **[CHANGELOG.md](CHANGELOG.md)**;
 el resto honesto vive en
 **[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**.
 
@@ -526,7 +526,7 @@ semana todos los manifiestos fijaron una build anterior a ellas— y la
 **todas las releases posteriores** la han mantenido ahí, cada una cortada sin
 dejar que las correcciones se acumularan indefinidamente en un `main` sin
 etiquetar — la última, la
-**[v0.46.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.46.0)**. La lista completa está en
+**[v0.47.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.47.0)**. La lista completa está en
 [CHANGELOG.md](CHANGELOG.md).
 
 Lo que queda está consolidado en

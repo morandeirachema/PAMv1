@@ -9,6 +9,59 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.47.0] — 2026-08-18
+
+A minor: AI-agent identities gain a **cumulative call budget**, the volume
+control a rate limit cannot express. **Schema change** — new migration `0044`
+(additive column plus one index; applied on startup, no backfill). One new env
+var, one new route.
+
+### Added
+
+- **A daily budget per agent.** `PAM_BROKER_BUDGET_PER_DAY` (default `0` =
+  unlimited) caps how many brokered tool calls one agent may make in a **rolling
+  24 hours**, with a per-agent override at
+  `POST /v1/agents/{id}/budget` (`manage_users`). Until now the only volume
+  control was an opt-in per-minute rate limit, which bounds a burst and nothing
+  else: an agent capped at 60 calls a minute may still make 86,400 privileged
+  calls a day, and nobody chose that number.
+
+  Details that matter in operation:
+
+  - The window is **rolling**, not a calendar day — no reset instant for queued
+    work to land on, and no timezone to configure.
+  - Usage is counted **from the audit trail** (`broker.tool_call.executed` and
+    `.resumed` only), so the number on the screen and the number the gate
+    enforces are the same number. Denied and failed calls do **not** consume
+    budget: a misconfigured agent must not burn its own quota on refusals and
+    then be refused a legitimate call for the wrong reason.
+  - The check bounds **new work only**. Collecting the result of a call a human
+    already approved is never refused for budget — the work is done, and
+    withholding the output would hide it while keeping the side effect.
+  - It **fails closed**. A count that cannot be read refuses the call: the count
+    comes from the audit trail, so if that is unreadable the call could not have
+    been recorded either.
+  - A per-agent budget of **`0` is a hard stop** — that agent may make no
+    brokered call at all — and is deliberately distinct from having no per-agent
+    budget, which inherits the server default. The console shows the two
+    differently and says so on screen.
+  - Enforced identically on REST and MCP.
+
+- `GET /v1/agents` now reports `budget_per_day` (omitted when the agent inherits
+  the default), `budget_used_today` and `budget_limit_effective`. Console menu
+  26 gains a **Budget** column and `7=Budget` to set or clear one, so an
+  operator can see who is near their ceiling instead of learning it from a
+  refused call.
+- New audit actions `agent.budget_set`, `agent.budget_exhausted` and
+  `agent.budget_check_failed`.
+
+### Fixed
+
+- PostgreSQL's `CreateAgentKey` silently dropped a column that the in-memory
+  store kept, so an agent key created with a field set came back without it on
+  Postgres only. Found while adding the budget column, which would have inherited
+  the same bug.
+
 ## [0.46.0] — 2026-08-18
 
 A minor that closes a **memory-exhaustion vector against the pamv1 host** and
@@ -1503,7 +1556,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.46.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.47.0...HEAD
+[0.47.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.47.0
 [0.46.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.46.0
 [0.45.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.45.0
 [0.44.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.44.0

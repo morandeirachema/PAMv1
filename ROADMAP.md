@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–167 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–168 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,30 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 168 — v0.47.0 ✅
+
+Releases Phase 167 (cumulative budgets for agents) — a minor: the volume control
+a rate limit cannot express. **Schema change** — the migration high-water mark
+moves `0043` -> `0044` (an additive nullable column on `agent_keys` plus a
+supporting `(actor, action, ts)` index on `audit_events`, applied on startup, no
+backfill). One new env var, one new route.
+
+- [ ] **v0.47.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published as `ghcr.io/morandeirachema/pamv1:0.47.0` (also `latest`), digest
+  recorded here once the publish workflow runs, verified **public** by anonymous
+  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] All five pins via the sweep; Helm chart `version` 0.37.0 -> **0.38.0**
+- [x] Both READMEs restated; `docs/README.md`, `docs/NIS2-COMPLIANCE.md` and
+  ROADMAP.md's top-banner phase count caught proactively; `CHANGELOG.md` gains
+  the release entry, which also records the pgstore `CreateAgentKey` column-drop
+  fix that came out of building the phase
+- [x] Carries the two dependabot updates merged after v0.46.0 (the Docker base
+  image and a Go dependency group), which is what a release phase is for
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging:
+  `gofmt`, `go vet`, `staticcheck`, `gosec`, `govulncheck`, `go test -race
+  ./...`, `go run ./cmd/archgen` (no schema/route drift)
 
 ## Phase 167 — Cumulative budgets for agents ✅
 
