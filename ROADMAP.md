@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–176 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–177 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,46 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 177 — The store surface nothing called ✅
+
+**Closes:** §3c, the cleanup the previous sweep recorded — by deciding each item
+rather than deleting the lot, because "no caller" turned out to mean three
+different things.
+
+- [x] **Two were capability gaps wearing dead code's clothes.**
+  `UpdateVendorEmail` has existed since Phase 116 and was wired to nothing, so a
+  vendor's contact address — where a magic-link approval invite is sent — could
+  be set at creation and never corrected: a typo meant every invite went
+  nowhere. `PUT /api/vendors/{id}` now accepts `email`, as a **pointer**, so "not
+  supplied" and "cleared" stay distinguishable and an org-only edit cannot
+  silently wipe the address; the value is validated (`net/mail.ParseAddress`,
+  plus an equality check that rejects the `Name <addr>` form) and audited, since
+  an invite sent to the wrong place is exactly what an investigation
+  reconstructs. And `CountMFARecoveryCodes` could answer "how many codes have I
+  left" since Phase 3b with nobody asking — `GET /api/mfa` now reports
+  `recovery_codes_remaining`
+- [x] **The count fails visibly, not quietly.** An unavailable count reports
+  `-1` and the console says "(count unavailable)", because rendering 0 would send
+  somebody to regenerate codes they still hold. None left is red, one or two
+  amber: recovery codes are single-use and only regenerated deliberately, so the
+  moment to notice is the one right after spending one
+- [x] **One was surface that read like a control.** `SetVendorDisabled` is
+  deleted (store surface 213 → **212**): it offered a second, weaker way to
+  half-stop a vendor, while the control that actually does it is
+  `OffboardVendor` — disable and revoke every grant, atomically. A spare
+  half-control is what somebody reaches for by mistake
+- [x] **Three were kept, deliberately.** `GetApprovalInvite`, `GetCheckout` and
+  `GetVendorByUsername` are read primitives the store contract suite uses to
+  verify what a production path wrote — and `GetCheckout` reads a RETURNED
+  lease, which `GetActiveCheckout` structurally cannot. A test-only read is a
+  legitimate use; deleting them to make a scan look tidier would weaken the
+  suite. Recorded here so the next sweep does not re-find them
+- [x] Tests: `api.TestMFAStatusReportsRecoveryCodesLeft` (the count appears,
+  changes with the codes, and the status never echoes the codes themselves) and
+  `api.TestVendorEmailIsCorrectable` (malformed refused, correction visible, and
+  an org-only edit leaves the address alone)
+- [x] No schema change (high-water stays `0046`), no new env var, no new route
 
 ## Phase 176 — A gap sweep over the batch's own code ✅
 
@@ -8159,19 +8199,15 @@ buys:
 *egress* proxies governing which third-party MCP servers an agent may call.
 pamv1 is an MCP **server**. Different product shape, not a gap.
 
-#### 3c. Cleanup the 2026-08-19 sweep recorded
+#### 3c. Cleanup the 2026-08-19 sweep recorded — ✅ closed
 
-Not defects, and not worth interrupting a batch for — written down so they are
-not rediscovered as findings later:
-
-- **Six store methods have no production caller**: `CountMFARecoveryCodes`,
-  `GetApprovalInvite`, `GetCheckout`, `GetVendorByUsername`, `SetVendorDisabled`,
-  `UpdateVendorEmail`. Each is implemented twice (memstore + pgstore) and held to
-  the contract suite, so the cost is real but small. Two deserve a decision
-  rather than deletion: `SetVendorDisabled` reads like a control when the real
-  one is `OffboardVendor`, and `CountMFARecoveryCodes` is a signal a user would
-  benefit from — "how many recovery codes do I have left" is exactly what a
-  person asks after using one.
+- ~~**Six store methods have no production caller.**~~ ✅ Phase 177 decided each
+  one instead of deleting the lot: two were capability gaps hiding as dead code
+  (a vendor's email could never be corrected; a user could never see how many
+  recovery codes they had left) and are now wired; one was surface that read like
+  a control (`SetVendorDisabled`) and is gone; three are read primitives the
+  store contract suite legitimately uses, kept and recorded so the next scan does
+  not re-find them.
 
 #### 4. Repo furniture — ✅ closed 2026-07-28
 

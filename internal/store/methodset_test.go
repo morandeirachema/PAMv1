@@ -52,9 +52,14 @@ import (
 // BrokerStore.{SeeAgentIdentity,EnrollAgentIdentity} (2) — the inventory half:
 // any workload in the trust domain can authenticate, and until it pamv1 knew
 // only about the ones an admin had typed in; enrolling is how a human claims one
-// pamv1 discovered without losing when it was first seen.
+// pamv1 discovered without losing when it was first seen. Phase 177 REMOVED
+// VendorStore.SetVendorDisabled (-1): it read like the control that stops a
+// vendor while the control that actually does it is OffboardVendor, which
+// disables and revokes every grant atomically. Nothing called the setter, and a
+// second, weaker way to half-stop a vendor is exactly the kind of surface an
+// operator reaches for by mistake.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 213
+	const want = 212
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)
