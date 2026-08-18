@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–177 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–178 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,39 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 178 — v0.49.0 ✅
+
+Releases phases 173–177: the batch's identity work (a policy principal side, an
+inventory of attested identities, recertification for non-human ones) and the
+sweep that audited those very phases and fixed what it found. **Schema change** —
+the migration high-water mark moves `0045` -> `0046` (three additive columns on
+`agent_identities`, applied on startup, no backfill). Two new env vars, both
+default-off, and **three upgrade notes** — more than any release so far, because
+two of the five phases change what an operator sees rather than only what pamv1
+enforces.
+
+- [ ] **v0.49.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published as `ghcr.io/morandeirachema/pamv1:0.49.0` (also `latest`), digest
+  recorded here once the publish workflow runs, verified **public** by anonymous
+  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] All five pins via the sweep; Helm chart `version` 0.39.0 -> **0.40.0**
+- [x] Both READMEs restated; `docs/README.md`, `docs/NIS2-COMPLIANCE.md` (whose
+  control-mapping note absorbs 173–177: two new action families counted by the
+  prefix the access-control control already uses, and one phase that changes what
+  a campaign COVERS rather than what it records) and ROADMAP.md's top-banner
+  phase count
+- [x] `CHANGELOG.md` gains the release entry, and it is the first whose **Fixed**
+  section repairs a defect introduced earlier in the same entry — `owner_known`
+  shipped in 175 and was corrected in 176, both inside this release. Said plainly
+  rather than quietly merged into the feature description
+- [x] The three upgrade notes are written where an operator meets them: campaign
+  queues grow (175), enrol SPIFFE identities before requiring enrollment (174),
+  and check the owner flags before requiring a known owner (176)
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging: `gofmt`,
+  `go vet`, `staticcheck`, `gosec`, `govulncheck`, `go test -race ./...`,
+  `go run ./cmd/archgen`
 
 ## Phase 177 — The store surface nothing called ✅
 
