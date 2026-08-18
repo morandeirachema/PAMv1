@@ -349,9 +349,17 @@ type Rule struct {
 }
 
 // matchesCaller reports whether this rule's principal side admits the caller.
+//
+// Both lists short-circuit when empty, which is the ordinary case: Evaluate runs
+// this for every rule on every tool call, and c.identities() allocates. A rule
+// set that uses neither list — every rule written before Phase 173 — costs two
+// length checks.
 func (r Rule) matchesCaller(c Caller) bool {
 	if len(r.Agents) > 0 && !slices.Contains(r.Agents, c.Agent) {
 		return false
+	}
+	if len(r.NotAgents) == 0 {
+		return true
 	}
 	for _, id := range c.identities() {
 		if slices.Contains(r.NotAgents, id) {

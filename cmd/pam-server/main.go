@@ -1302,6 +1302,7 @@ func run() error {
 		BrokerMaxResultBytes:      cfg.BrokerMaxResultBytes,
 		BrokerBudgetPerDay:        cfg.BrokerBudgetPerDay,
 		BrokerRequireEnrolledSVID: cfg.BrokerRequireEnrolledSVID,
+		BrokerRequireKnownOwner:   cfg.BrokerRequireKnownOwner,
 		BrokerRatePerMin:          cfg.BrokerRatePerMin,
 		BrokerCheckpointEvery:     cfg.BrokerCheckpointEvery,
 		BrokerAuditSignPrevKeys:   brokerSignPrevKeys,
