@@ -11,6 +11,7 @@
 package rotate
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -21,6 +22,7 @@ import (
 	"math/big"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -310,16 +312,113 @@ func (c SSHConnector) Rotate(ctx context.Context, target store.Target, username,
 		cmd = "chpasswd"
 	}
 	sess.Stdin = strings.NewReader(username + ":" + newSecret + "\n")
-	if out, err := sess.CombinedOutput(cmd); err != nil {
-		return fmt.Errorf("rotate command failed: %w: %s", err, strings.TrimSpace(string(out)))
+	if out, _, err := runLimited(sess, cmd); err != nil {
+		return fmt.Errorf("rotate command failed: %w: %s", err, strings.TrimSpace(out))
 	}
 	return nil
 }
 
+// maxOutputBytes caps how much of a single remote command's combined output
+// (stdout and stderr together) is kept in memory. Generous for real
+// administrative output, small enough that a runaway command cannot exhaust the
+// heap of the PAM host itself. It deliberately matches the WinRM connector's
+// own cap (internal/winrm.MaxOutputBytes) so the two one-shot execution paths
+// behave the same; the constant is duplicated rather than imported because
+// rotate has no other reason to depend on the WinRM package.
+const maxOutputBytes = 4 << 20 // 4 MiB
+
+// truncationMarker is appended to output that hit the cap. It is written in the
+// output itself, not merely reported alongside it, and that is the point:
+// these transcripts are hash-chained into the audit trail and replayed from the
+// console, so output that was silently cut short would read, forever after, as
+// a complete record of what a command printed. Evidence that admits it is
+// partial is worth much more than evidence that quietly lies about it.
+const truncationMarker = "\n[pamv1: output truncated at 4 MiB]\n"
+
+// limitedBuffer is an io.Writer (Go's "something you can write bytes to",
+// roughly Python's file-like object) that collects at most max bytes and then
+// throws the rest away, remembering that it did so. Compare bytes.Buffer, which
+// grows without limit — that unbounded growth is exactly the problem this type
+// exists to remove.
+//
+// It carries a mutex because a single limitedBuffer is wired to BOTH the remote
+// stdout and the remote stderr of one session, and the SSH library copies those
+// two streams from two separate goroutines (Go's lightweight threads). Without
+// the lock those concurrent writes would be a data race.
+type limitedBuffer struct {
+	mu        sync.Mutex
+	buf       bytes.Buffer
+	max       int
+	truncated bool
+}
+
+// Write appends p up to the buffer's byte cap and marks the buffer truncated
+// once the cap is reached. It always reports the full len(p) as written, even
+// for the bytes it dropped, so the SSH library's copy loop runs to completion:
+// returning a short count would surface as an I/O error and turn a merely
+// oversized command into a failed one. Dropping output is the intended
+// outcome; failing the command is not.
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if room := b.max - b.buf.Len(); room > 0 {
+		if len(p) <= room {
+			return b.buf.Write(p)
+		}
+		_, _ = b.buf.Write(p[:room])
+	}
+	b.truncated = true
+	return len(p), nil
+}
+
+// String returns the collected output, with truncationMarker appended when
+// anything was dropped. Output that fit under the cap comes back byte-for-byte
+// unchanged, marker-free — the common case must not be altered.
+func (b *limitedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.truncated {
+		return b.buf.String() + truncationMarker
+	}
+	return b.buf.String()
+}
+
+// runLimited runs command on an already-opened SSH session and returns its
+// combined stdout+stderr (capped at maxOutputBytes), whether that output was
+// truncated, and the session error.
+//
+// It replaces golang.org/x/crypto/ssh's Session.CombinedOutput, which is
+// otherwise identical but buffers the remote output with no bound at all — one
+// `cat /var/log/huge` on a target would be copied wholesale into pam-server's
+// heap. Every one-shot SSH execution in this package goes through here, so no
+// individual caller has to remember the cap.
+//
+// The error contract is CombinedOutput's, unchanged: a non-zero remote exit
+// comes back as an *ssh.ExitError for the caller to interpret, and it is the
+// caller (see Exec) that decides that is a result rather than a failure.
+func runLimited(sess *ssh.Session, command string) (string, bool, error) {
+	buf := &limitedBuffer{max: maxOutputBytes}
+	sess.Stdout = buf
+	sess.Stderr = buf
+	err := sess.Run(command)
+	out := buf.String()
+	buf.mu.Lock()
+	truncated := buf.truncated
+	buf.mu.Unlock()
+	return out, truncated, err
+}
+
 // ExecResult is the outcome of a one-shot remote command.
+//
+// Truncated reports that the remote command printed more than maxOutputBytes
+// and the surplus was dropped. The same fact is visible in Output (it ends with
+// truncationMarker), but it is exposed as a field as well so a caller that
+// wants to record or display "this output was cut" can test a boolean instead
+// of substring-matching text inside output the remote command controls.
 type ExecResult struct {
-	ExitCode int
-	Output   string
+	ExitCode  int
+	Output    string
+	Truncated bool
 }
 
 // Exec dials the target as username with secret (an ssh_key PEM or a password),
@@ -327,6 +426,10 @@ type ExecResult struct {
 // exit code. It is the broker's ssh_exec primitive: one-shot, no PTY/shell,
 // bounded by the connector timeout. A non-zero remote exit is a result, not a
 // transport error; only dial/session failures return err.
+//
+// The output is also bounded in size: at most maxOutputBytes is kept, and a
+// command that printed more comes back with Truncated set and the truncation
+// marker at the end of Output. Truncation never turns a result into an error.
 func (c SSHConnector) Exec(ctx context.Context, target store.Target, username, secret, command string) (ExecResult, error) {
 	auth, err := authMethod(secret)
 	if err != nil {
@@ -345,8 +448,8 @@ func (c SSHConnector) Exec(ctx context.Context, target store.Target, username, s
 	defer sess.Close()
 	defer c.execGuard(ctx, sess)()
 
-	out, err := sess.CombinedOutput(command)
-	res := ExecResult{Output: string(out)}
+	out, truncated, err := runLimited(sess, command)
+	res := ExecResult{Output: out, Truncated: truncated}
 	if err != nil {
 		var ee *ssh.ExitError
 		if errors.As(err, &ee) {
@@ -399,8 +502,8 @@ func (c SSHConnector) RotateKey(ctx context.Context, target store.Target, userna
 	cmd := fmt.Sprintf("mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && "+
 		"{ grep -vF '%s' ~/.ssh/authorized_keys; cat; } > ~/.ssh/authorized_keys.pamnew && "+
 		"mv ~/.ssh/authorized_keys.pamnew ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys", oldLine)
-	if out, err := sess.CombinedOutput(cmd); err != nil {
-		return fmt.Errorf("install authorized_keys failed: %w: %s", err, strings.TrimSpace(string(out)))
+	if out, _, err := runLimited(sess, cmd); err != nil {
+		return fmt.Errorf("install authorized_keys failed: %w: %s", err, strings.TrimSpace(out))
 	}
 	return nil
 }

@@ -313,7 +313,10 @@ type Options struct {
 	// = uncapped). BrokerRatePerMin rate-limits tool calls per agent (0 = off).
 	BrokerTokenTTL    time.Duration
 	BrokerMaxArgBytes int
-	BrokerRatePerMin  int
+	// BrokerMaxResultBytes caps how much of a tool's RESULT reaches the agent
+	// (0 = unbounded). The stored transcript keeps the full output either way.
+	BrokerMaxResultBytes int
+	BrokerRatePerMin     int
 	// BrokerCheckpointEvery emits a signed in-chain audit checkpoint every N broker
 	// events (0 = off). BrokerAuditSignPrevKeys are rotated-out ed25519 public keys
 	// still trusted to verify older checkpoints during a signing-key rotation

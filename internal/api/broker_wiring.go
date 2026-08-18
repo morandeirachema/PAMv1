@@ -29,6 +29,7 @@ func (s *Server) setupBroker(opts Options) error {
 	s.broker = broker.New(opts.BrokerPolicy, reg, chain).
 		WithApproval(s.store, s.alerter, opts.BrokerTokenTTL).
 		WithArgCap(opts.BrokerMaxArgBytes).
+		WithResultCap(opts.BrokerMaxResultBytes).
 		WithRevalidator(s.revalidateAgent)
 	s.brokerLimiter = ratelimit.New(opts.BrokerRatePerMin)
 	s.mcpSessions = newMCPSessionRegistry()

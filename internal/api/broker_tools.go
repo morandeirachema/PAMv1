@@ -316,18 +316,47 @@ func (t *sshExecTool) Execute(ctx context.Context, p *auth.Principal, args broke
 	// Durable audit BEFORE the agent (or a live watcher) receives the output —
 	// the same withheld-result contract as execWinRM: nobody acts on output the
 	// system of record never accounted for.
-	if err := t.s.auditAs(ctx, p.Name, "ssh.exec", fmt.Sprintf("target:%s user:%s exit:%d", target.Name, cred.Username, res.ExitCode)); err != nil {
+	detail := fmt.Sprintf("target:%s user:%s exit:%d", target.Name, cred.Username, res.ExitCode)
+	if res.Truncated {
+		detail += " output_truncated:true"
+	}
+	if err := t.s.auditAs(ctx, p.Name, "ssh.exec", detail); err != nil {
 		t.s.live.Publish(sid, []byte("pamv1: audit log unavailable; output withheld\r\n"))
 		return broker.Result{}, errAuditUnavailable
 	}
 	if res.Output != "" && t.s.live.HasSubscribers(sid) {
 		t.s.live.Publish(sid, []byte(res.Output))
 	}
-	return broker.Result{Data: map[string]any{
+	// Durable transcript, the same one every other brokered-command path writes
+	// (Phase 165). Until now `ssh_exec` was the only one without: WinRM has had
+	// `.winrm.log` since Phase 13, Kubernetes got `.k8s.log` in 155, the
+	// post-session reconstruction `.forensics.log` in 157 — and a human's SSH
+	// session has been recorded as an asciicast since Phase 2. So the single path
+	// where an AI agent runs a command on a Linux host was the one place output
+	// existed only in the agent's own context.
+	//
+	// It also carries the FULL output, which is what makes the result cap
+	// acceptable: the agent's copy may be a bounded slice, but nothing is lost.
+	// Best-effort, like the WinRM twin — the run itself was already audited above.
+	if file, sum := t.s.recordExecTranscript("SSH", ".ssh.log", target, cred.Username, p.Name, command,
+		res.Output, "", fmt.Sprintf("exit: %d", res.ExitCode)); file != "" {
+		if err := t.s.auditAs(ctx, p.Name, "session.record",
+			fmt.Sprintf("target:%s cred_user:%s file:%s sha256:%s", target.Name, cred.Username, file, sum)); err != nil {
+			t.s.log.Error("ssh_exec transcript not registered in the audit trail", "file", file, "err", err)
+		}
+	}
+	data := map[string]any{
 		"target":    target.Name,
 		"exit_code": res.ExitCode,
 		"output":    res.Output,
-	}}, nil
+	}
+	// Structural, not just the marker embedded in the text: the marker travels
+	// inside output the REMOTE HOST controls, so an agent matching on it could be
+	// fooled by a target that prints the same words. A field pamv1 sets cannot be.
+	if res.Truncated {
+		data["truncated"] = true
+	}
+	return broker.Result{Data: data}, nil
 }
 
 // listTargetsTool returns target inventory metadata (never secrets).
