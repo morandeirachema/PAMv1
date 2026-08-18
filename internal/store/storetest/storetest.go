@@ -1994,6 +1994,230 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("DeleteAgentKey(expiring): %v", err)
 	}
 
+	// --- agent daily call budget (Phase 167) ---
+	// The only volume control before this was an opt-in per-minute rate limit,
+	// which bounds a burst but never a day: 60 calls/minute still allows
+	// 86,400 privileged tool calls in 24 hours. The budget is the cumulative
+	// "how much in total" limit; these assertions pin the two halves of it —
+	// the setting (a three-state pointer) and the spend (what actually counts
+	// against it).
+	budgeted := &store.AgentKey{Name: "budgeted", Owner: "dave", TokenHash: "agenthash5"}
+	if err := st.CreateAgentKey(ctx, budgeted); err != nil {
+		t.Fatalf("CreateAgentKey(budgeted): %v", err)
+	}
+	// A brand-new key has NO per-agent setting — nil, not zero. Reading it as
+	// zero would silently forbid every call the agent makes; reading a
+	// deliberate zero as nil would silently allow them. Both directions are
+	// bugs, so the nil-ness is asserted on the freshly created struct and
+	// again after a round-trip through the store.
+	if budgeted.BudgetPerDay != nil {
+		t.Fatalf("a fresh agent key must have no budget setting, got %v", *budgeted.BudgetPerDay)
+	}
+	if got, err := st.GetAgentKey(ctx, budgeted.ID); err != nil || got.BudgetPerDay != nil {
+		t.Fatalf("a fresh agent key must read back with a nil budget: %+v err %v", got, err)
+	}
+	// A budget supplied at creation time must be persisted by the INSERT, not
+	// only held in the caller's struct — memstore stores the whole struct, so
+	// a pgstore INSERT that forgot the column would pass every other test here
+	// and then silently drop the setting in production.
+	atCreate := 7
+	created := &store.AgentKey{Name: "born-budgeted", Owner: "dave", TokenHash: "agenthash6", BudgetPerDay: &atCreate}
+	if err := st.CreateAgentKey(ctx, created); err != nil {
+		t.Fatalf("CreateAgentKey(born-budgeted): %v", err)
+	}
+	if got, err := st.GetAgentKey(ctx, created.ID); err != nil || got.BudgetPerDay == nil || *got.BudgetPerDay != 7 {
+		t.Fatalf("a budget set at creation must survive the insert: %+v err %v", got, err)
+	}
+	// Set, then change: the ordinary edit path.
+	five := 5
+	if err := st.SetAgentKeyBudget(ctx, budgeted.ID, &five); err != nil {
+		t.Fatalf("SetAgentKeyBudget(5): %v", err)
+	}
+	if got, err := st.GetAgentKey(ctx, budgeted.ID); err != nil || got.BudgetPerDay == nil || *got.BudgetPerDay != 5 {
+		t.Fatalf("SetAgentKeyBudget(5) did not round-trip: %+v err %v", got, err)
+	}
+	hundred := 100
+	if err := st.SetAgentKeyBudget(ctx, budgeted.ID, &hundred); err != nil {
+		t.Fatalf("SetAgentKeyBudget(100): %v", err)
+	}
+	if got, err := st.GetAgentKey(ctx, budgeted.ID); err != nil || got.BudgetPerDay == nil || *got.BudgetPerDay != 100 {
+		t.Fatalf("SetAgentKeyBudget(100) did not round-trip: %+v err %v", got, err)
+	}
+	// Zero is a VALUE, not an absence: an explicit "this agent may make no
+	// calls at all". It must read back as a non-nil pointer to 0, because the
+	// enforcement gate treats nil as "fall back to the server default" — if
+	// zero collapsed to nil, a deliberate hard stop would quietly become an
+	// allowance.
+	zeroBudget := 0
+	if err := st.SetAgentKeyBudget(ctx, budgeted.ID, &zeroBudget); err != nil {
+		t.Fatalf("SetAgentKeyBudget(0): %v", err)
+	}
+	gotZero, zeroErr := st.GetAgentKey(ctx, budgeted.ID)
+	if zeroErr != nil || gotZero.BudgetPerDay == nil {
+		t.Fatalf("a budget of 0 must read back as a non-nil pointer, not as \"unset\": %+v err %v", gotZero, zeroErr)
+	}
+	if *gotZero.BudgetPerDay != 0 {
+		t.Fatalf("SetAgentKeyBudget(0) round-tripped as %d", *gotZero.BudgetPerDay)
+	}
+	// Clearing with nil is the opposite of setting 0: it removes the per-agent
+	// setting so the server-wide default applies again.
+	if err := st.SetAgentKeyBudget(ctx, budgeted.ID, nil); err != nil {
+		t.Fatalf("SetAgentKeyBudget(nil): %v", err)
+	}
+	gotNil, nilErr := st.GetAgentKey(ctx, budgeted.ID)
+	if nilErr != nil || gotNil.BudgetPerDay != nil {
+		t.Fatalf("SetAgentKeyBudget(nil) must clear the setting: %+v err %v", gotNil, nilErr)
+	}
+	// The whole point of the pointer, stated once, explicitly: three keys in
+	// the three states must still be telling apart after a round-trip. nil is
+	// not 0, and 0 is not 5.
+	stateNil := &store.AgentKey{Name: "state-default", Owner: "erin", TokenHash: "agenthash7"}
+	stateZero := &store.AgentKey{Name: "state-stopped", Owner: "erin", TokenHash: "agenthash8"}
+	stateFive := &store.AgentKey{Name: "state-limited", Owner: "erin", TokenHash: "agenthash9"}
+	for _, k := range []*store.AgentKey{stateNil, stateZero, stateFive} {
+		if err := st.CreateAgentKey(ctx, k); err != nil {
+			t.Fatalf("CreateAgentKey(%s): %v", k.Name, err)
+		}
+	}
+	stopped, limited := 0, 5
+	if err := st.SetAgentKeyBudget(ctx, stateZero.ID, &stopped); err != nil {
+		t.Fatalf("SetAgentKeyBudget(stopped): %v", err)
+	}
+	if err := st.SetAgentKeyBudget(ctx, stateFive.ID, &limited); err != nil {
+		t.Fatalf("SetAgentKeyBudget(limited): %v", err)
+	}
+	rtNil, err1 := st.GetAgentKey(ctx, stateNil.ID)
+	rtZero, err2 := st.GetAgentKey(ctx, stateZero.ID)
+	rtFive, err3 := st.GetAgentKey(ctx, stateFive.ID)
+	if err1 != nil || err2 != nil || err3 != nil {
+		t.Fatalf("GetAgentKey(three states): %v / %v / %v", err1, err2, err3)
+	}
+	if rtNil.BudgetPerDay != nil {
+		t.Fatalf("state 1 of 3 (no setting) must be nil, got %d", *rtNil.BudgetPerDay)
+	}
+	if rtZero.BudgetPerDay == nil || *rtZero.BudgetPerDay != 0 {
+		t.Fatalf("state 2 of 3 (hard stop) must be a pointer to 0, got %v", rtZero.BudgetPerDay)
+	}
+	if rtFive.BudgetPerDay == nil || *rtFive.BudgetPerDay != 5 {
+		t.Fatalf("state 3 of 3 (limit 5) must be a pointer to 5, got %v", rtFive.BudgetPerDay)
+	}
+	// The list read paths must carry the column too. A SELECT that forgot it
+	// would leave every listed key looking unset — the most dangerous failure
+	// mode in this feature, because "unset" means "use the default", so a hard
+	// stop or a tight limit would read as permission.
+	listed, listErr := st.ListAgentKeysByOwner(ctx, "erin")
+	if listErr != nil || len(listed) != 3 {
+		t.Fatalf("ListAgentKeysByOwner(erin): %+v err %v", listed, listErr)
+	}
+	if listed[0].BudgetPerDay != nil ||
+		listed[1].BudgetPerDay == nil || *listed[1].BudgetPerDay != 0 ||
+		listed[2].BudgetPerDay == nil || *listed[2].BudgetPerDay != 5 {
+		t.Fatalf("ListAgentKeysByOwner dropped or flattened the budgets: %+v", listed)
+	}
+	allKeys, allErr := st.ListAgentKeys(ctx)
+	if allErr != nil {
+		t.Fatalf("ListAgentKeys: %v", allErr)
+	}
+	foundLimited := false
+	for _, k := range allKeys {
+		if k.ID == stateFive.ID {
+			foundLimited = true
+			if k.BudgetPerDay == nil || *k.BudgetPerDay != 5 {
+				t.Fatalf("ListAgentKeys dropped the budget: %+v", k)
+			}
+		}
+	}
+	if !foundLimited {
+		t.Fatal("ListAgentKeys did not return the budgeted key")
+	}
+	// ...and the token-hash lookup, which is the read the broker itself does
+	// on every call, so a missing column there would disable the budget
+	// entirely while every admin screen still showed it.
+	if got, err := st.GetAgentKeyByTokenHash(ctx, "agenthash9"); err != nil ||
+		got.BudgetPerDay == nil || *got.BudgetPerDay != 5 {
+		t.Fatalf("GetAgentKeyByTokenHash dropped the budget: %+v err %v", got, err)
+	}
+	if err := st.SetAgentKeyBudget(ctx, 999999, &five); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("SetAgentKeyBudget(missing): want ErrNotFound, got %v", err)
+	}
+
+	// Spend: what actually counts against the budget. The trail below mixes
+	// every broker outcome for two different agents, because the count is only
+	// meaningful if it ignores the right things.
+	budgetOld := &store.AuditEvent{Actor: "budgetbot", Action: "broker.tool_call.executed", Detail: "yesterday's work"}
+	if err := st.AppendAudit(ctx, budgetOld); err != nil {
+		t.Fatalf("AppendAudit(budget old): %v", err)
+	}
+	// The window starts at the first in-window event's OWN stored timestamp
+	// rather than at the test process's clock: pgstore stamps rows from the
+	// database server's clock, and the two machines need not agree.
+	budgetFirst := &store.AuditEvent{Actor: "budgetbot", Action: "broker.tool_call.executed", Detail: "did the work"}
+	if err := st.AppendAudit(ctx, budgetFirst); err != nil {
+		t.Fatalf("AppendAudit(budget executed): %v", err)
+	}
+	budgetSince := budgetFirst.TS
+	if !budgetOld.TS.Before(budgetSince) {
+		t.Fatalf("audit timestamps did not advance between two appends (%v then %v) — the window test cannot be meaningful",
+			budgetOld.TS, budgetSince)
+	}
+	rest := []store.AuditEvent{
+		// Counts: the agent collecting the result of a call a human approved.
+		// This is the other way work gets done; leaving it out would make
+		// every approved call free.
+		{Actor: "budgetbot", Action: "broker.tool_call.resumed", Detail: "collected an approved result"},
+		// Does not count: policy said no, so no privileged work happened.
+		// Charging refusals would let a misconfigured agent burn its own quota
+		// and then have a legitimate call refused for the wrong reason.
+		{Actor: "budgetbot", Action: "broker.tool_call.denied", Detail: "policy refused"},
+		// Does not count: the call broke rather than did anything.
+		{Actor: "budgetbot", Action: "broker.tool_call.failed", Detail: "upstream error"},
+		// Does not count: a broker.tool_call.* action that is not one of the
+		// two spending outcomes. Matching by prefix would wrongly count this.
+		{Actor: "budgetbot", Action: "broker.tool_call.requested", Detail: "asked, not yet run"},
+		// Does not count: not a broker action at all.
+		{Actor: "budgetbot", Action: "target.read", Detail: "listed inventory"},
+		// Does not count: a different agent's spend is not this one's.
+		{Actor: "otherbot", Action: "broker.tool_call.executed", Detail: "someone else's work"},
+	}
+	for i := range rest {
+		if err := st.AppendAudit(ctx, &rest[i]); err != nil {
+			t.Fatalf("AppendAudit(%s): %v", rest[i].Action, err)
+		}
+	}
+	// Exactly the executed + resumed rows for this agent inside the window.
+	if n, err := st.CountAgentToolCallsSince(ctx, "budgetbot", budgetSince); err != nil || n != 2 {
+		t.Fatalf("CountAgentToolCallsSince(budgetbot, window) = %d (err %v), want 2 (executed + resumed)", n, err)
+	}
+	// Widening the window picks up the older executed call, which proves the
+	// 2 above was a `since` exclusion and not an accidental miss.
+	if n, err := st.CountAgentToolCallsSince(ctx, "budgetbot", past); err != nil || n != 3 {
+		t.Fatalf("CountAgentToolCallsSince(budgetbot, past) = %d (err %v), want 3", n, err)
+	}
+	// A window that has not started yet counts nothing — this is what "the
+	// budget resets" looks like from the store's side.
+	if n, err := st.CountAgentToolCallsSince(ctx, "budgetbot", future); err != nil || n != 0 {
+		t.Fatalf("CountAgentToolCallsSince(budgetbot, future) = %d (err %v), want 0", n, err)
+	}
+	// Per-agent, not global.
+	if n, err := st.CountAgentToolCallsSince(ctx, "otherbot", past); err != nil || n != 1 {
+		t.Fatalf("CountAgentToolCallsSince(otherbot) = %d (err %v), want 1", n, err)
+	}
+	// An agent with no history spends nothing, and the actor match is exact
+	// and case-sensitive: "Budgetbot" is a different identity from "budgetbot"
+	// and must not inherit its spend.
+	if n, err := st.CountAgentToolCallsSince(ctx, "nosuchbot", past); err != nil || n != 0 {
+		t.Fatalf("CountAgentToolCallsSince(unknown agent) = %d (err %v), want 0", n, err)
+	}
+	if n, err := st.CountAgentToolCallsSince(ctx, "Budgetbot", past); err != nil || n != 0 {
+		t.Fatalf("CountAgentToolCallsSince is not case-sensitive on actor: got %d (err %v), want 0", n, err)
+	}
+	// Clean up so later sections see the same tidy set they did before.
+	for _, k := range []*store.AgentKey{budgeted, created, stateNil, stateZero, stateFive} {
+		if err := st.DeleteAgentKey(ctx, k.ID); err != nil {
+			t.Fatalf("DeleteAgentKey(%s): %v", k.Name, err)
+		}
+	}
+
 	// --- operator SSH certificates + KRL revocation (Phase 28) ---
 	vb := future
 	c1 := &store.SSHCert{Serial: 1001, KeyID: "pamv1:alice@web", Principal: "root", Actor: "alice", ValidBefore: &vb}

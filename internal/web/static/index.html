@@ -172,6 +172,7 @@
   let sshCerts = [], caInfo = null, loginSessions = [], agents = [], newAgent = null;
   let endpointAgents = [], newEndpointAgent = null; // Phase 153: outbound-only endpoint agents
   let quarantine = []; // Phase 159: quarantined agent identities (agent-key name, or a full SPIFFE ID)
+  let budgetAgent = null; // Phase 167: the agent whose daily call budget option 7 is editing
   let kubeTarget = null, kubeResult = null, kubeErr = ""; // Phase 155: brokered kubectl operations
   let deps = [], depsCred = null, blastResult = null, auditHead = null, nis2Report = null;
   let nis2Since = "", nis2Until = "";
@@ -1863,24 +1864,71 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         const status = (a) => a.disabled ? '<span class="red">suspended</span>'
           : expired(a) ? '<span class="red">expired  </span>'
           : '<span class="green">active   </span>';
-        // Three timestamps on one 5250 row would run past the 980px terminal, so
+        // Four timestamps on one 5250 row would run past the 980px terminal, so
         // Created is shown day-precision (its clock time carries nothing here)
-        // and the two lifecycle columns minute-precision. Both are fmtTime's
-        // output, sliced — never a second date format.
+        // and so, from Phase 167, is Expires: an expiry is MINTED in whole days
+        // on PAMADDAGT, so its clock time was never a fact an operator chose.
+        // Last used keeps its minutes, because staleness is read in hours. Both
+        // are fmtTime's output, sliced — never a second date format.
         const day = (t) => pad(fmtTime(t).slice(0, 10), 10);
         const mins = (t) => pad(fmtTime(t).slice(0, 16), 16);
+        // Phase 167 — the cumulative DAILY call budget. Two facts have to be
+        // readable at a glance in one fixed-width cell: how close this agent is
+        // to its cap, and whether that cap is ITS OWN or merely the server
+        // default it happens to inherit. The fraction carries the first; square
+        // brackets around the limit carry the second — [500] reads as "not this
+        // agent's number, the server's" — so a deliberate cap can be told from an
+        // unconfigured one without opening a second screen.
+        //
+        // The distinction is not cosmetic, because ZERO means opposite things on
+        // the two sides of it. An agent with NO budget_per_day of its own and an
+        // effective limit of 0 is inheriting a server default of "no limit"; an
+        // agent whose OWN budget_per_day is 0 is a deliberate hard stop that may
+        // make no calls at all. Collapsing them would render the strictest
+        // setting in the feature as the most permissive one, so they are never
+        // computed from the same number: `[∞]` (bracketed, cyan) can only ever be
+        // the inherited one, and `/0` + STOP (red) can only ever be the explicit
+        // one. FULL is the third red case — a real cap that today has spent.
+        const ownBudget = (a) => a.budget_per_day !== undefined && a.budget_per_day !== null;
+        const budgetCell = (a) => {
+          const own = ownBudget(a), used = Number(a.budget_used_today || 0);
+          const lim = Number((own ? a.budget_per_day : a.budget_limit_effective) || 0);
+          const blocked = own && lim === 0;          // its own cap of zero: no calls at all
+          const unlimited = !own && lim === 0;       // inheriting a server default of "no limit"
+          const shown = unlimited ? "∞" : String(lim);
+          const full = !blocked && lim > 0 && used >= lim;
+          const mark = blocked ? "STOP" : full ? "FULL" : "";
+          // cell() truncates, so a pathological counter cannot widen the row. The
+          // fraction gives up one column when a marker follows it, spending it on
+          // the separating space — so the marker always starts at the SAME offset
+          // whether or not the row above it has one, and the cell is 15 wide
+          // either way. A marker word that drifts left and right down the column
+          // is a marker nobody scans. Eleven columns is what an exhausted
+          // INHERITED cap needs at four digits (1000/[1000]), which is the widest
+          // shape this cell takes in practice; the Owner column paid for it.
+          // Amber from four fifths spent is the "about to run out" cue that
+          // comes before either red one.
+          const frac = used + "/" + (own ? shown : "[" + shown + "]");
+          const tone = blocked || full ? "red" : unlimited ? "cyan" : used >= lim * 0.8 ? "amber" : "green";
+          return `<td class="${tone}">${mark ? cell(frac, 10) + " " : cell(frac, 11)}${pad(mark, 4)}</td>`;
+        };
         term.innerHTML = `${head("PAMWRKAGT", "Work with AI-Agent Keys")}
 Non-human identities for the access broker: an agent may only request brokered tool
 calls — never a credential. Every call is attributed to its accountable owner.
-Type options, press Enter.  <span class="cyan">4=Revoke (permanent)   5=Suspend   6=Resume</span>
+Budget is today's brokered calls against the daily cap. <span class="white">430/500</span> is the agent's OWN cap;
+<span class="white">430/[500]</span> in brackets is the server default it inherits; <span class="cyan">12/[∞]</span> is that default set to no
+limit. <span class="red">FULL</span> means a real cap is spent for today; <span class="red">3/0 STOP</span> is an agent capped at zero — it
+is BLOCKED from every brokered call, which is the opposite of ∞, never the same thing.
+Type options, press Enter.  <span class="cyan">4=Revoke (permanent)   5=Suspend   6=Resume   7=Budget</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Name</th><th>Owner</th><th>Status</th><th>Created</th><th>Expires</th><th>Last used</th></tr>
-${agents.map((a) => `<tr><td>${opt(a.id)}</td><td>${esc(a.id)}</td><td class="white">${cell(a.name, 14)}</td><td>${cell(a.owner || "-", 14)}</td><td>${status(a)}</td><td class="cyan">${day(a.created_at)}</td><td class="${a.expires_at ? (expired(a) ? "red" : "amber") : "cyan"}">${mins(a.expires_at || "never")}</td><td class="cyan">${mins(a.last_used_at || "never used")}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Name</th><th>Owner</th><th>Status</th><th>Budget</th><th>Created</th><th>Expires</th><th>Last used</th></tr>
+${agents.map((a) => `<tr><td>${opt(a.id)}</td><td>${esc(a.id)}</td><td class="white">${cell(a.name, 13)}</td><td>${cell(a.owner || "-", 11)}</td><td>${status(a)}</td>${budgetCell(a)}<td class="cyan">${day(a.created_at)}</td><td class="${a.expires_at ? (expired(a) ? "red" : "amber") : "cyan"}">${day(a.expires_at || "never")}</td><td class="cyan">${mins(a.last_used_at || "never used")}</td></tr>`).join("")}
 </table>${agents.length ? "" : `<div class="cyan indent">(No agent keys. Press F6 to mint one — requires the broker to be enabled.)</div>`}
 <input type="submit" hidden></form>
 <div class="cyan">Suspend is reversible (5/6); revoke is not. An agent that presents a SPIFFE SVID has no key row
-here at all — stop that one with F7=Quarantine list. Parked calls awaiting a human are on menu 20.</div>
+here at all — stop that one with F7=Quarantine list. Parked calls awaiting a human are on menu 20.
+Option 7 sets or clears the daily budget: a rate limit bounds a burst, a budget bounds the day.</div>
 ${fkeys("F3=Exit   F5=Refresh   F6=Mint agent key   F7=Quarantine list   F12=Cancel")}`;
         document.getElementById("f-list").onsubmit = async (ev) => {
           ev.preventDefault();
@@ -1890,10 +1938,92 @@ ${fkeys("F3=Exit   F5=Refresh   F6=Mint agent key   F7=Quarantine list   F12=Can
               if (o === "4") { await api("DELETE", `/v1/agents/${a.id}`); say(`AGENT ${String(a.name).toUpperCase()} REVOKED.`); }
               else if (o === "5") { await api("POST", `/v1/agents/${a.id}/disable`, {}); say(`AGENT ${String(a.name).toUpperCase()} SUSPENDED — ITS TOKEN STOPS RESOLVING UNTIL RESUMED.`); }
               else if (o === "6") { await api("POST", `/v1/agents/${a.id}/enable`, {}); say(`AGENT ${String(a.name).toUpperCase()} RESUMED.`); }
+              // 7 is a prompt, not a verb: it carries the row to PAMAGTBGT and
+              // stops reading the subfile, the same way 2=Change does elsewhere.
+              else if (o === "7") { budgetAgent = a; return go("agentbudget"); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
             await openAgents();
           } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      // Phase 167 — option 7 on PAMWRKAGT: an agent identity's cumulative DAILY
+      // budget of brokered tool calls. Until now the only volume control was an
+      // opt-in per-minute rate limit, which bounds a burst and not a day: an
+      // agent capped at 60 calls a minute can still make 86,400 privileged calls
+      // before the day rolls over, and nobody ever chose that number. This screen
+      // is where somebody chooses it.
+      //
+      // Blank is a real answer here rather than an unfilled field: it CLEARS the
+      // per-agent cap so the agent rides the server default again. That is the
+      // one thing on this screen an operator could not guess, so the prompt says
+      // it in words — and there is deliberately no separate "delete budget"
+      // option to get out of step with it.
+      //
+      // Blank is also NOT the same as 0. An explicit 0 is this agent's own cap of
+      // zero: a hard stop that admits no brokered call at all. The two are
+      // opposites — blank is the most permissive answer on the screen and 0 the
+      // strictest — so the prompt says that too, in red, rather than leaving an
+      // operator to discover which one an empty-looking field meant.
+      agentbudget() {
+        back = "agents";
+        const a = budgetAgent || {};
+        const own = a.budget_per_day !== undefined && a.budget_per_day !== null;
+        const eff = Number((own ? a.budget_per_day : a.budget_limit_effective) || 0);
+        // Zero read two ways: its own zero is a block, an inherited zero is no
+        // limit. The screen must never let one be mistaken for the other.
+        const blocked = own && eff === 0;
+        const unlimited = !own && eff === 0;
+        // When the agent has no cap of its own, the limit in force IS the server
+        // default, so the prompt can name the number blank would fall back to.
+        const fallback = own ? "the server default" :
+          `the server default (currently ${unlimited ? "unlimited" : esc(eff) + " calls/day"})`;
+        term.innerHTML = `${head("PAMAGTBGT", "Set Agent Daily Budget")}
+A daily ceiling on the brokered tool calls this agent may make. It counts every call the
+broker admits, resets when the day rolls over, and refuses the rest once the day is spent.
+
+<div class="indent">
+Agent . . . . . . . :  <span class="white">${esc(a.name)}</span> (id ${esc(a.id)})
+Owner . . . . . . . :  <span class="white">${esc(a.owner || "-")}</span>
+Used today  . . . . :  <span class="white">${esc(Number(a.budget_used_today || 0))}</span> call(s)
+In force now  . . . :  ${blocked ? '<span class="red">0 — BLOCKED, no brokered calls at all</span>'
+  : unlimited ? '<span class="cyan">unlimited</span>'
+  : `<span class="white">${esc(eff)}</span> call(s)/day`}   <span class="${own ? "white" : "cyan"}">${own ? "(this agent's own cap)" : "(inherited — the server default)"}</span>
+</div>
+
+<form id="f-bgt" class="indent">
+<label>Calls per day . . . :  <input name="budget_per_day" size="12" inputmode="numeric" value="${own ? esc(a.budget_per_day) : ""}" placeholder="blank = server default" autofocus></label>
+<input type="submit" hidden>
+</form>
+<div class="cyan indent">Type a number to give this agent a cap of its own.
+<span class="white">Leave the field EMPTY and press Enter to CLEAR that cap</span> — the agent then goes back to
+${fallback}.
+Emptying the field is the only way to remove a per-agent budget — there is no separate
+option for it, so an empty field here is an answer, not an unfilled one.
+<span class="red">A cap of 0 is a BLOCK, not "no limit"</span> — the agent may then make no brokered call at all.
+Blank is how you hand it back to the server default; 0 is how you stop it.</div>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-bgt").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const raw = String(new FormData(ev.target).get("budget_per_day") || "").trim();
+          // Empty must never fall through to Number("") === 0, because 0 is this
+          // screen's HARDEST setting: it would block the agent outright where the
+          // operator asked only to hand it back to the server default. The API
+          // takes an explicit null for the clear, so that is what blank sends.
+          const body = { budget_per_day: raw === "" ? null : Number(raw) };
+          if (raw !== "" && !(Number.isInteger(body.budget_per_day) && body.budget_per_day >= 0)) {
+            say("CPF0002: CALLS PER DAY MUST BE A WHOLE NUMBER 0 OR MORE (0 BLOCKS THE AGENT), OR BLANK FOR THE SERVER DEFAULT.", true);
+            return render();
+          }
+          const name = String(a.name).toUpperCase();
+          try {
+            await api("POST", `/v1/agents/${a.id}/budget`, body);
+            say(raw === "" ? `AGENT ${name} BUDGET CLEARED — IT NOW USES THE SERVER DEFAULT.`
+              : body.budget_per_day === 0 ? `AGENT ${name} CAPPED AT 0 — IT IS BLOCKED FROM EVERY BROKERED CALL.`
+              : `AGENT ${name} BUDGET SET TO ${body.budget_per_day} CALL(S)/DAY.`);
+            await openAgents();
+          } catch (e) { say("CPF9898: " + (e.status === 404 ? "AI-AGENT BROKER IS DISABLED (set PAM_BROKER_POLICY_FILE)." : e.message), true); render(); }
         };
       },
 

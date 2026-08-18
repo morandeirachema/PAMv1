@@ -176,6 +176,14 @@ func (s *Server) mcpDispatcher(id *agentid.Identity, sess *mcpSession) mcp.Dispa
 			// protocol session the client established at `initialize`, and the client
 			// provenance is the `clientInfo` it declared there — the same two facts
 			// the REST caller passes explicitly, taken from where MCP puts them.
+			// The same cumulative budget the REST path enforces: a limit that
+			// only one transport honours is not a limit, and MCP is the transport
+			// an agent framework actually speaks.
+			if refusal := s.budgetRefusal(ctx, id, p.Name); refusal != nil {
+				s.auditAs(ctx, id.AgentName, broker.ActionFor(refusal.Status),
+					fmt.Sprintf("tool:%s status:%s reason:budget via:mcp", auditField(p.Name, 64), refusal.Status))
+				return toolResult(*refusal), nil
+			}
 			in := toolCallIn{SessionID: mcpRunID(sess), Client: mcpClient(sess), Tool: p.Name, Args: p.Arguments}
 			out := s.broker.ProcessCall(ctx, id, broker.Call{SessionID: in.SessionID, Client: in.Client, Tool: in.Tool, Args: in.Args})
 			s.auditAs(ctx, id.AgentName, broker.ActionFor(out.Status), brokerCallDetail(in, out)+" via:mcp")
