@@ -8242,6 +8242,22 @@ pamv1 is an MCP **server**. Different product shape, not a gap.
   store contract suite legitimately uses, kept and recorded so the next scan does
   not re-find them.
 
+#### 3d. A flaky test, recorded rather than rerun away
+
+`proxy.TestDBProxyZSPProvisionsAndTearsDownRole` failed once in CI on the
+v0.49.0 release PR — a commit that changes no Go code — and passed on the
+rerun. Twenty local `-race` runs pass. The failure is the proxy's own
+client-facing message, `pamv1: upstream connection failed`, which is exactly
+where the test's diagnosis stops: the underlying dial error is logged by the
+server and written to the audit trail (`db.session.error … error:<real
+error>`), and the test asserts on neither, so a CI failure reports the symptom
+and hides the cause.
+
+The fix is diagnosis before theory: surface the audit row's error when the
+session fails, so the next occurrence names its own cause instead of inviting a
+guess. Guessing now would mean changing timing code on a hunch — the honest
+position is that this is not yet understood.
+
 #### 4. Repo furniture — ✅ closed 2026-07-28
 
 - `CHANGELOG.md` (releases; the per-phase history stays here), `CONTRIBUTING.md`,
