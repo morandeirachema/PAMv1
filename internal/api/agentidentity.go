@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -191,6 +192,17 @@ func (s *Server) deleteAgentIdentity(w http.ResponseWriter, r *http.Request) {
 // knownUsernames returns the set of usernames pamv1 has a user row for, so a
 // listing can flag an agent whose owner is not one of them.
 //
+// The set is EXACT-CASE on purpose (Phase 176). Every control this report speaks
+// about matches an owner as a literal string — `ListAgentKeysByOwner` and
+// `ListAgentIdentitiesByOwner` are `WHERE owner = $1`, and `GetUserByUsername`
+// is `WHERE username = $1` — so an owner of "Carol" against a user "carol" is
+// NOT reachable by the offboarding cascade. Phase 175 shipped this check
+// case-insensitively and would have reported that agent as fine: a flag that
+// claims reachability the control does not have, which is the same defect class
+// as a dead field that reads like a control. Note the deliberate asymmetry with
+// the four-eyes comparison, which stays case-INSENSITIVE: there, matching more
+// broadly REFUSES more, and refusing more is the safe direction.
+//
 // An owner is free text on both identity kinds, and the offboarding cascade
 // matches it against a username STRING: deleting "carol" suspends the agents
 // owned by "carol" and reaches nothing owned by "caro1" or by "carol " — a typo
@@ -212,7 +224,7 @@ func (s *Server) knownUsernames(ctx context.Context) map[string]bool {
 	}
 	known := make(map[string]bool, len(users))
 	for _, u := range users {
-		known[strings.ToLower(u.Username)] = true
+		known[u.Username] = true
 	}
 	return known
 }
@@ -224,7 +236,7 @@ func ownerIsKnown(known map[string]bool, owner string) bool {
 	if known == nil {
 		return true
 	}
-	return known[strings.ToLower(strings.TrimSpace(owner))]
+	return known[strings.TrimSpace(owner)]
 }
 
 // accountableOwners resolves every human accountable for a parked call's agent
@@ -300,6 +312,23 @@ func (s *Server) accountableOwners(ctx context.Context, ident broker.ApprovalIde
 		return nil, subjects[0], nil
 	}
 	return owners, "", nil
+}
+
+// unknownOwners returns the owners in the list that match no pamv1 user, in
+// order and without duplicates. An unreadable roster returns none: a decision
+// must not be coloured — or refused — by a database hiccup.
+func (s *Server) unknownOwners(ctx context.Context, owners []string) []string {
+	known := s.knownUsernames(ctx)
+	if known == nil {
+		return nil
+	}
+	var out []string
+	for _, o := range owners {
+		if !ownerIsKnown(known, o) && !slices.Contains(out, o) {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 // suspendOwnedIdentities is the offboarding cascade's other half: quarantine
