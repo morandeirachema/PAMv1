@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -81,8 +82,14 @@ func (s *Server) updateVendor(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Email is a POINTER so "not supplied" and "cleared" stay distinguishable:
+	// an org-only edit must not silently wipe the address invites are sent to
+	// (Phase 177). Before this the address could be set at creation and never
+	// corrected — a typo meant every magic-link invite went nowhere, with the
+	// store method to fix it sitting unused.
 	var in struct {
-		Org string `json:"org"`
+		Org   string  `json:"org"`
+		Email *string `json:"email,omitempty"`
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -96,7 +103,24 @@ func (s *Server) updateVendor(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "vendor.update", fmt.Sprintf("vendor:%s org:%q", v.Username, in.Org))
+	detail := fmt.Sprintf("vendor:%s org:%q", v.Username, in.Org)
+	if in.Email != nil {
+		email := strings.TrimSpace(*in.Email)
+		if email != "" && !validEmail(email) {
+			writeError(w, http.StatusUnprocessableEntity, "email must be a valid address, or empty to clear it")
+			return
+		}
+		if err := s.store.UpdateVendorEmail(r.Context(), id, email); err != nil {
+			storeError(w, err)
+			return
+		}
+		v.Email = email
+		// The address itself is on the trail: it is contact detail an approver
+		// already sees, and an invite sent to the wrong place is exactly what an
+		// investigation needs to be able to reconstruct.
+		detail += " email:" + auditField(email, 200)
+	}
+	s.audit(r.Context(), "vendor.update", detail)
 	v.Org = in.Org
 	writeJSON(w, http.StatusOK, v)
 }
@@ -354,6 +378,18 @@ func (s *Server) vendorGate(w http.ResponseWriter, r *http.Request, target *stor
 		return false
 	}
 	return true
+}
+
+// validEmail reports whether addr is a single bare RFC 5322 address. The
+// equality check rejects the display-name form ("Ops <ops@example.com>"), which
+// parses fine but is not what a delivery path or an audit line should carry.
+//
+// Deliberately the only email validation in pamv1: an address is checked where
+// it is EDITED, not where it is sent, so a typo is caught by the person making
+// it rather than discovered when an invite silently goes nowhere.
+func validEmail(addr string) bool {
+	parsed, err := mail.ParseAddress(addr)
+	return err == nil && parsed.Address == addr
 }
 
 // vendorByID resolves a vendor by row id (via the list, since lookups are by

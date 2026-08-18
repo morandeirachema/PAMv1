@@ -1635,11 +1635,6 @@ func (s *PGStore) ListVendors(ctx context.Context, limit int, afterID int64) ([]
 	})
 }
 
-// SetVendorDisabled enables/disables a vendor by id, or ErrNotFound.
-func (s *PGStore) SetVendorDisabled(ctx context.Context, id int64, disabled bool) error {
-	return execExpectingRow(ctx, s.pool, `UPDATE vendors SET disabled = $2 WHERE id = $1`, id, disabled)
-}
-
 // UpdateVendorOrg changes a vendor's organization label; ErrNotFound if absent.
 func (s *PGStore) UpdateVendorOrg(ctx context.Context, id int64, org string) error {
 	return execExpectingRow(ctx, s.pool, `UPDATE vendors SET org = $2 WHERE id = $1`, id, org)

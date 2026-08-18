@@ -1995,19 +1995,6 @@ func (m *Memstore) UpdateVendorEmail(_ context.Context, id int64, email string) 
 	return nil
 }
 
-// SetVendorDisabled enables/disables a vendor by id, or ErrNotFound.
-func (m *Memstore) SetVendorDisabled(_ context.Context, id int64, disabled bool) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	v, ok := m.vendors[id]
-	if !ok {
-		return store.ErrNotFound
-	}
-	v.Disabled = disabled
-	m.vendors[id] = v
-	return nil
-}
-
 // CreateVendorGrant records a pending contract grant; ErrNotFound if the vendor
 // or target is missing.
 func (m *Memstore) CreateVendorGrant(_ context.Context, g *store.VendorGrant) error {
