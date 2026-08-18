@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–168 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–169 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,81 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 169 — Containment that follows the chain, inventory that respects a grant ✅
+
+**Closes:** the two live defects in the agent-broker follow-on research pass —
+quarantine that stopped at the presenter, and a `list_targets` that answered for
+the whole estate. Both were found by re-reading the tree at HEAD *after* phases
+159–167 shipped, so neither is a regression: they are what those phases did not
+reach.
+
+**Why they are one phase.** Both are about the delegated, SPIFFE-attested path —
+the posture the roadmap calls the intended production one — and both have the
+same shape as the Phase 159 defect they follow: a control that reads as covering
+every agent, checked against the one field the least-trusted identity kind does
+not use.
+
+- [x] **Quarantine follows the delegation chain.** `IsAgentQuarantined` was asked
+  about `Identity.AgentName` only. A delegated JWT-SVID (Phase 57 token exchange)
+  presents the *sub-agent's* subject and names its delegator solely in the RFC
+  8693 `act` chain — so quarantining a compromised root left every token it had
+  already minted working until that token's TTL expired. The responder pressed
+  the stop button and watched the compromise continue. The check now walks the
+  presenter plus every `ActorChain` element (`quarantineSubjects` /
+  `quarantinedSubject`), at **both** moments an agent identity is consulted:
+  ingress (`agentAuth`) and approval-time revalidation (`revalidateAgent`) — the
+  second matters most, since a parked call is precisely what a responder is
+  racing. Deduped, so the ordinary undelegated case is still a single lookup, and
+  still fail-closed on a store error
+- [x] **A static key's owner is deliberately NOT in that set.** For that identity
+  kind `OnBehalfOf` holds the accountable HUMAN's username, and quarantine is an
+  inventory of agent identities, not of people. Stopping every agent one human
+  owns is *offboarding* — a different action, already shipped in Phase 159, with
+  its own `reason:owner-offboarded` trail. An SVID's accountable party is the
+  outermost chain element and so is covered anyway
+- [x] **The refusal names the link that stopped the call.** `agent.quarantine_refused`
+  gains a `subject:` field, written only when the quarantined identity is not the
+  presenter. Without it the trail records the sub-agent that happened to make the
+  call, leaving the responder to guess why an agent they never quarantined went
+  quiet
+- [x] **`list_targets` no longer hands over the estate.** Its principal parameter
+  was literally `_`: an agent with zero grants received every target's name, host,
+  OS and protocol, and the unfiltered `list_credentials` added every account name
+  on them. No secret was ever read — `ListCredentialsMeta` cannot return one — but
+  that is the reconnaissance step of an attack path given free to the
+  least-trusted actor in the system, and it was the only place in
+  `broker_tools.go` that skipped the grant check its siblings enforce. Both tools
+  now answer through `agentCanSeeTarget`/`agentVisibleTargets`
+- [x] **One definition of the check, not a second one.** `authorizeAgentTarget`
+  and `authorizeAgentCredential` were refactored onto the same helper, so the
+  tools that act on a target and the tools that merely list one cannot drift.
+  Ungated targets (no grants, no safe) stay visible to everyone, exactly as on
+  every other pamv1 path — this narrows an agent's view, it does not invent a
+  second authorization model. Naming an ungranted target explicitly is **refused**
+  (`agent not authorized for target`), not answered with an empty list: "you may
+  not" and "there is nothing" are different facts, and an operator debugging a
+  policy needs them apart
+- [x] **Honest cost:** two store reads per target on an unfiltered listing,
+  because grants are stored target-side and pamv1 has no subject-indexed grant
+  query (the research's finding E — "what can this agent reach?" is unanswerable
+  in one query — is still open). A cache would be the alternative, and a cache
+  that can disagree with the gate is worse than the reads
+- [x] **Behaviour change worth an operator's attention**: an agent whose estate is
+  gated by grants now sees less than it did through both inventory tools
+- [x] **Tests, each verified to FAIL against the pre-fix code:**
+  `api.TestAgentQuarantineFollowsDelegationChain` (a real signed SVID whose `act`
+  claim names a quarantined root is refused although its own subject is clean,
+  the trail names the root, and releasing the root restores it),
+  `api.TestRevalidateAgentQuarantineFollowsTheChain` (the parked-call half,
+  in-package because no HTTP request reaches it without a SPIFFE deployment), and
+  `api.TestBrokerInventoryToolsScopedToGrants` (both listings narrowed, the named
+  ungranted target refused)
+- [x] No schema change (migration high-water stays `0044`), no new env var, no
+  route change. Docs updated in the same change: the threat model gains a "What
+  an agent is allowed to KNOW" section and a corrected delegation-containment
+  claim, plus the low-level change log, the admin guide, the code guide and the
+  shipped policy example
 
 ## Phase 168 — v0.47.0 ✅
 
