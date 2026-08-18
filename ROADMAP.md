@@ -2427,10 +2427,15 @@ moves `0043` -> `0044` (an additive nullable column on `agent_keys` plus a
 supporting `(actor, action, ts)` index on `audit_events`, applied on startup, no
 backfill). One new env var, one new route.
 
-- [ ] **v0.47.0** through the test-gated pipeline, rehearsed on `main` first.
-  Published as `ghcr.io/morandeirachema/pamv1:0.47.0` (also `latest`), digest
-  recorded here once the publish workflow runs, verified **public** by anonymous
-  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] **v0.47.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-18 as `ghcr.io/morandeirachema/pamv1:0.47.0` (also
+  `latest`), digest
+  `sha256:e5e4e3f942643650b91fdead9d28c02f469248549c714050d62da2286b88e37b`,
+  **public** (anonymous pull 200 on both tags, verified via the GHCR anonymous
+  token-exchange flow, and both tags resolve to the same digest), with the
+  `pam-agent` binaries (amd64 + arm64), the SPDX SBOM and `SHA256SUMS`
+  attached. The release workflow's own test job gated the tag and passed first
+  time — no runner trouble this round, unlike v0.46.0's SoftHSM hangs
 - [x] All five pins via the sweep; Helm chart `version` 0.37.0 -> **0.38.0**
 - [x] Both READMEs restated; `docs/README.md`, `docs/NIS2-COMPLIANCE.md` and
   ROADMAP.md's top-banner phase count caught proactively; `CHANGELOG.md` gains
