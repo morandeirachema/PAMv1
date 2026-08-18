@@ -36,14 +36,23 @@
 # deliberate secret-returning tool — leave it with NO allow rule to keep it
 # default-denied, which is the recommended posture).
 rules:
-  # Run a command on an allow-listed lab host, with a scoped, short-lived grant.
+  # Run a command on an allow-listed lab host.
+  #
+  # `scope` is a template rendered into the AUDIT record — it does not narrow
+  # what the call does (the arguments are already fixed, and the broker runs
+  # exactly those). It does assert presence: a template naming {target} fails to
+  # render when the call carries no `target`, and a render failure is a DENY.
+  # `ttl_seconds` is NOT set here, and cannot be: it bounds how long a
+  # require_approval call stays decidable, and an allow rule has no such window
+  # — the call runs and returns in the same request. Setting it on an allow or
+  # deny rule is refused when the policy loads (Phase 171), rather than accepted
+  # and ignored as it was until then.
   - id: exec-on-lab
     tool: winrm_exec
     when:
       args.target: { in: [lab-win-01, lab-win-02] }
     effect: allow
     scope: "target:{target}:exec"
-    ttl_seconds: 60
 
   # Read-only inventory is always safe to allow (no secrets are ever returned).
   # Since Phase 169 both inventory tools answer only for the targets THIS agent
@@ -78,6 +87,13 @@ rules:
     effect: require_approval
     approvers: [platform-team]
     scope: "target:{target}:exec"
+    # Here ttl_seconds is real: the call stays decidable, and its single-use
+    # resume token stays spendable, for 10 minutes rather than the deployment
+    # default (PAM_BROKER_TOKEN_TTL_MIN, 15). A rule may only NARROW that bound,
+    # never extend it — a line of YAML must not out-rank the deployment's own
+    # limit. After it lapses the call is swept and reported as failed, so the
+    # agent sees a resolution instead of waiting forever.
+    ttl_seconds: 600
 
   # Everything else is denied by default (no matching rule). reveal_credential is
   # intentionally absent here, so it stays default-denied; add an allow rule only

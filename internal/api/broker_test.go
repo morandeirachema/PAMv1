@@ -67,7 +67,6 @@ rules:
     tool: winrm_exec
     effect: allow
     scope: "target:{target}:exec"
-    ttl_seconds: 60
   - id: deny-rotate
     tool: rotate_credential
     effect: deny
