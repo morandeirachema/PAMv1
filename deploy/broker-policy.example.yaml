@@ -78,6 +78,37 @@ rules:
     tool: list_credentials
     effect: allow
 
+  # WHO may call, not just what (Phase 173). `agents:` restricts a rule to the
+  # listed presenting identities — an agent-key name or a full SPIFFE ID — and an
+  # absent list still matches everyone, so every rule above is unchanged. Without
+  # this, one allow rule for a tool enabled it for EVERY agent in the deployment.
+  #
+  # It matches the PRESENTER only: a call delegated from rotation-bot arrives
+  # under the delegate's own identity and needs its own rule. `not_agents:` is
+  # the mirror image and matches ANY identity the call can be attributed to —
+  # presenter, delegation chain or accountable party — so an exclusion cannot be
+  # escaped by delegating one hop.
+  - id: only-the-rotator-rotates
+    tool: rotate_credential
+    agents: [rotation-bot]
+    effect: allow
+
+  # Identity facts a rule can match on, from the reserved `caller.*` namespace:
+  # caller.agent, caller.spiffe_id, caller.on_behalf_of, caller.delegation_depth
+  # and caller.identity_kind ("spiffe" or "key"). Every value comes from the
+  # broker's authentication — an argument named "caller.agent" is a different
+  # lookup and can never satisfy one of these. An unknown caller.* attribute is
+  # refused when the policy loads, never silently unmatched.
+  #
+  # Depth counts delegation HOPS, so 0 is an undelegated call for both identity
+  # kinds and `gte: 1` means "this arrived through a delegated token".
+  - id: no-secrets-through-delegation
+    tool: reveal_credential
+    when:
+      caller.delegation_depth: { gte: 1 }
+    effect: deny
+    reason: a delegated token may not reveal a secret
+
   # Anything on production requires a human: the call parks, an approver decides
   # via /v1/approvals, and on approval the broker executes it server-side (JIT).
   - id: exec-on-prod-needs-approval
