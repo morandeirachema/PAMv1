@@ -338,6 +338,25 @@ const screens = [
     state: () => ({}),
   },
   {
+    // The approval queue (menu 20). Phase 171 added a DECIDE BY column, and a
+    // row here is already the widest in the console — a call id, an agent name,
+    // a JSON argument blob and two timestamps — so it is measured with every
+    // field at full length before the column is trusted on a 5250 screen.
+    name: "brokerapprovals",
+    src: /\n {6}brokerapprovals\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      brokerApprovals: [
+        { call_id: long ? LONG : "call_9f2c1ab3", agent: long ? LONGNAME : "planner",
+          on_behalf_of: long ? LONGNAME : "alice", tool: long ? LONGNAME : "winrm_exec",
+          args: long ? { target: LONG, command: LONG } : { target: "prod-win-01", command: "whoami" },
+          rule_id: long ? LONGNAME : "prod-needs-human", approvers: long ? [LONGNAME, LONGNAME] : ["platform-team"],
+          requested_at: "2026-08-18T12:00:00Z", expires_at: "2026-08-18T12:10:00Z" },
+        { call_id: "call_11223344", agent: "worker", on_behalf_of: "", tool: "ssh_exec",
+          args: {}, rule_id: "", approvers: [], requested_at: "2026-08-18T12:05:00Z", expires_at: "" },
+      ],
+    }),
+  },
+  {
     // Phase 170's SPIFFE owner registry (F8 on PAMWRKAGT). Like the quarantine
     // list its widest column is a full SPIFFE ID, the value that once pushed a
     // column off the terminal — and here a second wide column (the owner) sits
