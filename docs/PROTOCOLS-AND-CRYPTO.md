@@ -277,10 +277,29 @@ posture in §3.4.
 | **OIDC** (`internal/oidc`) | **RS256 only** (alg pinned), `rsa.VerifyPKCS1v15` + SHA-256 against the JWKS key by `kid` | Authorization Code + **PKCE S256**; issuer, audience, nonce and expiry all checked (60 s leeway); metadata reads capped at 1 MiB |
 | **Entra ROPC** (`internal/auth/entra.go`) | RS256 via the same verifier | Expiry **required** (fail closed); tenant (`tid`) checked against config |
 | **SAML 2.0** (`internal/saml`, Phase 151) | **XML-DSig** over Exclusive C14N — RSA- or ECDSA-SHA256/384/512 (and the SHA-1 variants for legacy IdPs), verified by `github.com/crewjam/saml` + `russellhaering/goxmldsig` against the `<KeyDescriptor use="signing">` certificate in the IdP metadata; optional `<EncryptedAssertion>` decryption (XML Encryption: RSA-OAEP / RSA-1.5 key transport, AES-128/192/256-CBC or -GCM) with the SP's own RSA key | SP-initiated only (`AllowIDPInitiated=false`); the Response **or** the Assertion must be signed (a decoy unsigned assertion beside a signed one is never the one acted on); `Destination` == ACS URL, `Issuer` == IdP entity ID, `InResponseTo` == the single-use request ID bound to the browser's state cookie, `IssueInstant`/`NotBefore`/`NotOnOrAfter` within 90 s / 3 min skew, `AudienceRestriction` == SP entity ID; XML round-trip-validated before parsing; response and metadata reads capped at 1 MiB. **Deliberate library exception, like WebAuthn** — see ROADMAP.md Phase 151 |
-| **SPIFFE JWT-SVID** (`internal/agentid/svid.go`) | RS256, **ES256** (P-256), **EdDSA** | Expiry and audience mandatory; subject must be inside the configured trust domain; RFC 8693 `act` delegation chains bounded by `PAM_BROKER_MAX_DELEGATION_DEPTH`, every delegate in-domain |
+| **SPIFFE JWT-SVID** (`internal/agentid/svid.go`) | RS256, **ES256** (P-256), **EdDSA** | Expiry and audience mandatory (60s clock leeway, the one permissive edge here — see below); subject must be inside the configured trust domain; RFC 8693 `act` delegation chains bounded by `PAM_BROKER_MAX_DELEGATION_DEPTH`, every delegate in-domain. Since Phase 169 the verified `act` chain is **load-bearing beyond audit**: quarantine is evaluated against every actor in it, and since Phase 173 a policy rule may match on `caller.delegation_depth` and exclude a whole lineage with `not_agents:` |
 
 All four make failures **indistinguishable** to the caller — no oracle telling an
 attacker which check failed.
+
+Two properties of the SVID path are worth stating precisely, because both are
+containment rather than cryptography:
+
+- **A delegated token carries its lineage, and pamv1 now acts on it.** The `act`
+  chain was verified from the start (in-domain, depth-bounded) but only recorded;
+  since Phase 169 a quarantine on any actor in the chain refuses the call at both
+  the front door and the approval gate, and since Phase 170 the four-eyes gate
+  resolves the accountable owner of every link. A signed token cannot inject a
+  foreign delegate — an out-of-domain `act.sub` is rejected — so the chain a
+  decision reads is the chain the trust domain signed.
+- **`may_act` is enforced but never issued.** `exchange.go` refuses to mint for
+  an actor the delegating token's `may_act` does not name, and the tokens pamv1
+  itself mints carry `jti` and `act` but no `may_act` — so from hop 2 onward
+  nobody can pin who may act for whom. Recorded in
+  [ROADMAP §3b](../ROADMAP.md#3b-the-ai-agent-broker-batch-2026-08-1718-research),
+  not fixed here. There is likewise no proof-of-possession (`cnf`/DPoP): a
+  minted delegated token is a bearer token, and its TTL — now narrowable per
+  rule (Phase 171) — is what bounds it.
 
 ### 2.9 Supply chain and deploy
 
