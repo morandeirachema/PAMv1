@@ -7743,7 +7743,10 @@ one by the fixes of 2026-07-30/31, and the 2026-08-06 read of the two newest
 phases by 60a and 61a. The **2026-08-07 sweep** (the first over phases 56–61a as
 a whole) closed across phases 62, 63 and 65 — see §0 below and
 [docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md). **Every read-only sweep is
-closed**, so nothing here is a known defect. The **2026-08-10 refactor,
+closed**, so nothing here is a known defect — including the **2026-08-17/18
+AI-agent-broker research** (five parallel read-only passes over the broker
+itself), whose two live defects were closed by phases 169 and 170; what remains
+of that batch is capability, not breakage, and is listed in §3b. The **2026-08-10 refactor,
 hardening and documentation-currency arc (phases 96–107)** — cross-path
 security-parity, the proxy-family structural unification, parser fuzzing, gosec
 enforcement, config-validation and docs — is likewise complete and adds no
@@ -7913,6 +7916,79 @@ Buildable without external infrastructure, each deferred by the phase named.
   quickstart bug where `kubectl apply -f deploy/k8s/` overwrote the secret you
   had just created with `CHANGE_ME`.
 
+#### 3b. The AI-agent broker batch (2026-08-17/18 research)
+
+Five read-only passes aimed at the broker itself — MCP spec security, agent
+identity standards, vendor AI-agent controls, agentic threat frameworks, and a
+follow-on pass re-read at HEAD after the first nine phases had shipped. Every
+finding carried a `file:line`; the standards citations were fetched, not
+recalled. **Nine phases closed it so far** — 159 (identity lifecycle + the
+subject-keyed stop button), 161 (run visibility: outcome-bearing actions, risk
+signals, run correlation), 163 (the guard defeated by sending less), 165
+(bounded results + the whole transcript), 167 (cumulative budgets), 169
+(chain-following quarantine + grant-scoped inventory), 170 (an owner for the
+SPIFFE-attested identity kind, which is what made four-eyes fire there), 171
+(`ttl_seconds` enforced, `scope` described honestly) and 173 (the policy
+principal side + the `caller.*` namespace).
+
+**Both live defects are closed.** What is left is capability, ordered by what it
+buys:
+
+- **SVID enrollment and inventory** — any workload in the trust domain *is* an
+  agent. Quarantine is a denylist and Phase 170's registry records owners for the
+  identities somebody named; neither enumerates the ones nobody did, so there is
+  no list to review and no "only enrolled workloads may call" posture. The cheap
+  half-step is recording first-seen/last-seen on every verified SVID so the
+  inventory exists before it gates anything, then an opt-in
+  `PAM_BROKER_REQUIRE_ENROLLED_SVID`. Aggravated by `CanConnectTarget` returning
+  open for a target with zero grants. Enrollment is not attestation — SPIRE
+  workload attestation stays in §5.
+- **"What can this agent reach?" has no query.** Every grant lookup is
+  target-indexed (direct rows plus safe membership), which is also the honest
+  cost Phase 169 accepted for its scoped inventory: two reads per target. A
+  subject-indexed view would answer the question an investigator actually asks,
+  and would let an agent's access be *reviewed* rather than reconstructed.
+- **Agent identities are never recertified.** Campaigns snapshot `target_grant`
+  and `safe_member` only, and a grant naming one agent is stored with
+  `SubjectType "user"` (the fleet-wide alternative is `role: agent`) — so when it
+  is reviewed at all, it is reviewed as if it were a person, under a subject type
+  that misdescribes it.
+  Related: `owner` is free text on both identity kinds and is never checked
+  against the user roster, so a typo makes an agent no offboarding cascade can
+  reach.
+- **Posture never reaches the agent path.** `internal/posture` is wired into
+  `admit()` and the REST `authz` middleware but not `agentAuth`, so a human's
+  laptop must pass EDR posture on every connect while an agent container passes
+  on a bearer token alone. The webhook half is small; the honesty is that a
+  webhook attesting *about a name* is much weaker than cryptographic workload
+  attestation.
+- **pamv1 enforces `may_act` but never issues it** (`exchange.go` checks it and
+  omits it when minting), so from hop 2 onward nobody can pin who may act for
+  whom.
+- **The approver sees one call, not the campaign.** `PendingApproval` still
+  carries no `ActorChain` even though the chain is already written to the audit
+  chain, and a presented SVID's `jti` is never parsed — so
+  `broker.token.exchanged` cannot be joined to the calls made with that token.
+  Both are presentational and cheap.
+- **Policy cannot read the registry owner** (deferred by Phase 173):
+  `caller.on_behalf_of` is the accountable party as the identity carries it, not
+  the human Phase 170's registry records for a SPIFFE ID. Resolving it inside the
+  engine would make the engine read the store, which it deliberately does not do;
+  the plumbing belongs in the broker.
+- **Smaller, named so they are not forgotten**: no proof-of-possession
+  (`cnf`/DPoP/WIMSE) on a minted delegated token, so bearer remains bearer; the
+  trust bundle is read once at startup; MCP is pinned at protocol `2024-11-05`;
+  `tools/list` shows every agent the whole toolset regardless of what policy
+  would allow it; the SVID verifier allows 60 seconds of clock leeway past `exp`,
+  normal practice but permissive in a system where a delegated token's TTL is its
+  other containment; and there is no ceiling on a single *run* — calls or targets
+  touched under one `session:` — as opposed to per minute and per day, both of
+  which exist.
+
+**Out of scope, not missing**: CyberArk's and StrongDM's agent brokers are
+*egress* proxies governing which third-party MCP servers an agent may call.
+pamv1 is an MCP **server**. Different product shape, not a gap.
+
 #### 4. Repo furniture — ✅ closed 2026-07-28
 
 - `CHANGELOG.md` (releases; the per-phase history stays here), `CONTRIBUTING.md`,
@@ -7967,10 +8043,14 @@ The 5250 console is now explicitly **keyboard-first** (the mouse is optional), m
 
 **Tier-2 (access-governance depth) is complete** — certification campaigns (19), the ITSM/ticketing gate (20), and richer approval workflows (21), now including one-time access (26). **Tier-3**: Zero Standing Privilege (22), privileged threat analytics (23) and the identity blast-radius / CIEM engine (31) are shipped — three of five; connector/plugin breadth and web/SaaS session proxying remain, along with *live* cloud-CIEM ingestion, all infra-bound. **Tier-4 is under way**: the application-secrets API (24) is shipped; a Terraform provider, Secrets-Hub sync-out, SSH-key fleet discovery, and thick-app components remain, each requiring external infrastructure or an account to build honestly (see [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)). The 5250 console has **full parity** with the backend (Phase 25) — every shipped capability is operable from the portal, keyboard-first — and the session-recording loop is closed end to end (Phase 26): record → watch live → replay later, hash-verified. See the [competitive-coverage section](README.md#coverage-vs-commercial-pam-cyberark-wallix-) for the full picture.
 
-**What is next** is consolidated in [What is left](#what-is-left-) above: the
-release that would complete the beta claim, the `cmd/pam-server` test gap, a
-dozen in-process feature follow-ons, and the repo furniture — with the
-infra-bound catalogue kept separately in
-[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md). The console is at
-**full parity** — every shipped capability is operable from the portal,
+**What is next** is consolidated in [What is left](#what-is-left-) above, and
+the list is much shorter than it was: the beta-claim release, the
+`cmd/pam-server` test gap, the dozen feature follow-ons and the repo furniture
+are all closed and struck through there. What genuinely remains in process is
+**§3b — the rest of the AI-agent-broker batch**: SVID enrollment and inventory,
+a subject-indexed answer to "what can this agent reach?", recertification for
+non-human identities, posture on the agent path, `may_act` emission, and the
+approver's view of a delegation chain. The infra-bound catalogue stays separate
+in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md), and the console is
+at **full parity** — every shipped capability is operable from the portal,
 keyboard-first.
