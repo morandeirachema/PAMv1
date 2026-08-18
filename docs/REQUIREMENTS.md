@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-08-17 · Reflects: Phases 0–159. Phases 66–70 add one more
+> Last updated: 2026-08-18 · Reflects: Phases 0–173. Phases 161–173 add no requirement: two additive migrations applied at startup (`0044`, `0045`) on the PostgreSQL instance already required, two optional knobs (`PAM_BROKER_MAX_RESULT_BYTES` from 165, `PAM_BROKER_BUDGET_PER_DAY` from 167), and no new dependency, listener or external system. Phases 66–70 add one more
 > background worker (the hourly, leader-locked certification scheduler); Phase 78
 > adds an optional per-replica Conjur refresh worker (off unless
 > `PAM_CONJUR_REFRESH_MIN` is set); 71–94 add no port, resource floor or

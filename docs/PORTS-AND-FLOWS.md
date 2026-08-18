@@ -127,9 +127,13 @@
 > forensic reconstruction is one more SSH connection to a target pamv1 already
 > dials (flow **E2**, `:22`), made after the session ends with the same
 > credential; nothing new is opened, and nothing new is reachable.
-> **Phases 159–167 add none either** — the agent-broker batch so far changes
-> who may call the existing `/v1/*` and `/mcp` surface and what pamv1 writes down
-> about it, never where anything listens or dials.
+> **Phases 159–173 add none either** — the agent-broker batch changes who may
+> call the existing `/v1/*` and `/mcp` surface, what a rule may say about the
+> caller, and what pamv1 writes down about it, never where anything listens or
+> dials. Phase 170's four `/v1/agents/identities` routes are ordinary
+> `manage_users` API calls on the port the portal already serves, and Phase 169's
+> chain-following quarantine and Phase 173's `caller.*` conditions are decisions
+> made on flows that already existed.
 > Everything from 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
 > **no new listeners**: certification/ticketing/approvals (19–21), threat analytics
