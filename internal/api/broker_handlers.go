@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -38,9 +39,11 @@ func (s *Server) agentAuth(next agentHandler) http.HandlerFunc {
 		// that identity kind AgentName IS the full SPIFFE ID — see svid.go, where
 		// the JWT subject is assigned to both AgentName and SPIFFEID. Keying on
 		// the name is therefore the one containment control that covers BOTH
-		// authentication paths. A store failure refuses the call: an unverifiable
-		// quarantine must never read as "not quarantined".
-		quarantined, qerr := s.store.IsAgentQuarantined(r.Context(), id.AgentName)
+		// authentication paths. It follows the presented token's whole delegation
+		// chain (quarantineSubjects), not just its presenter. A store failure
+		// refuses the call: an unverifiable quarantine must never read as "not
+		// quarantined".
+		hit, qerr := s.quarantinedSubject(r.Context(), id)
 		if qerr != nil {
 			s.log.Error("agent quarantine check failed; refusing the call (fail closed)",
 				"agent", id.AgentName, "err", qerr)
@@ -49,14 +52,15 @@ func (s *Server) agentAuth(next agentHandler) http.HandlerFunc {
 			s.authFailed(w, r, "agent", "invalid or missing agent credential")
 			return
 		}
-		if quarantined {
+		if hit != "" {
 			// Refused through authFailed, the same path a bad bearer takes: the
 			// response, the throttling and the api.auth_failed record are
 			// identical, so a quarantined agent learns nothing from the reply
 			// about why it stopped working. The reason is in the audit trail,
 			// where the responder looks, not in the 401 body.
 			_ = s.auditAs(r.Context(), id.AgentName, "agent.quarantine_refused",
-				"agent:"+auditField(id.AgentName, 200)+" path:"+auditField(r.URL.Path, 200))
+				"agent:"+auditField(id.AgentName, 200)+" path:"+auditField(r.URL.Path, 200)+
+					quarantineHitField(id, hit))
 			s.authFailed(w, r, "agent", "invalid or missing agent credential")
 			return
 		}
@@ -83,6 +87,72 @@ func (s *Server) agentAuth(next agentHandler) http.HandlerFunc {
 		}
 		next(w, r, id)
 	}
+}
+
+// quarantineSubjects lists every identity one presented agent credential must
+// be checked against before it is honoured: the presenter's own subject first,
+// then every actor in its RFC 8693 delegation chain (innermost..outermost, as
+// agentid.Identity records it).
+//
+// Checking only the presenter — what shipped in Phase 159 — left delegation
+// uncontained. A root agent that has already exchanged its token for sub-agent
+// tokens keeps acting through them after it is quarantined, because each
+// sub-agent presents its OWN subject and the compromised root appears only in
+// the token's `act` chain; the only thing that would eventually stop it is the
+// delegated token's TTL. A stop button a compromised agent can route around by
+// delegating one hop is not a stop button, so the whole chain is consulted and
+// any quarantined link refuses the call.
+//
+// A static key's OnBehalfOf is deliberately NOT included: for that identity kind
+// it holds the accountable HUMAN's username (see agentid.StaticVerifier), and
+// quarantine is an inventory of agent identities, not of people. Blocking every
+// agent one human owns is offboarding, a different action with a different
+// audit vocabulary. An SVID's accountable party is the outermost chain element,
+// so it is already covered above. Duplicates are dropped, which keeps the
+// ordinary undelegated case a single store lookup.
+func quarantineSubjects(id *agentid.Identity) []string {
+	out := make([]string, 0, len(id.ActorChain)+1)
+	seen := make(map[string]struct{}, len(id.ActorChain)+1)
+	for _, subject := range append([]string{id.AgentName}, id.ActorChain...) {
+		if subject == "" {
+			continue
+		}
+		if _, dup := seen[subject]; dup {
+			continue
+		}
+		seen[subject] = struct{}{}
+		out = append(out, subject)
+	}
+	return out
+}
+
+// quarantinedSubject returns the first quarantined identity in id's chain, or ""
+// when none is. An error is the caller's signal to fail closed — every caller
+// refuses the call rather than treating an unreadable quarantine as an absent
+// one.
+func (s *Server) quarantinedSubject(ctx context.Context, id *agentid.Identity) (string, error) {
+	for _, subject := range quarantineSubjects(id) {
+		quarantined, err := s.store.IsAgentQuarantined(ctx, subject)
+		if err != nil {
+			return "", err
+		}
+		if quarantined {
+			return subject, nil
+		}
+	}
+	return "", nil
+}
+
+// quarantineHitField renders the audit suffix naming WHICH identity in the chain
+// is quarantined, and only when that is not the presenter itself. Without it a
+// delegated refusal would record the sub-agent that happened to make the call
+// and leave the responder to guess why an agent they never quarantined stopped
+// working; with it the trail names the entry that did the stopping.
+func quarantineHitField(id *agentid.Identity, hit string) string {
+	if hit == "" || hit == id.AgentName {
+		return ""
+	}
+	return " subject:" + auditField(hit, 200)
 }
 
 // bearerToken extracts a Bearer token from the Authorization header.

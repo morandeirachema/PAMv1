@@ -46,13 +46,19 @@ rules:
     ttl_seconds: 60
 
   # Read-only inventory is always safe to allow (no secrets are ever returned).
+  # Since Phase 169 both inventory tools answer only for the targets THIS agent
+  # has a grant on (direct grants unioned with safe membership), so an allow rule
+  # here does not hand out the estate. A target with no grants and no safe stays
+  # open to everyone, exactly as it is on every other pamv1 path — grant the
+  # targets an agent should reach and the rest gate themselves.
   - id: read-inventory
     tool: list_targets
     effect: allow
   # Credential metadata never includes a secret, but `list_credentials` with no
-  # `target` lists EVERY credential in the system — inventory an agent has no
-  # reason to hold. Deny the unscoped form first (this is what `present: false`
-  # is for), then allow the scoped one.
+  # `target` lists every credential the agent is entitled to see at once —
+  # inventory an agent usually has no reason to hold in one call. Deny the
+  # unscoped form first (this is what `present: false` is for), then allow the
+  # scoped one.
   - id: no-unscoped-credential-listing
     tool: list_credentials
     when:

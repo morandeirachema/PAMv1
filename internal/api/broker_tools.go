@@ -37,6 +37,59 @@ func (s *Server) targetByName(ctx context.Context, name string) (*store.Target, 
 	return nil, fmt.Errorf("target %q not found", name)
 }
 
+// agentCanSeeTarget reports whether p may reach target at all: the target's
+// direct grants unioned with its safe's membership, evaluated by the same
+// auth.CanConnectTarget every operator path uses. It is the single definition of
+// "this agent and this target are related", shared by the tools that ACT on a
+// target and by the inventory tools that merely name one — an agent that may not
+// connect to a host has no business being told the host exists.
+//
+// A RoleAgent identity's fixed two-capability set (read_inventory, call_tool —
+// see AGENT-THREAT-MODEL.md) never includes CapUnlimitedVaultAccess, so the
+// personal-safe override this fetches can structurally never fire; the call
+// exists for correctness (an agent must be default-deny on a personal safe like
+// anyone else), not because an agent is expected to ever use the override.
+func (s *Server) agentCanSeeTarget(ctx context.Context, p *auth.Principal, target *store.Target) (bool, error) {
+	grants, err := s.store.EffectiveTargetGrants(ctx, target.ID)
+	if err != nil {
+		return false, err
+	}
+	personal, err := store.EffectiveSafePersonal(ctx, s.store, target)
+	if err != nil {
+		return false, err
+	}
+	return auth.CanConnectTarget(p, grants, target.SafeID != nil, personal), nil
+}
+
+// agentVisibleTargets returns the subset of the inventory p is authorized to
+// reach, in the store's order.
+//
+// The grant lookup is per target rather than one subject-indexed query because
+// no such query exists: grants are stored target-side (direct rows plus safe
+// membership), so "everything this subject may reach" can only be answered by
+// asking each target. That is two reads per target on an inventory listing —
+// acceptable for an inventory call an agent makes occasionally, and the honest
+// cost of not inventing a second, drifting definition of a grant. A grant-read
+// failure aborts the whole listing rather than silently dropping the target it
+// failed on: a partial inventory that looks complete is worse than an error.
+func (s *Server) agentVisibleTargets(ctx context.Context, p *auth.Principal) ([]store.Target, error) {
+	targets, err := s.store.ListTargets(ctx, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]store.Target, 0, len(targets))
+	for i := range targets {
+		allowed, err := s.agentCanSeeTarget(ctx, p, &targets[i])
+		if err != nil {
+			return nil, err
+		}
+		if allowed {
+			visible = append(visible, targets[i])
+		}
+	}
+	return visible, nil
+}
+
 // authorizeAgentTarget resolves a named target and enforces, in one place, the
 // target-scoped gates an agent tool must pass before touching it: an optional
 // expected protocol, the protocol allowlist, the agent's target grants, and the
@@ -55,21 +108,11 @@ func (s *Server) authorizeAgentTarget(ctx context.Context, p *auth.Principal, na
 	if !s.protocolAllowed(target.Protocol) {
 		return nil, fmt.Errorf("%s is not allowed by policy", target.Protocol)
 	}
-	grants, err := s.store.EffectiveTargetGrants(ctx, target.ID)
+	allowed, err := s.agentCanSeeTarget(ctx, p, target)
 	if err != nil {
 		return nil, err
 	}
-	// A RoleAgent identity's fixed two-capability set (read_inventory,
-	// call_tool — see AGENT-THREAT-MODEL.md) never includes
-	// CapUnlimitedVaultAccess, so the personal-safe override this fetches
-	// can structurally never fire here; this call exists for correctness
-	// (an agent must be default-deny on a personal safe like anyone else),
-	// not because an agent is expected to ever use the override.
-	personal, err := store.EffectiveSafePersonal(ctx, s.store, target)
-	if err != nil {
-		return nil, err
-	}
-	if !auth.CanConnectTarget(p, grants, target.SafeID != nil, personal) {
+	if !allowed {
 		return nil, fmt.Errorf("agent not authorized for target %q", name)
 	}
 	if !broker.Approved(ctx) {
@@ -116,17 +159,11 @@ func (s *Server) authorizeAgentCredential(ctx context.Context, p *auth.Principal
 	if err != nil {
 		return nil, nil, err
 	}
-	grants, err := s.store.EffectiveTargetGrants(ctx, target.ID)
+	allowed, err := s.agentCanSeeTarget(ctx, p, target)
 	if err != nil {
 		return nil, nil, err
 	}
-	// See authorizeAgentTarget's matching comment: structurally unreachable
-	// by a RoleAgent identity, fetched for correctness regardless.
-	personal, err := store.EffectiveSafePersonal(ctx, s.store, target)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !auth.CanConnectTarget(p, grants, target.SafeID != nil, personal) {
+	if !allowed {
 		return nil, nil, fmt.Errorf("agent not authorized for target %q", target.Name)
 	}
 	if !broker.Approved(ctx) {
@@ -377,8 +414,17 @@ func (t *listTargetsTool) InputSchema() map[string]string { return map[string]st
 func (t *listTargetsTool) Capability() auth.Capability { return auth.CapCallTool }
 
 // Execute returns target metadata; credential material is never included.
-func (t *listTargetsTool) Execute(ctx context.Context, _ *auth.Principal, _ broker.Args) (broker.Result, error) {
-	targets, err := t.s.store.ListTargets(ctx, 0, 0)
+//
+// Scoped to the agent's own grants (agentVisibleTargets). It listed the WHOLE
+// estate until Phase 169 — the principal was literally discarded — so an agent
+// with no grant at all still learned every hostname, OS and protocol pamv1
+// knows about, which is reconnaissance handed to the least-trusted actor in the
+// system and the one tool in this file that ignored the grants every sibling
+// enforces. Ungated targets (no grants, no safe) stay visible to everyone, as
+// they are everywhere else: this narrows an agent's view to what it may reach,
+// it does not invent a second authorization model.
+func (t *listTargetsTool) Execute(ctx context.Context, p *auth.Principal, _ broker.Args) (broker.Result, error) {
+	targets, err := t.s.agentVisibleTargets(ctx, p)
 	if err != nil {
 		return broker.Result{}, err
 	}
@@ -415,15 +461,41 @@ func (t *listCredentialsTool) InputSchema() map[string]string {
 // Capability is the capability an agent must hold to invoke any tool.
 func (t *listCredentialsTool) Capability() auth.Capability { return auth.CapCallTool }
 
-// Execute lists credential metadata, optionally filtered to one named target.
-func (t *listCredentialsTool) Execute(ctx context.Context, _ *auth.Principal, args broker.Args) (broker.Result, error) {
+// Execute lists credential metadata for the targets the agent may reach,
+// optionally filtered to one named target.
+//
+// Scoped like its sibling (Phase 169). A named target the agent has no grant on
+// is refused with the same message every other tool uses, rather than answered
+// with an empty list, because "you may not" and "there is nothing" are different
+// facts and an operator debugging a policy needs to tell them apart. The
+// unfiltered form — the one the Phase 163 argument-presence marker exists to let
+// a rule refuse — now lists only the accounts on targets the agent is authorized
+// for, so login names on the rest of the estate stop being free.
+func (t *listCredentialsTool) Execute(ctx context.Context, p *auth.Principal, args broker.Args) (broker.Result, error) {
 	var targetID int64
+	visible := map[int64]bool{}
 	if name, _ := args["target"].(string); name != "" {
 		target, err := t.s.targetByName(ctx, name)
 		if err != nil {
 			return broker.Result{}, err
 		}
+		allowed, err := t.s.agentCanSeeTarget(ctx, p, target)
+		if err != nil {
+			return broker.Result{}, err
+		}
+		if !allowed {
+			return broker.Result{}, fmt.Errorf("agent not authorized for target %q", name)
+		}
 		targetID = target.ID
+		visible[target.ID] = true
+	} else {
+		targets, err := t.s.agentVisibleTargets(ctx, p)
+		if err != nil {
+			return broker.Result{}, err
+		}
+		for _, tg := range targets {
+			visible[tg.ID] = true
+		}
 	}
 	// This tool reports id/target_id/username/secret_type only — never a
 	// secret — so the metadata-only listing is enough.
@@ -433,6 +505,9 @@ func (t *listCredentialsTool) Execute(ctx context.Context, _ *auth.Principal, ar
 	}
 	list := make([]map[string]any, 0, len(creds))
 	for _, c := range creds {
+		if !visible[c.TargetID] {
+			continue
+		}
 		list = append(list, map[string]any{"id": c.ID, "target_id": c.TargetID, "username": c.Username, "secret_type": c.SecretType})
 	}
 	return broker.Result{Data: map[string]any{"credentials": list}}, nil
