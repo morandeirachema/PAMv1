@@ -316,7 +316,11 @@ type Options struct {
 	// BrokerMaxResultBytes caps how much of a tool's RESULT reaches the agent
 	// (0 = unbounded). The stored transcript keeps the full output either way.
 	BrokerMaxResultBytes int
-	BrokerRatePerMin     int
+	// BrokerBudgetPerDay is the default cumulative cap on brokered tool calls per
+	// agent over a rolling 24 hours (0 = unlimited). A per-agent budget on the
+	// key overrides it. A rate limit bounds bursts; this bounds the total.
+	BrokerBudgetPerDay int
+	BrokerRatePerMin   int
 	// BrokerCheckpointEvery emits a signed in-chain audit checkpoint every N broker
 	// events (0 = off). BrokerAuditSignPrevKeys are rotated-out ed25519 public keys
 	// still trusted to verify older checkpoints during a signing-key rotation
@@ -504,8 +508,11 @@ type Server struct {
 	// PAM_BROKER_TOKEN_EXCHANGE is on, which also gates POST /v1/token.
 	exchanger     *agentid.Exchanger
 	auditChain    *auditchain.Chain
-	brokerLimiter *ratelimit.Limiter  // per-agent tool-call rate limit (Phase 13)
-	mcpSessions   *mcpSessionRegistry // open MCP SSE streams for elicitation (Phase 27)
+	brokerLimiter *ratelimit.Limiter // per-agent tool-call rate limit (Phase 13)
+	// brokerBudgetPerDay is the default cumulative per-agent call budget over a
+	// rolling 24h (0 = unlimited); a per-agent value on the key overrides it.
+	brokerBudgetPerDay int
+	mcpSessions        *mcpSessionRegistry // open MCP SSE streams for elicitation (Phase 27)
 }
 
 // RuntimeConfig is the set of settings PUT /api/config can change without a
@@ -1169,6 +1176,7 @@ func (s *Server) routes() {
 		s.mux.Handle("DELETE /v1/agents/quarantine/{id}", s.authz(auth.CapManageUsers, s.releaseAgentQuarantine))
 		s.mux.Handle("POST /v1/agents/{id}/disable", s.authz(auth.CapManageUsers, s.disableAgentKey))
 		s.mux.Handle("POST /v1/agents/{id}/enable", s.authz(auth.CapManageUsers, s.enableAgentKey))
+		s.mux.Handle("POST /v1/agents/{id}/budget", s.authz(auth.CapManageUsers, s.setAgentBudget))
 		s.mux.Handle("GET /v1/audit", s.authz(auth.CapReadAudit, s.listBrokerAudit))
 		s.mux.Handle("GET /v1/audit/verify", s.authz(auth.CapReadAudit, s.verifyBrokerAudit))
 		s.mux.Handle("GET /v1/audit/head", s.authz(auth.CapReadAudit, s.brokerAuditHead))

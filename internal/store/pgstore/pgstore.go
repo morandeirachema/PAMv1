@@ -1284,9 +1284,9 @@ func (s *PGStore) DeleteUser(ctx context.Context, id int64) error {
 // CreateAgentKey inserts an agent key, populating its ID and CreatedAt.
 func (s *PGStore) CreateAgentKey(ctx context.Context, k *store.AgentKey) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO agent_keys (name, owner, token_hash, disabled, expires_at)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
-		k.Name, k.Owner, k.TokenHash, k.Disabled, k.ExpiresAt,
+		`INSERT INTO agent_keys (name, owner, token_hash, disabled, expires_at, budget_per_day)
+		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
+		k.Name, k.Owner, k.TokenHash, k.Disabled, k.ExpiresAt, k.BudgetPerDay,
 	).Scan(&k.ID, &k.CreatedAt)
 	if pgCode(err) == pgUniqueViolation {
 		return store.ErrConflict
@@ -1300,21 +1300,21 @@ func (s *PGStore) CreateAgentKey(ctx context.Context, k *store.AgentKey) error {
 // can be audited as an expired key rather than as an unknown one.
 func (s *PGStore) GetAgentKeyByTokenHash(ctx context.Context, tokenHashHex string) (*store.AgentKey, error) {
 	return getOne(ctx, s.pool, scanAgentKey,
-		`SELECT id, name, owner, token_hash, disabled, created_at, expires_at, last_used_at
+		`SELECT id, name, owner, token_hash, disabled, created_at, expires_at, last_used_at, budget_per_day
 		 FROM agent_keys WHERE token_hash = $1 AND disabled = FALSE`, tokenHashHex)
 }
 
 // GetAgentKey returns an agent key by ID (regardless of disabled), or ErrNotFound.
 func (s *PGStore) GetAgentKey(ctx context.Context, id int64) (*store.AgentKey, error) {
 	return getOne(ctx, s.pool, scanAgentKey,
-		`SELECT id, name, owner, token_hash, disabled, created_at, expires_at, last_used_at
+		`SELECT id, name, owner, token_hash, disabled, created_at, expires_at, last_used_at, budget_per_day
 		 FROM agent_keys WHERE id = $1`, id)
 }
 
 // ListAgentKeys returns all agent keys ordered by ID.
 func (s *PGStore) ListAgentKeys(ctx context.Context) ([]store.AgentKey, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, owner, token_hash, disabled, created_at, expires_at, last_used_at
+		`SELECT id, name, owner, token_hash, disabled, created_at, expires_at, last_used_at, budget_per_day
 		 FROM agent_keys ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -1326,7 +1326,7 @@ func (s *PGStore) ListAgentKeys(ctx context.Context) ([]store.AgentKey, error) {
 // nil, when the owner has none).
 func (s *PGStore) ListAgentKeysByOwner(ctx context.Context, owner string) ([]store.AgentKey, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, owner, token_hash, disabled, created_at, expires_at, last_used_at
+		`SELECT id, name, owner, token_hash, disabled, created_at, expires_at, last_used_at, budget_per_day
 		 FROM agent_keys WHERE owner = $1 ORDER BY id`, owner)
 	if err != nil {
 		return nil, err
@@ -1350,6 +1350,55 @@ func (s *PGStore) SetAgentKeyDisabled(ctx context.Context, id int64, disabled bo
 func (s *PGStore) TouchAgentKey(ctx context.Context, id int64, at time.Time) error {
 	return execExpectingRow(ctx, s.pool,
 		`UPDATE agent_keys SET last_used_at = $2 WHERE id = $1`, id, at)
+}
+
+// SetAgentKeyBudget sets an agent key's daily brokered-call budget, or clears
+// it with nil so the server-wide default applies again; ErrNotFound if absent.
+//
+// budgetPerDay is a *int so all three states survive the trip to the database:
+// nil writes SQL NULL ("no per-agent setting"), a pointer to 0 writes 0 ("this
+// agent may make no calls at all"), and a positive value writes that number.
+// pgx maps a nil *int to NULL for us, so no special case is needed here -- but
+// note that the difference only survives because the column is nullable and
+// the field is a pointer on both sides.
+func (s *PGStore) SetAgentKeyBudget(ctx context.Context, id int64, budgetPerDay *int) error {
+	return execExpectingRow(ctx, s.pool,
+		`UPDATE agent_keys SET budget_per_day = $2 WHERE id = $1`, id, budgetPerDay)
+}
+
+// CountAgentToolCallsSince counts the brokered tool calls one agent has spent
+// since `since` (inclusive), from the primary audit trail.
+//
+// Only `broker.tool_call.executed` (work done immediately) and
+// `broker.tool_call.resumed` (the agent collecting the result of a call a
+// human approved) count -- denied and failed calls do not, because a budget
+// measures what the agent was allowed to DO, and refusals must not eat it. The
+// two names are compared with `IN (...)` rather than `LIKE
+// 'broker.tool_call.%'` deliberately: a prefix would silently start charging
+// the budget for any future broker.tool_call.* action. See BrokerStore's
+// interface doc for the full reasoning; the constants themselves live in
+// internal/broker (ActionToolCallExecuted / ActionToolCallResumed), which this
+// package cannot import without an import cycle, so they are repeated here as
+// literals and must be kept in step.
+//
+// Actor is matched with `=`, i.e. exactly and case-sensitively, the same way
+// every other actor lookup in this store works.
+func (s *PGStore) CountAgentToolCallsSince(ctx context.Context, agent string, since time.Time) (int, error) {
+	var n int
+	// The action names come from the shared constants rather than being spelled
+	// into the SQL, so this backend cannot drift from memstore or from the broker
+	// that writes them (a `store_test` guard pins those two together). Passed as
+	// a parameter, not interpolated: a constant would be safe to interpolate, but
+	// leaving no string-built SQL in the file at all is the habit worth keeping.
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM audit_events
+		 WHERE actor = $1
+		   AND action = ANY($2)
+		   AND ts >= $3`,
+		agent,
+		[]string{store.AuditActionToolCallExecuted, store.AuditActionToolCallResumed},
+		since.UTC()).Scan(&n)
+	return n, err
 }
 
 // QuarantineAgent stops one agent by subject, populating ID and CreatedAt;
@@ -2608,7 +2657,7 @@ func scanSession(row pgx.CollectableRow) (store.Session, error) {
 // scanAgentKey maps one result row into a store.AgentKey.
 func scanAgentKey(row pgx.CollectableRow) (store.AgentKey, error) {
 	var k store.AgentKey
-	err := row.Scan(&k.ID, &k.Name, &k.Owner, &k.TokenHash, &k.Disabled, &k.CreatedAt, &k.ExpiresAt, &k.LastUsedAt)
+	err := row.Scan(&k.ID, &k.Name, &k.Owner, &k.TokenHash, &k.Disabled, &k.CreatedAt, &k.ExpiresAt, &k.LastUsedAt, &k.BudgetPerDay)
 	return k, err
 }
 
