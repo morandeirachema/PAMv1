@@ -47,7 +47,7 @@ func TestTTLIsRefusedWhereItBoundsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a ttl on a require_approval rule must load: %v", err)
 	}
-	if d := e.Evaluate("t", nil); d.TTL != 90*time.Second {
+	if d := e.Evaluate(Caller{}, "t", nil); d.TTL != 90*time.Second {
 		t.Fatalf("decision ttl = %v, want 90s", d.TTL)
 	}
 }

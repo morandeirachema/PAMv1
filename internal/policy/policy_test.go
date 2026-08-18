@@ -69,7 +69,7 @@ rules:
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			d := e.Evaluate(tc.tool, tc.args)
+			d := e.Evaluate(Caller{}, tc.tool, tc.args)
 			if d.RuleID != tc.wantRule || d.Effect != tc.wantEffect {
 				t.Fatalf("got rule=%q effect=%q, want rule=%q effect=%q", d.RuleID, d.Effect, tc.wantRule, tc.wantEffect)
 			}
@@ -86,7 +86,7 @@ rules:
 // TestImplicitDeny proves a call matching no rule is denied by default.
 func TestImplicitDeny(t *testing.T) {
 	e := mustLoad(t, "rules:\n  - id: only-reads\n    tool: get_repo\n    effect: allow\n")
-	d := e.Evaluate("delete_repo", map[string]any{"repo": "x"})
+	d := e.Evaluate(Caller{}, "delete_repo", map[string]any{"repo": "x"})
 	if d.Effect != EffectDeny || d.RuleID != "implicit-default-deny" {
 		t.Fatalf("want implicit deny, got %+v", d)
 	}
@@ -130,7 +130,7 @@ rules:
 		{"t_num", map[string]any{"n": float64(9999999)}, EffectDeny},
 	}
 	for _, c := range cases {
-		if got := e.Evaluate(c.tool, c.args).Effect; got != c.want {
+		if got := e.Evaluate(Caller{}, c.tool, c.args).Effect; got != c.want {
 			t.Errorf("%s %v: effect=%q want %q", c.tool, c.args, got, c.want)
 		}
 	}
@@ -196,7 +196,7 @@ rules:
 		if c.amount != nil {
 			args["amount"] = c.amount
 		}
-		if got := eng.Evaluate("refund", args).Effect; got != c.want {
+		if got := eng.Evaluate(Caller{}, "refund", args).Effect; got != c.want {
 			t.Errorf("amount=%v: effect=%s, want %s", c.amount, got, c.want)
 		}
 	}
@@ -298,7 +298,7 @@ rules:
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			d := e.Evaluate(c.tool, c.args)
+			d := e.Evaluate(Caller{}, c.tool, c.args)
 			if d.Effect != c.want {
 				t.Fatalf("args=%v: effect=%s (rule %q), want %s", c.args, d.Effect, d.RuleID, c.want)
 			}
@@ -347,7 +347,7 @@ rules:
 		{"t_gte", map[string]any{"amount": "not-a-number"}, EffectDeny}, // non-numeric → still fails
 	}
 	for _, c := range cases {
-		if got := e.Evaluate(c.tool, c.args).Effect; got != c.want {
+		if got := e.Evaluate(Caller{}, c.tool, c.args).Effect; got != c.want {
 			t.Errorf("%s %v: effect=%s, want %s", c.tool, c.args, got, c.want)
 		}
 	}
@@ -398,7 +398,7 @@ rules:
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			d := e.Evaluate("list_credentials", c.args)
+			d := e.Evaluate(Caller{}, "list_credentials", c.args)
 			if d.RuleID != c.wantRule || d.Effect != c.want {
 				t.Fatalf("args=%v: rule=%q effect=%s, want rule=%q effect=%s",
 					c.args, d.RuleID, d.Effect, c.wantRule, c.want)
@@ -430,7 +430,7 @@ rules:
 		{map[string]any{"all_hosts": nil}, EffectDeny},
 	}
 	for _, c := range cases {
-		if got := e.Evaluate("ssh_exec", c.args).Effect; got != c.want {
+		if got := e.Evaluate(Caller{}, "ssh_exec", c.args).Effect; got != c.want {
 			t.Errorf("args=%v: effect=%s, want %s", c.args, got, c.want)
 		}
 	}
