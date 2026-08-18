@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–174 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–175 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,54 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 175 — The identities nobody was reviewing ✅
+
+**Closes:** the agent-broker research pass's finding 7 — agent identities are
+never recertified, and their owner is free text nothing checks.
+
+**The gap.** A certification campaign — the periodic "recertify or revoke" review
+SOX / ISO 27001 / NIS2 expect — snapshotted `target_grant` and `safe_member` and
+nothing else. AI-agent identities hold brokered access to the same estate and
+were reviewed by **nobody**. Worse, the one place an agent *did* surface was a
+target grant naming it, which is stored with `SubjectType "user"`: reviewed, when
+at all, as though it were a person.
+
+- [x] **Agents are campaign items of their own** — `agent_key` and
+  `agent_identity`, both `SubjectType "agent"`, carrying what makes the question
+  answerable: the owner, the lifecycle state (active/suspended/expired, or
+  enrolled/seen) and the dormancy signal (*last used* for a key, *last seen* for
+  an SVID). An agent nobody has called in four months, owned by somebody who
+  left, is exactly what the review exists to surface
+- [x] **Safe-scoped campaigns skip them.** An agent is not a member of a safe,
+  and padding a safe review with unrelated rows is the "list you were not asked
+  to review" failure `snapshotAccess`'s own header warns about
+- [x] **Revoking stops, it does not delete** (following Phase 159's stance): a
+  static key is suspended, an attested identity is quarantined — both reversible,
+  both audited `reason:certification-revoked`, both keeping the row an
+  investigation needs. An identity already stopped is success rather than an
+  error, exactly as a grant already gone is on the human path, and an existing
+  quarantine entry is never overwritten by this one
+- [x] **The owner-typo half of the same finding.** An owner is free text on both
+  identity kinds and the offboarding cascade matches it as a username STRING, so
+  `caro1` makes an agent no cascade can ever reach while the row still reads as
+  accountable. pamv1 does **not** refuse an unrecognised owner — a team address or
+  a service account is a legitimate answer to "who answers for this" — it
+  **reports** one: `owner_known` on both agent listings, a red owner with a `?` on
+  console menus 26 and F8, and a WARNING inside the campaign item, where a
+  reviewer is already asking that exact question. One roster read per listing,
+  degrading to "no finding" if it fails, so a database hiccup cannot turn an
+  inventory screen into a wall of warnings
+- [x] **A console defect found on the way**: the campaign screen rendered the item
+  kind with a non-truncating `pad(…, 12)`, and `agent_identity` is fourteen
+  characters — the row would have widened the moment the first agent item
+  appeared. Now `cell(…, 14)`; the revoke wording and the empty-state text, both
+  of which said "grant", now say what actually happens to each kind
+- [x] **Tests, both verified to FAIL against the pre-fix snapshot**:
+  `api.TestCampaignCertifiesAgentIdentities` (both kinds appear, reviewed as
+  agents, with dormancy; revoke suspends the key, quarantines the subject, deletes
+  neither, audits both) and `api.TestCampaignFlagsAnOwnerNobodyCanOffboard`
+- [x] No schema change (high-water stays `0046`), no new env var, no new route
 
 ## Phase 174 — The inventory an attested identity never had ✅
 
@@ -8010,14 +8058,14 @@ buys:
   cost Phase 169 accepted for its scoped inventory: two reads per target. A
   subject-indexed view would answer the question an investigator actually asks,
   and would let an agent's access be *reviewed* rather than reconstructed.
-- **Agent identities are never recertified.** Campaigns snapshot `target_grant`
-  and `safe_member` only, and a grant naming one agent is stored with
-  `SubjectType "user"` (the fleet-wide alternative is `role: agent`) — so when it
-  is reviewed at all, it is reviewed as if it were a person, under a subject type
-  that misdescribes it.
-  Related: `owner` is free text on both identity kinds and is never checked
-  against the user roster, so a typo makes an agent no offboarding cascade can
-  reach.
+- ~~**Agent identities are never recertified.**~~ — ✅ closed 2026-08-19 (Phase
+  175): campaigns snapshot both agent identity kinds as items of their own
+  (`SubjectType "agent"`, with owner, state and dormancy), revoking one suspends a
+  key or quarantines an attested subject rather than deleting it, and an owner
+  matching no pamv1 user is reported in both listings and inside the review. A
+  grant *naming* an agent is still filed as a `"user"` subject — that is the grant
+  table's shape, not the review's, and changing it would rewrite how every grant
+  is stored.
 - **Posture never reaches the agent path.** `internal/posture` is wired into
   `admit()` and the REST `authz` middleware but not `agentAuth`, so a human's
   laptop must pass EDR posture on every connect while an agent container passes
