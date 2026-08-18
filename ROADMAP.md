@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–162 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–163 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -309,7 +309,7 @@ that respects the project's IaC-first roots.
 
 PAM for AI agents (ports [`morandeirachema/pam-research`](https://github.com/morandeirachema/pam-research)): an agent holds only an identity key; a policy engine decides `allow / require_approval / deny` on a tool call **and its arguments**; approved actions execute **server-side** with a just-in-time credential; the agent receives only the result. "Trust the chokepoint, not the agent." Opt-in via `PAM_BROKER_POLICY_FILE`; brokers pamv1's own operations with JIT vault injection.
 
-- [x] **Policy engine** (`internal/policy`): YAML rules (`eq`/`not`/`in`/`not_in`), first-match-wins, implicit deny, scope templating, fail-loud loader
+- [x] **Policy engine** (`internal/policy`): YAML rules (`eq`/`not`/`in`/`not_in`; numeric comparators in Phase 30, `present` in Phase 163, where every operator also became presence-requiring), first-match-wins, implicit deny, scope templating, fail-loud loader
 - [x] **Agent identity** (`internal/agentid`): static bearer keys (`agent_keys`, SHA-256 hash lookup), `RoleAgent` + `CapCallTool`
 - [x] **Tool registry + JIT execution**: `winrm_exec` over the refactored `execWinRM` — decrypts just-in-time, returns only the result (proven: the runner gets the vaulted secret, the response leaks nothing)
 - [x] **Verifiable audit chain** (`internal/auditchain`): keyed-HMAC per-event hash chain (`broker_audit_events`) + `/v1/audit/verify` + ed25519-signed head checkpoint for truncation detection
@@ -2418,6 +2418,74 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 163 — Policy that cannot be bypassed by omission ✅
+
+**Closes:** the agent-broker research's finding 8 — negative policy guards
+bypassed by omission, no argument validation against the declared schema, and no
+`required` in the emitted JSON Schema — plus the cheap `isError` fix from the
+same pass.
+
+**The defect, and why it is the worst shape a control can have.** A `Condition`
+using `not` or `not_in` was satisfied when the argument was **absent**
+(documented as "differs or absent", so it looked deliberate). The exploit is
+concrete, not theoretical: `list_credentials` takes an OPTIONAL `target` and
+lists **every** credential's metadata when it is omitted. So the guard an
+operator would naturally write —
+
+```yaml
+- id: not-the-vault
+  tool: list_credentials
+  effect: allow
+  when: { args.target: { not_in: [vault-prod, hsm-root] } }
+```
+
+— did the opposite of what it says: omitting `target` satisfied the block-list,
+matched the allow rule, and listed the two targets the rule names. **The rule
+reads as a restriction and is defeated by sending less data.**
+
+- [x] **Every operator now requires the argument to be present**, matching `eq`,
+  `in` and the numeric comparators, which always did. An omitted argument
+  matches no condition, so the call falls through to the implicit deny
+- [x] **New `present: true|false` operator**, because after that change there was
+  no way to express "absent is acceptable" or "this argument must NOT be
+  supplied" — and the engine has no OR. `present: false` is how an operator
+  writes "the unscoped, list-everything form of this call is not allowed", which
+  is the very bypass the phase closes. The example policy gained exactly that
+  rule
+- [x] **Arguments are validated against the tool's own declared schema** before
+  the policy engine sees them (`broker.ValidateArgs`): an argument the tool does
+  not declare is **refused, not ignored** (the engine only inspects fields a rule
+  names, so an undeclared argument is a value that passed no guard — and a typo
+  like `targt` silently became "not supplied", which for an optional filter is
+  the difference between listing one thing and listing everything); a missing
+  required argument is refused (the tools read arguments with Go's comma-ok
+  assertion, so a missing string quietly became `""`); and a wrong type is
+  refused, which matters because the engine compares a **stringified** value
+  while the tool reads the raw JSON one — a type the two disagree about is a
+  value a rule can be made to match while the tool does something else with it
+- [x] **The `InputSchema` shorthand gained an optional marker** (`"string?"`), so
+  required-ness is declared rather than guessed. `list_credentials`' `target` is
+  the only optional argument in the toolset, and the marker exists for it
+- [x] **A supplied-but-empty string is refused** — the same bypass wearing one
+  character. `target: ""` is *present* as far as policy is concerned, so it
+  satisfies both a `not_in` block-list and a `present: true` guard, while the
+  tool reads it as "no filter" and returns everything. Found by the subagent
+  building the policy half and reported rather than silently patched, which is
+  the boundary working as intended
+- [x] **`required` is now advertised** in the MCP `tools/list` JSON Schema
+  (sorted, and omitted entirely rather than emitted empty), so a well-behaved
+  client gets the call right instead of learning the contract from a refusal
+- [x] **An MCP denial is flagged `isError: true`.** It was `false`, so a client
+  that trusts the flag — which is what the flag is for — read a policy refusal as
+  a successful call that returned some text. A call parked for approval is
+  deliberately still not an error: it has not failed, it is waiting for a human
+- [x] Ordering preserved deliberately: an **unknown tool** has no schema to check
+  against and still falls through to the policy decision, so "unknown tool with
+  no matching rule" stays a DENIAL rather than becoming a validation failure
+- [x] No schema change, no new env var, no route change. **Policy semantics DO
+  change** — the CHANGELOG and the admin guide both say so plainly rather than
+  burying it
 
 ## Phase 162 — v0.44.0 ✅
 
