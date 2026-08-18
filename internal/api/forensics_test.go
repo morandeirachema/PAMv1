@@ -266,9 +266,17 @@ func TestForensicsArtifactsAreListedAndPlayable(t *testing.T) {
 		TargetID: tid, CredentialID: cid, Actor: "alice", SessionID: "sess-4",
 		Started: now.Add(-time.Minute), Ended: now.Add(time.Minute),
 	})
-	// A Kubernetes transcript, written by the same shared writer.
-	if err := os.WriteFile(recDir+"/20260817-000000_web-01_alice.k8s.log", []byte("# pamv1 Kubernetes session\n"), 0o600); err != nil {
-		t.Fatal(err)
+	// A Kubernetes transcript and an ssh_exec transcript, both written by the
+	// same shared writer. Each new suffix has to be added to the listing regex and
+	// the classifier as well as the writer, which is exactly the pair Phase 155
+	// got half of — so every suffix in the family is pinned here from now on.
+	for name, body := range map[string]string{
+		"20260817-000000_web-01_alice.k8s.log": "# pamv1 Kubernetes session\n",
+		"20260818-000000_db-01_bot.ssh.log":    "# pamv1 SSH session\n",
+	} {
+		if err := os.WriteFile(recDir+"/"+name, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	ts := httptest.NewServer(srv)
@@ -281,7 +289,7 @@ func TestForensicsArtifactsAreListedAndPlayable(t *testing.T) {
 	if err := json.Unmarshal(data, &list); err != nil {
 		t.Fatal(err)
 	}
-	var forensicName, k8sName string
+	var forensicName, k8sName, sshName string
 	for _, r := range list {
 		switch {
 		case strings.HasSuffix(r.Name, ".forensics.log"):
@@ -294,10 +302,19 @@ func TestForensicsArtifactsAreListedAndPlayable(t *testing.T) {
 			if r.Kind != "transcript" {
 				t.Fatalf("kubernetes transcript classified as %q", r.Kind)
 			}
+		case strings.HasSuffix(r.Name, ".ssh.log"):
+			sshName = r.Name
+			if r.Kind != "transcript" {
+				t.Fatalf("ssh_exec transcript classified as %q", r.Kind)
+			}
 		}
 	}
-	if forensicName == "" || k8sName == "" {
-		t.Fatalf("both artifacts must be listed: %s", data)
+	if forensicName == "" || k8sName == "" || sshName == "" {
+		t.Fatalf("every brokered-command artifact must be listed: %s", data)
+	}
+	// And servable, not merely listed — the half Phase 155 missed.
+	if st, body := do(t, ts, http.MethodGet, "/api/recordings/"+sshName, testAPIKey, nil); st != http.StatusOK || !strings.Contains(string(body), "pamv1 SSH session") {
+		t.Fatalf("playback of the ssh_exec transcript: %d %s", st, body)
 	}
 	status, body := do(t, ts, http.MethodGet, "/api/recordings/"+forensicName, testAPIKey, nil)
 	if status != http.StatusOK || !strings.Contains(string(body), forensicHidden) {

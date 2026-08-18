@@ -1299,6 +1299,7 @@ func run() error {
 		BrokerAuditSignKey:      brokerSignKey,
 		BrokerTokenTTL:          cfg.BrokerTokenTTL,
 		BrokerMaxArgBytes:       cfg.BrokerMaxArgBytes,
+		BrokerMaxResultBytes:    cfg.BrokerMaxResultBytes,
 		BrokerRatePerMin:        cfg.BrokerRatePerMin,
 		BrokerCheckpointEvery:   cfg.BrokerCheckpointEvery,
 		BrokerAuditSignPrevKeys: brokerSignPrevKeys,
