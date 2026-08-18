@@ -121,7 +121,25 @@ func (s *Server) listAgentIdentities(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	known := s.knownUsernames(r.Context())
+	out := make([]agentIdentityView, 0, len(list))
+	for _, a := range list {
+		out = append(out, agentIdentityView{
+			AgentIdentity: a,
+			// An unowned row is not a typo, it is an unclaimed one — reporting
+			// it as an unknown owner would bury the finding that matters.
+			OwnerKnown: !a.Attributed() || ownerIsKnown(known, a.Owner),
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// agentIdentityView is a registration plus whether its owner is a pamv1 user
+// (Phase 175). Derived per request rather than stored, because it is a fact
+// about the user roster at this moment, not about the identity.
+type agentIdentityView struct {
+	store.AgentIdentity
+	OwnerKnown bool `json:"owner_known"`
 }
 
 type identityOwnerIn struct {
@@ -168,6 +186,45 @@ func (s *Server) deleteAgentIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), "agent.identity_remove", fmt.Sprintf("identity:%d", id))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// knownUsernames returns the set of usernames pamv1 has a user row for, so a
+// listing can flag an agent whose owner is not one of them.
+//
+// An owner is free text on both identity kinds, and the offboarding cascade
+// matches it against a username STRING: deleting "carol" suspends the agents
+// owned by "carol" and reaches nothing owned by "caro1" or by "carol " — a typo
+// makes an agent no cascade can ever reach, silently, with the row still reading
+// as though somebody were accountable. pamv1 does not refuse an owner it does
+// not recognise (a team address or a service account is a legitimate answer to
+// "who answers for this"), so instead it says so where a human is already
+// looking: the agent listings and the recertification campaign.
+//
+// One query for the whole listing rather than one per row. A failure returns nil,
+// which the callers read as "cannot tell" and render as not-flagged: an
+// unreachable user table must not turn an inventory screen into a wall of
+// warnings.
+func (s *Server) knownUsernames(ctx context.Context) map[string]bool {
+	users, err := s.store.ListUsers(ctx, 0, 0)
+	if err != nil {
+		s.log.Debug("owner check: user listing failed", "err", err)
+		return nil
+	}
+	known := make(map[string]bool, len(users))
+	for _, u := range users {
+		known[strings.ToLower(u.Username)] = true
+	}
+	return known
+}
+
+// ownerIsKnown reports whether owner matches a pamv1 user. With no roster (the
+// lookup failed) it answers true, so a failure reads as "no finding" rather than
+// as an accusation against every agent in the list.
+func ownerIsKnown(known map[string]bool, owner string) bool {
+	if known == nil {
+		return true
+	}
+	return known[strings.ToLower(strings.TrimSpace(owner))]
 }
 
 // accountableOwners resolves every human accountable for a parked call's agent
