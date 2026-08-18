@@ -1,0 +1,31 @@
+-- SVID enrollment and inventory (Phase 174).
+--
+-- Phase 170 gave a SPIFFE identity an OWNER, which is what made four-eyes and
+-- the offboarding cascade work on the attested path. What it did not give is an
+-- INVENTORY: any workload in the trust domain can authenticate, and pamv1 only
+-- knew about the ones an admin had happened to type in. There was no list of
+-- which SVIDs actually call, no first-seen, no last-seen, and no way to say
+-- "only identities we have reviewed may call at all".
+--
+-- These three columns are that inventory, and they are additive so an existing
+-- deployment changes behaviour in exactly no way until it opts in:
+--
+--   enrolled   -- TRUE for every existing row, because every existing row was
+--                 created deliberately through POST /v1/agents/identities. A row
+--                 pamv1 creates itself on first sight inserts FALSE: seen, not
+--                 claimed. The distinction is the whole point of the column, and
+--                 a DEFAULT of TRUE is what keeps it truthful for rows that
+--                 predate it.
+--   first_seen -- when this identity first authenticated. NULL on rows recorded
+--                 before this migration (or enrolled ahead of first use), which
+--                 reads correctly as "not seen since pamv1 started counting".
+--   last_seen  -- stamped on every successful authentication, so the dormant-
+--                 identity question an operator asks about a standing human
+--                 credential can be asked about a workload too.
+--
+-- No index on last_seen: the inventory is small (one row per SPIFFE ID in the
+-- trust domain) and is read by a listing, never filtered on in a hot path. The
+-- hot path is the existing UNIQUE index on spiffe_id, which the upsert uses.
+ALTER TABLE agent_identities ADD COLUMN IF NOT EXISTS enrolled   BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE agent_identities ADD COLUMN IF NOT EXISTS first_seen TIMESTAMPTZ;
+ALTER TABLE agent_identities ADD COLUMN IF NOT EXISTS last_seen  TIMESTAMPTZ;

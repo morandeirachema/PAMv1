@@ -1,6 +1,6 @@
 # pamv1 — documentation
 
-> Last updated: 2026-08-18 · Reflects: Phases 0–173 and release v0.48.0 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-08-18 · Reflects: Phases 0–174 and release v0.48.0 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -107,6 +107,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-08-18 | Phase 174 (SVID enrollment and inventory) documented across the set: a new env var in both configuration tables, the audit vocabulary's three new actions, the migration high-water mark at `0046`, and the threat model's "still open" note on SVID inventory closed rather than left standing. |
 | 2026-08-18 | Documentation currency pass over the AI-agent-broker batch (159–173). `ARCHITECTURE-HIGH-LEVEL.md`'s change log had stopped at Phase 157 and gained the nine missing rows; `SECURITY-GAPS.md` gained the **2026-08-17/18 research** section (five findings, all closed by 169–173, with the two live authorization defects called out as the shape Phase 159 had already found once); `PROTOCOLS-AND-CRYPTO.md` records that the verified `act` chain is now load-bearing for containment, plus the two honest edges (`may_act` enforced but never issued, no proof-of-possession); `PORTS-AND-FLOWS.md`'s "adds no flow" note extends to 173; `USER-GUIDE.md` gains the approver-visible DECIDE BY deadline. Every `Reflects:` header is at 0–173 / v0.48.0 |
 | 2026-08-09 | Phase 95 — documentation currency pass across the whole set: every `Reflects:` header brought to 0–94 / v0.18.1 (they ranged from 0–70 to 0–93; this entry point still said v0.13.0), the READMEs' phase story extended past 61 (both languages), PORTS-AND-FLOWS gained the omitted ITSM egress (E14), EXTERNAL-INFRA-GAPS' ITSM row caught up with the Phase 84 connectors, and the CODE-GUIDE package map gained its ten missing packages |
 | 2026-07-28 | Maturity banner corrected to **Beta** (it still said Alpha while the README said Beta — the entry point contradicting the doc that links to it). Added this file's own status header and change log, which house rules 2 and 5 require of every other doc. Rules 3, 4 and 9 rewritten to describe what the doc set actually does rather than a state it never reached. Linked the three deploy READMEs, which nothing in the repo referenced. Noted CODE-GUIDE §0.1 for readers who do not write Go |

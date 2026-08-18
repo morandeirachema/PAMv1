@@ -33,6 +33,7 @@ func (s *Server) setupBroker(opts Options) error {
 		WithRevalidator(s.revalidateAgent)
 	s.brokerLimiter = ratelimit.New(opts.BrokerRatePerMin)
 	s.brokerBudgetPerDay = opts.BrokerBudgetPerDay
+	s.brokerRequireEnrolledSVID = opts.BrokerRequireEnrolledSVID
 	s.mcpSessions = newMCPSessionRegistry()
 	// Static agent keys are always accepted; a SPIFFE SVID verifier, when
 	// configured, is tried alongside them (Phase 13d).

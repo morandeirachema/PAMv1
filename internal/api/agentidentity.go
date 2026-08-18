@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/morandeirachema/pamv1/internal/broker"
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -70,12 +71,45 @@ func (s *Server) createAgentIdentity(w http.ResponseWriter, r *http.Request) {
 	}
 	a := store.AgentIdentity{SPIFFEID: in.SPIFFEID, Owner: in.Owner, Note: in.Note, CreatedBy: actorFrom(r.Context())}
 	if err := s.store.CreateAgentIdentity(r.Context(), &a); err != nil {
-		storeError(w, err)
+		// A conflict is ambiguous since Phase 174, and the two cases mean opposite
+		// things. If the row is one pamv1 created for itself when this identity
+		// first called — seen, unenrolled, nobody's — then registering it is the
+		// operator ADOPTING it, which is exactly what this route is for, and
+		// refusing would leave them unable to claim what the inventory just told
+		// them about. If it is already enrolled, somebody has claimed it and a
+		// second registration really is a conflict.
+		if !errors.Is(err, store.ErrConflict) {
+			storeError(w, err)
+			return
+		}
+		existing, gerr := s.store.GetAgentIdentity(r.Context(), in.SPIFFEID)
+		if gerr != nil || existing.Enrolled {
+			storeError(w, store.ErrConflict)
+			return
+		}
+		if eerr := s.store.EnrollAgentIdentity(r.Context(), existing.ID, in.Owner, in.Note); eerr != nil {
+			storeError(w, eerr)
+			return
+		}
+		existing.Owner, existing.Note, existing.Enrolled = in.Owner, in.Note, true
+		s.audit(r.Context(), "agent.identity_enrolled",
+			fmt.Sprintf("spiffe_id:%s owner:%s first_seen:%s",
+				auditField(existing.SPIFFEID, maxSPIFFEIDLen), auditField(existing.Owner, 128),
+				auditField(timeOrDash(existing.FirstSeen), 40)))
+		writeJSON(w, http.StatusCreated, existing)
 		return
 	}
 	s.audit(r.Context(), "agent.identity_register",
 		fmt.Sprintf("spiffe_id:%s owner:%s", auditField(a.SPIFFEID, maxSPIFFEIDLen), auditField(a.Owner, 128)))
 	writeJSON(w, http.StatusCreated, a)
+}
+
+// timeOrDash renders an optional timestamp for an audit detail.
+func timeOrDash(t *time.Time) string {
+	if t == nil {
+		return "-"
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // listAgentIdentities returns every registered SPIFFE agent identity — the
@@ -194,6 +228,14 @@ func (s *Server) accountableOwners(ctx context.Context, ident broker.ApprovalIde
 				return nil, subject, nil
 			}
 			return nil, "", err
+		}
+		// A row existing is not the same as somebody answering for it: since
+		// Phase 174 pamv1 creates an UNOWNED row the first time an identity
+		// calls, so an inventory entry with no owner is exactly as unattributed
+		// as no entry at all — and must refuse the decision the same way. The
+		// alternative would be a four-eyes gate satisfied by an empty string.
+		if !reg.Attributed() {
+			return nil, subject, nil
 		}
 		owners = append(owners, reg.Owner)
 	}
