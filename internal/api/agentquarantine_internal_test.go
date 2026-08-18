@@ -97,3 +97,46 @@ func TestRevalidateAgentQuarantineCoversSVIDIdentities(t *testing.T) {
 		t.Fatal("an expired identity must not revalidate")
 	}
 }
+
+// TestRevalidateAgentQuarantineFollowsTheChain is the approval-time half of
+// Phase 169. A call is parked when a human must approve it, and a responder
+// racing an incident is racing exactly that call: the one already waiting for
+// someone to press approve.
+//
+// The presenter of a delegated token is a sub-agent, and the compromised root
+// appears only in the token's RFC 8693 `act` chain. Quarantining the root
+// therefore had no effect here at all — the parked call still ran on approval,
+// under an identity the responder believed they had stopped. No HTTP request
+// can reach this path without a SPIFFE deployment, so it is asserted in-package
+// against an identity shaped exactly like a delegated one.
+func TestRevalidateAgentQuarantineFollowsTheChain(t *testing.T) {
+	srv, st := newQuarantineServer(t)
+	ctx := context.Background()
+	const (
+		root = "spiffe://corp.example/ns/prod/sa/planner"
+		sub  = "spiffe://corp.example/ns/prod/sa/worker"
+	)
+
+	// A delegated identity: the worker presents the token, the planner is the
+	// actor it acts for (chain innermost..outermost, as svid.go builds it).
+	delegated := &agentid.Identity{
+		AgentName: sub, SPIFFEID: sub,
+		ActorChain: []string{sub, root}, OnBehalfOf: root,
+	}
+	if !srv.revalidateAgent(ctx, delegated) {
+		t.Fatal("an unquarantined delegated identity must revalidate")
+	}
+	if err := st.QuarantineAgent(ctx, &store.AgentQuarantine{
+		Subject: root, Reason: "compromised planner", CreatedBy: "alice",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if srv.revalidateAgent(ctx, delegated) {
+		t.Fatal("quarantining the root must stop a call parked by the sub-agent it delegated to")
+	}
+	// Still per subject: an unrelated agent's parked call is untouched.
+	unrelated := &agentid.Identity{AgentName: "spiffe://corp.example/ns/prod/sa/other"}
+	if !srv.revalidateAgent(ctx, unrelated) {
+		t.Fatal("quarantining one chain must not stop an unrelated agent")
+	}
+}
