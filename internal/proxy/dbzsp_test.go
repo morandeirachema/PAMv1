@@ -208,6 +208,7 @@ func waitForAuditDetail(t *testing.T, st store.Store, action, want string) {
 // row itself (it has none) — and that role is dropped once the session ends.
 func TestDBProxyZSPProvisionsAndTearsDownRole(t *testing.T) {
 	st := memstore.New()
+	auditOnFailure(t, st)
 	v := mustVault(t)
 	fake := startFakePGProvisioner(t, "provisioner-admin")
 	seedDBZSPTarget(t, st, v, fake.addr, "provisioner-admin", "zsp-slot")
@@ -216,7 +217,13 @@ func TestDBProxyZSPProvisionsAndTearsDownRole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbx, err := proxy.NewDB(st, v, resolver, proxy.DBConfig{RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second})
+	// No DialTimeout override: NewDB's own default (10s) applies. The 5s this
+	// test used to set was an arbitrary tightening, and a test that fails
+	// because IT chose a shorter bound than production is testing its own
+	// impatience — which is one candidate for the CI flake recorded in
+	// ROADMAP §3d, where a loaded runner failed the upstream handshake here and
+	// passed on a rerun.
+	dbx, err := proxy.NewDB(st, v, resolver, proxy.DBConfig{RecordingDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,6 +270,7 @@ func TestDBProxyZSPProvisionsAndTearsDownRole(t *testing.T) {
 // guessing which credential to provision with.
 func TestDBProxyZSPNoProvisionerRefused(t *testing.T) {
 	st := memstore.New()
+	auditOnFailure(t, st)
 	v := mustVault(t)
 	fake := startFakePGProvisioner(t, "unused-provisioner")
 	ctx := context.Background()
@@ -281,7 +289,13 @@ func TestDBProxyZSPNoProvisionerRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbx, err := proxy.NewDB(st, v, resolver, proxy.DBConfig{RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second})
+	// No DialTimeout override: NewDB's own default (10s) applies. The 5s this
+	// test used to set was an arbitrary tightening, and a test that fails
+	// because IT chose a shorter bound than production is testing its own
+	// impatience — which is one candidate for the CI flake recorded in
+	// ROADMAP §3d, where a loaded runner failed the upstream handshake here and
+	// passed on a rerun.
+	dbx, err := proxy.NewDB(st, v, resolver, proxy.DBConfig{RecordingDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,6 +340,7 @@ func TestDBProxyZSPNoProvisionerRefused(t *testing.T) {
 // one to provision with — ambiguity here must fail closed.
 func TestDBProxyZSPAmbiguousProvisionerRefused(t *testing.T) {
 	st := memstore.New()
+	auditOnFailure(t, st)
 	v := mustVault(t)
 	fake := startFakePGProvisioner(t, "provisioner-a")
 	ctx := context.Background()
@@ -357,7 +372,13 @@ func TestDBProxyZSPAmbiguousProvisionerRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbx, err := proxy.NewDB(st, v, resolver, proxy.DBConfig{RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second})
+	// No DialTimeout override: NewDB's own default (10s) applies. The 5s this
+	// test used to set was an arbitrary tightening, and a test that fails
+	// because IT chose a shorter bound than production is testing its own
+	// impatience — which is one candidate for the CI flake recorded in
+	// ROADMAP §3d, where a loaded runner failed the upstream handshake here and
+	// passed on a rerun.
+	dbx, err := proxy.NewDB(st, v, resolver, proxy.DBConfig{RecordingDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
