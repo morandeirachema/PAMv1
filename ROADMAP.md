@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–178 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–179 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,37 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 179 — Make the flaky test say why ✅
+
+**Closes:** §3d's first half — not the flake itself, which is still not
+understood, but the reason it could not be understood.
+
+**The dead end.** A CI run failed with `server error: pamv1: upstream connection
+failed`. That is the message the proxy sends a **client**, and it is vague on
+purpose: a client is not owed the upstream's error. The real cause was in two
+places the test never looked — the server log, and the audit trail as
+`db.session.error … error:<real error>` — so a failure that had already been
+diagnosed by the code under test arrived as a mystery. A test that cannot say
+why it failed teaches a team to rerun rather than read, which is how a real
+defect eventually gets rerun past.
+
+- [x] **`auditOnFailure(t, st)`** registers a cleanup that prints the last fifty
+  audit rows when a test fails, and nothing at all when it passes. Wired into
+  every database-proxy test that opens a session (six in `dbproxy_test.go`, three
+  in `dbzsp_test.go`). Proven by pointing a ZSP test at a dead upstream: the run
+  now reports `error:provisioner dial: dial tcp 127.0.0.1:1: connect: connection
+  refused` beside the vague wire message
+- [x] **The ZSP tests stop being more impatient than production.** They set
+  `DialTimeout: 5s` where `NewDB` defaults to 10s — an arbitrary tightening, and
+  one plausible reading of a CI failure on a loaded runner. The override is gone.
+  Labelled in the code as a candidate, not a fix: nothing has been reproduced,
+  and pretending otherwise would be worse than the flake
+- [x] **Not done, deliberately**: no timing code was touched. Six full `-race`
+  passes of the proxy package under saturated CPU with `GOMAXPROCS=1`, and forty
+  runs of the ZSP tests alone, all pass — so there is no evidence to fix against
+  yet, and §3d stays open with the cause marked unproven
+- [x] Test-only change: no production code, no schema, no route, no env var
 
 ## Phase 178 — v0.49.0 ✅
 
@@ -8242,21 +8273,26 @@ pamv1 is an MCP **server**. Different product shape, not a gap.
   store contract suite legitimately uses, kept and recorded so the next scan does
   not re-find them.
 
-#### 3d. A flaky test, recorded rather than rerun away
+#### 3d. A flaky test — now able to say why (open, cause unproven)
 
 `proxy.TestDBProxyZSPProvisionsAndTearsDownRole` failed once in CI on the
-v0.49.0 release PR — a commit that changes no Go code — and passed on the
-rerun. Twenty local `-race` runs pass. The failure is the proxy's own
-client-facing message, `pamv1: upstream connection failed`, which is exactly
-where the test's diagnosis stops: the underlying dial error is logged by the
-server and written to the audit trail (`db.session.error … error:<real
-error>`), and the test asserts on neither, so a CI failure reports the symptom
-and hides the cause.
+v0.49.0 release PR — a commit that changes no Go code — and passed on the rerun.
+It has not been reproduced since: forty local `-race` runs of the ZSP tests and
+six full `-race` passes of the whole proxy package under saturated CPU with
+`GOMAXPROCS=1` all pass.
 
-The fix is diagnosis before theory: surface the audit row's error when the
-session fails, so the next occurrence names its own cause instead of inviting a
-guess. Guessing now would mean changing timing code on a hunch — the honest
-position is that this is not yet understood.
+**Phase 179 did what could be done honestly**: the test can now report its own
+cause (it printed the proxy's client-facing wire message and nothing else, while
+the real error sat in the audit trail it never read), and the arbitrary 5-second
+dial bound it set — tighter than the 10 seconds production defaults to — is
+gone, since a test that fails because IT chose to be more impatient than the
+product is testing its own impatience. That second change is a *candidate* fix,
+not a diagnosis, and is labelled as one in the code.
+
+**What is still open**: the cause. The next occurrence will name it — the
+failing test now prints `db.session.error … error:<real error>` alongside the
+wire message — and until then, guessing at timing code would be changing
+behaviour on a hunch.
 
 #### 4. Repo furniture — ✅ closed 2026-07-28
 

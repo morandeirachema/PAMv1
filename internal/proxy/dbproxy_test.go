@@ -227,6 +227,38 @@ func seedPGTarget(t *testing.T, st store.Store, v *vault.Vault, addr string) {
 
 // waitReady reads relayed backend messages until ReadyForQuery, failing on an
 // ErrorResponse or transport error.
+// auditOnFailure prints the audit rows that explain a failed database-proxy test
+// before the test binary exits.
+//
+// It exists because of a real diagnosis dead end (Phase 179): a CI run failed
+// with `server error: pamv1: upstream connection failed`, which is the message
+// the proxy sends a CLIENT — deliberately vague, because a client is not owed
+// the upstream's error. The cause was in the audit trail
+// (`db.session.error … error:<real error>`) and in the server log, and the test
+// asserted on neither, so the failure named its symptom and hid its reason. A
+// test that cannot say why it failed teaches a team to rerun rather than read.
+//
+// Registered as a cleanup rather than woven into waitReady, which has no store:
+// one line per test, and it fires for ANY failure in that test, not only the
+// wire-message one.
+func auditOnFailure(t *testing.T, st store.Store) {
+	t.Helper()
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		events, err := st.ListAudit(context.Background(), 50)
+		if err != nil {
+			t.Logf("audit trail unavailable for diagnosis: %v", err)
+			return
+		}
+		t.Logf("--- audit trail (%d most recent) ---", len(events))
+		for _, e := range events {
+			t.Logf("  %s %-28s %s", e.TS.UTC().Format(time.RFC3339), e.Action, e.Detail)
+		}
+	})
+}
+
 func waitReady(t *testing.T, fe *pgproto3.Frontend) {
 	t.Helper()
 	for {
@@ -366,6 +398,7 @@ func TestDBProxyWrongKeyRejected(t *testing.T) {
 // blocked statement never reaches the upstream database.
 func TestDBProxyCommandBlocked(t *testing.T) {
 	st := memstore.New()
+	auditOnFailure(t, st)
 	v := mustVault(t)
 	fake := startFakePostgres(t, upstreamSecret)
 	seedPGTarget(t, st, v, fake.addr)
@@ -421,6 +454,7 @@ func TestDBProxyCommandBlocked(t *testing.T) {
 // still refused — deny wins over allow.
 func TestDBProxyCommandAllowList(t *testing.T) {
 	st := memstore.New()
+	auditOnFailure(t, st)
 	v := mustVault(t)
 	fake := startFakePostgres(t, upstreamSecret)
 	seedPGTarget(t, st, v, fake.addr)
@@ -497,6 +531,7 @@ func TestDBProxyCommandAllowList(t *testing.T) {
 // statements as they are brokered.
 func TestDBProxyLiveMonitor(t *testing.T) {
 	st := memstore.New()
+	auditOnFailure(t, st)
 	v := mustVault(t)
 	fake := startFakePostgres(t, upstreamSecret)
 	seedPGTarget(t, st, v, fake.addr)
@@ -674,6 +709,7 @@ func waitPendingStepUp(t *testing.T, su *session.StepUp) string {
 // session stays usable.
 func TestDBProxyStepUp(t *testing.T) {
 	st := memstore.New()
+	auditOnFailure(t, st)
 	v := mustVault(t)
 	fake := startFakePostgres(t, upstreamSecret)
 	seedPGTarget(t, st, v, fake.addr)
@@ -756,6 +792,7 @@ func TestDBProxyStepUp(t *testing.T) {
 // operator gets a FATAL ErrorResponse and the statement never reaches the upstream.
 func TestDBProxyStepUpExtended(t *testing.T) {
 	st := memstore.New()
+	auditOnFailure(t, st)
 	v := mustVault(t)
 	fake := startFakePostgres(t, upstreamSecret)
 	seedPGTarget(t, st, v, fake.addr)
