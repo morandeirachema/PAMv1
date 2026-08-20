@@ -227,6 +227,38 @@ func (v *SVIDVerifier) actorChain(subject string, act *actClaim) ([]string, bool
 	return chain, true
 }
 
+// p256FromJWK rebuilds a P-256 public key from a JWK's x/y coordinates.
+//
+// It parses the SEC1 uncompressed encoding rather than filling
+// ecdsa.PublicKey's X/Y fields directly, which Go 1.26 deprecated and
+// staticcheck's SA1019 now flags. The change is not only about the warning:
+// assigning coordinates constructs whatever was handed over, on-curve or not,
+// while ParseUncompressedPublicKey VALIDATES the point. A trust-domain JWKS is
+// operator-supplied configuration rather than attacker input, so this was never
+// a live hole — but a verifier that will not build an invalid key is the right
+// shape for one.
+//
+// RFC 7518 §6.2.1.2 requires each coordinate to be the curve's full byte length
+// with leading zeros preserved (32 bytes for P-256). A shorter value is
+// left-padded rather than refused, because a stripped leading zero is a common
+// encoder bug and rejecting it would fail a key that is arithmetically correct;
+// anything longer is refused, since that cannot be a P-256 coordinate.
+func p256FromJWK(xb, yb []byte) (*ecdsa.PublicKey, error) {
+	const coordLen = 32
+	if len(xb) > coordLen || len(yb) > coordLen {
+		return nil, errors.New("agentid: bad P-256 coordinate length")
+	}
+	buf := make([]byte, 1+2*coordLen)
+	buf[0] = 4 // SEC1 uncompressed point
+	copy(buf[1+coordLen-len(xb):], xb)
+	copy(buf[1+2*coordLen-len(yb):], yb)
+	pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), buf)
+	if err != nil {
+		return nil, fmt.Errorf("agentid: invalid P-256 public key: %w", err)
+	}
+	return pub, nil
+}
+
 // verifySignature checks a JWT signature for the SPIFFE-supported algorithms
 // against the JWS signing input (header.payload). JWT ECDSA signatures are raw
 // r||s (not ASN.1); Ed25519 signs the input directly (no prehash).
@@ -277,7 +309,7 @@ func publicKeyFromJWK(k jwtutil.JWK) (crypto.PublicKey, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &ecdsa.PublicKey{Curve: elliptic.P256(), X: new(big.Int).SetBytes(xb), Y: new(big.Int).SetBytes(yb)}, nil
+		return p256FromJWK(xb, yb)
 	case "OKP":
 		if k.Crv != "Ed25519" {
 			return nil, fmt.Errorf("agentid: unsupported OKP curve %q", k.Crv)

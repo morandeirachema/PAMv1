@@ -513,6 +513,14 @@ type Config struct {
 	// merely unrecognised is audited rather than blocked. On, the deployment is
 	// saying that four-eyes it cannot verify is four-eyes it will not accept.
 	BrokerRequireKnownOwner bool
+	// BrokerPostureRequired — PAM_BROKER_POSTURE_REQUIRED — also ask the posture
+	// webhook about AGENT identities, not only human operators (Phase 180).
+	// Separate from PAM_POSTURE_ATTEST_URL on purpose: a deployment that has been
+	// attesting laptops has a webhook that knows laptops, and pointing agent
+	// names at it unannounced would refuse every brokered call. Off by default;
+	// when on, an unanswerable posture check refuses the call, like everywhere
+	// else posture is enforced.
+	BrokerPostureRequired bool
 
 	// Token exchange (Phase 57): the MINTING half of delegation. Off by default —
 	// issuing delegated identities is a privilege an operator opts into, separate
@@ -856,6 +864,7 @@ func Load() (*Config, error) {
 		BrokerBudgetPerDay:         integer("PAM_BROKER_BUDGET_PER_DAY", 0),
 		BrokerRequireEnrolledSVID:  boolean("PAM_BROKER_REQUIRE_ENROLLED_SVID", false),
 		BrokerRequireKnownOwner:    boolean("PAM_BROKER_REQUIRE_KNOWN_OWNER", false),
+		BrokerPostureRequired:      boolean("PAM_BROKER_POSTURE_REQUIRED", false),
 		BrokerRatePerMin:           integer("PAM_BROKER_RATE_PER_MIN", 0),
 		BrokerCheckpointEvery:      integer("PAM_BROKER_AUDIT_CHECKPOINT_EVERY", 0),
 		BrokerAuditSignPrev:        getenv("PAM_BROKER_AUDIT_SIGN_PREV", ""),
