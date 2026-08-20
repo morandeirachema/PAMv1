@@ -14,6 +14,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/agentid"
 	"github.com/morandeirachema/pamv1/internal/auditchain"
 	"github.com/morandeirachema/pamv1/internal/broker"
+	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
@@ -68,6 +69,24 @@ func (s *Server) agentAuth(next agentHandler) http.HandlerFunc {
 		// asks for it — require that somebody has claimed it. See noteSVID.
 		if id.SPIFFEID != "" && !s.noteSVID(w, r, id) {
 			return
+		}
+		// Live posture for the agent's own workload (Phase 180), opt-in and
+		// deliberately LAST of the admission checks: it is the only one that
+		// leaves the process, so a quarantined, unenrolled or unknown identity is
+		// refused without ever reaching the deployment's webhook. Until now
+		// `internal/posture` was wired into the session proxies' admit() and the
+		// REST authz middleware but not here — a human's laptop had to pass EDR
+		// posture on every authenticated call while an agent container passed on
+		// a bearer token alone.
+		if s.brokerPostureRequired && s.postureAttestor.Enabled() {
+			if err := s.postureAttestor.AttestSubject(r.Context(), posture.SubjectAgent, id.AgentName); err != nil {
+				s.log.Warn("agent posture check failed; refusing the call",
+					"agent", id.AgentName, "err", err)
+				_ = s.auditAs(r.Context(), id.AgentName, "agent.posture_denied",
+					"agent:"+auditField(id.AgentName, maxSPIFFEIDLen)+" reason:posture-check-failed")
+				s.authFailed(w, r, "agent", "invalid or missing agent credential")
+				return
+			}
 		}
 		// Per-agent rate limit (keyed by agent name) bounds tool-call volume.
 		if s.brokerLimiter != nil && !s.brokerLimiter.Allow(id.AgentName) {
