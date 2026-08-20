@@ -330,7 +330,10 @@ type Options struct {
 	// owner is not a pamv1 user, rather than auditing it as unverified (Phase
 	// 176). Off by default.
 	BrokerRequireKnownOwner bool
-	BrokerRatePerMin        int
+	// BrokerPostureRequired extends the posture webhook to agent identities
+	// (Phase 180). Off by default; needs PostureAttestor to be configured too.
+	BrokerPostureRequired bool
+	BrokerRatePerMin      int
 	// BrokerCheckpointEvery emits a signed in-chain audit checkpoint every N broker
 	// events (0 = off). BrokerAuditSignPrevKeys are rotated-out ed25519 public keys
 	// still trusted to verify older checkpoints during a signing-key rotation
@@ -528,6 +531,9 @@ type Server struct {
 	// brokerRequireKnownOwner refuses an approval whose agent owner matches no
 	// pamv1 user (Phase 176). Read on the approval-decision path.
 	brokerRequireKnownOwner bool
+	// brokerPostureRequired asks the posture webhook about the calling agent
+	// (Phase 180). Read on the agent authentication path.
+	brokerPostureRequired bool
 	// svidSeen damps the inventory's last-seen writes to one per identity per
 	// sightingInterval (Phase 176). Keyed by SPIFFE ID; values are time.Time.
 	svidSeen    sync.Map
