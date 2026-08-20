@@ -2459,6 +2459,19 @@ weakest gate.
   `api.TestAgentPostureIsEnforcedAndOptIn`,
   `api.TestAgentPostureRefusalIsAudited`,
   `api.TestAgentPostureIsNotAskedAboutAStoppedAgent`
+- [x] **A CI-gate repair that had to ride along**: `staticcheck` 2026.2 on the
+  runner began failing every PR on `internal/agentid/svid.go` — Go 1.26
+  deprecated `ecdsa.PublicKey`'s `X`/`Y` fields, and the JWK parser filled them
+  directly. Nothing to do with this phase, but nothing merges behind a red gate,
+  so it is fixed here: `p256FromJWK` now parses the SEC1 uncompressed encoding
+  through `ecdsa.ParseUncompressedPublicKey`. That is a small security
+  improvement rather than a lint appeasement — assigning coordinates builds
+  whatever it is handed, on-curve or not, while parsing VALIDATES the point. A
+  trust-domain JWKS is operator-supplied configuration, so this was never a live
+  hole; a verifier that refuses to build an invalid key is simply the right
+  shape. Short coordinates (a stripped leading zero, a common encoder bug) are
+  left-padded rather than refused; over-long ones are refused.
+  `agentid.TestP256JWKRejectsAnOffCurvePoint` pins all three
 - [x] One new env var; no schema change; no new route
 
 ## Phase 179 — Make the flaky test say why ✅
