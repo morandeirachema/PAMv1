@@ -35,6 +35,7 @@ func (s *Server) setupBroker(opts Options) error {
 	s.brokerBudgetPerDay = opts.BrokerBudgetPerDay
 	s.brokerRequireEnrolledSVID = opts.BrokerRequireEnrolledSVID
 	s.brokerRequireKnownOwner = opts.BrokerRequireKnownOwner
+	s.brokerPostureRequired = opts.BrokerPostureRequired
 	s.mcpSessions = newMCPSessionRegistry()
 	// Static agent keys are always accepted; a SPIFFE SVID verifier, when
 	// configured, is tried alongside them (Phase 13d).

@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–179 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–180 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,48 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 180 — Posture reaches the agent path ✅
+
+**Closes:** the agent-broker research pass's finding D.
+
+**The gap.** `internal/posture` has been wired into the session proxies'
+`admit()` and the REST `authz` middleware since Phase 133, and into `agentAuth`
+never. A human operator's laptop proved its health on every authenticated call
+while an AI agent's container reached the broker on a bearer token alone — the
+inversion this batch keeps finding, with the least-trusted actor holding the
+weakest gate.
+
+- [x] **`PAM_BROKER_POSTURE_REQUIRED`** (default off) extends the existing
+  webhook to agent identities. **A separate knob from `PAM_POSTURE_ATTEST_URL`,
+  deliberately**: a deployment already attesting laptops has a webhook that has
+  never heard of an agent name, and enabling this silently would refuse every
+  brokered call the moment it upgraded
+- [x] **Checked last among the admission gates.** Quarantine, enrollment and the
+  local checks run first, because posture is the only one that leaves the
+  process: a stopped identity is refused here and never becomes traffic the
+  deployment's EDR system has to absorb. Pinned by its own test
+- [x] **Refused like every other agent refusal**: `agent.posture_denied …
+  reason:posture-check-failed` on the trail, and the same 401 a bad bearer gets,
+  so the agent learns nothing from the reply about why it stopped working
+- [x] **Additive wire change**: `posture.AttestSubject(ctx, kind, name)` sends
+  `{"user": …, "kind": "user"|"agent"}`. `user` keeps its name, so a webhook
+  written before agents were attested is unaffected; `kind` exists because a
+  posture system that cannot tell a laptop from a workload tends to answer
+  "healthy" for both
+- [x] **Said plainly, in the package doc and the admin guide**: for a laptop an
+  EDR system knows the device; for a workload the webhook answers about a NAME
+  pamv1 verified cryptographically, **not** about the process holding the
+  credential. Binding a credential to its process is workload attestation
+  (SPIRE), which stays infra-bound. An agent posture answer means "the fleet
+  manager believes this identity's workload is healthy", never "the caller IS
+  that workload" — and the cost, one webhook call per brokered call, is stated
+  where an operator decides
+- [x] Tests, verified to FAIL with the gate neutralised:
+  `api.TestAgentPostureIsEnforcedAndOptIn`,
+  `api.TestAgentPostureRefusalIsAudited`,
+  `api.TestAgentPostureIsNotAskedAboutAStoppedAgent`
+- [x] One new env var; no schema change; no new route
 
 ## Phase 179 — Make the flaky test say why ✅
 
@@ -8230,12 +8272,13 @@ buys:
   grant *naming* an agent is still filed as a `"user"` subject — that is the grant
   table's shape, not the review's, and changing it would rewrite how every grant
   is stored.
-- **Posture never reaches the agent path.** `internal/posture` is wired into
-  `admit()` and the REST `authz` middleware but not `agentAuth`, so a human's
-  laptop must pass EDR posture on every connect while an agent container passes
-  on a bearer token alone. The webhook half is small; the honesty is that a
-  webhook attesting *about a name* is much weaker than cryptographic workload
-  attestation.
+- ~~**Posture never reaches the agent path.**~~ — ✅ closed 2026-08-21 (Phase
+  180): `PAM_BROKER_POSTURE_REQUIRED` extends the existing webhook to agent
+  identities, checked last so a stopped identity never reaches it, refusals
+  audited `agent.posture_denied`, and the request now names the subject's kind so
+  a posture system can tell a laptop from a workload. The honesty stands and is
+  written into the package doc: a webhook attesting about a NAME is much weaker
+  than cryptographic workload attestation, which stays in §5.
 - **pamv1 enforces `may_act` but never issues it** (`exchange.go` checks it and
   omits it when minting), so from hop 2 onward nobody can pin who may act for
   whom.

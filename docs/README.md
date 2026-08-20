@@ -1,6 +1,6 @@
 # pamv1 — documentation
 
-> Last updated: 2026-08-19 · Reflects: Phases 0–178 and release v0.49.0 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-08-19 · Reflects: Phases 0–180 and release v0.49.0 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -107,6 +107,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-08-21 | Phase 180 (posture on the agent path): a new env var in both configuration tables, `agent.posture_denied` in the audit vocabulary, the webhook's additive `kind` field in the admin guide, and the honest limit — a webhook attests a NAME, not the process — stated in the posture package doc, ADMIN-GUIDE and EXTERNAL-INFRA-GAPS alike. |
 | 2026-08-19 | Phase 175 (recertifying non-human identities): the campaign section of ADMIN-GUIDE gains what a review now covers and what revoking an agent actually does, the threat model gains the two controls and their tests, and USER-GUIDE tells a reviewer why agent rows appear in their queue. |
 | 2026-08-18 | Phase 174 (SVID enrollment and inventory) documented across the set: a new env var in both configuration tables, the audit vocabulary's three new actions, the migration high-water mark at `0046`, and the threat model's "still open" note on SVID inventory closed rather than left standing. |
 | 2026-08-18 | Documentation currency pass over the AI-agent-broker batch (159–173). `ARCHITECTURE-HIGH-LEVEL.md`'s change log had stopped at Phase 157 and gained the nine missing rows; `SECURITY-GAPS.md` gained the **2026-08-17/18 research** section (five findings, all closed by 169–173, with the two live authorization defects called out as the shape Phase 159 had already found once); `PROTOCOLS-AND-CRYPTO.md` records that the verified `act` chain is now load-bearing for containment, plus the two honest edges (`may_act` enforced but never issued, no proof-of-possession); `PORTS-AND-FLOWS.md`'s "adds no flow" note extends to 173; `USER-GUIDE.md` gains the approver-visible DECIDE BY deadline. Every `Reflects:` header is at 0–173 / v0.48.0 |
