@@ -9,6 +9,93 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.50.0] — 2026-08-21
+
+A minor that finishes the AI-agent-broker batch's research backlog — posture on
+the agent path, `may_act` actually issued, the approver's view of a delegation —
+and then spends three phases auditing the batch itself, which is where most of
+this release's value is. **No schema change.** One new env var. **Three upgrade
+notes**, one of which can stop a deployment from starting.
+
+### Added
+
+- **Device posture reaches AI agents** (Phase 180). `PAM_BROKER_POSTURE_REQUIRED`
+  (default `false`) asks the posture webhook already configured for human
+  operators about agent identities too. A human's laptop had to prove its health
+  on every authenticated call while an agent container passed on a bearer token
+  alone. The check runs **last** among the admission gates, so a quarantined or
+  unenrolled identity is refused locally and never becomes traffic your EDR
+  system absorbs; the webhook body gains a `kind` field (`user`/`agent`) so a
+  receiver can branch instead of guessing. What it proves is narrower than for a
+  laptop, and the docs say so: the webhook answers about a *name*, not about the
+  process holding the credential.
+- **A delegated token can pin its next hop** (Phase 181). `POST /v1/token`
+  accepts `may_act` — a pamv1 extension parameter, since RFC 8693 defines the
+  claim and no request field for it — and writes it into the issued token, which
+  the next exchange enforces. pamv1 had enforced that claim since delegation
+  shipped and never issued it, so beyond the first hop the check had nothing to
+  read.
+- **The approver sees the delegation** (Phase 183). `GET /v1/approvals` carries
+  `actor_chain`, and console menu 20 shows a **HOPS** column — a direct call and
+  one that arrived through three sub-agents no longer look identical to the human
+  deciding.
+
+### Fixed
+
+- **A flag that claimed a reachability the control does not have** (Phase 176).
+  `owner_known`, added in the previous release, compared owners
+  case-insensitively while every owner lookup in pamv1 is a literal match: an
+  agent owned by `Carol` while the user is `carol` reported as fine and is
+  unreachable by the offboarding cascade.
+- **Four-eyes that could not be verified now says so** (Phase 176). An owner
+  nobody holds can never equal the approver, so the real owner could approve
+  their own agent's call. Such a decision is audited
+  `broker.approval.four_eyes_unverified`, and `PAM_BROKER_REQUIRE_KNOWN_OWNER`
+  refuses it outright.
+- **Seven refusals were invisible to detection** (Phase 185). Two agent-admission
+  refusals and five older ones — a refused delegated-token mint, an `ssh -L`
+  aimed at another host, a refused Kubernetes operation, a WinRM command stopped
+  by command control, and a blocked SFTP transfer — exported to a SIEM as routine
+  API activity and scored zero in the risk engine. All are refusals of an
+  already-authenticated party, which is exactly what `command.blocked` has been
+  classified as since v0.5.
+- **Inert settings now fail the startup** (Phase 182) — see the upgrade note.
+- **The identity inventory missed delegation chains and wrote on every call**
+  (Phase 176): every verified actor in a presented chain is recorded, and the
+  last-seen stamp is damped to one write per identity per minute.
+- **A parser fuzz gate that failed on slow runners** (Phase 185) and **a
+  `staticcheck` break from Go 1.26's deprecated ECDSA fields** (Phase 180) — the
+  latter replacing coordinate assignment with `ParseUncompressedPublicKey`, which
+  validates the point rather than trusting it.
+
+### Changed
+
+- **Five refusal actions now count as blocked commands** in the risk engine
+  (Phase 185) — see the upgrade note.
+- **The presented token's `jti` is recorded** on every brokered call as
+  `svid_jti:` (Phase 183), joining a minted delegated token to the calls made
+  with it. Named `svid_jti` because a call's `jti:` already means the resume
+  token's id.
+- `SetVendorDisabled` was removed from the store surface in v0.49.0's phase 177;
+  this release adds no further surface changes.
+
+### Upgrade notes
+
+- **A deployment with an inert broker setting will refuse to start.** Since Phase
+  182, `PAM_BROKER_REQUIRE_ENROLLED_SVID` without `PAM_BROKER_TRUST_DOMAIN_JWKS`,
+  `PAM_BROKER_POSTURE_REQUIRED` without `PAM_POSTURE_ATTEST_URL`, and any of the
+  three broker refusals without `PAM_BROKER_POLICY_FILE` are startup errors. Each
+  previously read as "the agents are gated" and did nothing. Fix the
+  configuration or remove the setting — the error names both halves.
+- **Risk scores will rise where refusals are routine.** Five actions that scored
+  zero now count as blocked commands. That is the intent — an operator
+  repeatedly refused a port-forward is exactly what the signal is for — but check
+  your thresholds before `PAM_ANALYTICS_AUTO_KILL` acts on the new numbers.
+- **Your SIEM will start seeing findings it did not before.** The same five
+  actions, plus two agent-admission refusals, now export as OCSF Detection
+  Findings rather than routine API Activity. Rules keyed on activity counts may
+  need adjusting; rules keyed on findings will start firing correctly.
+
 ## [0.49.0] — 2026-08-19
 
 A minor that finishes the AI-agent-broker batch's identity work and then audits
