@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-08-18 · Reflects: Phases 0–183. **Phase 53 added the first new
+> Last updated: 2026-08-21 · Reflects: Phases 0–184. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; nothing after
 > it adds a port or listener (55–94 ride the existing listeners and flows: the
 > live-monitor relay and the step-up decision bus ride the server ↔ PostgreSQL
@@ -127,13 +127,16 @@
 > forensic reconstruction is one more SSH connection to a target pamv1 already
 > dials (flow **E2**, `:22`), made after the session ends with the same
 > credential; nothing new is opened, and nothing new is reachable.
-> **Phases 159–173 add none either** — the agent-broker batch changes who may
+> **Phases 159–183 add none either** — the agent-broker batch changes who may
 > call the existing `/v1/*` and `/mcp` surface, what a rule may say about the
 > caller, and what pamv1 writes down about it, never where anything listens or
 > dials. Phase 170's four `/v1/agents/identities` routes are ordinary
 > `manage_users` API calls on the port the portal already serves, and Phase 169's
 > chain-following quarantine and Phase 173's `caller.*` conditions are decisions
-> made on flows that already existed.
+> made on flows that already existed. Phase 180's agent posture check is the one
+> that dials out at all, and it dials the webhook `PAM_POSTURE_ATTEST_URL`
+> already named for human operators (flow **E15**) — the same egress, asked
+> about a second kind of subject, not a new one.
 > Everything from 25 to 52g rides `:8080`, `:2222` or `:5433`. Ports marked *planned* have
 > no listener/dialer yet — do not open them until the phase lands. Phases 19–24 add
 > **no new listeners**: certification/ticketing/approvals (19–21), threat analytics
