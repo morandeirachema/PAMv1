@@ -1,6 +1,6 @@
 # pamv1 — documentation
 
-> Last updated: 2026-08-19 · Reflects: Phases 0–180 and release v0.49.0 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-08-19 · Reflects: Phases 0–181 and release v0.49.0 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -107,6 +107,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-08-21 | Phase 181 (`may_act` issued): the delegation section of ADMIN-GUIDE gains the extension parameter and its narrowing rules, PROTOCOLS-AND-CRYPTO's honest note that the claim was enforced but never issued is replaced by what now happens, and the threat model gains the control and its round-trip test. |
 | 2026-08-21 | Phase 180 (posture on the agent path): a new env var in both configuration tables, `agent.posture_denied` in the audit vocabulary, the webhook's additive `kind` field in the admin guide, and the honest limit — a webhook attests a NAME, not the process — stated in the posture package doc, ADMIN-GUIDE and EXTERNAL-INFRA-GAPS alike. |
 | 2026-08-19 | Phase 175 (recertifying non-human identities): the campaign section of ADMIN-GUIDE gains what a review now covers and what revoking an agent actually does, the threat model gains the two controls and their tests, and USER-GUIDE tells a reviewer why agent rows appear in their queue. |
 | 2026-08-18 | Phase 174 (SVID enrollment and inventory) documented across the set: a new env var in both configuration tables, the audit vocabulary's three new actions, the migration high-water mark at `0046`, and the threat model's "still open" note on SVID inventory closed rather than left standing. |

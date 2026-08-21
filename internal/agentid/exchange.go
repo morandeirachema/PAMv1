@@ -185,6 +185,16 @@ type ExchangeRequest struct {
 	RequestedTokenType string
 	Audience           string
 	Scope              string
+	// MayAct pins who may later act for the token being minted (Phase 181): the
+	// SPIFFE IDs written into its RFC 8693 §4.4 `may_act` claim, which the NEXT
+	// exchange enforces. Empty leaves the token unpinned, which is what every
+	// token minted before this phase was.
+	//
+	// A pamv1 EXTENSION, not an RFC parameter: RFC 8693 defines `may_act` as a
+	// claim, never a request field, so it is documented as an extension rather
+	// than passed off as standard. The delegator is the right party to set it —
+	// it is constraining an authority it is itself handing over.
+	MayAct []string
 }
 
 // ParseExchangeForm parses an `application/x-www-form-urlencoded` body into an
@@ -221,6 +231,18 @@ func ParseExchangeForm(values map[string][]string) (*ExchangeRequest, error) {
 			return nil, err
 		}
 		*f.dst = v
+	}
+	// may_act accepts a repeated parameter OR one space/comma-separated value,
+	// because both shapes appear in the wild for list-valued form fields and
+	// refusing one of them would be a papercut with no security value. Order is
+	// preserved and blanks dropped; validation (trust domain, count) happens in
+	// Exchange, where the trust domain is known.
+	for _, raw := range values["may_act"] {
+		for _, field := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' }) {
+			if f := strings.TrimSpace(field); f != "" {
+				req.MayAct = append(req.MayAct, f)
+			}
+		}
 	}
 	return req, nil
 }
@@ -320,6 +342,16 @@ func (x *Exchanger) Exchange(ctx context.Context, req *ExchangeRequest, delegato
 	}
 	jti := hex.EncodeToString(jtiRaw)
 
+	// RFC 8693 §4.4 on the ISSUING side (Phase 181). pamv1 has enforced may_act
+	// since Phase 57 and never emitted it, so from the second hop onward nobody
+	// could pin who may act for whom: the check existed and had nothing to read.
+	// The delegator names the parties allowed to act for the token being minted,
+	// and the next exchange checks the actor against exactly that list.
+	mayAct, merr := validateMayAct(req.MayAct, actor.SPIFFEID)
+	if merr != nil {
+		return nil, merr
+	}
+
 	claims := map[string]any{
 		"iss": x.issuer,
 		"sub": actor.SPIFFEID,
@@ -329,6 +361,16 @@ func (x *Exchanger) Exchange(ctx context.Context, req *ExchangeRequest, delegato
 		"exp": exp.Unix(),
 		"jti": jti,
 		"act": nestAct(delegatorChain(delegator)),
+	}
+	if len(mayAct) > 0 {
+		// The RFC's own shape — an object with `sub` — carrying a list when more
+		// than one party is named, which is the generalization this package's
+		// verifier already accepts on the reading side (mayActClaim.subjects).
+		if len(mayAct) == 1 {
+			claims["may_act"] = map[string]any{"sub": mayAct[0]}
+		} else {
+			claims["may_act"] = map[string]any{"sub": mayAct}
+		}
 	}
 	if delegator.OnBehalfOf != "" {
 		claims["on_behalf_of"] = delegator.OnBehalfOf
@@ -349,11 +391,78 @@ func (x *Exchanger) Exchange(ctx context.Context, req *ExchangeRequest, delegato
 		// display a DIFFERENT actor than the one the token was minted for. The
 		// refusal path beside this one already quoted per value; this is the same
 		// treatment, so the delegation chain reads the same way on both.
-		Audit: fmt.Sprintf("actor:%s delegator:%s on_behalf_of:%s chain:%s jti:%s expires_in:%d",
+		// may_act is on the trail because it is the constraint the NEXT exchange
+		// will be judged against: an investigator asking "who was this token
+		// allowed to be delegated to" should not have to hold the token to find
+		// out. Absent when unpinned, so the field's presence is itself the
+		// signal that somebody narrowed it.
+		Audit: fmt.Sprintf("actor:%s delegator:%s on_behalf_of:%s chain:%s jti:%s expires_in:%d%s",
 			auditfmt.Field(actor.SPIFFEID, 128), auditfmt.Field(delegator.SPIFFEID, 128),
 			auditfmt.Field(delegator.OnBehalfOf, 128), auditfmt.Field(strings.Join(chain, ">"), 256),
-			auditfmt.Field(jti, 64), ttlSec),
+			auditfmt.Field(jti, 64), ttlSec, mayActField(mayAct)),
 	}, nil
+}
+
+// mayActField renders the audit suffix naming who the issued token permits to
+// act for it, or "" when it is unpinned.
+func mayActField(mayAct []string) string {
+	if len(mayAct) == 0 {
+		return ""
+	}
+	return " may_act:" + auditfmt.Field(strings.Join(mayAct, ","), 256)
+}
+
+// maxMayAct bounds how many parties one token may name. A pin that lists
+// everybody is not a pin, and an unbounded list is an unbounded token.
+const maxMayAct = 8
+
+// validateMayAct checks the requested may_act entries against the token's own
+// subject and trust domain, returning them de-duplicated in the order given.
+//
+// The trust domain is taken from the ACTOR's verified SPIFFE ID rather than from
+// configuration: the verifier already established that the actor is in-domain,
+// so its own prefix is the domain — and a rule derived from the verified value
+// cannot drift away from the verifier's, which a second config field could.
+//
+// Naming the token's own subject is refused: an identity does not need
+// permission to act as itself, and accepting it would let a caller satisfy a
+// later may_act check with a self-reference.
+func validateMayAct(requested []string, subject string) ([]string, *ExchangeError) {
+	if len(requested) == 0 {
+		return nil, nil
+	}
+	if len(requested) > maxMayAct {
+		return nil, exchangeErr("invalid_request", "may_act names too many parties")
+	}
+	domain := trustDomainPrefix(subject)
+	out := make([]string, 0, len(requested))
+	for _, id := range requested {
+		if domain == "" || !strings.HasPrefix(id, domain) {
+			return nil, exchangeErr("invalid_request", "may_act must name identities inside the trust domain")
+		}
+		if id == subject {
+			return nil, exchangeErr("invalid_request", "may_act must not name the token's own subject")
+		}
+		if !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+// trustDomainPrefix returns "spiffe://<trust-domain>/" for a SPIFFE ID, or ""
+// when the value is not one.
+func trustDomainPrefix(spiffeID string) string {
+	const scheme = "spiffe://"
+	if !strings.HasPrefix(spiffeID, scheme) {
+		return ""
+	}
+	rest := spiffeID[len(scheme):]
+	slash := strings.Index(rest, "/")
+	if slash <= 0 {
+		return ""
+	}
+	return scheme + rest[:slash+1]
 }
 
 // delegatorChain returns the delegator's own actor chain, falling back to its
