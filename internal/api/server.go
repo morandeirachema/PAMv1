@@ -536,7 +536,11 @@ type Server struct {
 	brokerPostureRequired bool
 	// svidSeen damps the inventory's last-seen writes to one per identity per
 	// sightingInterval (Phase 176). Keyed by SPIFFE ID; values are time.Time.
-	svidSeen    sync.Map
+	svidSeen sync.Map
+	// svidSeenN counts svidSeen's entries so the damper can be bounded; it is a
+	// hint, not a ledger — a racy over- or under-count only shifts when the map
+	// is dropped, never what the damper decides.
+	svidSeenN   atomic.Int64
 	mcpSessions *mcpSessionRegistry // open MCP SSE streams for elicitation (Phase 27)
 }
 
