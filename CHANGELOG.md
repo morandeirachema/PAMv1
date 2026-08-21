@@ -9,6 +9,38 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.51.0] — 2026-08-21
+
+A small minor with one theme: **three capabilities that had shipped with an API
+and no way to use them from the portal**. No schema change, no new env var, no
+new route, no upgrade note — only screens that should have existed and a test
+that will notice next time.
+
+### Added
+
+- **DoubleLock is operable from the console** (option `10` on the credentials
+  screen). Turning it off is immediate; turning it on collects the holder and
+  password on a new `PAMDBLLCK` screen, and the credential listing gains a
+  DoubleLock column so the state is visible before somebody wonders why a reveal
+  is asking for a second password. Shipped in v0.30-era Phase 135 with routes and
+  a curl command.
+- **SCIM client keys are operable from the console** (menu **29**): mint, list
+  and revoke the bearer identity an IdP presents to `/scim/v2/Users`, with the
+  token shown once exactly as an agent key is. Shipped in Phase 149 the same way.
+- **A browser-extension token can be minted from the console** (menu **30**),
+  rather than from a curl command in the admin guide — a strange thing to have
+  asked of the person whose browser it is for. Shipped in Phase 147.
+
+### Fixed
+
+- **The parity claim is now enforced, not asserted.** pamv1's README and roadmap
+  say every shipped capability is operable from the portal; that was last checked
+  by hand in Phase 45, and three phases had shipped past it.
+  `web.TestConsoleCanReachEveryOperatorRoute` diffs the generated route table
+  against the console's own calls, and a route behind an operator capability must
+  either be reachable or carry a written reason why a person is not expected to
+  use it.
+
 ## [0.50.0] — 2026-08-21
 
 A minor that finishes the AI-agent-broker batch's research backlog — posture on
