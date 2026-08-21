@@ -189,3 +189,102 @@ func TestTokenExchangeDisabled(t *testing.T) {
 		t.Fatalf("token JWKS with no signing key: want 404, got %d", code)
 	}
 }
+
+// TestMayActPinsTheNextHop is Phase 181's round trip: pamv1 has enforced RFC
+// 8693 §4.4 `may_act` since Phase 57 and never emitted it, so the check existed
+// with nothing to read — from the second hop onward, nobody could pin who was
+// allowed to act for whom.
+//
+// Now a delegator names the parties permitted to act for the token it mints,
+// and the NEXT exchange refuses anyone else. Emission and enforcement finally
+// meet, which is the only state in which either is worth anything.
+func TestMayActPinsTheNextHop(t *testing.T) {
+	b64 := func(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	jwks, _ := json.Marshal(map[string]any{"keys": []map[string]any{
+		{"kty": "OKP", "crv": "Ed25519", "kid": "k1", "x": b64(pub)}}})
+	path := filepath.Join(t.TempDir(), "jwks.json")
+	if err := os.WriteFile(path, jwks, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const td, aud = "example.org", "pam-broker"
+	verifier, err := agentid.NewSVIDVerifier(path, td, aud, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signPub, signPriv, _ := ed25519.GenerateKey(rand.Reader)
+	if err := verifier.TrustIssuer(agentid.KeyID(signPub), signPub); err != nil {
+		t.Fatal(err)
+	}
+	opts := brokerOpts(t, &fakeWinRM{result: winrm.Result{Stdout: "ok"}}, toolsetRules)
+	opts.BrokerSVIDVerifier = verifier
+	opts.BrokerTokenSignKey = signPriv
+	opts.BrokerAudience = aud
+	opts.BrokerMaxDelegation = 3
+	opts.BrokerExchangeTTL = 5 * time.Minute
+	srv, _ := newTestServerOpts(t, nil, opts)
+
+	mint := func(sub string) string {
+		hdr := b64([]byte(`{"alg":"EdDSA","kid":"k1","typ":"JWT"}`))
+		claims, _ := json.Marshal(map[string]any{
+			"sub": "spiffe://example.org/" + sub, "aud": aud, "exp": time.Now().Add(time.Hour).Unix()})
+		signing := hdr + "." + b64(claims)
+		return signing + "." + b64(ed25519.Sign(priv, []byte(signing)))
+	}
+	planner, worker := mint("planner"), mint("worker")
+	helper, stranger := mint("helper"), mint("stranger")
+
+	// Hop 1: the planner delegates to the worker, and pins that only the helper
+	// may go on to act for that token.
+	code, body := postForm(t, srv, "/v1/token", planner, url.Values{
+		"grant_type":  {agentid.ExchangeGrantType},
+		"actor_token": {worker},
+		"may_act":     {"spiffe://example.org/helper"},
+	})
+	if code != http.StatusOK {
+		t.Fatalf("hop 1: %d %s", code, body)
+	}
+	delegated, _ := jsonMap(t, body)["access_token"].(string)
+	if delegated == "" {
+		t.Fatalf("no delegated token: %s", body)
+	}
+
+	// Hop 2 by the pinned party succeeds...
+	if code, body := postForm(t, srv, "/v1/token", delegated, url.Values{
+		"grant_type":  {agentid.ExchangeGrantType},
+		"actor_token": {helper},
+	}); code != http.StatusOK {
+		t.Fatalf("the pinned actor should be able to act: %d %s", code, body)
+	}
+	// ...and by anyone else is refused, which is the whole point: before this
+	// phase the minted token carried no may_act, so this call succeeded.
+	code, body = postForm(t, srv, "/v1/token", delegated, url.Values{
+		"grant_type":  {agentid.ExchangeGrantType},
+		"actor_token": {stranger},
+	})
+	if code == http.StatusOK {
+		t.Fatalf("an actor the token does not name must not be delegated to: %s", body)
+	}
+	if !strings.Contains(string(body), "may_act") {
+		t.Fatalf("the refusal should name the claim that refused it: %s", body)
+	}
+
+	// The pin is on the trail, so an investigator can answer "who was this token
+	// allowed to be handed to" without holding the token.
+	_, aud2 := do(t, srv, http.MethodGet, "/api/audit?limit=50", testAPIKey, nil)
+	if !strings.Contains(string(aud2), "may_act:") || !strings.Contains(string(aud2), "helper") {
+		t.Fatalf("the issued token's may_act should be audited: %s", aud2)
+	}
+
+	// A party outside the trust domain cannot be pinned at all — a token naming
+	// a foreign actor as permitted is either a mistake or an attempt to make
+	// pamv1's own enforcement read as though somebody outside had been vouched
+	// for.
+	if code, _ := postForm(t, srv, "/v1/token", planner, url.Values{
+		"grant_type":  {agentid.ExchangeGrantType},
+		"actor_token": {worker},
+		"may_act":     {"spiffe://evil.example/helper"},
+	}); code == http.StatusOK {
+		t.Fatal("may_act must not name an out-of-domain party")
+	}
+}
