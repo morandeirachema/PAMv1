@@ -55,6 +55,41 @@ var findingExact = map[string]bool{
 	// second place to keep in step, and `broker.tool_call.failed` is left out
 	// for the same reason.
 	"agent.quarantine_refused": true,
+	// Agent admission (Phases 174, 176). Two more refusals of an identity that
+	// HAS authenticated, neither of which any suffix rule reaches:
+	// `agent.not_enrolled` ends in neither `_denied` nor `_failed`, and
+	// `broker.approval.four_eyes_unverified` is not a refusal at all — the
+	// approval went through, and what the row records is that the second pair of
+	// eyes could not be established. It is a finding for that reason rather than
+	// in spite of it: a control that silently could not run is exactly what a
+	// SIEM should be told about, and the alternative is exporting it as routine
+	// API activity, which is how `broker.tool_call.denied` spent four phases
+	// invisible.
+	//
+	// `agent.posture_denied` is deliberately absent: the `_denied` suffix rule
+	// covers it, and a duplicate entry here is a second place to keep in step.
+	"agent.not_enrolled":                   true,
+	"broker.approval.four_eyes_unverified": true,
+	// Five refusals the new coverage guard found on its first run (Phase 185),
+	// none of them new code — they have been exporting as routine API Activity
+	// since the phases that introduced them, because `_refused`/`.blocked` are
+	// not suffix rules and nobody added the exact entry:
+	//
+	//   broker.token.refused  a delegated-token mint refused (57) — a stream of
+	//                         these is an agent probing what it may delegate
+	//   forward.refused       an `ssh -L` to a host other than the connected one
+	//                         (141) — the SSRF pivot that gate exists to stop
+	//   k8s.refused           a brokered Kubernetes operation refused (155)
+	//   winrm.refused         a WinRM command refused by command control (16/38)
+	//   sftp.blocked          a file transfer stopped by policy (32/92)
+	//
+	// Each is a refusal of an already-authenticated party, which is exactly what
+	// `command.blocked` — classified since Phase 27 — is.
+	"broker.token.refused": true,
+	"forward.refused":      true,
+	"k8s.refused":          true,
+	"winrm.refused":        true,
+	"sftp.blocked":         true,
 }
 
 // isFinding reports whether an action maps to a Detection Finding.
