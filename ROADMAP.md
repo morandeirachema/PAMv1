@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–182 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–183 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,42 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 183 — The approver sees the chain, the trail joins the token ✅
+
+**Closes:** the agent-broker research pass's finding 6 — the last of the batch's
+presentational gaps, and the kind that is easy to leave undone because nothing
+is broken, only unanswerable.
+
+- [x] **`PendingApproval` carries `ActorChain`.** The queue named the calling
+  agent and its accountable party, so a direct call and one that arrived down a
+  chain of sub-agents looked **identical** to the human approving it — while the
+  chain had been written to the hash-chained trail since Phase 57. It never
+  reached the person being asked to decide
+- [x] **Console menu 20 gains a HOPS column**: `direct` for an undelegated call
+  (a one-element chain is an agent acting for itself, so depth counts hops, not
+  links), the count otherwise, with the chain in the hover title so a deep
+  delegation cannot push the row's later columns off a 5250 screen — the defect
+  Phase 175 found on the campaign screen, not repeated here
+- [x] **The presented token's `jti` is parsed** into `Identity.TokenID` and
+  recorded on every brokered call as `svid_jti:`. `broker.token.exchanged` has
+  carried the MINTED token's `jti` since Phase 161, so both halves of a
+  delegation were on the trail with nothing linking them: an investigator could
+  see a token issued and calls arriving, and could not prove they were the same
+  token
+- [x] **Named `svid_jti`, not `jti`**, because a brokered call's `jti:` already
+  means the resume token's id. One call can carry both, and an investigator must
+  not have to guess which identifier they are reading
+- [x] **Bounded at the verifier** (64 characters): a `jti` is an issuer-chosen
+  opaque string that now reaches the audit trail, and an unbounded one is a way
+  to flood it. Truncated rather than dropped — a truncated id still joins a mint
+  to its uses, a dropped one loses the link entirely. Recorded, never trusted for
+  a decision
+- [x] Test: `api.TestDelegatedCallJoinsItsMintAndShowsItsChain` — the queue
+  carries the chain, and the exchange row's `jti` equals the call row's
+  `svid_jti`. **Verified to FAIL against the pre-183 queue**, which named the
+  agent and nothing about its lineage
+- [x] No schema change, no new env var, no new route
 
 ## Phase 182 — Knobs that did nothing where they were set ✅
 
@@ -8379,11 +8415,13 @@ buys:
   (Phase 181): the exchange accepts a `may_act` parameter (a pamv1 extension, since
   the RFC defines only the claim) and stamps it into the issued token, bounded to
   eight in-domain parties and never the subject itself, with the pin audited.
-- **The approver sees one call, not the campaign.** `PendingApproval` still
-  carries no `ActorChain` even though the chain is already written to the audit
-  chain, and a presented SVID's `jti` is never parsed — so
-  `broker.token.exchanged` cannot be joined to the calls made with that token.
-  Both are presentational and cheap.
+- ~~**The approver sees one call, not the campaign.**~~ — ✅ closed 2026-08-21
+  (Phase 183): `PendingApproval` carries `ActorChain` and console menu 20 shows a
+  HOPS column, and the presented token's `jti` is parsed and recorded as
+  `svid_jti:` so `broker.token.exchanged` joins to the calls made with that
+  token. **What remains of the original bullet**: the approver still sees one
+  CALL rather than the run it belongs to — grouping a decision by `session:` is a
+  different feature, not a missing field.
 - **Policy cannot read the registry owner** (deferred by Phase 173):
   `caller.on_behalf_of` is the accountable party as the identity carries it, not
   the human Phase 170's registry records for a SPIFFE ID. Resolving it inside the

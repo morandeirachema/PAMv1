@@ -245,11 +245,18 @@ type parkedCall struct {
 
 // PendingApproval is an approver-facing view of a parked call (no credential).
 type PendingApproval struct {
-	CallID     string    `json:"call_id"`
-	Tool       string    `json:"tool"`
-	Args       Args      `json:"args"`
-	Agent      string    `json:"agent"`
-	OnBehalfOf string    `json:"on_behalf_of,omitempty"`
+	CallID     string `json:"call_id"`
+	Tool       string `json:"tool"`
+	Args       Args   `json:"args"`
+	Agent      string `json:"agent"`
+	OnBehalfOf string `json:"on_behalf_of,omitempty"`
+	// ActorChain is the delegation chain behind this call, innermost..outermost
+	// (Phase 183). The approver is being asked whether a privileged action should
+	// run; "which agent asked" and "on whose authority, through how many hands"
+	// are different questions, and the queue could only answer the first. The
+	// chain was already written to the hash-chained trail — it simply never
+	// reached the human deciding.
+	ActorChain []string  `json:"actor_chain,omitempty"`
 	Scope      string    `json:"scope,omitempty"`
 	RuleID     string    `json:"rule_id,omitempty"`
 	Reason     string    `json:"reason,omitempty"`
@@ -569,7 +576,8 @@ func (b *Broker) PendingApprovals() []PendingApproval {
 		out = append(out, PendingApproval{
 			CallID: callID, Tool: p.call.Tool, Args: p.call.Args,
 			Agent: p.id.AgentName, OnBehalfOf: p.id.OnBehalfOf, Scope: p.scope,
-			RuleID: p.ruleID, Reason: p.reason, Approvers: p.approvers, Requested: p.requested,
+			ActorChain: append([]string(nil), p.id.ActorChain...),
+			RuleID:     p.ruleID, Reason: p.reason, Approvers: p.approvers, Requested: p.requested,
 			ExpiresAt: p.expiresAt,
 		})
 	}

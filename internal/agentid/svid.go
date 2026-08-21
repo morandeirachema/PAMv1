@@ -166,6 +166,7 @@ func (v *SVIDVerifier) Verify(_ context.Context, bearer string) (*Identity, erro
 		Sub string          `json:"sub"`
 		Exp int64           `json:"exp"`
 		Aud json.RawMessage `json:"aud"`
+		Jti string          `json:"jti"`
 		Act *actClaim       `json:"act"`
 		// RFC 8693 §4.4: who this token's holder allows to act for it. Carried
 		// through to Identity so the token-exchange minter can enforce it
@@ -191,11 +192,31 @@ func (v *SVIDVerifier) Verify(_ context.Context, bearer string) (*Identity, erro
 		return nil, ErrUnauthenticated // delegation too deep, or a delegate outside the trust domain
 	}
 	id := &Identity{AgentName: claims.Sub, SPIFFEID: claims.Sub, ActorChain: chain,
-		ExpiresAt: time.Unix(claims.Exp, 0), MayAct: claims.MayAct.subjects()}
+		ExpiresAt: time.Unix(claims.Exp, 0), MayAct: claims.MayAct.subjects(),
+		// Recorded, never trusted for a decision: `jti` is an identifier the
+		// issuer chose, so it can join a mint to its uses and must not gate
+		// anything. Bounded here rather than at every audit site.
+		TokenID: boundedJTI(claims.Jti)}
 	// The accountable party is the outermost actor (the human/service the chain
 	// bottoms out at), else the subject itself.
 	id.OnBehalfOf = chain[len(chain)-1]
 	return id, nil
+}
+
+// maxJTILen bounds a recorded token id. A jti is an opaque identifier chosen by
+// the issuer, so pamv1 neither parses nor trusts it — but it reaches the audit
+// trail, and an unbounded issuer-controlled string on the trail is a way to
+// flood it.
+const maxJTILen = 64
+
+// boundedJTI truncates an over-long token id rather than dropping it: a
+// truncated id still joins a mint to its uses in practice, while a dropped one
+// loses the link entirely.
+func boundedJTI(jti string) string {
+	if len(jti) > maxJTILen {
+		return jti[:maxJTILen]
+	}
+	return jti
 }
 
 // inTrustDomain reports whether sub is a SPIFFE ID under this verifier's trust
