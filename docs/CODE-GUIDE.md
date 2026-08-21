@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-18 · Reflects: Phases 0–183 + the 2026-07 hardening passes.
+> Last updated: 2026-08-21 · Reflects: Phases 0–184 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -894,6 +894,13 @@ only the result. "Trust the chokepoint, not the agent." Opt-in via
   SPIFFE subject + audience + expiry (fail-closed), with nested RFC 8693 `act`
   delegation capped by `PAM_BROKER_MAX_DELEGATION_DEPTH`. A `MultiVerifier` accepts
   either.
+- **Agent identity** (`agentid`) — a verified `Identity` carries more than a
+  name: `SPIFFEID`, the RFC 8693 `ActorChain` (innermost..outermost), `MayAct`
+  (who the token permits to act for it — enforced when minting since Phase 57,
+  and **issued** since 181), `ExpiresAt`, `KeyID` for a static key, and
+  `TokenID`, the presented token's `jti`, recorded on every brokered call as
+  `svid_jti:` so a mint joins to its uses (183). Every one of them is read from
+  the verified credential; none is caller-asserted.
 - **Policy engine** (`policy`) — sudoers-style ordered YAML rules, and since
   Phase 173 the analogy is complete: a rule has a **principal side**
   (`agents:` / `not_agents:`, empty = every agent) and `Evaluate` takes the
@@ -915,6 +922,16 @@ only the result. "Trust the chokepoint, not the agent." Opt-in via
   enforcing only the valid clause. A matched rule whose `scope` template references
   a missing argument still **denies** (never runs with an unfillable scope), and
   numeric args stringify in plain decimal so `10000000` can't miss as `1e+07`.
+- **Agent admission** (`api.agentAuth`) — the gate every brokered call passes,
+  in a deliberate order, cheapest and most local first: verify the bearer
+  (static key or SVID) → **quarantine**, checked against the presenter *and*
+  every actor in its delegation chain (169) → **enrollment**, when the
+  deployment requires an attested identity to have been claimed (174) →
+  **posture**, the only check that leaves the process, so a stopped identity
+  never becomes traffic somebody's EDR system absorbs (180) → rate limit →
+  budget. Each refusal returns the same 401 a bad bearer gets, so an agent
+  learns nothing from the reply about which gate stopped it; the reason is on
+  the audit trail, where the responder looks.
 - **The broker** (`broker.ProcessCall` / `Resume`) — the one loop both REST and MCP
   share. It caps argument size *before* any work, validates the arguments against
   the tool's own declared schema (Phase 163), caps the RESULT after a tool runs
