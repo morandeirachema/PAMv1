@@ -2431,10 +2431,15 @@ knobs that gated nothing, and seven refusals no detection surface could see.
 upgrade notes** — the first of which can stop a deployment from starting, which
 is the point of it.
 
-- [ ] **v0.50.0** through the test-gated pipeline, rehearsed on `main` first.
-  Published as `ghcr.io/morandeirachema/pamv1:0.50.0` (also `latest`), digest
-  recorded here once the publish workflow runs, verified **public** by anonymous
-  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] **v0.50.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-21 as `ghcr.io/morandeirachema/pamv1:0.50.0` (also
+  `latest`), digest
+  `sha256:ce4a81fff9d80d0f8ac3c78547fb56c1521f8c69b653762dc078eb4b5071af50`,
+  **public** (anonymous pull 200 on both tags via the GHCR token-exchange flow,
+  both resolving to the same digest), with the `pam-agent` binaries (amd64 +
+  arm64), the SPDX SBOM and `SHA256SUMS` attached. The release job took 3m45s,
+  the fastest of the batch — Phase 185's iteration-bounded fuzz gate is part of
+  why
 - [x] All five pins via the sweep; Helm chart `version` 0.40.0 -> **0.41.0**
 - [x] Both READMEs restated; `docs/README.md`, `docs/NIS2-COMPLIANCE.md` and
   ROADMAP.md's top-banner phase count
