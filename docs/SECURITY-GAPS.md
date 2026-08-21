@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-08-21 · Reflects: Phases 0–187 + the 2026-07 hardening
+> Last updated: 2026-08-21 · Reflects: Phases 0–188 + the 2026-07 hardening
 > passes, including the **post-beta sweep of 2026-07-27** (thirty findings, all
 > closed), the **sweep of 2026-08-07** over phases 56–61a (nine findings: two
 > closed by Phase 62, six by Phase 63, half of one withdrawn as a false
