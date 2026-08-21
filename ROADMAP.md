@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–184 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–185 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,48 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 185 — The refusals no detection surface could see ✅
+
+Asked of the last ten phases: **what did any of them add to the two detection
+surfaces?** Nothing. Five phases had added refusals, and `internal/ocsf`'s
+finding map and `internal/analytics`' `command_blocked` set had not changed
+since Phase 161.
+
+- [x] **Three from this batch.** `agent.not_enrolled` (174) and
+  `broker.approval.four_eyes_unverified` (176) reached neither surface —
+  `_refused` and `not_` are not suffix rules, and nobody added the exact entry —
+  while `agent.posture_denied` (180) exported correctly via the `_denied` suffix
+  and still scored **zero** in the risk engine
+- [x] **`four_eyes_unverified` is classified but deliberately not counted.** It
+  is not a refusal: the approval went through, and the row records that the
+  second pair of eyes could not be established. That belongs in a SIEM — a
+  control that silently could not run — and not in a signal permitted to drive an
+  automated response, where it would inflate a count of things that were blocked
+  with one that was not
+- [x] **Then the guard found five more, none of them new.**
+  `broker.token.refused` (57), `forward.refused` (141) — the SSRF pivot that gate
+  exists to stop — `k8s.refused` (155), `winrm.refused` (16/38) and
+  `sftp.blocked` (32/92) had been exporting as **routine API Activity** since the
+  phases that introduced them. Every one is a refusal of an already-authenticated
+  party, which is exactly what `command.blocked` has been classified as since
+  Phase 27
+- [x] **The durable half**: `ocsf.TestRefusalShapedActionsAreClassified`, the
+  inverse of Phase 161's `TestFindingExactActionsAreEmittable`. That one catches a
+  classification no code can emit — coverage advertised and absent. This one
+  catches an action pamv1 really emits, named the way pamv1 names a refusal, that
+  no classification reaches. Narrow on purpose: not "every action must be
+  classified", but "an action whose NAME says something was refused must either
+  be a finding or be listed with the reason it is not". One entry so far —
+  `dependency.create_denied`, input validation on an admin's own request
+- [x] **Operator-visible consequence, stated rather than discovered**: risk
+  scores rise where these refusals are routine, because behaviour that was
+  invisible to the engine now counts. That is the intent — an operator repeatedly
+  refused a port-forward is precisely what the signal is for — but it is worth
+  knowing before `PAM_ANALYTICS_AUTO_KILL` acts on it
+- [x] Tests: `analytics.TestAgentAdmissionRefusalsScoreAsBlocked` and the new
+  coverage guard, which **failed on its first run** with the five older gaps
+- [x] No schema change, no new env var, no new route
 
 ## Phase 184 — Documentation sync across the set ✅
 

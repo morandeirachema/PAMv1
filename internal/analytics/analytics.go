@@ -239,7 +239,37 @@ var (
 		"broker.tool_call.denied":  true,
 		"broker.approval.refused":  true,
 		"agent.quarantine_refused": true,
+		// The two admission refusals added after this map was written (Phases
+		// 174 and 180). Both meet the criterion above exactly: the agent proved
+		// who it was — an SVID verified against the trust domain — and was then
+		// refused for not being enrolled, or for a workload its posture system
+		// would not vouch for. An identity hammering the door in either state is
+		// a behavioural signal, and it scored zero.
+		"agent.not_enrolled":   true,
+		"agent.posture_denied": true,
+		// And five refusals that predate this map's last revision, found by the
+		// OCSF coverage guard in Phase 185. Every one is an authenticated party
+		// being told no — the criterion above — and every one scored zero:
+		// a refused delegated-token mint, an `ssh -L` aimed at another host, a
+		// refused Kubernetes operation, a WinRM command stopped by command
+		// control, and a file transfer stopped by SFTP policy.
+		//
+		// **Operator-visible consequence**: a deployment where these refusals are
+		// routine will see risk scores rise, because behaviour that was invisible
+		// to the engine now counts. That is the intent — an operator repeatedly
+		// refused a forward is exactly what the signal is for — but it is worth
+		// knowing before `PAM_ANALYTICS_AUTO_KILL` acts on it.
+		"broker.token.refused": true,
+		"forward.refused":      true,
+		"k8s.refused":          true,
+		"winrm.refused":        true,
+		"sftp.blocked":         true,
 	}
+	// Deliberately NOT in the map above: `broker.approval.four_eyes_unverified`
+	// (Phase 176). Nothing was blocked — the approval proceeded — so counting it
+	// as a blocked command would inflate a signal that drives an automated
+	// response. It is exported to the SIEM as a finding instead, which is the
+	// surface where "a control could not be verified" belongs.
 	authFailActions = map[string]bool{
 		"proxy.auth_failed": true, "login.failed": true, "authz.denied": true,
 		"session.denied": true, "access.denied": true, "db.session.denied": true,
