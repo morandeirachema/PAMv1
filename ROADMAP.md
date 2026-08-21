@@ -2428,10 +2428,14 @@ route and no upgrade note** — cut rather than banked, because the whole point 
 the phase is that a gap sat unnoticed for three phases and banking it would be
 the same mistake in miniature.
 
-- [ ] **v0.51.0** through the test-gated pipeline, rehearsed on `main` first.
-  Published as `ghcr.io/morandeirachema/pamv1:0.51.0` (also `latest`), digest
-  recorded here once the publish workflow runs, verified **public** by anonymous
-  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] **v0.51.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published 2026-08-21 as `ghcr.io/morandeirachema/pamv1:0.51.0` (also
+  `latest`), digest
+  `sha256:323f3cd0c3576ec874800d757ec298079ccd0109a47d9f862ad6dfb9219fb0ed`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
+  digest), with the `pam-agent` binaries (amd64 + arm64), the SPDX SBOM and
+  `SHA256SUMS` attached — the second release in one day, which is what a small
+  phase cut promptly rather than banked looks like
 - [x] All five pins via the sweep; Helm chart `version` 0.41.0 -> **0.42.0**
 - [x] Both READMEs restated; `docs/README.md`, `docs/NIS2-COMPLIANCE.md` and
   ROADMAP.md's top-banner phase count
