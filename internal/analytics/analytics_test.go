@@ -589,3 +589,29 @@ func TestPeerOutlierClassTooSmallFallsSilent(t *testing.T) {
 		t.Fatalf("flagged an agent against a peer group of two agents (or against humans): %+v", s)
 	}
 }
+
+// TestAgentAdmissionRefusalsScoreAsBlocked pins Phase 185's half of the
+// detection-parity fix: an authenticated identity being refused at the door is a
+// behavioural signal, and until this phase most of those refusals scored zero.
+//
+// The engine counted `agent.quarantine_refused` and nothing else from the agent
+// admission path, so an identity hammering the door while unenrolled — or with a
+// workload its posture system would not vouch for — looked exactly like an
+// identity that had gone quiet.
+func TestAgentAdmissionRefusalsScoreAsBlocked(t *testing.T) {
+	for _, action := range []string{
+		"agent.not_enrolled", "agent.posture_denied",
+		"broker.token.refused", "forward.refused", "k8s.refused",
+		"winrm.refused", "sftp.blocked",
+	} {
+		if !cmdBlockedActions[action] {
+			t.Errorf("%s is a refusal of an authenticated party and should count as a blocked command", action)
+		}
+	}
+	// And the one that is deliberately absent: nothing was blocked — the
+	// approval went through — so counting it would inflate a signal that is
+	// allowed to drive an automated response.
+	if cmdBlockedActions["broker.approval.four_eyes_unverified"] {
+		t.Error("four_eyes_unverified is not a blocked command: the call was approved, only unverifiably")
+	}
+}
