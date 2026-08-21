@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-08-21 · Reflects: Phases 0–185. Phases 161–183 add no requirement: three additive migrations applied at startup (`0044`, `0045`, `0046`) on the PostgreSQL instance already required, five optional knobs (`PAM_BROKER_MAX_RESULT_BYTES` 165, `PAM_BROKER_BUDGET_PER_DAY` 167, `PAM_BROKER_REQUIRE_ENROLLED_SVID` 174, `PAM_BROKER_REQUIRE_KNOWN_OWNER` 176, `PAM_BROKER_POSTURE_REQUIRED` 180 — the last needing the posture webhook this deployment may already run for human operators, never a new system), and no new dependency, listener or external service. Phases 66–70 add one more
+> Last updated: 2026-08-21 · Reflects: Phases 0–186. Phases 161–183 add no requirement: three additive migrations applied at startup (`0044`, `0045`, `0046`) on the PostgreSQL instance already required, five optional knobs (`PAM_BROKER_MAX_RESULT_BYTES` 165, `PAM_BROKER_BUDGET_PER_DAY` 167, `PAM_BROKER_REQUIRE_ENROLLED_SVID` 174, `PAM_BROKER_REQUIRE_KNOWN_OWNER` 176, `PAM_BROKER_POSTURE_REQUIRED` 180 — the last needing the posture webhook this deployment may already run for human operators, never a new system), and no new dependency, listener or external service. Phases 66–70 add one more
 > background worker (the hourly, leader-locked certification scheduler); Phase 78
 > adds an optional per-replica Conjur refresh worker (off unless
 > `PAM_CONJUR_REFRESH_MIN` is set); 71–94 add no port, resource floor or
