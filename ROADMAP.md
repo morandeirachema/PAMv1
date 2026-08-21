@@ -2459,6 +2459,14 @@ since Phase 161.
   knowing before `PAM_ANALYTICS_AUTO_KILL` acts on it
 - [x] Tests: `analytics.TestAgentAdmissionRefusalsScoreAsBlocked` and the new
   coverage guard, which **failed on its first run** with the five older gaps
+- [x] **A CI-gate repair that rode along**, and the same shape as the finding:
+  the fuzz smoke step budgeted `-fuzztime 20s` per target, so a loaded runner
+  failed the build with `context deadline exceeded` on a commit that had touched
+  no parser — the engine unable to finish inside its own deadline. That is a test
+  being impatient, not a defect being found, and it is the second time in this
+  batch a job failed for reasons unrelated to its diff (ROADMAP §3d is the
+  first). The budget is now a **count** (`-fuzztime 3000x`): the same work on
+  every machine, and nothing to expire
 - [x] No schema change, no new env var, no new route
 
 ## Phase 184 — Documentation sync across the set ✅
