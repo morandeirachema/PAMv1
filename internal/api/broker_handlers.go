@@ -275,6 +275,15 @@ func viaField(id *agentid.Identity, subject string) string {
 // a FIRST sighting is never throttled, because that one is the signal.
 const sightingInterval = time.Minute
 
+// maxSightingEntries bounds the damper's memory. One entry per distinct SPIFFE
+// ID is small in a stable trust domain and unbounded in a churny one — a
+// deployment that mints a per-pod identity accumulates an entry per pod, for the
+// life of the process. Past the cap the whole map is dropped rather than evicted
+// one by one: the entries are interchangeable, losing them costs at most one
+// extra row write per identity as the damper re-learns, and an LRU here would be
+// more machinery than the thing it protects.
+const maxSightingEntries = 4096
+
 // sightingDue reports whether subject's stamp is due to be written, recording
 // the attempt. In-process and per-replica by design: it is a write-rate damper,
 // not a distributed lock, and a second replica stamping the same identity a few
@@ -286,13 +295,21 @@ func (s *Server) sightingDue(subject string) bool {
 			return false
 		}
 	}
+	if s.svidSeenN.Add(1) > maxSightingEntries {
+		s.svidSeen.Clear()
+		s.svidSeenN.Store(1)
+	}
 	s.svidSeen.Store(subject, now)
 	return true
 }
 
 // forgetSighting drops a damper entry after a failed write, so the next call
 // retries instead of waiting out an interval it never actually recorded.
-func (s *Server) forgetSighting(subject string) { s.svidSeen.Delete(subject) }
+func (s *Server) forgetSighting(subject string) {
+	if _, loaded := s.svidSeen.LoadAndDelete(subject); loaded {
+		s.svidSeenN.Add(-1)
+	}
+}
 
 // bearerToken extracts a Bearer token from the Authorization header.
 func bearerToken(r *http.Request) string {

@@ -1008,6 +1008,36 @@ func Load() (*Config, error) {
 	if cfg.BrokerTrustDomainJWKS != "" && (cfg.BrokerTrustDomain == "" || cfg.BrokerAudience == "") {
 		errs = append(errs, "PAM_BROKER_TRUST_DOMAIN and PAM_BROKER_AUDIENCE are required when PAM_BROKER_TRUST_DOMAIN_JWKS is set")
 	}
+	// A control that is ON but cannot act is the failure this batch keeps
+	// closing, one level up: not a dead field in the code, but a live field in
+	// the CONFIGURATION whose prerequisite is absent. Each of these reads to an
+	// operator as "the agents are gated", and each does nothing at all without
+	// the thing it gates on — so each fails the startup loudly rather than
+	// serving a deployment that believes it is stricter than it is.
+	if cfg.BrokerRequireEnrolledSVID && cfg.BrokerTrustDomainJWKS == "" {
+		errs = append(errs, "PAM_BROKER_REQUIRE_ENROLLED_SVID needs PAM_BROKER_TRUST_DOMAIN_JWKS: without it no agent authenticates with an SVID, so there is no enrollment to require")
+	}
+	if cfg.BrokerPostureRequired && cfg.PostureAttestURL == "" {
+		errs = append(errs, "PAM_BROKER_POSTURE_REQUIRED needs PAM_POSTURE_ATTEST_URL: there is no posture system to ask")
+	}
+	// The broker's own knobs, checked as a group so a future one is covered by
+	// adding a line here rather than by remembering to. Numeric caps are
+	// harmless when the broker is off; these three are refusals, and a refusal
+	// that cannot happen is worth failing over.
+	if cfg.BrokerPolicyFile == "" {
+		for _, k := range []struct {
+			name string
+			set  bool
+		}{
+			{"PAM_BROKER_REQUIRE_KNOWN_OWNER", cfg.BrokerRequireKnownOwner},
+			{"PAM_BROKER_REQUIRE_ENROLLED_SVID", cfg.BrokerRequireEnrolledSVID},
+			{"PAM_BROKER_POSTURE_REQUIRED", cfg.BrokerPostureRequired},
+		} {
+			if k.set {
+				errs = append(errs, k.name+" needs the agent broker enabled (PAM_BROKER_POLICY_FILE)")
+			}
+		}
+	}
 	// Business-hours bounds must be a valid, non-empty window (the off-hours risk
 	// signal is otherwise meaningless or inverted).
 	if cfg.AnalyticsBusinessStart < 0 || cfg.AnalyticsBusinessEnd > 24 ||
