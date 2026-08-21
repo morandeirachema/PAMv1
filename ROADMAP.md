@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–183 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–184 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,44 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 184 — Documentation sync across the set ✅
+
+A currency pass over every `.md` in the repo, run because the previous one
+(Phase 176's docs half) fixed the headers and the two architecture docs — and
+five other documents kept saying "161–173" in their bodies while their
+`Reflects:` line said 183. **A header that is current above a body that is not
+is worse than a stale header**, which at least tells you to check.
+
+- [x] **Five bodies caught up**: `PORTS-AND-FLOWS.md` (extended through 183, and
+  it now names Phase 180's posture check as the one agent-path change that dials
+  out at all — to the webhook already used for human operators, flow E15, not a
+  new egress), `OT-DEPLOYMENT.md`, `RDP-TESTING.md`, `VNC-TESTING.md`,
+  `REQUIREMENTS.md` and `SYSADMIN-GUIDE.md`
+- [x] **Two counts were wrong, not just old**: the batch's knobs are five, not
+  three (`MAX_RESULT_BYTES`, `BUDGET_PER_DAY`, `REQUIRE_ENROLLED_SVID`,
+  `REQUIRE_KNOWN_OWNER`, `POSTURE_REQUIRED`) and its migrations three, not two.
+  A sentence assembled by three successive edits had also collapsed into
+  ungrammar, which is what happens when a passage is patched instead of rewritten
+- [x] **Both READMEs said the roadmap runs 0–178.** They are the first thing a
+  reader sees and the last thing a phase remembers
+- [x] **`SECURITY-GAPS.md` gained the 2026-08-19/21 self-sweeps** — findings CN
+  through CP, one of them a defect a single phase old — and states the process
+  conclusion plainly: a per-phase review cannot catch a defect whose author
+  believed the phase was correct, so both live findings came from reading the
+  batch as a whole with scans that do not care what any phase intended
+- [x] **`NIS2-COMPLIANCE.md`** absorbed 179–183 into its control-mapping note (a
+  new `agent.*` name counted by prefix, a claim written into a token whose
+  issuance was already recorded, a new FIELD on an action already counted, and
+  configuration validation that emits nothing but removes three ways a deployment
+  could believe it was gated), and **`CODE-GUIDE.md`** gained the agent-admission
+  order — cheapest and most local first, posture last because it is the only
+  check that leaves the process — plus what a verified `Identity` now carries
+- [x] **Checked and correct as they stand**: `ARCHITECTURE-DIAGRAMS.md` is
+  code-generated and CI-diffed; `RELATED-PROJECTS.md` deliberately tracks the
+  outside world rather than phases; every remaining "159–173"-style string is a
+  change-log entry describing its own scope, which is history, not drift
+- [x] Docs-only: no code, no schema, no route, no env var
 
 ## Phase 183 — The approver sees the chain, the trail joins the token ✅
 

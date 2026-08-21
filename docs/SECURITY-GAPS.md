@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-08-18 · Reflects: Phases 0–183 + the 2026-07 hardening
+> Last updated: 2026-08-21 · Reflects: Phases 0–184 + the 2026-07 hardening
 > passes, including the **post-beta sweep of 2026-07-27** (thirty findings, all
 > closed), the **sweep of 2026-08-07** over phases 56–61a (nine findings: two
 > closed by Phase 62, six by Phase 63, half of one withdrawn as a false
@@ -23,7 +23,11 @@
 > five times over (section below: four-eyes inert on the SPIFFE path, a
 > quarantine that stopped at the presenter, an inventory tool that discarded its
 > principal, two advertised policy controls that enforced nothing, and a policy
-> engine with no principal side — all closed by phases 169–173). The first of
+> engine with no principal side — all closed by phases 169–173). **Two later
+> self-sweeps (phases 176 and 182) then audited that batch's own output** and
+> found three more of the same shape, one of them a single phase old — recorded
+> in the section above the research one, along with what that says about relying
+> on per-phase review. The first of
 > those passes had already produced **one detection-integrity finding**: it found
 > that `internal/ocsf` classified
 > `broker.tool_call.denied` as a Detection Finding while no code could write
@@ -202,6 +206,33 @@ roadmap is the plan.
 | ~~F~~ | ~~**Certification decisions have no separation of duties.**~~ | Was: only `CapManageUsers` (i.e. an admin) could certify or revoke, so the principal who grants access was the only one who could attest to it. | **Fixed in Phases 39 + 46** — Phase 39 moved the decision to `CapApprove`, so a dedicated `approver` runs the recertification without holding the access-granting capability (creating/closing a campaign stay `CapManageUsers`). Phase 46 closed the remaining hole with **per-item four-eyes**: every grant records its creator (`target_grants.created_by`, `safe_members.created_by`, migration `0023`), the campaign snapshot carries it (`campaign_items.granted_by`, shown as "granted by X" in the item detail), and certifying an item you granted yourself is refused 403 + audited `certification.decision_denied`. Self-revoke stays allowed (it reduces access); pre-migration rows with no recorded creator are not blocked retroactively. Tests: `api.TestCertificationAuthz`, `api.TestCertificationFourEyes`, the store contract. |
 | ~~G~~ | ~~**Console parity has drifted since Phase 25.**~~ | Was: nine capabilities had no screen. Two of them — a parked agent tool call and a paused SQL statement — are human decisions **with a deadline**, which is what made curl-only actually cost something. | **Fixed across Phases 43 + 45** — Phase 43 shipped the two time-critical screens (*Approve AI-agent tool calls*, menu 20, showing the arguments the policy matched on; *In-session step-up decisions*, menu 21). Phase 45 shipped the other seven: vendors & contract grants (22), operator SSH certificates (23), identity blast radius (24), login-session revocation (25), agent keys (26), credential dependencies (option 9 on a credential), and the audit chain verify / signed head / OCSF export on the audit screen. One deliberate new route: `GET /api/ca/ssh/certs` (CapReadInventory) — the issued-cert serials a revocation needs were listable in the store but invisible over HTTP. All verified against a running server; the console is back at **full parity**. |
 | ~~H~~ | ~~**No update endpoints and no pagination.**~~ | Was: the `Store` interface had create/delete but no update for targets, safes, users or vendors — fixing a target's port meant delete + recreate, cascading away its credentials, grants, dependencies and safe assignment — and no list method except the audit reads was bounded (an authenticated memory-exhaustion vector). | **Fixed in Phase 44** — `UpdateTarget`/`UpdateSafe`/`UpdateUserRole`/`UpdateVendorOrg` + `PUT` routes with create-equivalent validation and authorization (the user edit re-runs the privilege-escalation guard; tokens survive a role change), audited `*.update`; the seven top-level list reads take an id-ascending `(limit, afterID)` window and every list endpoint clamps `?limit=&after=` to 1..500 (default 100) the way `listAudit` already did. Grants and safe members deliberately stay create + delete (no dependents to lose; two audited events beat one mutated row), and usernames stay immutable (they are the subject key in grants/sessions/vendor rows). Console: cursor-draining fetches + 2=Change screens. Tests: the store contract (both stores, live PostgreSQL in CI) + `api/update_test.go`. |
+
+## The 2026-08-19/21 self-sweeps — auditing the batch's own output
+
+Two passes over what phases 159–181 had just shipped, run because the per-phase
+reviews had proven insufficient: they read each change against its own intent,
+and neither of these findings contradicts an intent. Both are the same shape as
+the research findings above, which is the point — **the batch reproduced the
+defect class it was closing**, twice, in its own code and its own configuration.
+
+The first pass (Phase 176) read the code: dead-field scan, store surface, audit
+vocabulary emit parity, fail-open branches in every gate-shaped function, and
+bool flags honoured on read but never set. The second (Phase 182) read what the
+code was *deployed with*: environment variables, the shipped examples, and the
+in-memory state a long-lived process accumulates.
+
+| # | Finding | Why it matters | Status |
+|---|---|---|---|
+| ~~CN~~ | ~~**A reachability flag claimed a reachability the control does not have.**~~ Phase 175's `owner_known` — "the offboarding cascade can reach this agent" — compared owners case-insensitively, while every owner lookup in pamv1 is a literal match (`WHERE owner = $1`). | An agent owned by `Carol` while the user is `carol` reported as fine and is unreachable: deleting that user suspends nothing. A report that is wrong in the *reassuring* direction is the same class as a dead field that reads like a control, and it shipped one phase before it was caught. | **Fixed** — Phase 176, exact-case, with the deliberate asymmetry recorded: the four-eyes comparison stays case-INSENSITIVE, because matching more broadly there *refuses* more. `api.TestOwnerKnownMatchesTheControlItReportsOn` proves the claim by deleting the user and watching which agent gets suspended. |
+| ~~CO~~ | ~~**Four-eyes could not be verified and did not say so.**~~ The gate refuses `owner == approver`, so an owner nobody holds — a typo, or a team address — can never match. | The real owner could approve their own agent's privileged call, with the row still reading as though somebody were accountable. Four-eyes silently not applying is worse than four-eyes visibly absent. | **Fixed** — Phase 176: the decision is audited `broker.approval.four_eyes_unverified` naming the owner, and `PAM_BROKER_REQUIRE_KNOWN_OWNER` refuses it outright. Off by default, because a team-owned agent is a legitimate arrangement and the trail is honest either way. |
+| ~~CP~~ | ~~**Three refusals that could never fire.**~~ `PAM_BROKER_REQUIRE_ENROLLED_SVID` without a trust-domain JWKS, `PAM_BROKER_POSTURE_REQUIRED` without a posture webhook, and any broker refusal with no policy file. | Each reads to an operator as "the agents are gated" and does nothing at all — the batch's own failure class, one level up: not a dead field in the code, but a live field in the **configuration** whose prerequisite is absent. | **Fixed** — Phase 182: each fails the startup loudly, the idiom the validator already used for `PAM_BROKER_TOKEN_EXCHANGE`, checked as a group so the next knob is a list entry. `config.TestInertBrokerKnobsFailStartup`. |
+| — | **Hardening: two unbounded accumulations, one real.** Phase 176's write damper (`svidSeen`) kept an entry per distinct SPIFFE ID for the life of the process; MCP SSE sessions were checked and are deleted on close. | Small in a stable trust domain, unbounded where a per-pod identity is minted — a slow leak in the exact deployment shape SPIFFE encourages. | **Fixed** — Phase 182: capped at 4096 with a whole-map drop, since the entries are interchangeable and the worst case is one extra row write per identity while the damper re-learns. |
+
+**What the two sweeps say about the process**, recorded because it is the more
+useful finding: a per-phase review cannot catch a defect whose author believed
+the phase was correct. Both live findings came from reading the batch as a
+whole, with scans that do not care what any phase intended — and one of them was
+one phase old.
 
 ## The 2026-08-17/18 AI-agent-broker research — five passes, five findings
 
