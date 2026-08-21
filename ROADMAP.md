@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–180 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–181 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,48 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 181 — `may_act` is issued, not only enforced ✅
+
+**Closes:** the agent-broker research pass's finding 5.
+
+**The asymmetry.** `exchange.go` has refused since Phase 57 to mint for an actor
+the delegating token's RFC 8693 §4.4 `may_act` does not name — and has never
+emitted the claim. So the check was real, and beyond the first hop it had
+nothing to read: every token pamv1 minted was unpinned, and "who may act for
+this identity" was a question the system asked and never answered.
+
+- [x] **`POST /v1/token` accepts `may_act`** — repeated, or space/comma-separated
+  — and stamps it into the issued token in the RFC's own `{"sub": …}` shape: a
+  bare string for one party, a list for several, which is exactly what this
+  package's verifier already accepts on the reading side. Emission and
+  enforcement now meet, which is the only state in which either is worth
+  anything
+- [x] **Documented as a pamv1 EXTENSION, not passed off as standard.** RFC 8693
+  defines `may_act` as a claim and defines no request parameter for it, so no
+  other implementation will accept the same request. Said in the code, the admin
+  guide and the protocols doc
+- [x] **Narrowing rules, all fail-closed**: at most eight parties (a pin naming
+  everybody is not a pin, and an unbounded list is an unbounded token), every
+  entry inside the trust domain (a token vouching for a foreign party is either a
+  mistake or an attempt to make pamv1's own enforcement read as though somebody
+  outside had been approved), and never the token's own subject — an identity
+  does not need permission to act as itself, and allowing it would let a caller
+  satisfy a later check with a self-reference
+- [x] **The trust domain comes from the actor's already-verified SPIFFE ID**, not
+  from a second config field, so the rule cannot drift away from the verifier's
+- [x] **On the trail**: `broker.token.exchanged … may_act:` names the pin, absent
+  when unpinned — so its presence is itself the signal that somebody narrowed the
+  token, and an investigator can answer "who was this allowed to be handed to"
+  without holding it
+- [x] **Unpinned stays the default**, which is what every token minted before
+  this phase was: an omitted parameter changes nothing for an existing caller
+- [x] Tests: `api.TestMayActPinsTheNextHop` end to end (pinned actor allowed,
+  stranger refused with the claim named, pin audited, out-of-domain pin refused)
+  — **verified to FAIL with the emission removed**, where the stranger was
+  delegated to successfully — plus `agentid.TestValidateMayActBounds` and
+  `TestTrustDomainPrefix`
+- [x] No schema change, no new env var, no new route
 
 ## Phase 180 — Posture reaches the agent path ✅
 
@@ -8292,9 +8334,10 @@ buys:
   a posture system can tell a laptop from a workload. The honesty stands and is
   written into the package doc: a webhook attesting about a NAME is much weaker
   than cryptographic workload attestation, which stays in §5.
-- **pamv1 enforces `may_act` but never issues it** (`exchange.go` checks it and
-  omits it when minting), so from hop 2 onward nobody can pin who may act for
-  whom.
+- ~~**pamv1 enforces `may_act` but never issues it**~~ — ✅ closed 2026-08-21
+  (Phase 181): the exchange accepts a `may_act` parameter (a pamv1 extension, since
+  the RFC defines only the claim) and stamps it into the issued token, bounded to
+  eight in-domain parties and never the subject itself, with the pin audited.
 - **The approver sees one call, not the campaign.** `PendingApproval` still
   carries no `ActorChain` even though the chain is already written to the audit
   chain, and a presented SVID's `jti` is never parsed — so
