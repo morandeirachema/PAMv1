@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–187 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–188 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,27 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 188 — v0.51.0 ✅
+
+Releases Phase 187 alone: the three console screens for capabilities that had
+shipped with an API and no portal path, and the guard that will notice the next
+one. A deliberately small release — **no schema change, no new env var, no new
+route and no upgrade note** — cut rather than banked, because the whole point of
+the phase is that a gap sat unnoticed for three phases and banking it would be
+the same mistake in miniature.
+
+- [ ] **v0.51.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published as `ghcr.io/morandeirachema/pamv1:0.51.0` (also `latest`), digest
+  recorded here once the publish workflow runs, verified **public** by anonymous
+  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] All five pins via the sweep; Helm chart `version` 0.41.0 -> **0.42.0**
+- [x] Both READMEs restated; `docs/README.md`, `docs/NIS2-COMPLIANCE.md` and
+  ROADMAP.md's top-banner phase count
+- [x] `CHANGELOG.md` gains the release entry, whose **Fixed** line is the parity
+  claim itself: it is now enforced by a test rather than asserted by a sentence
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
 
 ## Phase 187 — Three capabilities the portal could not reach ✅
 
