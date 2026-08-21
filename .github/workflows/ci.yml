@@ -82,11 +82,20 @@ jobs:
         # the `test` step below (the regression guard); this step ALSO fuzzes each
         # target briefly, so a new crasher reachable within the budget fails the
         # build. Kept short to bound CI time; extend locally with a larger -fuzztime.
+        #
+        # The budget is a COUNT, not a duration (Phase 185). `-fuzztime 20s` made
+        # the gate depend on how loaded the runner was: a slow one failed the
+        # build with "context deadline exceeded" — the engine unable to finish
+        # within its own deadline — on a commit that had touched no parser. That
+        # is a test being impatient rather than a defect being found, and it
+        # teaches a team to rerun instead of read. A count does the same amount of
+        # work everywhere: ~3000 execs per target runs in well under a second of
+        # CPU locally and cannot expire.
         run: |
           for t in FuzzParsePreLogin FuzzParseSQLBatch FuzzParseRPC; do
-            go test -run '^$' -fuzz "$t" -fuzztime 20s ./internal/tds
+            go test -run '^$' -fuzz "$t" -fuzztime 3000x ./internal/tds
           done
-          go test -run '^$' -fuzz FuzzSFTPInspector -fuzztime 20s ./internal/proxy
+          go test -run '^$' -fuzz FuzzSFTPInspector -fuzztime 3000x ./internal/proxy
       - name: test
         # -coverpkg=./... measures coverage across the WHOLE tree rather than
         # per-package. It matters here because this codebase deliberately tests
