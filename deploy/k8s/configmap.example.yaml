@@ -223,10 +223,13 @@ data:
   # PAM_BROKER_RATE_PER_MIN: "0"
   # PAM_BROKER_AUDIT_CHECKPOINT_EVERY: "0"
   # PAM_BROKER_MAX_DELEGATION_DEPTH: "1"
+  # PAM_BROKER_REQUIRE_KNOWN_OWNER: "false"   # refuse an approval whose agent owner is not a pamv1 user
+  # PAM_BROKER_POSTURE_REQUIRED: "false"      # ask PAM_POSTURE_ATTEST_URL about agents too
   # SPIFFE/SVID identity for agents:
   # PAM_BROKER_TRUST_DOMAIN_JWKS: "/etc/pamv1/spiffe-jwks.json"
   # PAM_BROKER_TRUST_DOMAIN: "example.org"
   # PAM_BROKER_AUDIENCE: "pamv1"
+  # PAM_BROKER_REQUIRE_ENROLLED_SVID: "false" # refuse an SVID nobody has claimed (enrol first)
   # RFC 8693 token exchange (Phase 57) — the broker MINTS delegated SVIDs.
   # Needs the broker and the SVID settings above; the signing key is held in
   # shared custody unless PAM_BROKER_TOKEN_SIGN_SEED is set (a Secret, not here).

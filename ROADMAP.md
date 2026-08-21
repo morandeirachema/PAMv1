@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–181 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–182 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,47 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 182 — Knobs that did nothing where they were set ✅
+
+A sweep over what phases 174–181 **shipped** rather than over their code: the
+env vars, the deploy examples, the in-memory state. Three findings, and all
+three are this batch's recurring failure class one level up — not a dead field
+in the code, but a **live field in the configuration whose prerequisite is
+absent**.
+
+- [x] **Three refusals that could never fire.**
+  `PAM_BROKER_REQUIRE_ENROLLED_SVID` without `PAM_BROKER_TRUST_DOMAIN_JWKS`
+  gates an authentication path that does not exist; `PAM_BROKER_POSTURE_REQUIRED`
+  without `PAM_POSTURE_ATTEST_URL` asks a webhook nobody configured; any of the
+  three broker refusals with no `PAM_BROKER_POLICY_FILE` gates a broker that is
+  off. Each reads to an operator as "the agents are gated" and did nothing at
+  all. Each now fails the startup loudly — the idiom the validator already used
+  for `PAM_BROKER_TOKEN_EXCHANGE`, applied to the knobs that arrived after it
+- [x] **Checked as a group**, so the next broker refusal is covered by adding a
+  line to a list rather than by remembering to write a new `if`
+- [x] **The same three were missing from both shipped deploy examples.** An
+  operator copying `deploy/docker/.env.example` or
+  `deploy/k8s/configmap.example.yaml` never learned they exist — the drift Phase
+  63 fixed once for Phase 57's variables, recurring for mine. Added, each with
+  the ordering advice it needs: let the inventory build itself and claim what you
+  recognise *before* requiring enrollment; teach the posture webhook about agent
+  names *before* asking it about them
+- [x] **A bound on Phase 176's own damper.** `svidSeen` held one entry per
+  distinct SPIFFE ID for the life of the process — small in a stable trust
+  domain, unbounded in one that mints a per-pod identity. Capped at 4096 with a
+  whole-map drop past it: the entries are interchangeable, the worst case is one
+  extra row write per identity while the damper re-learns, and an LRU would be
+  more machinery than the thing it protects
+- [x] **Also checked, clean**: MCP SSE sessions are deleted on close, not
+  accumulated; the numeric broker caps are harmless when the broker is off (a cap
+  that bounds nothing misleads nobody, unlike a refusal that cannot happen); and
+  every route added since 169 is guarded by `CapManageUsers` or the agent
+  authenticator, as `archgen`'s route table shows
+- [x] Test: `config.TestInertBrokerKnobsFailStartup` — each inert combination
+  refused by name, and the fully-configured deployment still loading, so the
+  check refuses an inert setting rather than the feature
+- [x] No schema change, no new env var, no new route
 
 ## Phase 181 — `may_act` is issued, not only enforced ✅
 
