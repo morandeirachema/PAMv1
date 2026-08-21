@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–185 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–186 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,38 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 186 — v0.50.0 ✅
+
+Releases phases 179–185: the research backlog's last capability items (posture
+on the agent path, `may_act` issued, the approver's view of a delegation) and
+**three phases of auditing the batch itself**, which is where most of this
+release's value sits — a flag that was wrong in the reassuring direction, three
+knobs that gated nothing, and seven refusals no detection surface could see.
+
+**No schema change** (high-water stays `0046`), one new env var, and **three
+upgrade notes** — the first of which can stop a deployment from starting, which
+is the point of it.
+
+- [ ] **v0.50.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published as `ghcr.io/morandeirachema/pamv1:0.50.0` (also `latest`), digest
+  recorded here once the publish workflow runs, verified **public** by anonymous
+  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] All five pins via the sweep; Helm chart `version` 0.40.0 -> **0.41.0**
+- [x] Both READMEs restated; `docs/README.md`, `docs/NIS2-COMPLIANCE.md` and
+  ROADMAP.md's top-banner phase count
+- [x] `CHANGELOG.md` gains the release entry. Its **Fixed** section is longer
+  than its **Added** section for the first time, and that is an honest summary of
+  the release rather than an accident of ordering: three of the seven phases
+  exist because the batch audited itself and did not like what it found
+- [x] The three upgrade notes are written where an operator meets the
+  consequence: a startup that now refuses an inert setting, risk scores that rise
+  because behaviour which scored zero now counts, and a SIEM that starts
+  receiving findings it did not before
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging: `gofmt`,
+  `go vet`, `staticcheck`, `gosec`, `govulncheck`, `go test -race ./...`,
+  `go run ./cmd/archgen`
 
 ## Phase 185 — The refusals no detection surface could see ✅
 
