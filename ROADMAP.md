@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–186 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–187 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,45 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 187 — Three capabilities the portal could not reach ✅
+
+A parity sweep, asked as a diff: the generated route table against the console's
+own `api()` calls, which operator-guarded routes does no screen touch?
+
+**Three, and all of them shipped that way.** DoubleLock (Phase 135), SCIM client
+keys (149) and the browser-extension token (147) had routes, an admin-guide curl
+command, and **no screen at all** — capabilities an operator could only use by
+leaving the product, while the README and this roadmap both claim every shipped
+capability is operable from the portal. Console parity was last asserted by hand
+in Phase 45; three phases shipped past it, and nothing checked.
+
+- [x] **DoubleLock is credential option `10`.** Off is immediate — the lock is
+  being removed and the reveal gate already proved this caller may hold the
+  secret — while on collects the holder and password on `PAMDBLLCK`. The
+  credential listing gains a DoubleLock column, so the state is visible before
+  somebody wonders why a reveal is asking for a second password
+- [x] **Menu 29 manages SCIM client keys** (`PAMSCIMKY` / `PAMADDSCM` /
+  `PAMSCMTOK`), with the token shown once, exactly as an agent key is
+- [x] **Menu 30 mints a browser-extension token** (`PAMEXTTOK`), which the admin
+  guide had been documenting as a curl command — a strange thing to ask of the
+  person whose browser it is for
+- [x] **The durable half**: `web.TestConsoleCanReachEveryOperatorRoute`. Every
+  route behind an operator capability must be called by the console or listed in
+  `notOperable` **with the reason** a person is not expected to use it — 37
+  entries, every one a browser-driven flow, a list loader or a client-side
+  protocol. The exception list is the point: skipping a screen becomes a decision
+  somebody wrote down rather than an omission nobody noticed
+- [x] **The guard's own first draft was wrong, and that is recorded too.** It
+  matched on the static path prefix and passed while DoubleLock was still
+  missing, because `/api/credentials/{id}/doublelock` shares its prefix with half
+  the credential screen. The matcher now requires every literal segment in order
+  — which is exactly what distinguishes a sub-resource nobody calls from the
+  parent everybody does — and fails on all six routes when the screens are
+  removed
+- [x] Console fixtures for all three screens, including the extension screen's
+  before and after states
+- [x] No schema change, no new env var, no new route
 
 ## Phase 186 — v0.50.0 ✅
 
