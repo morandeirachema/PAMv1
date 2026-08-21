@@ -340,7 +340,7 @@ type toolCallIn struct {
 // looks identical to its thousandth routine call. Every caller-supplied value is
 // quoted and bounded (auditField): these come straight off the wire, and an
 // unquoted value in a `key:value` detail lets whoever controls it forge fields.
-func brokerCallDetail(in toolCallIn, out broker.Outcome) string {
+func brokerCallDetail(id *agentid.Identity, in toolCallIn, out broker.Outcome) string {
 	detail := fmt.Sprintf("tool:%s status:%s call:%s", auditField(in.Tool, 64), out.Status, out.CallID)
 	if t := targetArg(in.Args); t != "" {
 		detail += " target:" + auditField(t, 128)
@@ -351,8 +351,21 @@ func brokerCallDetail(in toolCallIn, out broker.Outcome) string {
 	if in.Client != "" {
 		detail += " client:" + auditField(in.Client, 128)
 	}
+	// The PRESENTED token's own id (Phase 183), which is what joins this call to
+	// the `broker.token.exchanged` row that minted the token — the two halves of
+	// a delegation sat in the same trail with nothing linking them. Named
+	// `svid_jti` and not `jti`, because `jti:` on a brokered call already means
+	// the RESUME token's id: one call can carry both, and an investigator must
+	// not have to guess which identifier they are reading.
+	if id != nil && id.TokenID != "" {
+		detail += " svid_jti:" + auditField(id.TokenID, maxJTIField)
+	}
 	return detail
 }
+
+// maxJTIField bounds the token id on the trail; the verifier already truncates
+// what it accepts, and this is the belt to that braces.
+const maxJTIField = 64
 
 // runField renders one optional correlation field for an audit detail, or ""
 // when the value is absent — so an event about a call that declared no run id is
@@ -407,7 +420,7 @@ func (s *Server) processToolCall(w http.ResponseWriter, r *http.Request, id *age
 	// execution as different signals. Phase 161 — before it, an agent could be
 	// refused a privileged tool call every minute for a week and neither surface
 	// would show anything but routine activity.
-	s.auditAs(r.Context(), id.AgentName, broker.ActionFor(out.Status), brokerCallDetail(in, out))
+	s.auditAs(r.Context(), id.AgentName, broker.ActionFor(out.Status), brokerCallDetail(id, in, out))
 	writeJSON(w, http.StatusOK, out)
 }
 
