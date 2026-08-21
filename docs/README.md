@@ -1,6 +1,6 @@
 # pamv1 — documentation
 
-> Last updated: 2026-08-19 · Reflects: Phases 0–183 and release v0.49.0 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-08-21 · Reflects: Phases 0–184 and release v0.49.0 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -107,6 +107,8 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-08-21 | **Phase 184 — documentation sync across the set.** Every doc's `Reflects:` header was current while five bodies still said "161–173": PORTS-AND-FLOWS, OT-DEPLOYMENT, RDP/VNC-TESTING, REQUIREMENTS and SYSADMIN-GUIDE now read through 183, with the knob count corrected from three to five and the migration count from two to three. Both READMEs said the roadmap runs 0–178. SECURITY-GAPS gained the **2026-08-19/21 self-sweeps** (findings CN–CP, one of them a defect a single phase old) and says what that implies about per-phase review; NIS2's control-mapping note absorbed 179–183; CODE-GUIDE gained the agent-admission order and what a verified `Identity` now carries. |
+| 2026-08-21 | Phase 182 (inert knobs): the three broker refusals that could never fire now fail startup, and all three reached `deploy/docker/.env.example` and `deploy/k8s/configmap.example.yaml`, which had never mentioned them. |
 | 2026-08-21 | Phase 183 (the approver's view): ADMIN-GUIDE's approval section gains the HOPS column and what it means, the threat model gains both controls and their test, and the low-level doc records why the new audit field is `svid_jti` and not `jti`. |
 | 2026-08-21 | Phase 181 (`may_act` issued): the delegation section of ADMIN-GUIDE gains the extension parameter and its narrowing rules, PROTOCOLS-AND-CRYPTO's honest note that the claim was enforced but never issued is replaced by what now happens, and the threat model gains the control and its round-trip test. |
 | 2026-08-21 | Phase 180 (posture on the agent path): a new env var in both configuration tables, `agent.posture_denied` in the audit vocabulary, the webhook's additive `kind` field in the admin guide, and the honest limit — a webhook attests a NAME, not the process — stated in the posture package doc, ADMIN-GUIDE and EXTERNAL-INFRA-GAPS alike. |
