@@ -375,6 +375,37 @@ const screens = [
     }),
   },
   {
+    // Phase 187's three screens: capabilities that shipped with routes and no
+    // portal path at all (DoubleLock 135, SCIM keys 149, extension token 147).
+    name: "scimkeys",
+    src: /\n {6}scimkeys\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      scimKeys: [
+        { id: 1, name: long ? LONGNAME : "okta-prod", owner: long ? LONGNAME : "iam-team",
+          created_at: "2026-08-21T09:00:00Z" },
+        { id: 2, name: "entra-test", owner: "", created_at: "2026-08-21T09:05:00Z" },
+      ],
+    }),
+  },
+  {
+    name: "doublelock",
+    noRows: true,
+    src: /\n {6}doublelock\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      dlockCred: long ? { id: 9, username: LONGNAME } : { id: 9, username: "svc-admin" },
+    }),
+  },
+  {
+    // Both halves of the extension screen: before minting (an explanation) and
+    // after (a token shown once).
+    name: "exttoken",
+    noRows: true,
+    src: /\n {6}exttoken\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      extToken: long ? { token: LONG, expires_at: "2026-08-21T10:00:00Z" } : null,
+    }),
+  },
+  {
     // Phase 170's SPIFFE owner registry (F8 on PAMWRKAGT). Like the quarantine
     // list its widest column is a full SPIFFE ID, the value that once pushed a
     // column off the terminal — and here a second wide column (the owner) sits

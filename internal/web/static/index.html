@@ -172,6 +172,10 @@
   let sshCerts = [], caInfo = null, loginSessions = [], agents = [], newAgent = null;
   let endpointAgents = [], newEndpointAgent = null; // Phase 153: outbound-only endpoint agents
   let quarantine = []; // Phase 159: quarantined agent identities (agent-key name, or a full SPIFFE ID)
+  let dlockCred = null;  // Phase 187: the credential DoubleLock is being set on
+  let scimKeys = [];     // Phase 187: SCIM client keys (menu 29)
+  let newScimKey = null; // shown once, like an agent key
+  let extToken = null;   // Phase 187: a minted browser-extension token, shown once
   let identities = []; // Phase 170: SPIFFE agent identities and the human accountable for each
   let ownerIdentity = null; // the registration whose owner is being reassigned
   let budgetAgent = null; // Phase 167: the agent whose daily call budget option 7 is editing
@@ -591,6 +595,20 @@
     try { quarantine = await api("GET", "/v1/agents/quarantine"); }
     catch (e) { if (e.status === 404) say("AI-AGENT BROKER IS DISABLED (set PAM_BROKER_POLICY_FILE)."); }
     go("quarantine");
+  }
+  // Phase 187: SCIM client keys (menu 29) and the extension token (menu 30) —
+  // both had routes and no screen at all, so the only way to mint either was a
+  // curl command in the admin guide.
+  async function openScimKeys() {
+    scimKeys = [];
+    try { scimKeys = await api("GET", "/v1/scim-keys"); }
+    catch (e) { if (e.status === 404) say("SCIM PROVISIONING IS DISABLED."); }
+    go("scimkeys");
+  }
+  async function openExtToken() { extToken = null; go("exttoken"); }
+  async function mintExtToken() {
+    try { extToken = await api("POST", "/api/extension-token", {}); render(); }
+    catch (e) { say("CPF9999: " + e.message, true); render(); }
   }
   // Phase 170: the SPIFFE owner registry, reached with F8 from the agent-key
   // screen. It answers the one question an attested agent could not answer —
@@ -1109,6 +1127,8 @@ ${fkeys("")}
           line(26, can("manage_users"), "Work with AI-agent keys") +
           line(27, can("read_audit"), "Delegated agent tokens (RFC 8693)") +
           line(28, can("read_inventory"), "Work with endpoint agents (outbound-only)") +
+          line(29, can("manage_users"), "Work with SCIM client keys (IdP provisioning)") +
+          line(30, can("reveal_secret"), "Browser-extension token (autofill)") +
           "90. Sign off\n";
         term.innerHTML = `${head("PAMMAIN", "PAMV1 Main Menu")}
 Select one of the following:
@@ -1129,7 +1149,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
             "19": openRecordings, "20": openBrokerApprovals, "21": openStepUps,
             "22": openVendors, "23": openSSHCerts, "24": () => go("blast"),
             "25": openLoginSessions, "26": openAgents, "27": openTokenExchange,
-            "28": openEndpointAgents,
+            "28": openEndpointAgents, "29": openScimKeys, "30": openExtToken,
             "90": signoff,
           };
           if (routes[c]) { try { await routes[c](); } catch (e) { say("CPF9999: " + e.message, true); render(); } }
@@ -1279,14 +1299,22 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         back = "main";
         const tn = Object.fromEntries(targets.map((t) => [t.id, t.name]));
         const canManage = can("manage_credentials"), canReveal = can("reveal_secret");
-        const optsHelp = [canReveal && "5=Display secret   6=Check-out", canManage && "7=Rotate   8=Reconcile", canManage && "4=Delete", "9=Dependents"].filter(Boolean).join("   ");
+        const optsHelp = [canReveal && "5=Display secret   6=Check-out", canManage && "7=Rotate   8=Reconcile", canManage && "4=Delete", "9=Dependents",
+          canReveal && "10=DoubleLock on/off"].filter(Boolean).join("   ");
+        // DoubleLock (Phase 135) shipped with routes and no screen, so the only
+        // way to put a second password on a credential — or take it off — was
+        // curl. Phase 187 found it by diffing the route table against the
+        // console's own calls.
+        const dlock = (c) => c.double_lock_holder
+          ? `<span class="amber">${cell("2nd:" + c.double_lock_holder, 14)}</span>`
+          : pad("-", 14);
         term.innerHTML = `${head("PAMWRKCRD", "Work with Vaulted Credentials")}
 Type options, press Enter.
   <span class="cyan">${optsHelp || "(read-only role)"}</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Target</th><th>User</th><th>Type</th><th>Secret</th></tr>
-${creds.map((c) => `<tr><td>${opt(c.id)}</td><td>${esc(c.id)}</td><td>${pad(tn[c.target_id] || c.target_id, 16)}</td><td>${pad(c.username, 14)}</td><td>${pad(c.secret_type, 8)}</td><td>********</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Target</th><th>User</th><th>Type</th><th>Secret</th><th>DoubleLock</th></tr>
+${creds.map((c) => `<tr><td>${opt(c.id)}</td><td>${esc(c.id)}</td><td>${pad(tn[c.target_id] || c.target_id, 16)}</td><td>${pad(c.username, 14)}</td><td>${pad(c.secret_type, 8)}</td><td>********</td><td>${dlock(c)}</td></tr>`).join("")}
 </table>${creds.length ? "" : `<div class="cyan indent">(Vault is empty.${canManage ? " Press F6 to add." : ""})</div>`}
 <input type="submit" hidden></form>
 ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add credential" : ""}   F12=Cancel`)}`;
@@ -1301,6 +1329,13 @@ ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add credential" : ""}   F12=Ca
               else if (o === "7") { await api("POST", `/api/credentials/${c.id}/rotate`, {}); say(`CREDENTIAL ${c.id} ROTATED.`); }
               else if (o === "8") { const r = await api("POST", `/api/credentials/${c.id}/reconcile`, {}); say(`CREDENTIAL ${c.id}: ${String(r.status || "checked").toUpperCase()}${r.detail ? " — " + r.detail : ""}.`); }
               else if (o === "9") { return openDeps(c.id); }
+              else if (o === "10") {
+                // Off is immediate (the lock is being removed, and the reveal
+                // route already proved this caller may hold the secret); on
+                // needs a holder and a password, so it goes to a form.
+                if (c.double_lock_holder) { await api("DELETE", `/api/credentials/${c.id}/doublelock`); say(`DOUBLELOCK REMOVED FROM CREDENTIAL ${c.id}.`); }
+                else { dlockCred = c; return go("doublelock"); }
+              }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
             await openCreds();
@@ -2444,6 +2479,124 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
             await openIdentities();
           } catch (e) { say("CPF9999: " + e.message, true); render(); }
         };
+      },
+
+      doublelock() {
+        back = "creds";
+        const c = dlockCred || {};
+        term.innerHTML = `${head("PAMDBLLCK", "DoubleLock a Credential")}
+A second, named password on top of the vault's own encryption: revealing or checking out
+this credential will additionally require it. The holder is the person who knows it —
+recorded so an investigator can see who to ask, never so pamv1 can ask for them.
+
+<div class="indent">Credential  . . . . :  <span class="white">${esc(c.id)}</span> (${esc(c.username || "")})</div>
+
+<form id="f-add" class="indent">
+<label>Holder  . . . . . . :  <input name="holder" size="20" required autofocus></label>
+<label>Password  . . . . . :  <input name="password" type="password" size="28" required autocomplete="new-password"></label>
+<input type="submit" hidden>
+</form>
+<div class="cyan indent">The password is never stored — only a verifier, and the secret re-sealed under it. Lose it
+and the credential cannot be revealed or checked out again: rotate it instead.</div>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-add").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          try {
+            await api("POST", `/api/credentials/${c.id}/doublelock`,
+              { holder: String(f.holder || "").trim(), password: String(f.password || "") });
+            say(`CREDENTIAL ${c.id} DOUBLELOCKED (HOLDER ${String(f.holder).trim().toUpperCase()}).`);
+            await openCreds();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      // SCIM client keys (Phase 149, screen added in 187 — the routes shipped
+      // with no portal path at all, so provisioning an IdP meant curl).
+      scimkeys() {
+        back = "main";
+        term.innerHTML = `${head("PAMSCIMKY", "Work with SCIM Client Keys")}
+The bearer identity an IdP presents to /scim/v2/Users when it provisions or deprovisions
+users. Not a person and not an agent: it can create, update and deactivate USER rows and
+nothing else.
+Type options, press Enter.  <span class="cyan">4=Revoke (the IdP stops provisioning immediately)</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>ID</th><th>Name</th><th>Owner</th><th>Created</th></tr>
+${scimKeys.map((k) => `<tr><td>${opt(k.id)}</td><td>${esc(k.id)}</td><td class="white">${cell(k.name, 20)}</td><td>${cell(k.owner || "-", 16)}</td><td class="cyan">${fmtTime(k.created_at)}</td></tr>`).join("")}
+</table>${scimKeys.length ? "" : `<div class="cyan indent">(No SCIM keys. Press F6 to mint one — the token is shown once.)</div>`}
+<input type="submit" hidden></form>
+${fkeys("F3=Exit   F5=Refresh   F6=Mint SCIM key   F12=Cancel")}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const k of scimKeys) {
+              const o = optVal(ev.target, k.id);
+              if (o === "4") { await api("DELETE", `/v1/scim-keys/${k.id}`); say(`SCIM KEY ${String(k.name).toUpperCase()} REVOKED.`); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openScimKeys();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      scimkeyadd() {
+        back = "scimkeys";
+        term.innerHTML = `${head("PAMADDSCM", "Mint a SCIM Client Key")}
+For an IdP's SCIM connector (Okta, Entra, OneLogin). Owner is the accountable human or team.
+
+<form id="f-add" class="indent">
+<label>Name  . . . . . . . :  <input name="name" size="20" required autofocus></label>
+<label>Owner . . . . . . . :  <input name="owner" size="20"></label>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-add").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          try {
+            newScimKey = await api("POST", "/v1/scim-keys",
+              { name: String(f.name || "").trim(), owner: String(f.owner || "").trim() });
+            go("scimkeycreated");
+          } catch (e) { say("CPF9898: " + (e.status === 404 ? "SCIM PROVISIONING IS DISABLED." : e.message), true); render(); }
+        };
+      },
+
+      scimkeycreated() {
+        back = "scimkeys";
+        const k = newScimKey || {};
+        term.innerHTML = `${head("PAMSCMTOK", "SCIM Client Token")}
+<span class="red blink">COPY THIS TOKEN NOW — IT IS SHOWN ONLY ONCE.</span>
+
+<div class="indent">
+Name  . . . . . . . :  <span class="white">${esc(k.name)}</span>
+Owner . . . . . . . :  <span class="white">${esc(k.owner || "-")}</span>
+
+Token . . . . . . . :  <span class="white">${esc(k.token)}</span>
+</div>
+<div class="cyan indent">Give it to the IdP's SCIM connector as a bearer token; only its hash is stored here.</div>
+${fkeys("F3=Exit   F12=Cancel")}`;
+      },
+
+      // A browser-extension autofill token (Phase 147, screen added in 187).
+      // Minting one was documented in the admin guide as a curl command, which
+      // is a strange thing to ask of the person whose browser it is for.
+      exttoken() {
+        back = "main";
+        const t = extToken;
+        term.innerHTML = `${head("PAMEXTTOK", "Browser-Extension Token")}
+A token for the pamv1 browser extension, scoped to ONE action: revealing a credential you
+already have permission to reveal. It cannot list targets, browse the vault, or call
+anything else, and it expires on its own.
+
+${t ? `<span class="red blink">COPY THIS TOKEN NOW — IT IS SHOWN ONLY ONCE.</span>
+
+<div class="indent">Token . . . . . . . :  <span class="white">${esc(t.token)}</span>
+Expires . . . . . . :  <span class="cyan">${fmtTime(t.expires_at)}</span></div>
+<div class="cyan indent">Paste it into the extension's settings along with this server's address.</div>`
+  : `<div class="cyan indent">Press F6 to mint one for yourself. It is issued to YOUR account — an extension token
+never grants more than the account it was minted from already had.</div>`}
+${fkeys("F3=Exit   F6=Mint a token   F12=Cancel")}`;
       },
 
       deps() {
@@ -3620,7 +3773,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   }
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
-  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, identities: openIdentities, endpointagents: openEndpointAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid) };
+  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, identities: openIdentities, scimkeys: openScimKeys, endpointagents: openEndpointAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid) };
   // cycleTheme rotates green → amber → slate → green, persists the choice, and
   // re-renders so the F-key hint's confirmation message shows immediately.
   function cycleTheme() {
@@ -3633,7 +3786,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
     render();
   }
 
-  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), quarantine: () => go("quarantineadd"), identities: () => go("identityadd"), endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, mfawebauthn: () => go("mfawebauthnadd") };
+  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), quarantine: () => go("quarantineadd"), identities: () => go("identityadd"), scimkeys: () => go("scimkeyadd"), exttoken: mintExtToken, endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, mfawebauthn: () => go("mfawebauthnadd") };
 
   window.addEventListener("keydown", async (ev) => {
     // While the RDP viewer is open it owns the keyboard (its own capture-phase
