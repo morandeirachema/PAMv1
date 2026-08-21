@@ -288,3 +288,106 @@ func TestMayActPinsTheNextHop(t *testing.T) {
 		t.Fatal("may_act must not name an out-of-domain party")
 	}
 }
+
+// TestDelegatedCallJoinsItsMintAndShowsItsChain covers Phase 183: the two halves
+// of a delegation were both on the trail with nothing linking them, and the
+// human approving a call could not see it had arrived through one.
+//
+// `broker.token.exchanged` has carried the minted token's `jti` since Phase 161;
+// the calls made with that token carried no token id at all, so an investigator
+// could see a token issued and calls arriving and could not prove they were the
+// same token. And `PendingApproval` named the calling agent without saying on
+// whose authority, through how many hands.
+func TestDelegatedCallJoinsItsMintAndShowsItsChain(t *testing.T) {
+	b64 := func(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	jwks, _ := json.Marshal(map[string]any{"keys": []map[string]any{
+		{"kty": "OKP", "crv": "Ed25519", "kid": "k1", "x": b64(pub)}}})
+	path := filepath.Join(t.TempDir(), "jwks.json")
+	if err := os.WriteFile(path, jwks, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const td, aud = "example.org", "pam-broker"
+	verifier, err := agentid.NewSVIDVerifier(path, td, aud, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signPub, signPriv, _ := ed25519.GenerateKey(rand.Reader)
+	if err := verifier.TrustIssuer(agentid.KeyID(signPub), signPub); err != nil {
+		t.Fatal(err)
+	}
+	opts := brokerOpts(t, &fakeWinRM{result: winrm.Result{Stdout: "ok"}}, approvalRules)
+	opts.BrokerSVIDVerifier = verifier
+	opts.BrokerTokenSignKey = signPriv
+	opts.BrokerAudience = aud
+	opts.BrokerMaxDelegation = 3
+	opts.BrokerExchangeTTL = 5 * time.Minute
+	srv, _ := newTestServerOpts(t, nil, opts)
+	seedWinRMTarget(t, srv, "win-chain-view", "pw")
+
+	mint := func(sub string) string {
+		hdr := b64([]byte(`{"alg":"EdDSA","kid":"k1","typ":"JWT"}`))
+		claims, _ := json.Marshal(map[string]any{
+			"sub": "spiffe://example.org/" + sub, "aud": aud,
+			"exp": time.Now().Add(time.Hour).Unix(), "jti": "src-" + sub})
+		signing := hdr + "." + b64(claims)
+		return signing + "." + b64(ed25519.Sign(priv, []byte(signing)))
+	}
+	planner, worker := mint("planner"), mint("worker")
+
+	code, body := postForm(t, srv, "/v1/token", planner, url.Values{
+		"grant_type":  {agentid.ExchangeGrantType},
+		"actor_token": {worker},
+	})
+	if code != http.StatusOK {
+		t.Fatalf("exchange: %d %s", code, body)
+	}
+	delegated, _ := jsonMap(t, body)["access_token"].(string)
+
+	// A call with the delegated token parks for approval.
+	_, pd := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", delegated,
+		map[string]any{"tool": "winrm_exec", "args": map[string]any{"target": "win-chain-view", "command": "id"}})
+	if jsonMap(t, pd)["status"] != "pending_approval" {
+		t.Fatalf("want pending_approval: %s", pd)
+	}
+
+	// The approver sees the chain, not just the calling agent.
+	_, ld := do(t, srv, http.MethodGet, "/v1/approvals", testAPIKey, nil)
+	if !strings.Contains(string(ld), "actor_chain") ||
+		!strings.Contains(string(ld), "spiffe://example.org/planner") {
+		t.Fatalf("the approval queue should carry the delegation chain: %s", ld)
+	}
+
+	// And the trail joins the mint to the call made with it: the exchange row's
+	// jti and the call row's svid_jti are the same token.
+	_, aud2 := do(t, srv, http.MethodGet, "/api/audit?limit=80", testAPIKey, nil)
+	trail := string(aud2)
+	if !strings.Contains(trail, "svid_jti:") {
+		t.Fatalf("a call made with a delegated token should record its token id: %s", trail)
+	}
+	minted := jtiFrom(t, trail, "broker.token.exchanged", "jti:")
+	used := jtiFrom(t, trail, "broker.tool_call.pending_approval", "svid_jti:")
+	if minted == "" || minted != used {
+		t.Fatalf("the minted token id %q should be the one the call used %q", minted, used)
+	}
+}
+
+// jtiFrom pulls a quoted id out of the audit row for action, by field prefix.
+func jtiFrom(t *testing.T, trail, action, field string) string {
+	t.Helper()
+	for _, line := range strings.Split(trail, "{") {
+		if !strings.Contains(line, action) {
+			continue
+		}
+		i := strings.Index(line, field)
+		if i < 0 {
+			continue
+		}
+		rest := line[i+len(field):]
+		rest = strings.TrimPrefix(rest, `\"`)
+		if j := strings.Index(rest, `\"`); j > 0 {
+			return rest[:j]
+		}
+	}
+	return ""
+}
