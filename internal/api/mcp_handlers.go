@@ -186,7 +186,7 @@ func (s *Server) mcpDispatcher(id *agentid.Identity, sess *mcpSession) mcp.Dispa
 			}
 			in := toolCallIn{SessionID: mcpRunID(sess), Client: mcpClient(sess), Tool: p.Name, Args: p.Arguments}
 			out := s.broker.ProcessCall(ctx, id, broker.Call{SessionID: in.SessionID, Client: in.Client, Tool: in.Tool, Args: in.Args})
-			s.auditAs(ctx, id.AgentName, broker.ActionFor(out.Status), brokerCallDetail(in, out)+" via:mcp")
+			s.auditAs(ctx, id.AgentName, broker.ActionFor(out.Status), brokerCallDetail(id, in, out)+" via:mcp")
 			// Elicitation (Phase 27): if the call parked for approval and the client
 			// declared elicitation support, ask the running user to confirm over the
 			// SSE stream. A decline WITHDRAWS the requester's own pending call (no

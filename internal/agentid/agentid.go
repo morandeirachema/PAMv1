@@ -32,6 +32,14 @@ type Identity struct {
 	// minter reads it (exchange.go) — it restricts who may be delegated TO, never
 	// what the holder itself may do.
 	MayAct []string
+	// TokenID is the presented token's `jti` (Phase 183), empty for a static key
+	// and for an SVID whose issuer set none. It is recorded on every brokered
+	// call so the mint of a delegated token — `broker.token.exchanged`, which has
+	// carried its own `jti:` since Phase 161 — can be joined to the calls made
+	// with it. Without it the two halves of a delegation sat in the same trail
+	// with nothing linking them: an investigator could see a token issued and
+	// calls arriving, and could not prove they were the same token.
+	TokenID string
 }
 
 // Principal is the auth.Principal the broker authorizes the call under.

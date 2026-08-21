@@ -364,6 +364,10 @@ const screens = [
           on_behalf_of: long ? LONGNAME : "alice", tool: long ? LONGNAME : "winrm_exec",
           args: long ? { target: LONG, command: LONG } : { target: "prod-win-01", command: "whoami" },
           rule_id: long ? LONGNAME : "prod-needs-human", approvers: long ? [LONGNAME, LONGNAME] : ["platform-team"],
+          // Phase 183: the delegation chain reaches the approver. The long
+          // variant drives a deep chain, whose rendered width must stay put —
+          // the count is shown, the chain itself lives in the hover title.
+          actor_chain: long ? [LONG, LONG + "/b", LONG + "/c"] : ["spiffe://e.org/worker", "spiffe://e.org/planner"],
           requested_at: "2026-08-18T12:00:00Z", expires_at: "2026-08-18T12:10:00Z" },
         { call_id: "call_11223344", agent: "worker", on_behalf_of: "", tool: "ssh_exec",
           args: {}, rule_id: "", approvers: [], requested_at: "2026-08-18T12:05:00Z", expires_at: "" },
