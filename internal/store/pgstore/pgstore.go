@@ -347,6 +347,61 @@ func (s *PGStore) EffectiveTargetGrants(ctx context.Context, targetID int64) ([]
 	})
 }
 
+// GrantsForSubjects returns every grant naming any of the given subjects, from
+// both paths, in one round trip: the subject pairs are sent as two parallel
+// text arrays and unnested into a join, so the query cost is one index scan per
+// path rather than one query per target. See store.GrantStore for why the
+// question is asked from the subject's side.
+func (s *PGStore) GrantsForSubjects(ctx context.Context, subjects []store.GrantSubject) ([]store.SubjectGrant, error) {
+	if len(subjects) == 0 {
+		return []store.SubjectGrant{}, nil
+	}
+	types := make([]string, len(subjects))
+	names := make([]string, len(subjects))
+	for i, sub := range subjects {
+		types[i], names[i] = sub.Type, sub.Name
+	}
+	rows, err := s.pool.Query(ctx,
+		`WITH subs AS (SELECT * FROM unnest($1::text[], $2::text[]) AS s(subject_type, subject))
+		 SELECT g.target_id, t.name, g.subject_type, g.subject, 'grant'::text, NULL::bigint
+		   FROM target_grants g
+		   JOIN targets t ON t.id = g.target_id
+		   JOIN subs ON subs.subject_type = g.subject_type AND subs.subject = g.subject
+		 UNION ALL
+		 SELECT t.id, t.name, sm.subject_type, sm.subject, 'safe'::text, sm.safe_id
+		   FROM safe_members sm
+		   JOIN targets t ON t.safe_id = sm.safe_id
+		   JOIN subs ON subs.subject_type = sm.subject_type AND subs.subject = sm.subject
+		 ORDER BY 1, 5, 4`, types, names)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.SubjectGrant, error) {
+		var g store.SubjectGrant
+		err := row.Scan(&g.TargetID, &g.TargetName, &g.SubjectType, &g.Subject, &g.Via, &g.SafeID)
+		return g, err
+	})
+}
+
+// GatedTargetIDs returns the ids of targets holding at least one effective
+// grant, ascending — the targets that are NOT open to every connect-capable
+// principal.
+func (s *PGStore) GatedTargetIDs(ctx context.Context) ([]int64, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT t.id FROM targets t
+		  WHERE EXISTS (SELECT 1 FROM target_grants g WHERE g.target_id = t.id)
+		     OR EXISTS (SELECT 1 FROM safe_members sm WHERE sm.safe_id = t.safe_id)
+		  ORDER BY t.id`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (int64, error) {
+		var id int64
+		err := row.Scan(&id)
+		return id, err
+	})
+}
+
 // CreateSafe inserts a safe, populating its ID and CreatedAt. Personal is
 // set here and only here — see store.Safe.Personal.
 func (s *PGStore) CreateSafe(ctx context.Context, sf *store.Safe) error {
