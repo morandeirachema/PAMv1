@@ -19,10 +19,17 @@ func seedReachEstate(t *testing.T, st store.Store) {
 	if err := st.CreateSafe(ctx, sf); err != nil {
 		t.Fatalf("CreateSafe: %v", err)
 	}
+	// Assign the safe in its own call — CreateTarget does not persist SafeID
+	// (see store.TargetStore.CreateTarget).
 	mk := func(name string, safeID *int64) int64 {
-		tg := &store.Target{Name: name, Host: "10.0.0.1", Port: 22, OSType: "linux", Protocol: "ssh", SafeID: safeID}
+		tg := &store.Target{Name: name, Host: "10.0.0.1", Port: 22, OSType: "linux", Protocol: "ssh"}
 		if err := st.CreateTarget(ctx, tg); err != nil {
 			t.Fatalf("CreateTarget(%s): %v", name, err)
+		}
+		if safeID != nil {
+			if err := st.AssignTargetSafe(ctx, tg.ID, safeID); err != nil {
+				t.Fatalf("AssignTargetSafe(%s): %v", name, err)
+			}
 		}
 		return tg.ID
 	}

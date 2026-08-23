@@ -39,12 +39,20 @@ func newReachFixture(t *testing.T) *reachFixture {
 	f.safeNone = mkSafe("empty", false)
 	f.safePriv = mkSafe("personal", true)
 
+	// The safe is assigned in a second call, never as a field on the struct
+	// CreateTarget is given — that is the only path that works on both store
+	// backends (see store.TargetStore.CreateTarget).
 	mkTarget := func(name string, safeID *int64) {
-		tg := &store.Target{Name: name, Host: name + ".example", Port: 22, Protocol: "ssh", SafeID: safeID}
+		tg := &store.Target{Name: name, Host: name + ".example", Port: 22, Protocol: "ssh"}
 		if err := st.CreateTarget(ctx, tg); err != nil {
 			t.Fatalf("CreateTarget(%s): %v", name, err)
 		}
 		f.targets[name] = tg.ID
+		if safeID != nil {
+			if err := st.AssignTargetSafe(ctx, tg.ID, safeID); err != nil {
+				t.Fatalf("AssignTargetSafe(%s): %v", name, err)
+			}
+		}
 	}
 	mkTarget("ungated", nil)           // nothing gates it: open to anyone
 	mkTarget("direct", nil)            // a user grant naming alice
@@ -286,9 +294,14 @@ func TestReachMatchesCanConnectRandomized(t *testing.T) {
 			}
 		}
 		for i := 0; i < 12; i++ {
-			tg := &store.Target{Name: fmt.Sprintf("t%d", i), Host: "h", Port: 22, Protocol: "ssh", SafeID: safeIDs[rng.Intn(len(safeIDs))]}
+			tg := &store.Target{Name: fmt.Sprintf("t%d", i), Host: "h", Port: 22, Protocol: "ssh"}
 			if err := st.CreateTarget(ctx, tg); err != nil {
 				t.Fatalf("CreateTarget: %v", err)
+			}
+			if sid := safeIDs[rng.Intn(len(safeIDs))]; sid != nil {
+				if err := st.AssignTargetSafe(ctx, tg.ID, sid); err != nil {
+					t.Fatalf("AssignTargetSafe: %v", err)
+				}
 			}
 			for n := rng.Intn(3); n > 0; n-- {
 				g := &store.TargetGrant{TargetID: tg.ID}
