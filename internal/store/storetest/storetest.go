@@ -488,13 +488,17 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	subjTargets := map[string]int64{}
 	for _, name := range []string{"si-open", "si-direct", "si-role", "si-safe", "si-other"} {
 		tt := &store.Target{Name: name, Host: "10.9.0.1", Port: 22, OSType: "linux", Protocol: "ssh"}
-		if name == "si-safe" {
-			tt.SafeID = &subjSafe.ID
-		}
 		if err := st.CreateTarget(ctx, tt); err != nil {
 			t.Fatalf("CreateTarget(%s): %v", name, err)
 		}
 		subjTargets[name] = tt.ID
+		// The safe assignment is AssignTargetSafe's job, never a field on the
+		// struct handed to CreateTarget — see store.TargetStore.CreateTarget.
+		if name == "si-safe" {
+			if err := st.AssignTargetSafe(ctx, tt.ID, &subjSafe.ID); err != nil {
+				t.Fatalf("AssignTargetSafe(%s): %v", name, err)
+			}
+		}
 	}
 	for _, g := range []store.TargetGrant{
 		{TargetID: subjTargets["si-direct"], SubjectType: "user", Subject: "si-alice"},

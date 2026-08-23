@@ -1025,6 +1025,13 @@ type WebAuthnCredential struct {
 // TargetStore is the target inventory.
 type TargetStore interface {
 	// CreateTarget inserts a target, populating its ID and CreatedAt.
+	//
+	// SafeID on the passed struct is NOT persisted: a target's safe is set by
+	// AssignTargetSafe and only there, the same way UpdateTarget never touches
+	// it (see Target.SafeID), and no create path — the REST API included —
+	// accepts a safe at creation. Set it here and pgstore drops it silently
+	// while memstore happens to keep it, so a memstore-only test can pass while
+	// the real backend has no assignment at all. Assign in a second call.
 	CreateTarget(ctx context.Context, t *Target) error
 	// ListTargets returns targets in the (limit, afterID) window, id-ascending.
 	ListTargets(ctx context.Context, limit int, afterID int64) ([]Target, error)
