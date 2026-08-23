@@ -742,6 +742,20 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (*Principal, error) 
 	return nil, ErrUnauthorized
 }
 
+// PrincipalForRole builds the Principal a stored role-or-profile string would
+// confer on the named identity, WITHOUT authenticating anything: no key is
+// presented and no session is created. It exists so a review can ask what some
+// OTHER subject may reach (see ReachableTargets) and get the same capability
+// resolution the subject itself would get when it logs in — a custom profile's
+// capabilities included. An unresolvable role is refused, fail-closed, exactly
+// as it is on the authentication path.
+//
+// It is not an authentication bypass: the caller must have already authorized
+// itself, and nothing here mints or accepts a credential.
+func (r *Resolver) PrincipalForRole(ctx context.Context, name, roleOrProfile string) (*Principal, error) {
+	return r.principalFor(ctx, name, roleOrProfile, false)
+}
+
 // principalFor builds a Principal from a stored role string: a built-in role uses
 // the role→capability matrix, otherwise the string is resolved as a custom
 // profile (its capabilities become the principal's CapSet). An unresolvable role

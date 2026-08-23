@@ -384,6 +384,10 @@ erDiagram
     ptr_time_Time LastSeen
     ptr_time_Time RevokedAt
   }
+  GrantSubject {
+    string Type
+    string Name
+  }
   KeyMaterial {
     string Name
   }
@@ -464,6 +468,14 @@ erDiagram
     bool Secret
     time_Time UpdatedAt
   }
+  SubjectGrant {
+    int64 TargetID
+    string TargetName
+    string SubjectType
+    string Subject
+    string Via
+    ptr_int64 SafeID
+  }
   Target {
     int64 ID
     string Name
@@ -533,12 +545,14 @@ erDiagram
   Credential ||--o{ Checkout : "has"
   Credential ||--o{ CredentialDependency : "has"
   Safe ||--o{ SafeMember : "has"
+  Safe ||--o{ SubjectGrant : "has"
   Safe ||--o{ Target : "has"
   Session ||--o{ SessionShareInvite : "has"
   Target ||--o{ AccessRequest : "has"
   Target ||--o{ Checkout : "has"
   Target ||--o{ Credential : "has"
   Target ||--o{ EndpointAgent : "has"
+  Target ||--o{ SubjectGrant : "has"
   Target ||--o{ TargetGrant : "has"
   Target ||--o{ VendorGrant : "has"
   Vendor ||--o{ VendorGrant : "has"
@@ -546,7 +560,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 190 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 191 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -557,6 +571,7 @@ The 190 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/access-requests/{id}/invite` | CapApprove |
 | GET | `/api/access-requests/{id}/invites` | CapApprove |
 | POST | `/api/access-requests/{id}/stop-recurrence` | CapApprove |
+| GET | `/api/access/reach` | CapReadAudit |
 | GET | `/api/analytics/risk` | CapReadAudit |
 | POST | `/api/approval-invites/{id}/revoke` | CapApprove |
 | GET | `/api/approval/preview/{token}` | public |

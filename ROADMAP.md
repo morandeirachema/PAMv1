@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–188 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–189 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,76 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 189 — What can this subject reach? ✅
+
+The last capability item of the AI-agent-broker research batch, and the one that
+had been sitting there the longest: **every grant lookup pamv1 had was
+target-indexed**. `EffectiveTargetGrants(targetID)` — direct rows unioned with
+safe membership — is exactly what a connect gate needs, and exactly the reverse
+of what a reviewer needs. "What can this agent reach?" could only be answered by
+walking every target and re-deriving the decision by hand, which is literally
+what `agentVisibleTargets` did on every `list_targets` call: **two store reads
+per target**, a cost Phase 169 accepted *in writing* because no subject-indexed
+query existed.
+
+- [x] **The relation, read backwards.** `GrantStore.GrantsForSubjects(subjects)`
+  returns every grant naming any of a principal's identifiers — its username plus
+  each role it holds — each row carrying the target it reaches and the path it
+  came from (`grant` / `safe`); `GatedTargetIDs()` returns the targets anything
+  gates at all. That second one is what separates an **open** target (nothing
+  gates it, so anyone connect-capable reaches it) from an unreachable one — a
+  distinction the subject-side grant rows alone can never make, because an open
+  target has no row. `store.Store` 212 -> 214 methods
+- [x] **`auth.ReachableTargets` composes them into the whole answer in four reads
+  regardless of estate size**, and reports not just *which* targets but **why**
+  each is reachable: `admin`, `unlimited_vault_access`, `open`, `grant`, `safe`.
+  The reason is the point — a yes/no gate can say an agent reaches 40 targets,
+  only this can say 37 of them are reachable because nobody decided anything
+- [x] **The equivalence is pinned, not asserted.** The one real risk here is a
+  second definition of "may reach" drifting from the connect-time one, which
+  would be worse than having no query at all — so
+  `TestReachMatchesCanConnect` compares the new answer against the per-target
+  `CanConnectTarget` loop for every principal shape (plain user, multi-role,
+  custom profile with `CapUnlimitedVaultAccess`, agent, admin), a randomized
+  variant repeats it over 25 generated estates, and
+  `TestGrantSubjectsMatchesSubjectMatches` keeps the query's subject list and
+  `SubjectMatches` in step in both directions
+- [x] **`GET /api/access/reach?subject=&kind=user|agent`** (`CapReadAudit` — the
+  same gate as the audit trail it complements), audited `access.reach_query`,
+  answering for a local user or either agent-identity kind
+- [x] **An agent in no registry is answered, not refused.** `known:false` plus
+  the targets nothing gates, because "any workload in the trust domain reaches
+  these" is precisely the question Phase 174's inventory left open, and refusing
+  it would hide the finding. A **directory-authenticated** identity returns 404
+  instead: its roles are decided by group mapping at login, and answering with
+  the built-in defaults would be inventing an identity
+- [x] **Console menu 31 (`PAMSUBRCH`)**, plus option `5` on a user row (menu 8)
+  and option `8` on an agent-key row (menu 26) — the two places somebody is
+  already looking at the subject. The reason column is bounded like every other
+  subfile cell (a subject name and a safe name are both unbounded values), and
+  `open` renders red because it is the finding, not the happy path. Fixture in
+  `console_check.js` drives all five reasons at both lengths
+- [x] **`agentVisibleTargets` now goes through the same path**, so the broker's
+  own inventory listing stops paying per-target reads — the payoff, not a
+  side-effect: the query exists AND the hot path that needed it uses it
+- [x] Migration **`0047`** indexes both grant tables on `(subject_type, subject)`
+  — a subject-indexed query with no subject index is a sequential scan of both
+  tables on exactly the estate size where the question starts to matter
+- [x] **Scope, stated rather than implied**: the answer is STANDING
+  reachability, what the grant model admits. Every other gate a connect attempt
+  passes — approval and its window, a vendor contract, a checkout, step-up,
+  posture, maintenance windows, quarantine — can only narrow it, never widen it.
+  So it is an upper bound on what the subject can reach *right now* and the
+  complete list of what it stands to reach *at all*, which is the right shape for
+  a review: an entitlement nobody uses is still an entitlement
+
+**What this does not close**, and is recorded so it is not mistaken for done:
+`CanConnectTarget` still returns open for a target with zero grants, so an
+enrolled-but-ungranted agent reaches every ungated target. This phase makes that
+*visible* — it is the red `open` count — but changing it is an estate-wide
+default that belongs to a phase deciding it for humans too. With this, §3b's
+capability list is closed and the batch's research is fully worked through.
 
 ## Phase 188 — v0.51.0 ✅
 
@@ -8559,17 +8629,22 @@ Five read-only passes aimed at the broker itself — MCP spec security, agent
 identity standards, vendor AI-agent controls, agentic threat frameworks, and a
 follow-on pass re-read at HEAD after the first nine phases had shipped. Every
 finding carried a `file:line`; the standards citations were fetched, not
-recalled. **Nine phases closed it so far** — 159 (identity lifecycle + the
+recalled. **Fifteen phases have closed it** — 159 (identity lifecycle + the
 subject-keyed stop button), 161 (run visibility: outcome-bearing actions, risk
 signals, run correlation), 163 (the guard defeated by sending less), 165
 (bounded results + the whole transcript), 167 (cumulative budgets), 169
 (chain-following quarantine + grant-scoped inventory), 170 (an owner for the
 SPIFFE-attested identity kind, which is what made four-eyes fire there), 171
 (`ttl_seconds` enforced, `scope` described honestly) and 173 (the policy
-principal side + the `caller.*` namespace).
+principal side + the `caller.*` namespace) — then 174 (SVID enrollment and
+inventory), 175 (recertifying non-human identities), 180 (posture on the agent
+path), 181 (`may_act` issued, not only enforced), 183 (the approver sees the
+chain) and **189 (the subject-indexed "what can this agent reach?")**, which was
+the list's last item.
 
-**Both live defects are closed.** What is left is capability, ordered by what it
-buys:
+**Both live defects are closed, and so is the capability list below.** What
+remains of the batch is the two bullets at the end — a deferral with a stated
+reason, and a set of smaller limits named so they are not forgotten:
 
 - ~~**SVID enrollment and inventory**~~ — ✅ closed 2026-08-18 (Phase 174): every
   attested identity that authenticates is recorded on sight (unowned, first- and
@@ -8580,11 +8655,17 @@ buys:
   enrolled-but-ungranted agent still reaches an ungated target; that is a
   deliberate estate-wide default, not an agent-specific one, and changing it
   belongs to a phase that decides it for humans too.
-- **"What can this agent reach?" has no query.** Every grant lookup is
-  target-indexed (direct rows plus safe membership), which is also the honest
-  cost Phase 169 accepted for its scoped inventory: two reads per target. A
-  subject-indexed view would answer the question an investigator actually asks,
-  and would let an agent's access be *reviewed* rather than reconstructed.
+- ~~**"What can this agent reach?" has no query.**~~ — ✅ closed 2026-08-23
+  (Phase 189): `GrantsForSubjects` + `GatedTargetIDs` read the grant relation from
+  the subject's side, `auth.ReachableTargets` composes them into the whole answer
+  in four reads regardless of estate size **with the reason each target is
+  reachable**, and `GET /api/access/reach` + console menu 31 expose it for a user
+  or either agent-identity kind. The two-reads-per-target cost Phase 169 accepted
+  is gone — `agentVisibleTargets` goes through the same path — and the equivalence
+  with `CanConnectTarget` is pinned by a test against the old loop rather than
+  assumed. **What remains of the original bullet**: nothing of the query itself;
+  the neighbouring `CanConnectTarget`-returns-open default is recorded above,
+  under SVID enrollment, where it belongs.
 - ~~**Agent identities are never recertified.**~~ — ✅ closed 2026-08-19 (Phase
   175): campaigns snapshot both agent identity kinds as items of their own
   (`SubjectType "agent"`, with owner, state and dormancy), revoking one suspends a
@@ -8718,11 +8799,17 @@ The 5250 console is now explicitly **keyboard-first** (the mouse is optional), m
 **What is next** is consolidated in [What is left](#what-is-left-) above, and
 the list is much shorter than it was: the beta-claim release, the
 `cmd/pam-server` test gap, the dozen feature follow-ons and the repo furniture
-are all closed and struck through there. What genuinely remains in process is
-**§3b — the rest of the AI-agent-broker batch**: SVID enrollment and inventory,
-a subject-indexed answer to "what can this agent reach?", recertification for
-non-human identities, posture on the agent path, `may_act` emission, and the
-approver's view of a delegation chain. The infra-bound catalogue stays separate
+are all closed and struck through there, and **§3b's capability list is now
+closed too, by Phase 189** — the subject-indexed answer
+to "what can this agent reach?" was its last item, after SVID enrollment and
+inventory, recertification for non-human identities, posture on the agent path,
+`may_act` emission and the approver's view of a delegation chain. What is left
+there is named, deliberate and small: no proof-of-possession on a minted
+delegated token, a trust bundle read once at startup, MCP pinned at protocol
+`2024-11-05`, `tools/list` showing every agent the whole toolset, 60 seconds of
+clock leeway past `exp`, no ceiling on a single run, and `CanConnectTarget`
+returning open for an ungated target — an estate-wide default, not an
+agent-specific one. The infra-bound catalogue stays separate
 in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md), and the console is
 at **full parity** — every shipped capability is operable from the portal,
 keyboard-first.

@@ -320,6 +320,96 @@ func (m *Memstore) EffectiveTargetGrants(_ context.Context, targetID int64) ([]s
 	return out, nil
 }
 
+// GrantsForSubjects returns every grant naming any of the given subjects, from
+// both paths (direct grants and safe membership), ordered by target id then
+// grant id. See store.GrantStore for why the question is asked this way round.
+func (m *Memstore) GrantsForSubjects(_ context.Context, subjects []store.GrantSubject) ([]store.SubjectGrant, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	want := make(map[store.GrantSubject]struct{}, len(subjects))
+	for _, sub := range subjects {
+		want[sub] = struct{}{}
+	}
+	out := make([]store.SubjectGrant, 0)
+	if len(want) == 0 {
+		return out, nil
+	}
+	named := func(subjectType, subject string) bool {
+		_, ok := want[store.GrantSubject{Type: subjectType, Name: subject}]
+		return ok
+	}
+	for _, g := range m.grants {
+		if !named(g.SubjectType, g.Subject) {
+			continue
+		}
+		t, ok := m.targets[g.TargetID]
+		if !ok {
+			continue // a grant whose target is gone reaches nothing
+		}
+		out = append(out, store.SubjectGrant{
+			TargetID: g.TargetID, TargetName: t.Name, SubjectType: g.SubjectType,
+			Subject: g.Subject, Via: store.GrantViaGrant,
+		})
+	}
+	for _, sm := range m.safeMembers {
+		if !named(sm.SubjectType, sm.Subject) {
+			continue
+		}
+		for _, t := range m.targets {
+			if t.SafeID == nil || *t.SafeID != sm.SafeID {
+				continue
+			}
+			safeID := sm.SafeID
+			out = append(out, store.SubjectGrant{
+				TargetID: t.ID, TargetName: t.Name, SubjectType: sm.SubjectType,
+				Subject: sm.Subject, Via: store.GrantViaSafe, SafeID: &safeID,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].TargetID != out[j].TargetID {
+			return out[i].TargetID < out[j].TargetID
+		}
+		if out[i].Via != out[j].Via {
+			return out[i].Via < out[j].Via
+		}
+		return out[i].Subject < out[j].Subject
+	})
+	return out, nil
+}
+
+// GatedTargetIDs returns the ids of targets holding at least one effective
+// grant, ascending — the targets that are NOT open to every connect-capable
+// principal.
+func (m *Memstore) GatedTargetIDs(_ context.Context) ([]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	gated := make(map[int64]struct{})
+	for _, g := range m.grants {
+		if _, ok := m.targets[g.TargetID]; ok {
+			gated[g.TargetID] = struct{}{}
+		}
+	}
+	withMembers := make(map[int64]struct{}, len(m.safeMembers))
+	for _, sm := range m.safeMembers {
+		withMembers[sm.SafeID] = struct{}{}
+	}
+	for _, t := range m.targets {
+		if t.SafeID == nil {
+			continue
+		}
+		if _, ok := withMembers[*t.SafeID]; ok {
+			gated[t.ID] = struct{}{}
+		}
+	}
+	out := make([]int64, 0, len(gated))
+	for id := range gated {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
 // CreateSafe inserts a safe, assigning ID and CreatedAt.
 func (m *Memstore) CreateSafe(_ context.Context, sf *store.Safe) error {
 	m.mu.Lock()

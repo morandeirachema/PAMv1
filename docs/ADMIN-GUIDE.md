@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-21 · Reflects: Phases 0–188 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-23 · Reflects: Phases 0–189 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -4019,6 +4019,71 @@ rather than guessed, which also marks the path's remediation *needs-review*. A
 graph whose edge references an unknown principal is rejected fail-loud; requests
 are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
+### 9.9 What can this subject reach? (Phase 189)
+
+§9.8 asks the structural question about a graph you submit; this asks it about
+**pamv1's own grants**, and it is the question an investigator actually starts
+with. Every grant lookup inside pamv1 is target-indexed — "who may reach this
+target" — which is what the connect gate needs and the reverse of what a review
+needs. Answering the review's question used to mean opening every target in turn
+and working it out by hand.
+
+`GET /api/access/reach?subject=<name>&kind=user|agent` (`read_audit`) answers it
+directly, and says **why** each target is reachable:
+
+```bash
+curl -H "X-API-Key: $PAM_API_KEY" \
+  "http://localhost:8080/api/access/reach?subject=alice"
+
+# an AI agent: a key name, or the full SPIFFE ID of an attested workload
+curl -H "X-API-Key: $PAM_API_KEY" \
+  "http://localhost:8080/api/access/reach?subject=spiffe://example.org/ns/prod/sa/planner&kind=agent"
+```
+
+```json
+{
+  "subject": "alice", "kind": "user", "known": true, "roles": ["user"],
+  "total": 3, "counts": {"grant": 1, "safe": 1, "open": 1},
+  "targets": [
+    {"target": "prod-db-01", "via": "grant", "subject_type": "user", "subject": "alice"},
+    {"target": "prod-web-01", "via": "safe", "safe": "prod", "subject_type": "role", "subject": "user"},
+    {"target": "lab-01", "via": "open"}
+  ]
+}
+```
+
+The `via` values are the five ways access happens: `grant` (a direct target grant
+naming the subject or a role it holds), `safe` (membership of the safe the target
+sits in), `admin` (the built-in admin bypass), `unlimited_vault_access` (the
+named override for a personal safe, Phase 139) and **`open`** — the target has no
+grants at all, so any connect-capable principal reaches it. Read the `counts`
+first: "reaches 40 targets, 37 of them open" is a very different finding from 40
+grants somebody decided on, and a flat total hides it.
+
+From the console: menu **31**, or option `5` on a row in the user list (menu 8)
+and option `8` on a row in the AI-agent key list (menu 26). Each query is audited
+`access.reach_query`.
+
+Two things it deliberately does **not** do:
+
+- **An agent nobody has enrolled is answered, not refused.** A SPIFFE ID in no
+  registry comes back with `"known": false` and the targets nothing gates —
+  because "any workload in the trust domain reaches these" is exactly the finding
+  worth having. Claim the identity (menu 26 → F8) to make it reviewable, and see
+  `PAM_BROKER_REQUIRE_ENROLLED_SVID` to make claiming mandatory.
+- **A directory-authenticated identity (AD/LDAP/Entra/OIDC/SAML) returns 404.**
+  Its roles are decided by group mapping at login, so pamv1 has nothing to
+  evaluate between logins; answering with the built-in defaults would be
+  inventing an identity. Local users and agent identities are reviewable this way.
+
+What you get is **standing** reachability: what the grant model admits. A connect
+attempt still passes the gates that can only narrow it — an access request's
+approval and its window, a vendor contract, a checkout, step-up, posture,
+maintenance windows, quarantine — so the list is an upper bound on what the
+subject can reach right now, and the complete list of what it stands to reach at
+all. That is the right shape for a review: an entitlement nobody uses is still an
+entitlement.
+
 ---
 
 ## 10. Security & hardening notes
@@ -4073,6 +4138,7 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 
 | Date | Change |
 |---|---|
+| 2026-08-23 | **Phase 189 — "what can this subject reach?"** A new review read, `GET /api/access/reach?subject=&kind=user|agent` (`read_audit`, audited `access.reach_query`), and console menu **31** — plus option `5` on a user row (menu 8) and option `8` on an agent-key row (menu 26). It answers the question pamv1 could not: every grant lookup was target-indexed, so "what can this agent reach?" meant opening every target in turn. The answer names each reachable target AND why — a direct grant, a role grant, safe membership, the admin bypass, or **open** (nothing gates the target, so anyone connect-capable reaches it), with per-reason counts, because "40 targets, 37 of them open" is a different finding from 40 deliberate grants. An agent in no registry is answered rather than refused (`"known": false` — an unenrolled workload reaching every ungated target is the finding); a directory-authenticated identity returns 404, since its roles are decided at login. Standing access only: the gates a connect still passes can narrow the list, never widen it. New migration `0047` (indexes both grant tables by subject). See §9.9 |
 | 2026-08-17 | **Phase 157 — post-session forensic reconstruction (the eBPF finding).** The planned mechanism (eBPF on the pam-server host) turned out to be architecturally impossible for a proxy: an operator's shell runs in the TARGET's kernel, so a probe here would observe zero events — verified, and documented as permanent. Shipped instead: after an interactive SSH session ends, pamv1 runs ONE fixed, read-only command (`ausearch -m EXECVE -ts today | tail -c 1048576`) over that target's own vaulted credential on a fresh connection, filters the target's kernel audit records to the session's window, and stores them as a hash-chained `.forensics.log` beside the recording — so an obfuscated (`base64 -d | sh`) or unechoed command still leaves a structured record of what actually ran. `PAM_SESSION_FORENSICS` (off by default), `_MAX_EVENTS`, `_TIMEOUT_SEC`. "Unavailable" (no auditd, no permission) is an audited FINDING, never silence; ZSP sessions are refused loudly; pamv1's own literal still obeys command control. New audit family `session.forensics*`. Also fixes a Phase 155 call site: `.k8s.log` transcripts were invisible to the recordings listing/playback, and both new artifact kinds are now listed and servable. Interactive SSH only, audit-only, no schema change. See §9.3b |
 | 2026-08-16 | **Phase 155 — Kubernetes targets (discrete operations).** A new `kubernetes` target protocol (port defaults to 6443) whose credential is a vaulted service-account bearer token (`k8s_token`), and `POST /api/targets/{id}/kubectl` (`connect`) brokering one audited operation at a time: `get`, `logs`, `apply` (server-side apply, `fieldManager=pamv1`) and `delete`. Same gates as the WinRM REST twin (protocol policy, grants/safes, approval, vendor contract, session cap + registry), same command control (the canonical `kubectl …` line is what deny/allow patterns match), same transcript (`.k8s.log`, hash on the audit row), same withheld-result contract when the audit write fails. The cluster's own RBAC decides what the token may do; its refusal comes back as `status:403` in the envelope. New `PAM_K8S_CA_FILE` / `PAM_K8S_INSECURE_SKIP_VERIFY` / `PAM_K8S_TIMEOUT_SEC` / `PAM_K8S_MAX_RESPONSE_KB`. New audit family `k8s.*`. Console: *Work with Targets* option 6. `exec`/`attach`/`port-forward` (streaming), client-certificate credentials and API discovery are deliberate v1 exclusions. No schema change. **Not verified against a real cluster** — proven against an in-process API server that accepts only the vaulted token. See "Kubernetes clusters" under §6 |
 | 2026-08-16 | **Phase 153 — outbound-only endpoint agents (Jump Client-style reachability).** For targets pamv1 cannot dial into: a new `pam-agent` binary (Release assets `pam-agent_linux_{amd64,arm64}` + `SHA256SUMS`) dials OUT to the existing `:2222` listener as `endpoint-agent:<name>` with its own bearer key, holds an RFC 4254 reverse tunnel, and the proxy reaches the bound target through it — never dialing it. `PAM_ENDPOINT_AGENTS_ENABLED` (default off); `POST/GET /api/endpoint-agents`, `DELETE /api/endpoint-agents/{id}` (`manage_targets` to create/revoke, `read_inventory` to list); console menu 28. One live agent per target; revoke kicks the live tunnel; SSH targets only. New migration `0042` (`endpoint_agents`). New audit family `endpoint_agent.*` plus `via:endpoint-agent:<name>` on `session.start`. The agent pins pam-server's host key (`PAM_AGENT_SERVER_HOST_KEY`, required), exposes exactly one local address, may open nothing toward pamv1, and lists every replica in HA. Proven end to end against a real upstream sshd through the tunnel; not verified across a real NAT. See "Outbound-only endpoint agents" under §6 |

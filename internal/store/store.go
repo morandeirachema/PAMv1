@@ -422,6 +422,39 @@ type TargetGrant struct {
 	CreatedBy   string `json:"created_by,omitempty"`
 }
 
+// Grant paths — how a subject came to hold a grant, recorded on SubjectGrant.
+const (
+	// GrantViaGrant is a row in target_grants naming the subject directly.
+	GrantViaGrant = "grant"
+	// GrantViaSafe is membership of the safe the target sits in (Phase 17),
+	// which grants every target placed in that safe.
+	GrantViaSafe = "safe"
+)
+
+// GrantSubject is one identifier a grant can name: a username ("user") or a
+// role ("role"). A principal presents several — its own name plus every role it
+// holds — and GrantsForSubjects takes the whole set, because a subject's access
+// is the union of the grants naming any of them.
+type GrantSubject struct {
+	Type string `json:"type"` // user | role
+	Name string `json:"name"`
+}
+
+// SubjectGrant is one grant seen from the subject's side: which target it
+// reaches, which of the presented subjects it named, and which path it came
+// from. TargetName is joined in because the answer to "what can this subject
+// reach?" is read by a person, and a list of target ids is not an answer.
+type SubjectGrant struct {
+	TargetID    int64  `json:"target_id"`
+	TargetName  string `json:"target_name"`
+	SubjectType string `json:"subject_type"` // user | role
+	Subject     string `json:"subject"`
+	Via         string `json:"via"` // grant | safe
+	// SafeID is the safe the grant came through, set only when Via is
+	// GrantViaSafe (nil for a direct grant).
+	SafeID *int64 `json:"safe_id,omitempty"`
+}
+
 // Checkout is an exclusive, time-boxed lease on a credential. While a checkout
 // is active no other holder may check the same credential out; on check-in the
 // credential is rotated so the password the holder saw can no longer be used.
@@ -1087,6 +1120,26 @@ type GrantStore interface {
 	// authorization decision uses this, so a target in a safe is reachable by the
 	// safe's members. An empty result means the target is unrestricted (open).
 	EffectiveTargetGrants(ctx context.Context, targetID int64) ([]TargetGrant, error)
+	// GrantsForSubjects is EffectiveTargetGrants read from the other side
+	// (Phase 189): instead of "who may reach this target", it answers "which
+	// grants name any of these subjects", across the whole estate, in one read.
+	// The subjects are the identifiers one principal presents — its username and
+	// every role it holds — so a caller asks once rather than per target.
+	//
+	// The same two paths are folded as EffectiveTargetGrants folds them, and each
+	// row records which one it came from in Via (GrantViaGrant / GrantViaSafe)
+	// so a review can say WHY, not just that. Rows are ordered by target id then
+	// grant id. An empty result does NOT mean "reaches nothing": a target with no
+	// grants at all is open to any connect-capable principal, which is a fact
+	// about the target, not about the subject — see GatedTargetIDs.
+	GrantsForSubjects(ctx context.Context, subjects []GrantSubject) ([]SubjectGrant, error)
+	// GatedTargetIDs returns the ids of every target that has at least one
+	// effective grant (a direct grant, or a member of the safe it sits in),
+	// ascending. It is the missing half of the subject-indexed view: a target
+	// absent from this set has no grants, and an ungated target that is not in a
+	// safe is open. Exactly equivalent to len(EffectiveTargetGrants(id)) > 0 for
+	// every target, computed in one read instead of one per target.
+	GatedTargetIDs(ctx context.Context) ([]int64, error)
 
 	// CreateSafe inserts a safe, populating its ID and CreatedAt.
 	CreateSafe(ctx context.Context, s *Safe) error

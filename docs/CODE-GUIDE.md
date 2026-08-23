@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-21 · Reflects: Phases 0–188 + the 2026-07 hardening passes.
+> Last updated: 2026-08-23 · Reflects: Phases 0–189 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -379,6 +379,18 @@ interface against both implementations (and, in CI, against a live PostgreSQL vi
   with no grants is open to any connect-capable principal; once it has grants,
   only matching subjects (or admins) may connect. `SubjectMatches` is factored out
   and reused for safe membership.
+- **Reachability, the other way round** (`reach.go`, Phase 189):
+  `CanConnectTarget` answers "may this principal reach THIS target", which is
+  what a connect gate needs. `ReachableTargets(ctx, st, p)` answers "which
+  targets may this principal reach at all", which is what a REVIEW needs, and it
+  reports the reason for each one (a direct grant, a role grant, safe
+  membership, the admin bypass, or nothing gating the target). It is built from
+  two subject-indexed store reads instead of asking each target in turn, so the
+  cost is four reads no matter how large the estate. Because it re-expresses a
+  decision that already exists, the risk is drift, not slowness: the equivalence
+  with the `CanConnectTarget` loop is asserted directly in
+  `TestReachMatchesCanConnect` (and again over randomly generated estates), which
+  is the test to run if you ever touch either.
 
 ### 3.5 `logging`, `metrics`, `alert`
 
@@ -1165,6 +1177,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-23 | Phase 189 (subject-indexed reachability): §3.3 (`store`) — `GrantStore` gains `GrantsForSubjects`/`GatedTargetIDs`, `store.Store` 212 → 214 methods, migration `0047` (two grant-table indexes by subject). §3.4 (`auth`) — new `reach.go`: `ReachableTargets` + `GrantSubjects`, the review-side twin of `CanConnectTarget`, with the equivalence pinned by `TestReachMatchesCanConnect`. New `internal/api/reach_handlers.go` (`GET /api/access/reach`); `agentVisibleTargets` now goes through the same path instead of two store reads per target. Console menu 31. No package moved, no CI gate changed. |
 | 2026-08-16 | Phase 149 (SCIM 2.0 user provisioning): §3.3 (`store`) — `User` gains `ExternalID`/`Active`; new `ScimKey` type and `ScimStore` role (4 methods); `UserStore` gains `GetUserByUsername`/`GetUserByExternalID`/`UpdateUserActive`/`UpdateUserExternalID`; `store.Store` 182 → 190 methods. `CreateUser` (both backends) now always creates an active user, ignoring `Active` on the input struct — closes a whole bug class by construction; the two real production callers needed no changes, but `internal/auth/auth_test.go`'s own hand-rolled `fakeDir` fixtures did (a real regression the full suite caught). §3.4 (`auth`) — `Resolve()`'s per-user-token branch now refuses when `!u.Active`, fail-closed. New `internal/api/scim_handlers.go` (`/v1/scim-keys` admin CRUD, `/scim/v2/Users` full CRUD + filter). New migration `0041`. No package moved, no CI gate changed. |
 | 2026-08-16 | Phase 147 (browser-extension password autofill): §3.4 (`auth`) gains `SessionScopeExtension` and `Principal.ExtensionOnly`, resolved in `Resolve()` alongside `TunnelOnly`/`MFAPending`. §4.2 — `authz` is now a thin wrapper over a new `authzCore(cap, allowExtension, next)`; a second wrapper, `authzExtOK`, is used at exactly one route (`POST /api/credentials/{id}/reveal`) so an extension token is refused everywhere else without duplicating the checklist. New `internal/api/extension_handlers.go` (`extensionToken`, minting via the existing `issueSessionTTL` — no new store method). New top-level `extension/` (Manifest V3 — `manifest.json`, `background.js`, `content.js`, `options.html`/`.js`), outside `internal/`, not a Go package. No package moved, no CI gate changed, no migration. |
 | 2026-08-15 | Phase 145 (generic file-attachment secrets): `store.SecretTypeFile`, capped at creation by new `Server.credentialFileMaxKB`/`Options.CredentialFileMaxKB` (`internal/api/server.go`). `store.Store` gained `ListCredentialsMeta` — a genuinely separate method, not a changed one — after stripping `secret_enc` from the existing `ListCredentials` broke the PostgreSQL proxy's JIT injection in testing (`dbproxy.go`'s `lookupTargetCred` depends on `ListCredentials` staying full-fidelity). Only 4 of 16 real call sites (found by a repo-wide grep, not assumed from package boundaries) were safe to redirect to the new method: the REST list endpoint, the broker's `list_credentials` tool, and two metadata-only checks in `sshca_handlers.go`/`targets.go`. §1 package map unchanged (no new package); `internal/store/methodset_test.go`'s pinned count moved 181 → 182. No package moved, no CI gate changed. |

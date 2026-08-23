@@ -64,28 +64,26 @@ func (s *Server) agentCanSeeTarget(ctx context.Context, p *auth.Principal, targe
 // agentVisibleTargets returns the subset of the inventory p is authorized to
 // reach, in the store's order.
 //
-// The grant lookup is per target rather than one subject-indexed query because
-// no such query exists: grants are stored target-side (direct rows plus safe
-// membership), so "everything this subject may reach" can only be answered by
-// asking each target. That is two reads per target on an inventory listing —
-// acceptable for an inventory call an agent makes occasionally, and the honest
-// cost of not inventing a second, drifting definition of a grant. A grant-read
-// failure aborts the whole listing rather than silently dropping the target it
-// failed on: a partial inventory that looks complete is worse than an error.
+// It is the subject-indexed query (Phase 189) rather than the per-target loop it
+// used to be. The loop was two store reads PER TARGET on a listing an agent
+// makes on every run, and it was written that way because no subject-indexed
+// query existed — grants are stored target-side, so "everything this subject may
+// reach" could only be answered by asking each target in turn. auth.ReachableTargets
+// asks it directly in four reads regardless of estate size, and reproduces
+// CanConnectTarget target for target (auth.TestReachMatchesCanConnect), so the
+// thing the old comment was right to fear — a second, drifting definition of a
+// grant — is pinned by a test rather than avoided by doing the slow thing.
+//
+// A read failure still aborts the whole listing rather than dropping the target
+// it failed on: a partial inventory that looks complete is worse than an error.
 func (s *Server) agentVisibleTargets(ctx context.Context, p *auth.Principal) ([]store.Target, error) {
-	targets, err := s.store.ListTargets(ctx, 0, 0)
+	reaches, err := auth.ReachableTargets(ctx, s.store, p)
 	if err != nil {
 		return nil, err
 	}
-	visible := make([]store.Target, 0, len(targets))
-	for i := range targets {
-		allowed, err := s.agentCanSeeTarget(ctx, p, &targets[i])
-		if err != nil {
-			return nil, err
-		}
-		if allowed {
-			visible = append(visible, targets[i])
-		}
+	visible := make([]store.Target, 0, len(reaches))
+	for _, rc := range reaches {
+		visible = append(visible, rc.Target)
 	}
 	return visible, nil
 }

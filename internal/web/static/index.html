@@ -180,6 +180,10 @@
   let ownerIdentity = null; // the registration whose owner is being reassigned
   let budgetAgent = null; // Phase 167: the agent whose daily call budget option 7 is editing
   let kubeTarget = null, kubeResult = null, kubeErr = ""; // Phase 155: brokered kubectl operations
+  // Phase 189: the answer to "what can this subject reach?" — the grant model
+  // read from the subject's side (menu 31), plus the query that produced it so
+  // F5 can re-ask it.
+  let reachAnswer = null, reachSubject = "", reachKind = "user";
   let deps = [], depsCred = null, blastResult = null, auditHead = null, nis2Report = null;
   let nis2Since = "", nis2Until = "";
   let campaigns = [], campView = null, risk = null, riskMin = "", riskWin = "";
@@ -606,6 +610,19 @@
     go("scimkeys");
   }
   async function openExtToken() { extToken = null; go("exttoken"); }
+  // Phase 189: the subject-indexed grant query. Every other grant screen is
+  // target-side ("who may reach this target"); this one asks the reviewer's
+  // question — what does this user or agent stand to reach, and WHY — which
+  // until now could only be answered by opening every target in turn.
+  // Called with no subject it just shows the empty form.
+  async function openReach(subject, kind) {
+    reachSubject = String(subject ?? reachSubject ?? "").trim();
+    reachKind = kind || reachKind || "user";
+    if (!reachSubject) { reachAnswer = null; return go("reach"); }
+    try { reachAnswer = await api("GET", `/api/access/reach?subject=${encodeURIComponent(reachSubject)}&kind=${encodeURIComponent(reachKind)}`); }
+    catch (e) { reachAnswer = null; say("CPF9898: " + e.message, true); }
+    go("reach");
+  }
   async function mintExtToken() {
     try { extToken = await api("POST", "/api/extension-token", {}); render(); }
     catch (e) { say("CPF9999: " + e.message, true); render(); }
@@ -1129,6 +1146,7 @@ ${fkeys("")}
           line(28, can("read_inventory"), "Work with endpoint agents (outbound-only)") +
           line(29, can("manage_users"), "Work with SCIM client keys (IdP provisioning)") +
           line(30, can("reveal_secret"), "Browser-extension token (autofill)") +
+          line(31, can("read_audit"), "What can this subject reach? (access review)") +
           "90. Sign off\n";
         term.innerHTML = `${head("PAMMAIN", "PAMV1 Main Menu")}
 Select one of the following:
@@ -1150,6 +1168,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
             "22": openVendors, "23": openSSHCerts, "24": () => go("blast"),
             "25": openLoginSessions, "26": openAgents, "27": openTokenExchange,
             "28": openEndpointAgents, "29": openScimKeys, "30": openExtToken,
+            "31": () => openReach(""),
             "90": signoff,
           };
           if (routes[c]) { try { await routes[c](); } catch (e) { say("CPF9999: " + e.message, true); render(); } }
@@ -1980,7 +1999,7 @@ Budget is today's brokered calls against the daily cap. <span class="white">430/
 <span class="white">430/[500]</span> in brackets is the server default it inherits; <span class="cyan">12/[∞]</span> is that default set to no
 limit. <span class="red">FULL</span> means a real cap is spent for today; <span class="red">3/0 STOP</span> is an agent capped at zero — it
 is BLOCKED from every brokered call, which is the opposite of ∞, never the same thing.
-Type options, press Enter.  <span class="cyan">4=Revoke (permanent)   5=Suspend   6=Resume   7=Budget</span>
+Type options, press Enter.  <span class="cyan">4=Revoke (permanent)   5=Suspend   6=Resume   7=Budget   8=What can it reach</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Name</th><th>Owner</th><th>Status</th><th>Budget</th><th>Created</th><th>Expires</th><th>Last used</th></tr>
@@ -2005,6 +2024,9 @@ ${fkeys("F3=Exit   F5=Refresh   F6=Mint agent key   F7=Quarantine list   F8=SPIF
               // 7 is a prompt, not a verb: it carries the row to PAMAGTBGT and
               // stops reading the subfile, the same way 2=Change does elsewhere.
               else if (o === "7") { budgetAgent = a; return go("agentbudget"); }
+              // 8 is the same kind of prompt: what this agent stands to reach,
+              // which is the question its owner has to answer at review time.
+              else if (o === "8") { return openReach(a.name, "agent"); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
             await openAgents();
@@ -2578,6 +2600,68 @@ Token . . . . . . . :  <span class="white">${esc(k.token)}</span>
 ${fkeys("F3=Exit   F12=Cancel")}`;
       },
 
+      // Phase 189 — menu 31: the subject-indexed grant query.
+      //
+      // The reason column is the point. A yes/no gate can say an agent reaches
+      // 40 targets; only this can say that 37 of them are reachable because
+      // NOTHING gates them, which is a very different finding from 40 grants
+      // somebody decided on.
+      reach() {
+        back = "main";
+        const r = reachAnswer;
+        const c = (r && r.counts) || {};
+        // The reason column is bounded like every other subfile cell: a subject
+        // name or a safe name can be arbitrarily long, and an unbounded last
+        // column is exactly what falls off a 5250 screen.
+        const viaText = (t) =>
+          t.via === "admin" ? "admin (role bypass)"
+          : t.via === "unlimited_vault_access" ? "unlimited vault access"
+          : t.via === "open" ? "open (nothing gates it)"
+          : t.via === "safe" ? `safe ${t.safe || "?"} (${t.subject_type}:${t.subject})`
+          : `grant (${t.subject_type}:${t.subject})`;
+        // Open is red because it is the finding: the subject reaches that target
+        // because nobody decided anything, which is the row a reviewer is
+        // looking for.
+        const viaTone = (t) =>
+          t.via === "open" ? "red"
+          : t.via === "admin" || t.via === "unlimited_vault_access" ? "amber"
+          : t.via === "safe" ? "cyan" : "";
+        const summary = !r ? "" : `
+<div class="indent">Subject . . . . . . :  <span class="white">${esc(r.subject)}</span> (${esc(r.kind)}${r.kind === "agent" && r.agent_kind ? ", " + esc(r.agent_kind) : ""})
+Roles . . . . . . . :  <span class="white">${esc((r.roles || []).join(", ") || "-")}</span>${r.owner ? `
+Owner . . . . . . . :  <span class="white">${esc(r.owner)}</span>` : ""}
+Reaches . . . . . . :  <span class="white">${esc(r.total)}</span> target(s)   <span class="cyan">grant ${esc(c.grant || 0)} / safe ${esc(c.safe || 0)} / open ${esc(c.open || 0)} / admin ${esc(c.admin || 0)}</span></div>
+${r.known === false ? `<div class="amber indent">This name is in no agent registry. What it reaches is what ANY authenticated
+agent reaches — every target nothing gates. Enrol it (menu 26 / F8) to make it reviewable.</div>` : ""}
+<table>
+<tr><th>ID</th><th>Target</th><th>Host</th><th>Proto</th><th>Reachable because</th></tr>
+${(r.targets || []).map((t) => `<tr><td>${esc(t.target_id)}</td><td class="white">${cell(t.target, 18)}</td><td>${cell(t.host, 22)}</td><td>${pad(t.protocol, 6)}</td><td class="${viaTone(t)}">${cell(viaText(t), 34)}</td></tr>`).join("")}
+</table>${(r.targets || []).length ? "" : `<div class="cyan indent">(Reaches nothing. Every target is either gated by grants this subject does not hold, or in a safe it is not a member of.)</div>`}`;
+        term.innerHTML = `${head("PAMSUBRCH", "What Can This Subject Reach?")}
+Standing access, read from the subject's side. Every other grant screen answers "who may reach
+this target"; this one answers the reverse, and says WHY each target is reachable — a direct
+grant, a role grant, safe membership, an admin bypass, or nothing gating the target at all.
+<span class="cyan">Kind</span> user = a local pamv1 user (a directory identity's roles are decided at login and cannot be
+reviewed here).  <span class="cyan">Kind</span> agent = an AI-agent key name or a full SPIFFE ID.
+
+<form id="f-q" class="indent">
+<label>Subject . . . . . . :  <input name="subject" size="44" required autofocus value="${esc(reachSubject)}"></label>
+<label>Kind  . . . . . . . :  <select name="kind">${["user", "agent"].map((k) => `<option${k === reachKind ? " selected" : ""}>${k}</option>`).join("")}</select></label>
+<input type="submit" hidden>
+</form>
+${summary}
+<div class="cyan">This is what the GRANT model admits — an upper bound. A connect attempt still passes the
+gates that can only narrow it (approval and its window, a vendor contract, a checkout, step-up,
+posture, quarantine). An entitlement nobody uses is still an entitlement, which is why the list
+is the standing one rather than what the subject happened to use.</div>
+${fkeys("F3=Exit   F5=Re-run   F12=Cancel")}`;
+        document.getElementById("f-q").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          await openReach(String(f.subject || "").trim(), String(f.kind || "user"));
+        };
+      },
+
       // A browser-extension autofill token (Phase 147, screen added in 187).
       // Minting one was documented in the admin guide as a curl command, which
       // is a strange thing to ask of the person whose browser it is for.
@@ -2784,7 +2868,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         back = "main";
         term.innerHTML = `${head("PAMWRKUSR", "Work with Users & Profiles")}
 Type options, press Enter.
-  <span class="cyan">2=Change role   4=Delete</span>
+  <span class="cyan">2=Change role   4=Delete${can("read_audit") ? "   5=What can they reach" : ""}</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Username</th><th>Role / profile</th><th>IP</th><th>Created</th></tr>
@@ -2799,6 +2883,9 @@ ${fkeys("F3=Exit   F5=Refresh   F6=Add user   F9=Reconcile directory   F12=Cance
             for (const u of users) {
               const o = optVal(ev.target, u.id);
               if (o === "2") { editUser = u; return go("userchange"); }
+              // 5 carries the row to PAMSUBRCH rather than acting on it, the
+              // same way 2=Change does: the review is a screen, not a verb.
+              else if (o === "5") { return openReach(u.username, "user"); }
               else if (o === "4") { await api("DELETE", `/api/users/${u.id}`); say(`USER ${String(u.username).toUpperCase()} DELETED.`); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
@@ -3773,7 +3860,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   }
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
-  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, identities: openIdentities, scimkeys: openScimKeys, endpointagents: openEndpointAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid) };
+  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, identities: openIdentities, scimkeys: openScimKeys, endpointagents: openEndpointAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid), reach: () => openReach(reachSubject, reachKind) };
   // cycleTheme rotates green → amber → slate → green, persists the choice, and
   // re-renders so the F-key hint's confirmation message shows immediately.
   function cycleTheme() {
