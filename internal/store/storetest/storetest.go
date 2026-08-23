@@ -476,6 +476,131 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("DeleteSafe(personal): %v", err)
 	}
 
+	// --- subject-indexed grants (Phase 189): the same relation, read backwards ---
+	// GrantsForSubjects and GatedTargetIDs must agree with EffectiveTargetGrants
+	// target for target — they are one relation read from two sides, and a store
+	// where they disagree would let a review report access the connect gate does
+	// not actually give (or hide access it does).
+	subjSafe := &store.Safe{Name: "subject-index-safe"}
+	if err := st.CreateSafe(ctx, subjSafe); err != nil {
+		t.Fatalf("CreateSafe(subject): %v", err)
+	}
+	subjTargets := map[string]int64{}
+	for _, name := range []string{"si-open", "si-direct", "si-role", "si-safe", "si-other"} {
+		tt := &store.Target{Name: name, Host: "10.9.0.1", Port: 22, OSType: "linux", Protocol: "ssh"}
+		if name == "si-safe" {
+			tt.SafeID = &subjSafe.ID
+		}
+		if err := st.CreateTarget(ctx, tt); err != nil {
+			t.Fatalf("CreateTarget(%s): %v", name, err)
+		}
+		subjTargets[name] = tt.ID
+	}
+	for _, g := range []store.TargetGrant{
+		{TargetID: subjTargets["si-direct"], SubjectType: "user", Subject: "si-alice"},
+		{TargetID: subjTargets["si-role"], SubjectType: "role", Subject: "auditor"},
+		{TargetID: subjTargets["si-other"], SubjectType: "user", Subject: "si-mallory"},
+	} {
+		gg := g
+		if err := st.CreateTargetGrant(ctx, &gg); err != nil {
+			t.Fatalf("CreateTargetGrant(subject): %v", err)
+		}
+	}
+	subjMember := &store.SafeMember{SafeID: subjSafe.ID, SubjectType: "user", Subject: "si-alice"}
+	if err := st.AddSafeMember(ctx, subjMember); err != nil {
+		t.Fatalf("AddSafeMember(subject): %v", err)
+	}
+	subjects := []store.GrantSubject{{Type: "user", Name: "si-alice"}, {Type: "role", Name: "auditor"}}
+	sgs, err := st.GrantsForSubjects(ctx, subjects)
+	if err != nil {
+		t.Fatalf("GrantsForSubjects: %v", err)
+	}
+	seen := map[string]store.SubjectGrant{}
+	for _, sg := range sgs {
+		if sg.TargetID == subjTargets["si-other"] {
+			t.Fatalf("GrantsForSubjects returned a grant naming somebody else: %+v", sg)
+		}
+		seen[sg.TargetName] = sg
+	}
+	if got, ok := seen["si-direct"]; !ok || got.Via != store.GrantViaGrant || got.SubjectType != "user" || got.Subject != "si-alice" {
+		t.Fatalf("direct grant not reported subject-side: %+v (present=%v)", got, ok)
+	}
+	if got, ok := seen["si-role"]; !ok || got.Via != store.GrantViaGrant || got.SubjectType != "role" {
+		t.Fatalf("role grant not reported subject-side: %+v (present=%v)", got, ok)
+	}
+	if got, ok := seen["si-safe"]; !ok || got.Via != store.GrantViaSafe || got.SafeID == nil || *got.SafeID != subjSafe.ID {
+		t.Fatalf("safe membership not reported subject-side: %+v (present=%v)", got, ok)
+	}
+	if _, ok := seen["si-open"]; ok {
+		t.Fatalf("an ungated target must not appear as a grant: it is open, which is a fact about the target")
+	}
+	// TargetName is joined in: the answer is read by a person, not by an id.
+	if seen["si-direct"].TargetName != "si-direct" {
+		t.Fatalf("GrantsForSubjects did not join the target name: %+v", seen["si-direct"])
+	}
+	// Ordering is target id ascending, so a caller can group without sorting.
+	for i := 1; i < len(sgs); i++ {
+		if sgs[i-1].TargetID > sgs[i].TargetID {
+			t.Fatalf("GrantsForSubjects out of target order: %+v", sgs)
+		}
+	}
+	// No subjects ⇒ no grants, and never an error: a principal with no
+	// identifiers is a legitimate (if useless) question to ask.
+	if none, err := st.GrantsForSubjects(ctx, nil); err != nil || len(none) != 0 {
+		t.Fatalf("GrantsForSubjects(nil) = %+v, %v", none, err)
+	}
+	// GatedTargetIDs must equal "EffectiveTargetGrants is non-empty", for every
+	// target in the estate — that is the whole contract, so check it that way.
+	gatedIDs, err := st.GatedTargetIDs(ctx)
+	if err != nil {
+		t.Fatalf("GatedTargetIDs: %v", err)
+	}
+	gatedSet := map[int64]bool{}
+	for _, id := range gatedIDs {
+		gatedSet[id] = true
+	}
+	allTargets, err := st.ListTargets(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("ListTargets: %v", err)
+	}
+	for i := range allTargets {
+		eg, err := st.EffectiveTargetGrants(ctx, allTargets[i].ID)
+		if err != nil {
+			t.Fatalf("EffectiveTargetGrants(%d): %v", allTargets[i].ID, err)
+		}
+		if want := len(eg) > 0; want != gatedSet[allTargets[i].ID] {
+			t.Fatalf("target %q: EffectiveTargetGrants says gated=%v, GatedTargetIDs says %v",
+				allTargets[i].Name, want, gatedSet[allTargets[i].ID])
+		}
+	}
+	for i := 1; i < len(gatedIDs); i++ {
+		if gatedIDs[i-1] >= gatedIDs[i] {
+			t.Fatalf("GatedTargetIDs must be ascending and distinct: %v", gatedIDs)
+		}
+	}
+	// Removing the last member of a safe un-gates its target again (containment
+	// is membership, not the safe's existence).
+	if err := st.DeleteSafeMember(ctx, subjMember.ID); err != nil {
+		t.Fatalf("DeleteSafeMember(subject): %v", err)
+	}
+	gatedIDs, err = st.GatedTargetIDs(ctx)
+	if err != nil {
+		t.Fatalf("GatedTargetIDs(after member removal): %v", err)
+	}
+	for _, id := range gatedIDs {
+		if id == subjTargets["si-safe"] {
+			t.Fatalf("target in an empty safe still reported as gated")
+		}
+	}
+	for _, name := range []string{"si-open", "si-direct", "si-role", "si-safe", "si-other"} {
+		if err := st.DeleteTarget(ctx, subjTargets[name]); err != nil {
+			t.Fatalf("DeleteTarget(%s): %v", name, err)
+		}
+	}
+	if err := st.DeleteSafe(ctx, subjSafe.ID); err != nil {
+		t.Fatalf("DeleteSafe(subject): %v", err)
+	}
+
 	// --- dependent accounts (Phase 17): a credential's consumers ---
 	dep := &store.CredentialDependency{CredentialID: cred.ID, Kind: "windows_service", Host: "app-01", Name: "MyService"}
 	if err := st.CreateCredentialDependency(ctx, dep); err != nil {
