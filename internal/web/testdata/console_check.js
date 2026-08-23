@@ -375,6 +375,39 @@ const screens = [
     }),
   },
   {
+    // Phase 189's subject reach review (menu 31). Its last column is a REASON
+    // built from a subject name and a safe name — both unbounded values — so
+    // the long variant is what proves the cell truncates instead of pushing the
+    // row off the terminal. The fixture also drives all five reasons at once,
+    // because each is rendered by its own branch.
+    name: "reach",
+    src: /\n {6}reach\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      reachSubject: long ? LONG : "planner",
+      reachKind: "agent",
+      reachAnswer: {
+        subject: long ? LONG : "planner", kind: "agent", agent_kind: "identity",
+        known: !long, owner: long ? LONGNAME : "alice",
+        roles: [long ? LONGNAME : "agent"],
+        total: 5,
+        counts: { grant: 1, safe: 1, open: 1, admin: 1, unlimited_vault_access: 1 },
+        targets: [
+          { target_id: 1, target: long ? LONGNAME : "prod-db-01", host: long ? LONG : "10.0.0.5",
+            protocol: "ssh", via: "grant", subject_type: "user", subject: long ? LONGNAME : "planner" },
+          { target_id: 2, target: long ? LONGNAME : "prod-web-01", host: long ? LONG : "10.0.0.6",
+            protocol: "ssh", via: "safe", subject_type: "role", subject: long ? LONGNAME : "agent",
+            safe: long ? LONGNAME : "prod" },
+          { target_id: 3, target: long ? LONGNAME : "lab-01", host: long ? LONG : "10.0.1.7",
+            protocol: "winrm", via: "open" },
+          { target_id: 4, target: long ? LONGNAME : "jump-01", host: long ? LONG : "10.0.1.8",
+            protocol: "rdp", via: "admin" },
+          { target_id: 5, target: long ? LONGNAME : "hsm-01", host: long ? LONG : "10.0.1.9",
+            protocol: "ssh", via: "unlimited_vault_access" },
+        ],
+      },
+    }),
+  },
+  {
     // Phase 187's three screens: capabilities that shipped with routes and no
     // portal path at all (DoubleLock 135, SCIM keys 149, extension token 147).
     name: "scimkeys",

@@ -57,9 +57,13 @@ import (
 // vendor while the control that actually does it is OffboardVendor, which
 // disables and revokes every grant atomically. Nothing called the setter, and a
 // second, weaker way to half-stop a vendor is exactly the kind of surface an
-// operator reaches for by mistake.
+// operator reaches for by mistake. Phase 189 added
+// GrantStore.{GrantsForSubjects,GatedTargetIDs} (2) — the subject-indexed view
+// of the grant relation, so "what can this subject reach?" is one query instead
+// of two reads per target, and an agent's access can be reviewed rather than
+// reconstructed.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 212
+	const want = 214
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)
