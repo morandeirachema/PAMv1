@@ -9,6 +9,57 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.54.1] — 2026-08-25
+
+A patch, cut because v0.54.0 is the only release that carries the External
+Secrets Operator backend and it carried a defect in it. **No schema change, no
+new route, no new env var, no upgrade note** — upgrade in place.
+
+### Fixed
+
+- **An alias could be planted on another application's grant.**
+  `POST /v1/apps/{id}/grants/{gid}/alias` parsed only the grant id and ignored the
+  application in the route, so naming grant 14 under application 7 renamed
+  **application 12's** grant and answered `200`. A mistyped or stale grant id
+  therefore handed a different application a stable, git-committable name for a
+  credential nobody meant to expose, while the operator read success.
+
+  **Not an escalation** — the route requires `reveal_secret`, so the caller is
+  already privileged, and no access was created that did not already exist. What
+  was wrong is that a privileged operator's mistake landed silently on the wrong
+  object and reported success. The handler now resolves the grant within the named
+  application and answers `404` otherwise, exactly as revoking a grant already did.
+- **`archgen` published two authenticated routes as unauthenticated again.** Its
+  wrapper scan returns on first match and `rateLimit(` was one of the entries, so
+  it absorbed whatever it wrapped: `POST /api/webauthn/login/{begin,finish}` are
+  `rateLimit(mfaPendingOnly(…))`, and `mfaPendingOnly` resolves the presented key
+  and refuses an invalid one, yet the generated API-surface table called them
+  `public (rate-limited)`. Rate limiting is now treated as a modifier and the
+  wrapper inside it is classified on its own. No route's actual authorization
+  changed — this is the security map describing a control it does not have, the
+  same class v0.54.0's own Phase 195 entry fixed.
+- **Revocation semantics on the ESO path are now described accurately.** Revoking
+  an application's grant removes its alias, so the by-alias route answers `404`
+  and an External Secrets Operator **deletes the Kubernetes Secret it manages**.
+  That is the intended behaviour — revocation should propagate — but the code
+  comment, a test name and the operator checklist in `deploy/k8s/eso/README.md`
+  all claimed the opposite. What must never delete is a *transient* refusal, such
+  as the reveal kill switch, which answers `403`; that case now has its own test
+  on the route it applies to.
+- **A 3.7 MB compiled binary is no longer committed at the repo root.** `archgen`
+  had been tracked since the v0.54.0 development cycle; `go build ./cmd/archgen`
+  writes exactly that path, so any contributor following the build instructions
+  got a dirty tree and could re-commit a stale executable. Removed and gitignored.
+
+### Changed
+
+- The alias audit detail records the application id alongside the grant.
+- `deploy/k8s/eso/secretstore.yaml` now states plainly that the reference
+  Kubernetes deployment serves **plain HTTP** on `8080` while the manifest is
+  `https://`, and what to do about it. The URL stays `https://` deliberately: the
+  endpoint hands out plaintext secrets, and defaulting the example to `http://`
+  would make the insecure path the easy one.
+
 ## [0.54.0] — 2026-08-25
 
 A minor whose one user-facing feature answers a question this project could not:
@@ -2086,7 +2137,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.54.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.54.1...HEAD
+[0.54.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.54.1
 [0.54.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.54.0
 [0.53.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.53.0
 [0.52.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.52.0
