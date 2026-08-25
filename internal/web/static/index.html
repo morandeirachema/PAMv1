@@ -2613,6 +2613,16 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         // The reason column is bounded like every other subfile cell: a subject
         // name or a safe name can be arbitrarily long, and an unbounded last
         // column is exactly what falls off a 5250 screen.
+        // The subject's own state, spelled out. Each is a reason the count above
+        // overstates what this subject can do TODAY, never a fact about a target.
+        const blockedText = (b) =>
+          b === "no_usable_capability" ? "holds no capability that can use a target"
+          : b === "deactivated" ? "account deactivated (SCIM)"
+          : b === "key_disabled" ? "agent key revoked/suspended"
+          : b === "key_expired" ? "agent key expired"
+          : b === "quarantined" ? "identity quarantined"
+          : b === "not_enrolled" ? "attested identity not enrolled"
+          : b;
         const viaText = (t) =>
           t.via === "admin" ? "admin (role bypass)"
           : t.via === "unlimited_vault_access" ? "unlimited vault access"
@@ -2630,7 +2640,9 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
 <div class="indent">Subject . . . . . . :  <span class="white">${esc(r.subject)}</span> (${esc(r.kind)}${r.kind === "agent" && r.agent_kind ? ", " + esc(r.agent_kind) : ""})
 Roles . . . . . . . :  <span class="white">${esc((r.roles || []).join(", ") || "-")}</span>${r.owner ? `
 Owner . . . . . . . :  <span class="white">${esc(r.owner)}</span>` : ""}
-Reaches . . . . . . :  <span class="white">${esc(r.total)}</span> target(s)   <span class="cyan">grant ${esc(c.grant || 0)} / safe ${esc(c.safe || 0)} / open ${esc(c.open || 0)} / admin ${esc(c.admin || 0)}</span></div>
+Reaches . . . . . . :  <span class="white">${esc(r.total)}</span> target(s)   <span class="cyan">grant ${esc(c.grant || 0)} / safe ${esc(c.safe || 0)} / open ${esc(c.open || 0)} / admin ${esc(c.admin || 0)}${c.unlimited_vault_access ? " / unlimited " + esc(c.unlimited_vault_access) : ""}</span></div>
+${(r.blocked || []).length ? `<div class="red indent">Cannot use this reach right now: <span class="white">${esc((r.blocked || []).map(blockedText).join("; "))}</span>.
+The targets below are what the grant model still admits — they come back the moment that changes.</div>` : ""}
 ${r.known === false ? `<div class="amber indent">This name is in no agent registry. What it reaches is what ANY authenticated
 agent reaches — every target nothing gates. Enrol it (menu 26 / F8) to make it reviewable.</div>` : ""}
 <table>

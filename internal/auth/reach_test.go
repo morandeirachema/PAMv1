@@ -341,3 +341,53 @@ func mustReach(ctx context.Context, t *testing.T, st *memstore.Memstore, p *Prin
 	}
 	return rs
 }
+
+// raceStore drives a write into the estate between ReachableTargets' two grant
+// reads, which is the only way to observe the ordering the engine depends on.
+type raceStore struct {
+	ReachStore
+	afterGrants func()
+}
+
+// GrantsForSubjects delegates, then runs the injected write — so whatever
+// GatedTargetIDs reads next sees an estate the grant read did not.
+func (r *raceStore) GrantsForSubjects(ctx context.Context, subs []store.GrantSubject) ([]store.SubjectGrant, error) {
+	out, err := r.ReachStore.GrantsForSubjects(ctx, subs)
+	if err == nil && r.afterGrants != nil {
+		r.afterGrants()
+	}
+	return out, err
+}
+
+// TestReachGateRaceFailsClosed pins the read ORDER, not just the reads.
+//
+// The two grant reads are not one transaction, so a grant written between them
+// is seen by one and not the other. The engine reads the subject's grants first
+// on purpose: a grant created in that window makes the target look gated with no
+// matching row, so it drops out of the answer. The other order would report the
+// target as OPEN — reachable by anyone — at the exact moment somebody restricted
+// it, and since the agent broker's inventory listing runs on this same path,
+// that would name a target to an agent just as it stopped being allowed to see
+// it. Briefly hiding a target beats briefly advertising one.
+func TestReachGateRaceFailsClosed(t *testing.T) {
+	f := newReachFixture(t)
+	ctx := context.Background()
+	id := f.targets["ungated"]
+
+	st := &raceStore{ReachStore: f.st, afterGrants: func() {
+		g := &store.TargetGrant{TargetID: id, SubjectType: "user", Subject: "someone-else"}
+		if err := f.st.CreateTargetGrant(ctx, g); err != nil {
+			t.Errorf("CreateTargetGrant in window: %v", err)
+		}
+	}}
+
+	got, err := ReachableTargets(ctx, st, &Principal{Name: "nobody", Role: RoleUser})
+	if err != nil {
+		t.Fatalf("ReachableTargets: %v", err)
+	}
+	for _, rc := range got {
+		if rc.Target.ID == id {
+			t.Fatalf("a target restricted mid-query must not be reported as %q reachable: %+v", rc.Via, rc)
+		}
+	}
+}
