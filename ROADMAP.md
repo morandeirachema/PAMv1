@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–204 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–205 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,35 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 205 — v0.55.0 ✅
+
+Releases **203 and 204**: two estate-wide defaults, closed. Neither was a bug in
+any single place, which is exactly why both had survived so long — a default
+nobody decided is nobody's to fix until somebody names it.
+
+No schema change (high-water stays `0048`), no new route, **one new env var**, no
+upgrade note.
+
+- [ ] **v0.55.0** through the test-gated pipeline. `.github/` is **untouched**
+  since v0.54.1, so the v0.11.1 rehearsal rule does not apply — checked with a
+  diff on `release.yml` specifically, since `ci.yml` is exercised by every PR
+  anyway. Published as `ghcr.io/morandeirachema/pamv1:0.55.0` (also `latest`),
+  digest recorded here **and in README.md's Status block**, verified **public** by
+  anonymous pull
+- [x] All pins via the sweep; Helm chart `version` 0.45.1 -> **0.46.0** (a minor
+  alongside an app minor, after the patch-for-a-patch of v0.54.1)
+- [x] Both READMEs restated; every `Reflects:` header, `docs/README.md` and this
+  banner
+- [x] `CHANGELOG.md` leads the new env var with **what it defaults to** and why,
+  because the interesting fact about `PAM_REQUIRE_TARGET_GRANT` is not that it
+  exists but that it is off — an upgrade changes nothing, and the migration path
+  is the reachability review rather than a leap
+- [x] The `tools/list` entry says plainly that it **narrows a listing, never a
+  call**. A changelog that let a reader think a filtered listing were a boundary
+  would be the same overclaim the code was careful to avoid
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
 
 ## Phase 204 — An agent is no longer handed the whole toolset ✅
 
