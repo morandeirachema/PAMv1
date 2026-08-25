@@ -2428,12 +2428,24 @@ nobody decided is nobody's to fix until somebody names it.
 No schema change (high-water stays `0048`), no new route, **one new env var**, no
 upgrade note.
 
-- [ ] **v0.55.0** through the test-gated pipeline. `.github/` is **untouched**
-  since v0.54.1, so the v0.11.1 rehearsal rule does not apply — checked with a
-  diff on `release.yml` specifically, since `ci.yml` is exercised by every PR
-  anyway. Published as `ghcr.io/morandeirachema/pamv1:0.55.0` (also `latest`),
-  digest recorded here **and in README.md's Status block**, verified **public** by
-  anonymous pull
+- [x] **v0.55.0** through the test-gated pipeline. `.github/` was **untouched**
+  since v0.54.1, so the v0.11.1 rehearsal rule did not apply — checked with a diff
+  on `release.yml` specifically, since `ci.yml` is exercised by every PR anyway.
+  Published 2026-08-25 as `ghcr.io/morandeirachema/pamv1:0.55.0` (also `latest`),
+  digest
+  `sha256:dbf64c412451b025f4c94221c921d8991262c2d7e9026aac1b2b44fde74fb263`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same digest),
+  signed and attested, with the `pam-agent` binaries, the SPDX SBOM and
+  `SHA256SUMS` attached
+- [x] **The first pipeline run failed and was re-run**, recorded rather than
+  quietly retried. cosign keyless signing died on
+  `fetching ambient OIDC credentials: invalid character 'u'` — GitHub's OIDC token
+  endpoint answering with something that was not JSON. Transient infrastructure,
+  not the v0.11.1 shape: nothing in the workflow or the commit was wrong, so the
+  version was not burned and `gh run rerun --failed` was the whole fix. **Note
+  that the re-run produced a DIFFERENT digest** (`sha256:470b2455…` from the
+  failed attempt, `sha256:dbf64c41…` published) — the build is not bit-identical
+  across runs, so a digest read out of a failed run's log is not the released one
 - [x] All pins via the sweep; Helm chart `version` 0.45.1 -> **0.46.0** (a minor
   alongside an app minor, after the patch-for-a-patch of v0.54.1)
 - [x] Both READMEs restated; every `Reflects:` header, `docs/README.md` and this
