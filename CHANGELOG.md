@@ -9,6 +9,59 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.55.0] — 2026-08-25
+
+A minor that closes **two estate-wide defaults** — the kind of thing that is not
+a bug in any single place, and is therefore easy to leave alone indefinitely.
+Both are narrowing, and one is opt-in because turning it on is a real change for
+a running estate. **No schema change** (migration high-water stays `0048`), no
+new route, **one new env var**, **no upgrade note**.
+
+### Added
+
+- **`PAM_REQUIRE_TARGET_GRANT`** (default `false`): refuse a connection to a
+  target that has **no grants at all** — no direct grant, and not in a safe with
+  members.
+
+  Until now such a target was reachable by *every* connect-capable principal,
+  human or agent. That is an estate-wide default rather than a decision anyone
+  made about a particular system, which is why the reachability review has
+  rendered those targets in red since it shipped. **False stays the default**, so
+  upgrading changes nothing: this is a decision an operator makes, not one taken
+  underneath them.
+
+  **The migration path is the review itself.** Open console menu **31** (or
+  `GET /api/access/reach`), see how many targets are reachable for reason `open`,
+  grant those deliberately, then set the flag. The answer now also reports which
+  policy is in force, because an `open` row means opposite things under each and
+  an empty open-count is otherwise indistinguishable from a policy that makes one
+  impossible.
+
+  Admins still bypass, deliberately: that is an explicit decision about a role,
+  where "nobody got round to restricting this target" is not a decision at all. A
+  safe-scoped target with no members was already default-deny and is unaffected.
+
+### Changed
+
+- **An AI agent is no longer handed the whole toolset.** MCP `tools/list`
+  returned the entire registry to every agent, so one permitted only `ssh_exec`
+  was still told that `winrm_exec` and `reveal_credential` exist. Policy refused
+  the call — the listing had already described the surface. It is now filtered to
+  what policy could *ever* allow that identity.
+
+  **This narrows a listing, never a call.** `tools/call` is unchanged and still
+  evaluates policy in full, so a tool that survives the filter can still be
+  refused, and a tool removed by it can still be invoked by name — an agent that
+  already knows the name loses nothing. What is removed is a map, not a door, and
+  the code says so rather than implying a boundary it does not provide.
+
+### Upgrade notes
+
+None. `PAM_REQUIRE_TARGET_GRANT` defaults to `false`, which is the behaviour
+every existing deployment already has. The `tools/list` change is visible to
+agents immediately but cannot refuse anything `tools/call` would have allowed —
+if a deployment runs no policy engine, every tool is still listed.
+
 ## [0.54.1] — 2026-08-25
 
 A patch, cut because v0.54.0 is the only release that carries the External
@@ -2137,7 +2190,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.54.1...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.55.0...HEAD
+[0.55.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.55.0
 [0.54.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.54.1
 [0.54.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.54.0
 [0.53.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.53.0
