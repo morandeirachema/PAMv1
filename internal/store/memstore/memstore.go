@@ -2699,6 +2699,42 @@ func (m *Memstore) DeleteAppSecretGrant(_ context.Context, id int64) error {
 }
 
 // AppMayAccessCredential reports whether app appID has a grant for credentialID.
+// SetAppGrantAlias sets or clears a grant's stable name, refusing a collision
+// within the same app the way the partial unique index does in Postgres.
+func (m *Memstore) SetAppGrantAlias(_ context.Context, grantID int64, alias string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.appGrants[grantID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	if alias != "" {
+		for id, other := range m.appGrants {
+			if id != grantID && other.AppID == g.AppID && other.Alias == alias {
+				return store.ErrConflict
+			}
+		}
+	}
+	g.Alias = alias
+	m.appGrants[grantID] = g
+	return nil
+}
+
+// AppCredentialByAlias resolves an alias within one app's own grants.
+func (m *Memstore) AppCredentialByAlias(_ context.Context, appID int64, alias string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if alias == "" {
+		return 0, store.ErrNotFound
+	}
+	for _, g := range m.appGrants {
+		if g.AppID == appID && g.Alias == alias {
+			return g.CredentialID, nil
+		}
+	}
+	return 0, store.ErrNotFound
+}
+
 func (m *Memstore) AppMayAccessCredential(_ context.Context, appID, credentialID int64) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

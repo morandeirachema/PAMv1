@@ -279,6 +279,7 @@ erDiagram
     int64 ID
     int64 AppID
     int64 CredentialID
+    string Alias
     time_Time CreatedAt
   }
   ApprovalInvite {
@@ -560,7 +561,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 191 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 193 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -733,6 +734,7 @@ The 191 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/v1/agents/{id}/budget` | CapManageUsers |
 | POST | `/v1/agents/{id}/disable` | CapManageUsers |
 | POST | `/v1/agents/{id}/enable` | CapManageUsers |
+| GET | `/v1/app-secrets/by-alias/{alias}` | application key |
 | GET | `/v1/app-secrets/{id}` | application key |
 | GET | `/v1/approvals` | CapApprove |
 | POST | `/v1/approvals/{id}/decision` | CapApprove |
@@ -742,6 +744,7 @@ The 191 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/v1/apps/{id}/grants` | CapManageUsers |
 | POST | `/v1/apps/{id}/grants` | CapRevealSecret |
 | DELETE | `/v1/apps/{id}/grants/{gid}` | CapRevealSecret |
+| POST | `/v1/apps/{id}/grants/{gid}/alias` | CapRevealSecret |
 | GET | `/v1/audit` | CapReadAudit |
 | GET | `/v1/audit/head` | CapReadAudit |
 | GET | `/v1/audit/jwks` | CapReadAudit |

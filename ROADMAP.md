@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–196 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–197 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,62 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 197 — pamv1 as an External Secrets Operator backend ✅
+
+The DevSecOps half of "secrets in Kubernetes" that pamv1 did **not** cover. It
+already sealed its *own* secrets into a cluster (SOPS + age, decrypted in-cluster
+by Flux) and already brokered privileged *access to* Kubernetes Secrets as
+discrete audited operations (155) — what it was not was a **source** of secrets
+for the workloads running there.
+
+`GET /v1/app-secrets/{id}` was most of the way: an application key in a bearer
+header, default-deny per grant, the reveal kill switch honoured, and a
+fail-closed audit written **before** the secret leaves. ESO's generic webhook
+provider is a templated HTTP call with JSONPath extraction, so nothing new had to
+be invented on either side. Two things genuinely blocked it.
+
+- [x] **`remoteRef.key` is a string; the route took a row id.** A `BIGSERIAL` is
+  not stable across environments, a restore, or a delete-and-recreate — and a
+  `SecretStore` holds that identifier in **git**. Migration `0048` puts a stable
+  `alias` on `app_secret_grants`, addressed by
+  `GET /v1/app-secrets/by-alias/{alias}`. **On the grant, not the credential**,
+  for three reasons: the grant must exist for access anyway, so naming it adds no
+  authorization surface — only a name for one already there; it is scoped per
+  app, so two applications may call the same credential different things without
+  colliding; and `credentials` has **no uniqueness on `(target_id, username)`**,
+  so there is no safe credential-side name to use instead. Resolution runs inside
+  the calling app's own grants, making it the authorization check as much as the
+  lookup
+- [x] **The status codes are a contract, and one of them destroys data.** ESO
+  reads **404 as "this secret was deleted"** and removes the Kubernetes Secret it
+  manages. So an undefined alias is 404 — correct, it really is gone — while a
+  **revoked or never-granted** credential is **403, never 404**, or an
+  authorization change would delete a running workload's secret. The handler was
+  already right about this; *nothing pinned it*, and a later tidy-up of "403 vs
+  404" would have looked entirely harmless. `TestESOStatusContract` pins all four
+  codes and fails with the consequence spelled out — **verified by flipping the
+  refusal to 404 and watching it fail**
+- [x] Both fetch routes fold into one `deliverAppSecret`, so the kill switch, the
+  ZSP refusal and the audit-before-delivery cannot drift apart between them
+- [x] `deploy/k8s/eso/` carries a working `SecretStore` + `ExternalSecret` pair
+  (carrying **no** secret material) and a README whose last section is a
+  **checklist for testing against a real cluster** — including the one that
+  matters: revoke a grant and confirm the Kubernetes Secret **survives**
+- [x] Console option `8` on a grant row (`PAMAPPALS`); `app.grant_alias_set` /
+  `app.grant_alias_cleared` join the audit vocabulary; the alias rides in
+  `app.secret_retrieved`'s detail through `auditField`
+- [x] **Phase 196's guard earned its keep immediately**: the new app-key-reachable
+  route failed `TestNonHumanCredentialReach` until it was written down with its
+  reason — which is the whole point of that list, working on the very next phase
+- [x] **What is NOT verified here, stated rather than implied**: end-to-end
+  against a running ESO in a real cluster. That needs a cluster this project does
+  not have, so it is catalogued in `docs/EXTERNAL-INFRA-GAPS.md` with the other
+  infra-bound items. The phase claims the contract is implemented and pinned — not
+  that the round trip is proven
+- [x] **Out of scope, and why**: ESO's `find`/`GetAllSecrets` — the webhook
+  provider does not support it, so there is nothing to implement. `PushSecret` is
+  the Secrets-Hub sync-out direction, which needs cloud accounts
 
 ## Phase 196 — What a non-human credential reaches, checked instead of claimed ✅
 

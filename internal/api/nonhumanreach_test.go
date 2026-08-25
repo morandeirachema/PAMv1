@@ -47,7 +47,8 @@ var nonHumanReach = map[string]map[string]string{
 	// granted. One route by design — the whole point is that an app never gets
 	// the operator API.
 	"application key": {
-		"GET /v1/app-secrets/{id}": "fetch one granted application secret",
+		"GET /v1/app-secrets/{id}":             "fetch one granted application secret",
+		"GET /v1/app-secrets/by-alias/{alias}": "the same fetch, addressed by the grant's stable alias, for declarative consumers such as an External Secrets Operator SecretStore (Phase 197) — it resolves only within this app's own grants, so it reaches nothing the id route does not",
 	},
 	// Guest links: a single-use token emailed to somebody with no pamv1 login,
 	// for one session share or one approval decision.
