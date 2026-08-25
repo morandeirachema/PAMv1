@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–195 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–196 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,50 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 196 — What a non-human credential reaches, checked instead of claimed ✅
+
+Phase 195 made the route table say **which** scheme guards each route, after it
+had published sixteen authenticated routes as `public`. This is the next question
+and the one that actually bounds damage: given that a route is reachable by an
+agent key, an IdP's SCIM token, an app key or a guest link — **is that the set
+somebody intended?**
+
+It matters more for these than for the operator API. A capability-gated route is
+checked per request against the caller's capability set; these credentials pass
+**no capability check at all** — the middleware authenticates the bearer and hands
+off — so *the route list is the authorization boundary for them*.
+
+- [x] **`nonHumanReach` is that list, with a reason per route**, covering all five
+  non-human schemes: `agent credential` (6), `SCIM client key` (7 — the surface
+  that creates and deletes users), `application key` (1, one by design),
+  `token (single-use link)` (5 guest routes), `token (query)` (2 viewer tunnels).
+  A route reachable without a human principal that nobody wrote down fails the
+  test, and the check runs **both ways** — a listed route that no longer exists
+  fails too, because a stale allowlist reads as more scrutiny than it gives
+- [x] **A claim that lived in a trailing comment is now a test.** `server.go` said
+  of the reveal route: *"browser-extension tokens (Phase 147) reach only this
+  route"* — the entire scoping of a credential issued to something running in a
+  page on a machine pamv1 does not control. Nothing checked it
+- [x] **And the existing test could not have.**
+  `TestExtensionTokenRefusedEverywhereElse` mints a real token and watches five
+  real routes refuse it — the stronger test for what it covers, but it samples the
+  *complement*, so a sixth `authzExtOK` route would leave it passing and the
+  comment quietly false. `TestExtensionTokenReachIsOneRoute` asserts the set
+  instead. **Verified by wrapping a second route in `authzExtOK`: the new test
+  fails, the behavioural one stays green** — which is precisely the gap
+  enumerating the complement leaves
+- [x] **`TestNoMutatingRouteIsPublic`** puts a fail-closed floor under the whole
+  table: a request that changes state must present *something*. It holds today —
+  the pre-auth exceptions (login, SSO callbacks, break-glass unseal) carry
+  `public (rate-limited)` from their own wrapper rather than bare `public`, which
+  is exactly the distinction that makes the floor checkable
+- [x] **What this still does not close**, kept honest: the operator API's own
+  capability *choices* are not asserted — that `POST /v1/apps/{id}/grants` takes
+  `CapRevealSecret` while listing them takes `CapManageUsers` is a deliberate
+  asymmetry nothing here would notice becoming an accident. This phase bounds the
+  surface with no capability check at all, which is the half where a wrong answer
+  has no second gate behind it
 
 ## Phase 195 — The security map called sixteen authenticated routes public ✅
 
