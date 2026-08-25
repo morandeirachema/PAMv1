@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–194 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–195 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,53 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 195 — The security map called sixteen authenticated routes public ✅
+
+`docs/ARCHITECTURE-DIAGRAMS.md` §3 is the API surface table — what a reader
+consults to see what guards each route. It is CI-gated for drift, so it was
+**guaranteed current and guaranteed wrong in the same breath**.
+
+`archgen`'s classifier knew four schemes (`auth.Cap*`, `authenticated(`,
+`rateLimit(`, and a special case for the RDP/VNC tunnels) and **fell back to
+`"public"` for everything else**. Three authentication schemes were added to the
+mux after it was written and never taught to it, so every route behind them was
+published as unauthenticated:
+
+- [x] **`agentAuth`** — `POST /v1/tool-calls`, `GET /v1/tool-calls/{id}`,
+  `POST /v1/tool-calls/{id}/resume`, `POST /v1/token`, `GET|POST /mcp`. The whole
+  **AI-agent broker tool-call surface**
+- [x] **`scimAuth`** — all seven `/scim/v2/*` routes. The whole **SCIM
+  provisioning surface, which creates and deletes users**
+- [x] **`appAuth`** — `GET /v1/app-secrets/{id}`
+- [x] Plus five guest routes shown as bare `public` while authenticating a
+  single-use token in the handler (session share, magic-link approval) — the
+  RDP/VNC tunnels got a `token (query)` label for exactly this situation in their
+  own phase and these were never added beside them
+
+**Nineteen rows corrected.** The routes were protected the entire time — `scimAuth`
+rejects a missing or unmatched bearer token, `agentAuth` verifies the credential
+and then checks quarantine — so this was never an access-control defect. It was
+the document lying about a control, which is the same class as Phase 190's
+nine-release-stale digest and deserves the same treatment.
+
+- [x] **The classifier refuses to guess.** An unrecognised wrapper is now an
+  **error that stops the generator**, naming the route and saying what to do about
+  it. CI runs `go run ./cmd/archgen`, so adding a scheme without teaching the
+  table fails the build rather than quietly publishing its routes as `public`
+- [x] **"No credential" has to be claimed, not inferred.** `publicRoutes` is an
+  allowlist of the seven genuinely credential-free routes, each carrying its
+  reason, and a test fails if any reason is blank. The nine pre-auth routes
+  (login, OIDC/SAML, WebAuthn login, break-glass unseal) keep
+  `public (rate-limited)` from their own wrapper
+- [x] `TestRouteGuardRefusesToGuess` pins every scheme's label, the allowlist, the
+  non-empty-reason rule, and — the point of the phase — that an unknown wrapper is
+  an error. **Verified by adding a bogus route and watching the generator exit 1**
+- [x] **What this does not close**, recorded so it is not mistaken for done: this
+  makes the *documentation* honest and keeps it that way. It is not an assertion
+  that every route is correctly authorized — six schemes share one mux, and
+  nothing yet checks that the scheme a route carries is the *right* one for what
+  it does. That is a bigger phase, and it now has a truthful table to start from
 
 ## Phase 194 — v0.53.0 ✅
 
