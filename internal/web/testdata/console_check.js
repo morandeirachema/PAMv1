@@ -379,7 +379,9 @@ const screens = [
     // built from a subject name and a safe name — both unbounded values — so
     // the long variant is what proves the cell truncates instead of pushing the
     // row off the terminal. The fixture also drives all five reasons at once,
-    // because each is rendered by its own branch.
+    // because each is rendered by its own branch, and (Phase 191) every
+    // "blocked" reason, which is the line that tells a reviewer the count above
+    // overstates what the subject can do today.
     name: "reach",
     src: /\n {6}reach\(\) \{\n[\s\S]*?\n {6}\},\n/,
     state: (long) => ({
@@ -389,6 +391,13 @@ const screens = [
         subject: long ? LONG : "planner", kind: "agent", agent_kind: "identity",
         known: !long, owner: long ? LONGNAME : "alice",
         roles: [long ? LONGNAME : "agent"],
+        // Phase 191: the subject's own state. Every reason at once, so each
+        // branch of blockedText renders, and the long variant proves the joined
+        // line wraps rather than pushing the screen sideways.
+        blocked: long
+          ? ["no_usable_capability", "deactivated", "key_disabled", "key_expired",
+             "quarantined", "not_enrolled"]
+          : ["key_disabled"],
         total: 5,
         counts: { grant: 1, safe: 1, open: 1, admin: 1, unlimited_vault_access: 1 },
         targets: [
