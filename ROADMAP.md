@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–202 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–203 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,46 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 203 — A target nobody restricted no longer reaches everyone ✅
+
+The estate-wide default this project has carried since Phase 2, deferred in
+writing by Phase 189 and rendered in **red** by 191 and 193 because it is the
+finding rather than the happy path: `CanConnectTarget` returned **open** for a
+target with no grants at all, so an unrestricted target was reachable by every
+connect-capable principal, human or agent.
+
+- [x] **`PAM_REQUIRE_TARGET_GRANT`** (default **false**) makes an ungated target
+  reachable by nobody until somebody grants it. **False is the historical
+  behaviour and stays the default**, so an upgrade changes nothing — this is a
+  decision an operator makes, not one taken underneath them
+- [x] **It is a named type, not a fifth bool.** `CanConnectTarget` already took
+  two, and a transposed argument here would silently invert an authorization
+  decision, so the policy is `auth.UngatedDefault` (`UngatedOpen` / `UngatedDeny`)
+  — a type the compiler will not let you swap with `personal` or `safeScoped`.
+  Changing the signature also made the compiler name **every** call site rather
+  than letting a package-level default drift out of test isolation
+- [x] **Wired on every path that admits a session**, checked rather than assumed:
+  the SSH proxy, the PostgreSQL proxy, the SQL Server proxy, the REST connect
+  check, the RDP/VNC viewer and the agent broker. The SSH proxy compiled fine
+  while never setting it — the flag would have been **inert on the main session
+  path**, which is exactly the defect Phase 182 went hunting for elsewhere
+- [x] **The reachability review honours the same policy**, and
+  `TestReachMatchesCanConnectUnderBothPolicies` re-runs the equivalence for each.
+  This matters more than usual: the review is the screen an operator reads to
+  decide whether it is safe to turn the flag on, so a review describing the other
+  policy would be worse than no review
+- [x] **The answer says which policy is in force** (`require_target_grant`, and a
+  line on menu 31), because an `open` row means opposite things under each and an
+  empty open-count is otherwise indistinguishable from a policy that makes one
+  impossible
+- [x] **Admins still bypass, deliberately.** That is an explicit decision about a
+  role; "nobody ever got round to restricting this target" is not a decision at
+  all, and it is only the second that this closes. A safe-scoped target with no
+  members was already default-deny and is unaffected
+- [x] **The migration path is the review itself**: read menu 31, see how many
+  targets are reachable for reason `open`, grant those deliberately, then set the
+  flag. Documented that way rather than as "flip it and see"
 
 ## Phase 202 — v0.54.1 ✅
 

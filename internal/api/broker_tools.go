@@ -58,7 +58,7 @@ func (s *Server) agentCanSeeTarget(ctx context.Context, p *auth.Principal, targe
 	if err != nil {
 		return false, err
 	}
-	return auth.CanConnectTarget(p, grants, target.SafeID != nil, personal), nil
+	return auth.CanConnectTarget(p, grants, target.SafeID != nil, personal, s.rt().ungated), nil
 }
 
 // agentVisibleTargets returns the subset of the inventory p is authorized to
@@ -77,7 +77,7 @@ func (s *Server) agentCanSeeTarget(ctx context.Context, p *auth.Principal, targe
 // A read failure still aborts the whole listing rather than dropping the target
 // it failed on: a partial inventory that looks complete is worse than an error.
 func (s *Server) agentVisibleTargets(ctx context.Context, p *auth.Principal) ([]store.Target, error) {
-	reaches, err := auth.ReachableTargets(ctx, s.store, p)
+	reaches, err := auth.ReachableTargets(ctx, s.store, p, s.rt().ungated)
 	if err != nil {
 		return nil, err
 	}
