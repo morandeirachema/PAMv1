@@ -60,6 +60,12 @@ func TestRouteGuardRefusesToGuess(t *testing.T) {
 		{"pre-auth, rate limited", `s.rateLimit(s.login))`, "public (rate-limited)"},
 		{"websocket query token", `s.rdpTunnel)`, "token (query)"},
 		{"guest magic link", `s.redeemShareInvite)`, "token (single-use link)"},
+		// The nested case: rateLimit is a MODIFIER and must not swallow what it
+		// wraps. It used to, and both WebAuthn login routes were published as
+		// "public (rate-limited)" while mfaPendingOnly was checking a credential.
+		{"a scheme wrapped in the throttle", `s.rateLimit(s.mfaPendingOnly(s.webauthnLoginBegin)))`, "MFA-pending token (rate-limited)"},
+		{"a capability wrapped in the throttle", `s.rateLimit(s.authz(auth.CapReadAudit, s.x)))`, "CapReadAudit (rate-limited)"},
+		{"throttled pre-auth with nothing inside", `s.rateLimit(s.login))`, "public (rate-limited)"},
 	} {
 		got, err := routeGuard("POST", "/api/whatever", tc.registration)
 		if err != nil {

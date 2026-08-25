@@ -25,3 +25,8 @@ deploy/k8s/sops/secrets.sops.yaml
 # drop these rules) so GitOps can see it.
 deploy/k8s/sops/pg-app.sops.yaml
 deploy/helm/pamv1/secrets.sops.yaml
+
+# `go build ./cmd/archgen` writes this at the repo root, and CLAUDE.md tells every
+# contributor to run archgen — so without this line the first person to follow the
+# instructions commits a 3.7 MB Linux executable. One did (Phase 195, fixed in 201).
+/archgen

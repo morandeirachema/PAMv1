@@ -2015,7 +2015,6 @@ func (s *PGStore) DeleteAppSecretGrant(ctx context.Context, id int64) error {
 	return execExpectingRow(ctx, s.pool, `DELETE FROM app_secret_grants WHERE id = $1`, id)
 }
 
-// AppMayAccessCredential reports whether app appID has a grant for credentialID.
 // SetAppGrantAlias sets or clears a grant's stable name; an empty alias stores
 // NULL, so the partial unique index does not treat two cleared grants as a
 // collision.
@@ -2051,6 +2050,7 @@ func (s *PGStore) AppCredentialByAlias(ctx context.Context, appID int64, alias s
 	return credID, err
 }
 
+// AppMayAccessCredential reports whether app appID has a grant for credentialID.
 func (s *PGStore) AppMayAccessCredential(ctx context.Context, appID, credentialID int64) (bool, error) {
 	var ok bool
 	err := s.pool.QueryRow(ctx,

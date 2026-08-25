@@ -638,7 +638,7 @@ The 193 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/mfa` | authenticated |
 | POST | `/api/mfa/enroll` | authenticated |
 | POST | `/api/mfa/recovery-codes` | authenticated |
-| POST | `/api/mfa/verify` | authenticated |
+| POST | `/api/mfa/verify` | authenticated (rate-limited) |
 | GET | `/api/profiles` | CapManageUsers |
 | POST | `/api/profiles` | CapManageUsers |
 | DELETE | `/api/profiles/{id}` | CapManageUsers |
@@ -702,8 +702,8 @@ The 193 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/vnc-token` | CapConnect |
 | GET | `/api/webauthn/credentials` | authenticated |
 | DELETE | `/api/webauthn/credentials/{id}` | authenticated |
-| POST | `/api/webauthn/login/begin` | public (rate-limited) |
-| POST | `/api/webauthn/login/finish` | public (rate-limited) |
+| POST | `/api/webauthn/login/begin` | MFA-pending token (rate-limited) |
+| POST | `/api/webauthn/login/finish` | MFA-pending token (rate-limited) |
 | POST | `/api/webauthn/register/begin` | authenticated |
 | POST | `/api/webauthn/register/finish` | authenticated |
 | GET | `/approve.html` | public |
