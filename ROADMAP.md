@@ -2428,11 +2428,14 @@ change** — migration `0047`, two plain indexes applied on startup with no
 backfill — one new route, one new console screen, no new env var and **no
 upgrade note**.
 
-- [ ] **v0.52.0** through the test-gated pipeline, rehearsed on `main` first.
-  Published as `ghcr.io/morandeirachema/pamv1:0.52.0` (also `latest`), digest
-  recorded here **and in README.md's Status block** once the publish workflow
-  runs, verified **public** by anonymous pull, with the `pam-agent` binaries
-  attached as since v0.40.0
+- [x] **v0.52.0** through the test-gated pipeline. Published 2026-08-25 as
+  `ghcr.io/morandeirachema/pamv1:0.52.0` (also `latest`), digest
+  `sha256:14a94a2bf386a4d280d2905a3f842683a18774d249ceb40b0b9f331ccfee0546`,
+  **public** (anonymous pull 200 on both tags via the GHCR anonymous
+  token-exchange flow, both resolving to the same digest), with the `pam-agent`
+  binaries for amd64 and arm64, the SPDX SBOM and `SHA256SUMS` attached.
+  Recorded **in README.md's Status block as well** — the first release for which
+  that is true, and the point of the fix below
 - [x] **README's Status block quoted the wrong image digest for nine releases.**
   It carried `sha256:0562b828...` — **v0.42.0's** digest, recorded in Phase 158 —
   while the version label beside it moved through v0.43.0 to v0.51.0, so a reader
