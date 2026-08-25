@@ -1150,6 +1150,26 @@ type GrantStore interface {
 	// safe is open. Exactly equivalent to len(EffectiveTargetGrants(id)) > 0 for
 	// every target, computed in one read instead of one per target.
 	GatedTargetIDs(ctx context.Context) ([]int64, error)
+	// ReachGrantSnapshot returns GrantsForSubjects and GatedTargetIDs together,
+	// from ONE CONSISTENT VIEW of the estate. It exists because the two answers
+	// are only meaningful against each other: "this target is gated" and "these
+	// are the subject's grants on it" combine into a reachability decision, and
+	// if the two halves come from different moments the combination describes an
+	// estate that never existed.
+	//
+	// Read separately, either order is wrong in one direction. Gated first: a
+	// grant created in the window leaves the target ungated in the older
+	// snapshot and it is reported OPEN — reachable by anyone — at the moment
+	// somebody restricted it. Grants first: revoking THIS subject's grant on a
+	// target other grants still hold leaves the deleted row in hand and the
+	// target still gated, so it is reported reachable via a grant that no longer
+	// exists. Phase 191 swapped the order and closed the first; this closes both,
+	// which is the only version that does not trade one window for another.
+	//
+	// Implementations must make the two reads atomic with respect to writers —
+	// pgstore uses a read-only REPEATABLE READ transaction, memstore holds its
+	// lock across both.
+	ReachGrantSnapshot(ctx context.Context, subjects []GrantSubject) (grants []SubjectGrant, gated []int64, err error)
 
 	// CreateSafe inserts a safe, populating its ID and CreatedAt.
 	CreateSafe(ctx context.Context, s *Safe) error

@@ -350,13 +350,78 @@ func TestSubjectReachBlocked(t *testing.T) {
 		t.Errorf("a quarantined agent must be flagged even when unknown: %+v", q)
 	}
 
-	// An attested identity pamv1 recorded on sight and nobody has claimed —
-	// SeeAgentIdentity is the path that builds that row, and enrolment is what
+	// An agent key with an explicit per-day budget of ZERO: not "unset" (nil,
+	// which takes the server default) but a deliberate hard stop of no calls at
+	// all. It stops the subject exactly as a disabled key does.
+	zero := 0
+	if err := st.CreateAgentKey(ctx, &store.AgentKey{
+		Name: "reach-nobudget", Owner: "alice", TokenHash: "reach-h3", BudgetPerDay: &zero,
+	}); err != nil {
+		t.Fatalf("CreateAgentKey(zero budget): %v", err)
+	}
+	if a := getReach(t, srv, "subject=reach-nobudget&kind=agent"); !hasBlocked(a, "budget_zero") {
+		t.Errorf("a zero-budget agent key must be flagged: %+v", a)
+	}
+
+	// An attested identity pamv1 recorded on sight and nobody has claimed.
+	// SeeAgentIdentity is the path that builds that row; enrolment is what
 	// claiming it means (an operator-registered identity is enrolled already).
+	//
+	// With PAM_BROKER_REQUIRE_ENROLLED_SVID OFF — the default — being unenrolled
+	// blocks NOTHING: that identity authenticates and reaches every ungated
+	// target, which is exactly the finding this review exists to surface. Saying
+	// it is blocked would understate its reach, the one direction this whole
+	// field is meant to prevent.
+	if _, err := st.SeeAgentIdentity(ctx, "spiffe://example.org/ns/prod/sa/seen", time.Now()); err != nil {
+		t.Fatalf("SeeAgentIdentity: %v", err)
+	}
+	if a := getReach(t, srv, "subject=spiffe://example.org/ns/prod/sa/seen&kind=agent"); hasBlocked(a, "not_enrolled") {
+		t.Errorf("with enrollment not required, unenrolled blocks nothing: %+v", a)
+	}
+}
+
+// TestSubjectReachNotEnrolledOnlyWhenRequired is the other half: the same
+// identity, on a deployment that actually refuses unenrolled SVIDs. The flag is
+// what turns "unclaimed" into "stopped", so it is what the flag must follow.
+func TestSubjectReachNotEnrolledOnlyWhenRequired(t *testing.T) {
+	// The flag lives on the broker wiring, which setupBroker skips entirely when
+	// no policy is supplied — so a broker-enabled options set is what actually
+	// turns it on.
+	opts := brokerOpts(t, &fakeWinRM{}, toolsetRules)
+	opts.BrokerRequireEnrolledSVID = true
+	srv, st := newTestServerOpts(t, nil, opts)
+	seedReachEstate(t, st)
+	ctx := context.Background()
+
 	if _, err := st.SeeAgentIdentity(ctx, "spiffe://example.org/ns/prod/sa/seen", time.Now()); err != nil {
 		t.Fatalf("SeeAgentIdentity: %v", err)
 	}
 	if a := getReach(t, srv, "subject=spiffe://example.org/ns/prod/sa/seen&kind=agent"); !hasBlocked(a, "not_enrolled") {
-		t.Errorf("an unenrolled attested identity must be flagged: %+v", a)
+		t.Errorf("with enrollment required, an unclaimed identity is stopped: %+v", a)
+	}
+}
+
+// TestSubjectReachExpiryBoundary pins the expiry comparison against the one the
+// auth path uses. store.AgentKey.Active treats now == ExpiresAt as expired
+// (now.Before(exp) is false), so a hand-written ExpiresAt.Before(now) would
+// disagree at exactly that instant — which is why the handler decomposes
+// Active rather than re-deriving it.
+func TestSubjectReachExpiryBoundary(t *testing.T) {
+	srv, st := newTestServerStore(t)
+	seedReachEstate(t, st)
+	ctx := context.Background()
+
+	exp := time.Now().Add(-time.Nanosecond)
+	if err := st.CreateAgentKey(ctx, &store.AgentKey{
+		Name: "reach-edge", Owner: "alice", TokenHash: "reach-h4", ExpiresAt: &exp,
+	}); err != nil {
+		t.Fatalf("CreateAgentKey: %v", err)
+	}
+	a := getReach(t, srv, "subject=reach-edge&kind=agent")
+	if !hasBlocked(a, "key_expired") {
+		t.Errorf("a key at or past its expiry must be flagged: %+v", a)
+	}
+	if hasBlocked(a, "key_disabled") {
+		t.Errorf("expired is not disabled — the two reasons must stay distinct: %+v", a)
 	}
 }

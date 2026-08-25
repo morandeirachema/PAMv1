@@ -36,8 +36,7 @@ const (
 type ReachStore interface {
 	ListTargets(ctx context.Context, limit int, afterID int64) ([]store.Target, error)
 	ListSafes(ctx context.Context, limit int, afterID int64) ([]store.Safe, error)
-	GrantsForSubjects(ctx context.Context, subjects []store.GrantSubject) ([]store.SubjectGrant, error)
-	GatedTargetIDs(ctx context.Context) ([]int64, error)
+	ReachGrantSnapshot(ctx context.Context, subjects []store.GrantSubject) ([]store.SubjectGrant, []int64, error)
 }
 
 // Reach is one target a principal may reach and the reason it may. Subject and
@@ -77,7 +76,7 @@ func GrantSubjects(p *Principal) []store.GrantSubject {
 }
 
 // ReachableTargets answers "what can this subject reach?" for the whole estate
-// in four reads, regardless of how many targets there are.
+// in three reads, regardless of how many targets there are.
 //
 // It is the subject-indexed twin of the connect-time decision, and it is
 // deliberately built out of the same pieces rather than re-deciding anything:
@@ -90,7 +89,7 @@ func GrantSubjects(p *Principal) []store.GrantSubject {
 //
 // The naive loop is what the broker did before (two store reads per target, in
 // a listing an agent makes on every run) because no subject-indexed query
-// existed; store.GrantsForSubjects is that query, and this is its one consumer
+// existed; store.ReachGrantSnapshot is that query, and this is its one consumer
 // of record. Results keep the store's target order (id-ascending).
 //
 // A target in a safe that has been deleted underneath it is treated as
@@ -114,25 +113,20 @@ func ReachableTargets(ctx context.Context, st ReachStore, p *Principal) ([]Reach
 		personal[sf.ID] = sf.Personal
 		safeName[sf.ID] = sf.Name
 	}
-	// ORDER MATTERS between these two reads, and it is the fail-closed direction
-	// that decides it. They are not one transaction, so a grant written between
-	// them is seen by one and not the other. Reading the subject's grants FIRST
-	// means a grant created in the window makes the target appear gated with no
-	// matching row — the target drops out, which under-reports for one query.
-	// Reading the gated set first would mean the opposite: the target is still
-	// "ungated" from the older snapshot and gets reported as OPEN, i.e. reachable
-	// by anyone, at the exact moment somebody restricted it. Since this same path
-	// decides which targets the broker names to an agent, the direction that
-	// briefly hides a target beats the one that briefly advertises it.
+	// ONE CONSISTENT VIEW, not two reads in a lucky order. These two answers are
+	// only meaningful against each other — "this target is gated" plus "these are
+	// the subject's grants on it" is the reachability decision — so if they come
+	// from different moments the pair describes an estate that never existed.
 	//
-	// The deletion window resolves correctly either way in this order: grants
-	// read first still holds the row, the gated set no longer does, and an
-	// ungated target IS open — which is exactly what gets reported.
-	grants, err := st.GrantsForSubjects(ctx, GrantSubjects(p))
-	if err != nil {
-		return nil, err
-	}
-	gatedIDs, err := st.GatedTargetIDs(ctx)
+	// Phase 191 ordered them grants-then-gated, which closed the window where a
+	// newly restricted target was still reported OPEN (reachable by anyone) but
+	// opened its mirror: revoking THIS subject's grant on a target other grants
+	// still hold left the deleted row in hand and the target still gated, so it
+	// was reported reachable via a grant that no longer existed. Since
+	// agentVisibleTargets runs on this path, that named a just-revoked target in
+	// an agent's own inventory. Ordering trades one window for the other;
+	// ReachGrantSnapshot takes both from one snapshot and closes both.
+	grants, gatedIDs, err := st.ReachGrantSnapshot(ctx, GrantSubjects(p))
 	if err != nil {
 		return nil, err
 	}

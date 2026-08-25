@@ -582,6 +582,55 @@ func RunStoreContract(t *testing.T, st store.Store) {
 			t.Fatalf("GatedTargetIDs must be ascending and distinct: %v", gatedIDs)
 		}
 	}
+	// ReachGrantSnapshot must return exactly what the two calls return
+	// separately, AND from one consistent view. Parity is what is checkable here
+	// on a quiet estate; the consistency is what the method exists for, and is
+	// exercised under concurrent writers in auth's own test.
+	snapGrants, snapGated, err := st.ReachGrantSnapshot(ctx, subjects)
+	if err != nil {
+		t.Fatalf("ReachGrantSnapshot: %v", err)
+	}
+	if len(snapGrants) != len(sgs) {
+		t.Fatalf("ReachGrantSnapshot grants = %d, GrantsForSubjects = %d", len(snapGrants), len(sgs))
+	}
+	// Compare by VALUE, not by struct equality: SubjectGrant carries a *int64
+	// SafeID, so == would compare pointer identity and two equal answers from
+	// two calls would never match.
+	sameSafe := func(a, b *int64) bool {
+		if a == nil || b == nil {
+			return a == b
+		}
+		return *a == *b
+	}
+	for i := range snapGrants {
+		a, b := snapGrants[i], sgs[i]
+		if a.TargetID != b.TargetID || a.TargetName != b.TargetName ||
+			a.SubjectType != b.SubjectType || a.Subject != b.Subject ||
+			a.Via != b.Via || !sameSafe(a.SafeID, b.SafeID) {
+			t.Fatalf("ReachGrantSnapshot grant %d = %+v, want %+v", i, a, b)
+		}
+	}
+	if len(snapGated) != len(gatedIDs) {
+		t.Fatalf("ReachGrantSnapshot gated = %v, GatedTargetIDs = %v", snapGated, gatedIDs)
+	}
+	for i := range snapGated {
+		if snapGated[i] != gatedIDs[i] {
+			t.Fatalf("ReachGrantSnapshot gated = %v, GatedTargetIDs = %v", snapGated, gatedIDs)
+		}
+	}
+	// The invariant that only a snapshot can guarantee: every target a returned
+	// grant names must be in the gated set. A grant IS what gates a target, so a
+	// grant pointing at an ungated target means the two halves came from
+	// different moments.
+	snapGatedSet := map[int64]bool{}
+	for _, id := range snapGated {
+		snapGatedSet[id] = true
+	}
+	for _, g := range snapGrants {
+		if !snapGatedSet[g.TargetID] {
+			t.Fatalf("ReachGrantSnapshot: grant on target %d that the same snapshot says nothing gates: %+v", g.TargetID, g)
+		}
+	}
 	// Removing the last member of a safe un-gates its target again (containment
 	// is membership, not the safe's existence).
 	if err := st.DeleteSafeMember(ctx, subjMember.ID); err != nil {

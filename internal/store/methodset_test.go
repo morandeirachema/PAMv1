@@ -61,9 +61,11 @@ import (
 // GrantStore.{GrantsForSubjects,GatedTargetIDs} (2) — the subject-indexed view
 // of the grant relation, so "what can this subject reach?" is one query instead
 // of two reads per target, and an agent's access can be reviewed rather than
-// reconstructed.
+// reconstructed. Phase 193 added GrantStore.ReachGrantSnapshot (1), which
+// returns those same two answers from ONE consistent view — reading them
+// separately is wrong in one direction whichever order you pick.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 214
+	const want = 215
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)
