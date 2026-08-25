@@ -50,6 +50,9 @@ type DBConfig struct {
 	RecordingDir    string            // where session recordings are written
 	Sessions        *session.Registry // live-session registry (optional)
 	RequireApproval bool              // global 4-eyes/OT gate (per-target also applies)
+	// RequireTargetGrant refuses a session to a target with NO grants at all
+	// (PAM_REQUIRE_TARGET_GRANT, Phase 203).
+	RequireTargetGrant bool
 	// TicketCheck re-validates the admitting request's ITSM ticket at connect
 	// time rather than at request time (PAM_TICKET_REVALIDATE, Phase 60).
 	TicketCheck store.TicketChecker
@@ -111,6 +114,7 @@ type DBProxy struct {
 	recordingDir string
 	sessions     *session.Registry
 	requireApprv bool
+	ungated      auth.UngatedDefault
 	ticketCheck  store.TicketChecker
 	posture      *posture.Attestor
 	onBreakGlass func(ctx context.Context, actor, detail string)
@@ -162,6 +166,7 @@ func NewDB(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg DBConfig
 		recordingDir: cfg.RecordingDir,
 		sessions:     cfg.Sessions,
 		requireApprv: cfg.RequireApproval,
+		ungated:      ungatedDefault(cfg.RequireTargetGrant),
 		ticketCheck:  cfg.TicketCheck,
 		posture:      cfg.PostureAttestor,
 		onBreakGlass: cfg.OnBreakGlass,
@@ -189,6 +194,7 @@ func NewDB(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg DBConfig
 		log:          d.log,
 		allowedProto: d.allowedProto,
 		requireApprv: d.requireApprv,
+		ungated:      d.ungated,
 		ticketCheck:  d.ticketCheck,
 		sessions:     d.sessions,
 		posture:      d.posture,

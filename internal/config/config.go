@@ -499,6 +499,23 @@ type Config struct {
 	BrokerTrustDomain     string // PAM_BROKER_TRUST_DOMAIN — SPIFFE trust domain host (e.g. example.org)
 	BrokerAudience        string // PAM_BROKER_AUDIENCE — required SVID audience
 	BrokerMaxDelegation   int    // PAM_BROKER_MAX_DELEGATION_DEPTH — RFC 8693 act-chain cap (default 1)
+	// RequireTargetGrant — PAM_REQUIRE_TARGET_GRANT — refuse a connection to a
+	// target that has NO grants at all: no direct grant, and not in a safe with
+	// members.
+	//
+	// FALSE IS THE DEFAULT, and it is pamv1's historical behaviour: a target
+	// nobody has restricted is reachable by every connect-capable principal,
+	// human or agent. That is an estate-wide default rather than a decision
+	// anyone made about a particular system, which is why the reachability review
+	// (menu 31, GET /api/access/reach) renders those targets in red — they are
+	// the finding, not the happy path.
+	//
+	// Turning it on is a real change for an existing estate, so it is opt-in
+	// rather than flipped underneath anyone: read the review first, see how many
+	// targets are reachable for reason "open", grant them deliberately, then set
+	// this. Admins still bypass (an explicit decision about a role), and a
+	// safe-scoped target was already default-deny.
+	RequireTargetGrant bool
 	// BrokerRequireEnrolledSVID — PAM_BROKER_REQUIRE_ENROLLED_SVID — refuse an
 	// SVID whose SPIFFE ID has not been enrolled in agent_identities (Phase 174).
 	// Off by default, because turning it on is a policy decision about the trust
@@ -862,6 +879,7 @@ func Load() (*Config, error) {
 		BrokerMaxArgBytes:          integer("PAM_BROKER_MAX_ARG_BYTES", 16384),
 		BrokerMaxResultBytes:       integer("PAM_BROKER_MAX_RESULT_BYTES", 65536),
 		BrokerBudgetPerDay:         integer("PAM_BROKER_BUDGET_PER_DAY", 0),
+		RequireTargetGrant:         boolean("PAM_REQUIRE_TARGET_GRANT", false),
 		BrokerRequireEnrolledSVID:  boolean("PAM_BROKER_REQUIRE_ENROLLED_SVID", false),
 		BrokerRequireKnownOwner:    boolean("PAM_BROKER_REQUIRE_KNOWN_OWNER", false),
 		BrokerPostureRequired:      boolean("PAM_BROKER_POSTURE_REQUIRED", false),

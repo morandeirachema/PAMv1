@@ -78,6 +78,9 @@ func GrantSubjects(p *Principal) []store.GrantSubject {
 // ReachableTargets answers "what can this subject reach?" for the whole estate
 // in three reads, regardless of how many targets there are.
 //
+// ungated must be the SAME policy the connect gates run with (Phase 203). Pass a
+// different one and this becomes a review of an estate that does not exist.
+//
 // It is the subject-indexed twin of the connect-time decision, and it is
 // deliberately built out of the same pieces rather than re-deciding anything:
 // for every target it reproduces CanConnectTarget's answer exactly — admin
@@ -95,7 +98,7 @@ func GrantSubjects(p *Principal) []store.GrantSubject {
 // A target in a safe that has been deleted underneath it is treated as
 // personal — i.e. closed to a plain admin — matching store.EffectiveSafePersonal,
 // which fails closed the same way when it cannot read the safe.
-func ReachableTargets(ctx context.Context, st ReachStore, p *Principal) ([]Reach, error) {
+func ReachableTargets(ctx context.Context, st ReachStore, p *Principal, ungated UngatedDefault) ([]Reach, error) {
 	if st == nil || p == nil {
 		return nil, errors.New("auth: reach needs a store and a principal")
 	}
@@ -162,9 +165,11 @@ func ReachableTargets(ctx context.Context, st ReachStore, p *Principal) ([]Reach
 			continue
 		}
 		if _, ok := gated[t.ID]; !ok {
-			// Ungated ⇒ open; safe-scoped-but-no-members ⇒ closed (containment),
-			// exactly as CanConnectTarget reads it.
-			if t.SafeID == nil {
+			// Safe-scoped-but-no-members ⇒ closed (containment). An UNGATED target
+			// is open or closed by deployment policy, exactly as CanConnectTarget
+			// reads it — the two must agree or this review stops describing the
+			// gate it exists to review.
+			if t.SafeID == nil && ungated == UngatedOpen {
 				out = append(out, Reach{Target: t, Via: ReachViaOpen})
 			}
 			continue

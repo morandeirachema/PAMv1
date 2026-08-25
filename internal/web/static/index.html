@@ -2642,6 +2642,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
 <div class="indent">Subject . . . . . . :  <span class="white">${esc(r.subject)}</span> (${esc(r.kind)}${r.kind === "agent" && r.agent_kind ? ", " + esc(r.agent_kind) : ""})
 Roles . . . . . . . :  <span class="white">${esc((r.roles || []).join(", ") || "-")}</span>${r.owner ? `
 Owner . . . . . . . :  <span class="white">${esc(r.owner)}</span>` : ""}
+Grant policy  . . . :  <span class="${r.require_target_grant ? "green" : "amber"}">${r.require_target_grant ? "a grant is REQUIRED (ungated targets reach nobody)" : "ungated targets are OPEN to anyone who may connect"}</span>
 Reaches . . . . . . :  <span class="white">${esc(r.total)}</span> target(s)   <span class="cyan">grant ${esc(c.grant || 0)} / safe ${esc(c.safe || 0)} / open ${esc(c.open || 0)} / admin ${esc(c.admin || 0)}${c.unlimited_vault_access ? " / unlimited " + esc(c.unlimited_vault_access) : ""}</span></div>
 ${(r.blocked || []).length ? `<div class="red indent">Cannot use this reach right now: <span class="white">${esc((r.blocked || []).map(blockedText).join("; "))}</span>.
 The targets below are what the grant model still admits — they come back the moment that changes.</div>` : ""}

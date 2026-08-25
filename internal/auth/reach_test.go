@@ -107,7 +107,7 @@ func canConnectLoop(ctx context.Context, t *testing.T, st *memstore.Memstore, p 
 		if err != nil {
 			t.Fatalf("EffectiveSafePersonal: %v", err)
 		}
-		out[targets[i].Name] = CanConnectTarget(p, grants, targets[i].SafeID != nil, personal)
+		out[targets[i].Name] = CanConnectTarget(p, grants, targets[i].SafeID != nil, personal, UngatedOpen)
 	}
 	return out
 }
@@ -129,16 +129,7 @@ func TestReachMatchesCanConnect(t *testing.T) {
 	ctx := context.Background()
 	f := newReachFixture(t)
 
-	principals := []*Principal{
-		{Name: "alice", Role: RoleUser},
-		{Name: "bob", Role: RoleUser},
-		{Name: "carol", Role: RoleAuditor},
-		{Name: "root", Role: RoleAdmin},
-		{Name: "alice", Role: RoleAdmin},
-		{Name: "multi", Role: RoleUser, Roles: []Role{RoleUser, RoleAuditor}},
-		{Name: "unlimited", Role: Role("custodian"), Caps: CapSet{CapUnlimitedVaultAccess: true, CapConnect: true}},
-		{Name: "agent-a", Role: RoleAgent},
-	}
+	principals := reachPrincipals()
 	for _, p := range principals {
 		want := map[string]bool{}
 		for name, ok := range canConnectLoop(ctx, t, f.st, p) {
@@ -146,9 +137,9 @@ func TestReachMatchesCanConnect(t *testing.T) {
 				want[name] = true
 			}
 		}
-		rs, err := ReachableTargets(ctx, f.st, p)
+		rs, err := ReachableTargets(ctx, f.st, p, UngatedOpen)
 		if err != nil {
-			t.Fatalf("ReachableTargets(%s): %v", p.Name, err)
+			t.Fatalf("ReachableTargets(%s, UngatedOpen): %v", p.Name, err)
 		}
 		got := reachSet(rs)
 		if len(got) != len(want) {
@@ -169,7 +160,7 @@ func TestReachReasons(t *testing.T) {
 	f := newReachFixture(t)
 
 	reasons := func(p *Principal) map[string]Reach {
-		rs, err := ReachableTargets(ctx, f.st, p)
+		rs, err := ReachableTargets(ctx, f.st, p, UngatedOpen)
 		if err != nil {
 			t.Fatalf("ReachableTargets: %v", err)
 		}
@@ -336,7 +327,7 @@ func TestReachMatchesCanConnectRandomized(t *testing.T) {
 
 func mustReach(ctx context.Context, t *testing.T, st *memstore.Memstore, p *Principal) []Reach {
 	t.Helper()
-	rs, err := ReachableTargets(ctx, st, p)
+	rs, err := ReachableTargets(ctx, st, p, UngatedOpen)
 	if err != nil {
 		t.Fatalf("ReachableTargets: %v", err)
 	}
@@ -408,7 +399,7 @@ func TestReachGrantSnapshotUnderWriters(t *testing.T) {
 	// And the reach answer built on it stays sane throughout: a subject whose
 	// only grant is being created and destroyed underneath must never be told a
 	// gated target is "open".
-	got, err := ReachableTargets(ctx, f.st, p)
+	got, err := ReachableTargets(ctx, f.st, p, UngatedOpen)
 	if err != nil {
 		t.Fatalf("ReachableTargets: %v", err)
 	}
@@ -422,5 +413,102 @@ func TestReachGrantSnapshotUnderWriters(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestUngatedDenyClosesTheDefault pins Phase 203's whole point: a target nobody
+// has restricted is reachable by anyone under the historical default, and by
+// nobody once the deployment says a grant is required.
+//
+// Admins still reach it. That is deliberate and is not the hole being closed:
+// admin is an explicit decision about a role, whereas "nobody ever got round to
+// restricting this target" is not a decision at all.
+func TestUngatedDenyClosesTheDefault(t *testing.T) {
+	plain := &Principal{Name: "nobody", Role: RoleUser}
+	admin := &Principal{Name: "boss", Role: RoleAdmin}
+
+	for _, tc := range []struct {
+		name       string
+		p          *Principal
+		open, deny bool
+	}{
+		{"a plain user reaches an ungated target only under UngatedOpen", plain, true, false},
+		{"an admin reaches it either way", admin, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CanConnectTarget(tc.p, nil, false, false, UngatedOpen); got != tc.open {
+				t.Errorf("UngatedOpen: %v, want %v", got, tc.open)
+			}
+			if got := CanConnectTarget(tc.p, nil, false, false, UngatedDeny); got != tc.deny {
+				t.Errorf("UngatedDeny: %v, want %v", got, tc.deny)
+			}
+		})
+	}
+
+	// A safe-scoped target with no members was ALREADY closed, under either
+	// policy — containment does not depend on this setting.
+	for _, u := range []UngatedDefault{UngatedOpen, UngatedDeny} {
+		if CanConnectTarget(plain, nil, true, false, u) {
+			t.Errorf("a safe-scoped target with no members must stay closed (policy %v)", u)
+		}
+	}
+}
+
+// TestReachMatchesCanConnectUnderBothPolicies is the equivalence test again, run
+// for each policy. The review and the gate must agree under whichever one the
+// deployment runs, or the screen an operator uses to decide whether it is safe
+// to turn UngatedDeny on would be describing a different estate.
+func TestReachMatchesCanConnectUnderBothPolicies(t *testing.T) {
+	f := newReachFixture(t)
+	ctx := context.Background()
+
+	for _, ungated := range []UngatedDefault{UngatedOpen, UngatedDeny} {
+		for _, p := range reachPrincipals() {
+			got, err := ReachableTargets(ctx, f.st, p, ungated)
+			if err != nil {
+				t.Fatalf("ReachableTargets(%s, %v): %v", p.Name, ungated, err)
+			}
+			reachable := map[int64]bool{}
+			for _, r := range got {
+				reachable[r.Target.ID] = true
+			}
+			targets, err := f.st.ListTargets(ctx, 0, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i := range targets {
+				tg := targets[i]
+				grants, err := f.st.EffectiveTargetGrants(ctx, tg.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				personal, err := store.EffectiveSafePersonal(ctx, f.st, &tg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := CanConnectTarget(p, grants, tg.SafeID != nil, personal, ungated)
+				if reachable[tg.ID] != want {
+					t.Errorf("policy %v, %s, target %q: reach=%v CanConnectTarget=%v",
+						ungated, p.Name, tg.Name, reachable[tg.ID], want)
+				}
+			}
+		}
+	}
+}
+
+// reachPrincipals is the set of principal shapes the equivalence tests run over:
+// a plain user, one with no grants at all, an auditor, an admin, an admin who
+// shares a granted user's name, a multi-role identity, a custom profile carrying
+// CapUnlimitedVaultAccess, and an AI agent.
+func reachPrincipals() []*Principal {
+	return []*Principal{
+		{Name: "alice", Role: RoleUser},
+		{Name: "bob", Role: RoleUser},
+		{Name: "carol", Role: RoleAuditor},
+		{Name: "root", Role: RoleAdmin},
+		{Name: "alice", Role: RoleAdmin},
+		{Name: "multi", Role: RoleUser, Roles: []Role{RoleUser, RoleAuditor}},
+		{Name: "unlimited", Role: Role("custodian"), Caps: CapSet{CapUnlimitedVaultAccess: true, CapConnect: true}},
+		{Name: "agent-a", Role: RoleAgent},
 	}
 }

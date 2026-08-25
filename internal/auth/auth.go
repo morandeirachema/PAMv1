@@ -166,9 +166,11 @@ func (r Role) Capabilities() []string {
 
 // CanConnectTarget reports whether the principal may connect to a target given
 // its effective grants (direct grants ∪ safe members), whether the target is
-// placed in a safe, and whether that safe is Personal (Phase 139). When no
+// placed in a safe, whether that safe is Personal (Phase 139), and what the
+// deployment means by a target with no grants at all (Phase 203). When no
 // grant matches, an *ungated* target (safeScoped=false) is open to any
-// connect-capable principal, but a *safe-scoped* target (safeScoped=true) is
+// connect-capable principal under UngatedOpen and reachable by nobody under
+// UngatedDeny, while a *safe-scoped* target (safeScoped=true) is
 // default-DENY — placing a target in a safe restricts it to that safe's
 // members, so an empty/unmatched grant set must not fall through to "open".
 // Otherwise a grant must match the user or role.
@@ -184,7 +186,29 @@ func (r Role) Capabilities() []string {
 // normally regardless of role; only a *different* admin without the override
 // is turned away. For an ordinary (non-personal) target this function's
 // behavior is byte-identical to before Phase 139.
-func CanConnectTarget(p *Principal, grants []store.TargetGrant, safeScoped, personal bool) bool {
+// UngatedDefault is what a deployment means by a target with NO grants at all.
+//
+// It is a named type rather than another bool because CanConnectTarget already
+// takes two, and a transposed argument here would silently invert an
+// authorization decision.
+type UngatedDefault int
+
+const (
+	// UngatedOpen: a target nobody has restricted is reachable by any
+	// connect-capable principal. This is what pamv1 has always done, and it stays
+	// the default so an upgrade changes nothing — but it is an estate-wide
+	// default rather than a decision anyone made about a particular system, which
+	// is why the reachability review renders those targets in red.
+	UngatedOpen UngatedDefault = iota
+	// UngatedDeny: a target with no grants is reachable by nobody until somebody
+	// grants it. Set PAM_REQUIRE_TARGET_GRANT=true to choose this. Admins still
+	// bypass (that is an explicit decision about a role), and a safe-scoped target
+	// was already default-deny — this closes the remaining hole, which is the
+	// target nobody ever got round to restricting.
+	UngatedDeny
+)
+
+func CanConnectTarget(p *Principal, grants []store.TargetGrant, safeScoped, personal bool, ungated UngatedDefault) bool {
 	if !personal {
 		for _, r := range p.effectiveRoles() {
 			if r == RoleAdmin {
@@ -195,8 +219,12 @@ func CanConnectTarget(p *Principal, grants []store.TargetGrant, safeScoped, pers
 		return true
 	}
 	if len(grants) == 0 {
-		// Ungated ⇒ open; safe-scoped-but-no-members ⇒ closed (containment).
-		return !safeScoped
+		// Safe-scoped but no members ⇒ closed (containment), always. An UNGATED
+		// target is open or closed depending on what the deployment decided.
+		if safeScoped || ungated == UngatedDeny {
+			return false
+		}
+		return true
 	}
 	for _, g := range grants {
 		if SubjectMatches(p, g.SubjectType, g.Subject) {
