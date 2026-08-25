@@ -9,6 +9,76 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.52.0] — 2026-08-25
+
+A minor that ships one phase, closing a question pamv1 could not answer about
+itself: **every grant lookup it had was target-indexed**. `EffectiveTargetGrants`
+is exactly what a connect gate needs and exactly the reverse of what a reviewer
+needs, so "what can this agent reach?" could only be answered by walking the
+whole estate and re-deriving each decision by hand. Now it is one query, one
+route and one console screen — and it reports not just *which* targets but
+**why** each one is reachable. **Schema change** — migration `0047` (two plain
+indexes; applied on startup, no backfill, no downtime). One new route, one new
+console screen, no new env var, **no upgrade note**.
+
+### Added
+
+- **"What can this subject reach?"** (Phase 189).
+  `GET /api/access/reach?subject=&kind=user|agent` answers for a local user or
+  either AI-agent identity kind, gated on `CapReadAudit` — the same gate as the
+  audit trail it complements — and audited `access.reach_query`. Each target
+  comes back with the **reason** it is reachable: `admin`,
+  `unlimited_vault_access`, `open`, `grant` or `safe`. The reason is the point: a
+  yes/no gate can say a subject reaches 40 targets, only this can say 37 of them
+  are reachable because nobody decided anything.
+- **The grant relation, readable backwards.** `GrantsForSubjects` returns every
+  grant naming any of a principal's identifiers — its username plus each role it
+  holds — each row carrying the target it reaches and the path it came from
+  (`grant` / `safe`); `GatedTargetIDs` returns the targets anything gates at all,
+  which is what separates an **open** target from an unreachable one, a
+  distinction the subject-side rows alone can never make because an open target
+  has no row. `auth.ReachableTargets` composes them into the whole answer in
+  **four reads regardless of estate size**.
+- **An agent in no registry is answered, not refused** — `known:false` plus the
+  targets nothing gates, because "any workload in the trust domain reaches these"
+  is precisely the question an identity inventory leaves open, and refusing it
+  would hide the finding. A directory-authenticated identity returns `404`
+  instead: its roles are decided by group mapping at login, and answering with
+  the built-in defaults would be inventing an identity.
+- **Console menu 31 (`PAMSUBRCH`)**, plus option `5` on a user row (menu 8) and
+  option `8` on an agent-key row (menu 26) — the two places somebody is already
+  looking at the subject. `open` renders red, because it is the finding rather
+  than the happy path.
+- **Migration `0047`** indexes `target_grants` and `safe_members` on
+  `(subject_type, subject)`. A subject-indexed query with no subject index is a
+  sequential scan of both tables on exactly the estate size where the question
+  starts to matter.
+
+### Changed
+
+- **The broker's own inventory listing stops paying per-target reads.**
+  `agentVisibleTargets` re-derived the decision with **two store reads per
+  target** on every `list_targets` call, a cost accepted in writing because no
+  subject-indexed query existed. It now goes through the same path as the new
+  route — the payoff rather than a side-effect: the query exists *and* the hot
+  path that needed it uses it.
+
+### Fixed
+
+- **The Terraform module deployed a 23-release-old image.**
+  `deploy/terraform/variables.tf` defaulted `image` to
+  `ghcr.io/morandeirachema/pamv1:0.28.0` and had not moved since v0.28.0, so
+  `terraform apply` with the module's own default installed a version from
+  2026-08-14 while every other manifest pinned the current one. Now `0.52.0`,
+  like the rest. The release checklist's sweep — one `grep` over `deploy/`
+  requiring exactly one release to appear — is what found it, which is the
+  argument for keeping a check that cannot go stale over a list of places that
+  can.
+- **Four releases were unlinkable from the CHANGELOG.** The reference-link block
+  at the bottom stopped at `0.47.0`, so the `[0.48.0]`–`[0.51.0]` headings above
+  it rendered as literal brackets, and `[Unreleased]` compared against `v0.47.0`.
+  All five links restored and the compare re-pointed.
+
 ## [0.51.0] — 2026-08-21
 
 A small minor with one theme: **three capabilities that had shipped with an API
@@ -1851,7 +1921,12 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.47.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.52.0...HEAD
+[0.52.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.52.0
+[0.51.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.51.0
+[0.50.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.50.0
+[0.49.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.49.0
+[0.48.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.48.0
 [0.47.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.47.0
 [0.46.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.46.0
 [0.45.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.45.0
