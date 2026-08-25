@@ -29,7 +29,7 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     -o /out/pam-server ./cmd/pam-server
 
 # Distroless, static, non-root: minimal attack surface for a credential vault.
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:1b7b9f0f0e0a1d2155f531db587cc48ec26aaf97ab64364225f5bf18a054e66a
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY --from=build /out/pam-server /pam-server
 # Every listener the server can open, at its default address: the portal/API,
 # the SSH session proxy, the PostgreSQL proxy and the SQL Server proxy. EXPOSE is
