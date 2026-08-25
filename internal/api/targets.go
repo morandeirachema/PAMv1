@@ -326,7 +326,7 @@ func (s *Server) authorizedForTarget(ctx context.Context, target *store.Target) 
 		return false, err
 	}
 	principal := principalFrom(ctx)
-	ok := auth.CanConnectTarget(principal, grants, target.SafeID != nil, personal)
+	ok := auth.CanConnectTarget(principal, grants, target.SafeID != nil, personal, s.rt().ungated)
 	if ok && principal.PersonalOverrideUsed(personal) {
 		s.audit(ctx, "safe.personal_override_used", "target:"+target.Name)
 	}

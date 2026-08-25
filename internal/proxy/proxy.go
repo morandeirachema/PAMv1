@@ -53,6 +53,11 @@ type Config struct {
 	// RequireApproval gates every session behind an approved access request
 	// (global OT policy); per-target Target.RequireApproval also applies.
 	RequireApproval bool
+	// RequireTargetGrant refuses a session to a target with NO grants at all
+	// (PAM_REQUIRE_TARGET_GRANT, Phase 203). False keeps pamv1's historical
+	// behaviour, where an unrestricted target is reachable by anyone who may
+	// connect at all.
+	RequireTargetGrant bool
 	// UpstreamHostKey verifies the target's SSH host key (e.g. a known_hosts
 	// callback). nil trusts any upstream key — insecure, and logged loudly.
 	UpstreamHostKey ssh.HostKeyCallback
@@ -218,6 +223,7 @@ type Proxy struct {
 	dialTimeout  time.Duration
 	sessions     *session.Registry
 	requireApprv bool
+	ungated      auth.UngatedDefault
 	upstreamHKCB ssh.HostKeyCallback
 	onBreakGlass func(ctx context.Context, actor, detail string)
 	allowedProto map[string]bool
@@ -310,6 +316,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		dialTimeout:    cfg.DialTimeout,
 		sessions:       cfg.Sessions,
 		requireApprv:   cfg.RequireApproval,
+		ungated:        ungatedDefault(cfg.RequireTargetGrant),
 		upstreamHKCB:   cfg.UpstreamHostKey,
 		onBreakGlass:   cfg.OnBreakGlass,
 		allowedProto:   protocolSet(cfg.AllowedProtocols),
@@ -343,6 +350,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		log:          p.log,
 		allowedProto: p.allowedProto,
 		requireApprv: p.requireApprv,
+		ungated:      p.ungated,
 		ticketCheck:  p.ticketCheck,
 		sessions:     p.sessions,
 		posture:      p.posture,
