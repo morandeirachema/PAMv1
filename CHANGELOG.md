@@ -9,6 +9,82 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.53.0] — 2026-08-25
+
+Three phases, and two of them exist because the release before them was
+reviewed rather than trusted. **No schema change** (migration high-water stays
+`0047`), no new route, no new env var, **no upgrade note** — but the Go toolchain
+that builds the published image moved to **1.27**, and the reachability review
+shipped in v0.52.0 gained the half it was missing and then had that half
+corrected.
+
+### Added
+
+- **The reachability review says whether the subject could actually use what it
+  reaches** (Phase 191). `GET /api/access/reach` gains **`blocked`** — every
+  reason the subject cannot exercise its standing reach right now, drawn from the
+  subject and never from a target: `no_usable_capability`, `deactivated`,
+  `key_disabled`, `key_expired`, `quarantined`, `not_enrolled`, and (Phase 193)
+  `budget_zero` and `quarantine_unknown`. Console menu **31** prints them in red
+  above the target list.
+
+  The targets and the total do **not** change when it is non-empty. That is
+  deliberate: a suspended account's grants are still grants and come back the
+  moment somebody flips it on, which is exactly why they are worth reviewing. But
+  "reaches 40 targets" and "would reach 40 targets if it could log in" are
+  different findings, and until now they looked identical.
+- **`auth.CanUseAnyTarget`** supplies the half `CanConnectTarget` structurally
+  cannot: that function does not consider capabilities at all — every call site
+  checks them separately, at the door — so the review reported an **auditor**
+  reaching every ungated target, for a role that can never open a session, reveal
+  a secret or call a tool.
+- **`GrantStore.ReachGrantSnapshot`** (Phase 193) returns the subject's grants and
+  the gated-target set from **one consistent view** — a read-only `REPEATABLE
+  READ` transaction in PostgreSQL, one lock hold in the in-memory store.
+
+### Fixed
+
+- **A review flag that pointed the wrong way** (Phase 193). `not_enrolled` was
+  reported for every unclaimed attested identity, while being unenrolled only
+  *blocks* when `PAM_BROKER_REQUIRE_ENROLLED_SVID` is on — and that defaults to
+  off. On a default deployment the identity in question authenticates and reaches
+  every ungated target, yet the console painted it red as already stopped. A
+  review surface that misleads is a control failure of its own kind. Now
+  conditional on the flag, with a test on each side of it.
+- **A grant race that could name a just-revoked target** (Phase 193). The two
+  grant reads behind the answer are only meaningful against each other, so
+  ordering them cannot make them correct — it only moves the window. Reading the
+  gated set first reported a newly restricted target as `open`, reachable by
+  anyone; reading grants first reported a revoked grant as still admitting a
+  target, and the AI-agent broker's own inventory listing runs on that path. Both
+  are closed by taking the pair from one snapshot, pinned by a concurrent-writer
+  test rather than by argument.
+- **An unreadable quarantine table read as "nothing stops this agent"** (Phase
+  193): a store error was swallowed and rendered as an empty `blocked`,
+  indistinguishable from a clean bill of health. It now reports
+  `quarantine_unknown`.
+- **An expiry comparison that disagreed with the authoritative one** (Phase 193)
+  at exactly the boundary instant — a hand-written second copy of a security
+  predicate, now decomposed from `store.AgentKey.Active` instead of re-derived.
+- **An agent key with a per-day budget of `0` was not reported as stopped**
+  (Phase 193). Zero is a deliberate administrative hard stop, distinct from an
+  unset budget, and it stops the subject exactly as a disabled key does.
+
+### Changed
+
+- **The published image is built with Go 1.27** (Phase 192), and so are the tests
+  that gate it. A dependency bump had moved both Dockerfiles to `golang:1.27`
+  while every CI job and both release jobs still ran Go 1.26 — so the release
+  would have attested a container compiled by a toolchain no test exercised, with
+  `pam-agent` binaries built by a *different* compiler attached beside it. Nothing
+  in CI compares those two halves, so it went green. Not exploitable on its own;
+  provenance is most of what a signed release claims.
+- **The Terraform module and the README's digest no longer lag the release**
+  (shipped in v0.52.0, restated because both were long-lived): the module's
+  default image had been 23 releases behind, and the README's Status block quoted
+  an image digest from nine releases earlier. The digest is now recorded in the
+  README alongside `ROADMAP.md` in the same pass, so the two move together.
+
 ## [0.52.0] — 2026-08-25
 
 A minor that ships one phase, closing a question pamv1 could not answer about
@@ -1930,7 +2006,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.52.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.53.0...HEAD
+[0.53.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.53.0
 [0.52.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.52.0
 [0.51.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.51.0
 [0.50.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.50.0
