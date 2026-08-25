@@ -1852,7 +1852,7 @@ func scanAppKey(row pgx.CollectableRow) (store.AppKey, error) {
 // scanAppSecretGrant scans one app_secret_grants row into a store.AppSecretGrant.
 func scanAppSecretGrant(row pgx.CollectableRow) (store.AppSecretGrant, error) {
 	var g store.AppSecretGrant
-	err := row.Scan(&g.ID, &g.AppID, &g.CredentialID, &g.CreatedAt)
+	err := row.Scan(&g.ID, &g.AppID, &g.CredentialID, &g.Alias, &g.CreatedAt)
 	return g, err
 }
 
@@ -2003,7 +2003,7 @@ func (s *PGStore) GrantAppSecret(ctx context.Context, g *store.AppSecretGrant) e
 // ListAppSecretGrants returns an app's secret grants ordered by id.
 func (s *PGStore) ListAppSecretGrants(ctx context.Context, appID int64) ([]store.AppSecretGrant, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, app_id, credential_id, created_at FROM app_secret_grants WHERE app_id = $1 ORDER BY id`, appID)
+		`SELECT id, app_id, credential_id, COALESCE(alias, ''), created_at FROM app_secret_grants WHERE app_id = $1 ORDER BY id`, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -2016,6 +2016,41 @@ func (s *PGStore) DeleteAppSecretGrant(ctx context.Context, id int64) error {
 }
 
 // AppMayAccessCredential reports whether app appID has a grant for credentialID.
+// SetAppGrantAlias sets or clears a grant's stable name; an empty alias stores
+// NULL, so the partial unique index does not treat two cleared grants as a
+// collision.
+func (s *PGStore) SetAppGrantAlias(ctx context.Context, grantID int64, alias string) error {
+	var stored *string
+	if alias != "" {
+		stored = &alias
+	}
+	tag, err := s.pool.Exec(ctx, `UPDATE app_secret_grants SET alias = $2 WHERE id = $1`, grantID, stored)
+	if pgCode(err) == pgUniqueViolation {
+		return store.ErrConflict
+	}
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+// AppCredentialByAlias resolves an alias within ONE app's grants — resolution and
+// authorization are the same query, so an alias can never reach a credential this
+// app was not granted.
+func (s *PGStore) AppCredentialByAlias(ctx context.Context, appID int64, alias string) (int64, error) {
+	var credID int64
+	err := s.pool.QueryRow(ctx,
+		`SELECT credential_id FROM app_secret_grants WHERE app_id = $1 AND alias = $2`,
+		appID, alias).Scan(&credID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, store.ErrNotFound
+	}
+	return credID, err
+}
+
 func (s *PGStore) AppMayAccessCredential(ctx context.Context, appID, credentialID int64) (bool, error) {
 	var ok bool
 	err := s.pool.QueryRow(ctx,
