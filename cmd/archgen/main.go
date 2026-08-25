@@ -401,6 +401,79 @@ var (
 	reCap   = regexp.MustCompile(`auth\.Cap(\w+)`)
 )
 
+// guardByWrapper maps a registration's middleware to the label the route table
+// shows, in match order. Every authentication scheme pamv1 puts on the mux has to
+// appear here — see routeGuard for what happens when one does not.
+var guardByWrapper = []struct{ needle, label string }{
+	{"authenticated(", "authenticated"},
+	{"agentAuth(", "agent credential"},
+	{"scimAuth(", "SCIM client key"},
+	{"appAuth(", "application key"},
+	{"rateLimit(", "public (rate-limited)"},
+	// The graphical viewer tunnels authenticate from a query-string token
+	// (browsers cannot set headers on a WebSocket handshake), so they carry no
+	// middleware wrapper for the route table to read off.
+	{"rdpTunnel", "token (query)"},
+	{"vncTunnel", "token (query)"},
+	// The guest pages (session share, magic-link approval) authenticate a
+	// single-use token inside the handler, for the same reason: the caller has no
+	// pamv1 login at all — that is the feature.
+	{"previewApprovalInvite", "token (single-use link)"},
+	{"redeemApprovalInvite", "token (single-use link)"},
+	{"redeemShareInvite", "token (single-use link)"},
+	{"streamShareGuest", "token (single-use link)"},
+	{"inputShareGuest", "token (single-use link)"},
+}
+
+// publicRoutes is the allowlist of routes that genuinely carry NO credential,
+// each with the reason it does not. It is what makes the classifier fail-closed:
+// "public" has to be claimed here, never inferred from a wrapper the generator
+// happens not to recognise.
+var publicRoutes = map[string]string{
+	"GET /healthz":                        "liveness probe, read by the container HEALTHCHECK",
+	"GET /readyz":                         "readiness probe (store reachable)",
+	"GET /metrics":                        "Prometheus exposition; bind it where only your scraper reaches",
+	"GET /{$}":                            "the 5250 portal shell; every call it makes is authenticated",
+	"GET /static/guacamole-common.min.js": "vendored RDP viewer client, a static asset",
+	"GET /approve.html":                   "magic-link approval guest page; the decision itself needs the token",
+	"GET /share.html":                     "session-share guest page; the session itself needs the token",
+}
+
+// routeGuard names what protects one route, and REFUSES to guess.
+//
+// It used to fall back to "public" for any registration it could not classify,
+// which is a fail-open default in the one document whose job is to say what
+// guards each route. Three schemes were added to the mux after the classifier
+// was written — agentAuth, scimAuth, appAuth — and every route behind them was
+// published as "public": the whole AI-agent tool-call surface and the whole SCIM
+// user-provisioning surface, which creates and deletes users. The routes were
+// never unprotected; the security map said they were.
+//
+// So an unrecognised wrapper is now an ERROR that stops the generator, and CI
+// runs the generator. Adding a new authentication scheme to the mux without
+// teaching this table about it fails the build instead of quietly publishing the
+// routes as unauthenticated. A genuinely credential-free route says so out loud
+// in publicRoutes, with its reason.
+func routeGuard(method, path, registration string) (string, error) {
+	if c := reCap.FindStringSubmatch(registration); c != nil {
+		return "Cap" + c[1], nil
+	}
+	for _, g := range guardByWrapper {
+		if strings.Contains(registration, g.needle) {
+			return g.label, nil
+		}
+	}
+	if _, ok := publicRoutes[method+" "+path]; ok {
+		return "public", nil
+	}
+	return "", fmt.Errorf(
+		"%s %s has no recognised auth wrapper and is not in publicRoutes (registration: %s) "+
+			"— add its middleware to guardByWrapper, or, if it really takes no credential, add "+
+			"it to publicRoutes with the reason; do not let it default to \"public\", which is "+
+			"how the broker and SCIM surfaces came to be documented as unauthenticated",
+		method, path, strings.TrimSpace(registration))
+}
+
 // writeRouteMap parses the mux wiring in internal/api/server.go into a table of
 // method, path, and the capability (or guard) each route enforces.
 func writeRouteMap(b *strings.Builder, root string) error {
@@ -415,18 +488,9 @@ func writeRouteMap(b *strings.Builder, root string) error {
 		if m == nil {
 			continue
 		}
-		guard := "public"
-		if c := reCap.FindStringSubmatch(m[3]); c != nil {
-			guard = "Cap" + c[1]
-		} else if strings.Contains(m[3], "authenticated(") {
-			guard = "authenticated"
-		} else if strings.Contains(m[3], "rateLimit(") {
-			guard = "public (rate-limited)"
-		} else if strings.Contains(m[3], "rdpTunnel") || strings.Contains(m[3], "vncTunnel") {
-			// The graphical viewer tunnels authenticate from a query-string token
-			// (browsers cannot set headers on a WebSocket handshake), so they carry
-			// no middleware guard for the route table to read off.
-			guard = "token (query)"
+		guard, err := routeGuard(m[1], m[2], m[3])
+		if err != nil {
+			return err
 		}
 		routes = append(routes, route{m[1], m[2], guard})
 	}

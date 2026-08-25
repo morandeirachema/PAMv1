@@ -574,8 +574,8 @@ The 191 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/access/reach` | CapReadAudit |
 | GET | `/api/analytics/risk` | CapReadAudit |
 | POST | `/api/approval-invites/{id}/revoke` | CapApprove |
-| GET | `/api/approval/preview/{token}` | public |
-| POST | `/api/approval/redeem/{token}` | public |
+| GET | `/api/approval/preview/{token}` | token (single-use link) |
+| POST | `/api/approval/redeem/{token}` | token (single-use link) |
 | GET | `/api/audit` | CapReadAudit |
 | GET | `/api/audit/export` | CapReadAudit |
 | GET | `/api/audit/head` | CapReadAudit |
@@ -668,9 +668,9 @@ The 191 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/share-invites/{id}/approve` | CapApprove |
 | POST | `/api/share-invites/{id}/deny` | CapApprove |
 | POST | `/api/share-invites/{id}/revoke` | CapManageTargets |
-| POST | `/api/share/input` | public |
-| POST | `/api/share/redeem/{token}` | public |
-| GET | `/api/share/stream` | public |
+| POST | `/api/share/input` | token (single-use link) |
+| POST | `/api/share/redeem/{token}` | token (single-use link) |
+| GET | `/api/share/stream` | token (single-use link) |
 | GET | `/api/targets` | CapReadInventory |
 | POST | `/api/targets` | CapManageTargets |
 | DELETE | `/api/targets/{id}` | CapManageTargets |
@@ -707,17 +707,17 @@ The 191 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/webauthn/register/finish` | authenticated |
 | GET | `/approve.html` | public |
 | GET | `/healthz` | public |
-| GET | `/mcp` | public |
-| POST | `/mcp` | public |
+| GET | `/mcp` | agent credential |
+| POST | `/mcp` | agent credential |
 | GET | `/metrics` | public |
 | GET | `/readyz` | public |
-| GET | `/scim/v2/ServiceProviderConfig` | public |
-| GET | `/scim/v2/Users` | public |
-| POST | `/scim/v2/Users` | public |
-| DELETE | `/scim/v2/Users/{id}` | public |
-| GET | `/scim/v2/Users/{id}` | public |
-| PATCH | `/scim/v2/Users/{id}` | public |
-| PUT | `/scim/v2/Users/{id}` | public |
+| GET | `/scim/v2/ServiceProviderConfig` | SCIM client key |
+| GET | `/scim/v2/Users` | SCIM client key |
+| POST | `/scim/v2/Users` | SCIM client key |
+| DELETE | `/scim/v2/Users/{id}` | SCIM client key |
+| GET | `/scim/v2/Users/{id}` | SCIM client key |
+| PATCH | `/scim/v2/Users/{id}` | SCIM client key |
+| PUT | `/scim/v2/Users/{id}` | SCIM client key |
 | GET | `/share.html` | public |
 | GET | `/static/guacamole-common.min.js` | public |
 | GET | `/v1/agents` | CapManageUsers |
@@ -733,7 +733,7 @@ The 191 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/v1/agents/{id}/budget` | CapManageUsers |
 | POST | `/v1/agents/{id}/disable` | CapManageUsers |
 | POST | `/v1/agents/{id}/enable` | CapManageUsers |
-| GET | `/v1/app-secrets/{id}` | public |
+| GET | `/v1/app-secrets/{id}` | application key |
 | GET | `/v1/approvals` | CapApprove |
 | POST | `/v1/approvals/{id}/decision` | CapApprove |
 | GET | `/v1/apps` | CapManageUsers |
@@ -749,10 +749,10 @@ The 191 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/v1/scim-keys` | CapManageUsers |
 | POST | `/v1/scim-keys` | CapManageUsers |
 | DELETE | `/v1/scim-keys/{id}` | CapManageUsers |
-| POST | `/v1/token` | public |
+| POST | `/v1/token` | agent credential |
 | GET | `/v1/token/jwks` | CapReadAudit |
-| POST | `/v1/tool-calls` | public |
-| GET | `/v1/tool-calls/{id}` | public |
-| POST | `/v1/tool-calls/{id}/resume` | public |
+| POST | `/v1/tool-calls` | agent credential |
+| GET | `/v1/tool-calls/{id}` | agent credential |
+| POST | `/v1/tool-calls/{id}/resume` | agent credential |
 | GET | `/{$}` | public |
 

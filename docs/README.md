@@ -1,6 +1,6 @@
 # pamv1 — documentation
 
-> Last updated: 2026-08-25 · Reflects: Phases 0–194 and release v0.53.0 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-08-25 · Reflects: Phases 0–195 and release v0.53.0 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -107,6 +107,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-08-25 | Phase 195 (fail-closed route map): SECURITY-GAPS records that the generated API-surface table had labelled sixteen authenticated routes `public` — the whole AI-agent tool-call surface and the whole SCIM surface among them — because `archgen`'s classifier defaulted to "public" for schemes added after it was written; ARCHITECTURE-LOW-LEVEL and CODE-GUIDE record the fail-closed classifier that replaces it |
 | 2026-08-25 | Phase 193 (the flags that were wrong) documented across the set: ADMIN-GUIDE §9.9's reason table gains `budget_zero` and `quarantine_unknown` and marks `not_enrolled` as conditional on `PAM_BROKER_REQUIRE_ENROLLED_SVID`, both architecture docs and CODE-GUIDE record `ReachGrantSnapshot` and why ordering two grant reads cannot be made correct, and SECURITY-GAPS carries the finding that a review flag pointing the wrong way is a control failure of its own kind. Phase 192 (Go 1.27 toolchain parity) is in the same sweep |
 | 2026-08-25 | Phase 191 (the subject's own state) documented across the set: ADMIN-GUIDE §9.9 gains the `blocked` reason table and the note that the total deliberately does not change when it is non-empty, both architecture docs and CODE-GUIDE record the capability half `CanConnectTarget` cannot give and the fail-closed read reorder, USER-GUIDE describes the new red line on menu 31, and every `Reflects:` header moved to 0–191. Phase 190 (v0.52.0) is in the same sweep: its own entry records that the README's Status block had quoted v0.42.0's image digest for nine releases, and that the digest-recording pass now covers the README as well as ROADMAP.md |
 | 2026-08-23 | Phase 189 (subject-indexed reachability) documented across the set: a new ADMIN-GUIDE §9.9 (the route, the five `via` reasons, why an unenrolled agent is answered and a directory identity is not, and the standing-vs-effective distinction), console menu 31 in USER-GUIDE's menu table, `access.reach_query` in the audit vocabulary, the new store reads and `auth.ReachableTargets` in both architecture docs, and BACKUP-AND-RESTORE's migration high-water mark moved to `0047` — an index-only migration, so a restore has nothing extra to carry |
