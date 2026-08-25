@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/morandeirachema/pamv1/internal/store"
 )
@@ -61,6 +63,7 @@ type reachAnswer struct {
 	Known     bool           `json:"known"`
 	AgentKind string         `json:"agent_kind"`
 	Roles     []string       `json:"roles"`
+	Blocked   []string       `json:"blocked"`
 	Total     int            `json:"total"`
 	Counts    map[string]int `json:"counts"`
 	Targets   []struct {
@@ -232,5 +235,128 @@ func TestSubjectReachAuthz(t *testing.T) {
 	}
 	if status, _ := do(t, srv, http.MethodGet, "/api/access/reach?subject=x&kind=group", testAPIKey, nil); status != http.StatusBadRequest {
 		t.Errorf("unknown kind: status %d, want 400", status)
+	}
+}
+
+// hasBlocked reports whether a reason appears in an answer's blocked list.
+func hasBlocked(a reachAnswer, reason string) bool {
+	for _, b := range a.Blocked {
+		if b == reason {
+			return true
+		}
+	}
+	return false
+}
+
+// getReach asks the review route and decodes the answer, failing the test on
+// anything but 200.
+func getReach(t *testing.T, srv *httptest.Server, query string) reachAnswer {
+	t.Helper()
+	status, body := do(t, srv, http.MethodGet, "/api/access/reach?"+query, testAPIKey, nil)
+	if status != http.StatusOK {
+		t.Fatalf("reach(%s): status %d body %s", query, status, body)
+	}
+	var a reachAnswer
+	if err := json.Unmarshal(body, &a); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return a
+}
+
+// TestSubjectReachBlocked pins the half of the answer that says the count
+// OVERSTATES what the subject can do today (Phase 191).
+//
+// Every case here used to report a clean list of reachable targets with nothing
+// marking it: an auditor holds no capability that can use a target at all, a
+// SCIM-deprovisioned user's token no longer resolves, a revoked or expired agent
+// key no longer authenticates, and a quarantined identity is stopped outright.
+// The targets are still reported in each case — a suspended account's grants are
+// still grants — but a reviewer has to be told, because these are the states in
+// which the bare total is wrong in the dangerous direction.
+func TestSubjectReachBlocked(t *testing.T) {
+	srv, st := newTestServerStore(t)
+	seedReachEstate(t, st)
+	ctx := context.Background()
+
+	// A user with grants and the capability to use them: nothing blocks it.
+	seedUser(t, srv, "reach-alice", "user")
+	if a := getReach(t, srv, "subject=reach-alice"); len(a.Blocked) != 0 {
+		t.Errorf("an ordinary user should have nothing blocking it: %v", a.Blocked)
+	}
+
+	// An auditor "reaches" every ungated target and every auditor-role grant,
+	// and can act on none of them: it holds read_inventory and read_audit only.
+	seedUser(t, srv, "reach-auditor", "auditor")
+	aud := getReach(t, srv, "subject=reach-auditor")
+	if !hasBlocked(aud, "no_usable_capability") {
+		t.Errorf("an auditor cannot use any target it reaches: %+v", aud)
+	}
+	if aud.Total == 0 {
+		t.Errorf("the standing entitlement is still reported, only annotated: %+v", aud)
+	}
+
+	// SCIM deprovisioning: the row survives so re-activating restores access,
+	// which is exactly why the entitlement is still listed — and why it must
+	// not read as live.
+	seedUser(t, srv, "reach-gone", "user")
+	u, err := st.GetUserByUsername(ctx, "reach-gone")
+	if err != nil {
+		t.Fatalf("GetUserByUsername: %v", err)
+	}
+	if err := st.UpdateUserActive(ctx, u.ID, false); err != nil {
+		t.Fatalf("UpdateUserActive: %v", err)
+	}
+	if a := getReach(t, srv, "subject=reach-gone"); !hasBlocked(a, "deactivated") {
+		t.Errorf("a deprovisioned user must be flagged: %+v", a)
+	}
+
+	// A revoked static key — what a certification campaign's revoke produces.
+	revoked := &store.AgentKey{Name: "reach-revoked", Owner: "alice", TokenHash: "reach-h1"}
+	if err := st.CreateAgentKey(ctx, revoked); err != nil {
+		t.Fatalf("CreateAgentKey: %v", err)
+	}
+	if err := st.SetAgentKeyDisabled(ctx, revoked.ID, true); err != nil {
+		t.Fatalf("SetAgentKeyDisabled: %v", err)
+	}
+	a := getReach(t, srv, "subject=reach-revoked&kind=agent")
+	if !a.Known || a.AgentKind != "key" || !hasBlocked(a, "key_disabled") {
+		t.Errorf("a revoked agent key must be found AND flagged: %+v", a)
+	}
+
+	// A key past its hard end date.
+	past := time.Now().Add(-time.Hour)
+	if err := st.CreateAgentKey(ctx, &store.AgentKey{
+		Name: "reach-expired", Owner: "alice", TokenHash: "reach-h2", ExpiresAt: &past,
+	}); err != nil {
+		t.Fatalf("CreateAgentKey(expired): %v", err)
+	}
+	if a := getReach(t, srv, "subject=reach-expired&kind=agent"); !hasBlocked(a, "key_expired") {
+		t.Errorf("an expired agent key must be flagged: %+v", a)
+	}
+
+	// Quarantine is checked for EVERY agent subject, including one no registry
+	// lists — that is the case where a reviewer most needs to be told, since
+	// there is no row anywhere else to carry the state.
+	if err := st.QuarantineAgent(ctx, &store.AgentQuarantine{
+		Subject: "reach-stopped", Reason: "test", CreatedBy: "test",
+	}); err != nil {
+		t.Fatalf("QuarantineAgent: %v", err)
+	}
+	q := getReach(t, srv, "subject=reach-stopped&kind=agent")
+	if q.Known {
+		t.Errorf("this subject is in no registry: %+v", q)
+	}
+	if !hasBlocked(q, "quarantined") {
+		t.Errorf("a quarantined agent must be flagged even when unknown: %+v", q)
+	}
+
+	// An attested identity pamv1 recorded on sight and nobody has claimed —
+	// SeeAgentIdentity is the path that builds that row, and enrolment is what
+	// claiming it means (an operator-registered identity is enrolled already).
+	if _, err := st.SeeAgentIdentity(ctx, "spiffe://example.org/ns/prod/sa/seen", time.Now()); err != nil {
+		t.Fatalf("SeeAgentIdentity: %v", err)
+	}
+	if a := getReach(t, srv, "subject=spiffe://example.org/ns/prod/sa/seen&kind=agent"); !hasBlocked(a, "not_enrolled") {
+		t.Errorf("an unenrolled attested identity must be flagged: %+v", a)
 	}
 }

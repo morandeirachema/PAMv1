@@ -1135,8 +1135,11 @@ type GrantStore interface {
 	//
 	// The same two paths are folded as EffectiveTargetGrants folds them, and each
 	// row records which one it came from in Via (GrantViaGrant / GrantViaSafe)
-	// so a review can say WHY, not just that. Rows are ordered by target id then
-	// grant id. An empty result does NOT mean "reaches nothing": a target with no
+	// so a review can say WHY, not just that. Rows are ordered by target id, then
+	// by path (GrantViaGrant before GrantViaSafe), then by subject — a
+	// SubjectGrant carries no grant id of its own, so there is nothing finer to
+	// order by, and callers that need one row per target pick it themselves (see
+	// auth.bestGrant). An empty result does NOT mean "reaches nothing": a target with no
 	// grants at all is open to any connect-capable principal, which is a fact
 	// about the target, not about the subject — see GatedTargetIDs.
 	GrantsForSubjects(ctx context.Context, subjects []GrantSubject) ([]SubjectGrant, error)

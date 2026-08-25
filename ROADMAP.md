@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–190 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–191 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,61 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 191 — The answer said what a subject reaches, not whether it could ✅
+
+A review of Phase 189 before it was tagged, and of the release furniture around
+it. Phase 189 built the subject-indexed answer and pinned it against the
+connect-time decision; what it did not do was say anything about **the subject's
+own state**. Three of the findings below share one failure mode, and it is the
+dangerous direction: the answer **overstates** what a subject can do, on a screen
+whose red `open` rows are meant to be read as a finding.
+
+- [x] **`blocked` on the answer, and a red line above the target list.** Every
+  reason a subject cannot exercise its standing reach right now, drawn from the
+  subject and never from a target: `no_usable_capability`, `deactivated`,
+  `key_disabled`, `key_expired`, `quarantined`, `not_enrolled`. The targets and
+  the total are unchanged — a suspended account's grants are still grants, and
+  they come back the moment somebody flips it on — but "reaches 40 targets" and
+  "would reach 40 if it could log in" are different findings and the answer could
+  not tell them apart
+- [x] **The capability half, which `CanConnectTarget` structurally cannot give.**
+  `auth.CanUseAnyTarget` — holds any of `CapConnect` / `CapRevealSecret` /
+  `CapCallTool`. Reach reproduces `CanConnectTarget`, and that function does not
+  consider capabilities at all: every call site checks them separately, at the
+  door. So the review reported that an **auditor** reaches every ungated target
+  and printed those rows red, for a role holding `read_inventory` + `read_audit`
+  that can never open a session, reveal a secret or call a tool
+- [x] **Lifecycle, read where it already lives.** `u.Active` (SCIM
+  deprovisioning, whose token `Resolver.Resolve` refuses outright),
+  `AgentKey.Disabled` (what a certification campaign's revoke produces) and
+  `ExpiresAt`, `AgentIdentity.Enrolled`, and `IsAgentQuarantined` — checked for
+  **every** agent subject including one no registry lists, because that is where
+  no other row carries the state. Certification campaigns have snapshotted this
+  since Phase 175; reach was the one review surface that omitted it
+- [x] **The gate race, closed in the fail-closed direction.** The two grant reads
+  are not one transaction. Reading `GatedTargetIDs` first meant a grant created in
+  the window left the target "ungated" in the older snapshot and reported it
+  **`open`** — reachable by anyone — at the moment somebody restricted it, and
+  since `agentVisibleTargets` runs on this path that named a target to an agent
+  as it stopped being allowed to see it. Reading the subject's grants first
+  inverts it: the target drops out instead. `TestReachGateRaceFailsClosed` drives
+  a write between the two reads through a wrapping store, and **fails on the old
+  order with exactly the `open` row** it was written to catch
+- [x] **The console counts did not sum.** The breakdown printed
+  `grant / safe / open / admin` and dropped `unlimited_vault_access`, which
+  `ReachSubjectCounts` does emit — so a principal with `CapUnlimitedVaultAccess`
+  over personal-safe targets read as "5 target(s) grant 1 / safe 1 / open 1 /
+  admin 1". The repo's own fixture had been driving that exact case
+- [x] **One duplicated full-table read removed.** `Reach` now carries `SafeName`,
+  filled from the same `ListSafes` that resolves the personal flags, so the API
+  stops reading the whole safes table a second time to map ids to names. The
+  engine's "four reads regardless of estate size" was true; the route around it
+  was five
+- [x] **A doc comment that could not be implemented.** `GrantsForSubjects`
+  promised rows "ordered by target id then grant id" — a `SubjectGrant` carries
+  no grant id, and both backends order by `(target id, path, subject)`. Corrected
+  to what they do, with the reason there is nothing finer
 
 ## Phase 190 — v0.52.0 ✅
 

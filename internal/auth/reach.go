@@ -49,6 +49,12 @@ type Reach struct {
 	SubjectType string       `json:"subject_type,omitempty"` // user | role
 	Subject     string       `json:"subject,omitempty"`
 	SafeID      *int64       `json:"safe_id,omitempty"`
+	// SafeName is the name of the SafeID safe, filled in from the same read
+	// that resolves the personal flags. An id is not an answer to a person, and
+	// the safes are already in hand — a caller that had to map ids to names
+	// itself would read the whole safes table a second time, which is what the
+	// API did before this field existed.
+	SafeName string `json:"safe_name,omitempty"`
 }
 
 // GrantSubjects lists every identifier a grant may name this principal by: its
@@ -103,8 +109,28 @@ func ReachableTargets(ctx context.Context, st ReachStore, p *Principal) ([]Reach
 		return nil, err
 	}
 	personal := make(map[int64]bool, len(safes))
+	safeName := make(map[int64]string, len(safes))
 	for _, sf := range safes {
 		personal[sf.ID] = sf.Personal
+		safeName[sf.ID] = sf.Name
+	}
+	// ORDER MATTERS between these two reads, and it is the fail-closed direction
+	// that decides it. They are not one transaction, so a grant written between
+	// them is seen by one and not the other. Reading the subject's grants FIRST
+	// means a grant created in the window makes the target appear gated with no
+	// matching row — the target drops out, which under-reports for one query.
+	// Reading the gated set first would mean the opposite: the target is still
+	// "ungated" from the older snapshot and gets reported as OPEN, i.e. reachable
+	// by anyone, at the exact moment somebody restricted it. Since this same path
+	// decides which targets the broker names to an agent, the direction that
+	// briefly hides a target beats the one that briefly advertises it.
+	//
+	// The deletion window resolves correctly either way in this order: grants
+	// read first still holds the row, the gated set no longer does, and an
+	// ungated target IS open — which is exactly what gets reported.
+	grants, err := st.GrantsForSubjects(ctx, GrantSubjects(p))
+	if err != nil {
+		return nil, err
 	}
 	gatedIDs, err := st.GatedTargetIDs(ctx)
 	if err != nil {
@@ -113,10 +139,6 @@ func ReachableTargets(ctx context.Context, st ReachStore, p *Principal) ([]Reach
 	gated := make(map[int64]struct{}, len(gatedIDs))
 	for _, id := range gatedIDs {
 		gated[id] = struct{}{}
-	}
-	grants, err := st.GrantsForSubjects(ctx, GrantSubjects(p))
-	if err != nil {
-		return nil, err
 	}
 	byTarget := make(map[int64][]store.SubjectGrant, len(grants))
 	for _, g := range grants {
@@ -154,10 +176,14 @@ func ReachableTargets(ctx context.Context, st ReachStore, p *Principal) ([]Reach
 			continue
 		}
 		if match, ok := bestGrant(byTarget[t.ID]); ok {
-			out = append(out, Reach{
+			rc := Reach{
 				Target: t, Via: match.Via, SubjectType: match.SubjectType,
 				Subject: match.Subject, SafeID: match.SafeID,
-			})
+			}
+			if match.SafeID != nil {
+				rc.SafeName = safeName[*match.SafeID]
+			}
+			out = append(out, rc)
 		}
 	}
 	return out, nil
@@ -189,6 +215,27 @@ func bestGrant(gs []store.SubjectGrant) (store.SubjectGrant, bool) {
 		}
 	}
 	return gs[best], true
+}
+
+// CanUseAnyTarget reports whether p holds any capability that can actually DO
+// something with a target: open a session, reveal its credential, or call a
+// brokered tool against it.
+//
+// It exists because ReachableTargets deliberately reproduces CanConnectTarget,
+// and CanConnectTarget does not consider capabilities at all — every call site
+// checks CapConnect separately, at the door (the API's authz middleware, the
+// proxy's admit sequence). Read on its own, then, the reach answer says an
+// auditor "reaches" every ungated target, and the console prints those rows in
+// red as a finding. They are not a finding: an auditor holds read_inventory and
+// read_audit and can never open a session, reveal a secret or call a tool. The
+// grant model really does admit those targets, so the rows are not wrong — what
+// is missing is that nothing downstream of the grant model would let this
+// subject use them. A reviewer needs both halves.
+func CanUseAnyTarget(p *Principal) bool {
+	if p == nil {
+		return false
+	}
+	return p.Can(CapConnect) || p.Can(CapRevealSecret) || p.Can(CapCallTool)
 }
 
 // ReachSubjectCounts summarises a reach listing by reason, for a console or an
