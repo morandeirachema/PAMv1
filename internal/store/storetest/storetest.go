@@ -550,12 +550,7 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 	// No subjects ⇒ no grants, and never an error: a principal with no
 	// identifiers is a legitimate (if useless) question to ask.
-	// Phase 197: a grant's alias is the stable name a declarative consumer uses.
-	// Resolution is scoped to the app, so it is an authorization check as much as
-	// a lookup; the uniqueness is per app, so two apps may reuse a name.
-	if apps := appAliasFixture(t, st); apps != nil {
-		aliasContract(t, st, apps)
-	}
+	aliasContract(t, st, appAliasFixture(t, st))
 
 	if none, err := st.GrantsForSubjects(ctx, nil); err != nil || len(none) != 0 {
 		t.Fatalf("GrantsForSubjects(nil) = %+v, %v", none, err)
@@ -3187,15 +3182,31 @@ interestDelivered:
 	}
 }
 
-// appAliasFixture makes two applications, each granted its own credential, and
-// returns their grant ids. Returns nil when the estate this contract runs on has
-// no credential to grant, so the check simply does not apply.
+// appAliasFixture makes a target, two credentials, and two applications each
+// granted one of them, returning the two grants. It creates everything it needs,
+// so it can never quietly opt out.
 func appAliasFixture(t *testing.T, st store.Store) []store.AppSecretGrant {
 	t.Helper()
 	ctx := context.Background()
-	creds, err := st.ListCredentials(ctx, 0, 0, 0)
-	if err != nil || len(creds) < 2 {
-		return nil
+	// Create the credentials this needs rather than reusing whatever the contract
+	// happens to have left lying around. The first version asked for two existing
+	// credentials and returned nil when it could not find them — and at this point
+	// the contract has created exactly ONE, so the entire alias contract silently
+	// never ran, on either backend. A fixture that opts itself out on a condition
+	// nobody checks is worse than no fixture: the suite stayed green while
+	// SetAppGrantAlias, AppCredentialByAlias and the per-app scoping went
+	// completely unverified.
+	tgt := &store.Target{Name: "alias-contract-host", Host: "10.7.7.7", Port: 22, OSType: "linux", Protocol: "ssh"}
+	if err := st.CreateTarget(ctx, tgt); err != nil {
+		t.Fatalf("alias fixture CreateTarget: %v", err)
+	}
+	var creds []store.Credential
+	for _, user := range []string{"alias-svc-a", "alias-svc-b"} {
+		c := &store.Credential{TargetID: tgt.ID, Username: user, SecretType: "password", SecretEnc: "v2:placeholder"}
+		if err := st.CreateCredential(ctx, c); err != nil {
+			t.Fatalf("alias fixture CreateCredential(%s): %v", user, err)
+		}
+		creds = append(creds, *c)
 	}
 	var grants []store.AppSecretGrant
 	for i, name := range []string{"alias-app-a", "alias-app-b"} {

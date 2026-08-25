@@ -99,21 +99,40 @@ func TestESOStatusContract(t *testing.T) {
 		}
 	})
 
-	t.Run("revoked grant is 403, never 404", func(t *testing.T) {
+	t.Run("revoking a grant removes the alias, and that propagates", func(t *testing.T) {
 		status, data := do(t, f.srv, http.MethodDelete,
 			"/v1/apps/"+itoa(f.appID)+"/grants/"+itoa(f.grantID), testAPIKey, nil)
 		if status != http.StatusNoContent && status != http.StatusOK {
 			t.Fatalf("revoke: %d %s", status, data)
 		}
-		// The alias went with the grant, so by-alias is now genuinely absent (404
-		// is right); what must NOT be 404 is the credential the app still knows
-		// the id of but may no longer read.
-		status, _ = appGet(t, f.srv, "/v1/app-secrets/"+itoa(f.credID), f.appToken)
-		if status == http.StatusNotFound {
-			t.Fatal("a revoked grant answered 404 — an ESO would read that as 'deleted' and remove the workload's Secret")
+		// This subtest used to be called "revoked grant is 403, never 404" and
+		// then quietly checked the ID route instead, because the alias goes with
+		// the grant. The name promised something the by-alias route — the one ESO
+		// actually calls — does not do. State the real behaviour: revocation
+		// removes the alias, the route answers 404, and ESO removes the workload's
+		// Secret. That is intended; leaving a plaintext secret in a Kubernetes
+		// Secret after access is withdrawn would be worse.
+		if status, _ := appGet(t, f.srv, "/v1/app-secrets/by-alias/prod-db-password", f.appToken); status != http.StatusNotFound {
+			t.Fatalf("by-alias after revoke: %d, want 404 (revocation propagates)", status)
 		}
-		if status != http.StatusForbidden {
-			t.Fatalf("revoked grant: %d, want 403", status)
+		// The id route still answers 403 for the credential the app knows about
+		// but may no longer read — a refusal, not a deletion.
+		if status, _ := appGet(t, f.srv, "/v1/app-secrets/"+itoa(f.credID), f.appToken); status != http.StatusForbidden {
+			t.Fatalf("id route after revoke: %d, want 403", status)
+		}
+	})
+
+	t.Run("a transient policy refusal is 403, never 404", func(t *testing.T) {
+		// The case that must never delete a running workload's Secret: the grant
+		// is intact, the alias resolves, and delivery is off by policy.
+		g := newESOFixture(t)
+		status, data := do(t, g.srv, http.MethodPost, "/api/config", testAPIKey,
+			map[string]any{"key": "PAM_REVEAL_DISABLED", "value": "true"})
+		if status != http.StatusOK && status != http.StatusCreated && status != http.StatusNoContent {
+			t.Skipf("cannot toggle the reveal kill switch here (%d %s)", status, data)
+		}
+		if status, _ := appGet(t, g.srv, "/v1/app-secrets/by-alias/prod-db-password", g.appToken); status != http.StatusForbidden {
+			t.Fatalf("reveal-disabled on the alias route: %d, want 403 — 404 would delete the Secret", status)
 		}
 	})
 
@@ -182,5 +201,44 @@ func TestESOAliasValidation(t *testing.T) {
 	}
 	if status, _ := appGet(t, f.srv, "/v1/app-secrets/by-alias/prod-db-password", f.appToken); status != http.StatusNotFound {
 		t.Fatalf("a cleared alias must stop resolving: %d, want 404", status)
+	}
+}
+
+// TestAliasSetIsScopedToTheNamedApp is the regression guard for a real defect:
+// setAppGrantAlias parsed only {gid} and ignored {id}, so naming a grant under
+// one application renamed a DIFFERENT application's grant and answered 200. A
+// mistyped or stale grant id therefore handed some other app a stable,
+// git-committable name for a credential nobody meant to expose, while the
+// operator read success.
+func TestAliasSetIsScopedToTheNamedApp(t *testing.T) {
+	f := newESOFixture(t)
+
+	// A second application with a grant of its own.
+	status, data := do(t, f.srv, http.MethodPost, "/v1/apps", testAPIKey,
+		map[string]any{"name": "bystander", "owner": "platform"})
+	if status != http.StatusCreated {
+		t.Fatalf("create second app: %d %s", status, data)
+	}
+	m := jsonMap(t, data)
+	otherID := int64(m["id"].(float64))
+	otherToken, _ := m["token"].(string)
+
+	status, data = do(t, f.srv, http.MethodPost, "/v1/apps/"+itoa(otherID)+"/grants", testAPIKey,
+		map[string]any{"credential_id": f.otherID})
+	if status != http.StatusCreated {
+		t.Fatalf("grant to second app: %d %s", status, data)
+	}
+	otherGrant := int64(jsonMap(t, data)["id"].(float64))
+
+	// Name the SECOND app's grant while addressing the FIRST app. This must not
+	// succeed, and above all must not name it.
+	status, data = do(t, f.srv, http.MethodPost,
+		"/v1/apps/"+itoa(f.appID)+"/grants/"+itoa(otherGrant)+"/alias", testAPIKey,
+		map[string]any{"alias": "planted"})
+	if status != http.StatusNotFound {
+		t.Fatalf("naming another app's grant: %d %s, want 404", status, data)
+	}
+	if status, _ := appGet(t, f.srv, "/v1/app-secrets/by-alias/planted", otherToken); status != http.StatusNotFound {
+		t.Fatalf("the bystander application gained the name anyway: %d", status)
 	}
 }

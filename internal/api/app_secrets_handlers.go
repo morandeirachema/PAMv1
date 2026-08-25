@@ -83,13 +83,20 @@ func (s *Server) fetchAppSecretByAlias(w http.ResponseWriter, r *http.Request, a
 	}
 	credID, err := s.store.AppCredentialByAlias(r.Context(), app.ID, alias)
 	if errors.Is(err, store.ErrNotFound) {
-		// 404 here is deliberate and load-bearing: an External Secrets Operator
-		// reads 404 as "this secret no longer exists" and DELETES the Kubernetes
-		// Secret it manages. That is the right answer for an alias nobody has
-		// defined. It is emphatically NOT the right answer for a revoked grant —
-		// see deliverAppSecret, which answers 403 there so a policy change can
-		// never masquerade as a deletion and take a running workload's Secret
-		// with it. TestESOStatusContract pins both.
+		// 404 means "no such alias for this application", and an External Secrets
+		// Operator reads that as "the secret is gone" and DELETES the Kubernetes
+		// Secret it manages.
+		//
+		// BE CLEAR ABOUT WHAT THAT COVERS, because an earlier version of this
+		// comment was wrong about it. The alias lives ON the grant, so REVOKING
+		// the grant destroys the alias and this route answers 404 — the workload's
+		// Secret is removed. That is the intended behaviour: revocation should
+		// propagate, and leaving a plaintext secret sitting in a Kubernetes Secret
+		// after an operator has withdrawn access is the worse outcome. What must
+		// NOT delete the Secret is a TRANSIENT refusal — the reveal kill switch,
+		// or a credential still granted but unreadable — and those answer 403 in
+		// deliverAppSecret above. TestESOStatusContract pins each case on the
+		// route it actually applies to.
 		s.auditAs(r.Context(), "app:"+app.Name, "app.secret_denied",
 			fmt.Sprintf("alias:%s reason:no-such-alias", auditField(alias, maxAliasLen)))
 		writeError(w, http.StatusNotFound, "no secret with that alias is granted to this application")
@@ -317,9 +324,35 @@ func (s *Server) deleteAppSecretGrant(w http.ResponseWriter, r *http.Request) {
 // a grant is part of deciding what an application may fetch, not part of managing
 // identities — the same reasoning that put granting and revoking there.
 func (s *Server) setAppGrantAlias(w http.ResponseWriter, r *http.Request) {
+	appID, ok := idParam(w, r)
+	if !ok {
+		return
+	}
 	gid, err := strconv.ParseInt(r.PathValue("gid"), 10, 64)
+	if err != nil || gid < 1 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid grant id")
+		return
+	}
+	// The route names an application, so the grant must be that application's.
+	// Without this the {id} segment was decorative: naming grant 14 under app 7
+	// renamed app 12's grant and answered 200, so a mistyped or stale id handed a
+	// DIFFERENT application a stable, git-committable name for a credential
+	// nobody meant to expose — while the operator read success. deleteAppSecretGrant
+	// scopes exactly this way; this handler simply did not.
+	grants, err := s.store.ListAppSecretGrants(r.Context(), appID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "grant id must be a number")
+		storeError(w, err)
+		return
+	}
+	owned := false
+	for _, g := range grants {
+		if g.ID == gid {
+			owned = true
+			break
+		}
+	}
+	if !owned {
+		writeError(w, http.StatusNotFound, "grant not found for this application")
 		return
 	}
 	var in struct {
@@ -349,7 +382,10 @@ func (s *Server) setAppGrantAlias(w http.ResponseWriter, r *http.Request) {
 	if alias == "" {
 		action = "app.grant_alias_cleared"
 	}
-	s.audit(r.Context(), action, fmt.Sprintf("grant:%d alias:%s", gid, auditField(alias, maxAliasLen)))
+	// The app id belongs in the detail: an alias names one application's access,
+	// and a trail that records only the grant cannot answer "which application
+	// gained this name" without a second lookup.
+	s.audit(r.Context(), action, fmt.Sprintf("app:%d grant:%d alias:%s", appID, gid, auditField(alias, maxAliasLen)))
 	writeJSON(w, http.StatusOK, map[string]any{"grant_id": gid, "alias": alias})
 }
 
