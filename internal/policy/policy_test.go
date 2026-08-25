@@ -435,3 +435,71 @@ rules:
 		}
 	}
 }
+
+// TestMayEverAllow pins the question a LISTING asks, which is not the question a
+// call asks: could any arguments get this caller an allow for this tool?
+//
+// It exists because MCP tools/list handed every agent the whole registry, so an
+// agent permitted only ssh_exec was still told winrm_exec and reveal_credential
+// exist. The reasoning has to follow Evaluate's first-match-wins order, and the
+// interesting cases are the conditional ones: a conditional DENY might not fire,
+// so a later allow still counts; an unconditional deny is final.
+func TestMayEverAllow(t *testing.T) {
+	const rules = `
+rules:
+  - id: planner-ssh
+    tool: ssh_exec
+    agents: [planner]
+    effect: allow
+  - id: nobody-reveals-prod
+    tool: reveal_credential
+    when:
+      target: {in: [prod-db]}
+    effect: deny
+  - id: reveal-otherwise
+    tool: reveal_credential
+    agents: [planner]
+    effect: require_approval
+    approvers: [secops]
+  - id: winrm-never
+    tool: winrm_exec
+    effect: deny
+`
+	e, err := Load(strings.NewReader(rules))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	planner := Caller{Agent: "planner"}
+	other := Caller{Agent: "other"}
+
+	for _, tc := range []struct {
+		name   string
+		caller Caller
+		tool   string
+		want   bool
+	}{
+		{"the tool its own rule names", planner, "ssh_exec", true},
+		{"another agent gets nothing from that rule", other, "ssh_exec", false},
+		{"a conditional deny does not settle it — a later rule may allow", planner, "reveal_credential", true},
+		{"…and that later rule is agent-scoped, so others still get nothing", other, "reveal_credential", false},
+		{"an UNCONDITIONAL deny is final", planner, "winrm_exec", false},
+		{"a tool no rule mentions is the implicit default deny", planner, "k8s_get", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := e.MayEverAllow(tc.caller, tc.tool); got != tc.want {
+				t.Errorf("MayEverAllow(%q, %q) = %v, want %v", tc.caller.Agent, tc.tool, got, tc.want)
+			}
+		})
+	}
+
+	// The filter must never be more permissive than Evaluate: anything Evaluate
+	// actually allows must have been listable.
+	for _, tool := range []string{"ssh_exec", "reveal_credential", "winrm_exec", "k8s_get"} {
+		for _, c := range []Caller{planner, other} {
+			d := e.Evaluate(c, tool, map[string]any{"target": "staging"})
+			if d.Effect != EffectDeny && !e.MayEverAllow(c, tool) {
+				t.Errorf("%s/%s: Evaluate says %q but the listing would hide it", c.Agent, tool, d.Effect)
+			}
+		}
+	}
+}

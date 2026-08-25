@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–203 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–204 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,35 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 204 — An agent is no longer handed the whole toolset ✅
+
+A named §3b limit, and the same shape Phase 189 closed for target listings: MCP
+`tools/list` returned **the entire registry to every agent**. An agent permitted
+only `ssh_exec` was still told that `winrm_exec` and `reveal_credential` exist.
+Policy refused the call — and the listing had already described the surface.
+
+- [x] **`policy.Engine.MayEverAllow(caller, tool)`** answers the question a
+  LISTING asks, which is not the one a call asks: could *any* arguments get this
+  caller an allow for this tool? It follows `Evaluate`'s own first-match-wins
+  order — a rule naming another tool or excluding this caller can never fire; a
+  rule with **no** conditions always fires, so its effect is final; a rule **with**
+  conditions only might, so a conditional allow is enough to say yes while a
+  conditional deny leaves a later rule free to allow. Nothing matching is the
+  implicit default deny
+- [x] **`Broker.ToolsFor(id)`** applies it, and `tools/list` calls that instead of
+  `Tools()`. With no policy engine configured every tool is listed, matching how
+  the broker behaves everywhere else when it has nothing to consult
+- [x] **It narrows a listing, never a call.** `tools/call` is untouched and still
+  evaluates policy in full, so a tool that survives the filter can still be
+  refused and a tool removed by it can still be invoked by name — an agent that
+  already knows the name loses nothing it had. Hiding here is advisory, and the
+  code says so rather than implying a boundary it is not
+- [x] **The filter can never be stricter than the gate**, which is the property
+  worth testing: `TestMayEverAllow` checks the reasoning case by case and then
+  asserts that anything `Evaluate` actually allows would have been listable. A
+  listing that hid a callable tool would break legitimate work for no security
+  gain
 
 ## Phase 203 — A target nobody restricted no longer reaches everyone ✅
 
