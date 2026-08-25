@@ -2622,6 +2622,8 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           : b === "key_expired" ? "agent key expired"
           : b === "quarantined" ? "identity quarantined"
           : b === "not_enrolled" ? "attested identity not enrolled"
+          : b === "budget_zero" ? "agent budget is zero (no calls allowed)"
+          : b === "quarantine_unknown" ? "quarantine state could not be read"
           : b;
         const viaText = (t) =>
           t.via === "admin" ? "admin (role bypass)"

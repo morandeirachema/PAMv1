@@ -353,6 +353,39 @@ func (s *PGStore) EffectiveTargetGrants(ctx context.Context, targetID int64) ([]
 // path rather than one query per target. See store.GrantStore for why the
 // question is asked from the subject's side.
 func (s *PGStore) GrantsForSubjects(ctx context.Context, subjects []store.GrantSubject) ([]store.SubjectGrant, error) {
+	return grantsForSubjects(ctx, s.pool, subjects)
+}
+
+// reachQuerier is the sliver of pgxpool.Pool and pgx.Tx that the two
+// subject-indexed grant reads need, so one implementation serves both.
+type reachQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+// ReachGrantSnapshot runs both grant reads inside one read-only REPEATABLE READ
+// transaction, so the gated set and the subject's grants describe the same
+// instant. READ COMMITTED would not do: it gives each STATEMENT its own
+// snapshot, which is exactly the split this method exists to remove.
+func (s *PGStore) ReachGrantSnapshot(ctx context.Context, subjects []store.GrantSubject) ([]store.SubjectGrant, []int64, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // read-only: nothing to commit
+	grants, err := grantsForSubjects(ctx, tx, subjects)
+	if err != nil {
+		return nil, nil, err
+	}
+	gated, err := gatedTargetIDs(ctx, tx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return grants, gated, nil
+}
+
+// grantsForSubjects is GrantsForSubjects' body, taking the querier so the same
+// SQL can run on the pool or inside ReachGrantSnapshot's transaction.
+func grantsForSubjects(ctx context.Context, q reachQuerier, subjects []store.GrantSubject) ([]store.SubjectGrant, error) {
 	if len(subjects) == 0 {
 		return []store.SubjectGrant{}, nil
 	}
@@ -361,7 +394,7 @@ func (s *PGStore) GrantsForSubjects(ctx context.Context, subjects []store.GrantS
 	for i, sub := range subjects {
 		types[i], names[i] = sub.Type, sub.Name
 	}
-	rows, err := s.pool.Query(ctx,
+	rows, err := q.Query(ctx,
 		`WITH subs AS (SELECT * FROM unnest($1::text[], $2::text[]) AS s(subject_type, subject))
 		 SELECT g.target_id, t.name, g.subject_type, g.subject, 'grant'::text, NULL::bigint
 		   FROM target_grants g
@@ -387,7 +420,13 @@ func (s *PGStore) GrantsForSubjects(ctx context.Context, subjects []store.GrantS
 // grant, ascending — the targets that are NOT open to every connect-capable
 // principal.
 func (s *PGStore) GatedTargetIDs(ctx context.Context) ([]int64, error) {
-	rows, err := s.pool.Query(ctx,
+	return gatedTargetIDs(ctx, s.pool)
+}
+
+// gatedTargetIDs is GatedTargetIDs' body, taking the querier for the same
+// reason grantsForSubjects does.
+func gatedTargetIDs(ctx context.Context, q reachQuerier) ([]int64, error) {
+	rows, err := q.Query(ctx,
 		`SELECT t.id FROM targets t
 		  WHERE EXISTS (SELECT 1 FROM target_grants g WHERE g.target_id = t.id)
 		     OR EXISTS (SELECT 1 FROM safe_members sm WHERE sm.safe_id = t.safe_id)
