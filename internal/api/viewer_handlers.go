@@ -179,7 +179,7 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 		storeError(w, err)
 		return
 	}
-	if !auth.CanConnectTarget(principal, grants, target.SafeID != nil, personal) {
+	if !auth.CanConnectTarget(principal, grants, target.SafeID != nil, personal, s.rt().ungated) {
 		writeError(w, http.StatusForbidden, "not authorized for this target")
 		return
 	}

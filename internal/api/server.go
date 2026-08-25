@@ -193,6 +193,13 @@ type Options struct {
 	TrustedProxyHops int
 	// RevealDisabled makes credential reveal break-glass-only (proxy is the norm).
 	RevealDisabled bool
+	// RequireTargetGrant refuses a connection to a target that has NO grants at
+	// all (PAM_REQUIRE_TARGET_GRANT, Phase 203). False — the default — keeps
+	// pamv1's historical behaviour, where an unrestricted target is reachable by
+	// any connect-capable principal. The reachability review (menu 31) renders
+	// exactly those targets in red, so an operator can see the blast radius
+	// before turning this on.
+	RequireTargetGrant bool
 	// Sessions is the live-session registry (shared with the proxy).
 	Sessions *session.Registry
 	// Live is the live-session output hub (shared with the proxy) that backs the
@@ -551,18 +558,21 @@ type Server struct {
 // Transport/bootstrap settings (listeners, TLS, DB URL, KEK) are not here —
 // they stay environment-only and require a restart.
 type RuntimeConfig struct {
-	Authn            auth.Authenticator
-	Directory        auth.DirectorySource
-	OIDC             *oidc.Provider
-	OIDCRoleMap      map[string]auth.Role
-	SAML             *saml.Provider
-	SAMLRoleMap      map[string]auth.Role
-	MFARequired      bool
-	RevealDisabled   bool
-	ApprovalRequired bool
-	ApprovalWindow   time.Duration
-	CheckoutTTL      time.Duration
-	AllowedProtocols []string
+	Authn          auth.Authenticator
+	Directory      auth.DirectorySource
+	OIDC           *oidc.Provider
+	OIDCRoleMap    map[string]auth.Role
+	SAML           *saml.Provider
+	SAMLRoleMap    map[string]auth.Role
+	MFARequired    bool
+	RevealDisabled bool
+	// RequireTargetGrant refuses a connection to a target with NO grants at all
+	// (PAM_REQUIRE_TARGET_GRANT, Phase 203). False keeps the historical default.
+	RequireTargetGrant bool
+	ApprovalRequired   bool
+	ApprovalWindow     time.Duration
+	CheckoutTTL        time.Duration
+	AllowedProtocols   []string
 }
 
 // Metrics exposes the server's collector, so a background worker wired in main
@@ -573,18 +583,31 @@ func (s *Server) Metrics() *metrics.Metrics { return s.metrics }
 // stored behind s.rtc (atomic.Pointer) so in-flight requests read a consistent
 // snapshot while a swap is in progress.
 type runtimeConf struct {
-	authn            auth.Authenticator
-	directory        auth.DirectorySource
-	oidc             *oidc.Provider
-	oidcRoleMap      map[string]auth.Role
-	saml             *saml.Provider
-	samlRoleMap      map[string]auth.Role
-	mfaRequired      bool
-	revealDisabled   bool
+	authn          auth.Authenticator
+	directory      auth.DirectorySource
+	oidc           *oidc.Provider
+	oidcRoleMap    map[string]auth.Role
+	saml           *saml.Provider
+	samlRoleMap    map[string]auth.Role
+	mfaRequired    bool
+	revealDisabled bool
+	// ungated is what a target with NO grants means here (Phase 203):
+	// auth.UngatedOpen (anyone connect-capable reaches it — the historical
+	// default) or auth.UngatedDeny under PAM_REQUIRE_TARGET_GRANT.
+	ungated          auth.UngatedDefault
 	approvalRequired bool
 	approvalWindow   time.Duration
 	checkoutTTL      time.Duration
 	allowedProtocols map[string]bool
+}
+
+// ungatedDefault maps the deployment's boolean to the policy the authorization
+// layer takes, so the mapping lives in exactly one place.
+func ungatedDefault(requireGrant bool) auth.UngatedDefault {
+	if requireGrant {
+		return auth.UngatedDeny
+	}
+	return auth.UngatedOpen
 }
 
 // snapshot converts an externally-built RuntimeConfig into the internal
@@ -606,6 +629,7 @@ func snapshot(rc RuntimeConfig) *runtimeConf {
 		samlRoleMap:      rc.SAMLRoleMap,
 		mfaRequired:      rc.MFARequired,
 		revealDisabled:   rc.RevealDisabled,
+		ungated:          ungatedDefault(rc.RequireTargetGrant),
 		approvalRequired: rc.ApprovalRequired,
 		approvalWindow:   rc.ApprovalWindow,
 		checkoutTTL:      rc.CheckoutTTL,

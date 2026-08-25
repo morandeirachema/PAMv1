@@ -136,11 +136,23 @@ type admitRequest struct {
 // gates holds the policy dependencies the admission sequence reads. Each proxy
 // builds one in its constructor from fields it already has, so the three share a
 // single admit() implementation instead of three hand-kept copies.
+// ungatedDefault maps the deployment's boolean to the policy the authorization
+// layer takes, so the mapping lives in one place on this side too.
+func ungatedDefault(requireGrant bool) auth.UngatedDefault {
+	if requireGrant {
+		return auth.UngatedDeny
+	}
+	return auth.UngatedOpen
+}
+
 type gates struct {
 	store        store.Store
 	vault        *vault.Vault
 	log          *slog.Logger
 	allowedProto map[string]bool
+	// ungated is what a target with NO grants means (Phase 203): auth.UngatedOpen
+	// (the historical default) or auth.UngatedDeny under PAM_REQUIRE_TARGET_GRANT.
+	ungated      auth.UngatedDefault
 	requireApprv bool
 	ticketCheck  store.TicketChecker
 	// sessions is the live-session registry; nil disables the concurrent-session
@@ -278,7 +290,7 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 		g.log.Error("safe personal lookup failed", "target", target.Name, "err", err)
 		return admitResult{outcome: admitCheckFailed, gate: gateTargetGrants, target: target, cred: cred}
 	}
-	if !auth.CanConnectTarget(principal, grants, target.SafeID != nil, personal) {
+	if !auth.CanConnectTarget(principal, grants, target.SafeID != nil, personal, g.ungated) {
 		return admitResult{outcome: admitDenied, gate: gateTargetPolicy, target: target, cred: cred}
 	}
 

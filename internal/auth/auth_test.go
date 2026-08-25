@@ -55,23 +55,23 @@ func TestCanConnectTarget(t *testing.T) {
 	other := &Principal{Name: "bob", Role: RoleUser}
 
 	// No grants on an ungated target → open to any connect-capable principal.
-	if !CanConnectTarget(user, nil, false, false) {
+	if !CanConnectTarget(user, nil, false, false, UngatedOpen) {
 		t.Fatal("no grants on an ungated target should be open")
 	}
 	grants := []store.TargetGrant{
 		{SubjectType: "user", Subject: "alice"},
 		{SubjectType: "role", Subject: "approver"},
 	}
-	if !CanConnectTarget(admin, grants, false, false) {
+	if !CanConnectTarget(admin, grants, false, false, UngatedOpen) {
 		t.Fatal("admin should always connect")
 	}
-	if !CanConnectTarget(user, grants, false, false) {
+	if !CanConnectTarget(user, grants, false, false, UngatedOpen) {
 		t.Fatal("granted user should connect")
 	}
-	if CanConnectTarget(other, grants, false, false) {
+	if CanConnectTarget(other, grants, false, false, UngatedOpen) {
 		t.Fatal("ungranted user must be denied")
 	}
-	if !CanConnectTarget(&Principal{Name: "x", Role: RoleApprover}, grants, false, false) {
+	if !CanConnectTarget(&Principal{Name: "x", Role: RoleApprover}, grants, false, false, UngatedOpen) {
 		t.Fatal("granted role should connect")
 	}
 }
@@ -85,20 +85,20 @@ func TestCanConnectSafeScoped(t *testing.T) {
 	admin := &Principal{Name: "boss", Role: RoleAdmin}
 
 	// Safe-scoped target with no members/grants: closed to a normal user.
-	if CanConnectTarget(user, nil, true, false) {
+	if CanConnectTarget(user, nil, true, false, UngatedOpen) {
 		t.Fatal("safe-scoped target with no grants must be default-deny")
 	}
 	// ...but an admin may always connect to an ordinary safe.
-	if !CanConnectTarget(admin, nil, true, false) {
+	if !CanConnectTarget(admin, nil, true, false, UngatedOpen) {
 		t.Fatal("admin should connect to a non-personal safe-scoped target")
 	}
 	// A matching safe member is allowed.
 	grants := []store.TargetGrant{{SubjectType: "user", Subject: "alice"}}
-	if !CanConnectTarget(user, grants, true, false) {
+	if !CanConnectTarget(user, grants, true, false, UngatedOpen) {
 		t.Fatal("safe member should connect")
 	}
 	// A non-matching principal on a safe-scoped target is denied.
-	if CanConnectTarget(&Principal{Name: "bob", Role: RoleUser}, grants, true, false) {
+	if CanConnectTarget(&Principal{Name: "bob", Role: RoleUser}, grants, true, false, UngatedOpen) {
 		t.Fatal("non-member must be denied on a safe-scoped target")
 	}
 }
@@ -116,21 +116,21 @@ func TestCanConnectPersonalSafe(t *testing.T) {
 	stranger := &Principal{Name: "bob", Role: RoleUser}
 	grants := []store.TargetGrant{{SubjectType: "user", Subject: "alice"}}
 
-	if CanConnectTarget(admin, grants, true, true) {
+	if CanConnectTarget(admin, grants, true, true, UngatedOpen) {
 		t.Fatal("a plain admin without CapUnlimitedVaultAccess must NOT bypass a personal safe")
 	}
-	if !CanConnectTarget(overrideAdmin, grants, true, true) {
+	if !CanConnectTarget(overrideAdmin, grants, true, true, UngatedOpen) {
 		t.Fatal("a principal holding CapUnlimitedVaultAccess must bypass a personal safe")
 	}
-	if !CanConnectTarget(owner, grants, true, true) {
+	if !CanConnectTarget(owner, grants, true, true, UngatedOpen) {
 		t.Fatal("the personal safe's own member must connect regardless of role")
 	}
-	if CanConnectTarget(stranger, grants, true, true) {
+	if CanConnectTarget(stranger, grants, true, true, UngatedOpen) {
 		t.Fatal("a non-member without the override must be denied on a personal safe")
 	}
 	// The override is irrelevant off a personal safe: an ordinary admin still
 	// bypasses exactly as before Phase 139 (byte-identical old behavior).
-	if !CanConnectTarget(admin, grants, true, false) {
+	if !CanConnectTarget(admin, grants, true, false, UngatedOpen) {
 		t.Fatal("admin must still bypass an ordinary (non-personal) safe")
 	}
 }

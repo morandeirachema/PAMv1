@@ -61,10 +61,17 @@ type reachResponse struct {
 	// in" are different findings, and before this the answer could not tell them
 	// apart — which is the failure mode that matters here, because every one of
 	// these states makes the bare number an OVERSTATEMENT.
-	Blocked []string       `json:"blocked"`
-	Total   int            `json:"total"`
-	Counts  map[string]int `json:"counts"`
-	Targets []reachTarget  `json:"targets"`
+	Blocked []string `json:"blocked"`
+	// RequireTargetGrant reports the deployment's ungated-target policy, because
+	// an "open" row means opposite things under each: with it false, a target
+	// nobody restricted is reachable by everyone connect-capable (and the review
+	// paints those rows red); with it true, such a target is reachable by nobody
+	// and no "open" row can appear at all. Without this the reader cannot tell an
+	// empty open-count from a policy that makes it impossible.
+	RequireTargetGrant bool           `json:"require_target_grant"`
+	Total              int            `json:"total"`
+	Counts             map[string]int `json:"counts"`
+	Targets            []reachTarget  `json:"targets"`
 }
 
 // Why a subject cannot exercise its standing reach right now. Each is a fact
@@ -204,7 +211,7 @@ func (s *Server) subjectReach(w http.ResponseWriter, r *http.Request) {
 			resp.Roles = append(resp.Roles, sub.Name)
 		}
 	}
-	reaches, err := auth.ReachableTargets(ctx, s.store, principal)
+	reaches, err := auth.ReachableTargets(ctx, s.store, principal, s.rt().ungated)
 	if err != nil {
 		storeError(w, err)
 		return
@@ -219,6 +226,7 @@ func (s *Server) subjectReach(w http.ResponseWriter, r *http.Request) {
 			SubjectType: rc.SubjectType, Subject: rc.Subject, Safe: rc.SafeName,
 		})
 	}
+	resp.RequireTargetGrant = s.rt().ungated == auth.UngatedDeny
 	resp.Total = len(resp.Targets)
 	resp.Counts = auth.ReachSubjectCounts(reaches)
 	if resp.Roles == nil {
