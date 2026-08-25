@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-08-25 · Reflects: Phases 0–191. Phase 189 adds no requirement either: one additive index-only migration (`0047`, two plain indexes on grant tables the schema already has) and no new knob, dependency, listener or external service. Phases 161–183 add no requirement: three additive migrations applied at startup (`0044`, `0045`, `0046`) on the PostgreSQL instance already required, five optional knobs (`PAM_BROKER_MAX_RESULT_BYTES` 165, `PAM_BROKER_BUDGET_PER_DAY` 167, `PAM_BROKER_REQUIRE_ENROLLED_SVID` 174, `PAM_BROKER_REQUIRE_KNOWN_OWNER` 176, `PAM_BROKER_POSTURE_REQUIRED` 180 — the last needing the posture webhook this deployment may already run for human operators, never a new system), and no new dependency, listener or external service. Phases 66–70 add one more
+> Last updated: 2026-08-25 · Reflects: Phases 0–192. Phase 189 adds no requirement either: one additive index-only migration (`0047`, two plain indexes on grant tables the schema already has) and no new knob, dependency, listener or external service. Phases 161–183 add no requirement: three additive migrations applied at startup (`0044`, `0045`, `0046`) on the PostgreSQL instance already required, five optional knobs (`PAM_BROKER_MAX_RESULT_BYTES` 165, `PAM_BROKER_BUDGET_PER_DAY` 167, `PAM_BROKER_REQUIRE_ENROLLED_SVID` 174, `PAM_BROKER_REQUIRE_KNOWN_OWNER` 176, `PAM_BROKER_POSTURE_REQUIRED` 180 — the last needing the posture webhook this deployment may already run for human operators, never a new system), and no new dependency, listener or external service. Phases 66–70 add one more
 > background worker (the hourly, leader-locked certification scheduler); Phase 78
 > adds an optional per-replica Conjur refresh worker (off unless
 > `PAM_CONJUR_REFRESH_MIN` is set); 71–94 add no port, resource floor or
@@ -278,6 +278,7 @@ checkout) are safe across replicas.
 
 | Scale | pam-server | PostgreSQL |
 |---|---|---|
+| 2026-08-25 | Phase 192: the build/test toolchain is Go **1.27** (CI and `release.yml`); `go.mod`'s `go 1.26` stays as the minimum a consumer of the module needs, so "Go 1.26+" above is still the requirement to build from source |
 | Demo / lab | 1 replica, 64–128 MiB | `memory` store or 1 small instance |
 | Small team | 1–2 replicas, 256 MiB, 250m | 1 vCPU / 1–2 GiB, 10–20 GiB disk |
 | Recording-heavy | add disk for `/data` (asciicast files grow with session volume) | — |

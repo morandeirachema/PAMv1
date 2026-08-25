@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-25 · Reflects: Phases 0–191 + the 2026-07 hardening passes.
+> Last updated: 2026-08-25 · Reflects: Phases 0–192 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -24,7 +24,7 @@ then §5 (the session proxy — the heart of the system). Everything else is a
 subsystem you can read on demand. Each section names the real files and the key
 functions so you can jump straight to the source.
 
-Prerequisites: Go 1.26 on `PATH` (this environment installs it under
+Prerequisites: Go 1.26 on `PATH` — the floor `go.mod` declares (this environment installs it under
 `~/.local/go/bin`). Build with `go build ./...`, test with `go test ./...` (CI
 runs `go test -race ./...`), format with `gofmt -l .` (must print nothing).
 
@@ -1177,6 +1177,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-25 | Phase 192 (toolchain parity): CI and `release.yml` move to `go-version: "1.27"`, matching the `golang:1.27` both Dockerfiles now build with — before this the container shipped compiled by a toolchain no test job ran. The `actions/go-versions` workaround step is deleted rather than repointed: it fetched a pinned go1.26.6 onto the front of `PATH`, which under a 1.27 toolchain is a downgrade. `go.mod` stays at `go 1.26` — that is the language floor for module consumers, not the build toolchain. |
 | 2026-08-25 | Phase 191 (the subject's own state): §3.4 (`auth`) — `reach.go` gains `CanUseAnyTarget` and `Reach.SafeName`, and swaps its two grant reads so the window fails closed. `internal/api/reach_handlers.go` — `blocked` on the response with its six reason constants, `lookupAgentSubject` now returns them and consults quarantine for every subject, and `safeNames` is deleted (the engine carries the name). Console menu 31 renders the blocked line and the `unlimited_vault_access` count it had been dropping. No package moved, no CI gate changed. |
 | 2026-08-23 | Phase 189 (subject-indexed reachability): §3.3 (`store`) — `GrantStore` gains `GrantsForSubjects`/`GatedTargetIDs`, `store.Store` 212 → 214 methods, migration `0047` (two grant-table indexes by subject). §3.4 (`auth`) — new `reach.go`: `ReachableTargets` + `GrantSubjects`, the review-side twin of `CanConnectTarget`, with the equivalence pinned by `TestReachMatchesCanConnect`. New `internal/api/reach_handlers.go` (`GET /api/access/reach`); `agentVisibleTargets` now goes through the same path instead of two store reads per target. Console menu 31. No package moved, no CI gate changed. |
 | 2026-08-16 | Phase 149 (SCIM 2.0 user provisioning): §3.3 (`store`) — `User` gains `ExternalID`/`Active`; new `ScimKey` type and `ScimStore` role (4 methods); `UserStore` gains `GetUserByUsername`/`GetUserByExternalID`/`UpdateUserActive`/`UpdateUserExternalID`; `store.Store` 182 → 190 methods. `CreateUser` (both backends) now always creates an active user, ignoring `Active` on the input struct — closes a whole bug class by construction; the two real production callers needed no changes, but `internal/auth/auth_test.go`'s own hand-rolled `fakeDir` fixtures did (a real regression the full suite caught). §3.4 (`auth`) — `Resolve()`'s per-user-token branch now refuses when `!u.Active`, fail-closed. New `internal/api/scim_handlers.go` (`/v1/scim-keys` admin CRUD, `/scim/v2/Users` full CRUD + filter). New migration `0041`. No package moved, no CI gate changed. |
