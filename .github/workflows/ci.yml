@@ -245,11 +245,15 @@ jobs:
             --set metrics.serviceMonitor.enabled=true > /tmp/rendered-all.yaml
       - name: kubeconform
         # conjur/policy.yaml is a Conjur policy document, not a K8s manifest,
-        # and sops/ holds encrypted material — both stay out of scope.
+        # and sops/ holds encrypted material — both stay out of scope. eso/ holds
+        # External Secrets CRD instances: their kinds have no upstream schema and
+        # are skipped like the CloudNativePG Cluster, but the plain Secret beside
+        # them is validated, which is the part that can actually be malformed.
         run: |
           go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
           "$(go env GOPATH)/bin/kubeconform" -summary -ignore-missing-schemas \
             deploy/k8s/*.yaml deploy/k8s/conjur/deployment.yaml deploy/k8s/flux/*.yaml \
+            deploy/k8s/eso/*.yaml \
             /tmp/rendered-default.yaml /tmp/rendered-all.yaml
       - name: kustomize bases build
         # The two bases are what `kubectl apply -k` and the Flux example both

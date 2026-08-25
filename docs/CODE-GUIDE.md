@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-25 · Reflects: Phases 0–196 + the 2026-07 hardening passes.
+> Last updated: 2026-08-25 · Reflects: Phases 0–197 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -1177,6 +1177,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-25 | Phase 197 (ESO backend): §3.3 (`store`) — `app_secret_grants` gains `alias`, migration `0048`, `SetAppGrantAlias`/`AppCredentialByAlias` (215 -> 217 methods). `internal/api/app_secrets_handlers.go` — `fetchAppSecretByAlias` and `setAppGrantAlias`, with both fetch routes folded into one `deliverAppSecret` so the reveal kill switch, the ZSP refusal and the fail-closed audit cannot drift apart. Console screen `PAMAPPALS`. New `deploy/k8s/eso/`. |
 | 2026-08-25 | Phase 195 (fail-closed route map): `cmd/archgen` gains `routeGuard`, `guardByWrapper` and `publicRoutes`. The guard label for a route is no longer guessed — an unrecognised middleware is an error that stops the generator, and "public" must be claimed in the allowlist with a reason. Adding a new auth wrapper to the mux now means adding it to `guardByWrapper` too, or CI fails. |
 | 2026-08-25 | Phase 193 (the flags that were wrong): §3.3 (`store`) — new `GrantStore.ReachGrantSnapshot` (214 -> 215 methods), pgstore in a read-only REPEATABLE READ transaction, memstore under one lock hold; both query bodies factored so pool and tx share them. §3.4 (`auth`) — `ReachStore` takes the snapshot instead of the two reads, `ReachableTargets` is three reads. `internal/api/reach_handlers.go` — `not_enrolled` gated on `brokerRequireEnrolledSVID`, expiry decomposed from `store.AgentKey.Active`, new `budget_zero` and `quarantine_unknown` reasons. |
 | 2026-08-25 | Phase 192 (toolchain parity): CI and `release.yml` move to `go-version: "1.27"`, matching the `golang:1.27` both Dockerfiles now build with — before this the container shipped compiled by a toolchain no test job ran. The `actions/go-versions` workaround step is deleted rather than repointed: it fetched a pinned go1.26.6 onto the front of `PATH`, which under a 1.27 toolchain is a downgrade. `go.mod` stays at `go 1.26` — that is the language floor for module consumers, not the build toolchain. |

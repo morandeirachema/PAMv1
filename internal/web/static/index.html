@@ -161,7 +161,7 @@
   let msg = ssoMsg, msgErr = ssoErr;
   // Per-screen data.
   let targets = [], creds = [], audit = [], sessions = [], requests = [], checkouts = [], users = [], grants = [];
-  let apps = [], appGrants = [], grantsApp = 0, newApp = null;
+  let apps = [], appGrants = [], grantsApp = 0, newApp = null, aliasGrant = null;
   let viewCred = null, grantsTarget = 0, newUser = null, mfaInfo = null, mfaEnroll = null, recoveryCodes = [], discovered = null, reconcileReport = null, acctScan = null;
   let webauthnCreds = []; // Phase 124: the caller's own registered FIDO2/WebAuthn authenticators
   let profiles = [], configItems = [], configNote = "", effCfg = null, iacText = "", iacFormat = "";
@@ -3042,11 +3042,13 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         term.innerHTML = `${head("PAMAPPGRT", "Application Secret Grants")}
 Secrets application <span class="white">${esc(app ? app.name : grantsApp)}</span> (id ${esc(grantsApp)}) may retrieve.
 Default-deny: it can fetch only the credentials granted here.
-Type options, press Enter.  <span class="cyan">4=Revoke grant</span>
+Type options, press Enter.  <span class="cyan">4=Revoke grant   8=Name it (alias)</span>
+An alias is the stable name a declarative consumer addresses — an External Secrets
+Operator SecretStore holds it in git, where a credential id would go stale.
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>Grant</th><th>Credential</th><th>Target / user</th><th>Granted</th></tr>
-${appGrants.map((g) => `<tr><td>${opt(g.id)}</td><td>${esc(g.id)}</td><td>${esc(g.credential_id)}</td><td>${pad(credLabel(g.credential_id), 24)}</td><td class="cyan">${fmtTime(g.created_at)}</td></tr>`).join("")}
+<tr><th>Opt</th><th>Grant</th><th>Credential</th><th>Target / user</th><th>Alias</th><th>Granted</th></tr>
+${appGrants.map((g) => `<tr><td>${opt(g.id)}</td><td>${esc(g.id)}</td><td>${esc(g.credential_id)}</td><td>${pad(credLabel(g.credential_id), 24)}</td><td class="${g.alias ? "white" : "cyan"}">${g.alias ? cell(g.alias, 20) : "-"}</td><td class="cyan">${fmtTime(g.created_at)}</td></tr>`).join("")}
 </table>${appGrants.length ? "" : `<div class="cyan indent">(No grants — this app can retrieve nothing. Press F6 to grant a credential.)</div>`}
 <input type="submit" hidden></form>
 ${fkeys("F3=Exit   F5=Refresh   F6=Grant credential   F12=Cancel")}`;
@@ -3056,8 +3058,36 @@ ${fkeys("F3=Exit   F5=Refresh   F6=Grant credential   F12=Cancel")}`;
             for (const g of appGrants) {
               const o = optVal(ev.target, g.id);
               if (o === "4") { await api("DELETE", `/v1/apps/${grantsApp}/grants/${g.id}`); say(`GRANT ${g.id} REVOKED.`); }
+              else if (o === "8") { aliasGrant = g; return go("appgrantalias"); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
+            await openAppGrants(grantsApp);
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      appgrantalias() {
+        back = "appgrants";
+        const g = aliasGrant || {};
+        term.innerHTML = `${head("PAMAPPALS", "Name an Application Grant")}
+Grant <span class="white">${esc(g.id)}</span> of application <span class="white">${esc((apps.find((a) => a.id === grantsApp) || {}).name || grantsApp)}</span>.
+
+An alias is how a declarative consumer names this secret — it goes in a manifest
+held in git, so it must stay stable when ids do not. Letters, digits, dot, dash
+and underscore only. Leave it empty to clear the name; the grant then remains
+reachable by credential id.
+
+<form id="f-alias">
+<div class="indent">Alias . . . . . . . :  <input name="alias" size="32" maxlength="128" value="${esc(g.alias || "")}"></div>
+<input type="submit" hidden></form>
+${fkeys("F3=Exit   Enter=Save   F12=Cancel")}`;
+        focusFirst();
+        document.getElementById("f-alias").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const alias = ev.target.alias.value.trim();
+          try {
+            await api("POST", `/v1/apps/${grantsApp}/grants/${g.id}/alias`, { alias });
+            say(alias ? `GRANT ${g.id} NAMED ${alias.toUpperCase()}.` : `GRANT ${g.id} ALIAS CLEARED.`);
             await openAppGrants(grantsApp);
           } catch (e) { say("CPF9999: " + e.message, true); render(); }
         };

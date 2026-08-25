@@ -550,6 +550,13 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 	// No subjects ⇒ no grants, and never an error: a principal with no
 	// identifiers is a legitimate (if useless) question to ask.
+	// Phase 197: a grant's alias is the stable name a declarative consumer uses.
+	// Resolution is scoped to the app, so it is an authorization check as much as
+	// a lookup; the uniqueness is per app, so two apps may reuse a name.
+	if apps := appAliasFixture(t, st); apps != nil {
+		aliasContract(t, st, apps)
+	}
+
 	if none, err := st.GrantsForSubjects(ctx, nil); err != nil || len(none) != 0 {
 		t.Fatalf("GrantsForSubjects(nil) = %+v, %v", none, err)
 	}
@@ -3179,3 +3186,75 @@ interestDelivered:
 		}
 	}
 }
+
+// appAliasFixture makes two applications, each granted its own credential, and
+// returns their grant ids. Returns nil when the estate this contract runs on has
+// no credential to grant, so the check simply does not apply.
+func appAliasFixture(t *testing.T, st store.Store) []store.AppSecretGrant {
+	t.Helper()
+	ctx := context.Background()
+	creds, err := st.ListCredentials(ctx, 0, 0, 0)
+	if err != nil || len(creds) < 2 {
+		return nil
+	}
+	var grants []store.AppSecretGrant
+	for i, name := range []string{"alias-app-a", "alias-app-b"} {
+		k := &store.AppKey{Name: name, Owner: "contract", TokenHash: "alias-h" + itoaTest(i)}
+		if err := st.CreateAppKey(ctx, k); err != nil {
+			t.Fatalf("CreateAppKey(%s): %v", name, err)
+		}
+		g := &store.AppSecretGrant{AppID: k.ID, CredentialID: creds[i].ID}
+		if err := st.GrantAppSecret(ctx, g); err != nil {
+			t.Fatalf("GrantAppSecret(%s): %v", name, err)
+		}
+		grants = append(grants, *g)
+	}
+	return grants
+}
+
+// aliasContract holds SetAppGrantAlias/AppCredentialByAlias to their promises.
+func aliasContract(t *testing.T, st store.Store, grants []store.AppSecretGrant) {
+	t.Helper()
+	ctx := context.Background()
+	a, b := grants[0], grants[1]
+
+	if err := st.SetAppGrantAlias(ctx, a.ID, "shared-name"); err != nil {
+		t.Fatalf("SetAppGrantAlias: %v", err)
+	}
+	got, err := st.AppCredentialByAlias(ctx, a.AppID, "shared-name")
+	if err != nil || got != a.CredentialID {
+		t.Fatalf("AppCredentialByAlias = %d, %v; want %d", got, err, a.CredentialID)
+	}
+	// Scoped to the owning app: the other app sees nothing under that name.
+	if _, err := st.AppCredentialByAlias(ctx, b.AppID, "shared-name"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("another app resolved an alias it was not granted: %v", err)
+	}
+	// And may legitimately reuse the name for its own grant.
+	if err := st.SetAppGrantAlias(ctx, b.ID, "shared-name"); err != nil {
+		t.Fatalf("the same alias must be reusable by a different app: %v", err)
+	}
+	if got, err := st.AppCredentialByAlias(ctx, b.AppID, "shared-name"); err != nil || got != b.CredentialID {
+		t.Fatalf("second app's alias = %d, %v; want %d", got, err, b.CredentialID)
+	}
+	// The listing carries it back.
+	list, err := st.ListAppSecretGrants(ctx, a.AppID)
+	if err != nil || len(list) == 0 || list[0].Alias != "shared-name" {
+		t.Fatalf("ListAppSecretGrants did not carry the alias: %+v, %v", list, err)
+	}
+	// Cleared means unaddressable, and an empty alias never resolves.
+	if err := st.SetAppGrantAlias(ctx, a.ID, ""); err != nil {
+		t.Fatalf("clearing an alias: %v", err)
+	}
+	if _, err := st.AppCredentialByAlias(ctx, a.AppID, "shared-name"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("a cleared alias still resolved: %v", err)
+	}
+	if _, err := st.AppCredentialByAlias(ctx, a.AppID, ""); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("the empty alias must never resolve: %v", err)
+	}
+	if err := st.SetAppGrantAlias(ctx, 0, "orphan"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("aliasing a grant that does not exist: %v, want ErrNotFound", err)
+	}
+}
+
+// itoaTest is a tiny local helper so the fixture can build distinct token hashes.
+func itoaTest(i int) string { return string(rune('0' + i)) }
