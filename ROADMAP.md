@@ -2430,11 +2430,13 @@ that image.
 No schema change (high-water stays `0048`), no new route, no new env var, no
 upgrade note.
 
-- [ ] **v0.54.1** through the test-gated pipeline. `.github/` is **untouched**
-  since v0.54.0, so the v0.11.1 rehearsal rule does not apply — checked with a
-  diff. Published as `ghcr.io/morandeirachema/pamv1:0.54.1` (also `latest`),
-  digest recorded here **and in README.md's Status block**, verified **public** by
-  anonymous pull
+- [x] **v0.54.1** through the test-gated pipeline. `.github/` was **untouched**
+  since v0.54.0, so the v0.11.1 rehearsal rule did not apply — checked with a
+  diff. Published 2026-08-25 as `ghcr.io/morandeirachema/pamv1:0.54.1` (also
+  `latest`), digest
+  `sha256:f2fcdc2d1b395056a62b5f1883f11cd10812758f243659affd75dddbb4b5936d`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same digest).
+  Recorded in README.md's Status block in the same pass
 - [x] All pins via the sweep; Helm chart `version` 0.45.0 -> **0.45.1** (a patch
   alongside an app patch, unlike the minor bumps a feature release takes)
 - [x] Both READMEs restated; every `Reflects:` header, `docs/README.md` and this
