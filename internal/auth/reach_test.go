@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sync"
 	"testing"
 
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -342,52 +343,84 @@ func mustReach(ctx context.Context, t *testing.T, st *memstore.Memstore, p *Prin
 	return rs
 }
 
-// raceStore drives a write into the estate between ReachableTargets' two grant
-// reads, which is the only way to observe the ordering the engine depends on.
-type raceStore struct {
-	ReachStore
-	afterGrants func()
-}
-
-// GrantsForSubjects delegates, then runs the injected write — so whatever
-// GatedTargetIDs reads next sees an estate the grant read did not.
-func (r *raceStore) GrantsForSubjects(ctx context.Context, subs []store.GrantSubject) ([]store.SubjectGrant, error) {
-	out, err := r.ReachStore.GrantsForSubjects(ctx, subs)
-	if err == nil && r.afterGrants != nil {
-		r.afterGrants()
-	}
-	return out, err
-}
-
-// TestReachGateRaceFailsClosed pins the read ORDER, not just the reads.
+// TestReachGrantSnapshotUnderWriters pins the property ordering could not give.
 //
-// The two grant reads are not one transaction, so a grant written between them
-// is seen by one and not the other. The engine reads the subject's grants first
-// on purpose: a grant created in that window makes the target look gated with no
-// matching row, so it drops out of the answer. The other order would report the
-// target as OPEN — reachable by anyone — at the exact moment somebody restricted
-// it, and since the agent broker's inventory listing runs on this same path,
-// that would name a target to an agent just as it stopped being allowed to see
-// it. Briefly hiding a target beats briefly advertising one.
-func TestReachGateRaceFailsClosed(t *testing.T) {
+// Phase 191 read the subject's grants before the gated set, which closed the
+// window where a newly restricted target was still reported OPEN — reachable by
+// anyone — but opened its mirror: revoking THIS subject's grant on a target other
+// grants still hold left the deleted row in hand while the target stayed gated,
+// so it was reported reachable via a grant that no longer existed. Ordering
+// trades one window for the other. Phase 193 takes both answers from one
+// snapshot, and this test drives real concurrent writers at it.
+//
+// The invariant is the one only a snapshot can hold: every target a returned
+// grant names must be in the same answer's gated set, because a grant IS what
+// gates a target. A pair read at two different moments violates it in one
+// direction or the other. Run under -race, this also proves the store's own
+// locking holds.
+func TestReachGrantSnapshotUnderWriters(t *testing.T) {
 	f := newReachFixture(t)
 	ctx := context.Background()
 	id := f.targets["ungated"]
 
-	st := &raceStore{ReachStore: f.st, afterGrants: func() {
-		g := &store.TargetGrant{TargetID: id, SubjectType: "user", Subject: "someone-else"}
-		if err := f.st.CreateTargetGrant(ctx, g); err != nil {
-			t.Errorf("CreateTargetGrant in window: %v", err)
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			g := &store.TargetGrant{TargetID: id, SubjectType: "user", Subject: "racer"}
+			if err := f.st.CreateTargetGrant(ctx, g); err != nil {
+				return
+			}
+			if err := f.st.DeleteTargetGrant(ctx, g.ID); err != nil {
+				return
+			}
 		}
-	}}
+	}()
 
-	got, err := ReachableTargets(ctx, st, &Principal{Name: "nobody", Role: RoleUser})
+	p := &Principal{Name: "racer", Role: RoleUser}
+	for i := 0; i < 300; i++ {
+		grants, gated, err := f.st.ReachGrantSnapshot(ctx, GrantSubjects(p))
+		if err != nil {
+			t.Fatalf("ReachGrantSnapshot: %v", err)
+		}
+		set := make(map[int64]struct{}, len(gated))
+		for _, g := range gated {
+			set[g] = struct{}{}
+		}
+		for _, g := range grants {
+			if _, ok := set[g.TargetID]; !ok {
+				close(stop)
+				wg.Wait()
+				t.Fatalf("grant on target %d that the same snapshot says nothing gates: %+v", g.TargetID, g)
+			}
+		}
+	}
+	close(stop)
+	wg.Wait()
+
+	// And the reach answer built on it stays sane throughout: a subject whose
+	// only grant is being created and destroyed underneath must never be told a
+	// gated target is "open".
+	got, err := ReachableTargets(ctx, f.st, p)
 	if err != nil {
 		t.Fatalf("ReachableTargets: %v", err)
 	}
 	for _, rc := range got {
-		if rc.Target.ID == id {
-			t.Fatalf("a target restricted mid-query must not be reported as %q reachable: %+v", rc.Via, rc)
+		if rc.Target.ID == id && rc.Via == ReachViaOpen {
+			if _, gatedNow, err := f.st.ReachGrantSnapshot(ctx, nil); err == nil {
+				for _, g := range gatedNow {
+					if g == id {
+						t.Fatalf("target %d reported open while the store says it is gated", id)
+					}
+				}
+			}
 		}
 	}
 }
