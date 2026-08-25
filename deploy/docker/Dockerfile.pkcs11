@@ -36,7 +36,7 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
     -o /out/pam-server ./cmd/pam-server
 
-FROM gcr.io/distroless/base-debian12:nonroot@sha256:b12529fbbd0bb15eea8905f69d83148679e0b4d7d434c8808100792029b1caae
+FROM gcr.io/distroless/base-debian12:nonroot@sha256:7f0c72cd138b442ae0deeb69c08b1acf5525439ba251a49ad93c320a061567e5
 COPY --from=build /out/pam-server /pam-server
 # The portal/API, the SSH proxy, and the PostgreSQL and SQL Server proxies —
 # the last two only when PAM_DB_ADDR / PAM_MSSQL_ADDR are set (both default off).
