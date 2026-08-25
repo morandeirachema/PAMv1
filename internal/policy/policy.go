@@ -499,6 +499,50 @@ func (e *Engine) Evaluate(caller Caller, tool string, args map[string]any) Decis
 	return Decision{RuleID: "implicit-default-deny", Effect: EffectDeny, Reason: "no rule matched"}
 }
 
+// MayEverAllow reports whether ANY set of arguments could get this caller an
+// allow (or an approval) for this tool. It is the question a listing asks, where
+// Evaluate answers the question a call asks.
+//
+// It exists because MCP `tools/list` handed every agent the whole registry: an
+// agent permitted only `ssh_exec` was still told `winrm_exec` and
+// `reveal_credential` exist. Policy refused the call, but the listing had already
+// described the surface — the same disclosure Phase 189 closed for target
+// listings, where the answer was to show an agent only what it can reach.
+//
+// The reasoning follows Evaluate's own order, first match wins:
+//
+//   - a rule that does not name this tool, or whose principal side excludes this
+//     caller, can never fire — skip it;
+//   - a rule with NO conditions always fires for this caller and tool, so its
+//     effect is final: allow or require_approval means yes, deny means no;
+//   - a rule WITH conditions only might fire. If it could allow, that is enough
+//     to say yes. If it would deny, a later rule may still allow, so keep looking.
+//
+// Nothing matching is the implicit default deny, and therefore no.
+//
+// Deliberately conservative in the DISCLOSURE direction, not the access one: it
+// never widens what a call may do — Evaluate alone decides that — so a tool shown
+// here can still be refused, while a tool hidden here can still be called by name
+// if an agent already knows it. Hiding is advisory; the point is to stop handing
+// out a map.
+func (e *Engine) MayEverAllow(caller Caller, tool string) bool {
+	for _, r := range e.rules {
+		if r.Tool != "" && r.Tool != tool {
+			continue
+		}
+		if !r.matchesCaller(caller) {
+			continue
+		}
+		if len(r.When) == 0 {
+			return r.Effect != EffectDeny
+		}
+		if r.Effect != EffectDeny {
+			return true
+		}
+	}
+	return false
+}
+
 // matchAll reports whether every condition in when holds (AND logic).
 //
 // A `caller.` prefix reads the VERIFIED identity; anything else reads the call's

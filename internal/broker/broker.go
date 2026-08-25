@@ -372,6 +372,34 @@ func Approved(ctx context.Context) bool {
 // Tools returns the registered tools (for MCP tools/list).
 func (b *Broker) Tools() []Tool { return b.registry.List() }
 
+// ToolsFor is Tools() narrowed to what policy could ever allow this identity to
+// call (Phase 204). It is what a listing should return: the full registry told
+// every agent that `winrm_exec` and `reveal_credential` exist, even when no rule
+// would ever let that agent near them, which is a map of the surface handed out
+// for free.
+//
+// It narrows a LISTING, never a call: ProcessCall still evaluates policy in full,
+// so a tool that survives this filter can still be refused, and a tool removed by
+// it can still be invoked by name — an agent that already knows the name loses
+// nothing it had. Hiding is advisory, and that is the honest description of it.
+//
+// With no policy engine configured every tool is listed, matching how the broker
+// behaves elsewhere when it has no policy to consult.
+func (b *Broker) ToolsFor(id *agentid.Identity) []Tool {
+	all := b.registry.List()
+	if b.engine == nil {
+		return all
+	}
+	caller := callerOf(id)
+	out := make([]Tool, 0, len(all))
+	for _, t := range all {
+		if b.engine.MayEverAllow(caller, t.Name()) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // ProcessCall evaluates policy and, on allow, executes the tool server-side,
 // returning only the result. Deny and (for now) require_approval are terminal
 // here; the approval decision + resume flow lands in a later increment.
