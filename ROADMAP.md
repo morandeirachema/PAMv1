@@ -2427,13 +2427,21 @@ reviewed rather than trusted. No schema change (migration high-water stays
 underneath: the toolchain that compiles the published image, and the honesty of
 the reachability review shipped in the release before it.
 
-- [ ] **v0.53.0** through the test-gated pipeline, **rehearsed on `main` first —
-  and this time the rehearsal is not a formality.** Phase 192 changed
-  `release.yml`'s Go pin, `ci.yml` never exercises that workflow, and the standing
-  rule since v0.11.1 is that such a change passes every green check and then fails
-  on the tag. Published as `ghcr.io/morandeirachema/pamv1:0.53.0` (also `latest`),
-  digest recorded here **and in README.md's Status block**, verified **public** by
-  anonymous pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] **v0.53.0** through the test-gated pipeline, **rehearsed on `main` first —
+  and this time the rehearsal was not a formality.** Phase 192 changed
+  `release.yml`'s Go pin and `ci.yml` never exercises that workflow, which is the
+  exact shape of the v0.11.1 failure: six green checks, then a dead pipeline on
+  the tag. The dispatch run came back green having actually built — *Build and
+  push (by digest)* and *Build pam-agent binaries* both ran, while the
+  outward-effect steps (SBOM attestation, SLSA provenance, Create Release)
+  skipped, which is what makes it a rehearsal rather than a `go test`. **First
+  time since v0.11.1 the rule has applied, and it worked.** Published 2026-08-25
+  as `ghcr.io/morandeirachema/pamv1:0.53.0` (also `latest`), digest
+  `sha256:d1e6c4f4f2bd4335e154653adbbecb2073f34ce9ad5f7bccb2e652aedeb75262`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same digest),
+  with the `pam-agent` binaries for amd64 and arm64, the SPDX SBOM and
+  `SHA256SUMS` attached. Recorded in README.md's Status block in the same pass —
+  the second release for which that is true
 - [x] All pins via the sweep; Helm chart `version` 0.43.0 -> **0.44.0**
 - [x] Both READMEs restated; every `Reflects: Phases 0–N` header, `docs/README.md`
   and this banner
