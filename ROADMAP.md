@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–189 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–190 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,38 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 190 — v0.52.0 ✅
+
+Releases Phase 189 alone: the subject-indexed grant query, §3b's last capability
+item, so "what can this agent reach?" stops being a walk over the whole estate
+and becomes four reads with a **reason** attached to every answer. **Schema
+change** — migration `0047`, two plain indexes applied on startup with no
+backfill — one new route, one new console screen, no new env var and **no
+upgrade note**.
+
+- [ ] **v0.52.0** through the test-gated pipeline, rehearsed on `main` first.
+  Published as `ghcr.io/morandeirachema/pamv1:0.52.0` (also `latest`), digest
+  recorded here once the publish workflow runs, verified **public** by anonymous
+  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] All pins via the sweep; Helm chart `version` 0.42.0 -> **0.43.0**
+- [x] **The sweep earned its keep this release.** `deploy/terraform/variables.tf`
+  still defaulted `image` to `pamv1:0.28.0` — 23 releases stale, so the module's
+  own default deployed a version from 2026-08-14 while every other manifest
+  pinned the current one. It is in the checklist by name and was missed anyway;
+  the `grep` that requires **exactly one** release to appear under `deploy/` is
+  what caught it, which is the argument for a check that cannot go stale over a
+  list of places that can
+- [x] **Four releases were unlinkable from the CHANGELOG**: the reference-link
+  block stopped at `0.47.0`, so the `[0.48.0]`–`[0.51.0]` headings rendered as
+  literal brackets and `[Unreleased]` compared against `v0.47.0`. All restored
+- [x] Both READMEs restated (the Spanish one's phase range was a phase behind);
+  every `Reflects: Phases 0–N` header, `docs/README.md`'s release line and this
+  banner
+- [x] `CHANGELOG.md` gains the release entry, whose **Added** section leads with
+  the reason column rather than the route, because the reason is the capability
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
 
 ## Phase 189 — What can this subject reach? ✅
 
