@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–197 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–198 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,40 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 198 — v0.54.0 ✅
+
+Releases **195, 196 and 197**. The one that changes what pamv1 can do is 197:
+a workload running in Kubernetes can now get a secret out of pamv1, through
+External Secrets Operator. The other two are the review that preceded it — a
+generated security map that had been calling sixteen authenticated routes public,
+and a written list of what each non-human credential reaches.
+
+**Schema change** — migration `0048`, one additive nullable column, applied on
+startup with no backfill. Two new routes, one new console screen, no new env var,
+**no upgrade note**.
+
+- [ ] **v0.54.0** through the test-gated pipeline. `release.yml` is **unchanged**
+  since v0.53.0 — the only `.github` edit was `ci.yml`'s kubeconform paths, and
+  `ci.yml` is exercised by every PR — so the v0.11.1 rehearsal rule does not
+  apply this time. It was checked rather than assumed. Published as
+  `ghcr.io/morandeirachema/pamv1:0.54.0` (also `latest`), digest recorded here
+  **and in README.md's Status block**, verified **public** by anonymous pull,
+  with the `pam-agent` binaries attached as since v0.40.0
+- [x] All pins via the sweep; Helm chart `version` 0.44.0 -> **0.45.0**
+- [x] Migration high-water **0047 -> 0048**; `store.Store` 215 -> **217** methods;
+  routes 191 -> **193**
+- [x] Both READMEs restated; every `Reflects:` header, `docs/README.md` and this
+  banner
+- [x] `CHANGELOG.md` gains the release entry, whose **Added** section leads with
+  the capability rather than the route, and whose **Fixed** entry says plainly
+  that no route was ever unprotected — the defect was the document describing a
+  control it did not have
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
+- [x] **Cut now rather than banked**, because 197 is the half of the ESO work that
+  cannot be verified from this repo: testing it against a real cluster needs a
+  published image, and an image that only exists on `main` cannot be pointed at
 
 ## Phase 197 — pamv1 as an External Secrets Operator backend ✅
 

@@ -9,6 +9,76 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.54.0] — 2026-08-25
+
+A minor whose one user-facing feature answers a question this project could not:
+**how does a workload running in Kubernetes get a secret out of pamv1?** It could
+already seal its *own* secrets into a cluster, and already brokered privileged
+*access to* Kubernetes Secrets as discrete audited operations — but it was not a
+**source** of secrets for the workloads there. Now it is, through External
+Secrets Operator. **Schema change** — migration `0048`, one additive nullable
+column; applied on startup, no backfill, **no upgrade note**. Two new routes, one
+new console screen, no new env var.
+
+The other two phases are tests and a generator fix, and both exist because the
+release before them was reviewed rather than trusted.
+
+### Added
+
+- **pamv1 as an External Secrets Operator backend** (Phase 197). An application
+  grant can carry a stable **alias**, and `GET /v1/app-secrets/by-alias/{alias}`
+  fetches by that name — so an ESO `SecretStore` can reference a secret from a
+  manifest held in git. Set one with
+  `POST /v1/apps/{id}/grants/{gid}/alias` (`reveal_secret`), or console option
+  `8` on a grant row (`PAMAPPALS`).
+
+  The alias lives on the **grant**, not the credential: the grant must exist for
+  access anyway, so naming it adds no authorization surface; it is scoped per
+  application, so two apps may call the same credential different things; and
+  `credentials` has no uniqueness on `(target_id, username)` to name against.
+  Resolution runs inside the calling app's own grants, which makes the lookup the
+  authorization check as well.
+- **Working manifests and a cluster checklist** in `deploy/k8s/eso/` — a
+  `SecretStore` and `ExternalSecret` pair carrying no secret material, and a
+  README ending in what to verify against a real cluster.
+- **Migration `0048`** — `alias` on `app_secret_grants`, unique per application
+  where set. Nullable, so every existing grant keeps working unchanged and stays
+  addressable by credential id.
+- `app.grant_alias_set` and `app.grant_alias_cleared` join the audit vocabulary;
+  the alias also rides in `app.secret_retrieved`'s detail.
+
+### Fixed
+
+- **The generated API-surface map called sixteen authenticated routes `public`**
+  (Phase 195). `docs/ARCHITECTURE-DIAGRAMS.md` §3 is what a reader consults to
+  see what guards each route, and it is CI-gated for drift — so it was guaranteed
+  current and guaranteed wrong at once. The generator classified routes by
+  pattern and **fell back to `"public"`** for anything it did not recognise, and
+  three authentication schemes added later were never taught to it: the whole
+  AI-agent tool-call surface, the whole SCIM surface (which creates and deletes
+  users), the application-secrets route, and five token-authenticated guest
+  routes. **No route was ever unprotected** — this was the document misdescribing
+  a control. Nineteen rows corrected, and the classifier now **refuses to guess**:
+  an unrecognised wrapper stops the generator, which CI runs, so a new scheme
+  fails the build instead of being published as unauthenticated.
+
+### Changed
+
+- **What each non-human credential reaches is now a written list** (Phase 196).
+  An agent key, an IdP's SCIM token and an application key pass **no capability
+  check** — the middleware authenticates the bearer and hands off — so the set of
+  routes each reaches *is* the authorization boundary for it. That set is now
+  recorded route by route with a reason, and checked in both directions so a
+  stale entry fails too. Also pinned: browser-extension tokens reach exactly one
+  route, a scoping that had lived only in a code comment; and no state-changing
+  route may be reachable with no credential at all.
+
+### Upgrade notes
+
+None. Migration `0048` is additive and nullable and applies on startup; existing
+application grants keep working and stay addressable by credential id, with the
+alias purely opt-in.
+
 ## [0.53.0] — 2026-08-25
 
 Three phases, and two of them exist because the release before them was
@@ -2006,7 +2076,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.53.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.54.0...HEAD
+[0.54.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.54.0
 [0.53.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.53.0
 [0.52.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.52.0
 [0.51.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.51.0
