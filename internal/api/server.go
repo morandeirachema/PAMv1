@@ -1105,6 +1105,11 @@ func (s *Server) routes() {
 	// needs CapRevealSecret (you can only hand out a secret you could reveal).
 	if s.appSecretsEnabled {
 		s.mux.HandleFunc("GET /v1/app-secrets/{id}", s.appAuth(s.fetchAppSecret))
+		// Addressed by the grant's stable alias rather than a row id, for
+		// declarative consumers such as an External Secrets Operator SecretStore
+		// whose manifest lives in git (Phase 197).
+		s.mux.HandleFunc("GET /v1/app-secrets/by-alias/{alias}", s.appAuth(s.fetchAppSecretByAlias))
+		s.mux.Handle("POST /v1/apps/{id}/grants/{gid}/alias", s.authz(auth.CapRevealSecret, s.setAppGrantAlias))
 		s.mux.Handle("POST /v1/apps", s.authz(auth.CapManageUsers, s.createAppKey))
 		s.mux.Handle("GET /v1/apps", s.authz(auth.CapManageUsers, s.listAppKeys))
 		s.mux.Handle("DELETE /v1/apps/{id}", s.authz(auth.CapManageUsers, s.deleteAppKey))

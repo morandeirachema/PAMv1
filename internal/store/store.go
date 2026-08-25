@@ -884,10 +884,18 @@ type SSHCert struct {
 // default-deny: an app may fetch only the credentials it has an explicit grant
 // for.
 type AppSecretGrant struct {
-	ID           int64     `json:"id"`
-	AppID        int64     `json:"app_id"`
-	CredentialID int64     `json:"credential_id"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID           int64 `json:"id"`
+	AppID        int64 `json:"app_id"`
+	CredentialID int64 `json:"credential_id"`
+	// Alias is a stable, operator-chosen name for this grant, unique within the
+	// app (Phase 197). It exists because a declarative consumer — an External
+	// Secrets Operator SecretStore, say — has to name the secret in a manifest
+	// held in git, and a credential's BIGSERIAL id is not stable across
+	// environments, a restore, or a delete-and-recreate. Empty means the grant is
+	// addressable by credential id only, which is every grant made before this
+	// field existed.
+	Alias     string    `json:"alias,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // BrokerToken is a short-lived, single-use ticket the broker mints when a tool
@@ -1749,6 +1757,15 @@ type AppSecretStore interface {
 	DeleteAppSecretGrant(ctx context.Context, id int64) error
 	// AppMayAccessCredential reports whether app appID has a grant for credentialID.
 	AppMayAccessCredential(ctx context.Context, appID, credentialID int64) (bool, error)
+	// SetAppGrantAlias sets (or, with an empty alias, clears) a grant's stable
+	// name. ErrConflict if the app already uses that alias for another grant,
+	// ErrNotFound if the grant does not exist.
+	SetAppGrantAlias(ctx context.Context, grantID int64, alias string) error
+	// AppCredentialByAlias resolves one of app appID's own grants by alias to the
+	// credential id it names. It is scoped to the app on purpose: resolution and
+	// authorization are the same lookup, so an alias can never name a credential
+	// this app was not granted. ErrNotFound when the app has no such alias.
+	AppCredentialByAlias(ctx context.Context, appID int64, alias string) (int64, error)
 }
 
 // ScimStore is the SCIM 2.0 provisioning API's client-key registry (Phase
