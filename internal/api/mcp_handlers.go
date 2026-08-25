@@ -153,7 +153,12 @@ func (s *Server) mcpDispatcher(id *agentid.Identity, sess *mcpSession) mcp.Dispa
 			return map[string]any{}, nil
 		},
 		"tools/list": func(context.Context, json.RawMessage) (any, *mcp.Error) {
-			tools := s.broker.Tools()
+			// Narrowed to what policy could ever allow THIS identity (Phase 204).
+			// The unfiltered registry told every agent that winrm_exec and
+			// reveal_credential exist even when no rule would ever let it near
+			// them — a map of the surface, handed out for free. tools/call is
+			// unchanged and still evaluates policy in full.
+			tools := s.broker.ToolsFor(id)
 			out := make([]map[string]any, 0, len(tools))
 			for _, t := range tools {
 				out = append(out, map[string]any{
