@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–197 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–199 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,42 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 199 — The flaky test, named ✅
+
+`proxy.TestSessionForensicsEndToEnd` failed on the v0.54.0 release PR — a commit
+touching neither the proxy nor forensics — and the failure was **diagnosable on
+sight**, because the assertion prints the whole report: `Scanned:2 Events:[]`.
+The records parsed; the window filter dropped them.
+
+- [x] **The cause, proven rather than guessed.** The fixture stamps its records
+  `msg=audit(<unix>.000:…)` — flooring to a whole second — and is built *before*
+  the session starts. So the record sits at `floor(now)` while the window opens at
+  `now+delta`. `sessionforensics.Parse` keeps events within **one second** either
+  side, so the record survives only while **`frac + delta <= 1s`**, where `frac`
+  is how far into its second the fixture happened to land. Near the end of a
+  second, the flooring throws the record a full second back, past the slack.
+  Failure odds are about `delta / 1s` — ~1% locally, more on a loaded runner
+- [x] **Reproduced deterministically before changing anything**, by driving
+  `Parse` directly across the grid: events survive at `frac`=0/500/950ms with
+  small deltas and vanish at exactly 950ms+60ms, 995ms+13ms and 995ms+60ms —
+  `frac + delta > 1s`, every time, with `Scanned` unchanged at 1
+- [x] **The fixture was the defect, not the product.** Real auditd emits
+  `sec.msec`; writing `.000` threw away up to a second of precision that the
+  window then depended on. The fixture now carries the true millisecond
+  component, which removes the dependency on where in a second the test runs
+  *and* makes it look like what auditd actually writes
+- [x] **The slack is now stated instead of assumed.** `TestWindowSlackEdges`
+  pins Parse's one-second tolerance at its edges — kept at exactly ±1s, dropped
+  beyond — because that tolerance is deliberate (the target's audit clock and
+  pamv1's need not agree to the millisecond) and nothing had ever recorded where
+  it ends. An accidental property that a test quietly leaned on is now a
+  described one
+- [x] **Not the flake §3d is still waiting on.** That one is
+  `TestDBProxyZSPProvisionsAndTearsDownRole`, unreproduced since v0.49.0 and
+  still open with its cause unproven. This is a second, separate flake — and it
+  is the one Phase 179's discipline was built for: the test printed enough to be
+  understood the first time it was seen
 
 ## Phase 197 — pamv1 as an External Secrets Operator backend ✅
 

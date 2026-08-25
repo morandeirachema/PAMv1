@@ -146,7 +146,22 @@ func (u *forensicUpstream) ranForensicCommand() bool {
 // somebody else's session, which must NOT appear in this session's artifact.
 func auditFixture(now time.Time) string {
 	rec := func(ts time.Time, serial, pid, exe, execve string) string {
-		stamp := fmt.Sprintf("msg=audit(%d.000:%s)", ts.Unix(), serial)
+		// Millisecond precision, because auditd emits `sec.msec` and because
+		// writing `.000` here made this test FLAKY — roughly once in a hundred
+		// runs, more on a loaded machine.
+		//
+		// The arithmetic: this fixture is built before the session starts, so the
+		// record's stamp is floor(now) while the window opens at now+delta.
+		// sessionforensics.Parse keeps events within one second of the window, so
+		// the record survives only while frac+delta <= 1s, where frac is how far
+		// into its second `now` happened to fall. Land near the end of a second
+		// and the flooring throws the record a full second back, past the slack,
+		// and the reconstruction comes back empty (`Scanned:2 Events:[]`).
+		//
+		// Keeping the real sub-second component removes the dependency on where
+		// in a second the test happens to run — and makes the fixture look like
+		// what auditd actually writes.
+		stamp := fmt.Sprintf("msg=audit(%d.%03d:%s)", ts.Unix(), ts.Nanosecond()/int(time.Millisecond), serial)
 		return "----\ntype=SYSCALL " + stamp + ": arch=c000003e syscall=59 success=yes exit=0 ppid=1000 pid=" + pid +
 			" auid=1000 uid=0 comm=\"sh\" exe=\"" + exe + "\" key=\"pamv1-exec\"\n" +
 			"type=EXECVE " + stamp + ": " + execve + "\n"
