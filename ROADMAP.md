@@ -2430,8 +2430,18 @@ upgrade note**.
 
 - [ ] **v0.52.0** through the test-gated pipeline, rehearsed on `main` first.
   Published as `ghcr.io/morandeirachema/pamv1:0.52.0` (also `latest`), digest
-  recorded here once the publish workflow runs, verified **public** by anonymous
-  pull, with the `pam-agent` binaries attached as since v0.40.0
+  recorded here **and in README.md's Status block** once the publish workflow
+  runs, verified **public** by anonymous pull, with the `pam-agent` binaries
+  attached as since v0.40.0
+- [x] **README's Status block quoted the wrong image digest for nine releases.**
+  It carried `sha256:0562b828...` — **v0.42.0's** digest, recorded in Phase 158 —
+  while the version label beside it moved through v0.43.0 to v0.51.0, so a reader
+  following "Verifying a release" and comparing digests got a mismatch on a
+  supply-chain check. The structural cause is that the digest-recording pass only
+  ever touched ROADMAP.md: the README's copy could not be right when the release
+  PR was written, because the digest does not exist until the tag is pushed.
+  Fixed by making the README say so and by adding it to the recording step above,
+  which is the only version of this fix that does not drift again
 - [x] All pins via the sweep; Helm chart `version` 0.42.0 -> **0.43.0**
 - [x] **The sweep earned its keep this release.** `deploy/terraform/variables.tf`
   still defaulted `image` to `pamv1:0.28.0` — 23 releases stale, so the module's

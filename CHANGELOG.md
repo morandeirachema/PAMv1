@@ -74,6 +74,15 @@ console screen, no new env var, **no upgrade note**.
   requiring exactly one release to appear — is what found it, which is the
   argument for keeping a check that cannot go stale over a list of places that
   can.
+- **The README quoted the wrong image digest for nine releases.** Its Status
+  block — the one a reader follows to verify a release's provenance — carried
+  `sha256:0562b828...`, which is **v0.42.0's** digest, while the version label
+  beside it moved from v0.43.0 all the way to v0.51.0. The cause is structural:
+  the digest-recording pass that runs after each tag only ever updated
+  `ROADMAP.md`, and the README's copy cannot be correct when the release PR is
+  written because the digest does not exist until the tag is pushed. The README
+  now says the digest is recorded once the workflow has run, and it is part of
+  the recording step, so it moves with the release instead of behind it.
 - **Four releases were unlinkable from the CHANGELOG.** The reference-link block
   at the bottom stopped at `0.47.0`, so the `[0.48.0]`–`[0.51.0]` headings above
   it rendered as literal brackets, and `[Unreleased]` compared against `v0.47.0`.
