@@ -2432,13 +2432,16 @@ test that finally said why.
 startup with no backfill. Two new routes, one new console screen, no new env var,
 **no upgrade note**.
 
-- [ ] **v0.54.0** through the test-gated pipeline. `release.yml` is **unchanged**
+- [x] **v0.54.0** through the test-gated pipeline. `release.yml` was **unchanged**
   since v0.53.0 — the only `.github` edit in the range was `ci.yml`'s kubeconform
-  paths, and `ci.yml` is exercised by every PR — so the v0.11.1 rehearsal rule
-  does not apply. Checked with a diff rather than assumed. Published as
-  `ghcr.io/morandeirachema/pamv1:0.54.0` (also `latest`), digest recorded here
-  **and in README.md's Status block**, verified **public** by anonymous pull,
-  with the `pam-agent` binaries attached as since v0.40.0
+  paths, and `ci.yml` is exercised by every PR — so the v0.11.1 rehearsal rule did
+  not apply. Checked with a diff rather than assumed. Published 2026-08-25 as
+  `ghcr.io/morandeirachema/pamv1:0.54.0` (also `latest`), digest
+  `sha256:92cd2b97d51f915afcb954fe47181562be8d44e1385c7dfaf49763f0da557d30`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same digest),
+  with the `pam-agent` binaries for amd64 and arm64, the SPDX SBOM and
+  `SHA256SUMS` attached. Recorded in README.md's Status block in the same pass —
+  the third release for which that is true
 - [x] All pins via the sweep; Helm chart `version` 0.44.0 -> **0.45.0**
 - [x] Migration high-water **0047 -> 0048**; `store.Store` 215 -> **217** methods;
   routes 191 -> **193**
