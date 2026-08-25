@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–201 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–202 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,35 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 202 — v0.54.1 ✅
+
+A patch, cut because **v0.54.0 is the only release carrying the External Secrets
+Operator backend and it carried a defect in it**. Banking the fix would have left
+the one published image that has the feature as the one with a bug in it — and
+the cluster test this whole path exists for would have been run against exactly
+that image.
+
+No schema change (high-water stays `0048`), no new route, no new env var, no
+upgrade note.
+
+- [ ] **v0.54.1** through the test-gated pipeline. `.github/` is **untouched**
+  since v0.54.0, so the v0.11.1 rehearsal rule does not apply — checked with a
+  diff. Published as `ghcr.io/morandeirachema/pamv1:0.54.1` (also `latest`),
+  digest recorded here **and in README.md's Status block**, verified **public** by
+  anonymous pull
+- [x] All pins via the sweep; Helm chart `version` 0.45.0 -> **0.45.1** (a patch
+  alongside an app patch, unlike the minor bumps a feature release takes)
+- [x] Both READMEs restated; every `Reflects:` header, `docs/README.md` and this
+  banner
+- [x] `CHANGELOG.md`'s entry is **all Fixed and Changed** and says plainly of the
+  alias defect that it is **not an escalation** — the route needs `reveal_secret`,
+  so the caller was already privileged and no access was created that did not
+  exist. Overstating a released defect is its own kind of inaccuracy
+- [x] Follows the precedent of v0.14.2 and v0.14.3, both cut *because* the phase
+  before them was a security fix rather than because a schedule said so
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
 
 ## Phase 201 — The review of 197, and what it found ✅
 
