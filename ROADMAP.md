@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–191 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–192 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,40 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 192 — The toolchain that builds the release was not the one that tested it ✅
+
+Dependabot's Go 1.27 bump (PR #313) moved **both Dockerfiles** to
+`golang:1.27`, and CI went green, because nothing in CI compares the two halves:
+the `docker` job built the image with 1.27 while every test job — and both
+`release.yml` jobs — still pinned `go-version: "1.26"`. Merged as-is that ships a
+container compiled by a toolchain no test ever ran, and, within a single release,
+`pam-agent` binaries built with 1.26 attached beside a container built with 1.27.
+
+Go 1.27.0 is stable (checked, not assumed — `go.dev/dl` lists `go1.27rc1..rc3` as
+non-stable above it), so the image bump is right and it is the **test side** that
+was left behind.
+
+- [x] **All seven pins moved to `1.27`** — five `ci.yml` jobs and both
+  `release.yml` jobs — so the toolchain that compiles what ships is the toolchain
+  that ran the tests
+- [x] **The `actions/go-versions` workaround is deleted, not updated.** It fetched
+  a sha256-pinned `go1.26.6` and put it first on `PATH`, which under a 1.27
+  toolchain is a silent **downgrade** — the step would have quietly undone this
+  phase. Its own comment said to try dropping it before adding a new one, so that
+  is what this does; if the catalog turns out to lag 1.27.0, the fix is a fresh
+  pinned fetch, not a revived 1.26 one
+- [x] **Verified locally on the real toolchain before pushing**, because CI here
+  is the thing being changed: go1.27.0 fetched, sha256-verified against the
+  published digest, and `gofmt` / `go vet` / `go build` / **`go test -race ./...`**
+  run green under it
+- [x] **`go.mod` stays at `go 1.26`** deliberately. That directive is the language
+  floor for anyone consuming the module, not the toolchain that builds it; raising
+  it would force every downstream builder to 1.27 for no benefit this phase needs
+- [x] **The next tag must be rehearsed.** `release.yml` changed, and `ci.yml`
+  never exercises it — the standing rule from v0.11.1, whose pipeline died on the
+  tag after six green checks. Run `gh workflow run release.yml` (bare, no inputs)
+  on `main` before cutting the release that carries this
 
 ## Phase 191 — The answer said what a subject reaches, not whether it could ✅
 

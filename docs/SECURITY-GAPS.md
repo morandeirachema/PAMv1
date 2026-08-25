@@ -9,7 +9,7 @@
 > lives. pamv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-08-25 · Reflects: Phases 0–191 + the 2026-07 hardening
+> Last updated: 2026-08-25 · Reflects: Phases 0–192 + the 2026-07 hardening
 > passes, including the **post-beta sweep of 2026-07-27** (thirty findings, all
 > closed), the **sweep of 2026-08-07** over phases 56–61a (nine findings: two
 > closed by Phase 62, six by Phase 63, half of one withdrawn as a false
@@ -846,6 +846,7 @@ is a phase each, out of scope for a security *fix*:
 
 | Env var | Default | Purpose |
 |---|---|---|
+| 2026-08-25 | **Phase 192 — supply-chain: the release binary was compiled by an untested toolchain.** A Dependabot bump moved both Dockerfiles to `golang:1.27` and CI went green, because nothing compares the build image against the test pins: every test job and both `release.yml` jobs still ran Go 1.26. A release therefore attested a container built by a compiler no test exercised, with `pam-agent` binaries built by a *different* compiler attached beside it. Closed by moving all seven pins to 1.27 and verifying the full `-race` suite on go1.27.0 locally before pushing, since CI itself was the thing under change. Not exploitable on its own — it is a provenance defect, and provenance is most of what a signed release claims |
 | `PAM_TRUSTED_PROXY_HOPS` | `0` | Trusted reverse-proxy hops; picks the client IP from XFF for rate limiting. |
 | `PAM_PROXY_AUTH_RATE_LIMIT` | `10` | Failed-auth throttle per IP/min on the SSH & DB proxies (0 disables). |
 | `PAM_REQUIRE_HTTPS` | `false` | Refuse to start the API/portal without native TLS. |
