@@ -1,5 +1,5 @@
 # Base images are pinned BY DIGEST, not only by tag. A tag is a moving pointer:
-# `golang:1.26-alpine` is a different image next week, so two builds of the same
+# `golang:1.27-alpine` is a different image next week, so two builds of the same
 # commit produce different binaries and neither the SBOM nor the SLSA provenance
 # describes what the other shipped. Dependabot watches this directory weekly and
 # raises the digest, so the pin is maintained rather than merely frozen — which is
