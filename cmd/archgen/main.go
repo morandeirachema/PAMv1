@@ -409,7 +409,10 @@ var guardByWrapper = []struct{ needle, label string }{
 	{"agentAuth(", "agent credential"},
 	{"scimAuth(", "SCIM client key"},
 	{"appAuth(", "application key"},
-	{"rateLimit(", "public (rate-limited)"},
+	// A pre-authentication token that is NOT yet a session: mfaPendingOnly
+	// resolves the presented key and refuses an invalid one, so these routes are
+	// credential-checked even though the sign-in is only half done.
+	{"mfaPendingOnly(", "MFA-pending token"},
 	// The graphical viewer tunnels authenticate from a query-string token
 	// (browsers cannot set headers on a WebSocket handshake), so they carry no
 	// middleware wrapper for the route table to read off.
@@ -439,6 +442,15 @@ var publicRoutes = map[string]string{
 	"GET /share.html":                     "session-share guest page; the session itself needs the token",
 }
 
+// withRateLimit annotates a real scheme with the throttle wrapped around it, so
+// the table shows both facts instead of letting one hide the other.
+func withRateLimit(label string, limited bool) string {
+	if limited {
+		return label + " (rate-limited)"
+	}
+	return label
+}
+
 // routeGuard names what protects one route, and REFUSES to guess.
 //
 // It used to fall back to "public" for any registration it could not classify,
@@ -455,13 +467,29 @@ var publicRoutes = map[string]string{
 // routes as unauthenticated. A genuinely credential-free route says so out loud
 // in publicRoutes, with its reason.
 func routeGuard(method, path, registration string) (string, error) {
+	// rateLimit is a MODIFIER, not a scheme, and must be recognised as one. It
+	// used to sit in guardByWrapper, and because the scan returns on first match
+	// it swallowed whatever it wrapped: `s.rateLimit(s.mfaPendingOnly(...))`
+	// classified as "public (rate-limited)", so both WebAuthn login routes were
+	// published as unauthenticated even though mfaPendingOnly resolves the
+	// presented key and refuses an invalid one. That is the very failure this
+	// generator was rewritten to prevent, reintroduced by the shape of the scan
+	// rather than by a missing entry — so the modifier is now peeled off first
+	// and the thing it wraps is classified on its own.
+	rateLimited := strings.Contains(registration, "rateLimit(")
 	if c := reCap.FindStringSubmatch(registration); c != nil {
-		return "Cap" + c[1], nil
+		return withRateLimit("Cap"+c[1], rateLimited), nil
 	}
 	for _, g := range guardByWrapper {
 		if strings.Contains(registration, g.needle) {
-			return g.label, nil
+			return withRateLimit(g.label, rateLimited), nil
 		}
+	}
+	// Nothing inside it: a genuinely pre-authentication route (login, the SSO
+	// callbacks, break-glass unseal) that is throttled precisely because anyone
+	// may call it.
+	if rateLimited {
+		return "public (rate-limited)", nil
 	}
 	if _, ok := publicRoutes[method+" "+path]; ok {
 		return "public", nil

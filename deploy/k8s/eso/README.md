@@ -59,7 +59,8 @@ exists" — ESO deletes the Kubernetes Secret it manages.** pamv1 therefore answ
 |---|---|---|
 | Granted, alias resolves | `200` | the secret, at `$.secret` |
 | No such alias for this app | `404` | it really is gone; letting ESO clean up is correct |
-| Grant **revoked**, or never granted | `403` | **never 404** — an authorization change must not read as a deletion and delete a running workload's Secret |
+| Grant **revoked** | `404` on the by-alias route | the alias lives on the grant, so revoking it removes the name — **and ESO removes the Secret.** That is intended: revocation propagates, and a plaintext secret left sitting in a Kubernetes Secret after access is withdrawn is the worse outcome |
+| Credential never granted, addressed by id | `403` | a refusal, not a deletion |
 | `PAM_REVEAL_DISABLED` is set | `403` | policy turned delivery off; same reasoning |
 | Bad or missing application key | `401` | |
 
@@ -80,9 +81,12 @@ rest of the infra-bound items. When you do test it, this is what to check:
       `alias:prod-db-password`, once per refresh — and **never the secret itself**.
 - [ ] Rotate the credential in pamv1; after `refreshInterval`, the Kubernetes
       Secret carries the new value.
-- [ ] **Revoke the grant.** The `ExternalSecret` should go to `SecretSyncedError`
-      and the Kubernetes Secret must **still exist** with its last value. If it
-      disappears, pamv1 answered 404 where it should have answered 403 — that is
-      the failure this design exists to prevent, so please report it.
-- [ ] Delete the alias (not the grant). The `ExternalSecret` may then legitimately
-      remove the Secret, because the source really is gone.
+- [ ] **Revoke the grant.** The Kubernetes Secret **is removed** — the alias goes
+      with the grant, the route answers 404, and ESO cleans up. That is the
+      intended behaviour: revocation propagates. Plan for it, because the workload
+      loses the Secret rather than merely stopping refreshes.
+- [ ] **Turn on the reveal kill switch** (`PAM_REVEAL_DISABLED=true`) with the
+      grant intact. This is the case that must **not** delete anything: the
+      `ExternalSecret` should go to `SecretSyncedError` and the Kubernetes Secret
+      must **still exist** with its last value. If it disappears, pamv1 answered
+      404 where it must answer 403 — please report that.
