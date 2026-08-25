@@ -321,18 +321,25 @@ func (m *Memstore) EffectiveTargetGrants(_ context.Context, targetID int64) ([]s
 }
 
 // GrantsForSubjects returns every grant naming any of the given subjects, from
-// both paths (direct grants and safe membership), ordered by target id then
-// grant id. See store.GrantStore for why the question is asked this way round.
+// both paths (direct grants and safe membership), ordered by target id, then by
+// path (grant before safe), then by subject — a SubjectGrant carries no grant id
+// to order by. See store.GrantStore for why the question is asked this way round.
 func (m *Memstore) GrantsForSubjects(_ context.Context, subjects []store.GrantSubject) ([]store.SubjectGrant, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.grantsForSubjectsLocked(subjects), nil
+}
+
+// grantsForSubjectsLocked is GrantsForSubjects' body. The caller holds m.mu, so
+// ReachGrantSnapshot can take both answers without releasing it in between.
+func (m *Memstore) grantsForSubjectsLocked(subjects []store.GrantSubject) []store.SubjectGrant {
 	want := make(map[store.GrantSubject]struct{}, len(subjects))
 	for _, sub := range subjects {
 		want[sub] = struct{}{}
 	}
 	out := make([]store.SubjectGrant, 0)
 	if len(want) == 0 {
-		return out, nil
+		return out
 	}
 	named := func(subjectType, subject string) bool {
 		_, ok := want[store.GrantSubject{Type: subjectType, Name: subject}]
@@ -375,7 +382,7 @@ func (m *Memstore) GrantsForSubjects(_ context.Context, subjects []store.GrantSu
 		}
 		return out[i].Subject < out[j].Subject
 	})
-	return out, nil
+	return out
 }
 
 // GatedTargetIDs returns the ids of targets holding at least one effective
@@ -384,6 +391,11 @@ func (m *Memstore) GrantsForSubjects(_ context.Context, subjects []store.GrantSu
 func (m *Memstore) GatedTargetIDs(_ context.Context) ([]int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.gatedTargetIDsLocked(), nil
+}
+
+// gatedTargetIDsLocked is GatedTargetIDs' body, for the same reason.
+func (m *Memstore) gatedTargetIDsLocked() []int64 {
 	gated := make(map[int64]struct{})
 	for _, g := range m.grants {
 		if _, ok := m.targets[g.TargetID]; ok {
@@ -407,7 +419,17 @@ func (m *Memstore) GatedTargetIDs(_ context.Context) ([]int64, error) {
 		out = append(out, id)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out, nil
+	return out
+}
+
+// ReachGrantSnapshot takes both grant answers under ONE hold of m.mu, so no
+// writer can land between them. It is the in-memory twin of pgstore's read-only
+// REPEATABLE READ transaction — see store.GrantStore for why the pair has to be
+// consistent with each other rather than merely correct one at a time.
+func (m *Memstore) ReachGrantSnapshot(_ context.Context, subjects []store.GrantSubject) ([]store.SubjectGrant, []int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.grantsForSubjectsLocked(subjects), m.gatedTargetIDsLocked(), nil
 }
 
 // CreateSafe inserts a safe, assigning ID and CreatedAt.

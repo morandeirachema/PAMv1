@@ -86,10 +86,24 @@ const (
 	// blockedQuarantined: the identity is under the agent stop-switch (Phase
 	// 159) — the one containment control that covers every agent kind.
 	blockedQuarantined = "quarantined"
+	// blockedQuarantineUnknown: the quarantine table could not be read, so
+	// whether this agent is stopped is unknown. Reported rather than swallowed —
+	// an empty blocked list means "nothing stops this subject", and a failed read
+	// is not evidence of that.
+	blockedQuarantineUnknown = "quarantine_unknown"
 	// blockedNotEnrolled: an attested identity recorded on sight but claimed by
-	// nobody (Phase 174), refused at the door wherever
-	// PAM_BROKER_REQUIRE_ENROLLED_SVID is on.
+	// nobody (Phase 174). Reported ONLY when PAM_BROKER_REQUIRE_ENROLLED_SVID is
+	// on, because that flag is the only thing that turns "unclaimed" into
+	// "refused" — with it off (the default) an unenrolled identity authenticates
+	// perfectly well, and saying otherwise would understate its reach, which is
+	// the failure mode this whole field exists to prevent.
 	blockedNotEnrolled = "not_enrolled"
+	// blockedBudgetZero: an agent key with an explicit per-day budget of ZERO —
+	// not "unset", which is nil and takes the server default, but a deliberate
+	// administrative hard stop of no brokered calls at all (see
+	// store.AgentKey.BudgetPerDay). It stops the subject exactly as a disabled
+	// key does.
+	blockedBudgetZero = "budget_zero"
 )
 
 // subjectReach answers GET /api/access/reach?subject=<name>&kind=user|agent —
@@ -234,11 +248,18 @@ func (s *Server) subjectReach(w http.ResponseWriter, r *http.Request) {
 // covers an agent no registry lists, which is exactly the case where a reviewer
 // most needs to be told.
 func (s *Server) lookupAgentSubject(ctx context.Context, subject string) (agentKind, owner string, known bool, blocked []string) {
-	if q, err := s.store.IsAgentQuarantined(ctx, subject); err == nil && q {
+	switch q, err := s.store.IsAgentQuarantined(ctx, subject); {
+	case err != nil:
+		// Quarantine is a CONTAINMENT state, not attribution detail. An
+		// unreadable registry may safely degrade to "no owner recorded"; an
+		// unreadable quarantine table must not degrade to "nothing stops this
+		// agent", which is the reading an absent flag invites. Say it is unknown.
+		blocked = append(blocked, blockedQuarantineUnknown)
+	case q:
 		blocked = append(blocked, blockedQuarantined)
 	}
 	if id, err := s.store.GetAgentIdentity(ctx, subject); err == nil && id != nil {
-		if !id.Enrolled {
+		if s.brokerRequireEnrolledSVID && !id.Enrolled {
 			blocked = append(blocked, blockedNotEnrolled)
 		}
 		return "identity", id.Owner, true, blocked
@@ -247,15 +268,24 @@ func (s *Server) lookupAgentSubject(ctx context.Context, subject string) (agentK
 	if err != nil {
 		return "", "", false, blocked
 	}
+	now := time.Now()
 	for i := range keys {
 		if keys[i].Name != subject {
 			continue
 		}
-		if keys[i].Disabled {
-			blocked = append(blocked, blockedKeyDisabled)
+		// Decomposed from store.AgentKey.Active rather than re-derived: that
+		// method IS the predicate the auth path uses, and a second copy of a
+		// security comparison written by hand is how the two ends up disagreeing
+		// at the boundary instant.
+		if !keys[i].Active(now) {
+			if keys[i].Disabled {
+				blocked = append(blocked, blockedKeyDisabled)
+			} else {
+				blocked = append(blocked, blockedKeyExpired)
+			}
 		}
-		if keys[i].ExpiresAt != nil && keys[i].ExpiresAt.Before(time.Now()) {
-			blocked = append(blocked, blockedKeyExpired)
+		if keys[i].BudgetPerDay != nil && *keys[i].BudgetPerDay == 0 {
+			blocked = append(blocked, blockedBudgetZero)
 		}
 		return "key", keys[i].Owner, true, blocked
 	}

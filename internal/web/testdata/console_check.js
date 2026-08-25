@@ -391,12 +391,15 @@ const screens = [
         subject: long ? LONG : "planner", kind: "agent", agent_kind: "identity",
         known: !long, owner: long ? LONGNAME : "alice",
         roles: [long ? LONGNAME : "agent"],
-        // Phase 191: the subject's own state. Every reason at once, so each
-        // branch of blockedText renders, and the long variant proves the joined
-        // line wraps rather than pushing the screen sideways.
+        // Phase 191/193: the subject's own state, every reason at once so each
+        // branch of blockedText evaluates. Note what this does and does NOT
+        // cover: rowWidths measures <tr> content only, and the blocked line is a
+        // <div> outside the table, so nothing here asserts its width — it proves
+        // the branches render without throwing, which is what caught nothing and
+        // is still worth having. Say so rather than let the comment claim more.
         blocked: long
           ? ["no_usable_capability", "deactivated", "key_disabled", "key_expired",
-             "quarantined", "not_enrolled"]
+             "quarantined", "not_enrolled", "budget_zero", "quarantine_unknown"]
           : ["key_disabled"],
         total: 5,
         counts: { grant: 1, safe: 1, open: 1, admin: 1, unlimited_vault_access: 1 },

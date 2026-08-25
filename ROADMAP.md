@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–192 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–193 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,59 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 193 — The flags that were themselves wrong ✅
+
+A review of Phase 191, which existed because the reach answer **overstated** what
+a subject could do. Its own headline flag got the direction backwards, and four
+smaller ones were wrong in ways worth writing down rather than quietly patching.
+
+- [x] **`not_enrolled` was reported unconditionally, and only *blocks* when
+  `PAM_BROKER_REQUIRE_ENROLLED_SVID` is on — which defaults to `false`.** So on a
+  default deployment an attested identity pamv1 recorded on sight and nobody has
+  claimed *can* call the broker and reach every ungated target — the case Phase
+  189 called "the finding" — while menu 31 printed a red *"Cannot use this reach
+  right now: attested identity not enrolled."* A reviewer read the highest-risk
+  row as already neutralised. That is the **understating** direction, exactly
+  inverse to the phase's purpose. Now gated on the flag, with a test for each side
+- [x] **The read reorder traded one race for its mirror; both are closed now.**
+  Phase 191 read grants before the gated set, which fixed "a newly restricted
+  target is reported OPEN" and introduced "revoking THIS subject's grant on a
+  target other grants still hold reports it reachable via a grant that no longer
+  exists" — and `agentVisibleTargets` runs on this path, so that named a
+  just-revoked target in an agent's own inventory. **Ordering cannot win**: the
+  pair is only meaningful against itself. New `GrantStore.ReachGrantSnapshot`
+  returns both from one consistent view — a read-only **REPEATABLE READ**
+  transaction in pgstore (READ COMMITTED would not do: it re-snapshots per
+  *statement*, which is precisely the split), one lock hold in memstore.
+  `store.Store` 214 -> 215 methods; `ReachableTargets` is now three reads, not four
+- [x] **The invariant is pinned by concurrent writers, not by argument.**
+  `TestReachGrantSnapshotUnderWriters` hammers create/delete on a grant while
+  reading, and asserts the one property only a snapshot can hold: **every target a
+  returned grant names must be in the same answer's gated set**, because a grant
+  IS what gates a target. Verified by reverting to two separate locked calls,
+  where it fails with exactly that mirror row. `storetest` checks parity + the
+  same invariant against **both** backends
+- [x] **The expiry comparison was a second copy of a security predicate.**
+  `ExpiresAt.Before(now)` marks a key expired at `now > exp`, while the
+  authoritative `store.AgentKey.Active` uses `now.Before(exp)` — expired at
+  `now >= exp`. They disagreed at exactly the boundary instant. The handler now
+  decomposes `Active(now)` instead of re-deriving it
+- [x] **A failed quarantine read no longer renders as "nothing stops this agent".**
+  It was `err == nil && q`, so a transient store error produced an empty
+  `blocked` — indistinguishable from a clean bill of health. Quarantine is a
+  containment state, not attribution detail: new `quarantine_unknown` reason,
+  matching `noteSVID`'s own stance that an unreadable registry cannot be read as
+  enrolled
+- [x] **A zero per-day budget is a hard stop and was missing.**
+  `AgentKey.BudgetPerDay` is a pointer precisely so `0` means "may make NO calls
+  at all" rather than "unset" — a fact about the subject that makes the total an
+  overstatement exactly as `key_disabled` does. New `budget_zero` reason
+- [x] Two comments corrected rather than left flattering: memstore still claimed
+  the "ordered by target id then grant id" that Phase 191 fixed on the interface
+  only, and the console fixture claimed to prove the blocked line wraps when
+  `rowWidths` measures `<tr>` content and that line is a `<div>` — it proves the
+  branches evaluate, which is worth having and is now what it says
 
 ## Phase 192 — The toolchain that builds the release was not the one that tested it ✅
 
