@@ -3,6 +3,7 @@ package sessionforensics_test
 import (
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -187,4 +188,53 @@ func TestArgvTruncationIsVisible(t *testing.T) {
 	if len(rep.Events[0].Argv[1]) != len(huge) {
 		t.Fatal("the parsed argument itself must not be truncated")
 	}
+}
+
+// TestWindowSlackEdges states, rather than assumes, where Parse's window ends.
+//
+// Parse keeps an event within ONE SECOND either side of the session, because the
+// target's audit clock and pamv1's need not agree to the millisecond. That slack
+// is deliberate — but its edges were never pinned, and a test fixture that
+// rounded its timestamps down to a whole second quietly depended on them: the
+// record survived only while the rounding loss plus the setup delay stayed under
+// the slack, which made an end-to-end proxy test fail roughly once in a hundred
+// runs (see internal/proxy/forensics_test.go).
+//
+// So: inside the slack is kept, outside is dropped, and both are checked at the
+// boundary rather than in the comfortable middle.
+func TestWindowSlackEdges(t *testing.T) {
+	start := time.Date(2026, 8, 25, 12, 0, 10, 0, time.UTC)
+	end := start.Add(2 * time.Second)
+
+	for _, tc := range []struct {
+		name string
+		at   time.Time
+		keep bool
+	}{
+		{"inside the session", start.Add(time.Second), true},
+		{"just before the start, within slack", start.Add(-900 * time.Millisecond), true},
+		{"a full second before the start, the exact edge", start.Add(-time.Second), true},
+		{"beyond the slack before the start", start.Add(-1100 * time.Millisecond), false},
+		{"a full second after the end, the exact edge", end.Add(time.Second), true},
+		{"beyond the slack after the end", end.Add(1100 * time.Millisecond), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rep := sessionforensics.Parse(execveRecord(tc.at, "id"), start, end, 0)
+			if rep.Scanned != 1 {
+				t.Fatalf("the record must parse regardless of the window: scanned=%d", rep.Scanned)
+			}
+			if got := len(rep.Events) == 1; got != tc.keep {
+				t.Errorf("event at %s: kept=%v, want %v", tc.at.Format(time.RFC3339Nano), got, tc.keep)
+			}
+		})
+	}
+}
+
+// execveRecord writes one ausearch-shaped exec record at ts, with the
+// millisecond component auditd actually emits.
+func execveRecord(ts time.Time, cmd string) string {
+	stamp := fmt.Sprintf("msg=audit(%d.%03d:9001)", ts.Unix(), ts.Nanosecond()/int(time.Millisecond))
+	return "----\ntype=SYSCALL " + stamp + ": arch=c000003e syscall=59 success=yes exit=0 ppid=1 pid=7" +
+		" auid=1000 uid=0 comm=\"sh\" exe=\"/bin/sh\" key=\"pamv1-exec\"\n" +
+		"type=EXECVE " + stamp + ": argc=1 a0=\"" + cmd + "\"\n"
 }
