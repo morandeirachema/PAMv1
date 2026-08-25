@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–200 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–201 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,66 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 201 — The review of 197, and what it found ✅
+
+A `/code-review high` over v0.54.0's own contents, run after it was released. It
+found eight things in Phase 197 — code written one phase earlier, by the same
+reviewer discipline that had just caught two other phases' defects. Two were
+serious, and one of them made a claim in the operator checklist untrue.
+
+- [x] **`setAppGrantAlias` ignored `{id}` entirely.** The route is
+  `POST /v1/apps/{id}/grants/{gid}/alias`, and the handler parsed only `gid`. So
+  naming grant 14 under application 7 renamed **application 12's** grant and
+  answered `200`: a mistyped or stale id handed a different application a stable,
+  git-committable name for a credential nobody meant to expose, while the
+  operator read success. `deleteAppSecretGrant` scopes correctly and documents
+  why; this handler simply did not. Now it loads the app's own grants and 404s
+  otherwise, with `TestAliasSetIsScopedToTheNamedApp` as the guard — **verified by
+  removing the check and watching it fail with the planted alias**
+- [x] **The whole Phase 197 store contract never ran, on either backend.**
+  `appAliasFixture` needed two existing credentials and returned nil otherwise —
+  and at that point the contract has created exactly one, so `SetAppGrantAlias`,
+  `AppCredentialByAlias`, the per-app scoping and every `ErrNotFound` case were
+  unverified while the suite stayed green. A fixture that opts itself out on a
+  condition nobody checks is worse than no fixture. It now creates what it needs
+  and cannot skip
+- [x] **The 403-never-404 promise did not hold on the route ESO actually calls.**
+  The alias lives on the grant, so revoking the grant destroys the alias and the
+  by-alias route answers **404** — which removes the workload's Kubernetes Secret.
+  The comment asserted the opposite, and the subtest named *"revoked grant is 403,
+  never 404"* quietly checked the **id** route instead. **The behaviour is right;
+  the claim was wrong**: revocation *should* propagate, and a plaintext secret
+  left in a Kubernetes Secret after access is withdrawn is the worse outcome. What
+  must never delete is a *transient* refusal — the reveal kill switch — and that
+  now has its own test on the alias route. The comment, the test names and the
+  operator checklist all say what actually happens
+- [x] **`rateLimit(` was a needle in `guardByWrapper`, and the scan returns on
+  first match** — so it swallowed whatever it wrapped. `s.rateLimit(s.mfaPendingOnly(...))`
+  classified as `public (rate-limited)`, publishing both WebAuthn login routes as
+  unauthenticated even though `mfaPendingOnly` resolves the presented key and
+  refuses an invalid one. **That is precisely the failure Phase 195 rewrote this
+  generator to prevent, reintroduced by the shape of the scan rather than by a
+  missing entry.** rateLimit is now peeled off as a *modifier* and the thing it
+  wraps is classified on its own, with the nested cases pinned
+- [x] **A 3.7 MB compiled Linux binary was committed at the repo root** since
+  Phase 195 — `go build ./cmd/archgen` writes exactly that path, and CLAUDE.md
+  tells every contributor to run archgen, so the next one would get a dirty tree
+  and could re-commit a stale executable. Removed, and `/archgen` added to
+  `.gitignore` so it cannot come back
+- [x] The alias audit detail gains the application id (it recorded only the
+  grant, which after the scoping bug was not even the app in the URL); the ESO
+  `SecretStore` now says plainly that the reference deployment serves **plain
+  HTTP** on 8080 while the manifest is `https://`, and what to do about it — left
+  as `https://` on purpose, because this endpoint hands out plaintext secrets and
+  defaulting the example to `http://` would make the insecure path the easy one;
+  and two doc comments that had been displaced onto the wrong functions are back
+  where they belong
+
+**All of this shipped in v0.54.0.** None of it is an unprivileged escalation —
+the alias route needs `CapRevealSecret` — but a released version answers `200`
+to an operation it did not perform on the object named, and that is worth a
+prompt fix rather than a wait for the next feature.
 
 ## Phase 200 — v0.54.0 ✅
 
