@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-08-25 · Reflects: Phases 0–205 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-08-26 · Reflects: Phases 0–206 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -338,6 +338,8 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_BROKER_POSTURE_REQUIRED` | | `false` | Ask the posture webhook about **agent** identities too, not only human operators. **Needs `PAM_POSTURE_ATTEST_URL`** — pamv1 refuses to start with this on and no webhook to ask. Off by default: a webhook that answers about laptops has never heard of an agent name. |
 | `PAM_BROKER_REQUIRE_KNOWN_OWNER` | | `false` | Refuse a broker approval when the calling agent's owner is not a pamv1 user. Off by default — an unrecognised owner is audited as `broker.approval.four_eyes_unverified` instead. Like every broker refusal, it needs the broker enabled (`PAM_BROKER_POLICY_FILE`) or startup fails. |
 | `PAM_BROKER_REQUIRE_ENROLLED_SVID` | | `false` | Refuse a SPIFFE-attested agent whose identity has not been **enrolled** (an owner recorded for it). Off by default. Static agent keys are unaffected. **Needs `PAM_BROKER_TRUST_DOMAIN_JWKS`** — pamv1 refuses to start with this on and no SVID path to gate. |
+| `PAM_BROKER_REQUIRE_POP` | | `false` | Refuse a SPIFFE-attested agent whose token is not **bound to a key** (RFC 7800 `cnf` + RFC 9449 proof of possession). Off by default — turning it on refuses every unbound token already in circulation, so bind first and switch after. **Needs `PAM_BROKER_TRUST_DOMAIN_JWKS`** — pamv1 refuses to start with this on and no SVID path to gate. Static agent keys carry no claims and are unaffected. |
+| `PAM_BROKER_PUBLIC_URL` | | *(derived)* | The base origin agents address the broker at, e.g. `https://pam.example.com`. Used to check a proof's `htu` claim. **Set this whenever anything terminates TLS in front of pamv1** — otherwise the request arrives as plain http on an internal name while the client signed the external URL, and every key-bound agent is refused. Must be a bare origin, no path. |
 | `PAM_BROKER_TOKEN_TTL_MIN` | | `15` | Maximum lifetime of a single-use approval resume token, and of the parked call it collects (minutes). A policy rule's `ttl_seconds` may narrow it per call, never extend it. |
 | `PAM_BROKER_RATE_PER_MIN` | | `0` (off) | Per-agent tool-call rate limit. |
 | `PAM_BROKER_MAX_ARG_BYTES` | | `16384` | Cap on a tool call's serialized arguments (0 = off). |
@@ -2432,6 +2434,61 @@ on. Static agent keys are unaffected; pamv1 issued those itself.
 trust domain already decided that — and proves nothing about the process holding
 the SVID. Cryptographic workload attestation (SPIRE) stays external; see
 [EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md).
+
+#### Binding a delegated token to a key (proof of possession)
+
+A token the broker mints is, by default, a **bearer** credential: whoever holds
+the string is that sub-agent until it expires. If one leaks — a log line, a
+crashed process's environment, an over-broad container mount — the leak is the
+compromise. Binding removes that.
+
+Give the sub-agent a key pair (Ed25519, P-256 or RSA), compute the RFC 7638
+thumbprint of its **public** key, and pass it when you mint:
+
+```bash
+curl -s -X POST "$PAM/v1/token" \
+  -H "Authorization: Bearer $DELEGATOR_SVID" \
+  -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+  -d actor_token="$SUBAGENT_SVID" \
+  -d cnf_jkt="$SUBAGENT_JKT"
+```
+
+The issued token now carries `cnf: {"jkt": "…"}`, and **every call presenting it
+must also send a `DPoP` header** — a short JWT signed by the matching private
+key, naming this request's method (`htm`) and URI (`htu`), the SHA-256 of the
+token itself (`ath`), a fresh `iat` and a one-use `jti`. Any standard DPoP client
+library produces it; the shape is RFC 9449 §4.2. The token may be presented as
+`Authorization: DPoP <token>` or `Authorization: Bearer <token>` — pamv1 reads
+the binding from the token, never from the header word.
+
+Three behaviours worth knowing before you turn this on:
+
+- **A bound token cannot delegate to an unbound one.** If the delegator's own
+  token carries a `cnf`, `cnf_jkt` is required on the next exchange. Otherwise
+  the constraint could be walked off at the next hop.
+- **A proof is single-use.** Headers are not secret, so a captured proof would
+  otherwise be replayable; the second use is refused.
+- **`PAM_BROKER_PUBLIC_URL` is not optional behind a proxy.** The proof is signed
+  over the URL the *client* used. If anything terminates TLS in front of pamv1,
+  set it, or every bound agent is refused with `reason:proof-uri-mismatch`.
+
+**To require binding**, set `PAM_BROKER_REQUIRE_POP=true`: an SVID-authenticated
+agent whose token carries no `cnf` is refused (`agent.pop_denied`,
+`reason:token-not-key-bound`). Same ordering advice as enrollment — bind the
+tokens first, then set the flag. Unbound tokens are completely unaffected until
+you do, so upgrading changes nothing on its own.
+
+**What this is not.** The *delegator* names the key, and pamv1 cannot check that
+the key belongs to the sub-agent rather than to the delegator itself. What you
+get is that a token lifted off the wire or out of a log is useless without the
+private key — theft, contained. Binding a credential to the process holding it is
+workload attestation, and stays SPIRE's job.
+
+Audit: `agent.pop_denied`, whose `reason:` names which check failed
+(`proof-header-missing`, `proof-replayed`, `proof-not-bound-to-this-token`,
+`proof-key-is-not-the-bound-key`, `proof-uri-mismatch`, `token-not-key-bound`, …).
+The caller is told only "invalid or missing agent credential" — the reason is for
+you, not for whoever is holding the token.
 
 Audit: `agent.identity_register` · `agent.identity_owner_set` ·
 `agent.identity_remove` · `agent.identity_first_seen` · `agent.identity_enrolled` ·

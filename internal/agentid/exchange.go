@@ -29,6 +29,10 @@ package agentid
 //	             never outlives the authority it came from.
 //	on_behalf_of the accountable party, informational only — the verifier
 //	             recomputes it from the chain and never trusts the claim.
+//	cnf          RFC 7800 confirmation, present only when the delegator asked for
+//	             it (`cnf_jkt`): the thumbprint of the key whose holder may
+//	             present this token. It is what makes the token stop being a
+//	             bearer credential — see pop.go.
 //
 // WHAT IT REFUSES, and why each refusal is load-bearing:
 //
@@ -45,6 +49,11 @@ package agentid
 //     mint, not only at ingress, so a runaway sub-agent spawn stops here rather
 //     than producing tokens that are refused later.
 //   - AN ACTOR THE SUBJECT DID NOT ALLOW (`may_act`, RFC 8693 §4.4).
+//   - AN UNBOUND TOKEN MINTED FROM A BOUND ONE. If the delegator's own token
+//     carries a `cnf`, the token it mints must carry one too. Otherwise the
+//     first hop of a sender-constrained chain could hand its authority to a
+//     plain bearer token, and the constraint would evaporate exactly where the
+//     chain got longer and harder to watch.
 
 import (
 	"context"
@@ -195,6 +204,19 @@ type ExchangeRequest struct {
 	// than passed off as standard. The delegator is the right party to set it —
 	// it is constraining an authority it is itself handing over.
 	MayAct []string
+	// CnfJKT binds the minted token to a key (Phase 206): the RFC 7638
+	// thumbprint that becomes its RFC 7800 `cnf.jkt`, so presenting the token
+	// takes a signature from the matching private key and not just the token.
+	// Empty leaves the token an ordinary bearer credential — unless the
+	// delegator's own token is bound, in which case Exchange refuses.
+	//
+	// A pamv1 EXTENSION, like MayAct: RFC 8693 defines no request parameter for
+	// a confirmation key, and RFC 9449's own binding flow has the CLIENT prove
+	// its key to the token endpoint — which cannot apply here, because the party
+	// calling the exchange is the delegator, not the sub-agent that will hold
+	// what it mints. So the delegator names the key. See pop.go for exactly what
+	// that does and does not establish.
+	CnfJKT string
 }
 
 // ParseExchangeForm parses an `application/x-www-form-urlencoded` body into an
@@ -225,6 +247,7 @@ func ParseExchangeForm(values map[string][]string) (*ExchangeRequest, error) {
 		{"requested_token_type", &req.RequestedTokenType},
 		{"audience", &req.Audience},
 		{"scope", &req.Scope},
+		{"cnf_jkt", &req.CnfJKT},
 	} {
 		v, err := single(f.name)
 		if err != nil {
@@ -352,6 +375,24 @@ func (x *Exchanger) Exchange(ctx context.Context, req *ExchangeRequest, delegato
 		return nil, merr
 	}
 
+	// Sender-constraining the minted token (Phase 206, RFC 7800 + RFC 9449).
+	// Two rules, both of them about not losing a constraint quietly:
+	//   - a supplied thumbprint must be well formed, because a token bound to a
+	//     value no key can produce is a token nobody can ever use, and a client
+	//     that typo'd its thumbprint should be told rather than handed a dead
+	//     credential;
+	//   - a bound delegator may not mint an unbound token. Binding is a property
+	//     of a CHAIN, not of a single hop: allowing the downgrade would let the
+	//     holder of a stolen-but-useless bound token exchange it for a usable
+	//     bearer one, which is the whole attack the binding was there to stop.
+	if req.CnfJKT != "" && !ValidThumbprint(req.CnfJKT) {
+		return nil, exchangeErr("invalid_request", "cnf_jkt must be a base64url SHA-256 JWK thumbprint")
+	}
+	if req.CnfJKT == "" && delegator.ConfirmationKey != "" {
+		return nil, exchangeErr("invalid_request",
+			"cnf_jkt is required: a key-bound token may not delegate to an unbound one")
+	}
+
 	claims := map[string]any{
 		"iss": x.issuer,
 		"sub": actor.SPIFFEID,
@@ -371,6 +412,10 @@ func (x *Exchanger) Exchange(ctx context.Context, req *ExchangeRequest, delegato
 		} else {
 			claims["may_act"] = map[string]any{"sub": mayAct}
 		}
+	}
+	if req.CnfJKT != "" {
+		// RFC 7800 §3.1's shape, carrying RFC 9449 §6.1's `jkt` member.
+		claims["cnf"] = map[string]any{"jkt": req.CnfJKT}
 	}
 	if delegator.OnBehalfOf != "" {
 		claims["on_behalf_of"] = delegator.OnBehalfOf
@@ -396,10 +441,10 @@ func (x *Exchanger) Exchange(ctx context.Context, req *ExchangeRequest, delegato
 		// allowed to be delegated to" should not have to hold the token to find
 		// out. Absent when unpinned, so the field's presence is itself the
 		// signal that somebody narrowed it.
-		Audit: fmt.Sprintf("actor:%s delegator:%s on_behalf_of:%s chain:%s jti:%s expires_in:%d%s",
+		Audit: fmt.Sprintf("actor:%s delegator:%s on_behalf_of:%s chain:%s jti:%s expires_in:%d%s%s",
 			auditfmt.Field(actor.SPIFFEID, 128), auditfmt.Field(delegator.SPIFFEID, 128),
 			auditfmt.Field(delegator.OnBehalfOf, 128), auditfmt.Field(strings.Join(chain, ">"), 256),
-			auditfmt.Field(jti, 64), ttlSec, mayActField(mayAct)),
+			auditfmt.Field(jti, 64), ttlSec, mayActField(mayAct), cnfField(req.CnfJKT)),
 	}, nil
 }
 
@@ -410,6 +455,20 @@ func mayActField(mayAct []string) string {
 		return ""
 	}
 	return " may_act:" + auditfmt.Field(strings.Join(mayAct, ","), 256)
+}
+
+// cnfField renders the audit suffix naming the key an issued token is bound to,
+// or "" when it is an ordinary bearer token.
+//
+// A thumbprint is a public value — it is a hash of a public key — so recording
+// it leaks nothing, and it is the field that lets an investigator tell a stolen
+// token that could be used from one that could not. Its ABSENCE is the more
+// interesting signal of the two.
+func cnfField(jkt string) string {
+	if jkt == "" {
+		return ""
+	}
+	return " cnf_jkt:" + auditfmt.Field(jkt, ThumbprintLen)
 }
 
 // maxMayAct bounds how many parties one token may name. A pin that lists

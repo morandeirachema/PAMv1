@@ -530,6 +530,17 @@ type Config struct {
 	// merely unrecognised is audited rather than blocked. On, the deployment is
 	// saying that four-eyes it cannot verify is four-eyes it will not accept.
 	BrokerRequireKnownOwner bool
+	// BrokerRequirePoP — PAM_BROKER_REQUIRE_POP — refuse an SVID-authenticated
+	// agent whose token is not key-bound (RFC 7800 `cnf`, Phase 206), making
+	// sender-constrained tokens mandatory instead of merely available. Off by
+	// default: turning it on refuses every unbound token already in circulation.
+	// Static agent keys carry no claims and are exempt by construction.
+	BrokerRequirePoP bool
+	// BrokerPublicURL — PAM_BROKER_PUBLIC_URL — the base URL agents address the
+	// broker at (e.g. https://pam.example.com), used to check an RFC 9449 proof's
+	// `htu` claim. Unset derives it per request, which is wrong behind a
+	// TLS-terminating proxy. Must be an absolute http(s) URL with no path.
+	BrokerPublicURL string
 	// BrokerPostureRequired — PAM_BROKER_POSTURE_REQUIRED — also ask the posture
 	// webhook about AGENT identities, not only human operators (Phase 180).
 	// Separate from PAM_POSTURE_ATTEST_URL on purpose: a deployment that has been
@@ -883,6 +894,8 @@ func Load() (*Config, error) {
 		BrokerRequireEnrolledSVID:  boolean("PAM_BROKER_REQUIRE_ENROLLED_SVID", false),
 		BrokerRequireKnownOwner:    boolean("PAM_BROKER_REQUIRE_KNOWN_OWNER", false),
 		BrokerPostureRequired:      boolean("PAM_BROKER_POSTURE_REQUIRED", false),
+		BrokerRequirePoP:           boolean("PAM_BROKER_REQUIRE_POP", false),
+		BrokerPublicURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("PAM_BROKER_PUBLIC_URL")), "/"),
 		BrokerRatePerMin:           integer("PAM_BROKER_RATE_PER_MIN", 0),
 		BrokerCheckpointEvery:      integer("PAM_BROKER_AUDIT_CHECKPOINT_EVERY", 0),
 		BrokerAuditSignPrev:        getenv("PAM_BROKER_AUDIT_SIGN_PREV", ""),
@@ -1038,6 +1051,25 @@ func Load() (*Config, error) {
 	if cfg.BrokerPostureRequired && cfg.PostureAttestURL == "" {
 		errs = append(errs, "PAM_BROKER_POSTURE_REQUIRED needs PAM_POSTURE_ATTEST_URL: there is no posture system to ask")
 	}
+	// Same shape again for proof of possession (Phase 206): it constrains
+	// SVID-authenticated agents, so without an SVID verifier it is a refusal that
+	// can never fire — and an operator reading it would believe the agent fleet
+	// was sender-constrained when nothing was.
+	if cfg.BrokerRequirePoP && cfg.BrokerTrustDomainJWKS == "" {
+		errs = append(errs, "PAM_BROKER_REQUIRE_POP needs PAM_BROKER_TRUST_DOMAIN_JWKS: without it no agent authenticates with an SVID, so there is no token that could carry a key binding")
+	}
+	// The origin a proof is checked against must be an ORIGIN. A value with a
+	// path, a query or a missing scheme would silently never match any request,
+	// refusing every bound agent with nothing in the config to point at.
+	if cfg.BrokerPublicURL != "" {
+		u, err := url.Parse(cfg.BrokerPublicURL)
+		switch {
+		case err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https"):
+			errs = append(errs, fmt.Sprintf("PAM_BROKER_PUBLIC_URL %q must be an absolute http(s) URL, e.g. https://pam.example.com", cfg.BrokerPublicURL))
+		case u.Path != "" || u.RawQuery != "" || u.Fragment != "":
+			errs = append(errs, fmt.Sprintf("PAM_BROKER_PUBLIC_URL %q must be a bare origin with no path, query or fragment", cfg.BrokerPublicURL))
+		}
+	}
 	// The broker's own knobs, checked as a group so a future one is covered by
 	// adding a line here rather than by remembering to. Numeric caps are
 	// harmless when the broker is off; these three are refusals, and a refusal
@@ -1050,6 +1082,7 @@ func Load() (*Config, error) {
 			{"PAM_BROKER_REQUIRE_KNOWN_OWNER", cfg.BrokerRequireKnownOwner},
 			{"PAM_BROKER_REQUIRE_ENROLLED_SVID", cfg.BrokerRequireEnrolledSVID},
 			{"PAM_BROKER_POSTURE_REQUIRED", cfg.BrokerPostureRequired},
+			{"PAM_BROKER_REQUIRE_POP", cfg.BrokerRequirePoP},
 		} {
 			if k.set {
 				errs = append(errs, k.name+" needs the agent broker enabled (PAM_BROKER_POLICY_FILE)")

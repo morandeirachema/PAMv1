@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–205 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–206 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,100 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 206 — A stolen delegated token stops being enough ✅
+
+The first of §3b's "smaller, named" limits, and the one that decided how much
+the rest of the delegation machinery was worth: a token this broker minted was a
+**bearer** credential. Phase 181 let a delegator pin who may act for it NEXT;
+nothing said anything about who is holding it NOW. Anything that captured one —
+a proxy log, a crashed agent's environment, an over-broad container mount, a
+transcript — could be that sub-agent until it expired.
+
+RFC 9449 ([DPoP](https://datatracker.ietf.org/doc/html/rfc9449)) is the answer
+the standards already have, over RFC 7800's `cnf` claim
+([RFC 7800](https://datatracker.ietf.org/doc/html/rfc7800)) and RFC 7638's JWK
+thumbprint ([RFC 7638](https://datatracker.ietf.org/doc/html/rfc7638), OKP
+members from [RFC 8037 §2](https://datatracker.ietf.org/doc/html/rfc8037#section-2)).
+
+- [x] **`cnf_jkt` at the mint.** `POST /v1/token` accepts the thumbprint of the
+  key the sub-agent holds and stamps it into the issued token as
+  `cnf: {jkt: …}`. A pamv1 EXTENSION, documented as one — RFC 8693 defines no
+  such request parameter, and RFC 9449's own binding flow has the CLIENT prove
+  its key to the token endpoint, which cannot apply here because the party
+  calling the exchange is the **delegator**, not the sub-agent that will hold
+  what it mints
+- [x] **A proof on every call.** `internal/agentid/pop.go` verifies the `DPoP`
+  header against RFC 9449 §4.3 in the RFC's own order: `typ`, a closed
+  asymmetric `alg` set, no private material in the embedded JWK, the signature,
+  `htm`/`htu`, `iat` freshness, `ath` (this token, not another), and finally the
+  thumbprint against what the token was bound to. It **reuses svid.go's**
+  `publicKeyFromJWK` and `verifySignature` rather than growing a second, subtly
+  different verifier — two copies of one security check drifting apart is a
+  failure this repo has already had
+- [x] **A proof is single-use.** Headers are not secret, so token and proof are
+  captured together; a bounded, TTL-swept cache refuses the second use. Its
+  quota is **per presenting key**, not global, because a cache that EVICTS to
+  make room forgets exactly the entry an attacker wants forgotten — so it fails
+  closed, and only for the key that filled its own quota. The replay entry is
+  written **last**, after every other check passes, or a forged proof carrying a
+  guessed `jti` could poison the id the legitimate proof was about to use
+- [x] **Binding does not evaporate down the chain.** A delegator whose own token
+  is bound may not mint an unbound one. Otherwise the holder of a
+  stolen-but-useless bound token could exchange it for a usable bearer token,
+  and the constraint would be walked off at exactly the hop where the chain gets
+  longer and harder to watch
+- [x] **A confirmation pamv1 cannot enforce fails closed.** RFC 7800 also defines
+  `jwk` and `kid` confirmations; only `jkt` is enforced here. Reading an
+  unenforceable `cnf` as "unbound" would DOWNGRADE a token its issuer had
+  deliberately constrained — the one outcome a binding must never produce — so
+  the verifier refuses the token outright instead
+- [x] **`PAM_BROKER_REQUIRE_POP`** (default **false**) turns binding from
+  available into mandatory for SVID-authenticated agents. Scoped to SVIDs on
+  purpose: a static agent key has no claims and so can carry no confirmation,
+  and requiring one of it would not make it sender-constrained — it would only
+  turn that identity kind off by a side door. The way to stop accepting bearer
+  agent keys is to stop configuring them, and a test pins that a static key still
+  passes with the flag on
+- [x] **`PAM_BROKER_PUBLIC_URL`**, because `htu` is compared against the address
+  the CLIENT signed. Behind a TLS-terminating ingress the request arrives as
+  plain http on an internal name, so deriving the origin per request would refuse
+  every bound agent. `X-Forwarded-*` is deliberately **not** consulted — letting
+  a caller choose what its own proof is checked against would remove the check.
+  Both knobs fail the startup loudly when their prerequisite is absent, the idiom
+  Phase 182 established
+- [x] **The end-to-end test is the claim, not a header check.** The SAME
+  delegated token is presented by a "thief" holding only the token and by the
+  holder who also has the private key: the thief gets 401, the holder executes a
+  real tool call. Then the replayed proof, a proof made for a different token, a
+  proof for a different endpoint, and a well-formed proof signed by somebody
+  else's key — each refused, each on the audit trail as `agent.pop_denied` with
+  its reason, while the caller was told only "invalid or missing agent
+  credential". **Verified by removing the gate and watching it fail**, and the
+  same for the chain-inheritance rule and the fail-closed `cnf`
+- [x] **The thumbprint is checked against the standard, not against itself.**
+  `TestJWKThumbprintMatchesRFC7638` uses the RFC's own worked example, so a
+  canonical form that was self-consistently wrong (member order, an escaped
+  character, a stray space) fails there and only there. The canonical JSON is
+  built by hand for the same reason: the RFC specifies exact octets, and an
+  encoder is free to make choices inside "valid JSON" that change them — and
+  every interpolated member is checked to be base64url first, because a value
+  carrying a quote could otherwise forge the canonical form of a DIFFERENT key
+- [x] **An unbound token is completely unaffected**, pinned by its own test. This
+  ships into a running estate without breaking a single agent already in the
+  field; adopting it is per-token, at the mint
+
+**What it does NOT claim**, written into the package doc rather than left to be
+discovered: the thumbprint is supplied by the DELEGATOR, and pamv1 cannot verify
+that the key belongs to the sub-agent rather than to the delegator itself — that
+attestation needs SPIRE, which stays in §5. The property actually gained is
+narrower and still worth the phase: whoever the key belongs to, **a token lifted
+off the wire or out of a log is useless without it**. Binding narrows the blast
+radius of theft; it is not an additional authorization gate, and nothing here
+changes what policy allows.
+
+No schema change (high-water stays `0048`), no new route, **two new env vars**,
+no upgrade note.
 
 ## Phase 205 — v0.55.0 ✅
 
@@ -9344,15 +9438,18 @@ reason, and a set of smaller limits named so they are not forgotten:
   the human Phase 170's registry records for a SPIFFE ID. Resolving it inside the
   engine would make the engine read the store, which it deliberately does not do;
   the plumbing belongs in the broker.
-- **Smaller, named so they are not forgotten**: no proof-of-possession
-  (`cnf`/DPoP/WIMSE) on a minted delegated token, so bearer remains bearer; the
-  trust bundle is read once at startup; MCP is pinned at protocol `2024-11-05`;
-  `tools/list` shows every agent the whole toolset regardless of what policy
-  would allow it; the SVID verifier allows 60 seconds of clock leeway past `exp`,
-  normal practice but permissive in a system where a delegated token's TTL is its
-  other containment; and there is no ceiling on a single *run* — calls or targets
-  touched under one `session:` — as opposed to per minute and per day, both of
-  which exist.
+- **Smaller, named so they are not forgotten** — two of them now struck:
+  ~~`tools/list` shows every agent the whole toolset regardless of what policy
+  would allow it~~ (✅ Phase 204) and ~~no proof-of-possession (`cnf`/DPoP/WIMSE)
+  on a minted delegated token, so bearer remains bearer~~ (✅ Phase 206 — with
+  **WIMSE still open**: the binding is DPoP-shaped, and pamv1 cannot attest that
+  the bound key belongs to the sub-agent rather than to the delegator that named
+  it, which is workload attestation and stays in §5). What is left: the trust
+  bundle is read once at startup; MCP is pinned at protocol `2024-11-05`; the
+  SVID verifier allows 60 seconds of clock leeway past `exp`, normal practice but
+  permissive in a system where a delegated token's TTL is its other containment;
+  and there is no ceiling on a single *run* — calls or targets touched under one
+  `session:` — as opposed to per minute and per day, both of which exist.
 
 **Out of scope, not missing**: CyberArk's and StrongDM's agent brokers are
 *egress* proxies governing which third-party MCP servers an agent may call.
