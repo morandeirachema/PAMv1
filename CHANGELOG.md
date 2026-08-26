@@ -9,6 +9,70 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.57.0] — 2026-08-26
+
+A minor that bounds **one credential** rather than one agent. The per-minute rate
+limit bounds a burst and the daily budget bounds a total; neither bounds the case
+an operator actually worries about when handing a sub-agent a delegated token —
+that the token quietly does two hundred things. **No schema change** (migration
+high-water stays `0048`), no new route, **one new env var**, **no upgrade note**.
+
+### Added
+
+- **`PAM_BROKER_MAX_CALLS_PER_TOKEN`** (default `0`, off): cap how many brokered
+  calls may be spent while presenting **one token**.
+
+  When a token reaches its ceiling the agent is told so plainly — a denial with a
+  reason, not a 401, because the credential is valid and has simply spent its
+  allowance — and **a new token starts a new ceiling**. The control retires a
+  credential; it does not punish an agent.
+
+  **It is keyed on the token's `jti`, not on the caller's declared `session:`.**
+  That distinction is the feature. `session:` is chosen by the party being
+  limited, so a ceiling built on it is escaped by sending a different string; a
+  `jti` is chosen by the issuer — pamv1 itself for a delegated token — so a fresh
+  allowance costs a trip back through the exchange, which is audited,
+  depth-capped, `may_act`-gated and, since v0.56.0, able to require proof of
+  possession.
+
+  **Two identity kinds are deliberately not covered**, and are left to the
+  per-day budget instead: a static agent key carries no token id at all, and
+  neither does an SVID whose issuer stamped no `jti`. "Unlimited" is the correct
+  answer for an identity this control cannot see, and an operator should not have
+  to discover that by experiment.
+
+- **`agent.token_budget_exhausted`** and **`agent.token_budget_check_failed`**
+  join the audit vocabulary. The first is a fact worth alerting on directly — it
+  reads as a runaway sub-agent as often as it reads as a ceiling set too low —
+  and carries the `svid_jti:` of the token in question, so the refusal joins to
+  the calls that spent it and to the `broker.token.exchanged` row that minted it.
+  The second is the fail-closed record: an unevaluable ceiling refuses the call
+  rather than reading as no ceiling.
+
+### Changed
+
+- **Documentation currency.** Eight documents had stalled at `Phases 0–205`,
+  because the two preceding releases each bumped only the headers that were
+  already current — a sweep keyed on the newest range cannot see a document that
+  never reached it. Both READMEs had also gone on defining beta as "every phase
+  through 52g has shipped", true when beta was declared and quietly wrong for 150
+  phases since.
+
+- **Three refusal actions reached the documented audit vocabulary**, two of which
+  appear as a literal nowhere in the source: `gateCredentialAccess` audits its
+  action argument *plus* `_denied`, so `credential.doublelock_enable_denied` and
+  `credential.doublelock_disable_denied` had been emitted since v0.35.0-era work
+  while being invisible to every audit that grepped for literals.
+  `credential.checkout_extend_denied` was simply missed. A guard test now
+  reconstructs these names the way the code assembles them.
+
+### Upgrade notes
+
+None. `PAM_BROKER_MAX_CALLS_PER_TOKEN` defaults to `0`, which is the behaviour
+every existing deployment already has. Set it per deployment once you know what a
+normal task costs — and note that it is a *second* limit rather than a
+replacement: the daily budget still applies, and whichever refuses first wins.
+
 ## [0.56.0] — 2026-08-26
 
 A minor that makes a delegated AI-agent token **stop being a bearer credential**.
@@ -2268,7 +2332,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.56.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.57.0...HEAD
+[0.57.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.57.0
 [0.56.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.56.0
 [0.55.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.55.0
 [0.54.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.54.1
