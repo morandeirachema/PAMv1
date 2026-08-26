@@ -28,8 +28,21 @@ type agentHandler func(w http.ResponseWriter, r *http.Request, id *agentid.Ident
 // SVID) and invokes next with the verified identity, or returns 401.
 func (s *Server) agentAuth(next agentHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := s.agentVerifier.Verify(r.Context(), bearerToken(r))
+		presented := bearerToken(r)
+		id, err := s.agentVerifier.Verify(r.Context(), presented)
 		if err != nil {
+			s.authFailed(w, r, "agent", "invalid or missing agent credential")
+			return
+		}
+		// Proof of possession (Phase 206). FIRST of the admission checks, because
+		// it finishes authenticating the PRESENTER: until it passes, all that has
+		// been established is that somebody holds a valid token, which is exactly
+		// the assumption a bound token exists to stop making.
+		if perr := s.checkProofOfPossession(r, id, presented); perr != nil {
+			_ = s.auditAs(r.Context(), id.AgentName, "agent.pop_denied",
+				"agent:"+auditField(id.AgentName, maxSPIFFEIDLen)+
+					" path:"+auditField(r.URL.Path, 200)+
+					" reason:"+auditField(agentid.ProofReason(perr), 64))
 			s.authFailed(w, r, "agent", "invalid or missing agent credential")
 			return
 		}
@@ -317,7 +330,73 @@ func bearerToken(r *http.Request) string {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, p) {
 		return strings.TrimSpace(h[len(p):])
 	}
+	// RFC 9449 §7.1 gives a sender-constrained token its own scheme, and a client
+	// library that implements DPoP sends `Authorization: DPoP <token>`. The token
+	// is the same string either way; refusing the scheme would mean every bound
+	// client had to lie about what it is holding. Which scheme was used is NOT
+	// consulted for anything — the `cnf` claim inside the token, not a header
+	// word the caller chose, is what decides whether a proof is demanded.
+	const d = "DPoP "
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, d) {
+		return strings.TrimSpace(h[len(d):])
+	}
 	return ""
+}
+
+// checkProofOfPossession enforces RFC 9449 sender-constraining for one request
+// (Phase 206). It returns nil when the call may proceed, and a *agentid.ProofError
+// otherwise, whose reason reaches the audit trail but never the caller.
+//
+// Two things make a proof necessary, and they are deliberately separate:
+//
+//   - the presented token CARRIES a binding (`cnf.jkt`). Then a proof is
+//     required no matter how the deployment is configured — a constraint the
+//     issuer put on a token cannot be optional at the door, or leaving the header
+//     off would be a downgrade attack with no attacker skill in it.
+//   - the deployment REQUIRES binding (PAM_BROKER_REQUIRE_POP) and the caller
+//     authenticated with an SVID. Then an unbound token is refused outright.
+//     Static agent keys are exempt by construction; see Options.BrokerRequirePoP.
+func (s *Server) checkProofOfPossession(r *http.Request, id *agentid.Identity, presented string) error {
+	if id.ConfirmationKey == "" {
+		if s.brokerRequirePoP && id.SPIFFEID != "" {
+			return &agentid.ProofError{Reason: "token-not-key-bound"}
+		}
+		return nil
+	}
+	if s.popChecker == nil { // broker disabled; these routes are not mounted
+		return &agentid.ProofError{Reason: "no-proof-checker"}
+	}
+	// RFC 9449 §4.3 (1): more than one DPoP header is ambiguous, and picking one
+	// would let an attacker append a header a proxy or client had already set.
+	proofs := r.Header.Values(agentid.ProofHeader)
+	if len(proofs) != 1 {
+		if len(proofs) == 0 {
+			return &agentid.ProofError{Reason: "proof-header-missing"}
+		}
+		return &agentid.ProofError{Reason: "proof-header-repeated"}
+	}
+	return s.popChecker.Verify(proofs[0], r.Method, s.requestURI(r), presented, id.ConfirmationKey)
+}
+
+// requestURI renders the target URI a proof's `htu` claim is compared against,
+// normalized per agentid.NormalizeURI.
+//
+// It prefers the configured public URL, because that is the address the CLIENT
+// signed. Deriving it from the request is right only when nothing sits in front
+// of the server: behind a TLS-terminating ingress the request arrives as plain
+// http on an internal hostname, so a proof over the real external URL would be
+// refused and every bound agent would break. The `X-Forwarded-*` headers are NOT
+// consulted — they are caller-settable, and letting a caller choose what its own
+// proof is checked against would remove the check.
+func (s *Server) requestURI(r *http.Request) string {
+	if s.brokerPublicURL != "" {
+		return agentid.NormalizeURI(s.brokerPublicURL + r.URL.EscapedPath())
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return agentid.NormalizeURI(scheme + "://" + r.Host + r.URL.EscapedPath())
 }
 
 type toolCallIn struct {

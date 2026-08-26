@@ -340,7 +340,24 @@ type Options struct {
 	// BrokerPostureRequired extends the posture webhook to agent identities
 	// (Phase 180). Off by default; needs PostureAttestor to be configured too.
 	BrokerPostureRequired bool
-	BrokerRatePerMin      int
+	// BrokerRequirePoP refuses an SVID-authenticated agent whose token carries no
+	// RFC 7800 `cnf` binding (Phase 206) — i.e. it makes sender-constrained
+	// tokens mandatory rather than available. Off by default, because turning it
+	// on breaks every unbound token a deployment already issued.
+	//
+	// It is scoped to SVIDs on purpose: a STATIC agent key has no claims and so
+	// can carry no confirmation, and requiring one of it would not make it
+	// sender-constrained — it would only turn that identity kind off by a side
+	// door. The way to stop accepting bearer agent keys is to stop configuring
+	// them.
+	BrokerRequirePoP bool
+	// BrokerPublicURL is the base URL agents address this broker at, e.g.
+	// "https://pam.example.com". It is what an RFC 9449 proof's `htu` claim is
+	// compared against; unset derives it from each request, which is wrong behind
+	// a TLS-terminating proxy (the request arrives as plain http on an internal
+	// name, while the client signed the external https one).
+	BrokerPublicURL  string
+	BrokerRatePerMin int
 	// BrokerCheckpointEvery emits a signed in-chain audit checkpoint every N broker
 	// events (0 = off). BrokerAuditSignPrevKeys are rotated-out ed25519 public keys
 	// still trusted to verify older checkpoints during a signing-key rotation
@@ -541,6 +558,14 @@ type Server struct {
 	// brokerPostureRequired asks the posture webhook about the calling agent
 	// (Phase 180). Read on the agent authentication path.
 	brokerPostureRequired bool
+	// brokerRequirePoP makes an RFC 7800 binding mandatory for SVID-authenticated
+	// agents (Phase 206); brokerPublicURL is the origin a proof's `htu` is
+	// checked against ("" = derive it from the request). popChecker verifies the
+	// proofs and remembers them so none is accepted twice; nil unless the broker
+	// is enabled.
+	brokerRequirePoP bool
+	brokerPublicURL  string
+	popChecker       *agentid.ProofChecker
 	// svidSeen damps the inventory's last-seen writes to one per identity per
 	// sightingInterval (Phase 176). Keyed by SPIFFE ID; values are time.Time.
 	svidSeen sync.Map
