@@ -885,6 +885,14 @@ func scramAuth(fe *pgproto3.Frontend, password string, mechanisms []string) erro
 	if err != nil {
 		return fmt.Errorf("scram iterations: %w", err)
 	}
+	// Bound the upstream-supplied iteration count (2026-08-26 audit). A hostile
+	// or impersonated PostgreSQL (reachable when the trust-any upstream-TLS
+	// default is in play) can return `i=2000000000`, which pbkdf2.Key would burn
+	// a core on. 600k is far above any real server's SCRAM count and matches the
+	// OWASP figure; anything higher is refused rather than honoured.
+	if iters < 1 || iters > 600_000 {
+		return fmt.Errorf("scram iterations %d out of range (1..600000)", iters)
+	}
 
 	saltedPassword := pbkdf2.Key([]byte(password), salt, iters, sha256.Size, sha256.New)
 	clientKey := hmacSHA256(saltedPassword, []byte("Client Key"))

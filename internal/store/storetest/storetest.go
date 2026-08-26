@@ -2030,6 +2030,29 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if keys, err := st.ListAgentKeys(ctx); err != nil || len(keys) != 2 {
 		t.Fatalf("ListAgentKeys: %d err %v", len(keys), err)
 	}
+
+	// At most one ACTIVE key per name (2026-08-26 audit, M-3): the budget and the
+	// audit actor key on the name, so two active keys sharing one name would pool
+	// one usage count under two different limits. Self-contained and cleaned up
+	// so the counts above and below are undisturbed.
+	m3a := &store.AgentKey{Name: "m3", Owner: "eve", TokenHash: "m3-hash-a"}
+	if err := st.CreateAgentKey(ctx, m3a); err != nil {
+		t.Fatalf("CreateAgentKey(m3a): %v", err)
+	}
+	if err := st.CreateAgentKey(ctx, &store.AgentKey{Name: "m3", Owner: "eve", TokenHash: "m3-hash-b"}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("a second ACTIVE key named m3 was allowed: %v, want ErrConflict", err)
+	}
+	// Revoke-then-remint under the same name is rotation, and must be allowed.
+	if err := st.SetAgentKeyDisabled(ctx, m3a.ID, true); err != nil {
+		t.Fatalf("disable m3a: %v", err)
+	}
+	m3b := &store.AgentKey{Name: "m3", Owner: "eve", TokenHash: "m3-hash-b"}
+	if err := st.CreateAgentKey(ctx, m3b); err != nil {
+		t.Fatalf("re-minting m3 after revoke was refused: %v", err)
+	}
+	// Clean up both so the running set stays as the sections below expect.
+	_ = st.DeleteAgentKey(ctx, m3a.ID)
+	_ = st.DeleteAgentKey(ctx, m3b.ID)
 	if err := st.DeleteAgentKey(ctx, ak.ID); err != nil {
 		t.Fatalf("DeleteAgentKey: %v", err)
 	}

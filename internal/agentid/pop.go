@@ -434,9 +434,15 @@ func hasPrivateJWKMembers(raw json.RawMessage) bool {
 	if err := json.Unmarshal(raw, &members); err != nil {
 		return false // unparsable; the typed unmarshal below refuses it anyway
 	}
-	for _, name := range privateJWKMembers {
-		if _, present := members[name]; present {
-			return true
+	for got := range members {
+		// Case-insensitive: JOSE member names are case-sensitive by spec, but a
+		// verifier hunting for private material should not be evaded by a `"D"`
+		// where `"d"` was meant (2026-08-26 audit). Compare folded.
+		lc := strings.ToLower(got)
+		for _, name := range privateJWKMembers {
+			if lc == name {
+				return true
+			}
 		}
 	}
 	return false

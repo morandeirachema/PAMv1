@@ -1678,6 +1678,12 @@ func (m *Memstore) CreateAgentKey(_ context.Context, k *store.AgentKey) error {
 		if existing.TokenHash == k.TokenHash {
 			return store.ErrConflict
 		}
+		// At most one ACTIVE key per name (2026-08-26 audit, M-3), matching the
+		// pgstore partial unique index in migration 0049. A revoked (disabled)
+		// key with the same name is fine — that is rotation.
+		if !existing.Disabled && existing.Name == k.Name && !k.Disabled {
+			return store.ErrConflict
+		}
 	}
 	k.ID = m.id()
 	k.CreatedAt = time.Now().UTC()

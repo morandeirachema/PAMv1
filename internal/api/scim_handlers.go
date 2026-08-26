@@ -376,6 +376,9 @@ func (s *Server) getScimUser(w http.ResponseWriter, r *http.Request, _ *store.Sc
 		scimStoreError(w, err)
 		return
 	}
+	if !s.scimInScope(w, u) {
+		return
+	}
 	writeJSON(w, http.StatusOK, scimUserFromStore(u))
 }
 
@@ -401,6 +404,9 @@ func (s *Server) replaceScimUser(w http.ResponseWriter, r *http.Request, key *st
 		scimStoreError(w, err)
 		return
 	}
+	if !s.scimInScope(w, u) {
+		return
+	}
 	if in.UserName != "" && in.UserName != u.Username {
 		scimWriteError(w, http.StatusBadRequest, "userName is immutable in pamv1; delete and re-create this user instead of renaming")
 		return
@@ -418,7 +424,10 @@ func (s *Server) replaceScimUser(w http.ResponseWriter, r *http.Request, key *st
 		}
 		u.ExternalID = in.ExternalID
 	}
-	s.applyScimActiveChange(r.Context(), key, u, in.Active)
+	if err := s.applyScimActiveChange(r.Context(), key, u, in.Active); err != nil {
+		scimStoreError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, scimUserFromStore(u))
 }
 
@@ -455,6 +464,9 @@ func (s *Server) patchScimUser(w http.ResponseWriter, r *http.Request, key *stor
 	u, err := s.store.GetUser(r.Context(), id)
 	if err != nil {
 		scimStoreError(w, err)
+		return
+	}
+	if !s.scimInScope(w, u) {
 		return
 	}
 	var newActive *bool
@@ -504,8 +516,28 @@ func (s *Server) patchScimUser(w http.ResponseWriter, r *http.Request, key *stor
 		}
 		u.ExternalID = *newExternalID
 	}
-	s.applyScimActiveChange(r.Context(), key, u, newActive)
+	if err := s.applyScimActiveChange(r.Context(), key, u, newActive); err != nil {
+		scimStoreError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, scimUserFromStore(u))
+}
+
+// scimInScope reports whether a SCIM key may act on this user. A SCIM key is a
+// machine credential held by an IdP connector; it manages ordinary user
+// lifecycle, and deprovisioning a pre-existing local user is a documented,
+// intended flow (see TestScimDeactivateBlocksAccess). What it must NOT do is
+// touch an ADMIN — reactivating one an operator deliberately deactivated would
+// restore a privileged bearer token the kill switch was meant to revoke, and
+// deactivating one is a DoS on privileged human access (2026-08-26 audit, F-5).
+// Admin lifecycle is not delegated to an IdP connector. Out of scope answers
+// 404, the SCIM convention for a resource the caller may not see.
+func (s *Server) scimInScope(w http.ResponseWriter, u *store.User) bool {
+	if auth.Role(u.Role) == auth.RoleAdmin {
+		scimWriteError(w, http.StatusNotFound, "no such SCIM-manageable user")
+		return false
+	}
+	return true
 }
 
 // applyScimActiveChange sets u's Active flag when want is non-nil and
@@ -513,16 +545,16 @@ func (s *Server) patchScimUser(w http.ResponseWriter, r *http.Request, key *stor
 // shared by replaceScimUser and patchScimUser, the two paths that can flip
 // this user's own access on or off. u is updated in place so the caller's
 // subsequent response reflects the new value without a second fetch.
-func (s *Server) applyScimActiveChange(ctx context.Context, key *store.ScimKey, u *store.User, want *bool) {
+func (s *Server) applyScimActiveChange(ctx context.Context, key *store.ScimKey, u *store.User, want *bool) error {
 	if want == nil || *want == u.Active {
-		return
+		return nil
 	}
 	if err := s.store.UpdateUserActive(ctx, u.ID, *want); err != nil {
-		// Best-effort: the caller already committed to a 200 response body
-		// built from u, and a transient store error here is vanishingly
-		// unlikely right after a successful GetUser. Logged via auditAs's
-		// own failure path if the append itself fails.
-		return
+		// Surface it (2026-08-26 audit, F-5). This is the deprovisioning write —
+		// silently swallowing it while answering 200 tells the IdP the account
+		// was deactivated when it was not, which is the failure a deprovisioning
+		// call exists to prevent.
+		return err
 	}
 	u.Active = *want
 	action := "scim.user_deactivate"
@@ -530,6 +562,7 @@ func (s *Server) applyScimActiveChange(ctx context.Context, key *store.ScimKey, 
 		action = "scim.user_reactivate"
 	}
 	_ = s.auditAs(ctx, "scim:"+key.Name, action, fmt.Sprintf("username:%s", auditField(u.Username, 128)))
+	return nil
 }
 
 // deleteScimUser implements DELETE /scim/v2/Users/{id} as a SOFT delete —
@@ -548,6 +581,9 @@ func (s *Server) deleteScimUser(w http.ResponseWriter, r *http.Request, key *sto
 	u, err := s.store.GetUser(r.Context(), id)
 	if err != nil {
 		scimStoreError(w, err)
+		return
+	}
+	if !s.scimInScope(w, u) {
 		return
 	}
 	if err := s.store.UpdateUserActive(r.Context(), id, false); err != nil {

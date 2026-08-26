@@ -307,3 +307,41 @@ func atoi64(t *testing.T, s string) int64 {
 	}
 	return n
 }
+
+// TestScimCannotTouchAdmin is the regression for the 2026-08-26 audit's F-5. A
+// SCIM key is an IdP connector's machine credential; it manages ordinary users,
+// but must not deactivate, delete, or reactivate an ADMIN — that would let a
+// compromised connector revoke privileged access, or restore an admin an
+// operator deliberately killed.
+func TestScimCannotTouchAdmin(t *testing.T) {
+	srv, st := newTestServerOpts(t, nil, api.Options{ScimEnabled: true})
+	scimTok := mintScimKey(t, srv, "azuread")
+
+	admin := store.User{Username: "root-admin", Role: string(auth.RoleAdmin), TokenHash: auth.TokenHash("pamt_admin_tok")}
+	if err := st.CreateUser(context.Background(), &admin); err != nil {
+		t.Fatal(err)
+	}
+	sid := itoa(admin.ID)
+
+	// PATCH deactivate — the deprovisioning path — is refused.
+	if code, d := scimDo(t, srv, http.MethodPatch, "/scim/v2/Users/"+sid, scimTok, map[string]any{
+		"Operations": []map[string]any{{"op": "Replace", "value": map[string]any{"active": false}}},
+	}); code != http.StatusNotFound {
+		t.Fatalf("SCIM deactivated an admin: %d %s, want 404", code, d)
+	}
+	// DELETE (soft-delete) is refused.
+	if code, d := scimDo(t, srv, http.MethodDelete, "/scim/v2/Users/"+sid, scimTok, nil); code != http.StatusNotFound {
+		t.Fatalf("SCIM soft-deleted an admin: %d %s, want 404", code, d)
+	}
+	// PUT (replace, which could set active) is refused.
+	if code, d := scimDo(t, srv, http.MethodPut, "/scim/v2/Users/"+sid, scimTok, map[string]any{
+		"userName": "root-admin", "active": true,
+	}); code != http.StatusNotFound {
+		t.Fatalf("SCIM replaced an admin: %d %s, want 404", code, d)
+	}
+
+	// The admin is untouched and still active.
+	if got, _ := st.GetUser(context.Background(), admin.ID); got == nil || !got.Active {
+		t.Fatal("the admin was modified by a SCIM write")
+	}
+}
