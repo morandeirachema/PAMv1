@@ -1,6 +1,9 @@
 package auditfmt
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestFieldQuotesAndBounds proves Field makes an untrusted value safe for an
 // audit detail: it quotes so an embedded newline or forged key:value pair cannot
@@ -44,5 +47,32 @@ func TestOneLine(t *testing.T) {
 		if got := OneLine(tc.in); got != tc.want {
 			t.Errorf("OneLine(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestValueNeutralisesKeyValueInjection is the unit-level guard for the
+// 2026-08-26 audit's M-1: Value must make an untrusted string unable to forge a
+// neighbouring key:value pair, which Field alone does not (strconv.Quote keeps
+// spaces and colons inside the quotes). Every proxy sink that interpolates
+// wire-supplied text — the SSH subsystem name, both DB proxies' database name,
+// the resolve reason — now routes through it.
+func TestValueNeutralisesKeyValueInjection(t *testing.T) {
+	for _, in := range []string{
+		`postgres reason:approved`,
+		`x sha256:deadbeef`,
+		"line\nbreak",
+		`a:b:c d:e`,
+	} {
+		got := Value(in, 200)
+		if strings.Contains(got, ":") {
+			t.Errorf("Value(%q) = %q still contains a raw colon; a forged field can survive", in, got)
+		}
+		if strings.ContainsAny(got, "\n") {
+			t.Errorf("Value(%q) = %q contains a raw newline", in, got)
+		}
+	}
+	// A benign value still round-trips readably (quoted, colon-escaped).
+	if got := Value("plainname", 200); got != `"plainname"` {
+		t.Errorf("Value(plainname) = %q, want a plain quoted string", got)
 	}
 }

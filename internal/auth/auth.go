@@ -319,7 +319,11 @@ const SessionScopeEnroll = "enroll"
 // requests together without letting an unauthenticated caller probe for a
 // username's factor type: password verification happens first, and only on
 // success is this narrow token minted. It resolves to an MFAPending
-// principal, refused everywhere except the WebAuthn login-ceremony routes.
+// principal, refused everywhere except the WebAuthn login-ceremony routes —
+// a claim that held for the API middleware and the proxies but NOT for the
+// RDP/VNC viewer tunnel until the 2026-08-26 audit, which found the tunnel
+// opening a live desktop on a password-only token. See Principal.NarrowScope
+// for why there is now exactly one implementation of "is this token narrow".
 const SessionScopeMFAPending = "mfa_pending"
 
 // SessionScopeBreakGlass marks a short-lived emergency session issued after a
@@ -379,7 +383,12 @@ type Principal struct {
 	// where Can(cap) still applies normally, since the token inherits the
 	// minting user's own role/capabilities. Every OTHER authenticated route
 	// refuses it exactly like TunnelOnly, so a token that leaked from an
-	// endpoint's local storage cannot do anything but reveal.
+	// endpoint's local storage cannot do anything but reveal. That sentence was
+	// FALSE from Phase 147 until the 2026-08-26 audit: the session proxies and
+	// the viewer tunnel resolve their own principal and had never been taught
+	// this field, so the leaked token opened SSH, database and desktop sessions
+	// for 24 hours. It is true now only because every such entry point calls
+	// MayOpenSession rather than reading these fields by hand.
 	ExtensionOnly bool
 	// IPAllowlist restricts this principal to connecting from a source address
 	// inside one of these comma-separated CIDR blocks (Phase 118), e.g.
@@ -400,6 +409,66 @@ type Principal struct {
 	// directory-authenticated principal has no store.User row to source it
 	// from). Checked against the configured header's value at HTTP authz time.
 	DeviceFingerprint string
+}
+
+// SessionScope names the narrow purposes a session token can be minted for.
+// A Principal resolved from such a token carries exactly one of them set; a
+// full login session carries none.
+type SessionScope int
+
+// The narrow scopes, in the order they were introduced. ScopeNone is the
+// full-session case and is what NarrowScope returns for it.
+const (
+	ScopeNone SessionScope = iota
+	ScopeEnrollOnly
+	ScopeMFAPending
+	ScopeTunnelOnly
+	ScopeExtensionOnly
+)
+
+// NarrowScope reports which narrow scope, if any, this principal is confined to.
+//
+// This exists because of the 2026-08-26 audit. Four entry points resolve a
+// principal themselves rather than through the API middleware — the SSH proxy,
+// both database proxies, and the RDP/VNC viewer tunnel — and each of them had
+// re-implemented the "is this a narrow token?" test by hand with a different
+// subset of the fields. The tunnel checked one of four; the proxies checked
+// three. So a browser-extension token, which the middleware correctly refuses
+// everywhere except reveal, was accepted as an SSH password and opened desktops;
+// and an mfa_pending token, refused by the proxies, opened a desktop through the
+// tunnel. Two authentication-scope bypasses, both caused by the same omission:
+// a field was added to Principal and not to every copy of the check.
+//
+// There is now one copy. An entry point that resolves its own principal calls
+// this and compares the result against the ONE scope it is built to serve; any
+// other narrow scope is refused. Adding a scope means adding it here, and the
+// compiler cannot make a caller forget a case it never enumerated.
+func (p *Principal) NarrowScope() SessionScope {
+	switch {
+	case p.EnrollOnly:
+		return ScopeEnrollOnly
+	case p.MFAPending:
+		return ScopeMFAPending
+	case p.TunnelOnly:
+		return ScopeTunnelOnly
+	case p.ExtensionOnly:
+		return ScopeExtensionOnly
+	}
+	return ScopeNone
+}
+
+// MayOpenSession reports whether this principal's scope permits opening a
+// brokered session or a viewer desktop — the thing every narrow scope exists to
+// PREVENT. `serving` names the one narrow scope the calling entry point is
+// legitimately for (the viewer tunnel passes ScopeTunnelOnly, since a tunnel
+// token is the credential it was built to accept); the proxies pass ScopeNone.
+//
+// The rule is deliberately a whitelist of two: a full session, or exactly the
+// scope this door is for. Every other narrow scope is refused, including ones
+// added after this comment was written.
+func (p *Principal) MayOpenSession(serving SessionScope) bool {
+	sc := p.NarrowScope()
+	return sc == ScopeNone || (serving != ScopeNone && sc == serving)
 }
 
 // effectiveRoles returns the role set to evaluate capabilities and role-grants

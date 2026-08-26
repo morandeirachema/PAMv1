@@ -12,6 +12,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -641,4 +642,90 @@ func mustEncode(t *testing.T, l *Login7) []byte {
 		t.Fatalf("Encode: %v", err)
 	}
 	return b
+}
+
+// TestParseRPCExecuteSQLAuditsTheStatementNotAValue is the regression test for
+// the 2026-08-26 audit's finding H-5. sp_executesql's shape is
+// (@stmt, @params, @p1, ...) — the statement is FIRST — and the parser picked
+// the LAST character parameter. For every parameterised ADO.NET/JDBC/pyodbc
+// call, db.query and the session recording therefore carried an operator-chosen
+// parameter VALUE instead of the statement: a caller could make the trail read
+// "SELECT 1 -- benign" while DROP TABLE ran. GuardTexts was never wrong (it
+// covers every parameter); the AUDIT was.
+func TestParseRPCExecuteSQLAuditsTheStatementNotAValue(t *testing.T) {
+	stmt := "SELECT * FROM payroll WHERE name = @name"
+	body := append(allHeaders(), 0xff, 0xff)
+	body = append(body, byte(ProcExecuteSQL), 0x00, 0x00, 0x00)
+	body = append(body, nvarcharParam("@stmt", stmt)...)
+	body = append(body, nvarcharParam("@params", "@name nvarchar(64)")...)
+	body = append(body, nvarcharParam("@name", "SELECT 1 -- totally benign")...)
+	reqs, err := ParseRPC(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reqs) != 1 {
+		t.Fatalf("want one call, got %d", len(reqs))
+	}
+	if reqs[0].SQL != stmt {
+		t.Fatalf("SQL = %q, want the statement %q", reqs[0].SQL, stmt)
+	}
+	if reqs[0].AuditText != stmt {
+		t.Fatalf("AuditText = %q — the trail records a parameter VALUE, not the statement", reqs[0].AuditText)
+	}
+	if n := len(reqs[0].GuardTexts()); n != 3 {
+		t.Fatalf("GuardTexts = %d, want all three parameters guardable", n)
+	}
+}
+
+// TestParseRPC128CharParamNameIsNotASeparator is the regression test for the
+// 2026-08-26 audit's finding H-4. A parameter named '@' plus 127 characters —
+// legal T-SQL, identifiers run to 128 — has a name-length byte of 0x80, which
+// walkParams read as an RPC batch separator. The walk stopped, ParseRPC
+// resynchronised mid-name, and the statement was never recovered while the
+// bytes were still forwarded and executed. The disambiguator is that a real
+// name always begins with '@' (0x40 0x00) and a separator never does.
+func TestParseRPC128CharParamNameIsNotASeparator(t *testing.T) {
+	stmt := "DROP TABLE payroll"
+	longName := "@" + strings.Repeat("a", 127) // len 128 -> name-length byte 0x80
+	if byte(len(longName)) != 0x80 {
+		t.Fatalf("fixture: name length byte = %#x, want 0x80", byte(len(longName)))
+	}
+	body := append(allHeaders(), 0xff, 0xff)
+	body = append(body, byte(ProcExecuteSQL), 0x00, 0x00, 0x00)
+	body = append(body, nvarcharParam(longName, stmt)...)
+	reqs, err := ParseRPC(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reqs) != 1 {
+		t.Fatalf("want one call, got %d: %+v", len(reqs), reqs)
+	}
+	if !reqs[0].Recovered {
+		t.Fatal("a fully legal call reported Recovered=false: the name-length byte was read as a separator")
+	}
+	if reqs[0].SQL != stmt {
+		t.Fatalf("SQL = %q, want %q — the statement was not recovered", reqs[0].SQL, stmt)
+	}
+	if len(reqs[0].GuardTexts()) == 0 {
+		t.Fatal("GuardTexts is empty: command control and step-up would both be bypassed")
+	}
+
+	// And a 127-char name (0x7F) plus a REAL 0xFF separator to a second call
+	// must still split into two calls — the fix must not have broken
+	// multi-batch parsing by treating separators as names.
+	name127 := "@" + strings.Repeat("b", 126)
+	two := append(allHeaders(), 0xff, 0xff)
+	two = append(two, byte(ProcExecuteSQL), 0x00, 0x00, 0x00)
+	two = append(two, nvarcharParam(name127, "SELECT 1")...)
+	two = append(two, 0xff)       // batch separator
+	two = append(two, 0xff, 0xff) // next call by ProcID
+	two = append(two, byte(ProcExecuteSQL), 0x00, 0x00, 0x00)
+	two = append(two, nvarcharParam("@stmt", "SELECT 2")...)
+	reqs, err = ParseRPC(two)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reqs) != 2 || reqs[0].SQL != "SELECT 1" || reqs[1].SQL != "SELECT 2" {
+		t.Fatalf("two batches after a 0x7F name: %+v", reqs)
+	}
 }

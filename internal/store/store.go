@@ -1679,7 +1679,10 @@ type BrokerStore interface {
 	//
 	// It counts the same two actions CountAgentToolCallsSince does, for the same
 	// reasons, and reads the same trail — the difference is only what it groups
-	// by. The daily budget asks "how much has this AGENT done today"; this asks
+	// by. That sentence was untrue when first written: the resume handlers did
+	// not write `svid_jti:`, so a `resumed` row could never match and
+	// approval-path work was free. Both handlers now write the field through
+	// api.resumeDetail, and TestTokenCeilingCountsResumedWork pins it. The daily budget asks "how much has this AGENT done today"; this asks
 	// "how much has been done with this one CREDENTIAL", which is the question a
 	// runaway or stolen token raises.
 	//

@@ -2,6 +2,7 @@ package session
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -98,6 +99,14 @@ func NewShareRegistry() *ShareRegistry {
 	return &ShareRegistry{m: make(map[string]*shareSession)}
 }
 
+// guestKeyHash is the SHA-256 (hex) of a guest key, the form stored and looked
+// up so the raw key is never a map key. Matches auth.TokenHash's role for the
+// other bearer credentials; kept local to avoid a session->auth import.
+func guestKeyHash(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])
+}
+
 // IssueGuestKey mints a fresh bearer key binding a web-redeemed external
 // invite to its session, actor and mode for the remainder of its viewing.
 // This is deliberately a SEPARATE secret from the invite's own one-time
@@ -121,7 +130,12 @@ func (r *ShareRegistry) IssueGuestKey(sid, actor, mode string, ttl time.Duration
 	if r.guests == nil {
 		r.guests = make(map[string]guestBinding)
 	}
-	r.guests[key] = guestBinding{sessionID: sid, actor: actor, mode: mode, expires: time.Now().Add(ttl)}
+	// Keyed by SHA-256 of the guest key, not the key itself (2026-08-26 audit):
+	// every other bearer credential in this repo is stored and resolved by hash,
+	// and this was the one that kept the raw secret as the lookup key. Hashing
+	// makes resolve O(1) AND removes the only bespoke handling of a raw bearer
+	// value from the hot path.
+	r.guests[guestKeyHash(key)] = guestBinding{sessionID: sid, actor: actor, mode: mode, expires: time.Now().Add(ttl)}
 	r.guestMu.Unlock()
 	return key, nil
 }
@@ -135,7 +149,7 @@ func (r *ShareRegistry) ResolveGuestKey(key string) (sid, actor, mode string, ok
 	}
 	r.guestMu.Lock()
 	defer r.guestMu.Unlock()
-	b, found := r.guests[key]
+	b, found := r.guests[guestKeyHash(key)]
 	if !found || time.Now().After(b.expires) {
 		return "", "", "", false
 	}
@@ -291,7 +305,8 @@ func (r *ShareRegistry) Kick(sid, joinID string) bool {
 	delete(ss.joined, joinID)
 	ss.mu.Unlock()
 	r.guestMu.Lock()
-	delete(r.guests, joinID)
+	// joinID is the raw guest key; the guests map is keyed by its hash.
+	delete(r.guests, guestKeyHash(joinID))
 	r.guestMu.Unlock()
 	if ok {
 		close(e.kicked)

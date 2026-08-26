@@ -46,7 +46,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	principal, err := rt.authn.Authenticate(r.Context(), in.Username, in.Password)
 	if err != nil {
 		s.log.Warn("login failed", "user", in.Username, "remote", r.RemoteAddr)
-		s.auditAs(r.Context(), in.Username, "login.failed", "reason:credentials remote:"+r.RemoteAddr)
+		// The username is UNAUTHENTICATED client input here — a failed login,
+		// so nothing has vouched for it. It becomes the audit `actor`, which the
+		// SIEM forwarder renders unquoted, so an unbounded value like
+		// `alice detail=routine` would inject a competing field into every
+		// forwarded record (2026-08-26 audit, M-2). Bound and quote it, exactly
+		// as the SSH proxy already does with c.User() on the identical input.
+		s.auditAs(r.Context(), auditField(in.Username, 64), "login.failed", "reason:credentials remote:"+r.RemoteAddr)
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}

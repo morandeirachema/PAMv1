@@ -140,9 +140,26 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	setActor(r.Context(), principal.Name)
 	r = r.WithContext(withPrincipal(r.Context(), principal))
 	s.noteBreakGlass(r.Context(), principal, r)
-	if principal.EnrollOnly {
-		s.audit(r.Context(), "authz.denied", r.Method+" "+r.URL.Path+" reason:mfa-enrollment-incomplete")
-		writeError(w, http.StatusForbidden, "complete MFA enrollment to continue")
+	// One shared scope test, not a hand-rolled subset. Until the 2026-08-26
+	// audit this handler checked EnrollOnly and nothing else, so an mfa_pending
+	// token (password verified, WebAuthn NOT yet verified) and a browser-extension
+	// token — both refused by every proxy and by the API middleware — opened a live
+	// desktop here. This path ends in a decrypted credential inside a Windows
+	// session; it cannot be the one door with a shorter checklist than the rest.
+	// The tunnel legitimately serves TunnelOnly tokens, so that is the one narrow
+	// scope MayOpenSession is told to allow through.
+	if !principal.MayOpenSession(auth.ScopeTunnelOnly) {
+		reason, msg := "narrow-scoped-token", "this token cannot open a "+proto.label+" session"
+		switch principal.NarrowScope() {
+		case auth.ScopeEnrollOnly:
+			reason, msg = "mfa-enrollment-incomplete", "complete MFA enrollment to continue"
+		case auth.ScopeMFAPending:
+			reason, msg = "mfa-webauthn-pending", "complete WebAuthn sign-in first"
+		case auth.ScopeExtensionOnly:
+			reason, msg = "extension-scoped-token", "a browser-extension token cannot open a "+proto.label+" session"
+		}
+		s.audit(r.Context(), "authz.denied", r.Method+" "+r.URL.Path+" reason:"+reason)
+		writeError(w, http.StatusForbidden, msg)
 		return
 	}
 	if !principal.Can(auth.CapConnect) {

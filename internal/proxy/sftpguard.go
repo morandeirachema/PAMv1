@@ -372,7 +372,17 @@ func (s *sftpInspector) handlePacket(body []byte, reply io.Writer) (forward bool
 	case fxpRename:
 		return s.handleRename(body[1:], reply)
 	case fxpSymlink:
-		return s.handleMutating(body[1:], reply, "symlink")
+		// SYMLINK carries TWO paths (linkpath, targetpath); handleMutating read
+		// only the first, so the target was never denylist-checked (2026-08-26
+		// audit, M-7). Both are checked now, like rename.
+		return s.handleTwoPathMutating(body[1:], reply, "symlink")
+	case fxpLink:
+		// Native v6 hard/symlink. It was not in this switch at all — it fell to
+		// default and, in allow mode, was audited with NO path check on either
+		// path, so `link /etc/shadow /tmp/x; get /tmp/x` laundered a denied path
+		// (M-7). handleExtended already governs the hardlink@openssh.com twin for
+		// exactly this reason.
+		return s.handleTwoPathMutating(body[1:], reply, "link")
 	case fxpExtended:
 		return s.handleExtended(body[1:], reply)
 	default:
@@ -385,11 +395,6 @@ func (s *sftpInspector) handlePacket(body []byte, reply io.Writer) (forward bool
 		// closes the same door for native requests. Allow mode forwards, as before.
 		if s.mode == SFTPReadOnly && !sftpReadOnlyForwardable[body[0]] {
 			return !s.refuse(reply, body[1:], sftpOpLabel(body[0]), "")
-		}
-		if body[0] == fxpLink {
-			// Allow mode: a hard/symlink is a mutation the explicit cases do not
-			// cover, so audit it here or the trail would miss it entirely.
-			s.audit("sftp.modify", "op:link")
 		}
 		return true // read-family op (opendir/readdir/stat/realpath/…), or allow mode
 	}
@@ -517,6 +522,52 @@ func (s *sftpInspector) handleMutating(rest []byte, reply io.Writer, op string) 
 		return false
 	}
 	s.audit("sftp.modify", fmt.Sprintf("op:%s path:%s", op, auditPath(path)))
+	return true
+}
+
+// handleTwoPathMutating governs an op that names TWO paths — SSH_FXP_SYMLINK
+// (linkpath, targetpath) and native SSH_FXP_LINK (new-link-path, existing-path,
+// then a trailing sym flag this ignores). Both are checked against the denylist,
+// because either can launder a denied path: a symlink or hardlink gives a denied
+// file a second, undenied name that a later read would fetch. The docs have
+// always said "a matching path is refused in every mode, downloads included" —
+// this makes SYMLINK and LINK match that, closing the 2026-08-26 audit's M-7.
+//
+// rest begins with uint32 id, string pathA, string pathB. A body that does not
+// parse is forwarded unchanged (fail-open on parse, as every other handler here
+// does — the guard inspects, it does not reframe the stream), which is safe
+// because an unparseable link request the target also cannot parse.
+func (s *sftpInspector) handleTwoPathMutating(rest []byte, reply io.Writer, op string) (forward bool) {
+	id, r, ok := readU32(rest)
+	if !ok {
+		return true // no id to reply on; the target will reject it too
+	}
+	a, r2, ok2 := readString(r)
+	b, _, ok3 := readString(r2)
+	// When both paths parse, either being denied refuses the op — in EVERY mode,
+	// downloads included, because a link gives a denied file an undenied name.
+	if ok2 && ok3 {
+		for _, p := range []string{a, b} {
+			if pattern, denied := s.pathDenied(p); denied {
+				return s.denyPath(reply, id, op, p, pattern)
+			}
+		}
+	}
+	// A link/symlink is a mutation, so read-only refuses it whether or not its
+	// paths parsed — a containment control must not depend on the request being
+	// well formed, which matches the native-op default arm above.
+	if s.mode == SFTPReadOnly {
+		s.audit("sftp.blocked", fmt.Sprintf("op:%s path:%s reason:readonly", op, auditPath(a)))
+		s.deny(reply, id)
+		return false
+	}
+	if !(ok2 && ok3) {
+		// Allow mode, malformed body: forward (the target rejects it) but still
+		// record that a link op crossed, or the trail would miss it.
+		s.audit("sftp.modify", "op:"+op)
+		return true
+	}
+	s.audit("sftp.modify", fmt.Sprintf("op:%s path:%s to:%s", op, auditPath(a), auditPath(b)))
 	return true
 }
 

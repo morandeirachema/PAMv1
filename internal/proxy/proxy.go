@@ -437,12 +437,35 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 	// refusal for the proxy, which resolves its own principal and would otherwise
 	// accept it as a password for ANY target the owner may reach, for an
 	// unbounded session, from a 60-second token.
-	if principal.TunnelOnly {
+	// The SSH proxy refuses narrow scopes HERE, at authentication, rather than
+	// in admit(): a refused password is the cheapest and quietest outcome, and
+	// it happens before any channel exists. That made this a fifth hand-written
+	// copy of the scope test — and the 2026-08-26 audit found it, like the
+	// proxies' admit() gate, checking TunnelOnly and nothing newer. The test now
+	// has one implementation, and this callback only maps its answer to the
+	// audit reason each scope has always used.
+	if !principal.MayOpenSession(auth.ScopeNone) {
 		remote := c.RemoteAddr().String()
-		p.log.Warn("tunnel-scoped token presented to the SSH proxy", "actor", principal.Name, "remote", remote)
-		p.audit(context.Background(), principal.Name, "session.denied",
-			"login:"+auditField(c.User(), 64)+" remote:"+remote+" reason:tunnel-only-token")
-		return nil, fmt.Errorf("pamv1: authentication failed")
+		reason := "narrow-scoped-token"
+		switch principal.NarrowScope() {
+		case auth.ScopeTunnelOnly:
+			reason = "tunnel-only-token"
+		case auth.ScopeExtensionOnly:
+			reason = "extension-scoped-token"
+		case auth.ScopeEnrollOnly, auth.ScopeMFAPending:
+			// Reachable here in principle, but these two have always been
+			// admitted to authentication and refused by admit() one step later
+			// with their own richer wording — keep that behaviour by letting
+			// them through, so the channel-level refusal (and its test) stays
+			// the one that fires.
+			reason = ""
+		}
+		if reason != "" {
+			p.log.Warn("narrow-scoped token presented to the SSH proxy", "actor", principal.Name, "scope", reason, "remote", remote)
+			p.audit(context.Background(), principal.Name, "session.denied",
+				"login:"+auditField(c.User(), 64)+" remote:"+remote+" reason:"+reason)
+			return nil, fmt.Errorf("pamv1: authentication failed")
+		}
 	}
 	p.noteBreakGlass(context.Background(), principal, "ssh login:"+auditField(c.User(), 64)+" remote:"+c.RemoteAddr().String())
 
@@ -581,6 +604,12 @@ func (p *Proxy) Serve(ctx context.Context, ln net.Listener) error {
 // succeeds, since an established session is legitimately idle for long stretches
 // while an operator reads output.
 const handshakeTimeout = 120 * time.Second
+
+// maxChannelsPerConn caps concurrently-open channels on one authenticated SSH
+// connection (2026-08-26 audit, M-8). Real clients open a handful — one session,
+// maybe a few forwards — so 64 never constrains legitimate use while bounding an
+// fd/disk-exhaustion attack from an authorized-but-hostile or runaway client.
+const maxChannelsPerConn = 64
 
 // handleConn completes the SSH handshake and runs every authorization gate in
 // order (enrollment, role CapConnect, target/credential resolution, per-target
@@ -808,18 +837,36 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		}
 	}()
 
+	// Cap concurrently-open channels per connection (2026-08-26 audit, M-8).
+	// The session gate (session.Registry.AllowNew) counts SESSIONS, once per
+	// connection; the channel loop below accepted an UNBOUNDED number of them,
+	// and each session channel spawns goroutines and opens a recording file and
+	// fd. One authorized operator connection could exhaust file descriptors or
+	// disk. The cap is generous — real clients open a handful — so it never
+	// bites legitimate use, only a runaway or hostile client.
+	var live atomic.Int32
 	var wg sync.WaitGroup
 	for nc := range chans {
 		switch nc.ChannelType() {
 		case "session":
+			if live.Load() >= maxChannelsPerConn {
+				nc.Reject(ssh.ResourceShortage, "pamv1: too many concurrent channels")
+				continue
+			}
 			interactive.Store(true)
+			live.Add(1)
 			wg.Add(1)
 			go func(nc ssh.NewChannel) {
 				defer wg.Done()
+				defer live.Add(-1)
 				defer recoverPanicLog(p.log, "session")
 				p.handleSession(ctx, nc, upstream, target, cred, actor, observe, principal.BreakGlass, sid)
 			}(nc)
 		case "direct-tcpip":
+			if live.Load() >= maxChannelsPerConn {
+				nc.Reject(ssh.ResourceShortage, "pamv1: too many concurrent channels")
+				continue
+			}
 			// Phase 141: ssh -L style forwarding, scoped to the target's own
 			// host only. None of observe/RequireSupervision/RequireRecording
 			// have a mechanism that covers a raw forward, so each refuses it
@@ -834,9 +881,11 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 			case p.requireRec:
 				nc.Reject(ssh.Prohibited, "pamv1: port forwarding is unavailable when session recording is required")
 			default:
+				live.Add(1)
 				wg.Add(1)
 				go func(nc ssh.NewChannel) {
 					defer wg.Done()
+					defer live.Add(-1)
 					defer recoverPanicLog(p.log, "forward")
 					p.handleDirectTCPIP(ctx, nc, upstream, target, actor)
 				}(nc)
@@ -873,14 +922,22 @@ func (p *Proxy) loadPrincipal(token string) (*auth.Principal, bool) {
 // proxies (access.denied for the approval and vendor denials, and
 // credential.decrypt_failed) and the shared check-failed error logs; this adds
 // only the SSH-transport-specific wording. The switch is exhaustive over the
-// gates reachable on the SSH path; gateTunnelOnly (refused at authentication)
-// and gateProtocolMatch (a DB-only gate) fall to the fail-closed default.
+// gates reachable on the SSH path; gateTunnelOnly and gateExtensionOnly (both
+// refused at authentication) and gateProtocolMatch (a DB-only gate) fall to
+// the fail-closed default in practice, and each still rejects if reached.
 func (p *Proxy) refuse(ctx context.Context, chans <-chan ssh.NewChannel, res admitResult, actor, login string, role auth.Role, remote string) {
 	switch res.gate {
 	case gateEnrollOnly:
 		p.log.Warn("session denied: mfa enrollment incomplete", "actor", actor, "remote", remote)
 		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
 		rejectAll(chans, ssh.Prohibited, "pamv1: complete MFA enrollment first")
+	case gateExtensionOnly:
+		// Normally unreachable on SSH — refused at authentication above, like
+		// gateTunnelOnly — but if it ever is reached it must REJECT, not merely
+		// audit. The first draft of this arm did only the latter.
+		p.log.Warn("session denied: browser-extension token", "actor", actor, "remote", remote)
+		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:extension-scoped-token")
+		rejectAll(chans, ssh.Prohibited, "pamv1: a browser-extension token cannot open a session")
 	case gateMFAPending:
 		p.log.Warn("session denied: webauthn sign-in pending", "actor", actor, "remote", remote)
 		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:mfa-webauthn-pending")
@@ -900,7 +957,7 @@ func (p *Proxy) refuse(ctx context.Context, chans <-chan ssh.NewChannel, res adm
 		rejectAll(chans, ssh.Prohibited, "pamv1: your device failed its posture check")
 	case gateResolve:
 		p.log.Warn("session denied", "actor", actor, "login", auditField(login, 64), "reason", res.reason, "remote", remote)
-		p.audit(ctx, actor, "session.denied", fmt.Sprintf("login:%s reason:%s", auditField(login, 64), res.reason))
+		p.audit(ctx, actor, "session.denied", fmt.Sprintf("login:%s reason:%s", auditField(login, 64), auditValue(res.reason, 200)))
 		rejectAll(chans, ssh.Prohibited, "pamv1: "+res.reason)
 	case gateProtocolAllowed:
 		p.log.Warn("session denied: protocol not allowed", "actor", actor, "target", res.target.Name, "protocol", res.target.Protocol)
@@ -1196,10 +1253,10 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		_ = ssh.Unmarshal(payload, &m)
 		if m.Name != "sftp" {
 			if p.sftpMode == SFTPDeny {
-				p.audit(ctx, actor, "sftp.denied", fmt.Sprintf("target:%s cred_user:%s subsystem:%s", target.Name, cred.Username, m.Name))
+				p.audit(ctx, actor, "sftp.denied", fmt.Sprintf("target:%s cred_user:%s subsystem:%s", target.Name, cred.Username, auditValue(m.Name, 64)))
 				return false
 			}
-			p.audit(ctx, actor, "session.subsystem", fmt.Sprintf("target:%s cred_user:%s name:%s", target.Name, cred.Username, m.Name))
+			p.audit(ctx, actor, "session.subsystem", fmt.Sprintf("target:%s cred_user:%s name:%s", target.Name, cred.Username, auditValue(m.Name, 64)))
 			return true
 		}
 		if p.sftpMode == SFTPDeny {
@@ -1821,6 +1878,11 @@ func (p *Proxy) winrmRun(ctx context.Context, out io.Writer, target *store.Targe
 // auditCmd renders a command for an audit detail, quoted and length-capped so a
 // long or newline-bearing command can't bloat or break the audit row.
 func auditCmd(command string) string { return auditField(command, 400) }
+
+// auditValue is auditField plus colon-escaping: for an untrusted string that
+// could itself be shaped like a key:value pair (a subsystem name, a database
+// name, a resolve reason). See auditfmt.Value and the 2026-08-26 audit's M-1.
+func auditValue(s string, limit int) string { return auditfmt.Value(s, limit) }
 
 // auditField makes an untrusted string safe to place in an audit detail or actor:
 // bounded in length and quoted, so embedded newlines, quotes and forged

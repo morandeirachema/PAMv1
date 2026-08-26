@@ -71,7 +71,7 @@ func TestDoubleLockLifecycle(t *testing.T) {
 		t.Fatalf("enable with no password: %d %s, want 422", code, d)
 	}
 	if code, d := do(t, srv, http.MethodPost, path+"/doublelock", testAPIKey,
-		map[string]any{"holder": "alice", "password": "hunter2"}); code != http.StatusNoContent {
+		map[string]any{"holder": "alice", "password": "correct horse battery staple"}); code != http.StatusNoContent {
 		t.Fatalf("enable doublelock: %d %s", code, d)
 	}
 
@@ -84,7 +84,7 @@ func TestDoubleLockLifecycle(t *testing.T) {
 		t.Fatalf("reveal with wrong doublelock password: %d %s, want 403", code, d)
 	}
 	// Reveal with the RIGHT password returns the ORIGINAL secret.
-	code, data = dlReveal(t, srv, http.MethodPost, path+"/reveal", testAPIKey, "hunter2")
+	code, data = dlReveal(t, srv, http.MethodPost, path+"/reveal", testAPIKey, "correct horse battery staple")
 	if code != http.StatusOK || jsonMap(t, data)["secret"] != secretPassword {
 		t.Fatalf("reveal with correct doublelock password: %d %s", code, data)
 	}
@@ -102,7 +102,7 @@ func TestDoubleLockLifecycle(t *testing.T) {
 	}
 	// The correct password disables it.
 	if code, d := do(t, srv, http.MethodDelete, path+"/doublelock", testAPIKey,
-		map[string]any{"password": "hunter2"}); code != http.StatusNoContent {
+		map[string]any{"password": "correct horse battery staple"}); code != http.StatusNoContent {
 		t.Fatalf("disable with correct password: %d %s", code, d)
 	}
 	// Reveal is back to normal, no header needed.
@@ -120,7 +120,7 @@ func TestDoubleLockGatesCheckout(t *testing.T) {
 	cid := seedTargetAndCred(t, srv)
 	path := "/api/credentials/" + itoa(cid)
 	do(t, srv, http.MethodPost, path+"/doublelock", testAPIKey,
-		map[string]any{"holder": "alice", "password": "hunter2"})
+		map[string]any{"holder": "alice", "password": "correct horse battery staple"})
 
 	// No password: refused, and the lease must have been rolled back (a
 	// second attempt is not blocked by "already checked out").
@@ -131,7 +131,7 @@ func TestDoubleLockGatesCheckout(t *testing.T) {
 		t.Fatalf("checkout with wrong doublelock password: %d %s, want 403", code, d)
 	}
 	// The correct password checks it out and returns the real secret.
-	code, data := dlReveal(t, srv, http.MethodPost, path+"/checkout", testAPIKey, "hunter2")
+	code, data := dlReveal(t, srv, http.MethodPost, path+"/checkout", testAPIKey, "correct horse battery staple")
 	if code != http.StatusCreated || jsonMap(t, data)["secret"] != secretPassword {
 		t.Fatalf("checkout with correct doublelock password: %d %s", code, data)
 	}
@@ -151,7 +151,7 @@ func TestDoubleLockRejectsZSPCredential(t *testing.T) {
 	cid := int64(jsonMap(t, data)["id"].(float64))
 
 	if code, d := do(t, srv, http.MethodPost, "/api/credentials/"+itoa(cid)+"/doublelock", testAPIKey,
-		map[string]any{"holder": "alice", "password": "hunter2"}); code != http.StatusUnprocessableEntity {
+		map[string]any{"holder": "alice", "password": "correct horse battery staple"}); code != http.StatusUnprocessableEntity {
 		t.Fatalf("doublelock on a ZSP credential: %d %s, want 422", code, d)
 	}
 }
@@ -167,7 +167,7 @@ func TestDoubleLockClearedByRotation(t *testing.T) {
 	cid := seedTargetAndCred(t, srv)
 	path := "/api/credentials/" + itoa(cid)
 	do(t, srv, http.MethodPost, path+"/doublelock", testAPIKey,
-		map[string]any{"holder": "alice", "password": "hunter2"})
+		map[string]any{"holder": "alice", "password": "correct horse battery staple"})
 
 	// Simulate what the rotation worker does: replace the secret and stamp
 	// rotated_at.
@@ -185,11 +185,32 @@ func TestDoubleLockClearedByRotation(t *testing.T) {
 	// Reveal no longer treats the old password as meaningful — it just fails
 	// as a plain decrypt failure ("v2:rotated-placeholder" is not a real
 	// vault token), not a doublelock-password refusal.
-	code, data := dlReveal(t, srv, http.MethodPost, path+"/reveal", testAPIKey, "hunter2")
+	code, data := dlReveal(t, srv, http.MethodPost, path+"/reveal", testAPIKey, "correct horse battery staple")
 	if code != http.StatusInternalServerError {
 		t.Fatalf("reveal after rotation: %d %s, want 500 (plain decrypt failure, not doublelock)", code, data)
 	}
 	if strings.Contains(strings.ToLower(string(data)), "doublelock") {
 		t.Fatalf("reveal error after rotation still mentions doublelock: %s", data)
+	}
+}
+
+// TestDoubleLockRejectsShortPassword is the regression test for the 2026-08-26
+// audit's finding H-3. DoubleLockEnc is a copy of the secret living OUTSIDE the
+// KEK, so the password is the only thing protecting it after a database
+// compromise — and it was validated only for being non-empty. A short password
+// is now refused before anything is sealed.
+func TestDoubleLockRejectsShortPassword(t *testing.T) {
+	srv := newTestServer(t)
+	cid := seedTargetAndCred(t, srv)
+	path := "/api/credentials/" + itoa(cid)
+
+	if code, d := do(t, srv, http.MethodPost, path+"/doublelock", testAPIKey,
+		map[string]any{"holder": "alice", "password": "short"}); code != http.StatusUnprocessableEntity {
+		t.Fatalf("a 5-char double-lock password was accepted: %d %s, want 422", code, d)
+	}
+	// A password at the floor is accepted.
+	if code, d := do(t, srv, http.MethodPost, path+"/doublelock", testAPIKey,
+		map[string]any{"holder": "alice", "password": "sixteen-chars-ok"}); code != http.StatusNoContent {
+		t.Fatalf("a 16-char password was refused: %d %s", code, d)
 	}
 }
