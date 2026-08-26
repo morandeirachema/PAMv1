@@ -42,6 +42,7 @@ func (s *Server) setupBroker(opts Options) error {
 	// even when the deployment has not made binding mandatory — otherwise the
 	// constraint would be advisory, which is the failure Phase 204 was careful
 	// to avoid claiming on the listing side.
+	s.brokerMaxCallsPerToken = opts.BrokerMaxCallsPerToken
 	s.brokerRequirePoP = opts.BrokerRequirePoP
 	s.brokerPublicURL = strings.TrimRight(strings.TrimSpace(opts.BrokerPublicURL), "/")
 	s.popChecker = agentid.NewProofChecker(0)

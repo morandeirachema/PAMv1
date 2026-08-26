@@ -1495,6 +1495,38 @@ func (s *PGStore) CountAgentToolCallsSince(ctx context.Context, agent string, si
 	return n, err
 }
 
+// CountAgentCallsForTokenSince counts the brokered tool calls made while
+// presenting one token, identified by its `jti`.
+//
+// The token is matched by searching the audit DETAIL for the field the API
+// writes, built here through store.AgentTokenAuditField so the two sides cannot
+// drift -- a mismatch would match nothing, and a ceiling that counts zero never
+// fires, which is the failure direction that stays silent.
+//
+// `strpos` rather than `LIKE`: a jti is issuer-chosen, and under LIKE a `%` or
+// `_` inside one would become a wildcard, quietly matching other tokens' rows
+// and over-counting somebody else's calls against this token's ceiling. strpos
+// has no pattern semantics at all, so there is nothing to escape.
+//
+// Actor is matched too, so quoting another agent's jti cannot spend its ceiling.
+func (s *PGStore) CountAgentCallsForTokenSince(ctx context.Context, agent, jti string, since time.Time) (int, error) {
+	if jti == "" {
+		return 0, nil // a static agent key has no token id; see the interface doc
+	}
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM audit_events
+		 WHERE actor = $1
+		   AND action = ANY($2)
+		   AND ts >= $3
+		   AND strpos(detail, $4) > 0`,
+		agent,
+		[]string{store.AuditActionToolCallExecuted, store.AuditActionToolCallResumed},
+		since.UTC(),
+		store.AgentTokenAuditField(jti)).Scan(&n)
+	return n, err
+}
+
 // QuarantineAgent stops one agent by subject, populating ID and CreatedAt;
 // ErrConflict if that subject is already quarantined.
 func (s *PGStore) QuarantineAgent(ctx context.Context, q *store.AgentQuarantine) error {

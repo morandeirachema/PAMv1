@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–208 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–209 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,69 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 209 — A ceiling on one token, and the correction that came with it ✅
+
+§3b's last capability item, and the phase spent as much effort on the item's
+*wording* as on the code. The roadmap recorded it as "no ceiling on a single
+**run** — calls or targets touched under one `session:`". Building that would
+have shipped a control the constrained party can escape by changing a string.
+
+- [x] **The premise was wrong, and the codebase already said so.**
+  `broker.Call.SessionID` is declared by the caller, and its own doc comment
+  states it "may never influence a decision" — it exists so an investigator can
+  reconstruct a run, not so a gate can read it. A ceiling keyed on `session:` is
+  a lint, not a control: the agent hitting it sends a different string. The
+  roadmap entry is corrected in place rather than quietly satisfied
+- [x] **Keyed on the presented token's `jti` instead**, which the ISSUER chooses —
+  pamv1 itself for a delegated token. A fresh allowance therefore costs a trip
+  back through the exchange, which is audited, depth-capped, `may_act`-gated and,
+  since Phase 206, able to require proof of possession. That is what makes the
+  number an operator sets actually bind
+- [x] **`BrokerStore.CountAgentCallsForTokenSince`** (`store.Store` 217 ->
+  **218**) reads the same primary audit trail the daily budget reads and counts
+  the same two spending actions for the same reasons — the difference is only
+  what it groups by. The actor is matched as well as the token, so one agent
+  cannot spend another's ceiling by quoting its `jti`
+- [x] **pgstore uses `strpos`, not `LIKE`.** A `jti` is issuer-chosen, and under
+  `LIKE` a `%` or `_` inside one becomes a wildcard that silently matches other
+  tokens' rows — over-counting somebody else's calls against this token's
+  ceiling. `strpos` has no pattern semantics, so there is nothing to escape
+- [x] **One function builds the field and the needle.** New
+  `store.AgentTokenAuditField`, which the API now writes the `svid_jti:` field
+  through, for exactly the reason `CredentialAAD` exists: two sides assembling
+  the same bytes independently is how a feature silently stops working — and
+  here the failure direction is a ceiling that counts **zero** and never fires,
+  which does not announce itself. Quoted rather than raw, so one `jti` cannot
+  match as a prefix of another (pinned by a contract case where it would)
+- [x] **Checked inside `budgetRefusal`, which both transports call.** The first
+  wiring put it in the REST helper — and MCP calls the shared function directly,
+  so the ceiling would have covered REST only. That is the failure this phase's
+  own doc comment warns about, caught by reading the call sites rather than by a
+  test. Fail-closed on a store error, matching the budget beside it
+- [x] **`PAM_BROKER_MAX_CALLS_PER_TOKEN`** (default off), bounded at 100000 and
+  refused at startup without the broker — a ceiling far above any real task
+  reads to an operator as a control and is not one
+- [x] **The end-to-end test cannot be satisfied by a simpler mechanism.** The
+  same agent spends its ceiling on one token and then keeps working on a second
+  obtained from the exchange: keyed on the agent, the second would be refused;
+  keyed on `session:`, the first would never have stopped. **Verified by
+  swapping the count for the per-agent one and watching the second token get
+  denied**
+- [x] **A test claim was corrected after the mutation check contradicted it.**
+  The static-key exemption survives deleting *both* explicit guards, because a
+  static key never causes an `svid_jti:` field to be written at all — nothing can
+  match a field that does not exist. The guards are belt to that braces and earn
+  their place by readability and by skipping a store round-trip per call; the
+  test now says that instead of claiming coverage it does not have
+
+**What it does not cover, said plainly**: a static agent key has no token id, and
+an SVID whose issuer stamps no `jti` has none either. Both are left to the
+per-day budget rather than being refused, because "unlimited" is the correct
+answer for an identity this control cannot see — and an operator should not have
+to discover that by experiment.
+
+Store surface 217 -> **218**; one new env var; no schema change, no new route.
 
 ## Phase 208 — The doc-currency audit, and the three names nothing could grep ✅
 
@@ -9554,8 +9617,14 @@ reason, and a set of smaller limits named so they are not forgotten:
   bundle is read once at startup; MCP is pinned at protocol `2024-11-05`; the
   SVID verifier allows 60 seconds of clock leeway past `exp`, normal practice but
   permissive in a system where a delegated token's TTL is its other containment;
-  and there is no ceiling on a single *run* — calls or targets touched under one
-  `session:` — as opposed to per minute and per day, both of which exist.
+  and ~~there is no ceiling on a single *run* — calls or targets touched under one
+  `session:` — as opposed to per minute and per day, both of which exist~~ (✅
+  Phase 209, **with the wording corrected**: a ceiling keyed on `session:` would
+  be escaped by the party it limits, since that value is declared by the caller,
+  so it is keyed on the presented token's issuer-chosen `jti` instead. What
+  remains unbounded is a run that spans several tokens — each gets its own
+  ceiling, which is the intended shape, but it means "one run" is bounded only
+  as far as one credential goes).
 
 **Out of scope, not missing**: CyberArk's and StrongDM's agent brokers are
 *egress* proxies governing which third-party MCP servers an agent may call.

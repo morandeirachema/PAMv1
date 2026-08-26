@@ -246,6 +246,9 @@ data:
   # Bind your tokens BEFORE requiring it. PAM_BROKER_PUBLIC_URL is mandatory
   # in practice here: an Ingress terminates TLS, so the request arrives as
   # plain http on an internal name while the client signed the external URL.
+  # Cap the brokered calls spendable with ONE token (0 = off). Bounds a single
+  # credential rather than an agent's day; a new token starts a new ceiling.
+  # PAM_BROKER_MAX_CALLS_PER_TOKEN: "0"
   # PAM_BROKER_REQUIRE_POP: "false"
   # PAM_BROKER_PUBLIC_URL: "https://pam.example.com"
 

@@ -530,6 +530,13 @@ type Config struct {
 	// merely unrecognised is audited rather than blocked. On, the deployment is
 	// saying that four-eyes it cannot verify is four-eyes it will not accept.
 	BrokerRequireKnownOwner bool
+	// BrokerMaxCallsPerToken — PAM_BROKER_MAX_CALLS_PER_TOKEN — cap how many
+	// brokered calls may be spent while presenting ONE token, keyed on its `jti`
+	// (Phase 209). 0 = off. Separate from BrokerBudgetPerDay rather than a
+	// replacement: the budget bounds an agent's day, this bounds one
+	// credential's whole life. A static agent key carries no token id and is
+	// unaffected — its ceiling is the per-day budget on its own row.
+	BrokerMaxCallsPerToken int
 	// BrokerRequirePoP — PAM_BROKER_REQUIRE_POP — refuse an SVID-authenticated
 	// agent whose token is not key-bound (RFC 7800 `cnf`, Phase 206), making
 	// sender-constrained tokens mandatory instead of merely available. Off by
@@ -712,6 +719,12 @@ func ValidateBootstrapAPIKey(key, databaseURL string) error {
 // stopping at the first, so a misconfigured deployment surfaces all of its
 // errors in one startup failure. A security toggle with a garbage value fails
 // loud here rather than defaulting to a fail-open state.
+// maxCallsPerToken bounds what PAM_BROKER_MAX_CALLS_PER_TOKEN may be set to. A
+// ceiling far above any real task is indistinguishable from none while still
+// reading to an operator as a control, which is the shape this validator refuses
+// elsewhere too.
+const maxCallsPerToken = 100_000
+
 func Load() (*Config, error) {
 	var errs []string
 	// boolean parses a strict bool (true/false/1/0/t/f/…) and records an error for
@@ -895,6 +908,7 @@ func Load() (*Config, error) {
 		BrokerRequireKnownOwner:    boolean("PAM_BROKER_REQUIRE_KNOWN_OWNER", false),
 		BrokerPostureRequired:      boolean("PAM_BROKER_POSTURE_REQUIRED", false),
 		BrokerRequirePoP:           boolean("PAM_BROKER_REQUIRE_POP", false),
+		BrokerMaxCallsPerToken:     integer("PAM_BROKER_MAX_CALLS_PER_TOKEN", 0),
 		BrokerPublicURL:            strings.TrimRight(strings.TrimSpace(os.Getenv("PAM_BROKER_PUBLIC_URL")), "/"),
 		BrokerRatePerMin:           integer("PAM_BROKER_RATE_PER_MIN", 0),
 		BrokerCheckpointEvery:      integer("PAM_BROKER_AUDIT_CHECKPOINT_EVERY", 0),
@@ -1058,6 +1072,13 @@ func Load() (*Config, error) {
 	if cfg.BrokerRequirePoP && cfg.BrokerTrustDomainJWKS == "" {
 		errs = append(errs, "PAM_BROKER_REQUIRE_POP needs PAM_BROKER_TRUST_DOMAIN_JWKS: without it no agent authenticates with an SVID, so there is no token that could carry a key binding")
 	}
+	// A ceiling must be a sane positive number. Negative is meaningless, and a
+	// value far above any real task is indistinguishable from no ceiling while
+	// reading to an operator as one — the shape this validator already refuses
+	// elsewhere.
+	if cfg.BrokerMaxCallsPerToken < 0 || cfg.BrokerMaxCallsPerToken > maxCallsPerToken {
+		errs = append(errs, "PAM_BROKER_MAX_CALLS_PER_TOKEN must be between 0 (off) and 100000")
+	}
 	// The origin a proof is checked against must be an ORIGIN. A value with a
 	// path, a query or a missing scheme would silently never match any request,
 	// refusing every bound agent with nothing in the config to point at.
@@ -1083,6 +1104,7 @@ func Load() (*Config, error) {
 			{"PAM_BROKER_REQUIRE_ENROLLED_SVID", cfg.BrokerRequireEnrolledSVID},
 			{"PAM_BROKER_POSTURE_REQUIRED", cfg.BrokerPostureRequired},
 			{"PAM_BROKER_REQUIRE_POP", cfg.BrokerRequirePoP},
+			{"PAM_BROKER_MAX_CALLS_PER_TOKEN", cfg.BrokerMaxCallsPerToken > 0},
 		} {
 			if k.set {
 				errs = append(errs, k.name+" needs the agent broker enabled (PAM_BROKER_POLICY_FILE)")

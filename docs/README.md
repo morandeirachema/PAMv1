@@ -1,6 +1,6 @@
 # pamv1 — documentation
 
-> Last updated: 2026-08-26 · Reflects: Phases 0–208 and release v0.56.0 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-08-26 · Reflects: Phases 0–209 and release v0.56.0 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -107,6 +107,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-08-26 | Phase 209 (a ceiling on one token) documented: ARCHITECTURE-LOW-LEVEL §4 gains `PAM_BROKER_MAX_CALLS_PER_TOKEN` and §5 gains `agent.token_budget_exhausted`/`_check_failed`; AGENT-THREAT-MODEL gains the control row; ADMIN-GUIDE gains the knob with the two identity kinds it does not cover. The roadmap's own wording for this item was **wrong and is corrected in place**: it described a ceiling keyed on `session:`, which the party being limited chooses for itself |
 | 2026-08-26 | Phase 208 (doc-currency audit against v0.56.0). Eight documents had **stalled at `Phases 0–205`** — 206 and 207 each bumped only the headers that were already current, so a sweep keyed on "0–206" could not see a document that never reached 206; all eighteen now state 0–208 **with what the new phases do or do not change for each**. Both READMEs claimed the wrong roadmap range and still defined beta as "every phase through 52g has shipped", true when beta was declared and wrong for 150 phases since. And §5 was missing three refusal actions, two of which **appear as a literal nowhere in the source**: `gateCredentialAccess` audits its argument plus `_denied`, so the emitted name is assembled at runtime and every literal-grep audit was blind to it. `api.TestGateDenialNamesAreDocumented` now reconstructs the names the way the helper does and requires each inside §5, not merely somewhere in the file |
 | 2026-08-26 | Release-currency check alongside v0.56.0 found a **four-release drift**: `NIS2-COMPLIANCE.md`'s Art. 21(2)(e) evidence row still named v0.51.0 as the current release, stale since v0.52.0 — in a row whose entire purpose is to be what an auditor reads. It is named in the release checklist by name and was missed anyway, which is the same lesson the `deploy/` pin sweep already encodes: a list of places is only as good as its last update, so the durable check is a grep that enumerates every version string rather than a checklist that remembers them |
 | 2026-08-25 | Documentation currency audit alongside v0.55.0. Verified rather than assumed, in both directions: **zero** documented env vars the code never reads (the Phase 182 defect class), **zero** server env vars absent from every operator-facing doc, and **zero** audit actions the code emits that §5 omits. One real defect found and fixed — BACKUP-AND-RESTORE, SYSADMIN-GUIDE and REQUIREMENTS all stated the migration high-water as `0047` while carrying `Reflects:` headers claiming currency through 205, when Phase 197 moved it to `0048`. A header asserting currency over a body that stopped being true is the same shape as the stale release digest Phase 190 closed |
