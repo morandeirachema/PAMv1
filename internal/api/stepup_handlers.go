@@ -46,7 +46,7 @@ type stepUpDecisionIn struct {
 // An operator may not decide their own session's step-up. The whole point of the
 // pause is to put a second person in the loop before a sensitive statement runs;
 // self-approval would turn it into a confirmation prompt while leaving an audit
-// entry that reads like independent review. Every other decision point in pamv1
+// entry that reads like independent review. Every other decision point in PAMv1
 // already refuses this, so the refusal is audited here in the same shape
 // (`*.self_*_denied`) rather than silently 403ing.
 //

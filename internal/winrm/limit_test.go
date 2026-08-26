@@ -34,8 +34,15 @@ func TestLimitedBufferCapsAndMarks(t *testing.T) {
 	if !strings.Contains(out, "truncated") {
 		t.Fatal("a truncated transcript does not say so")
 	}
-	if strings.Count(out, "A") != 1024 {
-		t.Fatalf("kept %d bytes, want exactly the 1024-byte cap", strings.Count(out, "A"))
+	// Count fill bytes in the PAYLOAD only, before the truncation marker — the
+	// marker text ("[PAMv1: output truncated…]") itself contains an 'A', so a
+	// naive Count over the whole string is off by one.
+	payload := out
+	if i := strings.Index(out, "\r\n["); i >= 0 {
+		payload = out[:i]
+	}
+	if strings.Count(payload, "A") != 1024 {
+		t.Fatalf("kept %d payload bytes, want exactly the 1024-byte cap", strings.Count(payload, "A"))
 	}
 }
 

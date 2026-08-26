@@ -592,7 +592,7 @@
   // It is keyed by the agent's CANONICAL SUBJECT — the agent-key name for a
   // static key, the full SPIFFE ID for an agent that authenticates with an SVID.
   // An SVID agent has no key row here to revoke or suspend (its identity is
-  // minted by the workload API, not by pamv1), so quarantining its subject is
+  // minted by the workload API, not by PAMv1), so quarantining its subject is
   // the ONLY stop button it has.
   async function openQuarantine() {
     quarantine = [];
@@ -1532,13 +1532,13 @@ Session <span class="white">${esc(String(shareInviteSid).slice(0, 8))}</span>. F
   <option value="view_control">View + control (keyboard access)</option>
 </select></label>
 <label>Kind  . . . . . . . :  <select name="kind">
-  <option value="internal">Internal — a named pamv1 user</option>
+  <option value="internal">Internal — a named PAMv1 user</option>
   <option value="external">External — email + QR (15-minute link)</option>
 </select></label>
 <label>Invitee / email . . :  <input name="who" size="30"></label>
 <input type="submit" hidden>
 </form>
-<div class="cyan indent">Internal: the invitee redeems it over SSH as their own login. External: pamv1 emails a one-time link + QR code, valid 15 minutes.</div>
+<div class="cyan indent">Internal: the invitee redeems it over SSH as their own login. External: PAMv1 emails a one-time link + QR code, valid 15 minutes.</div>
 ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-shrnew").onsubmit = async (ev) => {
           ev.preventDefault();
@@ -1602,7 +1602,7 @@ Invitee . . . . . . :  <span class="white">${esc(t.invitee)}</span>
 
 Token . . . . . . . :  <span class="white">${esc(t.token)}</span>
 </div>
-<div class="cyan indent">Give it to ${esc(t.invitee || "the invitee")}; they redeem it over SSH as "join:&lt;token&gt;" using their OWN pamv1 password. It expires in 15 minutes and works once.</div>
+<div class="cyan indent">Give it to ${esc(t.invitee || "the invitee")}; they redeem it over SSH as "join:&lt;token&gt;" using their OWN PAMv1 password. It expires in 15 minutes and works once.</div>
 ${fkeys("F3=Exit   F12=Cancel")}`;
       },
 
@@ -1836,7 +1836,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         const canRevoke = can("manage_targets");
         const ca = caInfo && !caInfo.disabled ? `CA fingerprint <span class="white">${esc(caInfo.fingerprint)}</span>` : `<span class="amber">Zero Standing Privilege is not enabled (set PAM_SSH_CA_KEY)${sshCerts.length ? " — issued certificates remain revocable" : ""}.</span>`;
         term.innerHTML = `${head("PAMWRKCRT", "Work with Operator SSH Certificates")}
-Short-lived certificates pamv1 signed for an operator's own key (proof-of-possession).
+Short-lived certificates PAMv1 signed for an operator's own key (proof-of-possession).
 ${ca}
 Type options, press Enter.  <span class="cyan">${canRevoke ? "4=Revoke (published in the KRL)" : "(read-only role)"}</span>
 
@@ -2006,7 +2006,7 @@ Type options, press Enter.  <span class="cyan">4=Revoke (permanent)   5=Suspend 
 ${agents.map((a) => `<tr><td>${opt(a.id)}</td><td>${esc(a.id)}</td><td class="white">${cell(a.name, 13)}</td><td class="${a.owner_known === false ? "red" : ""}">${cell((a.owner || "-") + (a.owner_known === false ? " ?" : ""), 11)}</td><td>${status(a)}</td>${budgetCell(a)}<td class="cyan">${day(a.created_at)}</td><td class="${a.expires_at ? (expired(a) ? "red" : "amber") : "cyan"}">${day(a.expires_at || "never")}</td><td class="cyan">${mins(a.last_used_at || "never used")}</td></tr>`).join("")}
 </table>${agents.length ? "" : `<div class="cyan indent">(No agent keys. Press F6 to mint one — requires the broker to be enabled.)</div>`}
 <input type="submit" hidden></form>
-<div class="cyan">An owner shown in red with a <span class="red">?</span> matches no pamv1 user, so deleting that human will
+<div class="cyan">An owner shown in red with a <span class="red">?</span> matches no PAMv1 user, so deleting that human will
 never suspend this agent — usually a typo. Fix it by re-minting under the right owner.
 Suspend is reversible (5/6); revoke is not. An agent that presents a SPIFFE SVID has no key row
 here at all — stop that one with F7=Quarantine list, and record who owns it with F8=SPIFFE owners
@@ -2182,7 +2182,7 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         const r = kubeResult;
         term.innerHTML = `${head("PAMKUBECT", "Run Kubernetes Operation")}
 Target <span class="white">${esc(t.name)}</span> (${esc(t.host)}:${esc(t.port)}) — the cluster's own RBAC decides what the
-vaulted service-account token may do; pamv1 brokers, guards and records the call.
+vaulted service-account token may do; PAMv1 brokers, guards and records the call.
 
 <form id="f-kube" class="indent">
 <label>Verb  . . . . . . . :  <select name="verb"><option>get</option><option>logs</option><option>apply</option><option>delete</option></select>   <span class="cyan">exec/attach/port-forward are not brokered</span></label>
@@ -2214,7 +2214,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         };
       },
 
-      // Menu 28 — outbound-only endpoint agents (Phase 153): a target pamv1
+      // Menu 28 — outbound-only endpoint agents (Phase 153): a target PAMv1
       // cannot dial into runs pam-agent, which dials OUT and holds a reverse
       // tunnel; while an unrevoked agent exists the target is reached ONLY
       // through it. Status is this replica's live view.
@@ -2223,7 +2223,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         const canManage = can("manage_targets");
         const status = (a) => a.revoked_at ? '<span class="red">revoked  </span>' : a.connected ? '<span class="green">connected</span>' : '<span class="cyan">offline  </span>';
         term.innerHTML = `${head("PAMWRKEPA", "Work with Endpoint Agents")}
-Outbound-only agents (pam-agent) for targets pamv1 cannot dial into: the agent dials OUT
+Outbound-only agents (pam-agent) for targets PAMv1 cannot dial into: the agent dials OUT
 to the SSH listener and holds a reverse tunnel; the target is then reached ONLY through it.
 Type options, press Enter.  <span class="cyan">${canManage ? "4=Revoke (key stops resolving, live tunnel dropped)" : "(read-only role)"}</span>
 
@@ -2342,7 +2342,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
       // SPIFFE ID (spiffe://trust-domain/path) for an agent that authenticates
       // with an SVID. That distinction is the whole point of this screen: an
       // SVID agent has no key row on PAMWRKAGT — its identity is minted by the
-      // workload API, not by pamv1 — so there is nothing to revoke or suspend,
+      // workload API, not by PAMv1 — so there is nothing to revoke or suspend,
       // and quarantining its subject is the ONLY stop button it has. A
       // quarantined subject is refused at the door, before any tool call is
       // matched against policy.
@@ -2407,7 +2407,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
       // against the approver, could never fire on the attested path.
       identities() {
         back = "agents";
-        // ENROLLED means a human claimed this identity; SEEN means pamv1 created
+        // ENROLLED means a human claimed this identity; SEEN means PAMv1 created
         // the row itself the first time that SPIFFE ID authenticated (Phase 174)
         // — an inventory that only held what somebody remembered to type would
         // not be one. A SEEN row has no owner, and an identity with no owner
@@ -2417,7 +2417,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           : `<span class="amber">${pad("seen", 8)}</span>`;
         const seenAt = (t) => pad(fmtTime(t).slice(0, 16), 16);
         term.innerHTML = `${head("PAMAGTOWN", "SPIFFE Agent Identities")}
-Every SPIFFE-attested agent pamv1 has seen, and who is accountable for each. The broker refuses
+Every SPIFFE-attested agent PAMv1 has seen, and who is accountable for each. The broker refuses
 an approval from a human who owns any agent in the calling chain (four-eyes), and deleting a
 human quarantines the identities they owned — both read this list.
 <span class="cyan">SEEN rows are workloads that authenticated but nobody has claimed: their parked calls cannot be
@@ -2509,7 +2509,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         term.innerHTML = `${head("PAMDBLLCK", "DoubleLock a Credential")}
 A second, named password on top of the vault's own encryption: revealing or checking out
 this credential will additionally require it. The holder is the person who knows it —
-recorded so an investigator can see who to ask, never so pamv1 can ask for them.
+recorded so an investigator can see who to ask, never so PAMv1 can ask for them.
 
 <div class="indent">Credential  . . . . :  <span class="white">${esc(c.id)}</span> (${esc(c.username || "")})</div>
 
@@ -2656,7 +2656,7 @@ ${(r.targets || []).map((t) => `<tr><td>${esc(t.target_id)}</td><td class="white
 Standing access, read from the subject's side. Every other grant screen answers "who may reach
 this target"; this one answers the reverse, and says WHY each target is reachable — a direct
 grant, a role grant, safe membership, an admin bypass, or nothing gating the target at all.
-<span class="cyan">Kind</span> user = a local pamv1 user (a directory identity's roles are decided at login and cannot be
+<span class="cyan">Kind</span> user = a local PAMv1 user (a directory identity's roles are decided at login and cannot be
 reviewed here).  <span class="cyan">Kind</span> agent = an AI-agent key name or a full SPIFFE ID.
 
 <form id="f-q" class="indent">
@@ -2684,7 +2684,7 @@ ${fkeys("F3=Exit   F5=Re-run   F12=Cancel")}`;
         back = "main";
         const t = extToken;
         term.innerHTML = `${head("PAMEXTTOK", "Browser-Extension Token")}
-A token for the pamv1 browser extension, scoped to ONE action: revealing a credential you
+A token for the PAMv1 browser extension, scoped to ONE action: revealing a credential you
 already have permission to reveal. It cannot list targets, browse the vault, or call
 anything else, and it expires on its own.
 
@@ -2704,8 +2704,8 @@ ${fkeys("F3=Exit   F6=Mint a token   F12=Cancel")}`;
         const canManage = can("manage_credentials");
         term.innerHTML = `${head("PAMWRKDEP", "Work with Dependent Accounts")}
 Consumers of credential <span class="white">${esc(c.username || c.id)}</span> (id ${esc(c.id)}) — services that log on with this
-account. On rotation, pamv1 also updates each consumer over WinRM so rotation does not break production.
-<span class="cyan">Managed via</span> is the account pamv1 logs in to that host AS. <span class="amber">this account</span> means it logs in as the
+account. On rotation, PAMv1 also updates each consumer over WinRM so rotation does not break production.
+<span class="cyan">Managed via</span> is the account PAMv1 logs in to that host AS. <span class="amber">this account</span> means it logs in as the
 credential being rotated, which needs admin rights on the host — name a management credential instead.
 Type options, press Enter.  <span class="cyan">${canManage ? "4=Delete" : "(read-only role)"}</span>
 
@@ -3403,7 +3403,7 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
       // acctscan (Phase 128): authenticated post-login account discovery — a
       // fixed enumeration command run over the target's own vaulted
       // credential, cross-referenced against every credential vaulted for
-      // that target. An "unmanaged" account is one the host has but pamv1
+      // that target. An "unmanaged" account is one the host has but PAMv1
       // does not — nobody is rotating or auditing access to it.
       acctscan() {
         back = "targets";
@@ -3413,7 +3413,7 @@ ${r ? `<div class="white">Target: ${esc(r.target)} (${esc(r.protocol)})   Found:
 <table><tr><th>Account</th><th>Privileged</th><th>Managed</th></tr>
 ${r.accounts.map((a) => `<tr><td>${cell(a.username, 24)}</td><td class="${a.privileged ? "amber" : ""}">${a.privileged ? "yes" : "-"}</td><td class="${r.managed[a.username] ? "green" : "red"}">${r.managed[a.username] ? "yes" : "NO"}</td></tr>`).join("")}
 </table>
-<div class="cyan indent">An unmanaged account has no vaulted pamv1 credential for this target — pamv1 is not rotating, auditing or brokering access to it.</div>` : `<div class="cyan">No scan results. Go back and run 9=Discover accounts on a target.</div>`}
+<div class="cyan indent">An unmanaged account has no vaulted PAMv1 credential for this target — PAMv1 is not rotating, auditing or brokering access to it.</div>` : `<div class="cyan">No scan results. Go back and run 9=Discover accounts on a target.</div>`}
 ${fkeys("F3=Exit   F12=Cancel")}`;
       },
 

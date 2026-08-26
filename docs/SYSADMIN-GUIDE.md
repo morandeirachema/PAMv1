@@ -1,17 +1,17 @@
-# pamv1 — Sysadmin Guide (how it works)
+# PAMv1 — Sysadmin Guide (how it works)
 
 > **Living document.** Update when the operator-facing behavior or the runbook
 > recipes change. See the [change log](#10-change-log).
 >
-> Last updated: 2026-08-26 · Reflects: Phases 0–212. **Phase 206 adds no background worker either** — proof of possession is checked inline on the agent ingress; its replay cache is in-process and swept lazily on use, not by a scheduled job. It does add two env vars (`PAM_BROKER_REQUIRE_POP`, `PAM_BROKER_PUBLIC_URL`), both default-off and both failing startup loudly without their prerequisite. **Phase 189 adds no background worker either** — it is one read-only route and one index-only migrations (`0047`, `0048`). **Phases 161–183 add no background worker**: the agent-broker batch changes what the existing request path decides and records, and its one periodic job (the parked-approval sweep) predates it — Phase 171 only made the deadline it sweeps against per call rather than deployment-wide. Three additive migrations (`0044`, `0045`, `0046`), applied at startup, and five new knobs, every one defaulted so an untouched deployment behaves exactly as it did: `PAM_BROKER_MAX_RESULT_BYTES` (165, default 64 KiB — how much of a tool's output reaches the agent, with the whole output kept in a transcript), `PAM_BROKER_BUDGET_PER_DAY` (167, default `0` = unlimited), `PAM_BROKER_REQUIRE_ENROLLED_SVID` (174), `PAM_BROKER_REQUIRE_KNOWN_OWNER` (176) and `PAM_BROKER_POSTURE_REQUIRED` (180) — the last three all default off, and since Phase 182 each **refuses to start** when the thing it gates on is absent (no SVID verifier, no broker policy file, no posture webhook), so an inert setting fails loudly instead of reading as protection. One operational consequence worth planning for: after Phase 170 a SPIFFE-authenticated agent needs a recorded owner before its parked calls can be approved by anyone, so register owners before the upgrade rather than discovering it at an approval. Phases 53–70 add one background worker (the hourly, leader-locked certification scheduler — always on, nothing to configure beyond `PAM_CERT_REMIND_DAYS`, which Phase 76 range-checks at `0`–`366` and refuses to start outside) and migrations `0025`–`0031`, all additive and applied at startup; 71–77 add no worker, migration or knob. Phase 78 adds one **optional, per-replica** worker — the Conjur secret refresh, off unless `PAM_CONJUR_REFRESH_MIN` is set, and deliberately not leader-locked because each replica holds its own copy of the secrets it re-reads. Phases 79–94 add no worker and no migration; the new knobs are the Phase 84 first-class ticket-connector family (`PAM_TICKET_PROVIDER`/`_URL`/`_USER`/`_TOKEN`/`_STATES`/`_ACTOR_FIELDS`/`_REQUIRE_WINDOW`/`_BIND_ACTOR`) and the Phase 86 `PAM_ANALYTICS_AUTO_STEPUP` response rung. Phase 116 adds migration `0032` (live session-sharing — §6.4, §7) and no new worker. Phase 118 adds migration `0033` (a `users.ip_allowlist` column) and, likewise, no new worker or knob. **Phase 120 adds a second scheduled worker**: `RunAccessRequestScheduler`, hourly, leader-locked on its own key (`pam_arq`), same always-on shape as the certification scheduler — it does nothing until an access request is filed with `recur_days` set. New migration `0034` (`access_requests.recur_days`/`next_run_at`, a new `password_history` table). **Phase 122 adds no worker and no migration** — suspend/resume gates the same in-memory, per-replica registry Phase 116's sharing already added, on the existing `approve` capability. **Phase 124 adds no worker but does add migration `0035`** (`webauthn_credentials`, `mfa_webauthn_challenges`) and two new restart-only env vars, `PAM_WEBAUTHN_RP_ID`/`_RP_ORIGIN` — presence enables the feature, same idiom as OIDC. **Phase 126 adds no worker and no migration** — the color-theme cycle is a client-side `localStorage` preference with no server-side state at all. **Phase 128 adds no worker, no migration and no new env var** — one new route, gated by the existing `PAM_COMMAND_DENY_FILE` guard like any other discrete command. **Phase 129 adds no worker and no new env var**, but does add migration `0036` (`credentials.is_provisioner`) — Zero Standing Privilege for PostgreSQL, RDP not achievable (confirmed protocol limitation) and SQL Server deferred. **Phase 131 adds no worker and no migration**, but does add one new env var, `PAM_COMMAND_ALLOW_FILE` — command allow-listing, off unless set. **Phase 133 adds no worker but does add migration `0037`** (`users.device_fingerprint`) and two new env vars, `PAM_POSTURE_ATTEST_URL`/`PAM_DEVICE_HEADER` — device-aware access control, off unless set. **Phase 135 adds no worker and no new env var**, but does add migration `0038` (`credentials.double_lock_holder`/`double_lock_verifier`/`double_lock_enc`) — DoubleLock, opt-in per credential via two new REST routes, nothing to configure. **Phase 137 adds no worker**, but does add migration `0039` (a new `approval_invites` table) and one new env var, `PAM_APPROVAL_INVITE_TTL_MIN` (default 1440) — magic-link approval, live the moment `PAM_ALERT_EMAIL_*`/`PAM_PORTAL_URL` are configured (the same requirement Phase 116 already set), plus session watermarking, which needs no configuration at all. **Phase 139 adds no worker and no new env var**, but does add migration `0040` (`safes.personal`) — personal safes, opt-in per safe via `POST /api/safes`, nothing to configure. **Phase 141 adds no worker and no migration**, but does add one new env var, `PAM_SSH_PORT_FORWARD` (default true) — port-forwarding on the SSH proxy, on by default, set to `false` to disable. **Phase 143 adds no worker and no migration**, but does add one new env var, `PAM_ICAP_URL` (off by default) — ICAP AV/DLP scanning of SFTP transfers, requires `PAM_SSH_SFTP_CAPTURE` and `PAM_SSH_SFTP_CAPTURE_MAX_MB` already set, joins the `PAM_OT_AIRGAP` conflict list. **Phase 145 adds no worker and no migration**, but does add one new env var, `PAM_CREDENTIAL_FILE_MAX_KB` (default 1024) — the file-attachment secret size cap, on by default at a sane ceiling rather than starting unbounded. **Phase 147 adds no worker and no migration**, but does add one new env var, `PAM_EXTENSION_TOKEN_TTL_HOURS` (default 24, range 1–720) — how long a minted browser-extension autofill token stays valid before it must be re-minted; the token itself is one more row in the existing `sessions` table. **Phase 149 adds no worker**, but does add migration `0041` (`users.external_id`/`users.active`, a new `scim_keys` table) and one new env var, `PAM_SCIM_ENABLED` (default off) — SCIM 2.0 user provisioning, an inbound REST surface on the existing `:8080` listener, nothing to configure beyond minting a client key once enabled. **Phase 151 adds no worker and no migration**, and twelve `PAM_SAML_*` env vars (SAML 2.0 SP login, `PAM_SAML_SP_URL` enables): operationally, one metadata fetch at startup/hot-swap — so a SAML-enabled server needs the IdP metadata URL reachable at boot, or the `_FILE` form — and, when the IdP rotates its signing certificate, a restart or a re-save of the SAML config in the console to pick up the new metadata (it is not auto-refreshed). If the optional SP key pair files are used, they are ordinary PEM files on disk, rotated by replacing them and restarting, and the IdP must be given the new certificate (re-import the SP metadata). **Phase 153 adds migration `0042` (`endpoint_agents`), one env var (`PAM_ENDPOINT_AGENTS_ENABLED`, default off) and a second binary you deploy to endpoints, not to pam-server**: `pam-agent` (Release assets `pam-agent_linux_{amd64,arm64}` + `SHA256SUMS`, verify before installing), run as a service on each unreachable target with `PAM_AGENT_SERVERS` (every replica), `_NAME`, `_KEY`, `_LOCAL_ADDR` and `_SERVER_HOST_KEY` (pam-server's SSH host public key — one key cluster-wide; if you ever rotate the SSH host key, every agent's pinned key must be updated or every tunnel stays down). Operationally: menu 28 / `GET /api/endpoint-agents` shows this replica's live view (connected/offline/revoked, last seen); an agent connects with backoff, so after a pam-server restart expect tunnels back within ~1–60 s; revoke (`DELETE /api/endpoint-agents/{id}`) drops the live tunnel at once and the key stops resolving; a lost key is revoke-and-re-register, nothing to recover. **Phase 155 adds no worker and no migration**, four `PAM_K8S_*` settings and one operational habit: a `kubernetes` target's service-account token is an ordinary vaulted credential, so rotating it is re-issuing the token at the cluster and updating the credential — there is no rotator for the `kubernetes` protocol, so the lifecycle worker reports it unsupported rather than attempting one. If the cluster uses a private CA (most do), `PAM_K8S_CA_FILE` must contain it or every operation fails TLS verification; several clusters' CAs can be concatenated into one bundle, and the file is read at startup, so a new cluster CA means a restart. **Phase 157 adds no worker and no migration**, three `PAM_SESSION_FORENSICS*` settings (off by default) and two operational consequences when you turn it on: one extra short SSH connection to the target after every interactive session (bounded by `_TIMEOUT_SEC`, drained on shutdown rather than killed), and one more artifact per session in `PAM_RECORDING_DIR` — size them with your recording retention. The targets need `auditd` with exec auditing and a credential that can read its log; where that is missing, watch for `session.forensics_unavailable`, which is a finding about the target rather than an error in pamv1. Nothing else in this runbook changes.
+> Last updated: 2026-08-26 · Reflects: Phases 0–212. **Phase 206 adds no background worker either** — proof of possession is checked inline on the agent ingress; its replay cache is in-process and swept lazily on use, not by a scheduled job. It does add two env vars (`PAM_BROKER_REQUIRE_POP`, `PAM_BROKER_PUBLIC_URL`), both default-off and both failing startup loudly without their prerequisite. **Phase 189 adds no background worker either** — it is one read-only route and one index-only migrations (`0047`, `0048`). **Phases 161–183 add no background worker**: the agent-broker batch changes what the existing request path decides and records, and its one periodic job (the parked-approval sweep) predates it — Phase 171 only made the deadline it sweeps against per call rather than deployment-wide. Three additive migrations (`0044`, `0045`, `0046`), applied at startup, and five new knobs, every one defaulted so an untouched deployment behaves exactly as it did: `PAM_BROKER_MAX_RESULT_BYTES` (165, default 64 KiB — how much of a tool's output reaches the agent, with the whole output kept in a transcript), `PAM_BROKER_BUDGET_PER_DAY` (167, default `0` = unlimited), `PAM_BROKER_REQUIRE_ENROLLED_SVID` (174), `PAM_BROKER_REQUIRE_KNOWN_OWNER` (176) and `PAM_BROKER_POSTURE_REQUIRED` (180) — the last three all default off, and since Phase 182 each **refuses to start** when the thing it gates on is absent (no SVID verifier, no broker policy file, no posture webhook), so an inert setting fails loudly instead of reading as protection. One operational consequence worth planning for: after Phase 170 a SPIFFE-authenticated agent needs a recorded owner before its parked calls can be approved by anyone, so register owners before the upgrade rather than discovering it at an approval. Phases 53–70 add one background worker (the hourly, leader-locked certification scheduler — always on, nothing to configure beyond `PAM_CERT_REMIND_DAYS`, which Phase 76 range-checks at `0`–`366` and refuses to start outside) and migrations `0025`–`0031`, all additive and applied at startup; 71–77 add no worker, migration or knob. Phase 78 adds one **optional, per-replica** worker — the Conjur secret refresh, off unless `PAM_CONJUR_REFRESH_MIN` is set, and deliberately not leader-locked because each replica holds its own copy of the secrets it re-reads. Phases 79–94 add no worker and no migration; the new knobs are the Phase 84 first-class ticket-connector family (`PAM_TICKET_PROVIDER`/`_URL`/`_USER`/`_TOKEN`/`_STATES`/`_ACTOR_FIELDS`/`_REQUIRE_WINDOW`/`_BIND_ACTOR`) and the Phase 86 `PAM_ANALYTICS_AUTO_STEPUP` response rung. Phase 116 adds migration `0032` (live session-sharing — §6.4, §7) and no new worker. Phase 118 adds migration `0033` (a `users.ip_allowlist` column) and, likewise, no new worker or knob. **Phase 120 adds a second scheduled worker**: `RunAccessRequestScheduler`, hourly, leader-locked on its own key (`pam_arq`), same always-on shape as the certification scheduler — it does nothing until an access request is filed with `recur_days` set. New migration `0034` (`access_requests.recur_days`/`next_run_at`, a new `password_history` table). **Phase 122 adds no worker and no migration** — suspend/resume gates the same in-memory, per-replica registry Phase 116's sharing already added, on the existing `approve` capability. **Phase 124 adds no worker but does add migration `0035`** (`webauthn_credentials`, `mfa_webauthn_challenges`) and two new restart-only env vars, `PAM_WEBAUTHN_RP_ID`/`_RP_ORIGIN` — presence enables the feature, same idiom as OIDC. **Phase 126 adds no worker and no migration** — the color-theme cycle is a client-side `localStorage` preference with no server-side state at all. **Phase 128 adds no worker, no migration and no new env var** — one new route, gated by the existing `PAM_COMMAND_DENY_FILE` guard like any other discrete command. **Phase 129 adds no worker and no new env var**, but does add migration `0036` (`credentials.is_provisioner`) — Zero Standing Privilege for PostgreSQL, RDP not achievable (confirmed protocol limitation) and SQL Server deferred. **Phase 131 adds no worker and no migration**, but does add one new env var, `PAM_COMMAND_ALLOW_FILE` — command allow-listing, off unless set. **Phase 133 adds no worker but does add migration `0037`** (`users.device_fingerprint`) and two new env vars, `PAM_POSTURE_ATTEST_URL`/`PAM_DEVICE_HEADER` — device-aware access control, off unless set. **Phase 135 adds no worker and no new env var**, but does add migration `0038` (`credentials.double_lock_holder`/`double_lock_verifier`/`double_lock_enc`) — DoubleLock, opt-in per credential via two new REST routes, nothing to configure. **Phase 137 adds no worker**, but does add migration `0039` (a new `approval_invites` table) and one new env var, `PAM_APPROVAL_INVITE_TTL_MIN` (default 1440) — magic-link approval, live the moment `PAM_ALERT_EMAIL_*`/`PAM_PORTAL_URL` are configured (the same requirement Phase 116 already set), plus session watermarking, which needs no configuration at all. **Phase 139 adds no worker and no new env var**, but does add migration `0040` (`safes.personal`) — personal safes, opt-in per safe via `POST /api/safes`, nothing to configure. **Phase 141 adds no worker and no migration**, but does add one new env var, `PAM_SSH_PORT_FORWARD` (default true) — port-forwarding on the SSH proxy, on by default, set to `false` to disable. **Phase 143 adds no worker and no migration**, but does add one new env var, `PAM_ICAP_URL` (off by default) — ICAP AV/DLP scanning of SFTP transfers, requires `PAM_SSH_SFTP_CAPTURE` and `PAM_SSH_SFTP_CAPTURE_MAX_MB` already set, joins the `PAM_OT_AIRGAP` conflict list. **Phase 145 adds no worker and no migration**, but does add one new env var, `PAM_CREDENTIAL_FILE_MAX_KB` (default 1024) — the file-attachment secret size cap, on by default at a sane ceiling rather than starting unbounded. **Phase 147 adds no worker and no migration**, but does add one new env var, `PAM_EXTENSION_TOKEN_TTL_HOURS` (default 24, range 1–720) — how long a minted browser-extension autofill token stays valid before it must be re-minted; the token itself is one more row in the existing `sessions` table. **Phase 149 adds no worker**, but does add migration `0041` (`users.external_id`/`users.active`, a new `scim_keys` table) and one new env var, `PAM_SCIM_ENABLED` (default off) — SCIM 2.0 user provisioning, an inbound REST surface on the existing `:8080` listener, nothing to configure beyond minting a client key once enabled. **Phase 151 adds no worker and no migration**, and twelve `PAM_SAML_*` env vars (SAML 2.0 SP login, `PAM_SAML_SP_URL` enables): operationally, one metadata fetch at startup/hot-swap — so a SAML-enabled server needs the IdP metadata URL reachable at boot, or the `_FILE` form — and, when the IdP rotates its signing certificate, a restart or a re-save of the SAML config in the console to pick up the new metadata (it is not auto-refreshed). If the optional SP key pair files are used, they are ordinary PEM files on disk, rotated by replacing them and restarting, and the IdP must be given the new certificate (re-import the SP metadata). **Phase 153 adds migration `0042` (`endpoint_agents`), one env var (`PAM_ENDPOINT_AGENTS_ENABLED`, default off) and a second binary you deploy to endpoints, not to pam-server**: `pam-agent` (Release assets `pam-agent_linux_{amd64,arm64}` + `SHA256SUMS`, verify before installing), run as a service on each unreachable target with `PAM_AGENT_SERVERS` (every replica), `_NAME`, `_KEY`, `_LOCAL_ADDR` and `_SERVER_HOST_KEY` (pam-server's SSH host public key — one key cluster-wide; if you ever rotate the SSH host key, every agent's pinned key must be updated or every tunnel stays down). Operationally: menu 28 / `GET /api/endpoint-agents` shows this replica's live view (connected/offline/revoked, last seen); an agent connects with backoff, so after a pam-server restart expect tunnels back within ~1–60 s; revoke (`DELETE /api/endpoint-agents/{id}`) drops the live tunnel at once and the key stops resolving; a lost key is revoke-and-re-register, nothing to recover. **Phase 155 adds no worker and no migration**, four `PAM_K8S_*` settings and one operational habit: a `kubernetes` target's service-account token is an ordinary vaulted credential, so rotating it is re-issuing the token at the cluster and updating the credential — there is no rotator for the `kubernetes` protocol, so the lifecycle worker reports it unsupported rather than attempting one. If the cluster uses a private CA (most do), `PAM_K8S_CA_FILE` must contain it or every operation fails TLS verification; several clusters' CAs can be concatenated into one bundle, and the file is read at startup, so a new cluster CA means a restart. **Phase 157 adds no worker and no migration**, three `PAM_SESSION_FORENSICS*` settings (off by default) and two operational consequences when you turn it on: one extra short SSH connection to the target after every interactive session (bounded by `_TIMEOUT_SEC`, drained on shutdown rather than killed), and one more artifact per session in `PAM_RECORDING_DIR` — size them with your recording retention. The targets need `auditd` with exec auditing and a credential that can read its log; where that is missing, watch for `session.forensics_unavailable`, which is a finding about the target rather than an error in PAMv1. Nothing else in this runbook changes.
 
-> ⚠️ **Beta · for learning purposes.** pamv1 is feature-complete against its
+> ⚠️ **Beta · for learning purposes.** PAMv1 is feature-complete against its
 > [roadmap](../ROADMAP.md) and has closed every finding of its own security
 > self-audit, but it has **not** been audited by anyone outside the project and is
 > **not** production-ready. See the [main README](../README.md) and [docs hub](README.md).
 
 > **Who this is for.** A system administrator who lives in the shell and writes
-> scripts, not Go. This guide explains **what pamv1 does, why, and how the pieces
+> scripts, not Go. This guide explains **what PAMv1 does, why, and how the pieces
 > fit** — in operational terms — and gives you copy-paste `curl`/`ssh` recipes for
 > everything you'll do day to day. It is the "mental model + runbook." For the
 > exhaustive config/flag reference see the [Administrator Guide](ADMIN-GUIDE.md);
@@ -20,7 +20,7 @@
 Every example uses two shell variables so you can paste as-is:
 
 ```bash
-PAM=https://pam.example          # your pamv1 API/portal (front it with TLS)
+PAM=https://pam.example          # your PAMv1 API/portal (front it with TLS)
 KEY=$PAM_API_KEY                 # your admin key (or a per-user token)
 api() { curl -fsS -H "X-API-Key: $KEY" "$@"; }   # tiny helper used below
 ```
@@ -39,7 +39,7 @@ Think about how privileged access usually works without a PAM:
   hard-codes it), so a leak is forever.
 - A leaver keeps a copy. A contractor keeps a copy. A laptop backup keeps a copy.
 
-Privileged Access Management fixes this with four ideas, and pamv1 implements all
+Privileged Access Management fixes this with four ideas, and PAMv1 implements all
 four on top of just **Go + PostgreSQL**:
 
 1. **Vault the secret** so it's encrypted at rest and no human needs to know it.
@@ -53,7 +53,7 @@ four on top of just **Go + PostgreSQL**:
 
 This is the sentence to remember:
 
-> An operator authenticates to pamv1 with **their own key**, and pamv1 opens the
+> An operator authenticates to PAMv1 with **their own key**, and PAMv1 opens the
 > session to the target using the **vaulted credential — which it decrypts only
 > after every authorization check passes, and never reveals to the operator.**
 
@@ -63,8 +63,8 @@ Concretely, to SSH into `web-01` as `root`, an operator runs:
 ssh -p 2222 root@web-01@pam.example      # password prompt = their PAM token
 ```
 
-They type *their* pamv1 token as the SSH password. They land in a `root` shell on
-`web-01` — but they were **never told `root`'s actual password**. pamv1 pulled it
+They type *their* PAMv1 token as the SSH password. They land in a `root` shell on
+`web-01` — but they were **never told `root`'s actual password**. PAMv1 pulled it
 from the vault, decrypted it in memory for that one dial, and threw it away. The
 operator can't reuse it tomorrow, can't put it in a script, can't leak it.
 
@@ -73,7 +73,7 @@ approvals, recordings — exists to protect, scope, or prove *that* flow.
 
 ## 3. The parts of the system
 
-pamv1 is **one binary** (`pam-server`) that opens a few listeners, plus a
+PAMv1 is **one binary** (`pam-server`) that opens a few listeners, plus a
 PostgreSQL database. There is nothing else to run.
 
 ```mermaid
@@ -83,7 +83,7 @@ flowchart LR
     ADM["Admin / you<br/>curl + portal"]
   end
 
-  subgraph pamv1["pam-server (one binary)"]
+  subgraph PAMv1["pam-server (one binary)"]
     API["Portal + REST API<br/>:8080"]
     SSHP["SSH proxy<br/>:2222"]
     DBP["PostgreSQL proxy<br/>:5433"]
@@ -117,7 +117,7 @@ flowchart LR
 | Part | Port | What it is, operationally |
 |---|---|---|
 | **Portal + REST API** | `:8080` | The management plane. A deliberately austere green-screen (AS/400 5250) web portal, and the same actions as a REST API you script with `curl`. This is where you onboard targets, vault credentials, grant access, read audit. |
-| **SSH proxy** | `:2222` | The session chokepoint for Linux (SSH) and Windows (WinRM) targets. Operators point their SSH client here; pamv1 injects the vaulted secret and brokers the session. |
+| **SSH proxy** | `:2222` | The session chokepoint for Linux (SSH) and Windows (WinRM) targets. Operators point their SSH client here; PAMv1 injects the vaulted secret and brokers the session. |
 | **PostgreSQL proxy** | `:5433` | The same chokepoint for database sessions. Operators point `psql` here; every SQL statement is audited. |
 | **Vault** | — | Not a separate service — a library inside `pam-server`. It seals each secret with **envelope encryption** (see §5). |
 | **PostgreSQL** | `5432` | The single source of truth: encrypted secrets, the audit trail, users, config. Must be unreachable from operator and target networks. |
@@ -222,7 +222,7 @@ That `v2:` string is what lands in the database. Three things make it robust:
 - **The KEK never handles the secret, only the DEK.** Providers:
   - `local` — AES-256-GCM wrap with the base64 `PAM_MASTER_KEY` (**dev/test only** — the key sits in an env var).
   - `vault-transit` — wrap/unwrap calls to HashiCorp Vault over HTTPS; **the KEK never leaves Vault**.
-  - `aws-kms` — KMS wrap/unwrap with `EncryptionContext {app: pamv1}`.
+  - `aws-kms` — KMS wrap/unwrap with `EncryptionContext {app: PAMv1}`.
   - `pkcs11` — `CKM_AES_GCM` wrap **inside an HSM**; the wrapping key never leaves the token.
   - Transit/KMS reject a non-32-byte unwrapped DEK, so a tampered token can't silently downgrade you to AES-128.
 
@@ -240,7 +240,7 @@ That `v2:` string is what lands in the database. Three things make it robust:
 ### 5.4 Connections — what encrypts each leg
 
 Every hop is a distinct connection with its own transport and auth. Nothing is
-trusted end-to-end: pamv1 authenticates you on the near leg and authenticates
+trusted end-to-end: PAMv1 authenticates you on the near leg and authenticates
 *itself* to the target on the far leg.
 
 ```mermaid
@@ -330,7 +330,7 @@ over the PostgreSQL wire protocol:
   separate WinRM command over HTTP/HTTPS (basic or NTLM), injecting the vaulted
   Windows credential; output is recorded like an SSH session. It's a command loop,
   not a stateful PowerShell.
-- **RDP**: pamv1 is a **client of an Apache Guacamole `guacd` daemon** — it speaks
+- **RDP**: PAMv1 is a **client of an Apache Guacamole `guacd` daemon** — it speaks
   the guacd protocol (`PAM_GUACD_ADDR`), injecting the credential into the
   handshake; guacd makes the actual RDP connection and can record server-side. The
   credential reaches guacd, never the browser. guacd ships as a service in the
@@ -450,7 +450,7 @@ api $PAM/api/sessions                                        # live target sessi
 api -X DELETE $PAM/api/sessions/<id>                         # kill a live session
 ```
 
-Disabling someone in AD doesn't end their live pamv1 login by itself — run
+Disabling someone in AD doesn't end their live PAMv1 login by itself — run
 `POST /api/identity/reconcile` (on a schedule) to revoke disabled directory
 sessions, or revoke on demand as above.
 
@@ -463,7 +463,7 @@ api "$PAM/api/audit/export?since=2026-07-01T00:00:00Z&format=csv" -OJ   # for a 
 
 Every sensitive action appends an event with the **actor**, and every proxied
 session is recorded (asciicast v2 with a SHA-256 fingerprint in the audit trail).
-Secret-delivery is **fail-closed on the audit**: if pamv1 can't durably record the
+Secret-delivery is **fail-closed on the audit**: if PAMv1 can't durably record the
 event, it refuses to hand out the secret.
 
 ## 7. The safety nets (know these exist)
@@ -484,7 +484,7 @@ event, it refuses to hand out the secret.
 | **Session sharing** | Bring a second party into a live session, view-only or view-control, via four-eyes request→approve; internal invites redeem over SSH, external ones by a single-use emailed QR through an unauthenticated guest page — never a stored password | `PAM_SESSION_SHARE_INVITE_TTL_SEC`, `PAM_SESSION_SHARE_GUEST_TTL_MIN` |
 | **Approvals (4-eyes)** | Require an approved request before connecting; N-of-M chains; maintenance windows; ITSM ticket | `PAM_REQUIRE_APPROVAL`, `PAM_APPROVALS_REQUIRED`, `PAM_REQUIRE_TICKET` |
 | **MFA** | TOTP second factor on login; enroll-only first sign-in until set up | `PAM_MFA_REQUIRED` |
-| **Zero Standing Privilege** | `ssh_ca` credentials store **no** secret — pamv1 mints a short-lived SSH certificate per session | `PAM_SSH_CA_KEY` |
+| **Zero Standing Privilege** | `ssh_ca` credentials store **no** secret — PAMv1 mints a short-lived SSH certificate per session | `PAM_SSH_CA_KEY` |
 | **Brute-force throttling** | Per-IP limits on the login API and the SSH/DB proxies | on by default; `PAM_PROXY_AUTH_RATE_LIMIT` |
 | **Break-glass** | Audited/alerted emergency admin access; optional M-of-N unseal | `PAM_BREAK_GLASS_KEY_HASH`, `PAM_BREAK_GLASS_THRESHOLD` |
 | **Threat analytics** | Behavioral risk scoring over the audit trail; optional auto-kill of critical actors | `PAM_ANALYTICS_INTERVAL_MIN`, `PAM_ANALYTICS_AUTO_KILL` |
@@ -500,7 +500,7 @@ event, it refuses to hand out the secret.
 
 ## 8. Running it for real — the short version
 
-pamv1 is 12-factor: **all configuration is `PAM_*` environment variables**, and
+PAMv1 is 12-factor: **all configuration is `PAM_*` environment variables**, and
 all deployment is infrastructure-as-code (do not hand-apply). The essentials:
 
 - **KEK in production.** Never ship the `local` KEK. Use `PAM_KEK_PROVIDER=vault-transit`
@@ -528,7 +528,7 @@ Postgres), and Terraform. Full detail is in the [Administrator Guide](ADMIN-GUID
 ## 9. Mental-model cheat-sheet
 
 - **The chokepoint is the product.** If a privileged session didn't go through
-  `:2222`/`:5433`, pamv1 didn't broker it and can't prove it. Make the proxy the
+  `:2222`/`:5433`, PAMv1 didn't broker it and can't prove it. Make the proxy the
   only path (firewall direct target access off).
 - **Operators carry *their* key, never the target's secret.** Revoking a person =
   revoking their token/login; the target passwords are untouched (and rotatable).

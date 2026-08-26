@@ -190,7 +190,7 @@ func TestTokenExchangeDisabled(t *testing.T) {
 	}
 }
 
-// TestMayActPinsTheNextHop is Phase 181's round trip: pamv1 has enforced RFC
+// TestMayActPinsTheNextHop is Phase 181's round trip: PAMv1 has enforced RFC
 // 8693 §4.4 `may_act` since Phase 57 and never emitted it, so the check existed
 // with nothing to read — from the second hop onward, nobody could pin who was
 // allowed to act for whom.
@@ -278,7 +278,7 @@ func TestMayActPinsTheNextHop(t *testing.T) {
 
 	// A party outside the trust domain cannot be pinned at all — a token naming
 	// a foreign actor as permitted is either a mistake or an attempt to make
-	// pamv1's own enforcement read as though somebody outside had been vouched
+	// PAMv1's own enforcement read as though somebody outside had been vouched
 	// for.
 	if code, _ := postForm(t, srv, "/v1/token", planner, url.Values{
 		"grant_type":  {agentid.ExchangeGrantType},

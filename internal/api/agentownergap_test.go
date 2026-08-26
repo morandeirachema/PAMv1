@@ -15,7 +15,7 @@ import (
 //
 // `owner_known` exists to say "the offboarding cascade can reach this agent".
 // The cascade matches an owner as a literal string (`WHERE owner = $1`), and so
-// does every other owner lookup in pamv1 — but the flag was computed
+// does every other owner lookup in PAMv1 — but the flag was computed
 // case-insensitively. An agent owned by "Carol" while the user is "carol" was
 // reported as fine and is, in fact, unreachable: deleting carol suspends
 // nothing. A flag that claims a reachability the control does not have is the
@@ -78,7 +78,7 @@ func TestOwnerKnownMatchesTheControlItReportsOn(t *testing.T) {
 // agent's call — four-eyes silently not applying, which is worse than four-eyes
 // visibly absent.
 //
-// pamv1 does not guess. The decision proceeds and the trail says the second pair
+// PAMv1 does not guess. The decision proceeds and the trail says the second pair
 // of eyes could not be established; a deployment that wants the stricter reading
 // sets PAM_BROKER_REQUIRE_KNOWN_OWNER.
 func TestFourEyesRecordsWhatItCouldNotVerify(t *testing.T) {
@@ -88,7 +88,7 @@ func TestFourEyesRecordsWhatItCouldNotVerify(t *testing.T) {
 		opts.BrokerRequireKnownOwner = requireKnown
 		srv, _ := newTestServerOpts(t, nil, opts)
 		seedWinRMTarget(t, srv, "win-owner-gap", "pw")
-		// Owned by a name no pamv1 user holds — a typo, or a team address.
+		// Owned by a name no PAMv1 user holds — a typo, or a team address.
 		_, tok := mintAgent(t, srv, "orphan-bot", "platform-team", nil)
 		_, pd := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok,
 			map[string]any{"tool": "winrm_exec", "args": map[string]any{"target": "win-owner-gap", "command": "id"}})
@@ -116,7 +116,7 @@ func TestFourEyesRecordsWhatItCouldNotVerify(t *testing.T) {
 	callID2, srv2 := park(t, true)
 	st, d := do(t, srv2, http.MethodPost, "/v1/approvals/"+callID2+"/decision", testAPIKey,
 		map[string]any{"approve": true})
-	if st != http.StatusForbidden || !strings.Contains(string(d), "not a pamv1 user") {
+	if st != http.StatusForbidden || !strings.Contains(string(d), "not a PAMv1 user") {
 		t.Fatalf("with PAM_BROKER_REQUIRE_KNOWN_OWNER the decision must be refused: %d %s", st, d)
 	}
 	// Refused, not consumed: the call is still there for somebody to decide once

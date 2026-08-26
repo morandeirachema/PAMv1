@@ -109,7 +109,7 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 // String returns the collected output, with a marker when it was truncated.
 func (b *limitedBuffer) String() string {
 	if b.truncated {
-		return b.buf.String() + "\r\n[pamv1: output truncated at 4 MiB]\r\n"
+		return b.buf.String() + "\r\n[PAMv1: output truncated at 4 MiB]\r\n"
 	}
 	return b.buf.String()
 }

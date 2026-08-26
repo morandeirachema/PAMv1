@@ -1,4 +1,4 @@
-// background.js — the only place this extension talks to a pamv1 server.
+// background.js — the only place this extension talks to a PAMv1 server.
 // The extension token and server URL live in chrome.storage.local; nothing
 // here persists in memory between events, since an MV3 service worker can be
 // killed and restarted at any time between them.
@@ -26,7 +26,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 async function revealCredential(credentialId) {
   const { serverUrl, extensionToken } = await chrome.storage.local.get(["serverUrl", "extensionToken"]);
   if (!serverUrl || !extensionToken) {
-    throw new Error("pamv1 Autofill is not configured yet — open the extension's settings page.");
+    throw new Error("PAMv1 Autofill is not configured yet — open the extension's settings page.");
   }
   const url = new URL(`/api/credentials/${encodeURIComponent(credentialId)}/reveal`, serverUrl);
   const resp = await fetch(url, {
@@ -37,10 +37,10 @@ async function revealCredential(credentialId) {
     throw new Error("This token cannot reveal that credential — check the credential ID and your access grant.");
   }
   if (resp.status === 401) {
-    throw new Error("This token is invalid or has expired — mint a new one from the pamv1 portal.");
+    throw new Error("This token is invalid or has expired — mint a new one from the PAMv1 portal.");
   }
   if (!resp.ok) {
-    throw new Error(`pamv1 returned ${resp.status}`);
+    throw new Error(`PAMv1 returned ${resp.status}`);
   }
   const body = await resp.json();
   if (body.secret_type && body.secret_type !== "password") {

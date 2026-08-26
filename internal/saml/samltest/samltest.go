@@ -3,7 +3,7 @@
 // binding, and issues a genuinely XML-DSig-signed (and, when the SP advertises
 // an encryption certificate, encrypted) Response for the HTTP-POST binding —
 // the same code path a production IdP exercises, not a canned XML fixture.
-// Tests then post that Response to pamv1's ACS, or tamper with it first via
+// Tests then post that Response to PAMv1's ACS, or tamper with it first via
 // Tamper to prove the SP refuses what a real attacker would send.
 package samltest
 

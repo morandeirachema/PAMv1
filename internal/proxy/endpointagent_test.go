@@ -311,7 +311,7 @@ func TestEndpointAgentAuthRefusals(t *testing.T) {
 }
 
 // TestEndpointAgentConnectionIsInboundOnly proves an authenticated agent
-// connection can carry NOTHING toward pamv1: a session channel and a
+// connection can carry NOTHING toward PAMv1: a session channel and a
 // direct-tcpip channel are both refused, a second tcpip-forward is refused,
 // and — from the other side — an operator's connection cannot request a
 // tcpip-forward at all (operators' global requests are discarded).

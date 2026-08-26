@@ -69,7 +69,7 @@ const (
 // ActionFor returns the audit action name for a call outcome's status.
 //
 // An unrecognised status still yields a well-formed name rather than an empty or
-// wrong one: recording a status pamv1 does not know about as "failed" would be a
+// wrong one: recording a status PAMv1 does not know about as "failed" would be a
 // lie in the authoritative log, so the name is built from the status itself and
 // simply goes unclassified.
 func ActionFor(s Status) string {
@@ -98,7 +98,7 @@ type Result struct {
 	Sensitive bool
 }
 
-// Tool is one brokered operation wrapping a pamv1 action.
+// Tool is one brokered operation wrapping a PAMv1 action.
 type Tool interface {
 	Name() string
 	Description() string
@@ -850,7 +850,7 @@ func (b *Broker) Resume(ctx context.Context, id *agentid.Identity, token, wantCa
 	// Record the collection in the tamper-evident chain, not only in the primary
 	// trail. The chain is the authoritative record, and until Phase 161 it ended
 	// at the approval decision: the moment the agent actually TOOK the result —
-	// which for reveal_credential is the moment a secret left pamv1 — appeared
+	// which for reveal_credential is the moment a secret left PAMv1 — appeared
 	// nowhere in it. The event names the token by its id, so it joins to the park
 	// event that minted it and to the broker_tokens row that was spent.
 	out.jti = jti
@@ -923,7 +923,7 @@ func (b *Broker) chainEvent(ctx context.Context, id *agentid.Identity, c Call, a
 // through auditfmt.Field — quoted and bounded — because they are unverified text
 // from the agent, and an unquoted value in a `key:value` detail lets whoever
 // controls it invent fields (a session id of `x actor:admin` would otherwise read
-// as a second, forged key). The jti is a hex hash pamv1 computed itself, so it
+// as a second, forged key). The jti is a hex hash PAMv1 computed itself, so it
 // needs no quoting.
 func runFields(c Call, out Outcome) string {
 	var b strings.Builder
@@ -1143,7 +1143,7 @@ func capResult(res Result, max int) (Result, bool) {
 
 // truncationNote is appended to every shortened string so a reader (human or
 // model) can never mistake a cut result for a complete one.
-const truncationNote = "\n…[truncated by pamv1 — full output is in the stored transcript]"
+const truncationNote = "\n…[truncated by PAMv1 — full output is in the stored transcript]"
 
 // truncationNoteBytes is the note's own length, reserved out of the budget so
 // adding it cannot push the result back over the cap.

@@ -142,7 +142,7 @@ func (s *Server) sendApprovalInviteEmail(ctx context.Context, inv store.Approval
 	if t, err := s.store.GetTarget(ctx, ar.TargetID); err == nil {
 		target = t.Name
 	}
-	subject := "A pamv1 access request needs your decision"
+	subject := "A PAMv1 access request needs your decision"
 	body := fmt.Sprintf(`<html><body style="font-family:sans-serif;background:#050705;color:#eaffea;padding:24px">
 <p><b>%s</b> is requesting access to <b>%s</b>.</p>
 <p>Reason: %s</p>

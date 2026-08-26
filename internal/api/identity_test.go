@@ -26,7 +26,7 @@ func (f fakeDirectory) UserStatus(_ context.Context, username string) (bool, boo
 // has disabled, and leaves everyone else alone.
 //
 // This is the joiner-mover-leaver path: when HR disables someone upstream, that
-// must reach pamv1 without an administrator remembering to act. A local-only
+// must reach PAMv1 without an administrator remembering to act. A local-only
 // account (absent from the directory entirely) must NOT be treated as disabled —
 // break-glass and service identities live there, and disabling them on a
 // directory outage would be an outage of its own.

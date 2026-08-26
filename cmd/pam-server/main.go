@@ -1,4 +1,4 @@
-// pam-server runs the pamv1 API and portal.
+// pam-server runs the PAMv1 API and portal.
 //
 // Utility flags:
 //
@@ -825,7 +825,7 @@ func roleMap(admin, user, auditor, approver string) map[string]auth.Role {
 // handler, optionally launches the credential-lifecycle worker and the SSH
 // proxy, then serves HTTP(S) until interrupted and shuts down gracefully.
 func run() error {
-	// Optionally source pamv1's own bootstrap secrets from CyberArk Conjur
+	// Optionally source PAMv1's own bootstrap secrets from CyberArk Conjur
 	// (Phase 18) before reading the environment. A no-op unless PAM_CONJUR_URL is
 	// set; SOPS/env remains the default. Fail-loud so a configured-but-unreachable
 	// Conjur never starts the server with empty secrets.
@@ -1774,7 +1774,7 @@ func buildAlerter(cfg *config.Config, log *slog.Logger) alert.Notifier {
 				network, addr = p, rest
 			}
 		}
-		ns = append(ns, alert.NewSyslog(network, addr, "pamv1"))
+		ns = append(ns, alert.NewSyslog(network, addr, "PAMv1"))
 		log.Info("alert channel enabled", "kind", "syslog", "addr", addr)
 	}
 	if cfg.AlertEmailSMTP != "" && cfg.AlertEmailFrom != "" && cfg.AlertEmailTo != "" {

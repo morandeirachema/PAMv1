@@ -50,7 +50,7 @@ func newTestWebAuthn(t *testing.T) *webauthn.WebAuthn {
 	t.Helper()
 	w, err := webauthn.New(&webauthn.Config{
 		RPID:          testRPID,
-		RPDisplayName: "pamv1 test",
+		RPDisplayName: "PAMv1 test",
 		RPOrigins:     []string{testRPOrigin},
 	})
 	if err != nil {

@@ -74,7 +74,7 @@ func waitPending(t *testing.T, su *StepUp, sid string) {
 // statement runs. Self-approval turns the pause into a confirmation prompt, and
 // leaves an audit entry that reads like independent review — worse than having
 // no gate at all, because it manufactures false assurance. Every other decision
-// point in pamv1 (access requests, vendor grants, broker approvals, access
+// point in PAMv1 (access requests, vendor grants, broker approvals, access
 // certification) already refused this; this one did not.
 func TestStepUpRefusesSelfApproval(t *testing.T) {
 	su := NewStepUp()

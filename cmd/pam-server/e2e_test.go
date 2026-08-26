@@ -19,7 +19,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// This file is the end-to-end proof that pamv1 does the thing a PAM exists to
+// This file is the end-to-end proof that PAMv1 does the thing a PAM exists to
 // do: an operator gets a session on a protected host WITHOUT ever holding that
 // host's credential, and evidence of what happened survives.
 //
@@ -248,7 +248,7 @@ func TestEndToEndPrivilegedAccess(t *testing.T) {
 }
 
 // startFaithfulUpstream is the protected host: an SSH server that accepts
-// EXACTLY ONE password — the one pamv1 vaults — and refuses any command it does
+// EXACTLY ONE password — the one PAMv1 vaults — and refuses any command it does
 // not recognise.
 //
 // Both halves matter. Accepting only the vaulted secret is what makes a

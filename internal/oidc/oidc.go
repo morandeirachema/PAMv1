@@ -1,7 +1,7 @@
 // Package oidc implements the OpenID Connect Authorization Code flow with PKCE
 // for browser-based login (e.g. Microsoft Entra ID). Unlike the ROPC grant, the
 // user authenticates directly with the IdP (so Conditional Access and IdP-side
-// MFA apply); pamv1 only receives an authorization code, exchanges it, and
+// MFA apply); PAMv1 only receives an authorization code, exchanges it, and
 // **validates the ID token's RS256 signature against the IdP's JWKS**.
 package oidc
 
@@ -111,7 +111,7 @@ func (p *Provider) AuthCodeURL(state, nonce, challenge string) string {
 	return p.cfg.AuthURL + "?" + q.Encode()
 }
 
-// Claims are the validated fields pamv1 reads from the ID token.
+// Claims are the validated fields PAMv1 reads from the ID token.
 type Claims struct {
 	Subject           string
 	PreferredUsername string

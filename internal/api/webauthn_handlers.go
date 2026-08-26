@@ -14,9 +14,9 @@ import (
 )
 
 // webauthnChallengeTTL bounds how long a stored ceremony challenge stays
-// takeable. This is pamv1's own deadline, computed independently of
+// takeable. This is PAMv1's own deadline, computed independently of
 // SessionData.Expires — the library only populates that field when
-// Config.Timeouts.{Registration,Login}.Enforce is turned on, which pamv1
+// Config.Timeouts.{Registration,Login}.Enforce is turned on, which PAMv1
 // does not set (there is no need to also configure the library's client-side
 // timeout hint just to get a server-side expiry), so relying on it here would
 // silently store an always-already-expired zero time.Time.
@@ -35,7 +35,7 @@ type webauthnUser struct {
 // WebAuthnID returns a stable, opaque per-user handle derived deterministically
 // from the username, so no separate "webauthn_users" table is needed the way
 // the library's own storage guidance describes for a multi-RP-ID deployment —
-// pamv1 has exactly one RP ID at a time (PAM_WEBAUTHN_RP_ID), so the same
+// PAMv1 has exactly one RP ID at a time (PAM_WEBAUTHN_RP_ID), so the same
 // username always yields the same handle with nothing to persist.
 func (u webauthnUser) WebAuthnID() []byte {
 	h := sha256.Sum256([]byte("pamv1-webauthn-id:" + u.username))

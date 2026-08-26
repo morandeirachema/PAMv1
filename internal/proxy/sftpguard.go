@@ -736,7 +736,7 @@ func (s *sftpInspector) deny(reply io.Writer, id uint32) {
 
 // writeStatus emits the permission-denied status packet itself.
 func (s *sftpInspector) writeStatus(reply io.Writer, id uint32) {
-	const msg = "pamv1: read-only session — write operation denied by policy"
+	const msg = "PAMv1: read-only session — write operation denied by policy"
 	body := []byte{fxpStatus}
 	body = binary.BigEndian.AppendUint32(body, id)
 	body = binary.BigEndian.AppendUint32(body, fxPermissionDenied)

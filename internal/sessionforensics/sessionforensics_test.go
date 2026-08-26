@@ -193,7 +193,7 @@ func TestArgvTruncationIsVisible(t *testing.T) {
 // TestWindowSlackEdges states, rather than assumes, where Parse's window ends.
 //
 // Parse keeps an event within ONE SECOND either side of the session, because the
-// target's audit clock and pamv1's need not agree to the millisecond. That slack
+// target's audit clock and PAMv1's need not agree to the millisecond. That slack
 // is deliberate — but its edges were never pinned, and a test fixture that
 // rounded its timestamps down to a whole second quietly depended on them: the
 // record survived only while the rounding loss plus the setup delay stayed under

@@ -90,7 +90,7 @@ func moduleRoot() (root, module string, err error) {
 // edit it by hand and the command that regenerates it — so someone who opens the
 // file and wants to change something is told immediately where to go instead.
 func writeHeader(b *strings.Builder) {
-	b.WriteString(`# pamv1 — Architecture Diagrams (generated)
+	b.WriteString(`# PAMv1 — Architecture Diagrams (generated)
 
 > **Do not edit by hand.** This file is regenerated from the source by
 > ` + "`go run ./cmd/archgen`" + ` (or ` + "`go generate ./...`" + `). CI runs the
@@ -402,7 +402,7 @@ var (
 )
 
 // guardByWrapper maps a registration's middleware to the label the route table
-// shows, in match order. Every authentication scheme pamv1 puts on the mux has to
+// shows, in match order. Every authentication scheme PAMv1 puts on the mux has to
 // appear here — see routeGuard for what happens when one does not.
 var guardByWrapper = []struct{ needle, label string }{
 	{"authenticated(", "authenticated"},
@@ -420,7 +420,7 @@ var guardByWrapper = []struct{ needle, label string }{
 	{"vncTunnel", "token (query)"},
 	// The guest pages (session share, magic-link approval) authenticate a
 	// single-use token inside the handler, for the same reason: the caller has no
-	// pamv1 login at all — that is the feature.
+	// PAMv1 login at all — that is the feature.
 	{"previewApprovalInvite", "token (single-use link)"},
 	{"redeemApprovalInvite", "token (single-use link)"},
 	{"redeemShareInvite", "token (single-use link)"},

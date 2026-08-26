@@ -35,7 +35,7 @@ type discoverAccountsResult struct {
 // `net localgroup Administrators`) and cross-references every discovered
 // account name against the target's own vaulted credentials. An account with
 // no matching credential is "unmanaged" — the CyberArk DNA-style finding this
-// phase exists to surface: a login-capable account pamv1 knows the *host*
+// phase exists to surface: a login-capable account PAMv1 knows the *host*
 // has, but isn't tracking, rotating or auditing access to. This is a
 // management action (auth.CapManageTargets), not a connect/session action —
 // it deliberately does not touch the live-session registry, recording
@@ -128,7 +128,7 @@ func (s *Server) discoverAccounts(w http.ResponseWriter, r *http.Request) {
 // protocol. Every command goes through guardCommand first, same chokepoint as
 // the interactive SSH/WinRM command paths (Phase 38's principle: every path
 // where a discrete command is visible obeys one policy) — these commands are
-// pamv1's own fixed literals, not operator input, but an operator-configured
+// PAMv1's own fixed literals, not operator input, but an operator-configured
 // deny pattern that happens to match must still refuse the scan rather than
 // silently bypass policy.
 // It returns partial=true when the target's answer was cut short by the exec
@@ -178,6 +178,6 @@ func (s *Server) runAccountScan(ctx context.Context, target *store.Target, cred 
 	admins, _ := s.winrm.Run(ctx, target.Host, target.Port, cred.Username, secret, cmdAdmins)
 	// WinRM has capped its own output since Phase 13 and reports it in the text
 	// rather than a flag, so the marker is the only signal available here.
-	partial := strings.Contains(users.Stdout, "truncated") && strings.Contains(users.Stdout, "pamv1")
+	partial := strings.Contains(users.Stdout, "truncated") && strings.Contains(users.Stdout, "PAMv1")
 	return accountscan.ParseWindowsAccounts(users.Stdout, admins.Stdout), partial, nil
 }

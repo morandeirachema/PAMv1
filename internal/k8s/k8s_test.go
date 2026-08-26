@@ -227,7 +227,7 @@ func TestWrongTokenRefused(t *testing.T) {
 // TestClusterRefusalIsAResultNotAnError proves the contract that matters for a
 // PAM: the cluster's own RBAC refusing the vaulted credential comes back as a
 // 403 result the operator sees and the audit trail records, not as an opaque
-// pamv1 error.
+// PAMv1 error.
 func TestClusterRefusalIsAResultNotAnError(t *testing.T) {
 	srv, _ := fakeAPIServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)

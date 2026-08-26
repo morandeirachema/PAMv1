@@ -1,4 +1,4 @@
-// Package logging configures pamv1's structured operational logs. Every
+// Package logging configures PAMv1's structured operational logs. Every
 // component logs to stdout via slog tagged with a "service" attribute
 // (server, api, proxy, store, vault, auth) so logs can be filtered per
 // service and shipped to a SIEM. These operational logs are separate from the
