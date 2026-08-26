@@ -21,9 +21,6 @@ permissions:
   id-token: write      # cosign keyless (OIDC) signing + provenance
   attestations: write  # SLSA build-provenance attestation
 
-env:
-  IMAGE: ghcr.io/${{ github.repository }}
-
 jobs:
   # ci.yml triggers on pushes to main and on pull requests — NOT on tags. Without
   # this job a tag could publish a signed, attested image built from a commit no
@@ -58,6 +55,27 @@ jobs:
       REAL: ${{ github.event_name == 'push' && '1' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # OCI names are lowercase; the GitHub repository (`PAMv1` since it was
+      # renamed alongside Phase 213) is not. This used to be a workflow-level
+      # `IMAGE: ghcr.io/${{ github.repository }}`, and the v0.58.0 tag showed why
+      # that cannot work: docker/metadata-action lowercases the tags it emits,
+      # so the build and push succeeded, and then `Generate SBOM` — which, like
+      # `cosign sign` and both attestations, assembles its reference from the
+      # raw variable — refused `ghcr.io/morandeirachema/PAMv1@sha256:…`. An
+      # image that nothing verifies was left under a release tag. The name is
+      # lowercased once here, an uppercase survivor fails the job outright, and
+      # this step runs in the rehearsal too, so a regression fails a dry run
+      # before it burns a tag.
+      - name: Image name (lowercase, or refuse)
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          case "$image" in
+            *[A-Z]*) echo "::error::image reference must be lowercase, got $image"; exit 1 ;;
+          esac
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+          echo "image=$image"
 
       - name: Log in to GHCR
         if: env.REAL
