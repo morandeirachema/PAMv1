@@ -1306,6 +1306,7 @@ func run() error {
 		BrokerRequireEnrolledSVID: cfg.BrokerRequireEnrolledSVID,
 		BrokerRequireKnownOwner:   cfg.BrokerRequireKnownOwner,
 		BrokerRequirePoP:          cfg.BrokerRequirePoP,
+		BrokerMaxCallsPerToken:    cfg.BrokerMaxCallsPerToken,
 		BrokerPublicURL:           cfg.BrokerPublicURL,
 		BrokerPostureRequired:     cfg.BrokerPostureRequired,
 		BrokerRatePerMin:          cfg.BrokerRatePerMin,

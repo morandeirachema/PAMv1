@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/morandeirachema/pamv1/internal/auditfmt"
 	"strings"
 	"time"
 
@@ -678,6 +679,31 @@ const (
 	AuditActionToolCallExecuted = "broker.tool_call.executed"
 	AuditActionToolCallResumed  = "broker.tool_call.resumed"
 )
+
+// MaxTokenIDField bounds a presented token's `jti` on the audit trail. The SVID
+// verifier already truncates to the same length; this is where the audit side
+// states it, so the writer and the counter below agree on the exact bytes.
+const MaxTokenIDField = 64
+
+// AgentTokenAuditField renders the ` svid_jti:"…"` field exactly as it appears
+// in a brokered call's audit detail.
+//
+// It exists for the same reason CredentialAAD does, and carries the same hazard:
+// TWO sides must produce byte-identical output or the feature silently fails.
+// The API writes this field onto every brokered call; CountAgentCallsForTokenSince
+// searches the trail for it. If they diverged, the search would simply match
+// nothing — and a ceiling that counts zero is a ceiling that never fires, which
+// is the failure direction that does not announce itself. So neither side builds
+// the string: both call this.
+//
+// The value is quoted through auditfmt.Field rather than concatenated raw,
+// because a `jti` is chosen by the token's issuer and reaches an audit detail
+// that is later SUBSTRING-matched. Quoting both delimits the value (so one jti
+// cannot match as a prefix of another) and escapes anything that would let an
+// issuer-chosen string forge a neighbouring `key:value` pair.
+func AgentTokenAuditField(jti string) string {
+	return " svid_jti:" + auditfmt.Field(jti, MaxTokenIDField)
+}
 
 // AgentKey is an AI-agent identity for the access broker: a bearer key whose
 // SHA-256 hash is stored, granting only the ability to request brokered tool
@@ -1619,6 +1645,7 @@ type BrokerStore interface {
 	// two must never be conflated, which is why this takes *int and not an
 	// int plus a "clear" flag.
 	SetAgentKeyBudget(ctx context.Context, id int64, budgetPerDay *int) error
+
 	// CountAgentToolCallsSince counts the brokered tool calls the named agent
 	// has actually SPENT since `since` (inclusive), reading the primary audit
 	// trail — the same record an auditor would count by hand, so the budget
@@ -1647,6 +1674,30 @@ type BrokerStore interface {
 	// start charging the budget for any future broker.tool_call.* action
 	// somebody adds, including outcomes that did no work.
 	CountAgentToolCallsSince(ctx context.Context, agent string, since time.Time) (int, error)
+	// CountAgentCallsForTokenSince counts the brokered tool calls made while
+	// presenting ONE token, identified by the `jti` its issuer stamped into it.
+	//
+	// It counts the same two actions CountAgentToolCallsSince does, for the same
+	// reasons, and reads the same trail — the difference is only what it groups
+	// by. The daily budget asks "how much has this AGENT done today"; this asks
+	// "how much has been done with this one CREDENTIAL", which is the question a
+	// runaway or stolen token raises.
+	//
+	// It is keyed on `jti` rather than on the caller's declared `session:` run id
+	// deliberately, and that is the whole point of the method: `session:` is
+	// chosen by the party being limited, so a ceiling built on it is escaped by
+	// sending a different string. A `jti` is chosen by the ISSUER — pamv1 itself
+	// for a delegated token — so the agent cannot mint itself a fresh allowance
+	// without going back through the exchange, which is audited, depth-capped
+	// and `may_act`-gated.
+	//
+	// The actor is matched as well as the token, so one agent cannot spend
+	// another's ceiling by quoting its jti: both must agree.
+	//
+	// An empty jti counts nothing and returns 0 — a static agent key carries no
+	// token id, and answering "unlimited" for it is correct rather than a
+	// fallback: its ceiling is the per-day budget on its own key row.
+	CountAgentCallsForTokenSince(ctx context.Context, agent, jti string, since time.Time) (int, error)
 	// QuarantineAgent stops one agent by subject, populating ID and CreatedAt;
 	// ErrConflict if that subject is already quarantined (quarantine is a
 	// set-membership fact, so re-adding is a caller error, not a no-op).

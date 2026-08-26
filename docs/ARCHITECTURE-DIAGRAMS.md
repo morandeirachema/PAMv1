@@ -212,6 +212,7 @@ flowchart LR
   n_session --> n_logging
   n_storetest --> n_session
   n_storetest --> n_store
+  n_store --> n_auditfmt
   n_store --> n_session
 ```
 

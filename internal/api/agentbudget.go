@@ -103,7 +103,12 @@ func (s *Server) refuseOverBudget(w http.ResponseWriter, r *http.Request, id *ag
 // budget, and the MCP transport is the one an agent framework actually speaks.
 func (s *Server) budgetRefusal(ctx context.Context, id *agentid.Identity, tool string) *broker.Outcome {
 	if s.brokerBudgetPerDay <= 0 && id.KeyID == 0 {
-		return nil // nothing configured and no per-agent setting is possible
+		// No daily budget applies — but the per-token ceiling is configured
+		// separately and must still be evaluated. Returning nil here outright
+		// would have made the ceiling silently inert for exactly the identity
+		// kind it exists for: an SVID has no key row, so `id.KeyID == 0` is the
+		// normal case for a delegated token.
+		return s.tokenCeilingRefusal(ctx, id, tool)
 	}
 	st, err := s.agentBudget(ctx, id)
 	if err != nil {
@@ -116,7 +121,16 @@ func (s *Server) budgetRefusal(ctx context.Context, id *agentid.Identity, tool s
 		}
 	}
 	if !st.exhausted() {
-		return nil
+		// The daily budget is satisfied; the per-TOKEN ceiling (Phase 209) is a
+		// second, independent limit and is checked here rather than at the REST
+		// call site, because the MCP transport calls THIS function directly. A
+		// ceiling enforced on one transport and not the other is not a ceiling,
+		// and MCP is the one an agent framework actually speaks.
+		//
+		// Order is deliberate: the daily budget is the coarser, longer-lived
+		// statement about an agent, so an agent that is out of budget for the day
+		// is told that rather than told about one of its tokens.
+		return s.tokenCeilingRefusal(ctx, id, tool)
 	}
 	// Audited under its own action, not only as a denial: "this agent hit its
 	// ceiling" is a fact an operator wants to see and alert on directly, and it
