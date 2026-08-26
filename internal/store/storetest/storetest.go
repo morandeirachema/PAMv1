@@ -953,6 +953,29 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("ListAccessRequests(after=last): %d err %v", len(reqs), err)
 	}
 
+	// --- decision is compare-and-set on pending (2026-08-26 audit, M-4) ---
+	// A decided request cannot be re-decided: the concurrency guarantee the
+	// handler's read-then-write cannot make on its own. Both DecideAccessRequest
+	// and SetApprovalState refuse a non-pending row with ErrConflict, so a
+	// racing approve can never overwrite a deny.
+	casAR := &store.AccessRequest{Requester: "erin", TargetID: tgt.ID, Reason: "cas", Status: "pending", ExpiresAt: future}
+	if err := st.CreateAccessRequest(ctx, casAR); err != nil {
+		t.Fatalf("CreateAccessRequest(cas): %v", err)
+	}
+	if err := st.DecideAccessRequest(ctx, casAR.ID, "denied", "frank", now); err != nil {
+		t.Fatalf("first decision (deny): %v", err)
+	}
+	// A second decision — the racing approve — must be refused, not silently win.
+	if err := st.DecideAccessRequest(ctx, casAR.ID, "approved", "grace", now); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("re-deciding a denied request returned %v, want ErrConflict", err)
+	}
+	if err := st.SetApprovalState(ctx, casAR.ID, "grace", "approved", "grace", &now); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("SetApprovalState on a denied request returned %v, want ErrConflict", err)
+	}
+	if a, _ := st.GetAccessRequest(ctx, casAR.ID); a.Status != "denied" || a.Approver != "frank" {
+		t.Fatalf("the deny was overwritten by a racing approve: %+v", a)
+	}
+
 	// --- access request recurrence (Phase 120) ---
 	//
 	// Mirrors the campaign recurrence section above exactly: an anchor must be
@@ -2007,6 +2030,29 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if keys, err := st.ListAgentKeys(ctx); err != nil || len(keys) != 2 {
 		t.Fatalf("ListAgentKeys: %d err %v", len(keys), err)
 	}
+
+	// At most one ACTIVE key per name (2026-08-26 audit, M-3): the budget and the
+	// audit actor key on the name, so two active keys sharing one name would pool
+	// one usage count under two different limits. Self-contained and cleaned up
+	// so the counts above and below are undisturbed.
+	m3a := &store.AgentKey{Name: "m3", Owner: "eve", TokenHash: "m3-hash-a"}
+	if err := st.CreateAgentKey(ctx, m3a); err != nil {
+		t.Fatalf("CreateAgentKey(m3a): %v", err)
+	}
+	if err := st.CreateAgentKey(ctx, &store.AgentKey{Name: "m3", Owner: "eve", TokenHash: "m3-hash-b"}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("a second ACTIVE key named m3 was allowed: %v, want ErrConflict", err)
+	}
+	// Revoke-then-remint under the same name is rotation, and must be allowed.
+	if err := st.SetAgentKeyDisabled(ctx, m3a.ID, true); err != nil {
+		t.Fatalf("disable m3a: %v", err)
+	}
+	m3b := &store.AgentKey{Name: "m3", Owner: "eve", TokenHash: "m3-hash-b"}
+	if err := st.CreateAgentKey(ctx, m3b); err != nil {
+		t.Fatalf("re-minting m3 after revoke was refused: %v", err)
+	}
+	// Clean up both so the running set stays as the sections below expect.
+	_ = st.DeleteAgentKey(ctx, m3a.ID)
+	_ = st.DeleteAgentKey(ctx, m3b.ID)
 	if err := st.DeleteAgentKey(ctx, ak.ID); err != nil {
 		t.Fatalf("DeleteAgentKey: %v", err)
 	}

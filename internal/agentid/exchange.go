@@ -49,6 +49,11 @@ package agentid
 //     mint, not only at ingress, so a runaway sub-agent spawn stops here rather
 //     than producing tokens that are refused later.
 //   - AN ACTOR THE SUBJECT DID NOT ALLOW (`may_act`, RFC 8693 §4.4).
+//   - A KEY-BOUND ACTOR TOKEN. The exchange cannot demand the actor's proof of
+//     possession (the caller is the delegator, not the actor), so a bound token
+//     handed over as a form field is refused outright rather than accepted as
+//     a bearer — which is what let a captured bound token buy its victim's
+//     identity until the 2026-08-26 audit.
 //   - AN UNBOUND TOKEN MINTED FROM A BOUND ONE. If the delegator's own token
 //     carries a `cnf`, the token it mints must carry one too. Otherwise the
 //     first hop of a sender-constrained chain could hand its authority to a
@@ -337,6 +342,18 @@ func (x *Exchanger) Exchange(ctx context.Context, req *ExchangeRequest, delegato
 	}
 	if actor.SPIFFEID == delegator.SPIFFEID {
 		return nil, exchangeErr("invalid_request", "an agent cannot delegate to itself")
+	}
+	// A key-bound ACTOR token may not be used here at all (2026-08-26 audit,
+	// T-2). The ingress demands a proof for a bound token; this endpoint never
+	// did, so a captured bound token for Y could be posted as actor_token with
+	// the caller's own key as cnf_jkt, yielding a token with sub=Y bound to the
+	// caller's key — Y's identity, under a key Y never held. The exchange has
+	// no way to demand Y's proof (the caller is the delegator, not Y), so the
+	// only honest answer is to refuse: a bound token is presented by its holder
+	// through the ingress, never handed to a third party as a form field.
+	if actor.ConfirmationKey != "" {
+		return nil, exchangeErr("invalid_request",
+			"actor_token is key-bound and cannot be delegated by a third party: a bound token is presented only by its holder")
 	}
 	// RFC 8693 §4.4: the delegator's own token may pin who is allowed to act for
 	// it. Absent means unpinned, not "anyone is named".

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"testing"
+
+	"github.com/morandeirachema/pamv1/internal/cmdguard"
 )
 
 // sftpReq builds a minimal SFTP request packet body: type || id(u32) || rest.
@@ -69,4 +71,65 @@ func TestSFTPAllowForwardsNativeLink(t *testing.T) {
 	if !found {
 		t.Fatalf("allow-mode LINK was forwarded without an sftp.modify audit: %v", audited)
 	}
+}
+
+// sftpLinkReq builds a LINK/SYMLINK-shaped body: type || id || string a || string b.
+func sftpLinkReq(typ byte, id uint32, a, b string) []byte {
+	body := []byte{typ}
+	var idb [4]byte
+	binary.BigEndian.PutUint32(idb[:], id)
+	body = append(body, idb[:]...)
+	for _, p := range []string{a, b} {
+		var lb [4]byte
+		binary.BigEndian.PutUint32(lb[:], uint32(len(p)))
+		body = append(body, lb[:]...)
+		body = append(body, []byte(p)...)
+	}
+	return body
+}
+
+// TestSFTPLinkChecksBothPathsAgainstDenylist is the regression for the
+// 2026-08-26 audit's M-7. Native SSH_FXP_LINK fell to the default arm with NO
+// path check on either path, and SSH_FXP_SYMLINK was read as a single-path
+// mutation so its target went unchecked. Either laundered a denied path:
+// `link /etc/shadow /tmp/x; get /tmp/x`. Both paths of both ops are now checked,
+// in allow mode too — the admin guide's "refused in every mode, downloads
+// included" now holds for links.
+func TestSFTPLinkChecksBothPathsAgainstDenylist(t *testing.T) {
+	deny := mustDenyMatcher(t, `(?i)/etc/shadow`)
+	for _, typ := range []byte{fxpLink, fxpSymlink} {
+		for _, tc := range []struct {
+			name, a, b string
+		}{
+			{"denied as source", "/etc/shadow", "/tmp/x"},
+			{"denied as target", "/tmp/x", "/etc/shadow"},
+		} {
+			// ALLOW mode — the mode the audit found unprotected.
+			insp := newSFTPInspector(SFTPAllow, deny, nil, func(string, string) {})
+			var reply bytes.Buffer
+			if insp.handlePacket(sftpLinkReq(typ, 3, tc.a, tc.b), &reply) {
+				t.Fatalf("op %d (%s), %s: a denied path was FORWARDED in allow mode", typ, sftpOpLabel(typ), tc.name)
+			}
+			if reply.Len() == 0 {
+				t.Fatalf("op %d, %s: denial left no STATUS reply", typ, tc.name)
+			}
+		}
+		// A link with two allowed paths still flows in allow mode.
+		insp := newSFTPInspector(SFTPAllow, deny, nil, func(string, string) {})
+		var reply bytes.Buffer
+		if !insp.handlePacket(sftpLinkReq(typ, 4, "/tmp/a", "/tmp/b"), &reply) {
+			t.Fatalf("op %d (%s): two allowed paths were refused", typ, sftpOpLabel(typ))
+		}
+	}
+}
+
+// mustDenyMatcher compiles a path denylist for the SFTP guard, failing the test
+// on a bad pattern.
+func mustDenyMatcher(t *testing.T, patterns ...string) *cmdguard.Guard {
+	t.Helper()
+	g, err := cmdguard.New(patterns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g
 }

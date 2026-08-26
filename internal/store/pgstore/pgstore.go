@@ -790,9 +790,29 @@ func (s *PGStore) ListAccessRequests(ctx context.Context, status string, limit i
 // DecideAccessRequest records an approve/deny decision, approver, and decision
 // time; ErrNotFound if the request is missing.
 func (s *PGStore) DecideAccessRequest(ctx context.Context, id int64, status, approver string, decidedAt time.Time) error {
-	return execExpectingRow(ctx, s.pool,
-		`UPDATE access_requests SET status = $1, approver = $2, decided_at = $3 WHERE id = $4`,
+	// Compare-and-set on the pending state, not a bare UPDATE by id (2026-08-26
+	// audit, M-4). The handler reads status=pending and then writes, so two
+	// deciders — one denying, one approving — could both pass the read and the
+	// second UPDATE would silently overwrite the first: a deny the operator was
+	// told was "final" replaced by an approve. The `status='pending'` predicate
+	// makes exactly one of them land; the loser affects no row.
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE access_requests SET status = $1, approver = $2, decided_at = $3
+		 WHERE id = $4 AND status = 'pending'`,
 		status, approver, decidedAt.UTC(), id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		// The row is either gone or already decided. It existed and was pending
+		// when the handler read it a moment ago, so the live cause is a
+		// concurrent decision: report a conflict, which the handler maps to 409.
+		if _, gerr := s.GetAccessRequest(ctx, id); gerr != nil {
+			return gerr // genuinely not found
+		}
+		return store.ErrConflict
+	}
+	return nil
 }
 
 // ListDueAccessRequests returns the approved recurring anchors whose next run
@@ -943,9 +963,25 @@ func (s *PGStore) ConsumeApprovalByID(ctx context.Context, id int64, requester s
 
 // SetApprovalState records a multi-approver decision (Phase 21).
 func (s *PGStore) SetApprovalState(ctx context.Context, id int64, approvedBy, status, approver string, decidedAt *time.Time) error {
-	return execExpectingRow(ctx, s.pool,
-		`UPDATE access_requests SET approved_by = $2, status = $3, approver = $4, decided_at = $5 WHERE id = $1`,
+	// Compare-and-set on pending (2026-08-26 audit, M-4). Both transitions this
+	// serves — accumulating another approver (pending->pending) and the final
+	// grant (pending->approved) — start from pending, so a request a concurrent
+	// deny already moved to "denied" affects no row and reports a conflict
+	// rather than silently reviving an approve over the deny.
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE access_requests SET approved_by = $2, status = $3, approver = $4, decided_at = $5
+		 WHERE id = $1 AND status = 'pending'`,
 		id, approvedBy, status, approver, decidedAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		if _, gerr := s.GetAccessRequest(ctx, id); gerr != nil {
+			return gerr
+		}
+		return store.ErrConflict
+	}
+	return nil
 }
 
 // auditChainLockKey serializes chained audit appends across every process sharing

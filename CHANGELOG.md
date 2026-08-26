@@ -159,7 +159,9 @@ env vars**, **no upgrade note**.
   agent is refused. `X-Forwarded-*` is deliberately never consulted: letting a
   caller choose what its own proof is checked against would remove the check.
 
-  Both variables fail the startup loudly when their prerequisite is absent, the
+  Both variables fail the startup loudly when their prerequisite is absent — a
+  sentence that was true of `PAM_BROKER_REQUIRE_POP` and, until Phase 212, false
+  of `PAM_BROKER_PUBLIC_URL`, which checked only its URL shape — the
   same idiom the other broker refusals already use.
 
 - **`agent.pop_denied`** joins the audit vocabulary, carrying a `reason:` naming

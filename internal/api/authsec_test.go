@@ -77,12 +77,23 @@ func TestFailedLoginAudited(t *testing.T) {
 	}
 	var found bool
 	for _, e := range events {
-		if e.Action == "login.failed" && e.Actor == "ad-alice" {
+		// The actor is QUOTED (auditField): a failed login's username is
+		// unauthenticated client input, so it is bounded and quoted before it
+		// becomes the audit actor — the same treatment the SSH proxy gives
+		// c.User() on proxy.auth_failed (2026-08-26 audit, M-2). It reaches the
+		// SIEM forwarder as actor=%s, so an unquoted `alice detail=x` would
+		// forge a field; quoting closes that.
+		if e.Action == "login.failed" && e.Actor == `"ad-alice"` {
 			found = true
+		}
+		// The raw, unquoted form must NOT appear — that would mean the sanitiser
+		// was skipped.
+		if e.Action == "login.failed" && e.Actor == "ad-alice" {
+			t.Fatal("the failed-login actor was stored unsanitised (unquoted)")
 		}
 	}
 	if !found {
-		t.Fatal("bad password login was not audited as login.failed")
+		t.Fatal("bad password login was not audited as login.failed with a quoted actor")
 	}
 }
 

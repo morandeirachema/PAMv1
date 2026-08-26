@@ -288,6 +288,17 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		c = tds.NewConn(conn) // re-frame over TLS
 	}
 
+	// Throttle BEFORE reading LOGIN7. The read is already bounded, so unlike the
+	// PostgreSQL proxy there was no allocation hazard here — but the limiter's
+	// job is to stop an abusive source from costing anything, and a peer that
+	// is already rate-limited should not get to make us parse one more login.
+	// Refused with a bare close rather than a TDS error: we have not read the
+	// client's TDS version yet, so we cannot frame a reply it would understand.
+	if !m.authLimiter.Allow(remoteHost(nConn.RemoteAddr())) {
+		m.log.Warn("mssql authentication rate limited", "remote", remote)
+		return
+	}
+
 	// --- LOGIN7 ---
 	typ, _, payload, err = c.ReadMessage(maxHandshakeMessage)
 	if err != nil || typ != tds.PacketLogin7 {
@@ -307,15 +318,6 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	}
 
 	loginName := login.UserName
-	// Throttle online guessing of the PAM key before any resolve work.
-	if !m.authLimiter.Allow(remoteHost(nConn.RemoteAddr())) {
-		// Log but do NOT append — as in the SSH and DB proxies: the preceding
-		// failures are the signal, and appending per attempt under a flood turns
-		// the system of record into the amplifier.
-		m.log.Warn("mssql authentication rate limited", "login", auditField(loginName, 64), "remote", remote)
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: too many attempts; try again shortly", tds72)
-		return
-	}
 	principal, err := m.resolver.Resolve(ctx, login.Password)
 	if err != nil {
 		m.log.Warn("mssql authentication failed", "login", auditField(loginName, 64), "remote", remote)
@@ -350,7 +352,7 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		remoteAddr:     remote,
 		expectProtocol: "mssql",
 		startAudit: func(t *store.Target, cr *store.Credential) (string, string) {
-			return "db.session.start", fmt.Sprintf("target:%s db:%s cred_user:%s via:mssql", t.Name, database, cr.Username)
+			return "db.session.start", fmt.Sprintf("target:%s db:%s cred_user:%s via:mssql", t.Name, auditValueDB(database), cr.Username)
 		},
 	})
 	if res.outcome != admitOK {
@@ -362,7 +364,7 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	up, loginResp, err := m.dialUpstream(ctx, target, cred.Username, secret, login)
 	if err != nil {
 		m.log.Error("upstream database connection failed", "actor", actor, "target", target.Name, "err", err)
-		m.audit(ctx, actor, "db.session.error", fmt.Sprintf("target:%s db:%s via:mssql error:%v", target.Name, database, err))
+		m.audit(ctx, actor, "db.session.error", fmt.Sprintf("target:%s db:%s via:mssql error:%v", target.Name, auditValueDB(database), err))
 		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: upstream connection failed", tds72)
 		return
 	}
@@ -807,6 +809,9 @@ func (m *MSSQLProxy) refuse(ctx context.Context, c *tds.Conn, res admitResult, a
 	case gateEnrollOnly:
 		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
 		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: complete MFA enrollment first", tds72)
+	case gateExtensionOnly:
+		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:extension-scoped-token")
+		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: a browser-extension token cannot open a database session", tds72)
 	case gateMFAPending:
 		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-webauthn-pending")
 		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: complete WebAuthn sign-in first", tds72)

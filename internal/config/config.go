@@ -452,7 +452,10 @@ type Config struct {
 	// _LOWER/_UPPER/_DIGIT/_SYMBOL). Defaults (24, 1, 1, 1, 1) reproduce the
 	// hardcoded policy every password had before this field existed, so an
 	// unconfigured deployment generates byte-for-byte-equivalent passwords.
-	PasswordMinLength                                                       int
+	PasswordMinLength int
+	// DoubleLockMinLength — PAM_DOUBLELOCK_MIN_LENGTH — minimum length for a
+	// DoubleLock password (2026-08-26 audit H-3); 0 uses the built-in floor of 16.
+	DoubleLockMinLength                                                     int
 	PasswordMinLower, PasswordMinUpper, PasswordMinDigit, PasswordMinSymbol int
 	// PasswordHistoryCount is how many of a credential's past rotation hashes
 	// are checked to refuse reissuing a recently-used password
@@ -892,6 +895,7 @@ func Load() (*Config, error) {
 		BrokerTokenTTL:             time.Duration(integer("PAM_BROKER_TOKEN_TTL_MIN", 15)) * time.Minute,
 		CertRemindDays:             integer("PAM_CERT_REMIND_DAYS", 7),
 		PasswordMinLength:          integer("PAM_PASSWORD_MIN_LENGTH", 24),
+		DoubleLockMinLength:        integer("PAM_DOUBLELOCK_MIN_LENGTH", 0),
 		PasswordMinLower:           integer("PAM_PASSWORD_MIN_LOWER", 1),
 		PasswordMinUpper:           integer("PAM_PASSWORD_MIN_UPPER", 1),
 		PasswordMinDigit:           integer("PAM_PASSWORD_MIN_DIGIT", 1),
@@ -1079,6 +1083,12 @@ func Load() (*Config, error) {
 	if cfg.BrokerMaxCallsPerToken < 0 || cfg.BrokerMaxCallsPerToken > maxCallsPerToken {
 		errs = append(errs, "PAM_BROKER_MAX_CALLS_PER_TOKEN must be between 0 (off) and 100000")
 	}
+	// A DoubleLock minimum below the built-in floor is silently ignored, and an
+	// absurdly high one makes the feature unusable; refuse both rather than
+	// surprise the operator. 0 means "use the built-in floor of 16".
+	if cfg.DoubleLockMinLength < 0 || cfg.DoubleLockMinLength > 1024 {
+		errs = append(errs, "PAM_DOUBLELOCK_MIN_LENGTH must be between 0 (use the default) and 1024")
+	}
 	// The origin a proof is checked against must be an ORIGIN. A value with a
 	// path, a query or a missing scheme would silently never match any request,
 	// refusing every bound agent with nothing in the config to point at.
@@ -1105,6 +1115,10 @@ func Load() (*Config, error) {
 			{"PAM_BROKER_POSTURE_REQUIRED", cfg.BrokerPostureRequired},
 			{"PAM_BROKER_REQUIRE_POP", cfg.BrokerRequirePoP},
 			{"PAM_BROKER_MAX_CALLS_PER_TOKEN", cfg.BrokerMaxCallsPerToken > 0},
+			// Added by the 2026-08-26 audit (T-4): four documents claimed this
+			// knob "fails the startup loudly" without its prerequisite, and it
+			// did not — only its URL shape was checked.
+			{"PAM_BROKER_PUBLIC_URL", cfg.BrokerPublicURL != ""},
 		} {
 			if k.set {
 				errs = append(errs, k.name+" needs the agent broker enabled (PAM_BROKER_POLICY_FILE)")

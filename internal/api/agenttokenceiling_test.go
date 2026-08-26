@@ -135,6 +135,16 @@ func ceilingServer(t *testing.T, ceiling int) (
 	mint func(sub string) string,
 	exchange func(t *testing.T, srv *httptest.Server, delegator, actor string) string,
 ) {
+	return ceilingServerWithRules(t, ceiling, toolsetRules)
+}
+
+// ceilingServerWithRules is ceilingServer with the policy chosen by the caller,
+// so a test can park calls for approval and prove the ceiling counts them.
+func ceilingServerWithRules(t *testing.T, ceiling int, rules string) (
+	srv *httptest.Server, st store.Store,
+	mint func(sub string) string,
+	exchange func(t *testing.T, srv *httptest.Server, delegator, actor string) string,
+) {
 	t.Helper()
 	b64 := func(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
@@ -154,7 +164,7 @@ func ceilingServer(t *testing.T, ceiling int) (
 		t.Fatal(err)
 	}
 
-	opts := brokerOpts(t, &fakeWinRM{result: winrm.Result{Stdout: "ok"}}, toolsetRules)
+	opts := brokerOpts(t, &fakeWinRM{result: winrm.Result{Stdout: "ok"}}, rules)
 	opts.BrokerSVIDVerifier = verifier
 	opts.BrokerTokenSignKey = signPriv
 	opts.BrokerAudience = aud
@@ -203,4 +213,87 @@ func randBytes(t *testing.T, n int) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// TestTokenCeilingCountsResumedWork is the regression test for the 2026-08-26
+// audit's finding T-1, the one functional defect this session introduced.
+//
+// The ceiling counts executed AND resumed rows — but the resume handlers never
+// wrote the `svid_jti:` field the count searches for, so a resumed row could
+// never match. An agent whose calls required approval therefore did all its
+// work through the approval path and charged nothing against its token — the
+// precise loophole the daily budget's own doc says must not exist.
+//
+// The proof is end to end and cannot be satisfied by the fixture alone: a real
+// SVID makes a real require_approval call, a human approves it, the agent
+// resumes — and the NEXT call must be refused as over-ceiling. Before the fix
+// that call was admitted, because the resumed row was invisible to the count.
+func TestTokenCeilingCountsResumedWork(t *testing.T) {
+	const ceiling = 1
+	srv, st, mint, exchange := ceilingServerWithRules(t, ceiling, approvalRules)
+	seedWinRMTarget(t, srv, "win-ceil", "vault-pw")
+	// The exchange is how a delegated token acquires a pamv1-minted jti; the
+	// trust-domain SVIDs the fixture mints carry one too, but a delegated token
+	// is the realistic subject of a per-token ceiling.
+	token := exchange(t, srv, mint("planner"), mint("worker"))
+	// Four-eyes (Phases 170/176) resolves the accountable owner of EVERY link
+	// in a delegated token's actor chain, so both the worker and the planner
+	// that delegated to it need a recorded owner. A fixture requirement, not
+	// the property under test.
+	for _, sub := range []string{"worker", "planner"} {
+		if sc, d := do(t, srv, http.MethodPost, "/v1/agents/identities", testAPIKey,
+			map[string]any{"spiffe_id": "spiffe://example.org/" + sub, "owner": "carol"}); sc != http.StatusCreated {
+			t.Fatalf("register %s owner: %d %s", sub, sc, d)
+		}
+	}
+
+	// 1. Park a call for approval. This spends nothing yet.
+	_, data := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", token,
+		map[string]any{"tool": "winrm_exec", "args": map[string]any{"target": "win-ceil", "command": "whoami"}})
+	m := jsonMap(t, data)
+	if m["status"] != "pending_approval" {
+		t.Fatalf("want pending_approval: %s", data)
+	}
+	callID, _ := m["call_id"].(string)
+	resume, _ := m["resume_token"].(string)
+
+	// 2. A human approves; the work executes server-side.
+	if sc, dd := do(t, srv, http.MethodPost, "/v1/approvals/"+callID+"/decision", testAPIKey,
+		map[string]any{"approve": true}); sc != http.StatusOK {
+		t.Fatalf("approve: %d %s", sc, dd)
+	}
+	// 3. The agent collects the result. THIS is the row that must charge the
+	//    ceiling, and the row the handlers used to write without svid_jti.
+	if sc, rd := doBearer(t, srv, http.MethodPost, "/v1/tool-calls/"+callID+"/resume", token,
+		map[string]any{"token": resume}); sc != http.StatusOK || jsonMap(t, rd)["status"] != "executed" {
+		t.Fatalf("resume: %d %s", sc, rd)
+	}
+
+	// 4. The ceiling of 1 is now spent — by approval-path work. The next call
+	//    is refused. Before the fix this returned pending_approval again.
+	_, data = doBearer(t, srv, http.MethodPost, "/v1/tool-calls", token,
+		map[string]any{"tool": "winrm_exec", "args": map[string]any{"target": "win-ceil", "command": "whoami"}})
+	out := jsonMap(t, data)
+	if out["status"] != "denied" {
+		t.Fatalf("a token that spent its ceiling through the approval path was not refused: %s", data)
+	}
+	if reason, _ := out["reason"].(string); !strings.Contains(reason, "spent its ceiling") {
+		t.Fatalf("reason = %q, want the ceiling named", reason)
+	}
+
+	// 5. And the resumed row on the trail carries the field the count needs, so
+	//    an investigator can join it the same way as an executed row.
+	events, err := st.ListAudit(t.Context(), 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.Action == "broker.tool_call.resumed" {
+			if !strings.Contains(e.Detail, "svid_jti:") {
+				t.Fatalf("the resumed row carries no svid_jti, so the ceiling cannot see it: %s", e.Detail)
+			}
+			return
+		}
+	}
+	t.Fatal("no broker.tool_call.resumed row was recorded")
 }

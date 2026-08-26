@@ -191,3 +191,47 @@ func TestParseExchangeFormReadsCnfJKT(t *testing.T) {
 		t.Fatal("a repeated cnf_jkt was accepted")
 	}
 }
+
+// TestExchangeRefusesBoundActorToken is the regression test for the 2026-08-26
+// audit's finding T-2. The ingress demands a proof for a key-bound token; the
+// exchange never did, so a captured bound token for Y could be posted as
+// actor_token with the caller's OWN key as cnf_jkt and produce a token with
+// sub=Y bound to a key Y never held — Y's identity for every policy decision.
+// The exchange cannot demand Y's proof (the caller is the delegator), so the
+// only honest answer is to refuse a bound actor token outright. pop.go's claim
+// that "a captured token without the private key proves nothing and is refused"
+// is only true if it holds HERE too.
+func TestExchangeRefusesBoundActorToken(t *testing.T) {
+	x, mint := popTestExchanger(t)
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	jkt, _ := JWKThumbprint(jwkFor(pub))
+	delegator, err := x.verify.Verify(t.Context(), mint("planner", time.Now().Add(time.Hour), ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	attackerPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	attackerJKT, _ := JWKThumbprint(jwkFor(attackerPub))
+
+	// The victim's token is bound to `jkt`; the attacker asks for a delegation
+	// bound to their own key instead.
+	_, xerr := x.Exchange(t.Context(), &ExchangeRequest{
+		GrantType:  ExchangeGrantType,
+		ActorToken: mint("worker", time.Now().Add(time.Hour), jkt),
+		CnfJKT:     attackerJKT,
+	}, delegator)
+	if xerr == nil {
+		t.Fatal("a key-bound actor token was accepted at the exchange and rebound to another key")
+	}
+	if !strings.Contains(xerr.Error(), "key-bound") {
+		t.Fatalf("refusal = %v, want it to name the binding", xerr)
+	}
+
+	// Control: the same request with an UNBOUND actor token still mints.
+	if _, xerr := x.Exchange(t.Context(), &ExchangeRequest{
+		GrantType:  ExchangeGrantType,
+		ActorToken: mint("worker", time.Now().Add(time.Hour), ""),
+		CnfJKT:     attackerJKT,
+	}, delegator); xerr != nil {
+		t.Fatalf("an unbound actor token was refused after the fix: %v", xerr)
+	}
+}

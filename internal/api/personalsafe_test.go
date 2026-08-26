@@ -199,3 +199,60 @@ func TestPersonalSafeImmutableOnUpdate(t *testing.T) {
 		t.Fatalf("listSafes should still show the safe as personal: %s", gd)
 	}
 }
+
+// TestPersonalSafeBypassesClosed is the regression test for the 2026-08-26
+// audit's finding M-5. Personal-safe privacy was enforced at connect time and
+// inside canManageSafe, but three management routes a plain CapManageTargets
+// holder can reach went straight to the store with no personal check:
+// reassigning the target's safe, deleting the safe, and granting the target
+// directly. Any of them unwrapped a private target. All three now refuse the
+// non-override manager and allow the override, matching canManageSafe.
+func TestPersonalSafeBypassesClosed(t *testing.T) {
+	srv := newTestServer(t)
+	targetID, _ := seedPersonalSafeTarget(t, srv, "alice")
+
+	_, ld := do(t, srv, http.MethodGet, "/api/safes", testAPIKey, nil)
+	var safes []map[string]any
+	if err := json.Unmarshal(ld, &safes); err != nil {
+		t.Fatal(err)
+	}
+	var safeID int64
+	for _, sf := range safes {
+		if sf["name"] == "alice-personal" {
+			safeID = int64(sf["id"].(float64))
+		}
+	}
+	if safeID == 0 {
+		t.Fatalf("could not find the seeded personal safe: %s", ld)
+	}
+
+	mgr := seedProfileUser(t, srv, "tmgr-m5", "carol-m5", "read_inventory", "manage_targets")
+
+	// 1. Reassigning the target out of its personal safe.
+	if code, d := do(t, srv, http.MethodPut, fmt.Sprintf("/api/targets/%d/safe", targetID), mgr,
+		map[string]any{"safe_id": nil}); code != http.StatusForbidden {
+		t.Fatalf("manage_targets unassigned a personal-safe target: want 403, got %d: %s", code, d)
+	}
+	// 2. A direct grant on the personal-safe target.
+	if code, d := do(t, srv, http.MethodPost, fmt.Sprintf("/api/targets/%d/grants", targetID), mgr,
+		map[string]any{"subject_type": "user", "subject": "carol-m5"}); code != http.StatusForbidden {
+		t.Fatalf("manage_targets self-granted a personal-safe target: want 403, got %d: %s", code, d)
+	}
+	// 3. Deleting the personal safe.
+	if code, d := do(t, srv, http.MethodDelete, fmt.Sprintf("/api/safes/%d", safeID), mgr, nil); code != http.StatusForbidden {
+		t.Fatalf("manage_targets deleted a personal safe: want 403, got %d: %s", code, d)
+	}
+
+	// The target is still in the safe: the refusals were effective, not cosmetic.
+	if code, d := do(t, srv, http.MethodPost, fmt.Sprintf("/api/targets/%d/grants", targetID), mgr,
+		map[string]any{"subject_type": "user", "subject": "carol-m5"}); code != http.StatusForbidden {
+		t.Fatalf("target left the personal safe after the refusals: %d %s", code, d)
+	}
+
+	// The override capability performs the same operations.
+	ovr := seedProfileUser(t, srv, "ovr-m5", "lead-m5", "read_inventory", "manage_targets", "unlimited_vault_access")
+	if code, d := do(t, srv, http.MethodPost, fmt.Sprintf("/api/targets/%d/grants", targetID), ovr,
+		map[string]any{"subject_type": "user", "subject": "lead-m5"}); code != http.StatusCreated {
+		t.Fatalf("override could not grant the personal-safe target: %d %s", code, d)
+	}
+}

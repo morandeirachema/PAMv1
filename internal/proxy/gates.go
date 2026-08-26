@@ -62,6 +62,7 @@ const (
 	gateTunnelOnly                  // tunnel-scoped viewer token presented to a session proxy
 	gateEnrollOnly                  // MFA enrollment still pending
 	gateMFAPending                  // WebAuthn second factor not yet verified this login
+	gateExtensionOnly               // browser-extension token presented to a session proxy
 	gateRoleConnect                 // role/profile lacks CapConnect
 	gateIPAllowlist                 // principal's source address is outside its IP allowlist
 	gatePosture                     // live device-posture attestation failed
@@ -203,25 +204,27 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 	principal := req.principal
 	actor := principal.Name
 
-	// 1. A tunnel-scoped token (the in-portal RDP/VNC viewer) authenticates ONLY
-	// at its viewer tunnel; it must not open a brokered session. (For the SSH
-	// proxy this is already refused at authentication time, so the check is a
-	// no-op there; the DB proxies reach it here.)
-	if principal.TunnelOnly {
-		return admitResult{outcome: admitDenied, gate: gateTunnelOnly}
-	}
-	// 2. An enrollment-only session (MFA setup pending) may not open sessions —
-	// the same refusal the HTTP authz middleware makes, so mandatory MFA cannot
-	// be bypassed through a session proxy.
-	if principal.EnrollOnly {
-		return admitResult{outcome: admitDenied, gate: gateEnrollOnly}
-	}
-	// 3. A password-verified-but-not-yet-WebAuthn-confirmed session may not open
-	// sessions either — same family as gate 2, same reasoning: mandatory MFA
-	// cannot be bypassed through a session proxy just because the second factor
-	// happens to be a two-round-trip ceremony instead of an inline code.
-	if principal.MFAPending {
-		return admitResult{outcome: admitDenied, gate: gateMFAPending}
+	// 1-3. A narrow-scope token may not open a brokered session. Until the
+	// 2026-08-26 audit this was three hand-written field checks, and it was
+	// missing the fourth field: a browser-extension token — which the HTTP
+	// middleware refuses everywhere except reveal — was accepted here as an SSH
+	// or database password and opened full sessions for 24 hours. The test now
+	// lives in ONE place, auth.Principal.MayOpenSession, and this gate only maps
+	// its answer to a per-scope audit reason. A proxy serves no narrow scope
+	// at all, hence ScopeNone.
+	if !principal.MayOpenSession(auth.ScopeNone) {
+		switch principal.NarrowScope() {
+		case auth.ScopeTunnelOnly:
+			return admitResult{outcome: admitDenied, gate: gateTunnelOnly}
+		case auth.ScopeEnrollOnly:
+			return admitResult{outcome: admitDenied, gate: gateEnrollOnly}
+		case auth.ScopeMFAPending:
+			return admitResult{outcome: admitDenied, gate: gateMFAPending}
+		default:
+			// ScopeExtensionOnly today; any scope added later lands here rather
+			// than being silently admitted, which is the whole point.
+			return admitResult{outcome: admitDenied, gate: gateExtensionOnly}
+		}
 	}
 	// 4. The role (or custom profile) must carry the connect capability.
 	if !principal.Can(auth.CapConnect) {

@@ -1268,6 +1268,7 @@ func run() error {
 		SAMLRoleMap:               roleMap(cfg.SAMLRoleAdmin, cfg.SAMLRoleUser, cfg.SAMLRoleAuditor, cfg.SAMLRoleApprover),
 		PortalURL:                 cfg.PortalURL,
 		GuacdAddr:                 cfg.GuacdAddr,
+		DoubleLockMinLength:       cfg.DoubleLockMinLength,
 		GuacdRecordingPath:        cfg.GuacdRecordingPath,
 		GuacdRDPSecurity:          cfg.GuacdRDPSecurity,
 		GuacdIgnoreCert:           cfg.GuacdIgnoreCert,

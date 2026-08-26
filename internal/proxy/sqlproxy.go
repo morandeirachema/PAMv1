@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/morandeirachema/pamv1/internal/auditfmt"
 	"strings"
 	"time"
 
@@ -188,6 +189,11 @@ func sqlBlockedStatement(ctx context.Context, l *listener, pol *sqlPolicy, cl sq
 // client via the fail closure, which writes the protocol-specific login-failure
 // token with the "pamv1: <reason>" text. The caller logs the refusal itself, so
 // each proxy's log line stays exactly as it was.
+// auditValueDB renders an untrusted database name (unauthenticated wire input on
+// both DB proxies) for a key:value audit detail, colon-escaped so it cannot
+// forge a neighbouring field. See auditfmt.Value and the 2026-08-26 audit's M-1.
+func auditValueDB(database string) string { return auditfmt.Value(database, 128) }
+
 func sqlDeny(ctx context.Context, l *listener, pol *sqlPolicy, actor, login, reason string, fail func(msg string)) {
 	l.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+pol.queryTag()+" reason:"+reason)
 	fail("pamv1: " + reason)

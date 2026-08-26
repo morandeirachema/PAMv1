@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"unicode/utf16"
 )
 
@@ -866,18 +867,45 @@ func parseRPCBatch(body []byte, i int) (Request, int, error) {
 		return req, next, nil
 	}
 	// Which parameter holds the statement depends on the procedure: it is the
-	// first character parameter for sp_executesql, but the third for
-	// sp_prepare/sp_prepexec and the second for sp_cursoropen. Rather than
-	// encode a fragile per-proc index, every recovered character parameter is
-	// reported — the guard checks them all, so a statement can hide in none of
-	// them.
+	// FIRST character parameter for sp_executesql, but later for the prepare
+	// and cursor family. Until the 2026-08-26 audit this block said so and then
+	// picked the LAST one anyway — so for sp_executesql, the shape every
+	// parameterised ADO.NET / JDBC / pyodbc call takes, the audit row recorded a
+	// parameter VALUE chosen by the operator instead of the statement. A caller
+	// could make `db.query`, the recording and the live monitor all read
+	// "SELECT 1 -- benign" while DROP TABLE ran. cmdguard was not bypassed (it
+	// checks every parameter); the audit trail was.
+	//
+	// The statement is now chosen per procedure. For sp_executesql that is
+	// texts[0]. For the prepare/cursor family the statement is genuinely later
+	// and its position is fixed by the protocol, but to keep this from ever
+	// again being a single operator-influenced string, AuditText for THOSE
+	// procedures carries every recovered character parameter, in order — an
+	// investigator sees the statement wherever it sits, and a value cannot
+	// impersonate it because the whole list is on the row.
 	carriesSQL := (byProcID && sqlBearingProcIDs[procID]) || (!byProcID && sqlBearingProcs[upper(proc)])
 	if carriesSQL && len(texts) > 0 {
-		req.SQL = texts[len(texts)-1] // the statement is the last character parameter in every shape we know
 		req.Params = texts
-		req.AuditText = req.SQL
+		isExecuteSQL := (byProcID && procID == ProcExecuteSQL) || (!byProcID && upper(proc) == "SP_EXECUTESQL")
+		if isExecuteSQL {
+			req.SQL = texts[0]
+			req.AuditText = req.SQL
+		} else {
+			// Prepare/cursor shapes: the statement is not first. Report the
+			// full parameter list rather than guessing an index that differs
+			// per procedure and would be another single-string audit surface.
+			req.SQL = texts[len(texts)-1]
+			req.AuditText = strings.Join(texts, " | ")
+		}
 	}
 	return req, next, nil
+}
+
+// nameFollows reports whether the bytes at b[i:] begin a UCS-2 parameter name,
+// i.e. the character '@' (0x40 0x00 little-endian). Used to tell a 0xFF/0x80
+// name-length byte apart from a batch separator — see walkParams.
+func nameFollows(b []byte, i int) bool {
+	return i+1 < len(b) && b[i] == 0x40 && b[i+1] == 0x00
 }
 
 // walkParams decodes a call's ParameterData list, returning every character
@@ -887,9 +915,24 @@ func parseRPCBatch(body []byte, i int) (Request, int, error) {
 // worse than reporting that the call was not readable.
 func walkParams(b []byte, i int) (texts []string, next int, ok bool) {
 	for i < len(b) {
-		// At a parameter boundary these bytes are batch separators, not a name
-		// length — that is how the protocol delimits several calls in one message.
-		if b[i] == 0xFF || b[i] == 0x80 {
+		// At a parameter boundary 0xFF / 0x80 are batch separators — that is
+		// how the protocol delimits several calls in one message. But both are
+		// ALSO valid name lengths: T-SQL identifiers run to 128 characters, so a
+		// parameter named `@` + 127 chars has a name-length byte of 0x80. Until
+		// the 2026-08-26 audit (H-4) this test read every such byte as a
+		// separator, the walk stopped, ParseRPC resynchronised mid-name, and the
+		// real statement was never recovered — while the original bytes were
+		// still forwarded and executed. With no CommandGuard (the default) the
+		// audit row and recording carried "[rpc #10]" for a DROP TABLE; a
+		// StepUpGuard was silently bypassed.
+		//
+		// The protocol gives one unambiguous disambiguator: a parameter name is
+		// UCS-2 text that MUST begin with '@' (MS-TDS 2.2.6.6, "ParamMetaData
+		// ... must start with @"), so a name-length byte is always followed by
+		// the two bytes 0x40 0x00. A separator is a bare flag byte followed by
+		// the next call's header, which never starts with an '@' character. So:
+		// treat 0xFF/0x80 as a separator ONLY when it is NOT followed by '@'.
+		if (b[i] == 0xFF || b[i] == 0x80) && !nameFollows(b, i+1) {
 			return texts, i, true
 		}
 		nameLen := int(b[i])

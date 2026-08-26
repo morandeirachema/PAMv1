@@ -235,6 +235,12 @@ func (s *Server) createTargetGrant(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A direct grant on a target in a personal safe would let a plain target
+	// manager reach a private target by granting themselves (2026-08-26 audit,
+	// M-5). Same override and same fail-closed check as the safe routes.
+	if !s.guardPersonalTarget(w, r, id) {
+		return
+	}
 	// The creator is recorded so a certification review can enforce four-eyes:
 	// the principal who granted access may not be the one certifying it (Phase 46).
 	g := store.TargetGrant{TargetID: id, SubjectType: in.SubjectType, Subject: in.Subject, CreatedBy: actorFrom(r.Context())}

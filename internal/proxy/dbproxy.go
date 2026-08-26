@@ -254,7 +254,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	_ = nConn.SetDeadline(time.Now().Add(handshakeTimeout))
 
 	// --- Startup / SSL negotiation ---
-	backend := pgproto3.NewBackend(conn, conn)
+	backend := newBoundedBackend(conn, pgPreAuthMaxBody)
 	var startup *pgproto3.StartupMessage
 	for startup == nil {
 		msg, err := backend.ReceiveStartupMessage()
@@ -272,7 +272,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 					return
 				}
 				conn = tconn
-				backend = pgproto3.NewBackend(conn, conn) // re-frame over TLS
+				backend = newBoundedBackend(conn, pgPreAuthMaxBody) // re-frame over TLS
 			} else if _, err := conn.Write([]byte{'N'}); err != nil {
 				return
 			}
@@ -301,6 +301,20 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	if err := backend.SetAuthType(pgproto3.AuthTypeCleartextPassword); err != nil {
 		return
 	}
+	// Throttle BEFORE reading the password, not after. Until the 2026-08-26
+	// audit this check sat below the Receive, so a peer that was already
+	// rate-limited could still make the proxy read (and, before the body bound
+	// above, allocate for) one more message per connection. The limiter's job is
+	// to stop an abusive source from costing us anything; that only holds if it
+	// runs before the first thing the source can make us do.
+	if !d.authLimiter.Allow(remoteHost(nConn.RemoteAddr())) {
+		// Log but do NOT append — see the SSH proxy's authenticate for why: the
+		// preceding failures are the signal, and appending per attempt under a
+		// flood turns the system of record into the amplifier.
+		d.log.Warn("db authentication rate limited", "login", auditField(login, 64), "remote", remote)
+		d.fail(backend, "28P01", "pamv1: too many attempts; try again shortly")
+		return
+	}
 	pmsg, err := backend.Receive()
 	if err != nil {
 		return
@@ -310,15 +324,9 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		d.fail(backend, "28000", "pamv1: password expected")
 		return
 	}
-	// Throttle online guessing of the PAM key before any resolve work.
-	if !d.authLimiter.Allow(remoteHost(nConn.RemoteAddr())) {
-		// Log but do NOT append — see the SSH proxy's authenticate for why: the
-		// preceding failures are the signal, and appending per attempt under a
-		// flood turns the system of record into the amplifier.
-		d.log.Warn("db authentication rate limited", "login", auditField(login, 64), "remote", remote)
-		d.fail(backend, "28P01", "pamv1: too many attempts; try again shortly")
-		return
-	}
+	// Past the password the peer will send real queries, which are legitimately
+	// larger than a credential — so the bound is widened here, and only here.
+	backend.SetMaxBodyLen(pgSessionMaxBody)
 	principal, err := d.resolver.Resolve(ctx, pw.Password)
 	if err != nil {
 		d.log.Warn("db authentication failed", "login", auditField(login, 64), "remote", remote)
@@ -356,7 +364,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		expectProtocol: "postgres",
 		skipDecrypt:    func(c *store.Credential) bool { return c.IsZSP() },
 		startAudit: func(t *store.Target, c *store.Credential) (string, string) {
-			return "db.session.start", fmt.Sprintf("target:%s db:%s cred_user:%s", t.Name, database, c.Username)
+			return "db.session.start", fmt.Sprintf("target:%s db:%s cred_user:%s", t.Name, auditValueDB(database), c.Username)
 		},
 	})
 	if res.outcome != admitOK {
@@ -398,7 +406,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	up, err := d.dialUpstream(ctx, target, dialUser, dialSecret, database)
 	if err != nil {
 		d.log.Error("upstream database connection failed", "actor", actor, "target", target.Name, "err", err)
-		d.audit(ctx, actor, "db.session.error", fmt.Sprintf("target:%s db:%s error:%v", target.Name, database, err))
+		d.audit(ctx, actor, "db.session.error", fmt.Sprintf("target:%s db:%s error:%v", target.Name, auditValueDB(database), err))
 		d.fail(backend, "08006", "pamv1: upstream connection failed")
 		return
 	}
@@ -481,6 +489,10 @@ func (d *DBProxy) dialUpstream(ctx context.Context, target *store.Target, user, 
 	}
 	conn = tconn
 	fe := pgproto3.NewFrontend(conn, conn)
+	// The upstream is a configured target, but its TLS default is trust-any, so
+	// a corrupted or impersonated server sending a bogus length must not be able
+	// to make this proxy allocate for it either.
+	fe.SetMaxBodyLen(pgSessionMaxBody)
 	fe.Send(&pgproto3.StartupMessage{
 		ProtocolVersion: pgproto3.ProtocolVersionNumber,
 		Parameters:      map[string]string{"user": user, "database": database},
@@ -623,6 +635,43 @@ func (c pgSQLClient) refuseFatal(msg string) {
 	_ = c.send(&pgproto3.ErrorResponse{Severity: "FATAL", Code: "42501", Message: msg})
 }
 
+// Message-body bounds for the PostgreSQL wire protocol, in octets.
+//
+// pgproto3's default is NO bound ("if maxBodyLen is 0, then no maximum is
+// enforced"), and that default was live here from Phase 15 until the 2026-08-26
+// audit: an unauthenticated peer could complete the 10 000-byte-bounded startup
+// exchange and then, in the password message that follows, declare a ~2 GiB body.
+// Receive() allocated it and blocked for the whole handshake timeout — and the
+// rate limiter runs AFTER that read, so it never saw the connection. A handful of
+// such connections OOM-killed the process and every session it hosted.
+//
+// Two bounds rather than one, because the two phases carry different traffic:
+//
+//   - pgPreAuthMaxBody covers the one message an unauthenticated peer may send
+//     after startup — a password. 64 KiB is orders of magnitude above any real
+//     credential and small enough that a flood of them is bounded by connection
+//     count, not by what each connection can make us allocate.
+//   - pgSessionMaxBody covers authenticated traffic: query text, bind parameters,
+//     COPY data. 64 MiB is generous for a brokered session and still refuses the
+//     pathological lengths a corrupted peer can encode in a 4-byte field.
+//
+// Both apply to the upstream Frontend as well, because the upstream's TLS
+// default is trust-any and a server that sends a bogus length is the failure
+// mode SetMaxBodyLen exists for on that side.
+const (
+	pgPreAuthMaxBody = 64 << 10
+	pgSessionMaxBody = 64 << 20
+)
+
+// newBoundedBackend constructs a pgproto3.Backend with a message-body bound
+// already set, so the bound cannot be forgotten at a construction site the way
+// it was at every construction site before the audit.
+func newBoundedBackend(conn net.Conn, maxBody int) *pgproto3.Backend {
+	b := pgproto3.NewBackend(conn, conn)
+	b.SetMaxBodyLen(maxBody)
+	return b
+}
+
 // fail sends a FATAL ErrorResponse to the operator's client.
 func (d *DBProxy) fail(backend *pgproto3.Backend, code, msg string) {
 	backend.Send(&pgproto3.ErrorResponse{Severity: "FATAL", Code: code, Message: msg})
@@ -657,6 +706,9 @@ func (d *DBProxy) refuse(ctx context.Context, backend *pgproto3.Backend, res adm
 	case gateEnrollOnly:
 		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
 		d.fail(backend, "28000", "pamv1: complete MFA enrollment first")
+	case gateExtensionOnly:
+		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:extension-scoped-token")
+		d.fail(backend, "28000", "pamv1: a browser-extension token cannot open a database session")
 	case gateMFAPending:
 		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-webauthn-pending")
 		d.fail(backend, "28000", "pamv1: complete WebAuthn sign-in first")
@@ -832,6 +884,14 @@ func scramAuth(fe *pgproto3.Frontend, password string, mechanisms []string) erro
 	iters, err := strconv.Atoi(attrs["i"])
 	if err != nil {
 		return fmt.Errorf("scram iterations: %w", err)
+	}
+	// Bound the upstream-supplied iteration count (2026-08-26 audit). A hostile
+	// or impersonated PostgreSQL (reachable when the trust-any upstream-TLS
+	// default is in play) can return `i=2000000000`, which pbkdf2.Key would burn
+	// a core on. 600k is far above any real server's SCRAM count and matches the
+	// OWASP figure; anything higher is refused rather than honoured.
+	if iters < 1 || iters > 600_000 {
+		return fmt.Errorf("scram iterations %d out of range (1..600000)", iters)
 	}
 
 	saltedPassword := pbkdf2.Key([]byte(password), salt, iters, sha256.Size, sha256.New)

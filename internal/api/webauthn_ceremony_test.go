@@ -246,8 +246,13 @@ func TestWebAuthnRegisterAndLoginEndToEnd(t *testing.T) {
 		t.Fatal("no MFAPending token returned")
 	}
 
-	// The pending token must be refused everywhere except the two WebAuthn
-	// login-ceremony routes — proving MFAPending is as narrow as EnrollOnly.
+	// The pending token must be refused by the API middleware — this checks
+	// /api/me as the representative route. It is NOT a proof of "everywhere":
+	// the viewer tunnel resolves its own principal and was, until the 2026-08-26
+	// audit, the one surface this token could open a desktop through. That
+	// surface has its own test now (TestViewerTunnelRefusesNarrowScopes); a
+	// comment claiming "everywhere" over a single-route check is how the gap
+	// stayed invisible.
 	if status, _ := do(t, srv, http.MethodGet, "/api/me", pendingTok, nil); status != http.StatusForbidden {
 		t.Fatalf("GET /api/me with a pending token = %d, want 403", status)
 	}

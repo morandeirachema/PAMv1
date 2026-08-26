@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–211 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–212 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2419,6 +2419,81 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 212 — The security audit, and every finding it could reach ✅
+
+A five-pass read-only security audit over v0.57.1 (crypto/secrets, authn/authz,
+proxies & parsers, store/data, and a documentation fact-check), each finding
+re-verified against the code by hand before any fix. It found one CRITICAL, five
+HIGH, eight MEDIUM and a set of LOW/informational items — **including four
+defects this very session's Phases 206 and 209 had just introduced**, which is
+the strongest argument for the audit having happened at all. Full report in
+`SECURITY-AUDIT-2026-08-26.md`.
+
+Every CRITICAL, every HIGH, all four session-introduced defects, and every
+MEDIUM but one are fixed here, each with a regression test and most pinned by
+mutation (the check is removed and the test watched to fail before it is
+restored). Migration high-water `0048 → 0049`.
+
+- [x] **C-1 — unauthenticated ~2 GiB allocation on the PostgreSQL proxy.**
+  `pgproto3`'s message-body bound was never set anywhere, so an unauthenticated
+  peer could declare a 2 GiB password body and the rate limiter — which ran
+  *after* that read — never saw it. Two bounds (64 KiB pre-auth, 64 MiB session),
+  a constructor that cannot forget them, and the limiter moved ahead of the read
+- [x] **H-1/H-2 — narrow-scope tokens opened sessions they never should.** A
+  leaked browser-extension token opened SSH/DB/desktop sessions, and an
+  `mfa_pending` token opened a desktop, because four entry points re-implemented
+  the "is this token narrow?" check by hand with different subsets of the fields.
+  Now one `auth.Principal.MayOpenSession`, called everywhere; deleting a scope
+  from it fails every entry point's test together
+- [x] **H-3 — DoubleLock.** A KEK-independent copy of the secret behind a
+  password checked only for being non-empty at 100k PBKDF2. A minimum length is
+  enforced (entropy is what defeats the offline attack), iterations raised to the
+  OWASP 600k, and the count stored per record so existing values still open
+- [x] **H-4/H-5 — the TDS broker's per-statement audit could be forged.** A
+  128-char parameter name was read as a batch separator (statement never
+  recovered, still executed), and `sp_executesql` audited the wrong parameter.
+  Both fixed and mutation-pinned
+- [x] **T-1 — the per-token ceiling (Phase 209) missed all approval-path work.**
+  The resume handlers never wrote the field the count searches for, so an agent
+  routing calls through approval charged nothing. One shared `resumeDetail` on
+  both transports; the end-to-end test spends a ceiling through approval
+- [x] **T-2/T-3/T-4 — the rest of this session's own gaps:** the token exchange
+  never checked the actor token's `cnf` (a captured bound token could buy its
+  victim's identity); the replay cache's per-replica scope was undocumented; and
+  `PAM_BROKER_PUBLIC_URL` never actually failed startup without its prerequisite
+- [x] **M-1/M-2 — audit-detail injection.** `auditfmt.Field` quotes but does not
+  escape colons, so five sinks (the SSH subsystem name, both DB proxies' database
+  name, the resolve reason, the login actor) could forge `key:value` pairs into
+  the trail the playback tamper-check and SIEM forwarder parse. New
+  `auditfmt.Value` generalises the fix the SFTP path handler already used
+- [x] **M-4 — a racing approve could overwrite a final deny.** The decision was
+  read-then-write with a bare UPDATE; now compare-and-set on `pending` in both
+  backends
+- [x] **M-5 — personal-safe privacy** was bypassable three ways by a plain target
+  manager (reassign the safe, delete it, self-grant). One fail-closed guard on
+  all three
+- [x] **M-7 — SFTP link path-laundering.** Native `SSH_FXP_LINK` checked neither
+  path and `SSH_FXP_SYMLINK` only one, so `link /etc/shadow /tmp/x; get /tmp/x`
+  laundered a denied path. Both paths of both ops now checked, in every mode
+- [x] **M-8 — unbounded channels per SSH connection.** Capped at 64
+- [x] **F-5 — a SCIM connector could deactivate or reactivate an admin.** Admin
+  lifecycle is not delegated to an IdP; the swallowed activation error surfaces
+- [x] **M-3 (name half)** — a partial unique index so two active agent keys can
+  no longer share a name and pool one budget; **plus** the SCRAM iteration cap,
+  the case-folded private-JWK check, and **F-8** (the authenticated middleware's
+  scope refusals are now audited)
+
+**Deliberately deferred, each with a stated reason** (see the report's header):
+M-6 (contract-suite coverage — additive test debt, not a live defect), the
+M-3 budget-reservation half (a new atomic store primitive, a design change), and
+F-7 (binding a resume token to its collector — needs a schema column; the token
+is single-use bearer by design). The remaining informational items were assessed
+non-exploitable or already documented.
+
+The whole gate suite and the race-enabled test suite pass, and the fixed binary
+was re-verified booting and serving the credential loop end to end — including
+the H-3 minimum-length refusal at runtime.
+
 ## Phase 211 — v0.57.1 ✅
 
 **A release with no functional change, cut on request and recorded as such.**
@@ -2734,7 +2809,8 @@ members from [RFC 8037 §2](https://datatracker.ietf.org/doc/html/rfc8037#sectio
   plain http on an internal name, so deriving the origin per request would refuse
   every bound agent. `X-Forwarded-*` is deliberately **not** consulted — letting
   a caller choose what its own proof is checked against would remove the check.
-  Both knobs fail the startup loudly when their prerequisite is absent, the idiom
+  Both knobs fail the startup loudly when their prerequisite is absent (true of
+  `REQUIRE_POP`; false of `PUBLIC_URL` until Phase 212 — see the audit), the idiom
   Phase 182 established
 - [x] **The end-to-end test is the claim, not a header check.** The SAME
   delegated token is presented by a "thief" holding only the token and by the

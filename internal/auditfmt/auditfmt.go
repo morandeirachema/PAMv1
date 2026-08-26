@@ -40,6 +40,24 @@ func OneLine(s string) string {
 //
 // The limit is in bytes, so a multi-byte rune can be cut in half; strconv.Quote
 // renders the remainder as \xNN escapes, which is safe and visibly truncated.
+// Value renders an untrusted string for a `key:value` audit detail, safe against
+// the ONE thing Field does not defend: a value that itself looks like a
+// key:value pair. Field quotes and bounds, but strconv.Quote keeps spaces and
+// colons INSIDE the quotes, so a value of `x reason:allowed` still reads as two
+// fields to the substring/space parsers that consume these details (playback's
+// sha256 tamper check, the console's field split, the SIEM forwarder).
+//
+// This is the generalisation of internal/proxy/auditPath, which did exactly this
+// for SFTP paths and named the recording tamper check as the reason. The
+// 2026-08-26 audit found five more sinks — the SSH subsystem name, the two DB
+// proxies' database name, res.reason and the login actor — that reached a detail
+// without it. Use Value for any value that comes off the wire; the colon is the
+// character that turns text into structure here, so escaping it (after Field's
+// quoting and bounding) closes the whole class.
+func Value(s string, limit int) string {
+	return strings.ReplaceAll(Field(s, limit), ":", `\x3a`)
+}
+
 func Field(s string, limit int) string {
 	if len(s) > limit {
 		s = s[:limit] + "…"

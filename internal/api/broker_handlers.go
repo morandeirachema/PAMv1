@@ -540,9 +540,30 @@ func (s *Server) resumeToolCall(w http.ResponseWriter, r *http.Request, id *agen
 		writeError(w, http.StatusNotFound, "invalid, expired, or already-used resume token")
 		return
 	}
-	s.auditAs(r.Context(), id.AgentName, broker.ActionToolCallResumed,
-		fmt.Sprintf("tool:%s call:%s status:%s%s", auditField(out.Tool, 64), out.CallID, out.Status, runField("session", out.SessionID)))
+	s.auditAs(r.Context(), id.AgentName, broker.ActionToolCallResumed, resumeDetail(id, out))
 	writeJSON(w, http.StatusOK, out)
+}
+
+// resumeDetail renders the audit detail for a collected (resumed) tool call,
+// on both the REST and the MCP transport.
+//
+// It exists because of the 2026-08-26 audit's finding T-1. Both resume handlers
+// built this string inline and neither wrote the presented token's `svid_jti:` —
+// the field brokerCallDetail writes on every INITIAL call, and the field Phase
+// 209's per-token ceiling SEARCHES the trail for. So a resumed row could never be
+// counted against a token's ceiling, and an agent whose calls required approval
+// did all its work through the approval path and charged nothing. That is the
+// exact loophole the daily budget's interface doc says must not exist, and the
+// ceiling's own doc claimed to count "the same two spending actions". It did
+// not. One function for both transports means the omission cannot recur on one
+// side only.
+func resumeDetail(id *agentid.Identity, out broker.Outcome) string {
+	detail := fmt.Sprintf("tool:%s call:%s status:%s%s",
+		auditField(out.Tool, 64), out.CallID, out.Status, runField("session", out.SessionID))
+	if id != nil && id.TokenID != "" {
+		detail += store.AgentTokenAuditField(id.TokenID)
+	}
+	return detail
 }
 
 // listBrokerApprovals returns the tool calls parked awaiting a human decision.
