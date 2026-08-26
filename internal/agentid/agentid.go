@@ -40,6 +40,15 @@ type Identity struct {
 	// with nothing linking them: an investigator could see a token issued and
 	// calls arriving, and could not prove they were the same token.
 	TokenID string
+	// ConfirmationKey is the RFC 7800 `cnf.jkt` this token was bound to (Phase
+	// 206): the RFC 7638 thumbprint of the key whose holder may present it.
+	// Empty means the token is an ordinary bearer credential — every token
+	// minted before this phase, and every static agent key, which has no claims
+	// to carry one.
+	//
+	// Its presence is what makes the ingress DEMAND a proof, so a bound token
+	// cannot be downgraded to a bearer one by leaving the proof off.
+	ConfirmationKey string
 }
 
 // Principal is the auth.Principal the broker authorizes the call under.

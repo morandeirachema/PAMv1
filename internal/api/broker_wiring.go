@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/agentid"
@@ -36,6 +37,14 @@ func (s *Server) setupBroker(opts Options) error {
 	s.brokerRequireEnrolledSVID = opts.BrokerRequireEnrolledSVID
 	s.brokerRequireKnownOwner = opts.BrokerRequireKnownOwner
 	s.brokerPostureRequired = opts.BrokerPostureRequired
+	// Proof of possession (Phase 206). The checker exists whenever the broker
+	// does, because a token that CARRIES a binding must be checked against it
+	// even when the deployment has not made binding mandatory — otherwise the
+	// constraint would be advisory, which is the failure Phase 204 was careful
+	// to avoid claiming on the listing side.
+	s.brokerRequirePoP = opts.BrokerRequirePoP
+	s.brokerPublicURL = strings.TrimRight(strings.TrimSpace(opts.BrokerPublicURL), "/")
+	s.popChecker = agentid.NewProofChecker(0)
 	s.mcpSessions = newMCPSessionRegistry()
 	// Static agent keys are always accepted; a SPIFFE SVID verifier, when
 	// configured, is tried alongside them (Phase 13d).

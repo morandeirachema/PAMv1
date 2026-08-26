@@ -247,6 +247,13 @@ var (
 		// a behavioural signal, and it scored zero.
 		"agent.not_enrolled":   true,
 		"agent.posture_denied": true,
+		// And the third (Phase 206), which meets the criterion more sharply than
+		// either: to be refused here a caller had to present a token whose
+		// signature, audience, expiry and trust domain all verified — it simply
+		// could not prove it holds the key that token is bound to. A run of these
+		// under one identity is the signature of a STOLEN token being spent, which
+		// is precisely the behaviour worth scoring.
+		"agent.pop_denied": true,
 		// And five refusals that predate this map's last revision, found by the
 		// OCSF coverage guard in Phase 185. Every one is an authenticated party
 		// being told no — the criterion above — and every one scored zero:
