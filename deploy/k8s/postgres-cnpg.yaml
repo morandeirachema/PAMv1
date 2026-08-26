@@ -1,4 +1,4 @@
-# High-availability PostgreSQL for pamv1 via the CloudNativePG operator.
+# High-availability PostgreSQL for PAMv1 via the CloudNativePG operator.
 #
 # Prerequisites: install the CloudNativePG operator first, e.g.
 #   kubectl apply --server-side -f \
@@ -18,7 +18,7 @@ metadata:
   name: pamv1-pg
   namespace: pamv1
   labels:
-    app.kubernetes.io/name: pamv1
+    app.kubernetes.io/name: PAMv1
 spec:
   instances: 3
   imageName: ghcr.io/cloudnative-pg/postgresql:17
@@ -31,7 +31,7 @@ spec:
       # By default CNPG GENERATES the app password into the secret it manages,
       # which leaves a manual step in the middle of an otherwise-IaC deploy:
       # somebody reads that password out of the running cluster and pastes it
-      # into pamv1's PAM_DATABASE_URL. Two copies of one password, kept in step
+      # into PAMv1's PAM_DATABASE_URL. Two copies of one password, kept in step
       # by hand.
       #
       # Uncomment to SUPPLY it instead, so the password is an input rather than

@@ -195,7 +195,7 @@ type Options struct {
 	RevealDisabled bool
 	// RequireTargetGrant refuses a connection to a target that has NO grants at
 	// all (PAM_REQUIRE_TARGET_GRANT, Phase 203). False — the default — keeps
-	// pamv1's historical behaviour, where an unrestricted target is reachable by
+	// PAMv1's historical behaviour, where an unrestricted target is reachable by
 	// any connect-capable principal. The reachability review (menu 31) renders
 	// exactly those targets in red, so an operator can see the blast radius
 	// before turning this on.
@@ -297,7 +297,7 @@ type Options struct {
 	// AllowedProtocols, when non-empty, restricts which target protocols may be
 	// created and connected to (e.g. {"ssh","winrm"}); empty allows all.
 	AllowedProtocols []string
-	// Directory (optional) backs identity reconciliation: pamv1 revokes access for
+	// Directory (optional) backs identity reconciliation: PAMv1 revokes access for
 	// users the directory reports as disabled. nil disables the reconcile endpoint.
 	Directory auth.DirectorySource
 	// Reconfigure (optional) rebuilds the hot-swappable RuntimeConfig from the
@@ -329,12 +329,12 @@ type Options struct {
 	BrokerBudgetPerDay int
 	// BrokerRequireEnrolledSVID refuses an SVID-authenticated agent whose SPIFFE
 	// ID has no enrolled row in agent_identities (Phase 174). Off by default:
-	// with it off pamv1 records every identity it sees so the inventory builds
+	// with it off PAMv1 records every identity it sees so the inventory builds
 	// itself, and with it on the trust domain's word stops being sufficient on
 	// its own.
 	BrokerRequireEnrolledSVID bool
 	// BrokerRequireKnownOwner refuses a broker approval when the calling agent's
-	// owner is not a pamv1 user, rather than auditing it as unverified (Phase
+	// owner is not a PAMv1 user, rather than auditing it as unverified (Phase
 	// 176). Off by default.
 	BrokerRequireKnownOwner bool
 	// BrokerPostureRequired extends the posture webhook to agent identities
@@ -378,7 +378,7 @@ type Options struct {
 	BrokerSVIDVerifier agentid.Verifier
 	// BrokerTokenSignKey (optional) enables the RFC 8693 token-exchange endpoint
 	// (Phase 57): the ed25519 key the broker signs delegated JWT-SVIDs with. Nil
-	// leaves POST /v1/token unmounted — pamv1 then verifies delegation without
+	// leaves POST /v1/token unmounted — PAMv1 then verifies delegation without
 	// issuing it, which is what Phases 13–56 did. BrokerExchangeTTL bounds an
 	// issued token (it is additionally capped by the delegator's own expiry).
 	BrokerTokenSignKey ed25519.PrivateKey
@@ -426,7 +426,7 @@ type Options struct {
 	// key admin routes and the /scim/v2/Users surface.
 	ScimEnabled bool
 	// SessionForensics (Phase 157) turns on post-session forensic
-	// reconstruction: after an interactive SSH session ends, pamv1 runs one
+	// reconstruction: after an interactive SSH session ends, PAMv1 runs one
 	// fixed, read-only command over that target's own vaulted credential to
 	// pull the TARGET's kernel audit record of what actually executed during
 	// the session window, and stores it beside the recording. Off by default —
@@ -562,7 +562,7 @@ type Server struct {
 	// row (Phase 174). Read on the agent authentication path.
 	brokerRequireEnrolledSVID bool
 	// brokerRequireKnownOwner refuses an approval whose agent owner matches no
-	// pamv1 user (Phase 176). Read on the approval-decision path.
+	// PAMv1 user (Phase 176). Read on the approval-decision path.
 	brokerRequireKnownOwner bool
 	// brokerPostureRequired asks the posture webhook about the calling agent
 	// (Phase 180). Read on the agent authentication path.
@@ -962,8 +962,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /metrics", s.metricsHandler) // Prometheus exposition
 	s.mux.HandleFunc("GET /{$}", web.Index)
 	s.mux.HandleFunc("GET /static/guacamole-common.min.js", web.GuacamoleJS) // vendored RDP viewer client
-	s.mux.HandleFunc("GET /share.html", web.Share)                           // Phase 116 guest viewer, no pamv1 login
-	s.mux.HandleFunc("GET /approve.html", web.Approve)                       // Phase 137 magic-link approval, no pamv1 login
+	s.mux.HandleFunc("GET /share.html", web.Share)                           // Phase 116 guest viewer, no PAMv1 login
+	s.mux.HandleFunc("GET /approve.html", web.Approve)                       // Phase 137 magic-link approval, no PAMv1 login
 
 	// Authentication endpoints are rate-limited per client IP.
 	s.mux.Handle("POST /api/login", s.rateLimit(http.HandlerFunc(s.login))) // public: this IS authentication
@@ -1012,7 +1012,7 @@ func (s *Server) routes() {
 	s.mux.Handle("PUT /api/targets/{id}/safe", s.authz(auth.CapManageTargets, s.setTargetSafe))
 	// Authenticated post-login account discovery (Phase 128): enumerate local/
 	// service accounts over the target's own vaulted credential and flag ones
-	// with no matching pamv1 credential. A management action, not a connect
+	// with no matching PAMv1 credential. A management action, not a connect
 	// action — CapManageTargets, not CapConnect.
 	s.mux.Handle("POST /api/targets/{id}/discover-accounts", s.authz(auth.CapManageTargets, s.discoverAccounts))
 
@@ -1030,7 +1030,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/targets/{id}/winrm", s.authz(auth.CapConnect, s.runWinRM))
 	// One discrete, audited Kubernetes operation against a `kubernetes` target
 	// (Phase 155) — the same capability the WinRM twin needs, since both are a
-	// privileged action on a machine pamv1 holds the credential for.
+	// privileged action on a machine PAMv1 holds the credential for.
 	s.mux.Handle("POST /api/targets/{id}/kubectl", s.authz(auth.CapConnect, s.runKubectl))
 	s.mux.Handle("POST /api/rdp-token", s.authz(auth.CapConnect, s.rdpToken))                  // mint a short-lived WS token for the viewer
 	s.mux.Handle("POST /api/vnc-token", s.authz(auth.CapConnect, s.vncToken))                  // same, for the VNC viewer
@@ -1079,7 +1079,7 @@ func (s *Server) routes() {
 
 	// Magic-link approval (Phase 137): a CapApprove holder delegates one
 	// decision to a named person via an emailed link, instead of that person
-	// logging into pamv1. The redeem/preview pair below is registered
+	// logging into PAMv1. The redeem/preview pair below is registered
 	// WITHOUT the authz(...) wrapper — reached from the unauthenticated
 	// approve.html guest page, the same way the session-share guest routes
 	// and RDP/VNC viewer tunnels are.
@@ -1277,7 +1277,7 @@ func (s *Server) routes() {
 		s.mux.Handle("POST /v1/agents/quarantine", s.authz(auth.CapManageUsers, s.quarantineAgent))
 		s.mux.Handle("GET /v1/agents/quarantine", s.authz(auth.CapManageUsers, s.listAgentQuarantine))
 		s.mux.Handle("DELETE /v1/agents/quarantine/{id}", s.authz(auth.CapManageUsers, s.releaseAgentQuarantine))
-		// Accountability for the identity kind pamv1 never issued a key to
+		// Accountability for the identity kind PAMv1 never issued a key to
 		// (Phase 170): who owns a SPIFFE-attested agent. Read by the broker's
 		// four-eyes refusal and by the offboarding cascade. Like "quarantine",
 		// the literal "identities" segment is registered before "{id}" only for

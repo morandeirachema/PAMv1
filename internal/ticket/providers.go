@@ -112,7 +112,7 @@ var errTicketNotFound = fmt.Errorf("no such ticket")
 // matchesActor reports whether any of the named fields identifies actor.
 //
 // The comparison is case-insensitive and also accepts the local part of an email
-// address, because the same human is `alice` in pamv1, `alice@acme.com` in Jira
+// address, because the same human is `alice` in PAMv1, `alice@acme.com` in Jira
 // and "Alice Smith" in a ServiceNow display value. Being strict here would make
 // the control unusable and it would be turned off, which protects nobody — so
 // the matching is deliberately forgiving and the *field list* is what an operator

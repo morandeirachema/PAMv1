@@ -333,7 +333,7 @@ const maxOutputBytes = 4 << 20 // 4 MiB
 // console, so output that was silently cut short would read, forever after, as
 // a complete record of what a command printed. Evidence that admits it is
 // partial is worth much more than evidence that quietly lies about it.
-const truncationMarker = "\n[pamv1: output truncated at 4 MiB]\n"
+const truncationMarker = "\n[PAMv1: output truncated at 4 MiB]\n"
 
 // limitedBuffer is an io.Writer (Go's "something you can write bytes to",
 // roughly Python's file-like object) that collects at most max bytes and then

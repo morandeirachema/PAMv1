@@ -22,7 +22,7 @@ type EntraConfig struct {
 	// so the access token carries the app roles assigned to the user.
 	Scope string
 	// RoleMap maps an Entra **app role value** or **group object id** (lower-cased)
-	// to a pamv1 role. A user with several mapped claims gets the highest one.
+	// to a PAMv1 role. A user with several mapped claims gets the highest one.
 	RoleMap map[string]Role
 	// AuthorityHost overrides the login host for sovereign clouds
 	// (e.g. login.microsoftonline.us); default login.microsoftonline.com.
@@ -33,13 +33,13 @@ type EntraConfig struct {
 }
 
 // EntraAuthenticator authenticates users against Entra ID using the OAuth2
-// resource-owner-password (ROPC) grant, which fits pamv1's username+password
+// resource-owner-password (ROPC) grant, which fits PAMv1's username+password
 // login. It requests an id_token (openid scope) and **validates its RS256
 // signature against the tenant JWKS** (plus tenant/tid, audience and expiry)
 // before trusting the role/group claims.
 //
 // NOTE: ROPC does not exercise Entra Conditional Access or IdP-side MFA — use
-// pamv1's own TOTP MFA on top, and prefer the OIDC auth-code flow for production.
+// PAMv1's own TOTP MFA on top, and prefer the OIDC auth-code flow for production.
 type EntraAuthenticator struct {
 	cfg      EntraConfig
 	hc       *http.Client
@@ -78,7 +78,7 @@ func NewEntraAuthenticator(cfg EntraConfig) (*EntraAuthenticator, error) {
 	return &EntraAuthenticator{cfg: cfg, hc: &http.Client{Timeout: 10 * time.Second}, endpoint: endpoint, jwksURL: jwksURL}, nil
 }
 
-// entraClaims are the id_token claims pamv1 trusts after signature validation.
+// entraClaims are the id_token claims PAMv1 trusts after signature validation.
 // Tid (the token's tenant) is checked against the configured tenant — Entra signs
 // with keys shared across all tenants, so audience+signature alone would accept a
 // token minted in an attacker-controlled tenant.

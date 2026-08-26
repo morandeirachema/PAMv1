@@ -312,7 +312,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		// preceding failures are the signal, and appending per attempt under a
 		// flood turns the system of record into the amplifier.
 		d.log.Warn("db authentication rate limited", "login", auditField(login, 64), "remote", remote)
-		d.fail(backend, "28P01", "pamv1: too many attempts; try again shortly")
+		d.fail(backend, "28P01", "PAMv1: too many attempts; try again shortly")
 		return
 	}
 	pmsg, err := backend.Receive()
@@ -321,7 +321,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	}
 	pw, ok := pmsg.(*pgproto3.PasswordMessage)
 	if !ok {
-		d.fail(backend, "28000", "pamv1: password expected")
+		d.fail(backend, "28000", "PAMv1: password expected")
 		return
 	}
 	// Past the password the peer will send real queries, which are legitimately
@@ -331,7 +331,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	if err != nil {
 		d.log.Warn("db authentication failed", "login", auditField(login, 64), "remote", remote)
 		d.audit(ctx, auditField(login, 64), "proxy.auth_failed", "proto:postgres remote:"+remote)
-		d.fail(backend, "28P01", "pamv1: authentication failed")
+		d.fail(backend, "28P01", "PAMv1: authentication failed")
 		return
 	}
 	actor := principal.Name
@@ -391,7 +391,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		}
 		if perr != nil {
 			d.audit(ctx, actor, "db.zsp_provision_failed", fmt.Sprintf("target:%s error:%v", target.Name, perr))
-			d.fail(backend, "08006", "pamv1: zero standing privilege provisioning failed")
+			d.fail(backend, "08006", "PAMv1: zero standing privilege provisioning failed")
 			return
 		}
 		dialUser = ephemeralUser
@@ -407,7 +407,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	if err != nil {
 		d.log.Error("upstream database connection failed", "actor", actor, "target", target.Name, "err", err)
 		d.audit(ctx, actor, "db.session.error", fmt.Sprintf("target:%s db:%s error:%v", target.Name, auditValueDB(database), err))
-		d.fail(backend, "08006", "pamv1: upstream connection failed")
+		d.fail(backend, "08006", "PAMv1: upstream connection failed")
 		return
 	}
 	defer up.conn.Close()
@@ -427,7 +427,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	} else {
 		d.audit(ctx, actor, "session.record_failed", "proto:postgres target:"+target.Name+" err:"+rerr.Error())
 		if d.requireRec {
-			d.fail(backend, "58000", "pamv1: session recording unavailable")
+			d.fail(backend, "58000", "PAMv1: session recording unavailable")
 			return
 		}
 	}
@@ -702,16 +702,16 @@ func (d *DBProxy) refuse(ctx context.Context, backend *pgproto3.Backend, res adm
 		// audit a second, differently-worded db.session.denied row for the same
 		// refusal.
 		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:tunnel-only-token")
-		d.fail(backend, "28000", "pamv1: this token may only be used by the in-portal viewer")
+		d.fail(backend, "28000", "PAMv1: this token may only be used by the in-portal viewer")
 	case gateEnrollOnly:
 		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
-		d.fail(backend, "28000", "pamv1: complete MFA enrollment first")
+		d.fail(backend, "28000", "PAMv1: complete MFA enrollment first")
 	case gateExtensionOnly:
 		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:extension-scoped-token")
-		d.fail(backend, "28000", "pamv1: a browser-extension token cannot open a database session")
+		d.fail(backend, "28000", "PAMv1: a browser-extension token cannot open a database session")
 	case gateMFAPending:
 		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-webauthn-pending")
-		d.fail(backend, "28000", "pamv1: complete WebAuthn sign-in first")
+		d.fail(backend, "28000", "PAMv1: complete WebAuthn sign-in first")
 	case gateRoleConnect:
 		d.deny(ctx, backend, actor, login, "your role may not open sessions")
 	case gateIPAllowlist:
@@ -726,33 +726,33 @@ func (d *DBProxy) refuse(ctx context.Context, backend *pgproto3.Backend, res adm
 		d.deny(ctx, backend, actor, login, "protocol not allowed by policy")
 	case gateTargetGrants:
 		// admit logged "target grants lookup failed"; fail closed on the wire.
-		d.fail(backend, "58000", "pamv1: authorization check failed")
+		d.fail(backend, "58000", "PAMv1: authorization check failed")
 	case gateTargetPolicy:
 		d.deny(ctx, backend, actor, login, "not authorized for this target")
 	case gateApprovalPolicy, gateApprovalClaim:
 		// admit logged the specific approval error; fail closed on the wire.
-		d.fail(backend, "58000", "pamv1: approval check failed")
+		d.fail(backend, "58000", "PAMv1: approval check failed")
 	case gateApproval:
 		// admit already audited access.denied with the reason.
-		d.fail(backend, "28000", "pamv1: connection requires an approved access request")
+		d.fail(backend, "28000", "PAMv1: connection requires an approved access request")
 	case gateVendorCheck:
 		// admit logged "vendor gate check failed"; fail closed on the wire.
-		d.fail(backend, "58000", "pamv1: authorization check failed")
+		d.fail(backend, "58000", "PAMv1: authorization check failed")
 	case gateVendor:
 		// admit already audited access.denied reason:vendor-contract.
-		d.fail(backend, "28000", "pamv1: vendor access requires an approved, in-window contract grant")
+		d.fail(backend, "28000", "PAMv1: vendor access requires an approved, in-window contract grant")
 	case gateSessionLimit:
 		d.audit(ctx, actor, "db.session.denied", "target:"+res.target.Name+" reason:session-limit")
-		d.fail(backend, "53300", "pamv1: too many concurrent sessions")
+		d.fail(backend, "53300", "PAMv1: too many concurrent sessions")
 	case gateAudit:
 		// admit's fail-closed db.session.start write did not land; refuse.
-		d.fail(backend, "58000", "pamv1: audit log unavailable; session refused")
+		d.fail(backend, "58000", "PAMv1: audit log unavailable; session refused")
 	case gateDecrypt:
 		// admit already audited credential.decrypt_failed and logged the error.
-		d.fail(backend, "58000", "pamv1: credential unavailable")
+		d.fail(backend, "58000", "PAMv1: credential unavailable")
 	default:
 		d.log.Error("unhandled admit refusal on the PostgreSQL proxy", "gate", int(res.gate), "actor", actor)
-		d.fail(backend, "58000", "pamv1: authorization check failed")
+		d.fail(backend, "58000", "PAMv1: authorization check failed")
 	}
 }
 

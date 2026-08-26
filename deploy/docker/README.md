@@ -33,7 +33,7 @@ openssl rand -base64 24              # PAM_API_KEY — must be ≥16 chars on a 
 
 The PostgreSQL session proxy (`PAM_DB_ADDR`, `:5433`) is **not** enabled in this
 compose file, so nothing listens there even though `.env.example` documents the
-variable. Set it and publish the port if you want to try `psql` through pamv1.
+variable. Set it and publish the port if you want to try `psql` through PAMv1.
 
 > **Two things that will refuse to start, or refuse a session, if you enable them
 > here.** Both are deliberate fail-closed behaviour from Phase 52c/52d, and both
@@ -49,14 +49,14 @@ variable. Set it and publish the port if you want to try `psql` through pamv1.
 ## Run the RDP viewer demo (see the pixels, no Windows host)
 
 Brings up a real **xrdp Linux desktop** as an RDP target, guacd, and pam-server,
-and auto-seeds the pamv1 target + credential — so you can watch a desktop render
+and auto-seeds the PAMv1 target + credential — so you can watch a desktop render
 through the in-portal viewer end to end.
 
 ```bash
 cd deploy/docker
 docker compose -f docker-compose.rdp-demo.yml up --build
 # open http://localhost:8080
-#   sign on: leave Password blank, enter the access token  demo-api-key-pamv1
+#   sign on: leave Password blank, enter the access token  demo-api-key-PAMv1
 #   Work with Targets → type 7 next to "demo-rdp" → Enter → an XFCE desktop renders
 #   Ctrl+Alt+Q disconnects
 ```
@@ -70,7 +70,7 @@ re-up. Full verification checklist: [docs/RDP-TESTING.md §4](../../docs/RDP-TES
 
 ```bash
 # from the repo root:
-docker build -f deploy/docker/Dockerfile -t pamv1 .
+docker build -f deploy/docker/Dockerfile -t PAMv1 .
 docker build -f deploy/docker/Dockerfile.pkcs11 -t pamv1:pkcs11 .   # HSM variant
 ```
 

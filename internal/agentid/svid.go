@@ -28,7 +28,7 @@ type actClaim struct {
 }
 
 // cnfClaim is an RFC 7800 §3.1 "cnf" (confirmation) claim. Only the RFC 9449
-// `jkt` member is read: pamv1 binds tokens to a key THUMBPRINT, never to an
+// `jkt` member is read: PAMv1 binds tokens to a key THUMBPRINT, never to an
 // embedded key, so there is nothing here to reconstruct a key from.
 type cnfClaim struct {
 	JKT string `json:"jkt"`
@@ -41,7 +41,7 @@ type cnfClaim struct {
 // to "" here, and the difference matters: treating an unreadable confirmation as
 // "unbound" would DOWNGRADE a token its issuer had deliberately constrained —
 // the one outcome a binding must never produce. RFC 7800 defines `jwk` and `kid`
-// confirmations too; pamv1 enforces only `jkt`, so a token using either is
+// confirmations too; PAMv1 enforces only `jkt`, so a token using either is
 // refused instead of quietly honoured as a bearer credential.
 func (c *cnfClaim) thumbprint() string {
 	if c == nil {
@@ -237,7 +237,7 @@ func (v *SVIDVerifier) Verify(_ context.Context, bearer string) (*Identity, erro
 }
 
 // maxJTILen bounds a recorded token id. A jti is an opaque identifier chosen by
-// the issuer, so pamv1 neither parses nor trusts it — but it reaches the audit
+// the issuer, so PAMv1 neither parses nor trusts it — but it reaches the audit
 // trail, and an unbounded issuer-controlled string on the trail is a way to
 // flood it.
 const maxJTILen = 64

@@ -18,7 +18,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
-// kubeToken is the credential pamv1 vaults for the cluster. The fake API server
+// kubeToken is the credential PAMv1 vaults for the cluster. The fake API server
 // below accepts ONLY this token, and no operator ever sees it: the tests hand
 // it to POST /api/credentials once and then only ever call the broker.
 const kubeToken = "sa-token-only-the-vault-has"
@@ -106,7 +106,7 @@ func fieldAfter(detail, key string) string {
 
 // TestKubectlJITInjection is this phase's flagship proof, the Kubernetes twin
 // of the SSH one: the fake cluster accepts ONLY the vaulted service-account
-// token, the operator authenticates to pamv1 with their own API key and never
+// token, the operator authenticates to PAMv1 with their own API key and never
 // possesses that token, yet the operation runs — so the credential can only have
 // come from the vault, injected just-in-time. It then checks everything that
 // must accompany a brokered privileged operation: the canonical command string,

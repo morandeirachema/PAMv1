@@ -42,7 +42,7 @@ func (p *Proxy) authenticateEndpointAgent(c ssh.ConnMetadata, name string, key [
 	refuse := func(reason string) (*ssh.Permissions, error) {
 		p.log.Warn("endpoint agent authentication failed", "agent", auditField(name, 64), "remote", remote, "reason", reason)
 		p.audit(ctx, endpointAgentActor(auditField(name, 64)), "endpoint_agent.auth_failed", "remote:"+remote+" reason:"+reason)
-		return nil, fmt.Errorf("pamv1: authentication failed")
+		return nil, fmt.Errorf("PAMv1: authentication failed")
 	}
 	if p.endpointAgents == nil {
 		return refuse("disabled")
@@ -53,7 +53,7 @@ func (p *Proxy) authenticateEndpointAgent(c ssh.ConnMetadata, name string, key [
 			return refuse("unknown-key")
 		}
 		p.log.Error("endpoint agent lookup failed", "err", err)
-		return nil, fmt.Errorf("pamv1: authentication failed")
+		return nil, fmt.Errorf("PAMv1: authentication failed")
 	}
 	if !a.Active() {
 		return refuse("revoked")
@@ -101,7 +101,7 @@ type endpointTunnel struct {
 
 // OpenTunnel opens one stream through the agent (see endpointTunnel).
 func (t *endpointTunnel) OpenTunnel() (net.Conn, error) {
-	// The originator fields are nominal — pamv1 itself is the originator —
+	// The originator fields are nominal — PAMv1 itself is the originator —
 	// but the client library parses them as a real IP:port and refuses port
 	// 0, so a valid placeholder is required.
 	ch, reqs, err := t.conn.OpenChannel("forwarded-tcpip", ssh.Marshal(forwardedTCPIPPayload{
@@ -142,15 +142,15 @@ func (c *channelConn) SetWriteDeadline(time.Time) error {
 }
 
 // serveEndpointAgent runs an authenticated agent-class connection until it
-// ends. An agent may open NO channels toward pamv1 (every one is refused —
-// its connection only ever carries streams pamv1 opens toward it), and only
+// ends. An agent may open NO channels toward PAMv1 (every one is refused —
+// its connection only ever carries streams PAMv1 opens toward it), and only
 // three global requests mean anything: one "tcpip-forward" (registers the
 // link; a second is refused), "cancel-tcpip-forward" (unregisters it) and
 // "keepalive@openssh.com". Connect and disconnect are audited under the
 // agent's own actor, and the store's last-seen stamp is refreshed at both.
 func (p *Proxy) serveEndpointAgent(ctx context.Context, sconn *ssh.ServerConn, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request, agentID, targetID int64, name, remote string) {
 	actor := endpointAgentActor(name)
-	go rejectAll(chans, ssh.Prohibited, "pamv1: an endpoint agent may not open channels")
+	go rejectAll(chans, ssh.Prohibited, "PAMv1: an endpoint agent may not open channels")
 	if err := p.store.TouchEndpointAgent(ctx, agentID, time.Now()); err != nil {
 		p.log.Warn("endpoint agent last-seen update failed", "agent", name, "err", err)
 	}

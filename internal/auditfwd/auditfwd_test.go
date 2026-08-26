@@ -116,7 +116,7 @@ func TestForwardCEF(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := collect(t, sink, 1)[0]
-	for _, want := range []string{"CEF:0|pamv1|", "|session.kill|", "suser=alice"} {
+	for _, want := range []string{"CEF:0|PAMv1|", "|session.kill|", "suser=alice"} {
 		if !strings.Contains(m, want) {
 			t.Fatalf("CEF record missing %q: %q", want, m)
 		}

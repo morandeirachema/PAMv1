@@ -99,7 +99,7 @@ func TestCampaignCertifiesAgentIdentities(t *testing.T) {
 // username STRING — so "caro1" makes an agent no cascade can ever reach, while
 // the row still reads as though somebody were accountable.
 //
-// pamv1 does not refuse an unrecognised owner (a team address is a legitimate
+// PAMv1 does not refuse an unrecognised owner (a team address is a legitimate
 // answer), so it says so where a human is already looking: the agent listings
 // and the review that exists to ask exactly this question.
 func TestCampaignFlagsAnOwnerNobodyCanOffboard(t *testing.T) {

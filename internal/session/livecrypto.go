@@ -7,7 +7,7 @@ package session
 // has no privilege model for notification channels: the documentation states
 // plainly that notifications are visible to all users, and LISTEN requires no
 // privilege at all. So with a plaintext bus, anything that could open a session
-// to the pamv1 database could:
+// to the PAMv1 database could:
 //
 //   - announce interest (`NOTIFY pam_live_interest, '<session id>'`) and thereby
 //     make the hosting replica start streaming a live privileged session's output

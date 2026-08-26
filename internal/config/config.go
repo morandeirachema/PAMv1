@@ -42,7 +42,7 @@ type Config struct {
 	// validity (a small window, since it is minted fresh per session).
 	SSHCAKeyPath string
 	SSHCertTTL   time.Duration
-	// SSHOperatorCertTTL caps an operator-issued SSH certificate (Phase 28): pamv1
+	// SSHOperatorCertTTL caps an operator-issued SSH certificate (Phase 28): PAMv1
 	// signs an operator's own public key for direct target access. Longer than the
 	// per-session ZSP TTL (an operator uses it interactively) but still short.
 	SSHOperatorCertTTL time.Duration
@@ -308,7 +308,7 @@ type Config struct {
 	// header, if present, is never read. When set, a principal whose
 	// enrolled store.User.DeviceFingerprint is non-empty must present a
 	// matching value in this header to act; a principal with no enrolled
-	// fingerprint is unaffected. pamv1 trusts whatever value arrives in this
+	// fingerprint is unaffected. PAMv1 trusts whatever value arrives in this
 	// header verbatim, so it must be deployed behind a reverse proxy that
 	// performs real mTLS termination and strips any client-supplied value —
 	// setting this without that proxy in place lets a caller self-assert any
@@ -392,7 +392,7 @@ type Config struct {
 	ScimEnabled bool
 
 	// SessionForensics turns on post-session forensic reconstruction (Phase
-	// 157): after an interactive SSH session ends, pamv1 runs ONE fixed,
+	// 157): after an interactive SSH session ends, PAMv1 runs ONE fixed,
 	// read-only command over that target's own vaulted credential to pull the
 	// TARGET's kernel audit record (auditd) of what actually executed during
 	// the session window, and stores it beside the recording — the only way a
@@ -506,7 +506,7 @@ type Config struct {
 	// target that has NO grants at all: no direct grant, and not in a safe with
 	// members.
 	//
-	// FALSE IS THE DEFAULT, and it is pamv1's historical behaviour: a target
+	// FALSE IS THE DEFAULT, and it is PAMv1's historical behaviour: a target
 	// nobody has restricted is reachable by every connect-capable principal,
 	// human or agent. That is an estate-wide default rather than a decision
 	// anyone made about a particular system, which is why the reachability review
@@ -523,12 +523,12 @@ type Config struct {
 	// SVID whose SPIFFE ID has not been enrolled in agent_identities (Phase 174).
 	// Off by default, because turning it on is a policy decision about the trust
 	// domain: with it off, any workload the trust domain vouches for may call and
-	// pamv1 records that it did; with it on, the trust domain's word is necessary
+	// PAMv1 records that it did; with it on, the trust domain's word is necessary
 	// but no longer sufficient, and somebody has to have claimed the identity
-	// first. Static agent keys are unaffected — pamv1 issued those itself.
+	// first. Static agent keys are unaffected — PAMv1 issued those itself.
 	BrokerRequireEnrolledSVID bool
 	// BrokerRequireKnownOwner — PAM_BROKER_REQUIRE_KNOWN_OWNER — refuse a broker
-	// approval when the calling agent's owner matches no pamv1 user (Phase 176).
+	// approval when the calling agent's owner matches no PAMv1 user (Phase 176).
 	// Off by default: a team address is a legitimate owner, and an owner that is
 	// merely unrecognised is audited rather than blocked. On, the deployment is
 	// saying that four-eyes it cannot verify is four-eyes it will not accept.
@@ -656,7 +656,7 @@ type Config struct {
 	// sources must be set when enabled. The two *_FILE settings are env/IaC-only
 	// (not hot-swappable): a stored override must never be able to point the
 	// server at an arbitrary file on its own host.
-	SAMLSPURL           string // pamv1's public base URL, e.g. https://pam.example.com
+	SAMLSPURL           string // PAMv1's public base URL, e.g. https://pam.example.com
 	SAMLSPEntityID      string // optional; defaults to <SP URL>/api/auth/saml/metadata
 	SAMLIDPMetadataURL  string // fetched once at build (and on hot-swap)
 	SAMLIDPMetadataFile string // or the metadata document on disk (air-gapped sites)

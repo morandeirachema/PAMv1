@@ -4,11 +4,11 @@ metadata:
   name: pam-server
   namespace: pamv1
   labels:
-    app.kubernetes.io/name: pamv1
+    app.kubernetes.io/name: PAMv1
 spec:
   type: ClusterIP
   selector:
-    app.kubernetes.io/name: pamv1
+    app.kubernetes.io/name: PAMv1
   ports:
     - name: http
       port: 8080

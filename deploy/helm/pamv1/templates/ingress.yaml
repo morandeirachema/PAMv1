@@ -2,9 +2,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "pamv1.fullname" . }}
+  name: {{ include "PAMv1.fullname" . }}
   labels:
-    {{- include "pamv1.labels" . | nindent 4 }}
+    {{- include "PAMv1.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -27,7 +27,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "pamv1.fullname" . }}
+                name: {{ include "PAMv1.fullname" . }}
                 port:
                   name: http
 {{- end }}

@@ -1,5 +1,5 @@
 // Package shamir implements Shamir's Secret Sharing over GF(2^8) — the scheme
-// used for pamv1's M-of-N break-glass quorum: the emergency key is split into N
+// used for PAMv1's M-of-N break-glass quorum: the emergency key is split into N
 // shares, and any M of them reconstruct it (fewer reveal nothing).
 package shamir
 

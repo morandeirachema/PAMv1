@@ -10,7 +10,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
-// registerBrokerTools populates the broker's tool registry with the pamv1
+// registerBrokerTools populates the broker's tool registry with the PAMv1
 // operations exposed to AI agents. Each tool re-checks target grants and injects
 // the credential just-in-time inside Execute, returning only the result (except
 // reveal_credential, the deliberate secret-returning tool, shipped default-deny).
@@ -340,12 +340,12 @@ func (t *sshExecTool) Execute(ctx context.Context, p *auth.Principal, args broke
 	t.s.live.Publish(sid, []byte("ssh_exec> "+command+"\r\n"))
 	secret, err := t.s.vault.Decrypt(sctx, cred.SecretEnc, store.CredentialAAD(target.ID, cred.ID))
 	if err != nil {
-		t.s.live.Publish(sid, []byte("pamv1: credential decryption failed; command refused\r\n"))
+		t.s.live.Publish(sid, []byte("PAMv1: credential decryption failed; command refused\r\n"))
 		return broker.Result{}, fmt.Errorf("credential decrypt failed")
 	}
 	res, err := t.s.sshConnector.Exec(sctx, *target, cred.Username, secret, command)
 	if err != nil {
-		t.s.live.Publish(sid, []byte(fmt.Sprintf("pamv1: ssh error: %v\r\n", err)))
+		t.s.live.Publish(sid, []byte(fmt.Sprintf("PAMv1: ssh error: %v\r\n", err)))
 		return broker.Result{}, err
 	}
 	// Durable audit BEFORE the agent (or a live watcher) receives the output —
@@ -356,7 +356,7 @@ func (t *sshExecTool) Execute(ctx context.Context, p *auth.Principal, args broke
 		detail += " output_truncated:true"
 	}
 	if err := t.s.auditAs(ctx, p.Name, "ssh.exec", detail); err != nil {
-		t.s.live.Publish(sid, []byte("pamv1: audit log unavailable; output withheld\r\n"))
+		t.s.live.Publish(sid, []byte("PAMv1: audit log unavailable; output withheld\r\n"))
 		return broker.Result{}, errAuditUnavailable
 	}
 	if res.Output != "" && t.s.live.HasSubscribers(sid) {
@@ -387,7 +387,7 @@ func (t *sshExecTool) Execute(ctx context.Context, p *auth.Principal, args broke
 	}
 	// Structural, not just the marker embedded in the text: the marker travels
 	// inside output the REMOTE HOST controls, so an agent matching on it could be
-	// fooled by a target that prints the same words. A field pamv1 sets cannot be.
+	// fooled by a target that prints the same words. A field PAMv1 sets cannot be.
 	if res.Truncated {
 		data["truncated"] = true
 	}
@@ -415,7 +415,7 @@ func (t *listTargetsTool) Capability() auth.Capability { return auth.CapCallTool
 //
 // Scoped to the agent's own grants (agentVisibleTargets). It listed the WHOLE
 // estate until Phase 169 — the principal was literally discarded — so an agent
-// with no grant at all still learned every hostname, OS and protocol pamv1
+// with no grant at all still learned every hostname, OS and protocol PAMv1
 // knows about, which is reconnaissance handed to the least-trusted actor in the
 // system and the one tool in this file that ignored the grants every sibling
 // enforces. Ungated targets (no grants, no safe) stay visible to everyone, as

@@ -19,7 +19,7 @@ func TestSyslogNotify(t *testing.T) {
 	}
 	defer pc.Close()
 
-	s := NewSyslog("udp", pc.LocalAddr().String(), "pamv1")
+	s := NewSyslog("udp", pc.LocalAddr().String(), "PAMv1")
 	s.Notify(context.Background(), Event{Type: "breakglass.access", Actor: "alice", Detail: "x", Time: time.Now()})
 
 	buf := make([]byte, 2048)
@@ -55,7 +55,7 @@ func TestEmailNotify(t *testing.T) {
 	select {
 	case msg := <-gotMsg:
 		s := string(msg)
-		if !strings.Contains(s, "Subject: [pamv1] breakglass.unseal by bob") || !strings.Contains(s, "Type: breakglass.unseal") {
+		if !strings.Contains(s, "Subject: [PAMv1] breakglass.unseal by bob") || !strings.Contains(s, "Type: breakglass.unseal") {
 			t.Fatalf("email body missing fields: %q", s)
 		}
 	case <-time.After(2 * time.Second):
@@ -81,7 +81,7 @@ func (c *deadlineConn) Close() error                       { return nil }
 // a connected-but-stalled TCP syslog sink cannot park the delivery goroutine.
 func TestSyslogWriteIsBounded(t *testing.T) {
 	dc := &deadlineConn{gotDeadline: make(chan time.Time, 1)}
-	s := NewSyslog("tcp", "203.0.113.1:514", "pamv1") // TEST-NET-3: never actually dialed
+	s := NewSyslog("tcp", "203.0.113.1:514", "PAMv1") // TEST-NET-3: never actually dialed
 	s.dial = func(_, _ string) (net.Conn, error) { return dc, nil }
 	s.Notify(context.Background(), Event{Type: "breakglass.access", Actor: "a"})
 	select {

@@ -25,7 +25,7 @@
 -- was first registered and by whom.
 --
 -- No foreign key to users: an owner may legitimately be a team address or a
--- service account name that is not a pamv1 login, and the same free-text
+-- service account name that is not a PAMv1 login, and the same free-text
 -- looseness agent_keys.owner already has. The offboarding cascade matches on
 -- the username string, exactly as ListAgentKeysByOwner does.
 CREATE TABLE IF NOT EXISTS agent_identities (

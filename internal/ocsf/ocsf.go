@@ -1,4 +1,4 @@
-// Package ocsf maps pamv1 audit events to the Open Cybersecurity Schema
+// Package ocsf maps PAMv1 audit events to the Open Cybersecurity Schema
 // Framework (OCSF) so the trail can be forwarded to a SIEM in a vendor-neutral
 // shape (Phase 27). It is a faithful SUBSET: routine actions become API Activity
 // events (class 6003, category 6) and security-relevant ones — denials, blocked
@@ -103,7 +103,7 @@ func isFinding(action string) bool {
 		strings.HasPrefix(action, "analytics.auto"):
 		return true
 	}
-	// Denial and failure suffixes, matched with EITHER separator. pamv1's action
+	// Denial and failure suffixes, matched with EITHER separator. PAMv1's action
 	// vocabulary genuinely uses both — `proxy.auth_failed`, where the outcome is
 	// part of one compound verb, and `agent.disable.failed`, where the outcome is
 	// its own dotted segment — so a rule that recognised only one of them was
@@ -172,7 +172,7 @@ func statusID(action string) int {
 	return 1
 }
 
-// FromAudit maps one pamv1 audit event to an OCSF event object (a JSON-ready
+// FromAudit maps one PAMv1 audit event to an OCSF event object (a JSON-ready
 // map). Security-relevant actions become Detection Findings; the rest become API
 // Activity. The mapping never invents fields it cannot fill from the event.
 func FromAudit(e store.AuditEvent) map[string]any {
@@ -196,7 +196,7 @@ func FromAudit(e store.AuditEvent) map[string]any {
 		"metadata": map[string]any{
 			"uid":     e.ID,
 			"version": SchemaVersion,
-			"product": map[string]any{"name": "pamv1", "vendor_name": "pamv1"},
+			"product": map[string]any{"name": "PAMv1", "vendor_name": "PAMv1"},
 			"labels":  []string{e.Action},
 		},
 	}
@@ -205,7 +205,7 @@ func FromAudit(e store.AuditEvent) map[string]any {
 	} else {
 		ev["api"] = map[string]any{
 			"operation": e.Action,
-			"service":   map[string]any{"name": "pamv1"},
+			"service":   map[string]any{"name": "PAMv1"},
 		}
 	}
 	return ev

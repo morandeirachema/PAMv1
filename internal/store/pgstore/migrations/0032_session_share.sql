@@ -1,7 +1,7 @@
 -- Live session-sharing (Phase 116): a second party can join a running SSH
 -- session, view-only or view-control, via a request-then-approve (four-eyes)
 -- invite. Kind distinguishes the two invite surfaces: 'internal' resolves
--- invitee as an existing pamv1 username, redeemed by an SSH login; 'external'
+-- invitee as an existing PAMv1 username, redeemed by an SSH login; 'external'
 -- resolves email as an unauthenticated contact address, redeemed via a
 -- mailed link + QR code by a browser. Nothing is redeemable until
 -- status='approved' — token_hash and expires_at are set only at that point,

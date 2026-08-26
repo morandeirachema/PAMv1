@@ -1,4 +1,4 @@
-// Package analytics is pamv1's privileged threat-analytics engine: a behavioral
+// Package analytics is PAMv1's privileged threat-analytics engine: a behavioral
 // risk scorer over the audit trail (the CyberArk PTA / Wallix analytics gap).
 // It is deliberately deterministic and explainable — every point of an actor's
 // risk score traces back to a named signal (break-glass use, blocked commands,

@@ -46,8 +46,8 @@ function setFieldValue(field, value) {
 function makeAutofillButton(passwordField, credentialId) {
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = "🔑 pamv1";
-  button.title = "Fill from pamv1";
+  button.textContent = "🔑 PAMv1";
+  button.title = "Fill from PAMv1";
   button.style.cssText =
     "position:absolute;z-index:2147483647;font-size:11px;padding:2px 6px;" +
     "border:1px solid #888;border-radius:4px;background:#fff;color:#222;cursor:pointer;";
@@ -82,8 +82,8 @@ function makeAutofillButton(passwordField, credentialId) {
     } finally {
       setTimeout(() => {
         button.disabled = false;
-        button.textContent = "🔑 pamv1";
-        button.title = "Fill from pamv1";
+        button.textContent = "🔑 PAMv1";
+        button.title = "Fill from PAMv1";
       }, 2000);
     }
   });

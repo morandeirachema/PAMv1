@@ -3,5 +3,5 @@ kind: Namespace
 metadata:
   name: pamv1
   labels:
-    app.kubernetes.io/name: pamv1
+    app.kubernetes.io/name: PAMv1
     pod-security.kubernetes.io/enforce: restricted

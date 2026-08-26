@@ -17,7 +17,7 @@ import (
 // sshCAPublicKey publishes the Zero Standing Privilege SSH certificate-authority
 // public key (Phase 22) so an operator can trust it on their targets. Installing
 // this key as the target's OpenSSH TrustedUserCAKeys lets the account accept the
-// short-lived certificates pamv1 mints just-in-time — no standing secret is ever
+// short-lived certificates PAMv1 mints just-in-time — no standing secret is ever
 // stored for the account. Returns 404 when ZSP is not enabled (no CA configured).
 func (s *Server) sshCAPublicKey(w http.ResponseWriter, r *http.Request) {
 	if s.sshCA == nil {

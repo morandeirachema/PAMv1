@@ -1,9 +1,9 @@
-// Package saml implements the SAML 2.0 Web Browser SSO profile with pamv1 in
+// Package saml implements the SAML 2.0 Web Browser SSO profile with PAMv1 in
 // the Service Provider (SP) role, so a deployment can sign in against an IdP
 // that speaks SAML but not OIDC — on-prem ADFS being the canonical case, along
 // with Okta, OneLogin and Entra ID's SAML applications (Phase 151).
 //
-// The flow is SP-initiated only: pamv1 mints an AuthnRequest, sends the browser
+// The flow is SP-initiated only: PAMv1 mints an AuthnRequest, sends the browser
 // to the IdP over the HTTP-Redirect binding, and receives the signed Response
 // back at its Assertion Consumer Service (ACS) over the HTTP-POST binding.
 // IdP-initiated logins, the artifact binding and single logout are deliberately
@@ -89,10 +89,10 @@ var DefaultGroupAttributes = []string{
 // Config describes one SAML Service Provider. Exactly one of IDPMetadataURL and
 // IDPMetadataXML must be set; RootURL is required; the SP key pair is optional.
 type Config struct {
-	// RootURL is pamv1's externally visible base URL as the browser and the IdP
+	// RootURL is PAMv1's externally visible base URL as the browser and the IdP
 	// see it, e.g. "https://pam.example.com". The ACS URL and the SP metadata
 	// URL are derived from it (RootURL + StatePath + "acs" / "metadata"), so it
-	// must be the public origin, not an internal listener address, when pamv1
+	// must be the public origin, not an internal listener address, when PAMv1
 	// sits behind a reverse proxy.
 	RootURL string
 	// EntityID is the SP's own identifier as registered at the IdP. Empty
@@ -106,7 +106,7 @@ type Config struct {
 	IDPMetadataURL string
 	// IDPMetadataXML is the IdP metadata document itself, for deployments that
 	// cannot fetch it (air-gapped sites, or an IdP whose metadata endpoint is
-	// not reachable from pamv1). Either an <EntityDescriptor> or an
+	// not reachable from PAMv1). Either an <EntityDescriptor> or an
 	// <EntitiesDescriptor> aggregate containing exactly one IdP is accepted.
 	IDPMetadataXML []byte
 	// SPKeyPEM / SPCertPEM optionally give the SP an RSA key pair. When both are
@@ -118,13 +118,13 @@ type Config struct {
 	SPKeyPEM  []byte
 	SPCertPEM []byte
 	// NameAttr, when set, names the assertion attribute (Name or FriendlyName)
-	// whose first value becomes the pamv1 username, e.g. an ADFS UPN claim
+	// whose first value becomes the PAMv1 username, e.g. an ADFS UPN claim
 	// "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/upn". Empty uses
 	// the assertion's Subject NameID, which is what most IdPs already populate
 	// with the email or UPN.
 	NameAttr string
 	// GroupAttrs lists the attribute names whose values are the group/role
-	// claims mapped to pamv1 roles. Empty uses DefaultGroupAttributes.
+	// claims mapped to PAMv1 roles. Empty uses DefaultGroupAttributes.
 	GroupAttrs []string
 	// HTTPClient is used for the one metadata fetch; nil uses a 10 s-timeout
 	// default.
@@ -140,20 +140,20 @@ type Provider struct {
 	signsReqs  bool
 }
 
-// Claims are the validated fields pamv1 reads from a SAML assertion, shaped like
+// Claims are the validated fields PAMv1 reads from a SAML assertion, shaped like
 // oidc.Claims so the API layer's role mapping and session issuance treat both
 // SSO paths identically.
 type Claims struct {
 	// NameID is the assertion Subject's NameID.
 	NameID string
-	// Name is the username pamv1 will record: the configured NameAttr's first
+	// Name is the username PAMv1 will record: the configured NameAttr's first
 	// value, or NameID when no attribute is configured (or it is absent).
 	Name string
 	// Groups are the values of every matching group attribute, in document
 	// order — the strings auth.MatchedRoles maps to roles.
 	Groups []string
 	// SessionIndex is the IdP's session handle from the AuthnStatement, kept
-	// for audit; pamv1 does not use it for logout (SLO is out of scope).
+	// for audit; PAMv1 does not use it for logout (SLO is out of scope).
 	SessionIndex string
 }
 
@@ -273,7 +273,7 @@ func (p *Provider) SignsRequests() bool { return p.signsReqs }
 func (p *Provider) Metadata() ([]byte, error) {
 	md := p.sp.Metadata()
 	// The SP never resolves artifacts and never handles logout: advertise only
-	// the HTTP-POST ACS so an IdP cannot be configured to send what pamv1
+	// the HTTP-POST ACS so an IdP cannot be configured to send what PAMv1
 	// refuses. Cutting the descriptor down here, rather than accepting whatever
 	// the library advertises, keeps the metadata honest about the code path.
 	for i := range md.SPSSODescriptors {
@@ -319,7 +319,7 @@ func (p *Provider) StartURL() (redirect string, requestID string, err error) {
 // IdP's metadata certificate, Destination == ACS URL, Issuer == IdP entity ID,
 // InResponseTo == requestID, IssueInstant/NotBefore/NotOnOrAfter within
 // tolerance, and AudienceRestriction == SP entity ID — and returns the claims
-// pamv1 reads from it. On failure the returned error is safe to log: it carries
+// PAMv1 reads from it. On failure the returned error is safe to log: it carries
 // the library's private diagnostic, never the assertion contents.
 func (p *Provider) ParseResponse(samlResponse string, requestID string) (*Claims, error) {
 	if len(samlResponse) > MaxResponseBytes {
@@ -382,7 +382,7 @@ func (p *Provider) claims(a *crewjam.Assertion) *Claims {
 // and an <EntitiesDescriptor> aggregate are accepted; in the aggregate case the
 // (single) entity carrying an IDPSSODescriptor is returned. Kept local rather
 // than imported from the library's samlsp middleware package, whose cookie/JWT
-// session machinery pamv1 does not use.
+// session machinery PAMv1 does not use.
 func ParseMetadata(data []byte) (*crewjam.EntityDescriptor, error) {
 	if len(data) > maxMetadataBytes {
 		return nil, errors.New("saml: idp metadata too large")

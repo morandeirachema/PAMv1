@@ -1,6 +1,6 @@
 -- Subject-indexed grant lookup (Phase 189).
 --
--- Every grant query pamv1 had was TARGET-indexed: "who may reach this target",
+-- Every grant query PAMv1 had was TARGET-indexed: "who may reach this target",
 -- answered by target_grants_target_idx and safe_members_safe_idx. The question
 -- an investigator actually asks is the other one — "what can this subject
 -- reach?" — and answering it meant reading every target's grants and filtering

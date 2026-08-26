@@ -1,6 +1,6 @@
-# Sourcing pamv1's bootstrap secrets from CyberArk Conjur (Phase 18)
+# Sourcing PAMv1's bootstrap secrets from CyberArk Conjur (Phase 18)
 
-pamv1 can fetch its **own** bootstrap secrets — `PAM_MASTER_KEY`, `PAM_API_KEY`,
+PAMv1 can fetch its **own** bootstrap secrets — `PAM_MASTER_KEY`, `PAM_API_KEY`,
 `PAM_DATABASE_URL`, the break-glass hash, and the broker audit keys — from a
 [CyberArk Conjur](https://www.conjur.org/) instance at startup, instead of from a
 Kubernetes Secret. This is the **runtime-broker** alternative to the
@@ -9,13 +9,13 @@ Kubernetes Secret. This is the **runtime-broker** alternative to the
 **Both mechanisms ship; neither is mandatory.** SOPS stays the zero-dependency
 default (great for the demo, air-gapped/OT sites, and simple GitOps). Conjur is
 opt-in for shops that already run it and want machine-identity auth, central
-rotation, and per-access audit of pamv1's own secrets.
+rotation, and per-access audit of PAMv1's own secrets.
 
-## How pamv1 uses Conjur
+## How PAMv1 uses Conjur
 
-At boot, when `PAM_CONJUR_URL` is set, pamv1 authenticates to Conjur and fills
+At boot, when `PAM_CONJUR_URL` is set, PAMv1 authenticates to Conjur and fills
 **any empty** bootstrap `PAM_*` secret from the variables under
-`PAM_CONJUR_POLICY_PREFIX` (default `pamv1`):
+`PAM_CONJUR_POLICY_PREFIX` (default `PAMv1`):
 
 | Bootstrap secret | Conjur variable |
 |---|---|
@@ -45,7 +45,7 @@ value in Conjur takes effect on the next restart.
    conjur variable set -i pamv1/database-url         -v 'postgres://pam:...@postgres:5432/pam?sslmode=verify-full'
    conjur variable set -i pamv1/break-glass-key-hash -v '<sha256-hex>'
    # Only if the AI-agent broker is enabled (PAM_BROKER_POLICY_FILE) — the policy
-   # declares both, and pamv1 fetches them at startup like the four above.
+   # declares both, and PAMv1 fetches them at startup like the four above.
    conjur variable set -i pamv1/broker-audit-key       -v "$(openssl rand -base64 32)"
    conjur variable set -i pamv1/broker-audit-sign-seed -v "$(openssl rand -base64 32)"
    ```
@@ -58,7 +58,7 @@ value in Conjur takes effect on the next restart.
    `deployment.yaml` shows the projected-token volume and the env:
 
    ```
-   PAM_CONJUR_URL=https://conjur.pamv1.svc.cluster.local
+   PAM_CONJUR_URL=https://conjur.PAMv1.svc.cluster.local
    PAM_CONJUR_AUTHN_JWT_SERVICE_ID=kubernetes
    PAM_CONJUR_JWT_FILE=/var/run/secrets/conjur/token
    PAM_CONJUR_CACERT=/etc/conjur/ca.pem
@@ -86,7 +86,7 @@ value in Conjur takes effect on the next restart.
 | Rotation / access audit | in Git history | **central, in Conjur** |
 | Works air-gapped / `docker compose up` demo | yes | needs Conjur reachable |
 
-pamv1 already externalizes its **KEK** (Vault-Transit / AWS-KMS / PKCS#11);
+PAMv1 already externalizes its **KEK** (Vault-Transit / AWS-KMS / PKCS#11);
 sourcing the bootstrap secrets from Conjur is the same philosophy applied to the
 values themselves.
 
@@ -96,7 +96,7 @@ values themselves.
 |---|---|
 | `PAM_CONJUR_URL` | Conjur appliance URL — **presence enables the provider** |
 | `PAM_CONJUR_ACCOUNT` | Conjur account (default `default`) |
-| `PAM_CONJUR_POLICY_PREFIX` | variable-name prefix (default `pamv1`) |
+| `PAM_CONJUR_POLICY_PREFIX` | variable-name prefix (default `PAMv1`) |
 | `PAM_CONJUR_AUTHN_LOGIN` / `PAM_CONJUR_API_KEY` | authn-api-key credentials |
 | `PAM_CONJUR_AUTHN_JWT_SERVICE_ID` / `PAM_CONJUR_JWT_FILE` | authn-jwt service id + JWT file |
 | `PAM_CONJUR_CACERT` | PEM CA bundle path for TLS to Conjur (optional) |
@@ -134,7 +134,7 @@ so refresh keeps working past the first expiry.
 
 ## Deferred
 
-Pushing pamv1's *managed* secrets out to Conjur (Secrets-Hub-style sync) remains
+Pushing PAMv1's *managed* secrets out to Conjur (Secrets-Hub-style sync) remains
 a documented follow-on. Runtime secret refresh and the per-variable override map
 **shipped in Phase 78** and were rebuilt in Phase 80 — see "Rotating without a
 restart" above.

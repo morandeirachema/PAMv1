@@ -6,7 +6,7 @@ package agentid
 // Phase 13 shipped the ingress: a sub-agent presenting a JWT-SVID whose nested
 // RFC 8693 `act` claims name the chain of actors it works for is verified,
 // depth-capped and audited. What was missing is the issuer — something has to
-// MINT those tokens when an agent spawns a sub-agent, and pamv1 catalogued that
+// MINT those tokens when an agent spawns a sub-agent, and PAMv1 catalogued that
 // as needing "an STS / token-exchange endpoint" from outside. It does not: the
 // broker already holds an accountable identity for the delegator and already
 // decides every call under policy, so the broker itself is the only party that
@@ -37,7 +37,7 @@ package agentid
 // WHAT IT REFUSES, and why each refusal is load-bearing:
 //
 //   - IMPERSONATION (an exchange with no actor token). RFC 8693 supports it;
-//     pamv1 does not. Erasing the intermediary is the exact opposite of the
+//     PAMv1 does not. Erasing the intermediary is the exact opposite of the
 //     accountability chain the broker exists to keep.
 //   - DELEGATING SOMEONE ELSE'S AUTHORITY. The delegator is the authenticated
 //     caller, not a token in the request body. A party holding two captured
@@ -186,7 +186,7 @@ func (x *Exchanger) PublicKey() ed25519.PublicKey {
 // KeyID returns the `kid` the exchanger stamps into every token it mints.
 func (x *Exchanger) KeyID() string { return x.kid }
 
-// ExchangeRequest is a parsed RFC 8693 request. Fields the RFC defines but pamv1
+// ExchangeRequest is a parsed RFC 8693 request. Fields the RFC defines but PAMv1
 // refuses (`scope`) or fixes (`resource`) are validated and rejected rather than
 // silently ignored — a client that asked for something it did not get should be
 // told, not left believing the token is narrower than it is.
@@ -204,7 +204,7 @@ type ExchangeRequest struct {
 	// exchange enforces. Empty leaves the token unpinned, which is what every
 	// token minted before this phase was.
 	//
-	// A pamv1 EXTENSION, not an RFC parameter: RFC 8693 defines `may_act` as a
+	// A PAMv1 EXTENSION, not an RFC parameter: RFC 8693 defines `may_act` as a
 	// claim, never a request field, so it is documented as an extension rather
 	// than passed off as standard. The delegator is the right party to set it —
 	// it is constraining an authority it is itself handing over.
@@ -215,7 +215,7 @@ type ExchangeRequest struct {
 	// Empty leaves the token an ordinary bearer credential — unless the
 	// delegator's own token is bound, in which case Exchange refuses.
 	//
-	// A pamv1 EXTENSION, like MayAct: RFC 8693 defines no request parameter for
+	// A PAMv1 EXTENSION, like MayAct: RFC 8693 defines no request parameter for
 	// a confirmation key, and RFC 9449's own binding flow has the CLIENT prove
 	// its key to the token endpoint — which cannot apply here, because the party
 	// calling the exchange is the delegator, not the sub-agent that will hold
@@ -382,7 +382,7 @@ func (x *Exchanger) Exchange(ctx context.Context, req *ExchangeRequest, delegato
 	}
 	jti := hex.EncodeToString(jtiRaw)
 
-	// RFC 8693 §4.4 on the ISSUING side (Phase 181). pamv1 has enforced may_act
+	// RFC 8693 §4.4 on the ISSUING side (Phase 181). PAMv1 has enforced may_act
 	// since Phase 57 and never emitted it, so from the second hop onward nobody
 	// could pin who may act for whom: the check existed and had nothing to read.
 	// The delegator names the parties allowed to act for the token being minted,

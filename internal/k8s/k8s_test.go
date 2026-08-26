@@ -164,7 +164,7 @@ func TestRequestPathsAndCommands(t *testing.T) {
 				Namespace: "prod", Manifest: []byte("apiVersion: apps/v1\nkind: Deployment\n")},
 			method:  http.MethodPatch,
 			path:    "/apis/apps/v1/namespaces/prod/deployments/web",
-			query:   "fieldManager=pamv1&force=true",
+			query:   "fieldManager=PAMv1&force=true",
 			command: "kubectl apply -f - deployments.apps/web -n prod",
 		},
 	}
@@ -227,7 +227,7 @@ func TestWrongTokenRefused(t *testing.T) {
 // TestClusterRefusalIsAResultNotAnError proves the contract that matters for a
 // PAM: the cluster's own RBAC refusing the vaulted credential comes back as a
 // 403 result the operator sees and the audit trail records, not as an opaque
-// pamv1 error.
+// PAMv1 error.
 func TestClusterRefusalIsAResultNotAnError(t *testing.T) {
 	srv, _ := fakeAPIServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)

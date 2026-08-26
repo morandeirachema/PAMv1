@@ -109,7 +109,7 @@ func TestScimUserCreateAndFilter(t *testing.T) {
 	}
 	scimID := atoi64(t, created["id"].(string))
 
-	// Prove pamv1's own view agrees: fixed role "user", regardless of the
+	// Prove PAMv1's own view agrees: fixed role "user", regardless of the
 	// fact the SCIM payload above never even offered a role to pick.
 	u, err := st.GetUser(context.Background(), scimID)
 	if err != nil {
@@ -297,7 +297,7 @@ func mustFloat(t *testing.T, v any) float64 {
 	return f
 }
 
-// atoi64 parses a SCIM resource id (a decimal string) back into pamv1's own
+// atoi64 parses a SCIM resource id (a decimal string) back into PAMv1's own
 // int64 row id, failing the test on a malformed value.
 func atoi64(t *testing.T, s string) int64 {
 	t.Helper()

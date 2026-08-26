@@ -50,9 +50,9 @@ import (
 // approval and the offboarding cascade both needed and neither could read for
 // an identity kind that has no agent_keys row. Phase 174 added
 // BrokerStore.{SeeAgentIdentity,EnrollAgentIdentity} (2) — the inventory half:
-// any workload in the trust domain can authenticate, and until it pamv1 knew
+// any workload in the trust domain can authenticate, and until it PAMv1 knew
 // only about the ones an admin had typed in; enrolling is how a human claims one
-// pamv1 discovered without losing when it was first seen. Phase 177 REMOVED
+// PAMv1 discovered without losing when it was first seen. Phase 177 REMOVED
 // VendorStore.SetVendorDisabled (-1): it read like the control that stops a
 // vendor while the control that actually does it is OffboardVendor, which
 // disables and revokes every grant atomically. Nothing called the setter, and a

@@ -1,4 +1,4 @@
--- Operator-issued SSH certificates (Phase 28): pamv1 signs an operator's own
+-- Operator-issued SSH certificates (Phase 28): PAMv1 signs an operator's own
 -- public key into a short-lived certificate scoped to a target account. The row
 -- is the revocation handle — a KRL revoking `serial` is published for targets,
 -- and a revoked cert is cut off before it expires.

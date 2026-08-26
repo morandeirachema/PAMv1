@@ -157,7 +157,7 @@ func TestBrokeredRunFieldsCannotForgeAuditFields(t *testing.T) {
 //
 // Until Phase 161 the chain ended at the human's approval decision. The later
 // step — the agent spending its single-use token and taking the result, which for
-// reveal_credential is the moment a secret leaves pamv1 — appeared only in the
+// reveal_credential is the moment a secret leaves PAMv1 — appeared only in the
 // primary trail, which is not the authoritative record. The `jti` is the token's
 // SHA-256, so the collection event joins to the park event that minted it and to
 // the `broker_tokens` row that was spent, without the trail ever holding anything

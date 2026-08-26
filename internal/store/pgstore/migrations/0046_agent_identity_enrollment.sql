@@ -2,7 +2,7 @@
 --
 -- Phase 170 gave a SPIFFE identity an OWNER, which is what made four-eyes and
 -- the offboarding cascade work on the attested path. What it did not give is an
--- INVENTORY: any workload in the trust domain can authenticate, and pamv1 only
+-- INVENTORY: any workload in the trust domain can authenticate, and PAMv1 only
 -- knew about the ones an admin had happened to type in. There was no list of
 -- which SVIDs actually call, no first-seen, no last-seen, and no way to say
 -- "only identities we have reviewed may call at all".
@@ -12,13 +12,13 @@
 --
 --   enrolled   -- TRUE for every existing row, because every existing row was
 --                 created deliberately through POST /v1/agents/identities. A row
---                 pamv1 creates itself on first sight inserts FALSE: seen, not
+--                 PAMv1 creates itself on first sight inserts FALSE: seen, not
 --                 claimed. The distinction is the whole point of the column, and
 --                 a DEFAULT of TRUE is what keeps it truthful for rows that
 --                 predate it.
 --   first_seen -- when this identity first authenticated. NULL on rows recorded
 --                 before this migration (or enrolled ahead of first use), which
---                 reads correctly as "not seen since pamv1 started counting".
+--                 reads correctly as "not seen since PAMv1 started counting".
 --   last_seen  -- stamped on every successful authentication, so the dormant-
 --                 identity question an operator asks about a standing human
 --                 credential can be asked about a workload too.

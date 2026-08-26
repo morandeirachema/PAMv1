@@ -1,4 +1,4 @@
-# pamv1 — System Requirements & Run Specs
+# PAMv1 — System Requirements & Run Specs
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
@@ -81,7 +81,7 @@
 > the only outbound call is one metadata fetch at startup/hot-swap (none with
 > the `_FILE` form). The runtime dependency, when enabled, is a SAML 2.0 IdP
 > (AD FS, Okta, OneLogin, an Entra SAML app) that you must supply and
-> register pamv1's SP metadata with. Three new Go dependencies
+> register PAMv1's SP metadata with. Three new Go dependencies
 > (`crewjam/saml`, `russellhaering/goxmldsig`, `beevik/etree`) are compiled
 > in — no runtime library, no CGO.
 > **Phase 153 adds one env var** (`PAM_ENDPOINT_AGENTS_ENABLED`, default off), one
@@ -108,10 +108,10 @@
 > in `PAM_RECORDING_DIR` — a few KB each, capped by `_MAX_EVENTS`, so budget
 > recording storage accordingly. It requires the TARGET to run `auditd` with
 > exec auditing and the vaulted credential to be able to read its log; without
-> that pamv1 records the finding rather than failing.
+> that PAMv1 records the finding rather than failing.
 
 > ⚠️ **Beta · for learning purposes. Not production, not externally audited.** These are the
-> specs to *run* pamv1 in Docker and Kubernetes, plus rough sizing. Validate
+> specs to *run* PAMv1 in Docker and Kubernetes, plus rough sizing. Validate
 > against your own load.
 
 ## At a glance
@@ -135,7 +135,7 @@
 | 5433/tcp | PostgreSQL session proxy | Operators `psql "host=... port=5433 user=<cred>@<target> dbname=..."`. Enable with `PAM_DB_ADDR` (off by default). |
 | 1433/tcp | SQL Server session proxy | Operators `sqlcmd -S host,1433 -U '<cred>@<target>' -P "$PAM_TOKEN"`. Enable with `PAM_MSSQL_ADDR` (off by default); set `PAM_TLS_CERT/KEY` — TDS clients require encryption. |
 | 5900/tcp | Outbound — guacd to VNC targets | **guacd**, not pam-server, makes this connection (plaintext RFB; see [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md) §3.5). |
-| 636/5986/4822/5432 | Outbound to targets/IdP | LDAPS to AD, WinRM-HTTPS, **guacd on 4822** (it is *guacd*, not pam-server, that then reaches RDP on 3389), PostgreSQL to `postgres` targets — **egress** from pamv1, not listeners. See [PORTS-AND-FLOWS.md](PORTS-AND-FLOWS.md). |
+| 636/5986/4822/5432 | Outbound to targets/IdP | LDAPS to AD, WinRM-HTTPS, **guacd on 4822** (it is *guacd*, not pam-server, that then reaches RDP on 3389), PostgreSQL to `postgres` targets — **egress** from PAMv1, not listeners. See [PORTS-AND-FLOWS.md](PORTS-AND-FLOWS.md). |
 
 ## Prerequisites (secrets)
 
@@ -215,7 +215,7 @@ kubectl apply -f secret.yaml -f configmap.yaml
 kubectl apply -f deployment.yaml -f service.yaml
 
 # Or Helm (deploy/helm/pamv1)
-helm install pamv1 deploy/helm/pamv1 \
+helm install PAMv1 deploy/helm/pamv1 \
   --set secret.data.PAM_MASTER_KEY=... \
   --set secret.data.PAM_API_KEY=... \
   --set secret.data.PAM_DATABASE_URL='postgres://...?sslmode=verify-full'
