@@ -127,7 +127,7 @@ desktop paint end to end on any Docker host:
 cd deploy/docker
 docker compose -f docker-compose.rdp-demo.yml up --build
 # then open http://localhost:8080
-#   sign on: leave Password blank, enter the access token  demo-api-key-PAMv1
+#   sign on: leave Password blank, enter the access token  demo-api-key-pamv1
 #   Work with Targets → type 7 next to "demo-rdp" → Enter → an XFCE desktop renders
 #   Ctrl+Alt+Q disconnects
 ```

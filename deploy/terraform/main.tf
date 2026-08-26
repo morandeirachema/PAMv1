@@ -1,4 +1,4 @@
-# PAMv1 on Kubernetes, as code. Applies the same topology as deploy/k8s
+# pamv1 on Kubernetes, as code. Applies the same topology as deploy/k8s
 # but parameterized and state-managed (Terraform >= 1.6 / OpenTofu).
 #
 #   terraform init
@@ -36,7 +36,7 @@ resource "kubernetes_namespace" "pam" {
   metadata {
     name = var.namespace
     labels = {
-      "app.kubernetes.io/name"                 = "PAMv1"
+      "app.kubernetes.io/name"                 = "pamv1"
       "pod-security.kubernetes.io/enforce"     = "restricted"
     }
   }
@@ -59,16 +59,16 @@ resource "kubernetes_deployment" "pam" {
   metadata {
     name      = "pam-server"
     namespace = kubernetes_namespace.pam.metadata[0].name
-    labels    = { "app.kubernetes.io/name" = "PAMv1" }
+    labels    = { "app.kubernetes.io/name" = "pamv1" }
   }
   spec {
     replicas = var.replicas
     selector {
-      match_labels = { "app.kubernetes.io/name" = "PAMv1" }
+      match_labels = { "app.kubernetes.io/name" = "pamv1" }
     }
     template {
       metadata {
-        labels = { "app.kubernetes.io/name" = "PAMv1" }
+        labels = { "app.kubernetes.io/name" = "pamv1" }
       }
       spec {
         automount_service_account_token = false
@@ -154,11 +154,11 @@ resource "kubernetes_service" "pam" {
   metadata {
     name      = "pam-server"
     namespace = kubernetes_namespace.pam.metadata[0].name
-    labels    = { "app.kubernetes.io/name" = "PAMv1" }
+    labels    = { "app.kubernetes.io/name" = "pamv1" }
   }
   spec {
     type     = "ClusterIP"
-    selector = { "app.kubernetes.io/name" = "PAMv1" }
+    selector = { "app.kubernetes.io/name" = "pamv1" }
     port {
       name        = "http"
       port        = 8080

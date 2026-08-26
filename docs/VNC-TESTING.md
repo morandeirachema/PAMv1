@@ -46,7 +46,7 @@ A real TigerVNC desktop, guacd and pam-server, with the target seeded for you:
 cd deploy/docker
 docker compose -f docker-compose.vnc-demo.yml up --build
 # → http://localhost:8080
-#   Sign On: leave Password blank, enter the access token (demo-api-key-PAMv1)
+#   Sign On: leave Password blank, enter the access token (demo-api-key-pamv1)
 #   Work with Targets → type 7 next to "demo-vnc" → Enter
 #   → an XFCE desktop renders in the portal. Ctrl+Alt+Q disconnects.
 ```

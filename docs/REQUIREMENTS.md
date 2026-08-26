@@ -215,7 +215,7 @@ kubectl apply -f secret.yaml -f configmap.yaml
 kubectl apply -f deployment.yaml -f service.yaml
 
 # Or Helm (deploy/helm/pamv1)
-helm install PAMv1 deploy/helm/pamv1 \
+helm install pamv1 deploy/helm/pamv1 \
   --set secret.data.PAM_MASTER_KEY=... \
   --set secret.data.PAM_API_KEY=... \
   --set secret.data.PAM_DATABASE_URL='postgres://...?sslmode=verify-full'

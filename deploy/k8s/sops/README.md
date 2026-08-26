@@ -1,6 +1,6 @@
 # SOPS-encrypted Kubernetes secrets (Phase 14)
 
-PAMv1's secrets (`PAM_MASTER_KEY`, `PAM_API_KEY`, the database URL, …) must reach the
+pamv1's secrets (`PAM_MASTER_KEY`, `PAM_API_KEY`, the database URL, …) must reach the
 cluster without ever sitting in plaintext in git. This directory uses
 **[SOPS](https://github.com/getsops/sops)** with **[age](https://age-encryption.org/)** to
 encrypt *only the values* of a Kubernetes `Secret` — `kind`, `metadata` and the keys stay
@@ -76,7 +76,7 @@ Edit a sealed file later with `sops --config deploy/.sops.yaml deploy/k8s/sops/s
 `pg-app.sops.example.yaml` seals the **CloudNativePG application credentials**. By default
 CNPG generates that password itself, which puts a manual step in the middle of an
 otherwise-IaC deployment: somebody reads it out of the running cluster and pastes it into
-PAMv1's `PAM_DATABASE_URL`. Two copies of one password, kept in step by hand.
+pamv1's `PAM_DATABASE_URL`. Two copies of one password, kept in step by hand.
 
 Sealing it makes the password an input instead of an output — uncomment
 `bootstrap.initdb.secret.name` in [`../postgres-cnpg.yaml`](../postgres-cnpg.yaml) and both
@@ -111,7 +111,7 @@ additive: CI and laptops keep using age, the cluster uses its cloud identity, an
 needs the other's key. That is also the migration path — add the recipient, run
 `sops updatekeys`, then remove the old one.
 
-Nothing in PAMv1 *requires* SOPS — a plain `kubectl create secret` (or the Helm
+Nothing in pamv1 *requires* SOPS — a plain `kubectl create secret` (or the Helm
 `secret.data` values) still works. SOPS is the recommended way to keep the secret manifest
 **in the same IaC repo** as the rest of the deployment without leaking it.
 

@@ -1,6 +1,6 @@
 -- Dependent accounts (Phase 17): declare the consumers of a credential (Windows
 -- Services, Scheduled Tasks, IIS App Pools that log on with the account). When
--- the credential is rotated, PAMv1 updates each consumer over WinRM so the
+-- the credential is rotated, pamv1 updates each consumer over WinRM so the
 -- rotation does not break production. Deleting the credential cascades.
 
 CREATE TABLE IF NOT EXISTS credential_dependencies (

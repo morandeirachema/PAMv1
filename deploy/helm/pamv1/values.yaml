@@ -1,4 +1,4 @@
-# Default values for the PAMv1 chart. Override with -f my-values.yaml.
+# Default values for the pamv1 chart. Override with -f my-values.yaml.
 
 replicaCount: 1
 

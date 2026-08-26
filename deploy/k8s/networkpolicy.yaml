@@ -1,8 +1,8 @@
-# Default-deny NetworkPolicy for the PAMv1 vault pod.
+# Default-deny NetworkPolicy for the pamv1 vault pod.
 #
 # Without this, any pod in the cluster can reach the API (8080) and SSH proxy
 # (2222) of the credential vault, and the vault can egress anywhere. This policy
-# denies all traffic to/from the PAMv1 pod except:
+# denies all traffic to/from the pamv1 pod except:
 #   - ingress on the app ports (8080 API/portal, 2222 SSH proxy),
 #   - egress to DNS and the PostgreSQL backend,
 #   - egress to the private target ranges the proxy connects to.
@@ -16,11 +16,11 @@ metadata:
   name: pamv1-default-deny
   namespace: pamv1
   labels:
-    app.kubernetes.io/name: PAMv1
+    app.kubernetes.io/name: pamv1
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: PAMv1
+      app.kubernetes.io/name: pamv1
   policyTypes:
     - Ingress
     - Egress

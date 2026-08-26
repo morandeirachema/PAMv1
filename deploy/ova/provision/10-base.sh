@@ -1,16 +1,16 @@
 #!/bin/sh
-# Base system: the service account PAMv1 runs as, and its state directories.
+# Base system: the service account pamv1 runs as, and its state directories.
 set -eu
 
-# A dedicated, non-login system user. PAMv1 never needs root: its SSH proxy binds
+# A dedicated, non-login system user. pamv1 never needs root: its SSH proxy binds
 # 2222 and its API 8080, both above 1024.
-if ! id PAMv1 >/dev/null 2>&1; then
-	adduser --system --group --home /var/lib/pamv1 --shell /usr/sbin/nologin PAMv1
+if ! id pamv1 >/dev/null 2>&1; then
+	adduser --system --group --home /var/lib/pamv1 --shell /usr/sbin/nologin pamv1
 fi
 
-install -d -o PAMv1 -g PAMv1 -m 0750 /var/lib/pamv1
-install -d -o PAMv1 -g PAMv1 -m 0750 /var/lib/pamv1/recordings
-install -d -o root  -g PAMv1 -m 0750 /etc/pamv1
+install -d -o pamv1 -g pamv1 -m 0750 /var/lib/pamv1
+install -d -o pamv1 -g pamv1 -m 0750 /var/lib/pamv1/recordings
+install -d -o root  -g pamv1 -m 0750 /etc/pamv1
 
 # --- Interface-agnostic networking -------------------------------------------
 # The build runs under QEMU (virtio-net → ens3); the OVA is imported into
@@ -64,7 +64,7 @@ systemctl enable serial-getty@ttyS0.service
 cat > /etc/issue <<'EOF'
       _____  _____ ___  ____   ______
      |  __ \|  _  |  \/  \ \ / /  _  |
-     | |__) | |_| | .  . |\ V /| | | |   PAMv1 appliance (Debian 13)
+     | |__) | |_| | .  . |\ V /| | | |   pamv1 appliance (Debian 13)
      |  ___/|  _  | |\/| | \ / | | | |   Privileged Access Management
      | |    | | | | |  | | | | | |_| |
      |_|    |_| |_|_|  |_| |_| |_____/   https://github.com/morandeirachema/pamv1

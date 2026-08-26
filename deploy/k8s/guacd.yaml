@@ -6,9 +6,9 @@
 # This is an INTERNAL service: it is a ClusterIP (no external exposure), and the
 # NetworkPolicy below admits only pam-server on :4822.
 #
-# NOTE the labels: guacd uses `app.kubernetes.io/name: guacd` (not `PAMv1`) so the
-# pam-server Service and NetworkPolicy — which select `app.kubernetes.io/name: PAMv1`
-# — do NOT match it. `part-of: PAMv1` keeps it grouped under the app.
+# NOTE the labels: guacd uses `app.kubernetes.io/name: guacd` (not `pamv1`) so the
+# pam-server Service and NetworkPolicy — which select `app.kubernetes.io/name: pamv1`
+# — do NOT match it. `part-of: pamv1` keeps it grouped under the app.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,7 +16,7 @@ metadata:
   namespace: pamv1
   labels:
     app.kubernetes.io/name: guacd
-    app.kubernetes.io/part-of: PAMv1
+    app.kubernetes.io/part-of: pamv1
 spec:
   replicas: 1
   selector:
@@ -26,7 +26,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: guacd
-        app.kubernetes.io/part-of: PAMv1
+        app.kubernetes.io/part-of: pamv1
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -82,7 +82,7 @@ metadata:
   namespace: pamv1
   labels:
     app.kubernetes.io/name: guacd
-    app.kubernetes.io/part-of: PAMv1
+    app.kubernetes.io/part-of: pamv1
 spec:
   type: ClusterIP
   selector:
@@ -101,7 +101,7 @@ metadata:
   namespace: pamv1
   labels:
     app.kubernetes.io/name: guacd
-    app.kubernetes.io/part-of: PAMv1
+    app.kubernetes.io/part-of: pamv1
 spec:
   podSelector:
     matchLabels:
@@ -113,7 +113,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/name: PAMv1   # pam-server only
+              app.kubernetes.io/name: pamv1   # pam-server only
       ports:
         - protocol: TCP
           port: 4822

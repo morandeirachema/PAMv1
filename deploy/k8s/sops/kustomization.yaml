@@ -12,5 +12,5 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - secrets.sops.example.yaml     # PAMv1's own bootstrap secrets  <-- replace
+  - secrets.sops.example.yaml     # pamv1's own bootstrap secrets  <-- replace
   - pg-app.sops.example.yaml      # CloudNativePG app credentials  <-- replace

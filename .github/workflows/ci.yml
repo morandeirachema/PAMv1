@@ -236,9 +236,9 @@ jobs:
         # The chart deliberately refuses to render without a credentials source
         # (so PAM_MASTER_KEY cannot land in Helm release history) — provide one.
         run: |
-          helm template PAMv1 deploy/helm/pamv1 \
+          helm template pamv1 deploy/helm/pamv1 \
             --set secret.existingSecret=pam-secrets > /tmp/rendered-default.yaml
-          helm template PAMv1 deploy/helm/pamv1 \
+          helm template pamv1 deploy/helm/pamv1 \
             --set secret.create=true --set 'secret.data.PAM_MASTER_KEY=x' \
             --set ingress.enabled=true --set guacd.enabled=true \
             --set networkPolicy.enabled=true --set persistence.enabled=true \

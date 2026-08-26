@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build the PAMv1 appliance OVA.
+# Build the pamv1 appliance OVA.
 #
 # Produces a VirtualBox/VMware-importable .ova containing Debian 13 (trixie),
-# PostgreSQL, the pam-server binary and the full PAMv1 source tree.
+# PostgreSQL, the pam-server binary and the full pamv1 source tree.
 #
 # It needs NO root, NO VirtualBox and NO Packer — just QEMU, xorriso and the Go
 # toolchain. The install is unattended (debian-installer preseed); provisioning
@@ -90,7 +90,7 @@ cp "${here}/firstboot.sh" "$payload/"
 mkdir -p "${payload}/src"
 git -C "$repo" archive --format=tar HEAD | tar -x -C "${payload}/src"
 cat > "${payload}/BUILD_INFO" <<EOF
-PAMv1 appliance
+pamv1 appliance
   version        : ${version}
   commit         : ${commit}
   built          : $(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -129,7 +129,7 @@ qemu-img create -f qcow2 "$disk" "$DISK_SIZE" >/dev/null
 # The serial console is captured so a failed build is diagnosable.
 append="auto=true priority=critical preseed/url=http://10.0.2.2:${HTTP_PORT}/preseed.cfg"
 append+=" debian-installer/locale=en_US.UTF-8 keyboard-configuration/xkb-keymap=us"
-append+=" netcfg/choose_interface=auto hostname=PAMv1 domain=local"
+append+=" netcfg/choose_interface=auto hostname=pamv1 domain=local"
 append+=" console=ttyS0,115200n8 --- console=ttyS0,115200n8"
 
 set +e
@@ -178,7 +178,7 @@ kill "$http_pid" 2>/dev/null || true; unset http_pid
 # --- 6b. Boot the appliance and prove it works -------------------------------
 # The installer's late_command writes its own log inside the guest, so grepping
 # the install console for a success marker proves nothing. This does: boot the
-# built image and ask the running PAMv1 for its health.
+# built image and ask the running pamv1 for its health.
 #
 # It runs against a THROWAWAY COPY-ON-WRITE OVERLAY, never the image we ship —
 # booting consumes first boot (keys get generated), and the OVA must leave that
@@ -212,7 +212,7 @@ kill "$vm_pid" 2>/dev/null || true
 wait "$vm_pid" 2>/dev/null || true
 if [[ $healthy -ne 1 ]]; then
 	tail -60 "${work}/firstboot-serial.log" 2>/dev/null | tr -d '\r' || true
-	die "the appliance booted but PAMv1 never answered /healthz — see ${work}/firstboot-serial.log"
+	die "the appliance booted but pamv1 never answered /healthz — see ${work}/firstboot-serial.log"
 fi
 
 # --- 7. Convert to a stream-optimized VMDK ----------------------------------

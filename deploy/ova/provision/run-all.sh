@@ -24,10 +24,10 @@ uplink() { [ -f "$LOG" ] && curl -fsS --max-time 10 -o /dev/null \
 
 beacon start
 {
-	echo "=== PAMv1 provisioning $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+	echo "=== pamv1 provisioning $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 	chmod +x ./*.sh
 
-	for s in 10-base.sh 20-postgres.sh 30-PAMv1.sh 40-firstboot.sh 50-harden.sh; do
+	for s in 10-base.sh 20-postgres.sh 30-pamv1.sh 40-firstboot.sh 50-harden.sh; do
 		echo "=== provision: $s ==="
 		beacon "$s"
 		if ! sh -x "./$s"; then
@@ -44,4 +44,4 @@ beacon start
 uplink
 beacon complete
 # Also to the installer's own log, so a build without the beacon still shows it.
-echo "PAMv1 provisioning complete (see /var/log/pamv1-provision.log)"
+echo "pamv1 provisioning complete (see /var/log/pamv1-provision.log)"

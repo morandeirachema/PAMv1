@@ -1137,7 +1137,7 @@ A minor: one new capability. No schema change.
   session to proxy — with a vaulted service-account bearer token
   (`k8s_token`) and `POST /api/targets/{id}/kubectl` brokering ONE audited
   operation at a time: `get`, `logs`, `apply` (server-side apply,
-  `fieldManager=PAMv1`) and `delete`. The token is injected just-in-time
+  `fieldManager=pamv1`) and `delete`. The token is injected just-in-time
   and never shown to the operator; what it may do inside the cluster is
   decided by the cluster's own RBAC, whose refusal comes back as its own
   `403` in the response envelope. Same gates, command control (`kubectl …`
