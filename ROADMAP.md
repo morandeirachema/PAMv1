@@ -2432,10 +2432,16 @@ no upgrade note.
 - [x] **v0.57.0** through the test-gated pipeline. `.github/` was **untouched**
   since v0.56.0 — checked with a diff on `release.yml` specifically, per the
   refined rule — so the v0.11.1 rehearsal did not apply. Published 2026-08-26 as
-  `ghcr.io/morandeirachema/pamv1:0.57.0` (also `latest`), digest recorded in the
-  follow-up, **public** (anonymous pull on both tags, both resolving to the same
+  `ghcr.io/morandeirachema/pamv1:0.57.0` (also `latest`), digest
+  `sha256:75a2a43d58dc01247d4af1a56ac56ae3bd2fe535bcec0aedc93791375f995ad0`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
   digest), signed and attested, with the `pam-agent` binaries, the SPDX SBOM and
   `SHA256SUMS` attached
+- [x] **Second consecutive first-attempt pipeline.** Signing verified the only
+  way that works here — the workflow's own step conclusions (`Sign the image
+  (keyless)`, `Attest the SBOM`, `Attest build provenance (SLSA)`, all
+  `success`) — rather than by probing `.sig`/`.att` tags or the GHCR referrers
+  API, which return nothing even for known-good releases
 - [x] All pins via the sweep — exactly one release under `deploy/`. Helm chart
   `version` 0.47.0 -> **0.48.0**, a minor alongside an app minor
 - [x] `store.Store` **217 -> 218** (Phase 209's `CountAgentCallsForTokenSince`);
