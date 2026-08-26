@@ -1,12 +1,12 @@
 # Kubernetes (raw manifests)
 
-Plain manifests for a namespaced PAMv1 install. For a parameterised install use
+Plain manifests for a namespaced pamv1 install. For a parameterised install use
 the Helm chart in [`../helm/pamv1`](../helm/pamv1) instead — it renders the same
 shapes from `values.yaml`.
 
 | File | What it is |
 |---|---|
-| `namespace.yaml` | The `PAMv1` namespace |
+| `namespace.yaml` | The `pamv1` namespace |
 | `configmap.example.yaml` | **The env example.** Every non-secret `PAM_*` knob, grouped and commented. Copy to `configmap.yaml`, edit, apply |
 | `secret.example.yaml` | Its secret half: keys, credentials and key-derived hashes. Copy to `secret.yaml` (git-ignored), or encrypt it in-repo with SOPS (`sops/`) |
 | `deployment.yaml` | pam-server: non-root, read-only root FS, all capabilities dropped, `/healthz` + `/readyz` probes. Reads both files above via `envFrom` |
@@ -29,7 +29,7 @@ kubectl apply -f secret.yaml -f configmap.yaml
 
 kubectl apply -f guacd.yaml               # only if you want RDP/VNC
 kubectl apply -f deployment.yaml -f service.yaml
-kubectl -n PAMv1 port-forward svc/pamv1 8080:8080
+kubectl -n pamv1 port-forward svc/pamv1 8080:8080
 ```
 
 Two of the required values have to be generated, not invented:

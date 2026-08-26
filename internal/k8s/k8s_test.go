@@ -164,7 +164,7 @@ func TestRequestPathsAndCommands(t *testing.T) {
 				Namespace: "prod", Manifest: []byte("apiVersion: apps/v1\nkind: Deployment\n")},
 			method:  http.MethodPatch,
 			path:    "/apis/apps/v1/namespaces/prod/deployments/web",
-			query:   "fieldManager=PAMv1&force=true",
+			query:   "fieldManager=pamv1&force=true",
 			command: "kubectl apply -f - deployments.apps/web -n prod",
 		},
 	}

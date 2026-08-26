@@ -1,5 +1,5 @@
 [Unit]
-Description=PAMv1 first-boot initialisation (per-appliance keys)
+Description=pamv1 first-boot initialisation (per-appliance keys)
 Documentation=https://github.com/morandeirachema/pamv1
 After=network-online.target postgresql.service
 Wants=network-online.target

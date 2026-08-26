@@ -1,5 +1,5 @@
 -- Outbound-only endpoint agents (Phase 153, BeyondTrust "Jump Client"-style):
--- an agent installed on a target PAMv1 cannot dial into dials OUT to the SSH
+-- an agent installed on a target pamv1 cannot dial into dials OUT to the SSH
 -- listener with a bearer key (only its SHA-256 hash is stored, the same shape
 -- as agent_keys/app_keys/scim_keys) and holds a reverse tunnel open; the
 -- proxy then reaches that target through the tunnel instead of Target.Host.

@@ -15,7 +15,7 @@ ALTER TABLE agent_keys ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ;
 -- Quarantine: the local stop-switch on one agent identity.
 --
 -- Deliberately its own table keyed by a free-form subject, NOT a boolean
--- column on agent_keys, because the set of agents PAMv1 authenticates is
+-- column on agent_keys, because the set of agents pamv1 authenticates is
 -- larger than the set of rows in agent_keys: an SVID-authenticated agent
 -- proves its identity through the SPIFFE workload API and never received a key
 -- from us, so it has no agent_keys row to flag. Keying on the canonical

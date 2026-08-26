@@ -9,7 +9,7 @@
 # where the password must be generated anyway so that no two appliances share one.
 #
 # Two deliberate choices, both least privilege:
-#   - PAMv1 connects as `pam`, which OWNS its database but is NOT a superuser.
+#   - pamv1 connects as `pam`, which OWNS its database but is NOT a superuser.
 #     The vault's KEK lives outside the database, so a database-only compromise
 #     yields ciphertext — but since Phase 55 that same connection also carries the
 #     cross-replica live-monitoring relay, so the role is worth more than it used
@@ -33,7 +33,7 @@ sed -i "s/^#\?password_encryption.*/password_encryption = scram-sha-256/" "${PGC
 # Replace the default host lines with an explicit localhost-only scram policy.
 sed -i '/^host/d' "${PGCONF}/pg_hba.conf"
 cat >> "${PGCONF}/pg_hba.conf" <<'EOF'
-# PAMv1 appliance: local TCP only, scram-sha-256. No remote access.
+# pamv1 appliance: local TCP only, scram-sha-256. No remote access.
 host    pam             pam             127.0.0.1/32            scram-sha-256
 host    pam             pam             ::1/128                 scram-sha-256
 EOF

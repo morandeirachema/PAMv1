@@ -38,9 +38,9 @@ spec:
             - { containerPort: 2222, name: ssh }
           env:
             # --- Conjur secret sourcing ---
-            - { name: PAM_CONJUR_URL, value: "https://conjur.PAMv1.svc.cluster.local" }
+            - { name: PAM_CONJUR_URL, value: "https://conjur.pamv1.svc.cluster.local" }
             - { name: PAM_CONJUR_ACCOUNT, value: "default" }
-            - { name: PAM_CONJUR_POLICY_PREFIX, value: "PAMv1" }
+            - { name: PAM_CONJUR_POLICY_PREFIX, value: "pamv1" }
             # authn-jwt (Kubernetes-native, no bootstrap secret in Git):
             - { name: PAM_CONJUR_AUTHN_JWT_SERVICE_ID, value: "kubernetes" }
             - { name: PAM_CONJUR_JWT_FILE, value: "/var/run/secrets/conjur/token" }

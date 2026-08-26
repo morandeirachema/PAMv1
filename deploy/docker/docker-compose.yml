@@ -42,7 +42,7 @@ services:
       - pamdata:/data
     restart: "no"
 
-  # Apache Guacamole proxy daemon: PAMv1 speaks the guacd protocol to it to
+  # Apache Guacamole proxy daemon: pamv1 speaks the guacd protocol to it to
   # broker RDP (JIT-injecting the credential into the handshake; it never reaches
   # the browser). Internal only — its port is NOT published to the host, so only
   # pam-server on the internal bridge can reach it. guacd itself connects out to

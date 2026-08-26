@@ -11,7 +11,7 @@ who the actors are (operator / approver / auditor / agent) and what should stop
 whom from doing what.
 
 **Proposed shape**
-How it might work in PAMv1's model (chokepoint brokering, JIT injection,
+How it might work in pamv1's model (chokepoint brokering, JIT injection,
 audited actions, deny-by-default). A rough sketch is fine.
 
 **Prior art**

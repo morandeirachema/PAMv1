@@ -1,6 +1,6 @@
 -- Magic-link access-request approval (Phase 137): a named person can decide
 -- a pending access request from an emailed link, without ever logging into
--- PAMv1 — BeyondTrust's out-of-band approval, the buildable "link" half.
+-- pamv1 — BeyondTrust's out-of-band approval, the buildable "link" half.
 -- Unlike session_share_invites there is no separate meta-approval stage:
 -- minting an invite already requires CapApprove, so token_hash/expires_at
 -- are set at creation, not on a later decision.

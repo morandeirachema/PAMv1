@@ -1,4 +1,4 @@
--- Phase 61: a dependent account can name the credential PAMv1 connects WITH to
+-- Phase 61: a dependent account can name the credential pamv1 connects WITH to
 -- update it.
 --
 -- Until now propagation logged into the consumer's host as the rotated service

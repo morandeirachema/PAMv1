@@ -1,5 +1,5 @@
-# PAMv1 Conjur policy (Phase 18) — policy-as-code for the bootstrap secrets that
-# PAMv1 sources at startup instead of from a sealed manifest.
+# pamv1 Conjur policy (Phase 18) — policy-as-code for the bootstrap secrets that
+# pamv1 sources at startup instead of from a sealed manifest.
 #
 # Load it (as a Conjur admin):
 #   conjur policy load -b root -f policy.yaml
@@ -11,7 +11,7 @@
 #   conjur variable set -i pamv1/break-glass-key-hash -v '<sha256-hex>'
 #   conjur variable set -i pamv1/broker-audit-key     -v "$(openssl rand -base64 32)"    # only if the broker is enabled
 #
-# pam-server reads these at boot: PAM_CONJUR_URL + PAM_CONJUR_POLICY_PREFIX=PAMv1
+# pam-server reads these at boot: PAM_CONJUR_URL + PAM_CONJUR_POLICY_PREFIX=pamv1
 # → PAM_MASTER_KEY, PAM_API_KEY, PAM_DATABASE_URL, PAM_BREAK_GLASS_KEY_HASH,
 # PAM_BROKER_AUDIT_KEY (and _SIGN_SEED). Any variable absent here is simply not
 # sourced from Conjur — provide it via env/SOPS instead.
@@ -19,7 +19,7 @@
 - !policy
   id: pamv1
   body:
-    # The bootstrap secrets PAMv1 sources at startup.
+    # The bootstrap secrets pamv1 sources at startup.
     - &secrets
       - !variable master-key
       - !variable api-key
@@ -34,7 +34,7 @@
     - !host
       id: pam-server
       annotations:
-        description: The PAMv1 server process; reads its own bootstrap secrets.
+        description: The pamv1 server process; reads its own bootstrap secrets.
 
     # pam-server may read (and fetch the value of) those secrets — nothing else.
     - !permit

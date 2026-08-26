@@ -76,7 +76,7 @@ const DefaultAPIVersion = "v1"
 // (Kubernetes server-side apply requires a field manager, and records it on the
 // object). Seeing `PAMv1` in `metadata.managedFields` on a cluster object is
 // itself a useful audit signal.
-const FieldManager = "PAMv1"
+const FieldManager = "pamv1"
 
 // defaultTailLines bounds a `logs` read that does not ask for a specific
 // number. A pod's log is unbounded; a brokered, audited, transcript-recorded

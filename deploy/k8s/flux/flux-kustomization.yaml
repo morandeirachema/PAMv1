@@ -1,4 +1,4 @@
-# Flux: reconcile PAMv1 from git, decrypting SOPS-sealed secrets in-cluster.
+# Flux: reconcile pamv1 from git, decrypting SOPS-sealed secrets in-cluster.
 #
 # This is the piece the SOPS README described in prose and never showed. The
 # point of `.spec.decryption` is that the sealed files can live in the same repo

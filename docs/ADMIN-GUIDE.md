@@ -113,13 +113,13 @@ Host key and session recordings persist in the `pamdata` volume.
 
 ```bash
 kubectl apply -f deploy/k8s/namespace.yaml
-kubectl -n PAMv1 create secret generic pam-secrets \
+kubectl -n pamv1 create secret generic pam-secrets \
   --from-literal=PAM_MASTER_KEY=... \
   --from-literal=PAM_API_KEY=... \
   --from-literal=PAM_BREAK_GLASS_KEY_HASH=... \
   --from-literal=PAM_DATABASE_URL='postgres://pam:...@postgres:5432/pam?sslmode=verify-full'
 kubectl apply -f deploy/k8s/
-kubectl -n PAMv1 logs deploy/pam-server -f
+kubectl -n pamv1 logs deploy/pam-server -f
 ```
 
 The `create secret` above keeps the plaintext out of Git but only lives in the
@@ -197,7 +197,7 @@ Or with **Helm** (`deploy/helm/pamv1`) — configurable replicas, a PVC option, 
 Prometheus `ServiceMonitor`, and the same hardened pod security context:
 
 ```bash
-helm install PAMv1 deploy/helm/pamv1 \
+helm install pamv1 deploy/helm/pamv1 \
   --set secret.data.PAM_MASTER_KEY=... \
   --set secret.data.PAM_API_KEY=... \
   --set secret.data.PAM_DATABASE_URL='postgres://pam:...@postgres:5432/pam?sslmode=verify-full' \
@@ -792,7 +792,7 @@ principal (capped at `PAM_SSH_OPERATOR_CERT_TTL_MIN`, default 10m):
 ```bash
 # 1. get a proof-of-possession challenge, sign it with your private key
 CH=$(curl -s -XPOST -H "X-API-Key: $KEY" $PAM/api/ca/ssh/challenge | jq -r .challenge)
-SIG=$(printf %s "$CH" | ssh-keygen -Y sign -n PAMv1 -f ~/.ssh/id_ed25519 /dev/stdin ...)  # (client tooling)
+SIG=$(printf %s "$CH" | ssh-keygen -Y sign -n pamv1 -f ~/.ssh/id_ed25519 /dev/stdin ...)  # (client tooling)
 # 2. exchange it for a certificate scoped to the "svc" account on web-01
 curl -s -XPOST -H "X-API-Key: $KEY" $PAM/api/ca/ssh/sign \
   -d '{"public_key":"ssh-ed25519 AAAA... me","challenge":"'"$CH"'","signature":"<base64>",
@@ -853,7 +853,7 @@ can carry:
 | `namespace` | all | blank means the cluster-scoped path — for a namespaced resource that is Kubernetes' own across-all-namespaces collection |
 | `selector` | get | label selector (`app=web,tier!=db`) |
 | `container` / `tail_lines` | logs | one container of many; how many lines (default 200, max 10000) |
-| `manifest` | apply | the YAML or JSON, sent verbatim as a **server-side apply** patch with `fieldManager=PAMv1` |
+| `manifest` | apply | the YAML or JSON, sent verbatim as a **server-side apply** patch with `fieldManager=pamv1` |
 
 **What the cluster decides, and what PAMv1 decides.** PAMv1 does not
 re-implement Kubernetes RBAC: what the token may do is the cluster's business,
@@ -2731,14 +2731,14 @@ Example with [SoftHSM2](https://www.opendnssec.org/softhsm/)
 (swap in your vendor module for a real HSM):
 
 ```bash
-softhsm2-util --init-token --free --label PAMv1 --pin 1234 --so-pin 5678
+softhsm2-util --init-token --free --label pamv1 --pin 1234 --so-pin 5678
 # create an AES-256 wrapping key labelled pamv1-kek (pkcs11-tool, or your HSM's tooling)
 
 export PAM_KEK_PROVIDER=pkcs11
 export PAM_KEK_PKCS11_MODULE=/usr/lib/softhsm/libsofthsm2.so
 export PAM_KEK_PKCS11_PIN=1234
 export PAM_KEK_PKCS11_KEY_LABEL=pamv1-kek
-export PAM_KEK_PKCS11_TOKEN_LABEL=PAMv1
+export PAM_KEK_PKCS11_TOKEN_LABEL=pamv1
 ```
 
 Mount the vendor module read-only into the container. Integrity of the vault token
@@ -2772,7 +2772,7 @@ Example (JSON):
 ```
 
 Collect them where the platform puts stdout: `docker compose logs pam`,
-`kubectl -n PAMv1 logs deploy/pam-server`, or your log shipper. **PostgreSQL** logs
+`kubectl -n pamv1 logs deploy/pam-server`, or your log shipper. **PostgreSQL** logs
 connections/disconnections in its own container (`docker compose logs db`).
 
 Secrets are never logged: the vault does not log secret operations, and the store
@@ -4224,7 +4224,7 @@ entitlement.
 | 2026-08-25 | **Phase 191 — `blocked` on the reachability review.** §9.9 gains the reason table: `no_usable_capability`, `deactivated`, `key_disabled`, `key_expired`, `quarantined`, `not_enrolled`. The targets and the total are unchanged when it is non-empty — a suspended account's grants are still grants — but an auditor reaching every ungated target, a deprovisioned user and a revoked agent key all used to read as live entitlement. `access.reach_query`'s audit detail carries the reasons |
 | 2026-08-23 | **Phase 189 — "what can this subject reach?"** A new review read, `GET /api/access/reach?subject=&kind=user|agent` (`read_audit`, audited `access.reach_query`), and console menu **31** — plus option `5` on a user row (menu 8) and option `8` on an agent-key row (menu 26). It answers the question PAMv1 could not: every grant lookup was target-indexed, so "what can this agent reach?" meant opening every target in turn. The answer names each reachable target AND why — a direct grant, a role grant, safe membership, the admin bypass, or **open** (nothing gates the target, so anyone connect-capable reaches it), with per-reason counts, because "40 targets, 37 of them open" is a different finding from 40 deliberate grants. An agent in no registry is answered rather than refused (`"known": false` — an unenrolled workload reaching every ungated target is the finding); a directory-authenticated identity returns 404, since its roles are decided at login. Standing access only: the gates a connect still passes can narrow the list, never widen it. New migration `0047` (indexes both grant tables by subject). See §9.9 |
 | 2026-08-17 | **Phase 157 — post-session forensic reconstruction (the eBPF finding).** The planned mechanism (eBPF on the pam-server host) turned out to be architecturally impossible for a proxy: an operator's shell runs in the TARGET's kernel, so a probe here would observe zero events — verified, and documented as permanent. Shipped instead: after an interactive SSH session ends, PAMv1 runs ONE fixed, read-only command (`ausearch -m EXECVE -ts today | tail -c 1048576`) over that target's own vaulted credential on a fresh connection, filters the target's kernel audit records to the session's window, and stores them as a hash-chained `.forensics.log` beside the recording — so an obfuscated (`base64 -d | sh`) or unechoed command still leaves a structured record of what actually ran. `PAM_SESSION_FORENSICS` (off by default), `_MAX_EVENTS`, `_TIMEOUT_SEC`. "Unavailable" (no auditd, no permission) is an audited FINDING, never silence; ZSP sessions are refused loudly; PAMv1's own literal still obeys command control. New audit family `session.forensics*`. Also fixes a Phase 155 call site: `.k8s.log` transcripts were invisible to the recordings listing/playback, and both new artifact kinds are now listed and servable. Interactive SSH only, audit-only, no schema change. See §9.3b |
-| 2026-08-16 | **Phase 155 — Kubernetes targets (discrete operations).** A new `kubernetes` target protocol (port defaults to 6443) whose credential is a vaulted service-account bearer token (`k8s_token`), and `POST /api/targets/{id}/kubectl` (`connect`) brokering one audited operation at a time: `get`, `logs`, `apply` (server-side apply, `fieldManager=PAMv1`) and `delete`. Same gates as the WinRM REST twin (protocol policy, grants/safes, approval, vendor contract, session cap + registry), same command control (the canonical `kubectl …` line is what deny/allow patterns match), same transcript (`.k8s.log`, hash on the audit row), same withheld-result contract when the audit write fails. The cluster's own RBAC decides what the token may do; its refusal comes back as `status:403` in the envelope. New `PAM_K8S_CA_FILE` / `PAM_K8S_INSECURE_SKIP_VERIFY` / `PAM_K8S_TIMEOUT_SEC` / `PAM_K8S_MAX_RESPONSE_KB`. New audit family `k8s.*`. Console: *Work with Targets* option 6. `exec`/`attach`/`port-forward` (streaming), client-certificate credentials and API discovery are deliberate v1 exclusions. No schema change. **Not verified against a real cluster** — proven against an in-process API server that accepts only the vaulted token. See "Kubernetes clusters" under §6 |
+| 2026-08-16 | **Phase 155 — Kubernetes targets (discrete operations).** A new `kubernetes` target protocol (port defaults to 6443) whose credential is a vaulted service-account bearer token (`k8s_token`), and `POST /api/targets/{id}/kubectl` (`connect`) brokering one audited operation at a time: `get`, `logs`, `apply` (server-side apply, `fieldManager=pamv1`) and `delete`. Same gates as the WinRM REST twin (protocol policy, grants/safes, approval, vendor contract, session cap + registry), same command control (the canonical `kubectl …` line is what deny/allow patterns match), same transcript (`.k8s.log`, hash on the audit row), same withheld-result contract when the audit write fails. The cluster's own RBAC decides what the token may do; its refusal comes back as `status:403` in the envelope. New `PAM_K8S_CA_FILE` / `PAM_K8S_INSECURE_SKIP_VERIFY` / `PAM_K8S_TIMEOUT_SEC` / `PAM_K8S_MAX_RESPONSE_KB`. New audit family `k8s.*`. Console: *Work with Targets* option 6. `exec`/`attach`/`port-forward` (streaming), client-certificate credentials and API discovery are deliberate v1 exclusions. No schema change. **Not verified against a real cluster** — proven against an in-process API server that accepts only the vaulted token. See "Kubernetes clusters" under §6 |
 | 2026-08-16 | **Phase 153 — outbound-only endpoint agents (Jump Client-style reachability).** For targets PAMv1 cannot dial into: a new `pam-agent` binary (Release assets `pam-agent_linux_{amd64,arm64}` + `SHA256SUMS`) dials OUT to the existing `:2222` listener as `endpoint-agent:<name>` with its own bearer key, holds an RFC 4254 reverse tunnel, and the proxy reaches the bound target through it — never dialing it. `PAM_ENDPOINT_AGENTS_ENABLED` (default off); `POST/GET /api/endpoint-agents`, `DELETE /api/endpoint-agents/{id}` (`manage_targets` to create/revoke, `read_inventory` to list); console menu 28. One live agent per target; revoke kicks the live tunnel; SSH targets only. New migration `0042` (`endpoint_agents`). New audit family `endpoint_agent.*` plus `via:endpoint-agent:<name>` on `session.start`. The agent pins pam-server's host key (`PAM_AGENT_SERVER_HOST_KEY`, required), exposes exactly one local address, may open nothing toward PAMv1, and lists every replica in HA. Proven end to end against a real upstream sshd through the tunnel; not verified across a real NAT. See "Outbound-only endpoint agents" under §6 |
 | 2026-08-16 | **Phase 151 — SAML 2.0 single sign-on (Service Provider).** For IdPs with no OIDC endpoint (on-prem AD FS, SAML-only Okta/OneLogin/Entra apps): SP-initiated Web Browser SSO — `GET /api/auth/saml/start` (AuthnRequest, HTTP-Redirect), `POST /api/auth/saml/acs` (the IdP's signed Response, HTTP-POST), `GET /api/auth/saml/metadata` (the SP descriptor an IdP admin imports). `PAM_SAML_SP_URL` enables it (presence, like `PAM_OIDC_ISSUER`); IdP metadata from `PAM_SAML_IDP_METADATA_URL` or `_FILE`; group/role attribute → role via `PAM_SAML_ROLE_*`; optional `PAM_SAML_SP_KEY_FILE`/`_CERT_FILE` sign AuthnRequests and accept encrypted assertions; `PAM_SAML_NAME_ATTR`/`_GROUP_ATTR` pick the attributes. Hot-swappable except the three `_FILE` paths; `PAM_OT_AIRGAP` refuses the metadata URL. XML-DSig verification is delegated to a well-audited library (the WebAuthn precedent — see PROTOCOLS-AND-CRYPTO.md §"SAML"). Login state rides the same single-use store the OIDC flow uses, so the ACS can land on any replica. Login audited as `login … via:saml`. No schema change. **Not verified against a live IdP** — proven against a real in-process SAML IdP instead. See the "SAML 2.0 single sign-on" section above |
 | 2026-08-16 | **Phase 149 — SCIM 2.0 user provisioning.** New `/scim/v2/Users` (RFC 7643/7644), authenticated by a new non-human `ScimKey` bearer identity (`POST /v1/scim-keys`, `manage_users` to mint), never a human principal — every SCIM-provisioned user gets the fixed `user` role, no way to request more. `store.User` gains `ExternalID` and `Active`; deactivating (`PATCH active:false` or `DELETE`, which is a soft-delete) now actually blocks that user's local token from authenticating, not just a flag — proven end to end. Reactivation restores the same token, nothing re-minted. Complements the existing pull-based `POST /api/identity/reconcile`. `PAM_SCIM_ENABLED` (default off). **Not interactively verified against a real IdP** — no Okta/Azure AD/OneLogin account in this environment; both RFC 7644's standard `PATCH` shape and Azure AD's documented no-path variant are implemented and tested against a fake. See §7 |

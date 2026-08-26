@@ -1,5 +1,5 @@
 #!/bin/sh
-# PAMv1 itself: the binary, the source tree, and the service unit.
+# pamv1 itself: the binary, the source tree, and the service unit.
 #
 # The binary is built on the BUILD HOST (CGO_ENABLED=0, static) and injected, so
 # the appliance carries no Go toolchain and no build dependencies. The full source
@@ -19,10 +19,10 @@ install -o root -g root -m 0644 /opt/pamv1/systemd/pamv1.service /etc/systemd/sy
 install -o root -g root -m 0644 /opt/pamv1/systemd/pamv1-firstboot.service /etc/systemd/system/pamv1-firstboot.service
 
 # Enabled, but they do nothing useful until first boot has written the env file —
-# PAMv1.service requires it, so a failed first boot leaves the service down and
+# pamv1.service requires it, so a failed first boot leaves the service down and
 # visible rather than up and misconfigured.
 systemctl enable pamv1-firstboot.service
-systemctl enable PAMv1.service
+systemctl enable pamv1.service
 
 /usr/local/bin/pam-server -version 2>/dev/null || true
 echo "pam-server installed: $(sha256sum /usr/local/bin/pam-server | cut -c1-16)…"
