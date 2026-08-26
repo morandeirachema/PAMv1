@@ -2,8 +2,8 @@
 
 > ⚠️ **Beta · con fines educativos.** Este es un proyecto educativo creado para explorar cómo
 > funciona de principio a fin un sistema de Gestión de Acceso Privilegiado (PAM). **Beta**
-> significa completo frente a su [hoja de ruta](ROADMAP.md) — han entregado todas las fases
-> hasta la 52g, están cerrados todos los hallazgos de su propia
+> significa completo frente a su [hoja de ruta](ROADMAP.md) — se han entregado todas las
+> fases, están cerrados todos los hallazgos de su propia
 > [autoauditoría de seguridad](docs/SECURITY-GAPS.md), y cada capacidad tiene pruebas y se
 > despliega como código. Sigue **sin** haber sido auditado por nadie ajeno al proyecto y **no**
 > está listo para producción — no lo uses para custodiar credenciales privilegiadas reales.
@@ -38,7 +38,7 @@ de fósforo verde** sin concesiones, porque tocar un PAM debe *sentirse* serio.
 
 Construido fase a fase con una regla: **cada fase es funcional de principio a fin** — arranca,
 pasa los tests y se despliega como Infraestructura-como-Código. El **[roadmap](ROADMAP.md)**
-abarca de la 0 a la 205, **se han entregado todas las fases**, y la release etiquetada y
+abarca de la 0 a la 208, **se han entregado todas las fases**, y la release etiquetada y
 firmada con cosign vigente es la
 **[v0.56.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.56.0)** (2026-08-26;
 la primera fue la v0.10.0, el 2026-07-28). Lo que eso suma:
