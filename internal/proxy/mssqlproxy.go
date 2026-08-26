@@ -352,7 +352,7 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		remoteAddr:     remote,
 		expectProtocol: "mssql",
 		startAudit: func(t *store.Target, cr *store.Credential) (string, string) {
-			return "db.session.start", fmt.Sprintf("target:%s db:%s cred_user:%s via:mssql", t.Name, database, cr.Username)
+			return "db.session.start", fmt.Sprintf("target:%s db:%s cred_user:%s via:mssql", t.Name, auditValueDB(database), cr.Username)
 		},
 	})
 	if res.outcome != admitOK {

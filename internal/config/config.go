@@ -1083,6 +1083,12 @@ func Load() (*Config, error) {
 	if cfg.BrokerMaxCallsPerToken < 0 || cfg.BrokerMaxCallsPerToken > maxCallsPerToken {
 		errs = append(errs, "PAM_BROKER_MAX_CALLS_PER_TOKEN must be between 0 (off) and 100000")
 	}
+	// A DoubleLock minimum below the built-in floor is silently ignored, and an
+	// absurdly high one makes the feature unusable; refuse both rather than
+	// surprise the operator. 0 means "use the built-in floor of 16".
+	if cfg.DoubleLockMinLength < 0 || cfg.DoubleLockMinLength > 1024 {
+		errs = append(errs, "PAM_DOUBLELOCK_MIN_LENGTH must be between 0 (use the default) and 1024")
+	}
 	// The origin a proof is checked against must be an ORIGIN. A value with a
 	// path, a query or a missing scheme would silently never match any request,
 	// refusing every bound agent with nothing in the config to point at.

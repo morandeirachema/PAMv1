@@ -55,7 +55,7 @@ func OneLine(s string) string {
 // character that turns text into structure here, so escaping it (after Field's
 // quoting and bounding) closes the whole class.
 func Value(s string, limit int) string {
-	return strings.ReplaceAll(Field(s, limit), ":", `:`)
+	return strings.ReplaceAll(Field(s, limit), ":", `\x3a`)
 }
 
 func Field(s string, limit int) string {

@@ -376,7 +376,7 @@ func (s *Server) getScimUser(w http.ResponseWriter, r *http.Request, _ *store.Sc
 		scimStoreError(w, err)
 		return
 	}
-	if !s.scimInScope(w, u) {
+	if !s.scimInScope(r.Context(), w, u) {
 		return
 	}
 	writeJSON(w, http.StatusOK, scimUserFromStore(u))
@@ -404,7 +404,7 @@ func (s *Server) replaceScimUser(w http.ResponseWriter, r *http.Request, key *st
 		scimStoreError(w, err)
 		return
 	}
-	if !s.scimInScope(w, u) {
+	if !s.scimInScope(r.Context(), w, u) {
 		return
 	}
 	if in.UserName != "" && in.UserName != u.Username {
@@ -466,7 +466,7 @@ func (s *Server) patchScimUser(w http.ResponseWriter, r *http.Request, key *stor
 		scimStoreError(w, err)
 		return
 	}
-	if !s.scimInScope(w, u) {
+	if !s.scimInScope(r.Context(), w, u) {
 		return
 	}
 	var newActive *bool
@@ -527,13 +527,23 @@ func (s *Server) patchScimUser(w http.ResponseWriter, r *http.Request, key *stor
 // machine credential held by an IdP connector; it manages ordinary user
 // lifecycle, and deprovisioning a pre-existing local user is a documented,
 // intended flow (see TestScimDeactivateBlocksAccess). What it must NOT do is
-// touch an ADMIN — reactivating one an operator deliberately deactivated would
-// restore a privileged bearer token the kill switch was meant to revoke, and
-// deactivating one is a DoS on privileged human access (2026-08-26 audit, F-5).
-// Admin lifecycle is not delegated to an IdP connector. Out of scope answers
-// 404, the SCIM convention for a resource the caller may not see.
-func (s *Server) scimInScope(w http.ResponseWriter, u *store.User) bool {
-	if auth.Role(u.Role) == auth.RoleAdmin {
+// touch a PRIVILEGED user — reactivating one an operator deliberately
+// deactivated restores a privileged bearer token the kill switch was meant to
+// revoke, and deactivating one is a DoS on privileged human access (2026-08-26
+// audit, F-5). Out of scope answers 404, the SCIM convention for a resource the
+// caller may not see.
+//
+// "Privileged" is the EFFECTIVE-CAPABILITY test, not the role string: u.Role
+// holds either a built-in role or a custom profile name, so a first cut that
+// compared against "admin" would have let a connector touch a user whose
+// profile carries manage_users or unlimited_vault_access without being the
+// built-in admin. The role/profile is resolved to its capability set and
+// refused if it can administer users or holds the vault override. A profile
+// that cannot be resolved (an unreadable store, a deleted profile) fails
+// closed — an unknown privilege level is treated as privileged.
+func (s *Server) scimInScope(ctx context.Context, w http.ResponseWriter, u *store.User) bool {
+	prin, err := s.resolver.PrincipalForRole(ctx, u.Username, u.Role)
+	if err != nil || prin.IsAdmin() || prin.Can(auth.CapManageUsers) || prin.Can(auth.CapUnlimitedVaultAccess) {
 		scimWriteError(w, http.StatusNotFound, "no such SCIM-manageable user")
 		return false
 	}
@@ -583,7 +593,7 @@ func (s *Server) deleteScimUser(w http.ResponseWriter, r *http.Request, key *sto
 		scimStoreError(w, err)
 		return
 	}
-	if !s.scimInScope(w, u) {
+	if !s.scimInScope(r.Context(), w, u) {
 		return
 	}
 	if err := s.store.UpdateUserActive(r.Context(), id, false); err != nil {

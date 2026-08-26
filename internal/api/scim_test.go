@@ -344,4 +344,27 @@ func TestScimCannotTouchAdmin(t *testing.T) {
 	if got, _ := st.GetUser(context.Background(), admin.ID); got == nil || !got.Active {
 		t.Fatal("the admin was modified by a SCIM write")
 	}
+
+	// A custom PROFILE with admin-equivalent capabilities is privileged too,
+	// even though its role string is not "admin". The guard resolves effective
+	// capabilities, not the role name — a first cut that compared against
+	// "admin" would have missed this.
+	privTok := seedProfileUser(t, srv, "superuser", "carol-priv", "read_inventory", "manage_users")
+	_ = privTok
+	var privID int64
+	if users, err := st.ListUsers(context.Background(), 0, 0); err == nil {
+		for _, u := range users {
+			if u.Username == "carol-priv" {
+				privID = u.ID
+			}
+		}
+	}
+	if privID == 0 {
+		t.Fatal("could not find the privileged-profile user")
+	}
+	if code, d := scimDo(t, srv, http.MethodPatch, "/scim/v2/Users/"+itoa(privID), scimTok, map[string]any{
+		"Operations": []map[string]any{{"op": "Replace", "value": map[string]any{"active": false}}},
+	}); code != http.StatusNotFound {
+		t.Fatalf("SCIM deactivated a user with a manage_users profile: %d %s, want 404", code, d)
+	}
 }
