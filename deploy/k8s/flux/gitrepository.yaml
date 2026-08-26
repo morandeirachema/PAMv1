@@ -14,4 +14,4 @@ spec:
     # Pin a tag rather than tracking a branch: a GitOps controller following
     # `main` deploys whatever lands there, which is the supply-chain problem the
     # signed releases exist to avoid.
-    tag: v0.57.1
+    tag: v0.58.0

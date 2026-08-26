@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–212 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–214 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,97 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 214 — v0.58.0 ✅
+
+Releases **212 and 213** — and 212 is the reason this release is due at all: a
+CRITICAL (an unauthenticated ~2 GiB allocation on the PostgreSQL proxy, ahead of
+the rate limiter) and five HIGHs have sat on `main` since the audit merged, and
+a fix nobody can deploy is a fix on paper. 213 is display-only.
+
+A **minor**, not a patch. v0.18.2 and v0.54.1 were patches because they moved no
+schema, route or env var; this one moves two of the three — migration
+high-water `0048` → **`0049`** and one new env var, `PAM_DOUBLELOCK_MIN_LENGTH` —
+and changes two things an operator can observe (a DoubleLock password now has a
+minimum length; the CEF/LEEF vendor field reads `PAMv1`). Four upgrade notes,
+one of which can refuse a startup.
+
+- [x] **v0.58.0** through the test-gated pipeline. `.github/` untouched since
+  v0.57.1 — checked with a diff on `release.yml` — so no rehearsal. Published
+  2026-08-26 as `ghcr.io/morandeirachema/pamv1:0.58.0` (also `latest`), digest
+  recorded once the publish workflow has run, signed and attested, with the
+  `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS` attached
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm chart
+  `version` 0.48.1 -> **0.49.0**, a minor alongside an app minor
+- [x] `store.Store` unchanged at **218**; migration high-water `0048` ->
+  **`0049`**; routes unchanged at **193**
+- [x] **The pre-release currency check found that Phase 212 had bumped every
+  `Reflects:` header without documenting itself** — the mirror image of what
+  Phase 208 found against v0.56.0: there, headers stalled behind the code; here
+  they moved while the content did not, which is the harder drift to see because
+  a sweep keyed on the header range reports it current. `PAM_DOUBLELOCK_MIN_LENGTH`
+  was in no document; migration `0049` was attributed to Phase 197 in
+  BACKUP-AND-RESTORE and absent from REQUIREMENTS; DoubleLock's new iteration
+  count and minimum length were in neither the ADMIN-GUIDE nor
+  PROTOCOLS-AND-CRYPTO §2.5 — which, it turned out, had never carried the
+  DoubleLock row its own Phase 135 change-log entry says it did; and neither
+  architecture doc nor CODE-GUIDE had a change-log row for 212 or 213. All
+  closed here
+- [x] **Phase 213 had no roadmap entry** and the banner still said 0–212; both
+  written here. Phase 212's three deferrals (M-6, M-3's budget half, F-7) lived
+  only in that phase's entry — they now sit in "What is left" §2 and §3 against
+  the phase that deferred them, which is that section's rule
+- [x] Both READMEs restated; every `Reflects:` header, `docs/README.md`,
+  `NIS2-COMPLIANCE.md`'s evidence row and this banner
+- [x] `CHANGELOG.md` leads with **the CRITICAL and why it was reachable** — a
+  library default of "no bound" and a limiter that ran after the read — and the
+  upgrade note that can refuse a startup (two active agent keys sharing a name
+  fail migration `0049`) comes before anything else an operator must do
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
+
+## Phase 213 — The name reads `PAMv1`; the identifiers stay `pamv1` ✅
+
+The product presents itself as **PAMv1** everywhere the string reads as a name:
+prose in both READMEs and every doc, portal and browser-extension text, Go doc
+comments, error/log display strings, IaC-export and transcript headers, the
+alert e-mail subject, the syslog tag default, the CEF/LEEF vendor field, the
+OCSF `product`, and the TOTP issuer.
+
+Every **technical identifier stays lowercase**, because it must: the Go module
+path (`github.com/morandeirachema/pamv1`, 829 imports), the container image
+(OCI names are lowercase), every Kubernetes/Helm resource name, label and
+namespace and the chart name, env-var *values* (`PGDATABASE=pamv1`), the
+SSH-certificate KeyID `pamv1:<actor>@<target>`, the SAML EntityID URN, the
+Conjur policy-prefix default (a lookup path that must match real variable
+names), hostnames, SPIFFE-style IDs, and the server-side-apply field manager (a
+machine ownership identifier with upgrade implications).
+
+- [x] Done by a context-aware replacer — a word regex that excludes slash-,
+  colon- and `!`-adjacent tokens and any `key: value` / `key=value` identifier
+  line — then verified: zero import paths, image references, cert KeyIDs, SAML
+  URNs, Kubernetes names, hostnames or `go.mod` lines changed
+- [x] **The suite caught three over-reaches**, each reverted or fixed: the two
+  Conjur policy-prefix defaults (lookup paths, back to lowercase) and a WinRM
+  test that counted `A` bytes and was thrown off because the marker `[PAMv1:`
+  now contains one (made marker-robust)
+- [x] **Helm lint caught the fourth**, after the first PR revision had renamed
+  functional identifiers: 63 `deploy/`, workflow, shell, systemd, Terraform and
+  (immutable) SQL-migration files restored to their pre-rename state, and the
+  functional tokens embedded in doc *command* examples (`-n pamv1`, `helm
+  install pamv1`, the SoftHSM `--label`, the field manager — reverted in code,
+  test and docs together) put back. `PAMv1` now appears in zero Helm, k8s,
+  workflow, shell, Terraform, service or SQL files and in zero command-value
+  positions in the docs
+- [x] **Two things an operator can observe changed**, and v0.58.0's upgrade
+  notes say so: the CEF/LEEF vendor field, the OCSF `product` and the syslog
+  tag default now read `PAMv1` (a SIEM rule keyed case-sensitively on the old
+  literal needs the new one), and a TOTP factor enrolled from now on is
+  labelled `PAMv1` in the authenticator app (existing enrollments are
+  unaffected — the issuer is a label in the provisioning URI, not part of the
+  secret)
+- [x] No schema, route, env-var or `store.Store` change (218 / `0049` / 193,
+  as Phase 212 left them); `archgen` regenerated for the diagram heading
 
 ## Phase 212 — The security audit, and every finding it could reach ✅
 
@@ -9607,6 +9698,12 @@ last to hold, and now does:
   EOF, oversized length, garbage, `ready` without a connection id) all surface
   as errors; and `oidc.Discover` resolves endpoints (trailing slash included)
   and errors on unreachable or malformed metadata.
+- **Twenty store methods absent from the pgstore contract suite** (212, the
+  2026-08-26 audit's M-6) — ⬜ open. Test-coverage debt, not a live defect:
+  the methods work and are exercised through handler tests against both
+  backends; what is missing is the contract suite's guarantee that memstore
+  and pgstore agree on each one's edge behaviour. Purely additive, and
+  sizable, which is why the audit phase deferred it rather than half-doing it.
 
 #### 3. Feature follow-ons, in process
 
@@ -9695,6 +9792,20 @@ Buildable without external infrastructure, each deferred by the phase named.
   back out of the cluster. Building what the docs described also turned up the
   quickstart bug where `kubectl apply -f deploy/k8s/` overwrote the secret you
   had just created with `CHANGE_ME`.
+- **Atomic budget reservation for agent calls** (212, audit M-3's second
+  half) — ⬜ open. Migration `0049` closed the name half (two active keys can
+  no longer share a name and pool one budget under two limits); the
+  count-then-call shape of the per-day budget and the per-token ceiling
+  remains a check-then-act, so a concurrent burst at the boundary can
+  over-run by the burst's width. Closing it is a new compare-and-spend store
+  primitive — a design change, not a fix — and the per-minute rate limit
+  already bounds the burst, so the residual is small.
+- **Bind a broker resume token to its collector** (212, audit F-7) — ⬜
+  open. A resume token is single-use bearer by explicit design and call ids
+  are 96-bit random, so this is defence-in-depth rather than a live hole;
+  binding it to the identity that parked the call needs a schema column and
+  a decision about which identity to bind (agent key, SVID `jti`, or `cnf`
+  thumbprint).
 
 #### 3b. The AI-agent broker batch (2026-08-17/18 research)
 

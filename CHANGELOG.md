@@ -9,6 +9,123 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.58.0] — 2026-08-26
+
+A minor that ships a **security audit's fixes**: one CRITICAL, five HIGH and every
+MEDIUM but one, from a five-pass read-only audit of v0.57.1 whose redacted record
+is `SECURITY-AUDIT-2026-08-26.md`. Migration high-water `0048` → **`0049`**,
+**one new env var**, no new route — and **four upgrade notes, the first of which
+can refuse a startup**. Read those before pulling the image.
+
+The CRITICAL is the one to understand. The PostgreSQL proxy reads its wire
+protocol through `pgproto3`, whose default message-body bound is *none*, and the
+proxy never set one — so an unauthenticated peer could declare a ~2 GiB password
+body, and the connection rate limiter, which ran *after* that read, never saw it.
+Nothing was wrong in the cryptography or the authorization model; the audit's
+dominant theme was **entry points that re-implemented a check and drifted from
+the canonical one**, and four of the defects were introduced by v0.56.0 and
+v0.57.0 themselves — which is the strongest argument for the audit having
+happened. The fixes are mostly one function called everywhere rather than new
+machinery, and each carries a regression test, most pinned by mutation.
+
+### Fixed
+
+- **C-1 — unauthenticated ~2 GiB allocation on the PostgreSQL proxy.** The
+  `pgproto3` backend is now built by a constructor that cannot forget the bound:
+  64 KiB before authentication (a password is the only message an unauthenticated
+  peer may send), 64 MiB in session (query text, bind parameters, COPY data). The
+  rate limiter runs before the first read.
+- **H-1/H-2 — narrow-scope tokens opened the sessions they existed to prevent.**
+  A leaked browser-extension token opened SSH, database and desktop sessions, and
+  an `mfa_pending` token opened a desktop, because four entry points each
+  re-implemented "is this token narrow?" over a different subset of the scope
+  fields. One `auth.Principal.MayOpenSession`, called by both proxies, the desktop
+  and the viewer tunnel — a whitelist of two (a full session, or exactly the scope
+  that door is for), so a scope added later is refused by construction.
+- **H-3 — DoubleLock.** The second password guards `DoubleLockEnc`, a copy of the
+  secret deliberately outside the vault KEK — and it was checked only for being
+  non-empty, at 100 000 PBKDF2 iterations. Now: a **minimum length of 16**
+  (`PAM_DOUBLELOCK_MIN_LENGTH` raises it; nothing lowers it), **600 000
+  iterations** (the OWASP figure), and the count stored per record so every
+  existing lock still opens at the count it was sealed with.
+- **H-4/H-5 — the SQL Server broker's per-statement audit could be forged.** A
+  128-character parameter name was read as a batch separator (the statement was
+  never recovered, and still executed), and `sp_executesql` audited the wrong
+  parameter. Both fixed and mutation-pinned.
+- **The four defects v0.56.0 and v0.57.0 introduced** (T-1..T-4): the per-token
+  ceiling never counted calls routed through approval — the resume handlers never
+  wrote the field the count searches for, so an agent routing calls through
+  approval was charged nothing (one shared `resumeDetail` on both transports now);
+  the token exchange never checked the actor token's `cnf`, so a captured bound
+  token could buy its victim's identity; the replay cache's per-replica scope was
+  undocumented; and `PAM_BROKER_PUBLIC_URL` did not actually refuse startup
+  without its prerequisite, though four documents said it did.
+- **M-1/M-2 — audit-detail injection.** `auditfmt.Field` quotes but does not
+  escape colons, so five wire-sourced values (the SSH subsystem name, both DB
+  proxies' database name, the resolve reason, the login actor) could forge
+  `key:value` pairs into the trail that the playback tamper check and the SIEM
+  forwarder parse. New `auditfmt.Value` generalises the fix the SFTP path handler
+  already used.
+- **M-4** — a racing approve could overwrite a final deny; decisions are now
+  compare-and-set on `pending` in both backends. **M-5** — personal-safe privacy
+  was bypassable three ways by a plain target manager (reassign the safe, delete
+  it, self-grant); one fail-closed guard covers all three. **M-7** — SFTP
+  `SSH_FXP_LINK` checked neither path and `SSH_FXP_SYMLINK` only one, so a link
+  laundered a denied path; both paths of both ops are checked in every mode.
+  **M-8** — channels per authenticated SSH connection capped at 64. **F-5** — a
+  SCIM connector could deactivate or reactivate an admin; admin lifecycle is not
+  delegated to an IdP, and the swallowed activation error now surfaces. **F-8** —
+  scope refusals in the authenticated middleware now audit as `authz.denied`.
+  Plus a bound on the upstream SCRAM iteration count (600 000) and a case-folded
+  private-JWK check.
+
+### Added
+
+- **`PAM_DOUBLELOCK_MIN_LENGTH`** (default `0` = the built-in floor of 16,
+  maximum `1024`): minimum length of a DoubleLock password at enable time. It can
+  raise the floor and never lower it — a misconfiguration cannot weaken the
+  control below what the audit set.
+- **Migration `0049`** — a partial unique index, `agent_keys_active_name_unique`:
+  at most one *active* agent key per name. The per-agent budget and the audit
+  actor key on the name, and only the token hash was unique, so two keys could
+  share a name and pool one usage count under two different `budget_per_day`
+  limits with indistinguishable audit rows. Revoking a key and minting a fresh
+  one under the same name still works; the revoked row is outside the index.
+
+### Changed
+
+- **The product's display name is `PAMv1`.** Prose, portal and extension text,
+  doc comments, error and log display strings, transcript and IaC-export headers,
+  the alert e-mail subject, the syslog tag default, the CEF/LEEF vendor field, the
+  OCSF `product` and the TOTP issuer. Every machine identifier stays `pamv1` —
+  module path, image name, Kubernetes/Helm names and labels, env-var values, the
+  SSH-certificate KeyID, the SAML EntityID, hostnames — because those must.
+- **Documentation currency.** The audit phase had bumped every `Reflects:` header
+  without documenting itself: `PAM_DOUBLELOCK_MIN_LENGTH` was in no document,
+  migration `0049` was attributed to the wrong phase in one doc and absent from
+  another, and the DoubleLock hardening was recorded nowhere an operator reads.
+  All closed in this release.
+
+### Upgrade notes
+
+1. **Migration `0049` refuses to apply — and the server refuses to start — if
+   two *active* agent keys share a name.** Before upgrading, check
+   `SELECT name, count(*) FROM agent_keys WHERE disabled = FALSE GROUP BY name
+   HAVING count(*) > 1;` and disable (revoke) all but one of each set. A
+   deployment that never minted two keys under one name is unaffected, and a
+   fresh install has nothing to check.
+2. **A new DoubleLock password must be at least 16 characters.** Locks already
+   set keep working unchanged — they open at the iteration count they were
+   sealed with; only *enabling* DoubleLock is gated. To reseal an existing lock
+   at 600 000 iterations, disable and re-enable it.
+3. **SIEM rules keyed on the vendor field.** CEF and LEEF lines now carry
+   `PAMv1` where they carried `pamv1`, the syslog tag default follows, and the
+   OCSF `product.name` / `vendor_name` likewise; a rule that matches the old
+   literal case-sensitively needs the new one.
+4. A TOTP factor enrolled from now on is labelled `PAMv1` in the authenticator
+   app. Existing enrollments are unaffected — the issuer is a label in the
+   provisioning URI, not part of the secret.
+
 ## [0.57.1] — 2026-08-26
 
 **A version bump with no functional change.** Cut deliberately, on request, and
@@ -2369,7 +2486,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.57.1...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.0...HEAD
+[0.58.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.58.0
 [0.57.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.57.1
 [0.57.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.57.0
 [0.56.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.56.0
