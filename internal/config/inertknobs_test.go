@@ -57,6 +57,23 @@ func TestInertBrokerKnobsFailStartup(t *testing.T) {
 		// every key-bound agent would be refused with nothing in the config to
 		// point at. Refuse the value instead of the traffic.
 		{
+			"a per-token ceiling with no broker",
+			map[string]string{"PAM_BROKER_MAX_CALLS_PER_TOKEN": "10"},
+			"PAM_BROKER_MAX_CALLS_PER_TOKEN needs the agent broker enabled",
+		},
+		{
+			"a negative ceiling",
+			map[string]string{"PAM_BROKER_MAX_CALLS_PER_TOKEN": "-1"},
+			"PAM_BROKER_MAX_CALLS_PER_TOKEN must be between 0 (off) and 100000",
+		},
+		{
+			// A ceiling this high is indistinguishable from none while still
+			// reading to an operator as a control.
+			"an absurd ceiling",
+			map[string]string{"PAM_BROKER_POLICY_FILE": "/tmp/p.yaml", "PAM_BROKER_MAX_CALLS_PER_TOKEN": "999999"},
+			"PAM_BROKER_MAX_CALLS_PER_TOKEN must be between 0 (off) and 100000",
+		},
+		{
 			"public url with a path",
 			map[string]string{"PAM_BROKER_PUBLIC_URL": "https://pam.example.com/broker"},
 			"must be a bare origin",

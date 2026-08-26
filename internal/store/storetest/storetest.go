@@ -2493,6 +2493,66 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if n, err := st.CountAgentToolCallsSince(ctx, "budgetbot", future); err != nil || n != 0 {
 		t.Fatalf("CountAgentToolCallsSince(budgetbot, future) = %d (err %v), want 0", n, err)
 	}
+
+	// --- per-TOKEN ceiling (Phase 209) ---
+	//
+	// The same trail, grouped by the presented token's `jti` instead of by the
+	// agent. Every row below is written with the field the API actually writes,
+	// through store.AgentTokenAuditField, so this contract fails if a backend
+	// searches for something the writer never produces.
+	tokenRows := []store.AuditEvent{
+		{Actor: "tokenbot", Action: store.AuditActionToolCallExecuted,
+			Detail: "tool:\"ssh_exec\"" + store.AgentTokenAuditField("tok-aaa")},
+		{Actor: "tokenbot", Action: store.AuditActionToolCallResumed,
+			Detail: "tool:\"ssh_exec\"" + store.AgentTokenAuditField("tok-aaa")},
+		// A second token's spend is not the first token's — this is the whole
+		// point of the method: a fresh token starts with a fresh ceiling.
+		{Actor: "tokenbot", Action: store.AuditActionToolCallExecuted,
+			Detail: "tool:\"ssh_exec\"" + store.AgentTokenAuditField("tok-bbb")},
+		// Same jti, different agent: must not be counted, or one agent could
+		// spend another's ceiling by quoting its token id.
+		{Actor: "tokenbot2", Action: store.AuditActionToolCallExecuted,
+			Detail: "tool:\"ssh_exec\"" + store.AgentTokenAuditField("tok-aaa")},
+		// A refusal carrying the same token does not count, exactly as it does
+		// not for the daily budget: a ceiling measures work done, not work
+		// refused.
+		{Actor: "tokenbot", Action: "broker.tool_call.denied",
+			Detail: "tool:\"ssh_exec\"" + store.AgentTokenAuditField("tok-aaa")},
+		// A jti that is a strict PREFIX of another must not match it. This is
+		// what the quoting in AgentTokenAuditField buys: the field is delimited,
+		// so "tok-a" cannot match inside "tok-aaa".
+		{Actor: "tokenbot", Action: store.AuditActionToolCallExecuted,
+			Detail: "tool:\"ssh_exec\"" + store.AgentTokenAuditField("tok-a")},
+	}
+	for i := range tokenRows {
+		if err := st.AppendAudit(ctx, &tokenRows[i]); err != nil {
+			t.Fatalf("AppendAudit(token row %d): %v", i, err)
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		agent string
+		jti   string
+		want  int
+	}{
+		{"executed + resumed for one token", "tokenbot", "tok-aaa", 2},
+		{"a second token has its own count", "tokenbot", "tok-bbb", 1},
+		{"another agent's rows are not counted", "tokenbot2", "tok-aaa", 1},
+		{"a prefix jti matches only itself", "tokenbot", "tok-a", 1},
+		{"an unknown token has spent nothing", "tokenbot", "tok-zzz", 0},
+		// A static agent key carries no token id. Answering 0 is correct, not a
+		// fallback: its ceiling is the per-day budget on its own key row.
+		{"an empty jti counts nothing", "tokenbot", "", 0},
+	} {
+		if n, err := st.CountAgentCallsForTokenSince(ctx, tc.agent, tc.jti, budgetSince); err != nil || n != tc.want {
+			t.Errorf("CountAgentCallsForTokenSince(%s, %q): %s = %d (err %v), want %d",
+				tc.agent, tc.jti, tc.name, n, err, tc.want)
+		}
+	}
+	// The window applies here too: nothing is counted before it starts.
+	if n, err := st.CountAgentCallsForTokenSince(ctx, "tokenbot", "tok-aaa", future); err != nil || n != 0 {
+		t.Fatalf("CountAgentCallsForTokenSince(future) = %d (err %v), want 0", n, err)
+	}
 	// Per-agent, not global.
 	if n, err := st.CountAgentToolCallsSince(ctx, "otherbot", past); err != nil || n != 1 {
 		t.Fatalf("CountAgentToolCallsSince(otherbot) = %d (err %v), want 1", n, err)
