@@ -953,6 +953,29 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("ListAccessRequests(after=last): %d err %v", len(reqs), err)
 	}
 
+	// --- decision is compare-and-set on pending (2026-08-26 audit, M-4) ---
+	// A decided request cannot be re-decided: the concurrency guarantee the
+	// handler's read-then-write cannot make on its own. Both DecideAccessRequest
+	// and SetApprovalState refuse a non-pending row with ErrConflict, so a
+	// racing approve can never overwrite a deny.
+	casAR := &store.AccessRequest{Requester: "erin", TargetID: tgt.ID, Reason: "cas", Status: "pending", ExpiresAt: future}
+	if err := st.CreateAccessRequest(ctx, casAR); err != nil {
+		t.Fatalf("CreateAccessRequest(cas): %v", err)
+	}
+	if err := st.DecideAccessRequest(ctx, casAR.ID, "denied", "frank", now); err != nil {
+		t.Fatalf("first decision (deny): %v", err)
+	}
+	// A second decision — the racing approve — must be refused, not silently win.
+	if err := st.DecideAccessRequest(ctx, casAR.ID, "approved", "grace", now); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("re-deciding a denied request returned %v, want ErrConflict", err)
+	}
+	if err := st.SetApprovalState(ctx, casAR.ID, "grace", "approved", "grace", &now); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("SetApprovalState on a denied request returned %v, want ErrConflict", err)
+	}
+	if a, _ := st.GetAccessRequest(ctx, casAR.ID); a.Status != "denied" || a.Approver != "frank" {
+		t.Fatalf("the deny was overwritten by a racing approve: %+v", a)
+	}
+
 	// --- access request recurrence (Phase 120) ---
 	//
 	// Mirrors the campaign recurrence section above exactly: an anchor must be

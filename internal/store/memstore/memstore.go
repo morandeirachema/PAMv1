@@ -827,6 +827,10 @@ func (m *Memstore) SetApprovalState(_ context.Context, id int64, approvedBy, sta
 	if !ok {
 		return store.ErrNotFound
 	}
+	// CAS on pending, matching pgstore (2026-08-26 audit, M-4).
+	if ar.Status != "pending" {
+		return store.ErrConflict
+	}
 	ar.ApprovedBy = approvedBy
 	ar.Status = status
 	ar.Approver = approver
@@ -878,6 +882,12 @@ func (m *Memstore) DecideAccessRequest(_ context.Context, id int64, status, appr
 	ar, ok := m.accessReq[id]
 	if !ok {
 		return store.ErrNotFound
+	}
+	// Compare-and-set on pending, matching pgstore (2026-08-26 audit, M-4): a
+	// request already decided cannot be re-decided, so a racing approve can no
+	// longer overwrite a deny.
+	if ar.Status != "pending" {
+		return store.ErrConflict
 	}
 	ar.Status = status
 	ar.Approver = approver

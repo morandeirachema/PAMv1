@@ -605,6 +605,12 @@ func (p *Proxy) Serve(ctx context.Context, ln net.Listener) error {
 // while an operator reads output.
 const handshakeTimeout = 120 * time.Second
 
+// maxChannelsPerConn caps concurrently-open channels on one authenticated SSH
+// connection (2026-08-26 audit, M-8). Real clients open a handful — one session,
+// maybe a few forwards — so 64 never constrains legitimate use while bounding an
+// fd/disk-exhaustion attack from an authorized-but-hostile or runaway client.
+const maxChannelsPerConn = 64
+
 // handleConn completes the SSH handshake and runs every authorization gate in
 // order (enrollment, role CapConnect, target/credential resolution, per-target
 // grants and the approval gate) before dialing the upstream with the
@@ -831,18 +837,36 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		}
 	}()
 
+	// Cap concurrently-open channels per connection (2026-08-26 audit, M-8).
+	// The session gate (session.Registry.AllowNew) counts SESSIONS, once per
+	// connection; the channel loop below accepted an UNBOUNDED number of them,
+	// and each session channel spawns goroutines and opens a recording file and
+	// fd. One authorized operator connection could exhaust file descriptors or
+	// disk. The cap is generous — real clients open a handful — so it never
+	// bites legitimate use, only a runaway or hostile client.
+	var live atomic.Int32
 	var wg sync.WaitGroup
 	for nc := range chans {
 		switch nc.ChannelType() {
 		case "session":
+			if live.Load() >= maxChannelsPerConn {
+				nc.Reject(ssh.ResourceShortage, "pamv1: too many concurrent channels")
+				continue
+			}
 			interactive.Store(true)
+			live.Add(1)
 			wg.Add(1)
 			go func(nc ssh.NewChannel) {
 				defer wg.Done()
+				defer live.Add(-1)
 				defer recoverPanicLog(p.log, "session")
 				p.handleSession(ctx, nc, upstream, target, cred, actor, observe, principal.BreakGlass, sid)
 			}(nc)
 		case "direct-tcpip":
+			if live.Load() >= maxChannelsPerConn {
+				nc.Reject(ssh.ResourceShortage, "pamv1: too many concurrent channels")
+				continue
+			}
 			// Phase 141: ssh -L style forwarding, scoped to the target's own
 			// host only. None of observe/RequireSupervision/RequireRecording
 			// have a mechanism that covers a raw forward, so each refuses it
@@ -857,9 +881,11 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 			case p.requireRec:
 				nc.Reject(ssh.Prohibited, "pamv1: port forwarding is unavailable when session recording is required")
 			default:
+				live.Add(1)
 				wg.Add(1)
 				go func(nc ssh.NewChannel) {
 					defer wg.Done()
+					defer live.Add(-1)
 					defer recoverPanicLog(p.log, "forward")
 					p.handleDirectTCPIP(ctx, nc, upstream, target, actor)
 				}(nc)
