@@ -2450,8 +2450,21 @@ is the release** — the same source, one pipeline fix, every pin moved to it.
 - [x] **v0.58.1** through the test-gated pipeline, **rehearsed first** with the
   `workflow_dispatch` build, because this time `.github/` did change. Published
   2026-08-26 as `ghcr.io/morandeirachema/pamv1:0.58.1` (also `latest`), digest
-  recorded once the publish workflow has run, signed and attested, with the
-  `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS` attached
+  `sha256:67e9ee722b35904e55f96828bc5338f09a66e7f3c1b2cf25bd1568232818bb7b`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
+  digest), signed and attested — every publishing step's own conclusion
+  `success` — with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS`
+  attached
+- [x] **The README's `cosign verify` was run against the published image, not
+  assumed.** With the pre-rename lowercase identity regexp it fails (`rc=1`,
+  no matching signature); with `morandeirachema/PAMv1` spelled as the
+  repository now is, and with the shipped `(?i)` form, it passes — so the
+  certificate identity does carry the repository's case, and the README's old
+  command would have told a verifier that v0.58.1 was unsigned. `cosign
+  verify-attestation --type spdxjson` passes the same way. `gh attestation
+  verify` could not be run from this machine (the packaged `gh` 2.46 predates
+  the subcommand); the SLSA step's own `success` conclusion stands for it, as
+  Phase 210 established
 - [x] **The image name is lowercased once and refused if it is not.** A first
   step in the release job writes `IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}` and
   exits non-zero on any uppercase survivor; it runs in the rehearsal too, so a

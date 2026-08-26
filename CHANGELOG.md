@@ -43,11 +43,18 @@ manifest pins. Everything the `[0.58.0]` entry below describes ships here.
 Helm chart `0.49.0` → `0.49.1`, a patch alongside an app patch. No Go source,
 schema, route or env var changed between `v0.58.0` and this tag.
 
+**Digests.** 0.58.1 is `sha256:67e9ee72…` (the full value is in the README and on the
+release page); the unsigned image under 0.58.0 is `sha256:77c8dba0…`. They differ,
+as the v0.57.1 note explains any two builds here will, and the second one is how
+to recognise the image not to run: `docker inspect --format '{{index .RepoDigests 0}}'`
+on what you have deployed.
+
 ## [0.58.0] — 2026-08-26 · unsigned image only, superseded by 0.58.1
 
 > **Do not deploy `0.58.0`.** Its pipeline failed after the image push and before
 > the SBOM, signature, attestations and GitHub Release — see `[0.58.1]` above,
-> which ships exactly the content described here, verified.
+> which ships exactly the content described here, verified. The unsigned image's
+> digest is `sha256:77c8dba0633738545af269508dd37188bfafb8aee0a1c1608efa5975916b252b`.
 
 A minor that ships a **security audit's fixes**: one CRITICAL, five HIGH and every
 MEDIUM but one, from a five-pass read-only audit of v0.57.1 whose redacted record
