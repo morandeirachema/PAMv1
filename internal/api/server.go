@@ -1458,22 +1458,29 @@ func (s *Server) authenticated(next http.HandlerFunc) http.Handler {
 		// low-sensitivity endpoints any signed-in identity may call (/me, /logout,
 		// /mfa/*), so an emergency-key holder never acts entirely unrecorded.
 		s.noteBreakGlass(ctx, p, r)
-		if p.TunnelOnly {
-			writeError(w, http.StatusForbidden, "this token is only valid for the RDP tunnel")
-			return
+		// A narrow-scope token reaching an authenticated-only route is refused,
+		// AND recorded (2026-08-26 audit, F-8): authzCore audits every equivalent
+		// refusal, and a leaked scoped token probing /me left no trace here. The
+		// reason slug matches the one the proxies and the tunnel use for the same
+		// scope, so the trail reads consistently wherever the refusal happened.
+		// A narrow-scope token reaching an authenticated-only route is refused,
+		// AND recorded (2026-08-26 audit, F-8): a leaked scoped token probing /me
+		// left no trace here, unlike authzCore. EnrollOnly is deliberately NOT in
+		// this set — an enrollment session must still reach /api/mfa/* to finish
+		// setup, exactly as before; only the three fully-out-of-scope tokens are
+		// refused. The reason slugs match the proxies' and the tunnel's.
+		reason, msg := "", ""
+		switch p.NarrowScope() {
+		case auth.ScopeTunnelOnly:
+			reason, msg = "tunnel-only-token", "this token is only valid for the RDP tunnel"
+		case auth.ScopeMFAPending:
+			reason, msg = "mfa-webauthn-pending", "complete WebAuthn sign-in to continue"
+		case auth.ScopeExtensionOnly:
+			reason, msg = "extension-scoped-token", "this token is only valid for the extension reveal endpoint"
 		}
-		if p.MFAPending {
-			// Narrower than EnrollOnly (which /api/mfa/* still accepts): this
-			// token exists only to finish the pending WebAuthn login ceremony,
-			// via mfaPendingOnly — not /me, /logout, or self-service MFA.
-			writeError(w, http.StatusForbidden, "complete WebAuthn sign-in to continue")
-			return
-		}
-		if p.ExtensionOnly {
-			// No authenticated-only route (/me, /logout, ...) is the reveal
-			// endpoint, so an extension token is refused here unconditionally —
-			// authzExtOK, not authenticated, is the one exception this scope gets.
-			writeError(w, http.StatusForbidden, "this token is only valid for the extension reveal endpoint")
+		if reason != "" {
+			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:"+reason)
+			writeError(w, http.StatusForbidden, msg)
 			return
 		}
 		next(w, r.WithContext(ctx))
