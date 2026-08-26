@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–214 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–215 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2419,6 +2419,79 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 215 — The second audit, one day after the first ✅
+
+A fresh five-pass read-only audit over **v0.58.1** — the tree as released, one
+day after Phase 212's fixes shipped — asked on the day and recorded in
+`docs/SECURITY-AUDIT-2026-08-27.md`: the CI gates plus `gosec` at medium
+confidence, `staticcheck -checks all`, `golangci-lint` with every linter, the
+four fuzzers and the race suite; a grep sweep of the classic vulnerability
+classes; then the authn/authz paths, every bearer surface and the data paths
+read by hand. **Two HIGH, one MEDIUM, three LOW — none in the code Phase 212
+had just fixed, all beside it.** Every one fixed here with a regression test,
+each pinned by mutation.
+
+The cryptography, the vault envelope, the sixteen-gate `admit()` sequence, the
+JWT/DPoP verifiers, the OIDC/SAML callbacks and the token exchange read clean.
+Two patterns account for the findings, one of them a repeat:
+
+- [x] **A-1 (HIGH) — sessions outlived the account.** Deleting a user, SCIM-
+  deactivating one, or changing their role revoked no session, and
+  `auth.Resolve` built a session principal from the session row alone — so a
+  24-hour browser-extension token kept revealing secrets after its owner was
+  deleted, and a re-roled user kept the old role's sessions. One
+  `cutUserAccess` (login sessions + live proxied sessions, `session.revoked
+  reason:<why>`, a new `session.revoke_failed` if the delete fails) on all
+  three write paths, AND `auth.Directory` gains `GetUserByUsername` so `Resolve`
+  refuses a session whose local row is inactive, fail-closed on a lookup error.
+  Directory identities (no local row) are governed exactly as before
+- [x] **A-2 (HIGH) — the web guest's bearer key was its roster id.**
+  `streamShareGuest` tracked a guest under the raw key, so `GET
+  /api/sessions/{id}/share/roster` served every `read_audit` reader the guest's
+  live credential as `join_id`, and the kick audit wrote it into the trail — a
+  supervisor could watch as the guest or, for `view_control`, type as the
+  guest. Tracked under `session.GuestJoinID` now (the SHA-256 the registry has
+  keyed on since Phase 212), `Kick` revokes by it, and the id resolves to
+  nothing as a key
+- [x] **A-3 (MED) — a session principal carried no IP allowlist or device
+  binding.** Only the per-user-token path copied them, so the ADMIN-GUIDE's
+  "enforced everywhere that principal authenticates" was false for every
+  session token. The row read A-1 adds carries both
+- [x] **A-4/A-5 (LOW-MED/LOW) — two more self-resolving doors with a shorter
+  checklist**, the 2026-08-26 audit's H-1/H-2 shape: the `authenticated`
+  middleware (`/me`, `/logout`, MFA enrollment — a token outside its allowlist
+  could still enroll a second factor) and the RDP/VNC viewer tunnel ran neither
+  the IP allowlist nor the device/posture gates `authz` and `admit()` run. One
+  `Server.sourceGates`, called by all three, so a gate added to the middleware
+  cannot miss the other two doors
+- [x] **A-6 (LOW) — personal-safe integrity.** Phase 212's M-5 closed the
+  privacy bypasses; a plain `manage_targets`/`manage_credentials` profile could
+  still plant a credential on, delete a credential of, or delete a target in
+  someone else's personal safe. `guardPersonalTargetWrite` (owner, `can_manage`
+  member, override, or a built-in admin — who provisions those safes) on all
+  three
+- [x] **Assessed and left alone, with reasons in the report:** the alert
+  goroutine's `context.Background()` (deliberate — its own timeout, not the
+  request's), and ~780 `errcheck` hits that are `Close`/`Reply`/`Fprint` or
+  *denial* audits on paths whose success side is already fail-closed
+- [x] **The live-Postgres suite did not run on the audit machine** — no Docker
+  daemon, podman or PostgreSQL binary — and the report says so; CI's `pgstore`
+  job covers it on this phase's PR as it did on #350–#352
+- [x] **The 2026-08-26 report moved under `docs/`** — the repo root keeps its
+  fixed file set — with the two deferrals (M-6, F-7) that were in its prose but
+  not its table added as rows, and its header naming the release that shipped
+  its fixes. Both reports are indexed in `docs/README.md` and linked from
+  `SECURITY.md`
+- [x] **Three documented claims corrected where the audit found them false:**
+  the allowlist's "everywhere", SCIM's "deactivation actually cuts access", and
+  the low-level doc's "`join_id` and guest key are the same string" — plus
+  PROTOCOLS §2.5's guest-key row, which still said "not hashed" three phases
+  after Phase 212 hashed it
+- [x] No schema, route or env-var change; `store.Store` unchanged at **218**,
+  routes at **193**; one new audit action (`session.revoke_failed`) and a
+  `reason:` field on `session.revoked`. The full gate sweep and the race suite
+  pass
+
 ## Phase 214 — v0.58.0, and v0.58.1 because a tag is not free to move ✅
 
 Releases **212 and 213** — and 212 is the reason this release is due at all: a
@@ -2571,7 +2644,7 @@ re-verified against the code by hand before any fix. It found one CRITICAL, five
 HIGH, eight MEDIUM and a set of LOW/informational items — **including four
 defects this very session's Phases 206 and 209 had just introduced**, which is
 the strongest argument for the audit having happened at all. Full report in
-`SECURITY-AUDIT-2026-08-26.md`.
+`docs/SECURITY-AUDIT-2026-08-26.md`.
 
 Every CRITICAL, every HIGH, all four session-introduced defects, and every
 MEDIUM but one are fixed here, each with a regression test and most pinned by

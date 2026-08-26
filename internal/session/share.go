@@ -49,7 +49,7 @@ type shareSession struct {
 // JoinedParty describes one attached session-share join, for the console
 // roster and the primary operator's join notice.
 type JoinedParty struct {
-	JoinID string `json:"join_id"` // opaque id Kick targets — the SSH join's own id, or a web guest's key
+	JoinID string `json:"join_id"` // opaque id Kick targets — the SSH join's own id, or a web guest's GuestJoinID (never its key)
 	Actor  string `json:"actor"`   // "guest:<email>" for an external/vendor redemption
 	Mode   string `json:"mode"`    // view_only | view_control
 }
@@ -106,6 +106,17 @@ func guestKeyHash(key string) string {
 	sum := sha256.Sum256([]byte(key))
 	return hex.EncodeToString(sum[:])
 }
+
+// GuestJoinID is the roster/kick identifier for a web guest: the SHA-256 of
+// its bearer key, never the key itself. Until the 2026-08-27 audit
+// streamShareGuest tracked a guest under the raw key, so GET
+// /api/sessions/{id}/share/roster handed every roster reader (CapReadAudit)
+// the guest's live credential as `join_id`, and the kick audit wrote it into
+// the trail — a supervisor could read the guest's stream or, for
+// view_control, type as the guest. The hash identifies the join uniquely (it
+// is the guests map's own key) and resolves to nothing when presented as a
+// key.
+func GuestJoinID(key string) string { return guestKeyHash(key) }
 
 // IssueGuestKey mints a fresh bearer key binding a web-redeemed external
 // invite to its session, actor and mode for the remainder of its viewing.
@@ -287,9 +298,9 @@ func (r *ShareRegistry) Untrack(sid, joinID string) {
 // own deferred cleanup (Untrack, closing notices, audit) — the same
 // "close it and let the loop unwind" shape session kill already uses
 // elsewhere in this codebase, rather than reaching in and tearing down its
-// connection directly. joinID doubling as a web guest's key (see
-// IssueGuestKey — streamShareGuest Tracks under the key itself) is also
-// revoked here, so a request already in flight when Kick is called cannot be
+// connection directly. A web guest's key binding (streamShareGuest Tracks
+// under GuestJoinID, which is the guests map's own key) is also revoked
+// here, so a request already in flight when Kick is called cannot be
 // followed by a new one even if it raced the closed channel. Reports whether
 // a matching join was found.
 func (r *ShareRegistry) Kick(sid, joinID string) bool {
@@ -305,8 +316,9 @@ func (r *ShareRegistry) Kick(sid, joinID string) bool {
 	delete(ss.joined, joinID)
 	ss.mu.Unlock()
 	r.guestMu.Lock()
-	// joinID is the raw guest key; the guests map is keyed by its hash.
-	delete(r.guests, guestKeyHash(joinID))
+	// A web guest's joinID IS its GuestJoinID — the guests map's own key — so
+	// the binding is revoked directly; an SSH join's id matches nothing here.
+	delete(r.guests, joinID)
 	r.guestMu.Unlock()
 	if ok {
 		close(e.kicked)

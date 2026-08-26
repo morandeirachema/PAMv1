@@ -567,6 +567,11 @@ func (s *Server) applyScimActiveChange(ctx context.Context, key *store.ScimKey, 
 		return err
 	}
 	u.Active = *want
+	if !*want {
+		// Deprovisioning must actually cut access — including the sessions the
+		// user already holds, not only the per-user token (2026-08-27 audit).
+		s.cutUserAccess(ctx, u.Username, "deactivated")
+	}
 	action := "scim.user_deactivate"
 	if *want {
 		action = "scim.user_reactivate"

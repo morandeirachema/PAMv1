@@ -554,6 +554,15 @@ func TestShareInviteRosterAndKick(t *testing.T) {
 	if joinID == "" {
 		t.Fatalf("roster entry has no join_id to kick: %s", data)
 	}
+	// The join id must identify the guest without BEING its credential
+	// (2026-08-27 audit): the roster is served to any CapReadAudit reader and
+	// the kick is audited, and both used to carry the raw guest key.
+	if joinID == key {
+		t.Fatal("roster join_id is the guest's raw bearer key")
+	}
+	if code, _ := do(t, srv, http.MethodGet, "/api/share/stream?key="+joinID, "", nil); code != http.StatusUnauthorized {
+		t.Fatalf("join_id presented as a guest key: %d, want 401", code)
+	}
 
 	// A plain user (no CapManageTargets) cannot kick.
 	if code, _ := do(t, srv, http.MethodPost, "/api/sessions/"+sid+"/share/kick", aliceTok, map[string]any{"join_id": joinID}); code != http.StatusForbidden {

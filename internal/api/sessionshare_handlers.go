@@ -15,6 +15,7 @@ import (
 
 	"github.com/morandeirachema/pamv1/internal/alert"
 	"github.com/morandeirachema/pamv1/internal/auth"
+	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
@@ -391,10 +392,15 @@ func (s *Server) streamShareGuest(w http.ResponseWriter, r *http.Request) {
 	// redeem time would leave a roster entry stuck "joined" forever if the
 	// guest closed their tab without the underlying session ever ending.
 	joined := time.Now()
-	kicked := s.shares.Track(sid, key, actor, mode)
+	// Tracked under GuestJoinID, never the key: the roster is served to every
+	// CapReadAudit reader and the kick is audited, so the id that reaches them
+	// must identify this join without BEING the guest's credential (2026-08-27
+	// audit).
+	joinID := session.GuestJoinID(key)
+	kicked := s.shares.Track(sid, joinID, actor, mode)
 	s.shares.Notify(sid, fmt.Sprintf("PAMv1: %s joined this session (%s)", actor, mode))
 	defer func() {
-		s.shares.Untrack(sid, key)
+		s.shares.Untrack(sid, joinID)
 		s.shares.Notify(sid, fmt.Sprintf("PAMv1: %s left this session", actor))
 		_ = s.auditAs(r.Context(), actor, "session.share_ended", fmt.Sprintf("session:%s duration:%s", sid, time.Since(joined).Round(time.Second)))
 	}()

@@ -655,6 +655,8 @@ to do it, because a signature nobody can check is decoration.
 TAG=v0.58.1                       # the released version
 IMAGE=ghcr.io/morandeirachema/pamv1
 
+# (If your ~/.docker/config.json names a credential helper you do not have,
+#  these read-only pulls fail before they start: DOCKER_CONFIG=$(mktemp -d).)
 # 1. The image was built by this repository's release workflow, not by someone else.
 #    (?i): the identity in the certificate carries the repository's own case —
 #    it is `PAMv1` since v0.58.1 and was `pamv1` before — while the image name

@@ -1362,37 +1362,13 @@ func (s *Server) authzCore(cap auth.Capability, allowExtension bool, next http.H
 			writeError(w, http.StatusForbidden, "this token is only valid for the extension reveal endpoint")
 			return
 		}
-		// Source-address restriction (Phase 118): a principal with a non-empty
-		// IPAllowlist may act only from inside it — the same gate the session
-		// proxies enforce at connect time (gates.go), applied here so a local
-		// user's bearer token is IP-restricted on every authenticated call, not
-		// only at connect. Break-glass bypasses, matching every other gate it
-		// already bypasses.
-		if !p.BreakGlass && !auth.IPAllowed(p.IPAllowlist, s.clientIP(r)) {
-			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:source-ip-not-allowed")
-			writeError(w, http.StatusForbidden, "your account may not connect from this network")
+		// Source IP allowlist (Phase 118), enrolled device (Phase 133) and live
+		// posture (Phase 133), in that order, as one function shared with the
+		// viewer tunnel — see sourceGates for why it is one.
+		if reason, msg := s.sourceGates(ctx, p, r); reason != "" {
+			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:"+reason)
+			writeError(w, http.StatusForbidden, msg)
 			return
-		}
-		// Device-identity restriction (Phase 133): when this principal has an
-		// enrolled fingerprint, the value a trusted reverse proxy injected in
-		// s.deviceHeader must match it. s.deviceHeader empty (the default)
-		// skips this entirely — the header, if present, is never even read.
-		// Break-glass bypasses, matching every other gate it already bypasses.
-		if !p.BreakGlass && s.deviceHeader != "" && p.DeviceFingerprint != "" && r.Header.Get(s.deviceHeader) != p.DeviceFingerprint {
-			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:device-not-trusted")
-			writeError(w, http.StatusForbidden, "this device is not enrolled for your account")
-			return
-		}
-		// Live device posture (Phase 133): re-checked on every authenticated
-		// call, not just at connect (gates.go), since posture — unlike vendor
-		// employment — can change mid-session. A nil/unconfigured attestor
-		// always passes. Break-glass bypasses.
-		if !p.BreakGlass && s.postureAttestor.Enabled() {
-			if err := s.postureAttestor.Attest(ctx, p.Name); err != nil {
-				s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:posture-check-failed")
-				writeError(w, http.StatusForbidden, "your device failed its posture check")
-				return
-			}
 		}
 		if !p.Can(cap) {
 			s.log.Warn("authorization denied", "actor", p.Name, "role", string(p.Role),
@@ -1403,6 +1379,44 @@ func (s *Server) authzCore(cap auth.Capability, allowExtension bool, next http.H
 		}
 		next(w, r.WithContext(ctx))
 	})
+}
+
+// sourceGates runs the three per-request principal gates that sit between the
+// scope test and the capability test — the source-IP allowlist (Phase 118),
+// the enrolled device fingerprint and live posture (Phase 133) — and returns
+// the audit reason slug and the refusal message of the first that trips, or
+// "" when all pass. Break-glass bypasses all three, as it does every other
+// gate: emergency access is already loud on its own.
+//
+// One function because two doors need it: the authz middleware, and the
+// RDP/VNC viewer tunnel, which resolves its own principal from a query-string
+// token and, until the 2026-08-27 audit, ran none of these — a tunnel token
+// minted from inside a user's allowlist opened the desktop from anywhere it
+// was relayed to. That is the "self-resolving entry point with a shorter
+// checklist" shape the 2026-08-26 audit's H-1/H-2 had; a gate added here
+// lands on both doors at once, and the session proxies run the same three in
+// admit() (gates 5-6).
+func (s *Server) sourceGates(ctx context.Context, p *auth.Principal, r *http.Request) (reason, msg string) {
+	if p.BreakGlass {
+		return "", ""
+	}
+	if !auth.IPAllowed(p.IPAllowlist, s.clientIP(r)) {
+		return "source-ip-not-allowed", "your account may not connect from this network"
+	}
+	// s.deviceHeader empty (the default) skips this entirely — the header, if
+	// present, is never even read.
+	if s.deviceHeader != "" && p.DeviceFingerprint != "" && r.Header.Get(s.deviceHeader) != p.DeviceFingerprint {
+		return "device-not-trusted", "this device is not enrolled for your account"
+	}
+	// Re-checked on every authenticated call, not just at connect, since
+	// posture — unlike vendor employment — can change mid-session. A
+	// nil/unconfigured attestor always passes.
+	if s.postureAttestor.Enabled() {
+		if err := s.postureAttestor.Attest(ctx, p.Name); err != nil {
+			return "posture-check-failed", "your device failed its posture check"
+		}
+	}
+	return "", ""
 }
 
 // noteBreakGlass loudly records and alerts a break-glass access (the security
@@ -1479,6 +1493,16 @@ func (s *Server) authenticated(next http.HandlerFunc) http.Handler {
 			reason, msg = "extension-scoped-token", "this token is only valid for the extension reveal endpoint"
 		}
 		if reason != "" {
+			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:"+reason)
+			writeError(w, http.StatusForbidden, msg)
+			return
+		}
+		// The source gates too (2026-08-27 audit): Phase 118 promised a local
+		// user's token is IP-restricted "on every authenticated call", and this
+		// middleware — /me, /logout and the MFA enrollment routes — had never run
+		// them, so a token used from outside its allowlist could still enroll a
+		// second factor. Same function as authz and the viewer tunnel.
+		if reason, msg := s.sourceGates(ctx, p, r); reason != "" {
 			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:"+reason)
 			writeError(w, http.StatusForbidden, msg)
 			return
