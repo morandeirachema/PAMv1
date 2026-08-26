@@ -80,7 +80,8 @@ belonging to a user who is later deleted, deactivated or re-roled stops working
 at that moment rather than at its expiry; and a session-share supervisor's
 console reads the same roster — only the value of `join_id` changed.
 
-Helm chart `0.49.1` → `0.49.2`, a patch alongside an app patch.
+Helm chart `0.49.1` → `0.49.2`, a patch alongside an app patch. Image digest
+`sha256:89cfc84e…` (the full value is in the README and on the release page).
 
 ## [0.58.1] — 2026-08-26
 
