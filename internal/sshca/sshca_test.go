@@ -125,7 +125,7 @@ func keysEqual(a, b ssh.PublicKey) bool {
 // option, accepted by a CA-trusting checker for that principal only.
 func TestIssueForKeyScopedCert(t *testing.T) {
 	ca := testCA(t)
-	// The operator's own key (pamv1 never sees the private half beyond this test).
+	// The operator's own key (PAMv1 never sees the private half beyond this test).
 	opPub, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)

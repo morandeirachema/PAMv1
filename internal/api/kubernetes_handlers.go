@@ -12,7 +12,7 @@ import (
 
 // kubectlIn is the body of POST /api/targets/{id}/kubectl: one discrete,
 // kubectl-shaped operation. It is deliberately a vocabulary rather than a
-// passthrough — an operator cannot describe an operation pamv1 would not be
+// passthrough — an operator cannot describe an operation PAMv1 would not be
 // able to name in a command string, guard with a policy, record in a
 // transcript and put on the audit trail.
 type kubectlIn struct {
@@ -30,7 +30,7 @@ type kubectlIn struct {
 // runKubectl brokers one Kubernetes operation against a `kubernetes` target.
 //
 // It is the WinRM REST endpoint's twin, deliberately: both are ONE discrete
-// privileged operation on a machine pamv1 holds the credential for, so both run
+// privileged operation on a machine PAMv1 holds the credential for, so both run
 // the same gate sequence in the same order — protocol allowed by policy,
 // per-target grants (`authorizedForTarget`), the four-eyes approval gate
 // (`enforceApproval`), the vendor contract gate, then the concurrent-session
@@ -143,7 +143,7 @@ func (s *Server) runKubectl(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "kubernetes request failed")
 		return
 	}
-	// A non-2xx from the cluster is an ANSWER, not a pamv1 failure: the
+	// A non-2xx from the cluster is an ANSWER, not a PAMv1 failure: the
 	// cluster's own RBAC refusing this service account (403), or the object not
 	// existing (404), is exactly what the operator asked to find out. It comes
 	// back in the envelope with its status, the way the WinRM endpoint returns a
@@ -190,19 +190,19 @@ func (s *Server) execKubectl(ctx context.Context, target *store.Target, cred *st
 	// permits only `kubectl get` gets the same policy here as on every other
 	// path where a discrete command is visible (Phase 38's principle).
 	if err := s.guardCommand(ctx, actor, target.Name, "kubernetes", command); err != nil {
-		s.live.Publish(sid, []byte("pamv1: command blocked by policy\r\n"))
-		s.recordKubectlNotice(ctx, target, cred, actor, command, "pamv1: command blocked by policy")
+		s.live.Publish(sid, []byte("PAMv1: command blocked by policy\r\n"))
+		s.recordKubectlNotice(ctx, target, cred, actor, command, "PAMv1: command blocked by policy")
 		return k8s.Result{}, err
 	}
 	if s.recordingRequired(s.recordingDir) {
 		_ = s.auditAs(ctx, actor, "k8s.refused", "target:"+target.Name+" reason:recording-required")
-		s.live.Publish(sid, []byte("pamv1: recording is required but unavailable; command refused\r\n"))
+		s.live.Publish(sid, []byte("PAMv1: recording is required but unavailable; command refused\r\n"))
 		return k8s.Result{}, errRecordingRequired
 	}
 	token, err := s.vault.Decrypt(ctx, cred.SecretEnc, store.CredentialAAD(target.ID, cred.ID))
 	if err != nil {
 		s.audit(ctx, "credential.decrypt_failed", fmt.Sprintf("credential:%d target:%s op:kubectl", cred.ID, target.Name))
-		s.live.Publish(sid, []byte("pamv1: credential decryption failed; command refused\r\n"))
+		s.live.Publish(sid, []byte("PAMv1: credential decryption failed; command refused\r\n"))
 		return k8s.Result{}, errDecryptFailed
 	}
 	cfg := s.k8sConfig
@@ -212,15 +212,15 @@ func (s *Server) execKubectl(ctx context.Context, target *store.Target, cred *st
 	if err != nil {
 		s.log.Error("kubernetes client", "target", target.Name, "err", err)
 		s.audit(ctx, "k8s.error", fmt.Sprintf("target:%s error:%v", target.Name, err))
-		s.live.Publish(sid, []byte(fmt.Sprintf("pamv1: kubernetes error: %v\r\n", err)))
+		s.live.Publish(sid, []byte(fmt.Sprintf("PAMv1: kubernetes error: %v\r\n", err)))
 		return k8s.Result{}, err
 	}
 	res, err := client.Do(ctx, req)
 	if err != nil {
 		s.log.Error("kubernetes request failed", "target", target.Name, "err", err)
 		s.audit(ctx, "k8s.error", fmt.Sprintf("target:%s cred_user:%s error:%v", target.Name, cred.Username, err))
-		s.live.Publish(sid, []byte(fmt.Sprintf("pamv1: kubernetes error: %v\r\n", err)))
-		s.recordKubectlNotice(ctx, target, cred, actor, command, fmt.Sprintf("pamv1: kubernetes error: %v", err))
+		s.live.Publish(sid, []byte(fmt.Sprintf("PAMv1: kubernetes error: %v\r\n", err)))
+		s.recordKubectlNotice(ctx, target, cred, actor, command, fmt.Sprintf("PAMv1: kubernetes error: %v", err))
 		return k8s.Result{}, err
 	}
 	file, sum := s.recordExecTranscript("Kubernetes", ".k8s.log", target, cred.Username, actor, command,
@@ -231,7 +231,7 @@ func (s *Server) execKubectl(ctx context.Context, target *store.Target, cred *st
 	// the record is missing instead of receiving output nothing accounts for.
 	if err := s.auditAs(ctx, actor, "k8s.run", fmt.Sprintf("target:%s cred_user:%s command:%s status:%d file:%s sha256:%s",
 		target.Name, cred.Username, auditField(command, 300), res.Status, file, sum)); err != nil {
-		s.live.Publish(sid, []byte("pamv1: audit log unavailable; output withheld\r\n"))
+		s.live.Publish(sid, []byte("PAMv1: audit log unavailable; output withheld\r\n"))
 		return k8s.Result{}, errAuditUnavailable
 	}
 	// Output reaches live watchers only AFTER the durable audit above, or the

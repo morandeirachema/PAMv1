@@ -461,7 +461,7 @@ const screens = [
       identities: [
         { id: 1, spiffe_id: long ? LONG : "spiffe://e.org/ns/prod/sa/planner",
           owner: long ? LONGNAME : "alice", note: long ? LONG : "release planner",
-          // Phase 175: an owner matching no pamv1 user is flagged in place, so
+          // Phase 175: an owner matching no PAMv1 user is flagged in place, so
           // the fixture drives the marker as well as the plain value.
           owner_known: false,
           enrolled: true, first_seen: "2026-08-18T11:00:00Z", last_seen: "2026-08-18T12:30:00Z",

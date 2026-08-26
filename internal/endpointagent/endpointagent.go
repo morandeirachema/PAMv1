@@ -1,8 +1,8 @@
 // Package endpointagent is the OUTBOUND-ONLY connectivity agent that runs on a
-// target endpoint pamv1 cannot dial into — a NAT'd branch box, a CGNAT'd
+// target endpoint PAMv1 cannot dial into — a NAT'd branch box, a CGNAT'd
 // contractor laptop, an unattended host behind a firewall that admits nothing
 // inbound (Phase 153, BeyondTrust "Jump Client"-style; the binary is
-// cmd/pam-agent). It inverts pamv1's usual direction for that one endpoint:
+// cmd/pam-agent). It inverts PAMv1's usual direction for that one endpoint:
 // the agent dials OUT to pam-server's SSH listener as "endpoint-agent:<name>"
 // with its bearer key, asks for a reverse forward (RFC 4254 §7, the real
 // `ssh -R` mechanism, which golang.org/x/crypto/ssh already implements

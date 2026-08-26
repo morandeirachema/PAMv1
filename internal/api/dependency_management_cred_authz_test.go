@@ -9,7 +9,7 @@ package api_test
 // and nothing else — could name a credential they may not reveal, on a target
 // they were never granted, and point the dependency's `host` at a machine they
 // control. The next rotation of any credential they *could* rotate then made
-// pamv1 decrypt the named secret and present it, in plaintext, to that machine.
+// PAMv1 decrypt the named secret and present it, in plaintext, to that machine.
 
 import (
 	"context"
@@ -72,7 +72,7 @@ func seedProfileUser(t *testing.T, srv *httptest.Server, profile, user string, c
 }
 
 // TestManagementCredentialNeedsRevealSecret is the exfiltration attempt itself:
-// a credential manager who cannot reveal a secret cannot make pamv1 present one
+// a credential manager who cannot reveal a secret cannot make PAMv1 present one
 // on their behalf. CapManageCredentials buys the right to declare a dependency,
 // not the right to spend someone else's crown jewels doing it.
 func TestManagementCredentialNeedsRevealSecret(t *testing.T) {
@@ -111,7 +111,7 @@ func TestManagementCredentialNeedsRevealSecret(t *testing.T) {
 		t.Fatalf("rotate lab credential: %d %s", code, d)
 	}
 	if fake.gotHost != "" {
-		t.Fatalf("pamv1 connected to %q presenting %q", fake.gotHost, fake.gotUser)
+		t.Fatalf("PAMv1 connected to %q presenting %q", fake.gotHost, fake.gotUser)
 	}
 }
 

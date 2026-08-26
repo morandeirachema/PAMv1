@@ -673,7 +673,7 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("an undeclared management credential must read back as 0, got %d", ds[0].ManagementCredentialID)
 	}
 	// A declared management credential round-trips (Phase 61): it decides which
-	// account pamv1 authenticates to the consumer's host as, so losing it in
+	// account PAMv1 authenticates to the consumer's host as, so losing it in
 	// storage would silently revert to logging in as the rotated account.
 	managed := &store.CredentialDependency{
 		CredentialID: cred.ID, Kind: "scheduled_task", Host: "app-02", Name: "NightlyJob",
@@ -2152,7 +2152,7 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	// --- agent quarantine (Phase 159) ---
 	// Keyed by subject, not by agent_keys ID, because an SVID-authenticated
 	// agent has no key row at all — a SPIFFE ID must be quarantinable even
-	// though pamv1 never issued it anything to disable.
+	// though PAMv1 never issued it anything to disable.
 	if q, err := st.IsAgentQuarantined(ctx, "spiffe://example.org/agent/planner"); err != nil || q {
 		t.Fatalf("IsAgentQuarantined(clean): %v err %v", q, err)
 	}
@@ -2281,7 +2281,7 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("DeleteAgentIdentity(cleanup): %v", err)
 	}
 	// --- SVID enrollment and inventory (Phase 174) ---
-	// An operator-created row is ENROLLED; a row pamv1 creates on first sight is
+	// An operator-created row is ENROLLED; a row PAMv1 creates on first sight is
 	// not, and that difference is what an inventory review reads.
 	enrolledIdent := &store.AgentIdentity{SPIFFEID: "spiffe://example.org/agent/enrolled", Owner: "carol", CreatedBy: "alice"}
 	if err := st.CreateAgentIdentity(ctx, enrolledIdent); err != nil {

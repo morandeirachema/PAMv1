@@ -1,7 +1,7 @@
 package api_test
 
 // dependency_management_cred_test.go covers Phase 61: a dependent account can
-// name the credential pamv1 connects WITH to update it, instead of logging in
+// name the credential PAMv1 connects WITH to update it, instead of logging in
 // as the service account whose password is being rotated.
 
 import (
@@ -38,7 +38,7 @@ func seedManagementCred(t *testing.T, srv *httptest.Server, username, secret str
 }
 
 // TestPropagationUsesTheManagementCredential is the phase in one test: with a
-// management credential declared, pamv1 authenticates to the consumer's host as
+// management credential declared, PAMv1 authenticates to the consumer's host as
 // THAT account — not as the service account it is rotating, which in a hardened
 // environment cannot log on remotely at all and should not hold the rights this
 // change needs.
@@ -69,7 +69,7 @@ func TestPropagationUsesTheManagementCredential(t *testing.T) {
 		t.Fatal("rotation did not set a new secret")
 	}
 
-	// pamv1 logged in as the management account…
+	// PAMv1 logged in as the management account…
 	if fake.gotUser != "CONTOSO\\svc-admin" || fake.gotPass != "admin-secret" {
 		t.Fatalf("propagation logged in as %q, want the management credential", fake.gotUser)
 	}

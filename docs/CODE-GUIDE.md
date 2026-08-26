@@ -1,4 +1,4 @@
-# pamv1 — Code Guide (how it all works)
+# PAMv1 — Code Guide (how it all works)
 
 > **Living document.** This is the developer's narrative walkthrough of the whole
 > codebase: what each package does, how the load-bearing flows work end to end,
@@ -114,13 +114,13 @@ load-bearing security, not decoration.
 
 ## 1. The big picture
 
-pamv1 is a **Privileged Access Management** system: it holds privileged
+PAMv1 is a **Privileged Access Management** system: it holds privileged
 credentials encrypted at rest, and it puts itself *in the middle* of every
-privileged connection so that operators reach targets **through** pamv1 without
+privileged connection so that operators reach targets **through** PAMv1 without
 ever seeing the credential. The one idea the whole system is built around:
 
 > **Trust the chokepoint, not the client.** The secret is decrypted just-in-time
-> inside pamv1, injected into the upstream connection, and never handed to the
+> inside PAMv1, injected into the upstream connection, and never handed to the
 > operator. Every use is recorded and audited.
 
 It is a **single Go binary** (`cmd/pam-server`) that runs several listeners:
@@ -131,7 +131,7 @@ It is a **single Go binary** (`cmd/pam-server`) that runs several listeners:
 
 Everything under `internal/` is a focused package the binary wires together.
 Since Phase 153 there is a second, much smaller deployable — `cmd/pam-agent`,
-the outbound-only endpoint agent that runs ON a target pamv1 cannot dial into
+the outbound-only endpoint agent that runs ON a target PAMv1 cannot dial into
 and holds a reverse tunnel to the SSH proxy (`internal/endpointagent`); it is
 a client of pam-server, not a server of anything.
 
@@ -302,7 +302,7 @@ encrypted and stored in a second step.
   - `LocalKEK` — an AES-256-GCM key from `PAM_MASTER_KEY` (base64). **Dev/test only.**
   - `TransitKEK` (`transit.go`) — HashiCorp Vault Transit; the KEK never leaves Vault.
   - `AWSKMSKEK` (`awskms.go`) — AWS KMS `Encrypt`/`Decrypt` of the DEK, with an
-    `app=pamv1` encryption context; the CMK never leaves KMS.
+    `app=PAMv1` encryption context; the CMK never leaves KMS.
   - `PKCS11KEK` (`pkcs11.go`, build tag `pkcs11`) — an on-prem HSM wraps the DEK;
     the default static build ships a stub that returns "not built in".
 
@@ -512,7 +512,7 @@ store errors to HTTP codes (`storeError`), and appends an audit event:
 
 ## 5. The session proxy — the heart of the system (`internal/proxy`)
 
-This is where pamv1 earns its name. An operator runs
+This is where PAMv1 earns its name. An operator runs
 `ssh -p 2222 <creduser>@<target>@pam-host` with their **PAM key/token as the SSH
 password**; the proxy authenticates them, resolves the target's credential,
 **decrypts the secret just-in-time**, dials the real target injecting that secret,
@@ -579,7 +579,7 @@ makes a session that can't be recorded fail closed.
   target's host key against a known_hosts file (unset ⇒ trust-any + loud warning).
 - **Outbound-only endpoint agents** (Phase 153, `endpointagent.go` +
   `internal/endpointagent`, `PAM_ENDPOINT_AGENTS_ENABLED`) — the inverse of the
-  jump host: for a target pamv1 cannot dial at all, a `pam-agent` process ON
+  jump host: for a target PAMv1 cannot dial at all, a `pam-agent` process ON
   the target dials in to this same listener as `endpoint-agent:<name>` (its
   own bearer key, resolved by hash — `authenticateEndpointAgent`, never the
   human resolver), and `serveEndpointAgent` accepts one `tcpip-forward`,
@@ -782,8 +782,8 @@ stored **only as SHA-256** — the plaintext is shown once and never persisted.
 
 ## 7. Credential lifecycle (`internal/rotate`, `lifecycle_handlers.go`, `scheduler.go`)
 
-pamv1 can change the password **on the target** and re-vault it, so the account's
-secret is one only pamv1 knows and can prove is current.
+PAMv1 can change the password **on the target** and re-vault it, so the account's
+secret is one only PAMv1 knows and can prove is current.
 
 - **Connectors** (`rotate`): `SSHConnector` rotates over SSH (`chpasswd` fed on
   stdin, so the new password never hits a shell command line) and verifies with an
@@ -815,9 +815,9 @@ secret is one only pamv1 knows and can prove is current.
 
 ## 8. Zero Standing Privilege (Phase 22 — `internal/sshca`)
 
-Instead of storing a secret for an account, pamv1 signs a **short-lived SSH
+Instead of storing a secret for an account, PAMv1 signs a **short-lived SSH
 certificate just-in-time** per session — the account has *no standing credential*;
-the target trusts only the pamv1 CA. This is the Teleport / CyberArk ZSP model
+the target trusts only the PAMv1 CA. This is the Teleport / CyberArk ZSP model
 built on the existing proxy chokepoint.
 
 - **The CA** (`sshca.CertAuthority`) — `LoadOrCreate(PAM_SSH_CA_KEY)` persists an
@@ -841,7 +841,7 @@ sequenceDiagram
   participant Op as operator
   participant P as proxy
   participant CA as sshca CA
-  participant U as target sshd (TrustedUserCAKeys = pamv1 CA)
+  participant U as target sshd (TrustedUserCAKeys = PAMv1 CA)
   Op->>P: ssh root@web-01@pam (PAM key as password)
   Note over P: gates pass; cred.SecretType == "ssh_ca"
   P->>CA: IssueUser("root", 2m, "pamv1:op@web-01")

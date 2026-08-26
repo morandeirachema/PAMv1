@@ -12,7 +12,7 @@ package blast
 // clicking through a console and nobody knowing exactly what changed.
 //
 // WHAT IT IS NOT. This is a STARTING POINT, not an applyable plan, and it says
-// so in its own header. pamv1's normalized graph deliberately carries less than
+// so in its own header. PAMv1's normalized graph deliberately carries less than
 // a provider export does — an edge knows the policy or grant that enables it
 // (`via`), not the ARN, the condition block or the group's full membership — so
 // each emitted stanza names the object to change and leaves the provider
@@ -115,7 +115,7 @@ func Terraform(findings []Finding, g *Graph) string {
 	// reviewer cannot tell a real change from reordering.
 	sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
 	var b strings.Builder
-	b.WriteString(`# pamv1 identity blast-radius — proposed remediation
+	b.WriteString(`# PAMv1 identity blast-radius — proposed remediation
 #
 # Each block below cuts the EARLIEST pivot edge on a reported escalation path:
 # the change closest to the source, which breaks that path with the least
@@ -270,7 +270,7 @@ func credentialFix(cut PathEdge, src, dst *Principal) string {
 	return fmt.Sprintf(`# %s holds a credential for %s. Two steps, in this order:
 #   1. remove the read access (below), then
 #   2. ROTATE the credential — until it is rotated, a copy already taken still
-#      works, so step 1 alone is not a fix. In pamv1 that is
+#      works, so step 1 alone is not a fix. In PAMv1 that is
 #      POST /api/credentials/{id}/rotate.
 resource "aws_iam_policy" "%s_deny_secret" {
   name = "%s-deny-secret-read"

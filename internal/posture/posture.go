@@ -65,7 +65,7 @@ const (
 //
 // **What this can and cannot prove.** For a laptop, an EDR system knows the
 // device and answers about it. For a workload, the webhook is answering about a
-// NAME pamv1 verified cryptographically — not about the process holding the
+// NAME PAMv1 verified cryptographically — not about the process holding the
 // credential. That is a real gap and not one more infrastructure here would
 // close: binding a credential to the process presenting it is workload
 // attestation (SPIRE), which stays external. Treat an agent posture answer as

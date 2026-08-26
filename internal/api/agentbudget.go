@@ -16,7 +16,7 @@ import (
 // A ROLLING 24 hours, not a calendar day, and the difference is the point. A
 // calendar reset hands every agent a predictable instant at which its quota
 // refills, which is exactly when an agent (or whoever is driving it) would queue
-// the work it could not do before — and it forces pamv1 to pick a timezone for
+// the work it could not do before — and it forces PAMv1 to pick a timezone for
 // something that has nothing to do with anyone's working day. A rolling window
 // needs no reset job, no timezone, and no midnight.
 const budgetWindow = 24 * time.Hour
@@ -199,7 +199,7 @@ type agentWithBudget struct {
 	// BudgetLimitEffective is the limit actually in force — the agent's own when
 	// set, otherwise the server default. Zero means unlimited.
 	BudgetLimitEffective int `json:"budget_limit_effective"`
-	// OwnerKnown reports whether this key's owner matches a pamv1 user (Phase
+	// OwnerKnown reports whether this key's owner matches a PAMv1 user (Phase
 	// 175). False means the offboarding cascade — which matches owners by
 	// username string — can never reach this agent, usually because of a typo.
 	OwnerKnown bool `json:"owner_known"`

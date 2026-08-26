@@ -19,11 +19,11 @@ import (
 // fake target, but its channel-accept loop also honors client-initiated
 // direct-tcpip requests (RFC 4254 §7.2), dialing whatever destination is
 // asked for and bridging bytes — exactly what a real target's own sshd does
-// when it allows TCP forwarding, which pamv1 does not control. The
-// same-target-only restriction this phase adds lives entirely on pamv1's
+// when it allows TCP forwarding, which PAMv1 does not control. The
+// same-target-only restriction this phase adds lives entirely on PAMv1's
 // side (handleDirectTCPIP), not here, so this fake upstream deliberately
 // does NOT validate the destination — proving that restriction requires
-// showing pamv1 refuses before ever asking the upstream to dial at all.
+// showing PAMv1 refuses before ever asking the upstream to dial at all.
 func startForwardingUpstream(t *testing.T, wantUser, wantPass string) (host string, port int) {
 	t.Helper()
 	cfg := &ssh.ServerConfig{
@@ -165,8 +165,8 @@ func TestDirectTCPIPSameHostForwards(t *testing.T) {
 
 // TestDirectTCPIPRefusesOtherHost proves the actual scope limit: even
 // though the fake upstream sshd would happily dial anywhere (it doesn't
-// know or care about pamv1's policy), a forward naming a DIFFERENT host is
-// refused by pamv1 itself, before the upstream is ever asked to dial it —
+// know or care about PAMv1's policy), a forward naming a DIFFERENT host is
+// refused by PAMv1 itself, before the upstream is ever asked to dial it —
 // the SSRF-pivot path this phase deliberately closes.
 func TestDirectTCPIPRefusesOtherHost(t *testing.T) {
 	elsewhereLn, err := net.Listen("tcp", "127.0.0.1:0")
@@ -217,7 +217,7 @@ func TestDirectTCPIPRefusesOtherHost(t *testing.T) {
 	}
 	select {
 	case <-dialed:
-		t.Fatal("the elsewhere listener must never be reached — pamv1 must refuse before the upstream dials anything")
+		t.Fatal("the elsewhere listener must never be reached — PAMv1 must refuse before the upstream dials anything")
 	case <-time.After(200 * time.Millisecond):
 	}
 }

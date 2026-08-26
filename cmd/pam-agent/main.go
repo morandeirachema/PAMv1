@@ -1,4 +1,4 @@
-// Command pam-agent is pamv1's outbound-only endpoint agent (Phase 153): a
+// Command pam-agent is PAMv1's outbound-only endpoint agent (Phase 153): a
 // small binary installed on a target that pam-server cannot dial into (a NAT'd
 // branch box, a CGNAT'd contractor laptop, an unattended host with no inbound
 // firewall rule). It dials OUT to pam-server's SSH listener with its own bearer

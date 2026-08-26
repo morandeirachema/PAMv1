@@ -39,7 +39,7 @@ func forensicFixture(now time.Time) string {
 }
 
 // forensicServer builds a real api.Server (not just its handler) wired to an
-// in-process SSH target that answers pamv1's fixed forensic command with
+// in-process SSH target that answers PAMv1's fixed forensic command with
 // `audit`, seeds that target and its vaulted credential, and returns the
 // server, its store, the recording directory and the target/credential ids.
 func forensicServer(t *testing.T, audit string, enabled bool, opts api.Options) (*api.Server, store.Store, string, int64, int64) {
@@ -103,7 +103,7 @@ func auditDetail(t *testing.T, st store.Store, action string) string {
 }
 
 // TestCollectSessionForensicsReconstructsWhatRan is the collector's flagship
-// proof: pamv1 pulls the TARGET's own kernel audit record over the same vaulted
+// proof: PAMv1 pulls the TARGET's own kernel audit record over the same vaulted
 // credential after the session, and the stored artifact names the decoded
 // command the recording could not show — scoped to the session's window, hashed
 // into the audit trail, with no secret in it.
@@ -190,7 +190,7 @@ func TestCollectSessionForensicsUnavailableIsAFinding(t *testing.T) {
 // command on a target: the feature switched off, a Zero Standing Privilege
 // credential (whose session certificate is gone, and minting another would be a
 // fresh privileged access after the approval was consumed), and an operator
-// deny pattern that happens to match pamv1's own fixed literal.
+// deny pattern that happens to match PAMv1's own fixed literal.
 func TestCollectSessionForensicsRefusals(t *testing.T) {
 	now := time.Now()
 	req := func(tid, cid int64) api.SessionForensicsRequest {
@@ -227,7 +227,7 @@ func TestCollectSessionForensicsRefusals(t *testing.T) {
 			api.Options{CommandGuard: denyGuard(t, `(?i)ausearch`)})
 		srv.CollectSessionForensics(context.Background(), req(tid, cid))
 		if d := auditDetail(t, st, "session.forensics_failed"); !strings.Contains(d, "command-blocked") {
-			t.Fatalf("a deny pattern must refuse pamv1's own literal too, got %q", d)
+			t.Fatalf("a deny pattern must refuse PAMv1's own literal too, got %q", d)
 		}
 		if d := auditDetail(t, st, "command.blocked"); !strings.Contains(d, "path:forensics") {
 			t.Fatalf("the refusal should be audited as command.blocked, got %q", d)
@@ -271,8 +271,8 @@ func TestForensicsArtifactsAreListedAndPlayable(t *testing.T) {
 	// the classifier as well as the writer, which is exactly the pair Phase 155
 	// got half of — so every suffix in the family is pinned here from now on.
 	for name, body := range map[string]string{
-		"20260817-000000_web-01_alice.k8s.log": "# pamv1 Kubernetes session\n",
-		"20260818-000000_db-01_bot.ssh.log":    "# pamv1 SSH session\n",
+		"20260817-000000_web-01_alice.k8s.log": "# PAMv1 Kubernetes session\n",
+		"20260818-000000_db-01_bot.ssh.log":    "# PAMv1 SSH session\n",
 	} {
 		if err := os.WriteFile(recDir+"/"+name, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
@@ -313,7 +313,7 @@ func TestForensicsArtifactsAreListedAndPlayable(t *testing.T) {
 		t.Fatalf("every brokered-command artifact must be listed: %s", data)
 	}
 	// And servable, not merely listed — the half Phase 155 missed.
-	if st, body := do(t, ts, http.MethodGet, "/api/recordings/"+sshName, testAPIKey, nil); st != http.StatusOK || !strings.Contains(string(body), "pamv1 SSH session") {
+	if st, body := do(t, ts, http.MethodGet, "/api/recordings/"+sshName, testAPIKey, nil); st != http.StatusOK || !strings.Contains(string(body), "PAMv1 SSH session") {
 		t.Fatalf("playback of the ssh_exec transcript: %d %s", st, body)
 	}
 	status, body := do(t, ts, http.MethodGet, "/api/recordings/"+forensicName, testAPIKey, nil)

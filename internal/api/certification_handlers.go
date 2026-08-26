@@ -322,7 +322,7 @@ func (s *Server) snapshotAccess(ctx context.Context, c *store.Campaign) (int, er
 }
 
 // snapshotAgents adds one campaign item per AI-agent identity, of both kinds:
-// the static keys pamv1 issued and the SPIFFE identities it has seen or
+// the static keys PAMv1 issued and the SPIFFE identities it has seen or
 // enrolled. The reviewer's question is the one nobody was being asked — "should
 // this non-human identity still exist, and is the human named beside it really
 // the one accountable for it?" — so the detail carries the owner, the state and
@@ -379,9 +379,9 @@ func (s *Server) snapshotAgents(ctx context.Context, c *store.Campaign) (int, er
 	return n, nil
 }
 
-// ownerUnknownNote is appended to an item whose owner matches no pamv1 user —
+// ownerUnknownNote is appended to an item whose owner matches no PAMv1 user —
 // the state in which offboarding can never reach this agent.
-const ownerUnknownNote = " — WARNING: owner is not a pamv1 user, so offboarding cannot reach this agent"
+const ownerUnknownNote = " — WARNING: owner is not a PAMv1 user, so offboarding cannot reach this agent"
 
 // agentKeyState renders a key's lifecycle for a reviewer in three words.
 func agentKeyState(k store.AgentKey) string {

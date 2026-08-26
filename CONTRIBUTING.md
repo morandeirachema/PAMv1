@@ -1,6 +1,6 @@
-# Contributing to pamv1
+# Contributing to PAMv1
 
-pamv1 is an **educational, beta** PAM — built to be read, run and learned from.
+PAMv1 is an **educational, beta** PAM — built to be read, run and learned from.
 Contributions are welcome under that framing: clarity beats cleverness, and a
 change that makes the system easier to understand is as valuable as a feature.
 

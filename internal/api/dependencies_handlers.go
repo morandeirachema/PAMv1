@@ -13,7 +13,7 @@ import (
 )
 
 // --- dependent accounts (Phase 17): a credential's consumers (Windows Services,
-// Scheduled Tasks, IIS App Pools) that pamv1 updates over WinRM when the
+// Scheduled Tasks, IIS App Pools) that PAMv1 updates over WinRM when the
 // credential is rotated, so rotation does not break production. ---
 
 var validDependencyKind = map[string]bool{
@@ -56,7 +56,7 @@ type dependencyIn struct {
 	Host string `json:"host"`
 	Port int    `json:"port"`
 	Name string `json:"name"`
-	// ManagementCredentialID is the credential pamv1 connects to Host WITH to
+	// ManagementCredentialID is the credential PAMv1 connects to Host WITH to
 	// update this consumer (Phase 61). Omitted or 0 keeps the original
 	// behaviour of connecting as the account being rotated.
 	ManagementCredentialID int64 `json:"management_credential_id"`
@@ -122,7 +122,7 @@ func (s *Server) createDependency(w http.ResponseWriter, r *http.Request) {
 //
 // WHY THIS IS A CREDENTIAL-ACCESS PATH. Phase 61 read the reference as
 // configuration — a caller with CapManageCredentials could name any credential
-// at all, and only its existence was checked. But naming it means pamv1 will
+// at all, and only its existence was checked. But naming it means PAMv1 will
 // later decrypt that secret and present it, over WinRM, to `host` — a host the
 // same caller chooses freely on the same request. That is a reveal with extra
 // steps: it hands the plaintext to a machine the caller controls without the

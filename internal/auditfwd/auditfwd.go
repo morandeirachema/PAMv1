@@ -79,7 +79,7 @@ type Config struct {
 	Network string // "udp", "tcp" or "tls" (RFC 5425 syslog over TLS)
 	Addr    string // host:port of the SIEM collector
 	Format  Format
-	Tag     string // syslog APP-NAME / CEF device product (default "pamv1")
+	Tag     string // syslog APP-NAME / CEF device product (default "PAMv1")
 	Host    string // syslog HOSTNAME (default the OS hostname)
 	Batch   int    // max events per flush (default 500)
 	// TLSCAFile, for the "tls" transport, is a PEM bundle the collector's
@@ -122,7 +122,7 @@ func New(src source, cfg Config) (*Forwarder, error) {
 		log: logging.Component("auditfwd"),
 	}
 	if f.tag == "" {
-		f.tag = "pamv1"
+		f.tag = "PAMv1"
 	}
 	if f.host == "" {
 		if h, err := os.Hostname(); err == nil && h != "" {
@@ -285,7 +285,7 @@ func renderRFC5424(e store.AuditEvent, tag, host string) string {
 // and '\'; extension values escape '=' and '\'. rt is milliseconds since epoch.
 func renderCEF(e store.AuditEvent, tag string) string {
 	sig := cefHeader(e.Action)
-	return fmt.Sprintf("CEF:0|pamv1|%s|1|%s|%s|3|rt=%d suser=%s msg=%s",
+	return fmt.Sprintf("CEF:0|PAMv1|%s|1|%s|%s|3|rt=%d suser=%s msg=%s",
 		cefHeader(tag), sig, sig, e.TS.UnixMilli(),
 		cefExt(e.Actor), cefExt(e.Detail))
 }
@@ -296,7 +296,7 @@ func renderCEF(e store.AuditEvent, tag string) string {
 // strip tabs (the delimiter) and CR/LF, so an actor name carrying either cannot
 // forge an attribute or a record.
 func renderLEEF(e store.AuditEvent, tag string) string {
-	return fmt.Sprintf("LEEF:2.0|pamv1|%s|1|%s|devTime=%d\tusrName=%s\tmsg=%s",
+	return fmt.Sprintf("LEEF:2.0|PAMv1|%s|1|%s|devTime=%d\tusrName=%s\tmsg=%s",
 		leefHeader(tag), leefHeader(e.Action), e.TS.UnixMilli(),
 		leefAttr(e.Actor), leefAttr(e.Detail))
 }

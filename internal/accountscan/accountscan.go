@@ -1,6 +1,6 @@
 // Package accountscan parses the output of a fixed, read-only enumeration
-// command run against a target pamv1 already holds a vaulted credential for,
-// to answer "what local/service accounts exist here, and does pamv1 manage
+// command run against a target PAMv1 already holds a vaulted credential for,
+// to answer "what local/service accounts exist here, and does PAMv1 manage
 // them?" (Phase 128) — the authenticated counterpart to internal/discovery's
 // pre-auth port probing. Every function here is pure text parsing with no I/O
 // and no store dependency, so the two output shapes (a Unix /etc/passwd, a
@@ -22,7 +22,7 @@ type Account struct {
 // unixNologinShells are shells that make a Unix account non-interactive: an
 // account like this cannot be used to log in, so it is outside this scan's
 // concern (a service account with a real secret would still show up via its
-// pamv1 credential, not this list).
+// PAMv1 credential, not this list).
 var unixNologinShells = map[string]bool{
 	"/usr/sbin/nologin": true,
 	"/sbin/nologin":     true,
@@ -33,7 +33,7 @@ var unixNologinShells = map[string]bool{
 // ParseUnixAccounts extracts login-capable accounts from the text of
 // /etc/passwd (7 colon-separated fields: name:passwd:uid:gid:gecos:home:shell).
 // Root (uid 0) is always kept and marked Privileged; other system accounts
-// (uid 1-999, the Debian/Ubuntu convention pamv1's own OVA and Docker images
+// (uid 1-999, the Debian/Ubuntu convention PAMv1's own OVA and Docker images
 // use) are skipped as noise, not accounts an operator could use to log in
 // interactively. A line that doesn't parse (wrong field count, non-numeric
 // uid) is skipped rather than treated as an error — the output of a fixed
@@ -70,7 +70,7 @@ func ParseUnixAccounts(passwdOutput string) []Account {
 // be dropped without a fragile line-count assumption (localized Windows
 // builds vary the exact wording, but "starts with a run of dashes" and "the
 // well-known English success line" are stable enough for this scan's purpose
-// — pamv1 does not attempt to localize this parser).
+// — PAMv1 does not attempt to localize this parser).
 func isWindowsNoiseLine(line string) bool {
 	t := strings.TrimSpace(line)
 	switch {

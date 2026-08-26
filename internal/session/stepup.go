@@ -205,7 +205,7 @@ func (s *StepUp) claim(sessionID string, pause int64, approve bool, decider stri
 // statement runs; letting the operator approve their own turns the pause into a
 // confirmation prompt, which is worse than no gate at all because the audit trail
 // then records an approval that never happened. Every other decision point in
-// pamv1 — access requests, vendor grants, broker approvals, access certification
+// PAMv1 — access requests, vendor grants, broker approvals, access certification
 // — already refuses self-approval; this one did not.
 //
 // The check happens under the same lock as the claim, so a concurrent decision

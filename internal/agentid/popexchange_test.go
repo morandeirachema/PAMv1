@@ -163,7 +163,7 @@ func TestExchangeRefusesAMalformedBinding(t *testing.T) {
 }
 
 // TestVerifierRefusesAnUnenforceableConfirmation is the fail-closed half of the
-// claim. RFC 7800 also defines `jwk` and `kid` confirmations; pamv1 enforces only
+// claim. RFC 7800 also defines `jwk` and `kid` confirmations; PAMv1 enforces only
 // `jkt`. Reading such a token as "unbound" would DOWNGRADE a token its issuer had
 // deliberately constrained, so it is refused outright instead.
 func TestVerifierRefusesAnUnenforceableConfirmation(t *testing.T) {

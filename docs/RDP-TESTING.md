@@ -1,4 +1,4 @@
-# pamv1 — RDP viewer: testing procedure
+# PAMv1 — RDP viewer: testing procedure
 
 > **Living document.** Update whenever the RDP path (guacd handshake, the tunnel
 > prelude, the token endpoint, or the in-portal viewer) changes.
@@ -8,7 +8,7 @@
 > auditing), 52c (recording-required, throttled tunnel auth), 52e and 137
 > (watermark overlay).
 
-This is the procedure to verify pamv1's **RDP function** end to end: an operator
+This is the procedure to verify PAMv1's **RDP function** end to end: an operator
 opens an RDP target from the 5250 portal, the credential is injected server-side
 at the guacd handshake, and the browser only ever receives the rendered screen.
 
@@ -120,7 +120,7 @@ to see it:
 ### 4a. The bundled demo (no Windows host needed)
 
 A compose file ships a real **xrdp Linux desktop** as an RDP target alongside
-guacd and pam-server, with the pamv1 target auto-seeded — so you can watch a
+guacd and pam-server, with the PAMv1 target auto-seeded — so you can watch a
 desktop paint end to end on any Docker host:
 
 ```bash

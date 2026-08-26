@@ -116,7 +116,7 @@ const (
 // subjectReach answers GET /api/access/reach?subject=<name>&kind=user|agent —
 // the subject-indexed view of the grant model (Phase 189).
 //
-// Every other grant query in pamv1 is target-indexed ("who may reach this
+// Every other grant query in PAMv1 is target-indexed ("who may reach this
 // target?"), which is the question the connect gate asks. The question an
 // investigator asks is the reverse one, and until now it could only be answered
 // by walking every target and re-deriving the answer by hand. This route asks it

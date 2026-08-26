@@ -217,7 +217,7 @@ func (s *Server) propagateDependencies(ctx context.Context, cred *store.Credenti
 		if port == 0 {
 			port = 5985
 		}
-		// Who pamv1 connects AS to make this change (Phase 61). A declared
+		// Who PAMv1 connects AS to make this change (Phase 61). A declared
 		// management credential is used when there is one; otherwise this falls
 		// back to the rotated account, which is what it always did.
 		user, secret, via, cerr := s.dependencyLogin(ctx, cred, newSecret, d)
@@ -244,7 +244,7 @@ type errManagementCredential string
 // Error renders the reason.
 func (e errManagementCredential) Error() string { return string(e) }
 
-// dependencyLogin resolves the account pamv1 authenticates to the consumer's
+// dependencyLogin resolves the account PAMv1 authenticates to the consumer's
 // host with, returning its username, its plaintext secret, and a short label
 // for the audit trail (never the secret itself).
 //
@@ -275,7 +275,7 @@ func (s *Server) dependencyLogin(ctx context.Context, cred *store.Credential, ne
 	}
 	// Re-checked here, not only at declaration (Phase 61a), for the same reason
 	// the dependency's name is: this is the last point before the value leaves
-	// pamv1, and a row could predate the rule or have been written straight into
+	// PAMv1, and a row could predate the rule or have been written straight into
 	// the database. An SSH private key handed to WinRM as a password authenticates
 	// nothing and discloses everything, so it never leaves.
 	if mc.SecretType != "" && mc.SecretType != "password" {

@@ -176,7 +176,7 @@ var nis2Controls = []struct {
 	{"j", "MFA / continuous auth, secured comms, secured emergency comms", "implemented", []string{"mfa", "login"}},
 }
 
-// nis2Report produces a live, window-scoped evidence report against pamv1's
+// nis2Report produces a live, window-scoped evidence report against PAMv1's
 // NIS2 Art. 21(2) control matrix — a canned, control-mapped report, not
 // another raw audit slice. Each control's status is architectural (whether
 // the capability exists, same as docs/NIS2-COMPLIANCE.md), not derived from

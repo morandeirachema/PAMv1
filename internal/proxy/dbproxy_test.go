@@ -231,7 +231,7 @@ func seedPGTarget(t *testing.T, st store.Store, v *vault.Vault, addr string) {
 // before the test binary exits.
 //
 // It exists because of a real diagnosis dead end (Phase 179): a CI run failed
-// with `server error: pamv1: upstream connection failed`, which is the message
+// with `server error: PAMv1: upstream connection failed`, which is the message
 // the proxy sends a CLIENT — deliberately vague, because a client is not owed
 // the upstream's error. The cause was in the audit trail
 // (`db.session.error … error:<real error>`) and in the server log, and the test

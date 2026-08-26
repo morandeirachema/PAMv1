@@ -13,7 +13,7 @@ import (
 	"github.com/go-ldap/ldap/v3"
 )
 
-// DirectorySource reports a directory account's status, so pamv1 can revoke
+// DirectorySource reports a directory account's status, so PAMv1 can revoke
 // access for disabled users and surface orphaned local accounts (identity
 // reconciliation).
 type DirectorySource interface {
@@ -37,7 +37,7 @@ type LDAPConfig struct {
 	BindPassword string
 	BaseDN       string // search base, e.g. DC=example,DC=com
 	UserFilter   string // e.g. (sAMAccountName=%s); %s is the escaped username
-	// GroupRoleMap maps a group DN (lower-cased) to a pamv1 role. A user in
+	// GroupRoleMap maps a group DN (lower-cased) to a PAMv1 role. A user in
 	// several mapped groups gets the highest-privilege role.
 	GroupRoleMap map[string]Role
 	// InsecureSkipVerify disables TLS verification — dev only.
@@ -165,7 +165,7 @@ func (a *LDAPAuthenticator) Authenticate(ctx context.Context, username, password
 	// capability union so a multi-group user keeps every capability.
 	role, roles, ok := MatchedRoles(groups, a.cfg.GroupRoleMap)
 	if !ok {
-		return nil, fmt.Errorf("%w: user is in no pamv1 group", ErrUnauthorized)
+		return nil, fmt.Errorf("%w: user is in no PAMv1 group", ErrUnauthorized)
 	}
 	// Normalize the login to lower-case: AD/LDAP binds are case-insensitive, so
 	// "Alice" and "alice" authenticate identically — canonicalizing keeps one actor

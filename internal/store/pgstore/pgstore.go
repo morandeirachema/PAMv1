@@ -1654,7 +1654,7 @@ func (s *PGStore) EnrollAgentIdentity(ctx context.Context, id int64, owner, note
 func (s *PGStore) SetAgentIdentityOwner(ctx context.Context, id int64, owner string) error {
 	// Naming an owner IS enrolling: it is the act by which a human takes
 	// responsibility for the identity, whether the row was typed in by an admin
-	// or created by pamv1 the first time the workload called.
+	// or created by PAMv1 the first time the workload called.
 	return execExpectingRow(ctx, s.pool,
 		`UPDATE agent_identities SET owner = $2, enrolled = TRUE WHERE id = $1`, id, owner)
 }

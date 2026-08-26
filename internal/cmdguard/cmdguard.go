@@ -7,7 +7,7 @@
 // path with no allow-list configured keeps exactly its pre-Phase-131
 // deny-only behavior.
 //
-// It applies on every path where pamv1 can see a **discrete command** — the SSH
+// It applies on every path where PAMv1 can see a **discrete command** — the SSH
 // `exec` request (non-interactive `ssh target "cmd"`), each WinRM command-loop
 // line and each REST WinRM run, each PostgreSQL/SQL Server statement, and the
 // agent broker's `ssh_exec`/`winrm_exec` tools. One deny policy, loaded once

@@ -137,7 +137,7 @@ func TestConsoleCanReachEveryOperatorRoute(t *testing.T) {
 
 	if len(unreachable) > 0 {
 		t.Fatalf("%d operator route(s) the 5250 console cannot reach:\n  %s\n"+
-			"pamv1 claims every shipped capability is operable from the portal (README, ROADMAP), so each of "+
+			"PAMv1 claims every shipped capability is operable from the portal (README, ROADMAP), so each of "+
 			"these is either a missing screen or a claim that needs narrowing. Add the screen, or add the "+
 			"route to notOperable WITH the reason a person is not expected to use it.",
 			len(unreachable), strings.Join(unreachable, "\n  "))

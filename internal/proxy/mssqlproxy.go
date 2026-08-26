@@ -313,7 +313,7 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	if login.IntegratedSecurity() {
 		// Brokering means swapping the operator's PAM key for a vaulted SQL
 		// login; Windows authentication cannot express that.
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: use SQL authentication (integrated/Windows auth is not brokered)", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: use SQL authentication (integrated/Windows auth is not brokered)", tds72)
 		return
 	}
 
@@ -322,7 +322,7 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	if err != nil {
 		m.log.Warn("mssql authentication failed", "login", auditField(loginName, 64), "remote", remote)
 		m.audit(ctx, auditField(loginName, 64), "proxy.auth_failed", "proto:mssql remote:"+remote)
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: authentication failed", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: authentication failed", tds72)
 		return
 	}
 	actor := principal.Name
@@ -365,7 +365,7 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	if err != nil {
 		m.log.Error("upstream database connection failed", "actor", actor, "target", target.Name, "err", err)
 		m.audit(ctx, actor, "db.session.error", fmt.Sprintf("target:%s db:%s via:mssql error:%v", target.Name, auditValueDB(database), err))
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: upstream connection failed", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: upstream connection failed", tds72)
 		return
 	}
 	defer up.conn.Close()
@@ -393,7 +393,7 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	} else {
 		m.audit(ctx, actor, "session.record_failed", "proto:mssql target:"+target.Name+" err:"+rerr.Error())
 		if m.requireRec {
-			m.fail(c, mssqlErrLoginFailed, 14, "pamv1: session recording unavailable", tds72)
+			m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: session recording unavailable", tds72)
 			return
 		}
 	}
@@ -642,7 +642,7 @@ func (m *MSSQLProxy) relay(ctx context.Context, client *tds.Conn, up *upstreamMS
 						m.audit(ctx, actor, "command.blocked",
 							fmt.Sprintf("target:%s via:mssql pattern:unparsed-request sql:[unparsed %s]", target.Name, tdsKind(typ)))
 						_ = sendClient(tds.PacketTabularResult, tds.Refusal(mssqlErrPolicy, 16,
-							"pamv1: request could not be parsed for policy inspection", typ, tds72))
+							"PAMv1: request could not be parsed for policy inspection", typ, tds72))
 						continue
 					}
 					if sqlRecordQuery(ctx, &m.listener, &m.pol, rec, actor, target, "[unparsed "+tdsKind(typ)+" request]", sid) {
@@ -719,7 +719,7 @@ func (m *MSSQLProxy) refuseRequests(ctx, relayCtx context.Context, sendClient fu
 			m.audit(ctx, actor, "command.blocked",
 				fmt.Sprintf("target:%s via:mssql pattern:unreadable-parameters sql:%s", target.Name, auditCmd(req.AuditText)))
 			_ = sendClient(tds.PacketTabularResult, tds.Refusal(mssqlErrPolicy, 16,
-				"pamv1: statement could not be read for policy inspection", reqType, tds72))
+				"PAMv1: statement could not be read for policy inspection", reqType, tds72))
 			return true
 		}
 		// Guard EVERY recovered character parameter, not only the one believed
@@ -805,16 +805,16 @@ func (m *MSSQLProxy) refuse(ctx context.Context, c *tds.Conn, res admitResult, a
 		// audit a second, differently-worded db.session.denied row for the same
 		// refusal.
 		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:tunnel-only-token")
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: this token may only be used by the in-portal viewer", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: this token may only be used by the in-portal viewer", tds72)
 	case gateEnrollOnly:
 		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: complete MFA enrollment first", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: complete MFA enrollment first", tds72)
 	case gateExtensionOnly:
 		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:extension-scoped-token")
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: a browser-extension token cannot open a database session", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: a browser-extension token cannot open a database session", tds72)
 	case gateMFAPending:
 		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-webauthn-pending")
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: complete WebAuthn sign-in first", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: complete WebAuthn sign-in first", tds72)
 	case gateRoleConnect:
 		m.deny(ctx, c, actor, login, "your role may not open sessions", tds72)
 	case gateIPAllowlist:
@@ -829,33 +829,33 @@ func (m *MSSQLProxy) refuse(ctx context.Context, c *tds.Conn, res admitResult, a
 		m.deny(ctx, c, actor, login, "protocol not allowed by policy", tds72)
 	case gateTargetGrants:
 		// admit logged "target grants lookup failed"; fail closed on the wire.
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: authorization check failed", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: authorization check failed", tds72)
 	case gateTargetPolicy:
 		m.deny(ctx, c, actor, login, "not authorized for this target", tds72)
 	case gateApprovalPolicy, gateApprovalClaim:
 		// admit logged the specific approval error; fail closed on the wire.
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: approval check failed", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: approval check failed", tds72)
 	case gateApproval:
 		// admit already audited access.denied with the reason.
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: connection requires an approved access request", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: connection requires an approved access request", tds72)
 	case gateVendorCheck:
 		// admit logged "vendor gate check failed"; fail closed on the wire.
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: authorization check failed", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: authorization check failed", tds72)
 	case gateVendor:
 		// admit already audited access.denied reason:vendor-contract.
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: vendor access requires an approved, in-window contract grant", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: vendor access requires an approved, in-window contract grant", tds72)
 	case gateSessionLimit:
 		m.audit(ctx, actor, "db.session.denied", "target:"+res.target.Name+" reason:session-limit")
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: too many concurrent sessions", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: too many concurrent sessions", tds72)
 	case gateAudit:
 		// admit's fail-closed db.session.start write did not land; refuse.
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: audit log unavailable; session refused", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: audit log unavailable; session refused", tds72)
 	case gateDecrypt:
 		// admit already audited credential.decrypt_failed and logged the error.
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: credential unavailable", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: credential unavailable", tds72)
 	default:
 		m.log.Error("unhandled admit refusal on the SQL Server proxy", "gate", int(res.gate), "actor", actor)
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: authorization check failed", tds72)
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: authorization check failed", tds72)
 	}
 }
 

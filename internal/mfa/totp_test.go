@@ -50,8 +50,8 @@ func TestValidateRoundtrip(t *testing.T) {
 
 // TestProvisioningURI checks the otpauth:// URI carries the expected fields.
 func TestProvisioningURI(t *testing.T) {
-	uri := ProvisioningURI("ABC234", "alice", "pamv1")
-	for _, want := range []string{"otpauth://totp/", "secret=ABC234", "issuer=pamv1", "digits=6", "period=30"} {
+	uri := ProvisioningURI("ABC234", "alice", "PAMv1")
+	for _, want := range []string{"otpauth://totp/", "secret=ABC234", "issuer=PAMv1", "digits=6", "period=30"} {
 		if !strings.Contains(uri, want) {
 			t.Fatalf("URI %q missing %q", uri, want)
 		}

@@ -47,7 +47,7 @@ func TestBrokeredResultIsCappedButTheTranscriptIsWhole(t *testing.T) {
 	if !strings.HasPrefix(got, "LOGLINE-") {
 		t.Fatalf("the start of the output must survive: %q", got)
 	}
-	if !strings.Contains(got, "truncated by pamv1") || res["truncated"] != true {
+	if !strings.Contains(got, "truncated by PAMv1") || res["truncated"] != true {
 		t.Fatalf("the agent must be told its copy is partial, got %v", res)
 	}
 
@@ -73,7 +73,7 @@ func TestBrokeredResultIsCappedButTheTranscriptIsWhole(t *testing.T) {
 		t.Fatalf("the transcript is %d bytes for %d bytes of output — the durable record must be whole, "+
 			"since that is what makes truncating the agent's copy acceptable", len(transcript), len(huge))
 	}
-	if strings.Contains(transcript, "truncated by pamv1") {
+	if strings.Contains(transcript, "truncated by PAMv1") {
 		t.Fatal("the truncation marker leaked into the durable transcript")
 	}
 }

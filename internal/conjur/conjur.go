@@ -1,5 +1,5 @@
-// Package conjur is an optional runtime source for pamv1's OWN bootstrap secrets
-// (Phase 18). When PAM_CONJUR_URL is set, pamv1 authenticates to a CyberArk
+// Package conjur is an optional runtime source for PAMv1's OWN bootstrap secrets
+// (Phase 18). When PAM_CONJUR_URL is set, PAMv1 authenticates to a CyberArk
 // Conjur instance at startup and fills any empty bootstrap PAM_* secret
 // (master key, API key, database URL, break-glass hash, broker keys) from it —
 // so those secrets can live in Conjur (with machine-identity auth, central
@@ -7,7 +7,7 @@
 // to the SOPS GitOps sealing (Phase 14), not a replacement: SOPS stays the
 // zero-dependency default, Conjur is opt-in.
 //
-// The client is hand-rolled over the two Conjur REST endpoints pamv1 needs
+// The client is hand-rolled over the two Conjur REST endpoints PAMv1 needs
 // (authenticate + read secret), so it adds no dependency — the same approach the
 // repo takes for MCP JSON-RPC and SPIFFE JWT verification.
 package conjur
@@ -200,7 +200,7 @@ var bootstrapSecrets = []struct{ env, suffix string }{
 // set, or PAM_SECRETS_PROVIDER=conjur), it authenticates and fills any empty
 // bootstrap PAM_* secret from Conjur before config.Load reads the environment.
 // It fails loud on auth/transport errors — a configured-but-unreachable Conjur
-// must not silently start pamv1 with empty secrets — but treats a variable
+// must not silently start PAMv1 with empty secrets — but treats a variable
 // missing in Conjur (404) as "not managed here" and leaves it to the normal
 // fail-loud config validation. Disabled = a nil client and no error.
 //

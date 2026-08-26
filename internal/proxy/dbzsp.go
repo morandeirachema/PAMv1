@@ -2,7 +2,7 @@ package proxy
 
 // dbzsp.go implements Zero Standing Privilege for PostgreSQL targets (Phase
 // 129, extending Phase 22's SSH-only ZSP): a db_zsp credential carries no
-// stored secret. Instead, at dial time, pamv1 uses the target's separately
+// stored secret. Instead, at dial time, PAMv1 uses the target's separately
 // vaulted "provisioner" credential to CREATE a fresh, randomly-named
 // PostgreSQL role with a random password and a VALID UNTIL expiry, dials
 // AGAIN as that ephemeral role for the real session, and DROPs the role when
@@ -11,8 +11,8 @@ package proxy
 // process, in memory, for the span of a single connect.
 //
 // SQL Server is out of scope here: internal/tds only ever parses what a
-// client sends (pamv1 acting as a TDS server) and has no code for reading a
-// real server's response token stream, which issuing pamv1's own CREATE
+// client sends (PAMv1 acting as a TDS server) and has no code for reading a
+// real server's response token stream, which issuing PAMv1's own CREATE
 // LOGIN would need — a genuinely separate piece of work, not attempted here.
 
 import (
@@ -71,7 +71,7 @@ func findProvisioner(ctx context.Context, st store.Store, targetID int64) (*stor
 	return found, nil
 }
 
-// randomIdentifier returns n random bytes as lowercase hex. It is pamv1's own
+// randomIdentifier returns n random bytes as lowercase hex. It is PAMv1's own
 // randomness, never derived from client-controlled input, so embedding it in
 // generated SQL (via the quoting helpers below) is not an injection surface.
 func randomIdentifier(n int) (string, error) {
@@ -133,7 +133,7 @@ func (d *DBProxy) teardownPGRole(ctx context.Context, actor string, target *stor
 
 // pgSimpleExec sends stmt as a PostgreSQL simple-query message over fe and
 // reads the response through ReadyForQuery, returning the server's own error
-// if any. This is pamv1 acting as its own PostgreSQL client — distinct from
+// if any. This is PAMv1 acting as its own PostgreSQL client — distinct from
 // the relay path (relay.go), which never originates a statement itself, only
 // forwards the operator's.
 func pgSimpleExec(fe *pgproto3.Frontend, stmt string) error {

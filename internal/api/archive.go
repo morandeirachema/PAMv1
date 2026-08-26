@@ -8,7 +8,7 @@ package api
 // and, crucially, makes the prune CONDITIONAL on that export succeeding, so a
 // broken or full archive costs disk space rather than the audit trail.
 //
-// pamv1 cannot make storage immutable from inside the process; that is the
+// PAMv1 cannot make storage immutable from inside the process; that is the
 // operator's mount. What it does guarantee is that every archived artifact is
 // written once (never overwritten), read-only, and digest-stamped into the
 // audit trail, so a later reader can prove the archive is the thing that was

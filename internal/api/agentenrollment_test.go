@@ -23,13 +23,13 @@ func svidServer(t *testing.T, spiffeID string, requireEnrolled bool) (*httptest.
 	return srv, svid
 }
 
-// TestSVIDInventoryBuildsItself is Phase 174's first half: pamv1 records every
+// TestSVIDInventoryBuildsItself is Phase 174's first half: PAMv1 records every
 // attested identity that authenticates, so the inventory exists whether or not
 // anyone remembered to enrol one.
 //
-// A static agent key is knowable by definition — pamv1 minted it. An SVID is the
+// A static agent key is knowable by definition — PAMv1 minted it. An SVID is the
 // opposite: any workload the trust domain vouches for may call, and until this
-// phase pamv1 knew only about the ones an admin had typed into the owner
+// phase PAMv1 knew only about the ones an admin had typed into the owner
 // registry. That matters because every containment control built for this
 // identity kind (quarantine, four-eyes, the offboarding cascade) keys on a
 // SUBJECT a responder must be able to name.
@@ -127,7 +127,7 @@ func TestRequireEnrolledSVIDRefusesTheUnclaimed(t *testing.T) {
 		t.Fatalf("an enrolled identity should be admitted: %d %s", st, d)
 	}
 
-	// A static agent key is unaffected: pamv1 issued it, so there is nothing to
+	// A static agent key is unaffected: PAMv1 issued it, so there is nothing to
 	// enrol and requiring enrollment must not lock the other identity kind out.
 	_, tok := mintAgent(t, srv, "static-bot", "alice", nil)
 	if st, d := doBearer(t, srv, http.MethodPost, "/v1/tool-calls", tok,
@@ -174,7 +174,7 @@ func TestDiscoveredIdentityIsUnattributedForFourEyes(t *testing.T) {
 //
 // The controls that read the inventory read the whole chain — quarantine walks
 // it (169), four-eyes resolves an owner for every link (170) — so a delegating
-// root that never calls pamv1 directly had no row at all. An operator could not
+// root that never calls PAMv1 directly had no row at all. An operator could not
 // enrol it from the list, and every approval of a call it delegated was refused
 // as unattributed until they typed the SPIFFE ID by hand.
 func TestDelegationChainIsInventoried(t *testing.T) {
@@ -200,7 +200,7 @@ func TestDelegationChainIsInventoried(t *testing.T) {
 	if !seen[sub] || !seen[root] {
 		t.Fatalf("both the presenter and the actor it acts for should be inventoried: %s", ld)
 	}
-	// The trail says how pamv1 learned about an identity that never called it.
+	// The trail says how PAMv1 learned about an identity that never called it.
 	_, aud := do(t, srv, http.MethodGet, "/api/audit?limit=50", testAPIKey, nil)
 	if !strings.Contains(string(aud), "via:") {
 		t.Fatalf("a chain member's first sighting should name the presenter: %s", aud)

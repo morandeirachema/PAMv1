@@ -418,7 +418,7 @@ func TestSessionShareJoinKick(t *testing.T) {
 }
 
 // TestSessionShareJoinRefusesWrongInvitee proves an invite issued to one
-// pamv1 user cannot be redeemed by a different one, even with the correct
+// PAMv1 user cannot be redeemed by a different one, even with the correct
 // token — a leaked token must not let a different user impersonate the
 // invitee.
 func TestSessionShareJoinRefusesWrongInvitee(t *testing.T) {
@@ -451,7 +451,7 @@ func TestSessionShareJoinRefusesWrongInvitee(t *testing.T) {
 	sid := waitForSession(t, reg)
 
 	const rawToken = "someones-share-token"
-	// Invite is issued to "bob", but "erin" (a real, different pamv1 user)
+	// Invite is issued to "bob", but "erin" (a real, different PAMv1 user)
 	// tries to redeem it with the right token.
 	approvedInvite(t, st, sid, "view_only", "internal", "bob", rawToken, time.Minute)
 
@@ -562,7 +562,7 @@ func TestSessionShareJoinRefusesExternalKind(t *testing.T) {
 	sid := waitForSession(t, reg)
 
 	const rawToken = "vendor-share-token"
-	// An "external" invite has no Invitee (a vendor contact isn't a pamv1
+	// An "external" invite has no Invitee (a vendor contact isn't a PAMv1
 	// principal) — even if "grace" (a real user) somehow learned the token,
 	// the join path refuses it outright, wrong-surface, before even
 	// reaching the invitee-match check.

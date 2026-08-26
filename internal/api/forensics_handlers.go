@@ -10,7 +10,7 @@ import (
 )
 
 // SessionForensicsRequest is what the SSH proxy hands back after an interactive
-// session ends: the facts pamv1 itself knows about the session, which are what
+// session ends: the facts PAMv1 itself knows about the session, which are what
 // scope the reconstruction to it (the target's audit log holds every session's
 // execs, including other operators').
 type SessionForensicsRequest struct {
@@ -29,7 +29,7 @@ type SessionForensicsRequest struct {
 // It runs ONE fixed, read-only command over the target's own vaulted credential
 // on a FRESH connection — never the live session, which is gone by now — the
 // same shape Phase 128's account discovery established, through the same
-// `guardCommand` chokepoint so pamv1's own literal is not exempt from an
+// `guardCommand` chokepoint so PAMv1's own literal is not exempt from an
 // operator's deny policy.
 //
 // It is called from a background goroutine the proxy tracks (so a graceful
@@ -42,7 +42,7 @@ type SessionForensicsRequest struct {
 //     auditd, exec auditing off, or the credential may not read the audit log).
 //     That is a FINDING, not a silent no-op: a target whose sessions cannot be
 //     reconstructed is exactly what an auditor wants to know;
-//   - `session.forensics_failed` — pamv1 could not ask (dial/exec failure,
+//   - `session.forensics_failed` — PAMv1 could not ask (dial/exec failure,
 //     decrypt failure, policy refusal).
 func (s *Server) CollectSessionForensics(ctx context.Context, in SessionForensicsRequest) {
 	if !s.forensics {

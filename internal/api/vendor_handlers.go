@@ -384,7 +384,7 @@ func (s *Server) vendorGate(w http.ResponseWriter, r *http.Request, target *stor
 // equality check rejects the display-name form ("Ops <ops@example.com>"), which
 // parses fine but is not what a delivery path or an audit line should carry.
 //
-// Deliberately the only email validation in pamv1: an address is checked where
+// Deliberately the only email validation in PAMv1: an address is checked where
 // it is EDITED, not where it is sent, so a typo is caught by the person making
 // it rather than discovered when an invite silently goes nowhere.
 func validEmail(addr string) bool {

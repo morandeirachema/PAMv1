@@ -456,12 +456,12 @@ func (s *Server) execWinRM(ctx context.Context, target *store.Target, cred *stor
 	// chokepoint the REST WinRM endpoint and the broker's winrm_exec tool share,
 	// so the deny policy covers a human and an agent identically.
 	if err := s.guardCommand(ctx, actor, target.Name, "winrm", command); err != nil {
-		s.live.Publish(sid, []byte("pamv1: command blocked by policy\r\n"))
+		s.live.Publish(sid, []byte("PAMv1: command blocked by policy\r\n"))
 		// The attempt is evidence: the proxy path tees this refusal into its
 		// .cast, so the REST/broker path writes a transcript too — otherwise a
 		// supervisor could watch a denied attempt live and later find no
 		// recording of it.
-		s.recordWinRMRefusal(ctx, target, cred, actor, command, "pamv1: command blocked by policy")
+		s.recordWinRMRefusal(ctx, target, cred, actor, command, "PAMv1: command blocked by policy")
 		return winrm.Result{}, err
 	}
 	// PAM_REQUIRE_RECORDING covers this path too now. The check must come BEFORE
@@ -472,21 +472,21 @@ func (s *Server) execWinRM(ctx context.Context, target *store.Target, cred *stor
 	if s.recordingRequired(s.recordingDir) {
 		// Best-effort: the command is refused below regardless of this write.
 		_ = s.auditAs(ctx, actor, "winrm.refused", "target:"+target.Name+" reason:recording-required")
-		s.live.Publish(sid, []byte("pamv1: recording is required but unavailable; command refused\r\n"))
+		s.live.Publish(sid, []byte("PAMv1: recording is required but unavailable; command refused\r\n"))
 		return winrm.Result{}, errRecordingRequired
 	}
 	secret, err := s.vault.Decrypt(ctx, cred.SecretEnc, store.CredentialAAD(target.ID, cred.ID))
 	if err != nil {
 		s.audit(ctx, "credential.decrypt_failed", fmt.Sprintf("credential:%d target:%s op:winrm", cred.ID, target.Name))
-		s.live.Publish(sid, []byte("pamv1: credential decryption failed; command refused\r\n"))
+		s.live.Publish(sid, []byte("PAMv1: credential decryption failed; command refused\r\n"))
 		return winrm.Result{}, errDecryptFailed
 	}
 	res, err := s.winrm.Run(ctx, target.Host, target.Port, cred.Username, secret, command)
 	if err != nil {
 		s.log.Error("winrm run failed", "target", target.Name, "err", err)
 		s.audit(ctx, "winrm.error", fmt.Sprintf("target:%s cred_user:%s error:%v", target.Name, cred.Username, err))
-		s.live.Publish(sid, []byte(fmt.Sprintf("pamv1: winrm error: %v\r\n", err)))
-		s.recordWinRMRefusal(ctx, target, cred, actor, command, fmt.Sprintf("pamv1: winrm error: %v", err))
+		s.live.Publish(sid, []byte(fmt.Sprintf("PAMv1: winrm error: %v\r\n", err)))
+		s.recordWinRMRefusal(ctx, target, cred, actor, command, fmt.Sprintf("PAMv1: winrm error: %v", err))
 		return winrm.Result{}, err
 	}
 	file, sum := s.recordWinRM(target, cred.Username, actor, command, res)
@@ -497,7 +497,7 @@ func (s *Server) execWinRM(ctx context.Context, target *store.Target, cred *stor
 	// missing instead of receiving output that was never accounted for.
 	if err := s.auditAs(ctx, actor, "winrm.run",
 		fmt.Sprintf("target:%s cred_user:%s exit:%d file:%s sha256:%s", target.Name, cred.Username, res.ExitCode, file, sum)); err != nil {
-		s.live.Publish(sid, []byte("pamv1: audit log unavailable; output withheld\r\n"))
+		s.live.Publish(sid, []byte("PAMv1: audit log unavailable; output withheld\r\n"))
 		return winrm.Result{}, errAuditUnavailable
 	}
 	// Output reaches live watchers only AFTER the durable audit above: the
@@ -567,7 +567,7 @@ func (s *Server) recordExecTranscript(kind, suffix string, target *store.Target,
 	name := recording.Title(s.opaqueRecNames, ts, sanitizeName(target.Name), sanitizeName(actor)) + suffix
 	path := filepath.Join(s.recordingDir, name)
 	transcript := fmt.Sprintf(
-		"# pamv1 %s session\n# target: %s (%s:%d)\n# user: %s\n# actor: %s\n# time: %s\n\n$ %s\n\n--- stdout ---\n%s\n--- stderr ---\n%s\n--- %s ---\n",
+		"# PAMv1 %s session\n# target: %s (%s:%d)\n# user: %s\n# actor: %s\n# time: %s\n\n$ %s\n\n--- stdout ---\n%s\n--- stderr ---\n%s\n--- %s ---\n",
 		kind, target.Name, target.Host, target.Port, credUser, actor, ts.Format(time.RFC3339),
 		command, stdout, stderr, outcome)
 	// Seal the transcript at rest when configured, and hash the bytes that land ON

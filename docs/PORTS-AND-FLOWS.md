@@ -1,4 +1,4 @@
-# pamv1 — Ports & Network Flow Matrix
+# PAMv1 — Ports & Network Flow Matrix
 
 > **Living document.** Update whenever a listener, an upstream protocol, or a
 > deployment flow changes. This is the reference for firewall rules, security
@@ -35,7 +35,7 @@
 > already in the process; nothing new crosses the wire.
 > **Phase 124 adds no port, listener or flow either** — the WebAuthn
 > ceremony is six new routes on the existing `:8080`; the browser talks
-> directly to its own platform/hardware authenticator, never to pamv1 or
+> directly to its own platform/hardware authenticator, never to PAMv1 or
 > anywhere else, so there is no new egress purpose either, unlike OIDC's
 > discovery/token calls.
 > **Phase 126 adds no port, listener or flow either** — the
@@ -98,12 +98,12 @@
 > egress purpose, nothing new on the wire.
 > **Phase 149 adds no port, listener or flow either** — `/v1/scim-keys` and
 > `/scim/v2/Users` both ride the existing `:8080`; SCIM is push, an IdP
-> calling *in* to pamv1, so there is no new egress purpose either, unlike
+> calling *in* to PAMv1, so there is no new egress purpose either, unlike
 > the ITSM/posture/vendor webhooks that call *out*.
 > **Phase 151 adds no port or listener, and one new egress purpose on an
 > existing flow** — the SAML SP's three routes ride `:8080`; the login itself
 > is browser-mediated (the operator's browser carries the AuthnRequest to the
-> IdP and the signed Response back to pamv1's ACS), so, unlike OIDC's
+> IdP and the signed Response back to PAMv1's ACS), so, unlike OIDC's
 > server-side token exchange, **no per-login server↔IdP call exists**. The
 > only outbound call is one HTTPS fetch of the IdP metadata document at
 > startup and on hot-swap (`PAM_SAML_IDP_METADATA_URL`, folded into E5's
@@ -111,7 +111,7 @@
 > `PAM_SAML_IDP_METADATA_FILE`, which is what `PAM_OT_AIRGAP` requires.
 > **Phase 153 adds one genuinely new flow — the first whose direction is
 > the reverse of everything above it.** An **outbound-only endpoint agent**
-> (`pam-agent`, on a target pamv1 cannot dial into) connects *in* to the
+> (`pam-agent`, on a target PAMv1 cannot dial into) connects *in* to the
 > EXISTING `:2222` SSH listener (**I8**) and holds a reverse tunnel; the
 > proxy then reaches that target *through the agent's connection* instead
 > of egress flow E2. No new listener, no new port, no new egress from
@@ -124,12 +124,12 @@
 > pam-server, on the same `:8080` control plane the operator already talks to;
 > there is no session proxy and therefore no new inbound flow.
 > **Phase 157 adds no port, listener or flow at all** — the post-session
-> forensic reconstruction is one more SSH connection to a target pamv1 already
+> forensic reconstruction is one more SSH connection to a target PAMv1 already
 > dials (flow **E2**, `:22`), made after the session ends with the same
 > credential; nothing new is opened, and nothing new is reachable.
 > **Phases 159–183 add none either** — the agent-broker batch changes who may
 > call the existing `/v1/*` and `/mcp` surface, what a rule may say about the
-> caller, and what pamv1 writes down about it, never where anything listens or
+> caller, and what PAMv1 writes down about it, never where anything listens or
 > dials. Phase 170's four `/v1/agents/identities` routes are ordinary
 > `manage_users` API calls on the port the portal already serves, and Phase 169's
 > chain-following quarantine and Phase 173's `caller.*` conditions are decisions
@@ -176,7 +176,7 @@ PostgreSQL and SQL Server. Plain-text variants are for isolated local dev only.
 Kubernetes Service (`deploy/k8s/service.yaml`) maps `8080 → 8080` and `2222 → 2222` (Helm uses `service.httpPort` / `service.sshPort`, same defaults);
 add `5433 → 5433` and/or `1433 → 1433` when the database proxies are enabled (neither is mapped by default).
 
-## 2. Ingress — who connects **to** pamv1
+## 2. Ingress — who connects **to** PAMv1
 
 | # | Source (zone) | → Destination | Port | Proto | Purpose | Status |
 |---|---------------|---------------|-----:|-------|---------|--------|
@@ -189,7 +189,7 @@ add `5433 → 5433` and/or `1433 → 1433` when the database proxies are enabled
 | I8 | **Endpoint agent** (`pam-agent`, on a NAT'd/firewalled target — target zone, or wherever the endpoint sits) | pam-server | 2222 | SSH | Outbound-only reverse tunnel: authenticates as `endpoint-agent:<name>` with its own bearer key, requests one `tcpip-forward`, then only carries streams pam-server opens toward it. Replaces E2 for that target (Phase 153) | ✅ P153 |
 | I7 | Session-share guest (**untrusted** — no zone; wherever the emailed link/QR reaches) | pam-server | 8080/443 | HTTPS | Redeem a session-share invite and stream/control the shared session it names — **unauthenticated** (`/share.html`, `POST /api/share/redeem/{token}`), then a minted guest key on every further call (`GET /api/share/stream`, `POST /api/share/input`), never `X-API-Key` | ✅ P116 |
 
-## 3. Egress — what pamv1 connects **to**
+## 3. Egress — what PAMv1 connects **to**
 
 | # | Source | → Destination (zone) | Port | Proto | Purpose | Status |
 |---|--------|----------------------|-----:|-------|---------|--------|
@@ -230,7 +230,7 @@ flowchart LR
         U["User"]
         R["Auditor / Approver"]
     end
-    subgraph PAM["pamv1 control plane"]
+    subgraph PAM["PAMv1 control plane"]
         S["pam-server<br/>:8080 portal/API<br/>:2222 ssh proxy<br/>:5433 db proxy<br/>:1433 mssql proxy"]
     end
     subgraph DATA["Data zone"]
@@ -320,7 +320,7 @@ security-group rules match on port, not path), or keep sharing
 **internal-only**: an internal invite redeems over the `:2222` SSH ingress
 operators already reach (I2), with no additional exposure.
 
-Kubernetes: pamv1 ships the pod-level restrictions (restricted PSS, non-root,
+Kubernetes: PAMv1 ships the pod-level restrictions (restricted PSS, non-root,
 read-only rootfs, dropped capabilities) **and** a default-deny `NetworkPolicy` —
 `deploy/k8s/networkpolicy.yaml` (raw manifest, applied by `kubectl apply -f deploy/k8s/`)
 and a gated Helm template (`networkPolicy.enabled`, default `false` in `values.yaml`).
@@ -353,7 +353,7 @@ specific target hosts and protocols, and default-deny everything else across the
 
 > ⚠️ **External session-share invites (Phase 116) reach the portal from
 > outside the operator zone, by design (I7).** The whole point of an external
-> invite is a guest with no pamv1 account and no presence in your network — the
+> invite is a guest with no PAMv1 account and no presence in your network — the
 > emailed QR code has to be reachable from wherever they are, which for an OT
 > site usually means outside the 3.5 DMZ entirely. Keep sharing
 > **internal-only** at OT sites (`kind:"internal"` invites redeem over the
@@ -372,7 +372,7 @@ specific target hosts and protocols, and default-deny everything else across the
 | Date | Change |
 |---|---|
 | 2026-08-16 | **Phase 155 — Kubernetes targets: one new EGRESS destination (E16), no new listener.** A `kubernetes` target is a cluster's API server, brokered as discrete operations over the existing `:8080` control plane rather than proxied on a listener of its own — so the only new flow is pam-server → API server `:6443` (HTTPS, certificate verified against `PAM_K8S_CA_FILE` or the system roots; no trust-any fallback, since every request carries a bearer token). One request per operation, no long-lived connection, and no streaming: `exec`/`attach`/`port-forward` are not brokered, so nothing here opens a multiplexed SPDY/WebSocket channel |
-| 2026-08-16 | **Phase 153 — outbound-only endpoint agents: a genuinely new INGRESS flow, and the first that reverses the proxy's direction.** New **I8**: `pam-agent`, installed on a target pamv1 cannot dial into (NAT, CGNAT, no inbound firewall rule), connects *in* to the existing `:2222` SSH listener as `endpoint-agent:<name>` with its own bearer key, requests one RFC 4254 `tcpip-forward`, and thereafter only carries `forwarded-tcpip` streams pam-server opens toward it — each of which lands on the ONE local address the agent is configured with (its own sshd). The proxy's ordinary upstream SSH handshake runs over that stream, so E2 is simply not used for an agent-bound target: no new listener, port or egress. In §6 the rule "pam-server → target:22" is replaced, for such endpoints, by "endpoint → pam-server:2222"; the endpoint itself needs no inbound rule at all. Per-replica: an agent's TCP connection terminates on one process, so in HA the agent lists every replica (`PAM_AGENT_SERVERS`) and holds one tunnel to each. Opt-in via `PAM_ENDPOINT_AGENTS_ENABLED`; the agent pins pam-server's SSH host key (`PAM_AGENT_SERVER_HOST_KEY`), which is one key cluster-wide under shared custody |
+| 2026-08-16 | **Phase 153 — outbound-only endpoint agents: a genuinely new INGRESS flow, and the first that reverses the proxy's direction.** New **I8**: `pam-agent`, installed on a target PAMv1 cannot dial into (NAT, CGNAT, no inbound firewall rule), connects *in* to the existing `:2222` SSH listener as `endpoint-agent:<name>` with its own bearer key, requests one RFC 4254 `tcpip-forward`, and thereafter only carries `forwarded-tcpip` streams pam-server opens toward it — each of which lands on the ONE local address the agent is configured with (its own sshd). The proxy's ordinary upstream SSH handshake runs over that stream, so E2 is simply not used for an agent-bound target: no new listener, port or egress. In §6 the rule "pam-server → target:22" is replaced, for such endpoints, by "endpoint → pam-server:2222"; the endpoint itself needs no inbound rule at all. Per-replica: an agent's TCP connection terminates on one process, so in HA the agent lists every replica (`PAM_AGENT_SERVERS`) and holds one tunnel to each. Opt-in via `PAM_ENDPOINT_AGENTS_ENABLED`; the agent pins pam-server's SSH host key (`PAM_AGENT_SERVER_HOST_KEY`), which is one key cluster-wide under shared custody |
 | 2026-08-15 | **Phase 143 — ICAP AV/DLP scanning, a genuinely new egress destination and protocol.** New **E15**: `PAM_ICAP_URL` submits a finalized SFTP transfer's captured bytes to an ICAP (RFC 3507) RESPMOD gateway on `1344` by default, plaintext, no TLS option in v1. Not a session-brokering flow like E4a/E13 — it is a side-channel scan that runs only *after* the file has already crossed E2 (or E10/E13) in either direction, so a firewall rule for it protects visibility, not the transfer itself. Off unless configured; joins the `PAM_OT_AIRGAP` conflict list. §6 and §7 updated |
 | 2026-08-15 | **Phase 141 — port-forwarding widens an existing flow, no new listener or destination.** A client `ssh -L` forward rides E2 (the same `:2222`-admitted host the session already reaches) but on WHATEVER port the operator requests, not just the target's SSH port — a firewall/NetworkPolicy scoped to exactly `target:22` egress needs widening for forwarding to work. `PAM_SSH_PORT_FORWARD=false` keeps the egress surface exactly as narrow as before this phase; no table row changes, since E2 already covers the destination host |
 | 2026-08-13 | **Phase 116 — live session-sharing, no new listener.** Adds a new *ingress* row rather than a new port: **I7**, an unauthenticated external/vendor guest redeeming an emailed invite at `/share.html` and streaming/controlling the shared session with a minted guest key — reaches the existing `:8080`. Adds a new *egress* row too: **E9b**, the invite email itself — same `PAM_ALERT_EMAIL_*` SMTP config as E9 but a different recipient (the guest, not an admin) and, worth flagging for OT sites, **not** covered by `PAM_OT_AIRGAP`'s alert no-op, since it bypasses the alerter abstraction that gets silenced. The internal-invite `join:<token>` SSH form rides the existing I2 ingress with ordinary PAM password auth, so it gets no new row. §6 and §7 updated with the exposure this implies |
@@ -384,6 +384,6 @@ specific target hosts and protocols, and default-deny everything else across the
 | 2026-07-23 | **Helm NetworkPolicy: pam→guacd egress.** When `guacd.enabled` + `networkPolicy.enabled`, the pam-server default-deny NetworkPolicy now includes the `pam-server → guacd:4822` egress rule (E4a) — it was only in the raw k8s manifest, so a Helm deploy with a narrowed `egressTargetCIDRs` blocked the bundled guacd. guacd resource limits raised (256Mi→512Mi) since a large RDP display is a ~64 MiB framebuffer; guacd resource names re-truncated to the 63-char limit |
 | 2026-07-23 | **In-portal RDP viewer** — the browser now renders RDP over the **existing** `:8080/443` control plane (a WebSocket upgrade of `GET /api/targets/{id}/rdp`, preceded by `POST /api/rdp-token`); no new listener. The guacd egress (E4a `:4822` → E4b `:3389`) is unchanged |
 | 2026-07-23 | **guacd** (RDP broker) now ships as a co-deployed **internal** service (docker-compose + `deploy/k8s/guacd.yaml` + gated Helm), reached on `:4822`; `PAM_GUACD_ADDR` is wired for you and its NetworkPolicy admits only pam-server. No new *external* listeners |
-| 2026-07-23 | Phases 19–24 add no new listeners (all ride `:8080`); ZSP (22) rides `:2222`. Corrected §6: pamv1 now **ships** a default-deny `NetworkPolicy` (`deploy/k8s/networkpolicy.yaml` + a gated Helm template), not just pod-level restrictions |
+| 2026-07-23 | Phases 19–24 add no new listeners (all ride `:8080`); ZSP (22) rides `:2222`. Corrected §6: PAMv1 now **ships** a default-deny `NetworkPolicy` (`deploy/k8s/networkpolicy.yaml` + a gated Helm template), not just pod-level restrictions |
 | 2026-07-21 | Refreshed for Phases 0–18: added the **`:5433` database-proxy listener** (I5) and its egress to postgres targets (E10, `:5432`); marked the now-shipped flows implemented — Prometheus scrape (I4), rotation/reconciliation (E7), syslog (E8), alerts (E9); added **CyberArk Conjur** (E11, `:443`, optional) and the **KMS/HSM KEK** egress (E12); folded Entra/OIDC into the identity egress; noted native HTTPS + the db-proxy operator-leg TLS. Diagram and firewall summary updated |
 | 2026-07-18 | Initial ports & flow matrix (Phase 3a): 8080/2222 listeners, 5432 egress, 22 target SSH; planned WinRM/RDP/LDAP/syslog/alerting flows |

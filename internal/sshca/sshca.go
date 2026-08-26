@@ -1,11 +1,11 @@
 // Package sshca implements a Zero Standing Privilege (ZSP) SSH certificate
 // authority. Instead of storing a long-lived password or private key for a
-// privileged account, pamv1 signs a short-lived SSH *user certificate*
-// just-in-time for each proxied session. The target trusts only the pamv1 CA
+// privileged account, PAMv1 signs a short-lived SSH *user certificate*
+// just-in-time for each proxied session. The target trusts only the PAMv1 CA
 // (its public key installed as an OpenSSH TrustedUserCAKeys), so the account
 // has no standing secret at all — the certificate is minted fresh per session
 // and expires in minutes. This is the Teleport / CyberArk ZSP model applied to
-// pamv1's existing JIT proxy chokepoint.
+// PAMv1's existing JIT proxy chokepoint.
 //
 // The CA private key never signs anything but short-TTL user certificates, and
 // the per-session client keypair is generated in memory, used for one dial, and
@@ -32,7 +32,7 @@ import (
 )
 
 // clockSkew is how far before "now" a minted certificate becomes valid, to
-// tolerate small clock differences between pamv1 and the target.
+// tolerate small clock differences between PAMv1 and the target.
 const clockSkew = 1 * time.Minute
 
 // CertAuthority signs short-lived SSH user certificates. It holds the CA
@@ -73,7 +73,7 @@ func (ca *CertAuthority) Fingerprint() string {
 // ttl, and returns a signer that authenticates with it. A fresh ephemeral
 // keypair backs each certificate: the private key lives only in the returned
 // signer (one dial, then discarded), so no standing secret exists for the
-// account. keyID is stamped into the certificate (pamv1 records the actor and
+// account. keyID is stamped into the certificate (PAMv1 records the actor and
 // target there) for audit correlation on the target's sshd logs. The returned
 // certificate is also handed back so the caller can audit its serial/validity.
 func (ca *CertAuthority) IssueUser(principal string, ttl time.Duration, keyID string) (ssh.Signer, *ssh.Certificate, error) {
@@ -115,7 +115,7 @@ func (ca *CertAuthority) IssueUser(principal string, ttl time.Duration, keyID st
 }
 
 // IssueOpts scopes an operator-facing certificate (Phase 28). The operator holds
-// the private key; pamv1 signs only their public key, so no secret is generated
+// the private key; PAMv1 signs only their public key, so no secret is generated
 // or stored. Principals must be non-empty; SourceAddress / ForceCommand become
 // OpenSSH critical options that a target's sshd enforces.
 type IssueOpts struct {
@@ -248,7 +248,7 @@ func (ca *CertAuthority) KRL(serials []uint64, krlVersion uint64, now time.Time)
 	b = putU64(b, uint64(now.Unix()))        // generated_date
 	b = putU64(b, 0)                         // flags
 	b = putString(b, nil)                    // reserved
-	b = putString(b, []byte("pamv1"))        // comment
+	b = putString(b, []byte("PAMv1"))        // comment
 
 	if len(serials) > 0 {
 		// CERTIFICATES section body: ca_key, reserved, then a SERIAL_LIST subsection.

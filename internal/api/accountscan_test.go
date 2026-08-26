@@ -148,7 +148,7 @@ The command completed successfully.
 
 // TestDiscoverAccountsSSH proves the end-to-end scan against a real SSH
 // upstream: root and the vaulted "deploy" account are found managed, and
-// "shadow_admin" — an account the target has but pamv1 never vaulted a
+// "shadow_admin" — an account the target has but PAMv1 never vaulted a
 // credential for — is flagged unmanaged. This is the core finding the whole
 // phase exists to surface, so it is proven against a real server, not mocked.
 func TestDiscoverAccountsSSH(t *testing.T) {
@@ -273,7 +273,7 @@ func TestDiscoverAccountsNoCredential(t *testing.T) {
 // TestDiscoverAccountsCommandBlocked proves the fixed enumeration command is
 // not exempt from an operator-configured deny policy — Phase 38's "every
 // path where a discrete command is visible obeys one policy" principle
-// applies to pamv1's own generated commands too, not just operator input.
+// applies to PAMv1's own generated commands too, not just operator input.
 func TestDiscoverAccountsCommandBlocked(t *testing.T) {
 	upstream := startAccountScanSSHServer(t, "deploy", "s3cret", samplePasswd)
 	opts := api.Options{}

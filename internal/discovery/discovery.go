@@ -1,5 +1,5 @@
 // Package discovery finds candidate targets by probing hosts for the management
-// ports pamv1 can broker (SSH, WinRM, RDP). It only checks reachability — a TCP
+// ports PAMv1 can broker (SSH, WinRM, RDP). It only checks reachability — a TCP
 // connect — and never authenticates; onboarding a discovered candidate is a
 // separate, deliberate step.
 package discovery
@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Candidate is a reachable host:port classified by the protocol pamv1 would use.
+// Candidate is a reachable host:port classified by the protocol PAMv1 would use.
 type Candidate struct {
 	Host     string `json:"host"`
 	Port     int    `json:"port"`

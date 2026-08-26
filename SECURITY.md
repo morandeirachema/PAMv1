@@ -2,7 +2,7 @@
 
 ## What this project is, and what that means for you
 
-pamv1 is an **educational** Privileged Access Management system. It is
+PAMv1 is an **educational** Privileged Access Management system. It is
 feature-complete against its [roadmap](ROADMAP.md) and has closed every finding
 of its own [security self-audit](docs/SECURITY-GAPS.md), but it **has not been
 audited by anyone outside the project** and is **not production-ready**.
@@ -39,7 +39,7 @@ agree something workable rather than leave you guessing.
 Anything that breaks one of the invariants this project is built around:
 
 - **The operator never receives the vaulted credential.** The secret is decrypted
-  just-in-time inside pamv1 and injected into the upstream connection.
+  just-in-time inside PAMv1 and injected into the upstream connection.
 - **Every use of a secret is audited**, and the security-critical paths fail
   closed when the audit trail is unavailable.
 - **Authorization is enforced at the chokepoint**, not delegated to the client.
@@ -63,7 +63,7 @@ an AI-agent broker call escape the policy or approval gates described in
   xrdp target and the committed SOPS example key are all deliberately weak and
   labelled as such. The SOPS demo key is public on purpose.
 - **Configuration choices the documentation warns against**, such as running
-  without `PAM_SSH_KNOWN_HOSTS` — where pamv1 logs a warning at startup. If you
+  without `PAM_SSH_KNOWN_HOSTS` — where PAMv1 logs a warning at startup. If you
   think a warning should be a refusal, that is a good issue, but file it as one.
 
 ## How this project already looks for its own problems

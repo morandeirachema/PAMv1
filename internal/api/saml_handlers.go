@@ -141,7 +141,7 @@ func (s *Server) samlACS(w http.ResponseWriter, r *http.Request) {
 }
 
 // samlMetadata serves the SP metadata document the IdP administrator imports
-// to register pamv1 as a relying party. Public and unauthenticated by design —
+// to register PAMv1 as a relying party. Public and unauthenticated by design —
 // it holds only the entity ID, the ACS URL and (if configured) the SP's public
 // certificate, all of which the IdP must know before any login can happen.
 func (s *Server) samlMetadata(w http.ResponseWriter, r *http.Request) {

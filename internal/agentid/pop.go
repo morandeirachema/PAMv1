@@ -28,7 +28,7 @@ package agentid
 //     2026-08-26 audit; before that the exchange was the one door left open).
 //
 // WHAT IT DOES NOT CLAIM. The thumbprint is supplied by the DELEGATOR at mint
-// time (`cnf_jkt`, see exchange.go), and pamv1 cannot verify that the key
+// time (`cnf_jkt`, see exchange.go), and PAMv1 cannot verify that the key
 // belongs to the sub-agent rather than to the delegator itself — an attestation
 // that would need SPIRE, which stays out of process. That is not a weakness of
 // the property actually gained: whoever the key belongs to, a token lifted off

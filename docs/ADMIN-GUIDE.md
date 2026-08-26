@@ -1,6 +1,6 @@
-# pamv1 — Administrator Guide
+# PAMv1 — Administrator Guide
 
-A complete, practical guide for **administrators**: deploy pamv1, configure it,
+A complete, practical guide for **administrators**: deploy PAMv1, configure it,
 onboard targets and credentials, manage users and roles, run the break-glass
 procedure, and read the logs and audit trail.
 
@@ -10,7 +10,7 @@ procedure, and read the logs and audit trail.
 >
 > Last updated: 2026-08-26 · Reflects: Phases 0–212 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
-> ⚠️ **Educational / pre-production.** pamv1 is a learning project and is
+> ⚠️ **Educational / pre-production.** PAMv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
 > Do not guard real production credentials with it yet.
 
@@ -130,7 +130,7 @@ under [`deploy/k8s/sops/`](../deploy/k8s/sops/) — `apply.sh` streams
 encrypted manifest is committed. See its [README](../deploy/k8s/sops/README.md)
 for Flux/Argo/helm-secrets wiring.
 
-Or, if you run **CyberArk Conjur**, pamv1 can fetch its own bootstrap secrets
+Or, if you run **CyberArk Conjur**, PAMv1 can fetch its own bootstrap secrets
 from it at startup instead (Phase 18) — set `PAM_CONJUR_URL` and pam-server pulls
 `PAM_MASTER_KEY`/`PAM_API_KEY`/`PAM_DATABASE_URL`/… from Conjur, with a
 Kubernetes projected-token (`authn-jwt`) so **no secret lives in Git at all**.
@@ -317,7 +317,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_REQUIRE_REASON` | | `false` | Reject an access request that carries no reason. |
 | `PAM_ACCESS_ONE_TIME` | | `false` | Make **every** access request single-use (Phase 26): the first privileged use its approval admits consumes it. Requests can also opt in individually (`one_time`). |
 | `PAM_CHECKOUT_TTL_MIN` | | `30` | Credential checkout lease lifetime (minutes). |
-| `PAM_VENDOR_ATTEST_URL` | | (off) | Employment-attestation webhook consulted when a vendor contract grant is approved (Phase 29): pamv1 `POST`s `{"vendor":…,"org":…}` and the vendor-management system answers `2xx` for a currently-employed technician, so access is refused the moment their own employer offboards them. See §7. |
+| `PAM_VENDOR_ATTEST_URL` | | (off) | Employment-attestation webhook consulted when a vendor contract grant is approved (Phase 29): PAMv1 `POST`s `{"vendor":…,"org":…}` and the vendor-management system answers `2xx` for a currently-employed technician, so access is refused the moment their own employer offboards them. See §7. |
 | `PAM_POSTURE_ATTEST_URL` | | (off) | Live device-posture webhook, checked on every connect and every authenticated call, not just once at approval (Phase 133). See §7. |
 | `PAM_DEVICE_HEADER` | | (off) | Name of an HTTP header a trusted reverse proxy injects with a terminated client certificate's fingerprint; once set, a user with an enrolled `device_fingerprint` must present a matching value (Phase 133). See §7. |
 | `PAM_VENDOR_SWEEP_INTERVAL_MIN` | | `0` (off) | How often the sweeper cuts a vendor's **live** session once its contract grant's window closes (`vendor.session_expired`), so access ends with the contract rather than at the next connect. |
@@ -335,12 +335,12 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_BROKER_POLICY_FILE` | | (off) | YAML policy file — **its presence enables the AI-agent access broker** (Phase 13). |
 | `PAM_BROKER_AUDIT_KEY` | broker only | (shared custody) | base64 32-byte HMAC key for the verifiable audit chain. **Unset = generated once and held under shared custody** (KEK-sealed in `key_material`, same as the SSH host/CA keys). An explicit value is **written through to custody** (so later unsetting it cannot fork the chain); an explicit value that *disagrees* with custody is a **fatal start** — unset it to adopt the cluster key. |
 | `PAM_BROKER_AUDIT_SIGN_SEED` | broker only | (shared custody) | base64 32-byte ed25519 seed signing the audit-chain head (truncation detection). Unset = shared custody; **setting it is how a signing-key rotation is driven** (see §"Rotate the checkpoint signer") — custody converges to the explicit seed, so the replaced signer cannot silently come back. |
-| `PAM_BROKER_POSTURE_REQUIRED` | | `false` | Ask the posture webhook about **agent** identities too, not only human operators. **Needs `PAM_POSTURE_ATTEST_URL`** — pamv1 refuses to start with this on and no webhook to ask. Off by default: a webhook that answers about laptops has never heard of an agent name. |
-| `PAM_BROKER_REQUIRE_KNOWN_OWNER` | | `false` | Refuse a broker approval when the calling agent's owner is not a pamv1 user. Off by default — an unrecognised owner is audited as `broker.approval.four_eyes_unverified` instead. Like every broker refusal, it needs the broker enabled (`PAM_BROKER_POLICY_FILE`) or startup fails. |
-| `PAM_BROKER_REQUIRE_ENROLLED_SVID` | | `false` | Refuse a SPIFFE-attested agent whose identity has not been **enrolled** (an owner recorded for it). Off by default. Static agent keys are unaffected. **Needs `PAM_BROKER_TRUST_DOMAIN_JWKS`** — pamv1 refuses to start with this on and no SVID path to gate. |
-| `PAM_BROKER_REQUIRE_POP` | | `false` | Refuse a SPIFFE-attested agent whose token is not **bound to a key** (RFC 7800 `cnf` + RFC 9449 proof of possession). Off by default — turning it on refuses every unbound token already in circulation, so bind first and switch after. **Needs `PAM_BROKER_TRUST_DOMAIN_JWKS`** — pamv1 refuses to start with this on and no SVID path to gate. Static agent keys carry no claims and are unaffected. |
+| `PAM_BROKER_POSTURE_REQUIRED` | | `false` | Ask the posture webhook about **agent** identities too, not only human operators. **Needs `PAM_POSTURE_ATTEST_URL`** — PAMv1 refuses to start with this on and no webhook to ask. Off by default: a webhook that answers about laptops has never heard of an agent name. |
+| `PAM_BROKER_REQUIRE_KNOWN_OWNER` | | `false` | Refuse a broker approval when the calling agent's owner is not a PAMv1 user. Off by default — an unrecognised owner is audited as `broker.approval.four_eyes_unverified` instead. Like every broker refusal, it needs the broker enabled (`PAM_BROKER_POLICY_FILE`) or startup fails. |
+| `PAM_BROKER_REQUIRE_ENROLLED_SVID` | | `false` | Refuse a SPIFFE-attested agent whose identity has not been **enrolled** (an owner recorded for it). Off by default. Static agent keys are unaffected. **Needs `PAM_BROKER_TRUST_DOMAIN_JWKS`** — PAMv1 refuses to start with this on and no SVID path to gate. |
+| `PAM_BROKER_REQUIRE_POP` | | `false` | Refuse a SPIFFE-attested agent whose token is not **bound to a key** (RFC 7800 `cnf` + RFC 9449 proof of possession). Off by default — turning it on refuses every unbound token already in circulation, so bind first and switch after. **Needs `PAM_BROKER_TRUST_DOMAIN_JWKS`** — PAMv1 refuses to start with this on and no SVID path to gate. Static agent keys carry no claims and are unaffected. |
 | `PAM_BROKER_MAX_CALLS_PER_TOKEN` | | `0` (off) | Cap how many brokered calls may be spent with **one token**. A second, independent limit alongside `PAM_BROKER_BUDGET_PER_DAY`: the budget bounds an agent's day, this bounds one credential. When a token hits it, the agent is told so and a **new token starts a new ceiling** — the credential is retired, the agent is not punished. **Static agent keys are unaffected**, because they carry no token id; their ceiling is the per-day budget. Needs the broker enabled. |
-| `PAM_BROKER_PUBLIC_URL` | | *(derived)* | The base origin agents address the broker at, e.g. `https://pam.example.com`. Used to check a proof's `htu` claim. **Set this whenever anything terminates TLS in front of pamv1** — otherwise the request arrives as plain http on an internal name while the client signed the external URL, and every key-bound agent is refused. Must be a bare origin, no path. |
+| `PAM_BROKER_PUBLIC_URL` | | *(derived)* | The base origin agents address the broker at, e.g. `https://pam.example.com`. Used to check a proof's `htu` claim. **Set this whenever anything terminates TLS in front of PAMv1** — otherwise the request arrives as plain http on an internal name while the client signed the external URL, and every key-bound agent is refused. Must be a bare origin, no path. |
 | `PAM_BROKER_TOKEN_TTL_MIN` | | `15` | Maximum lifetime of a single-use approval resume token, and of the parked call it collects (minutes). A policy rule's `ttl_seconds` may narrow it per call, never extend it. |
 | `PAM_BROKER_RATE_PER_MIN` | | `0` (off) | Per-agent tool-call rate limit. |
 | `PAM_BROKER_MAX_ARG_BYTES` | | `16384` | Cap on a tool call's serialized arguments (0 = off). |
@@ -511,7 +511,7 @@ curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/credentials/
 
 A real Manifest V3 extension — `extension/` in the repo root, outside
 `internal/`, with its own [setup README](../extension/README.md) — fills a
-login form from a credential vaulted in pamv1. It closes Delinea's Web
+login form from a credential vaulted in PAMv1. It closes Delinea's Web
 Password Filler / BeyondTrust's Workforce Passwords gap by calling the
 *existing*, already-audited `POST /api/credentials/{id}/reveal` — the same
 route the portal itself uses — rather than opening any new way to get a
@@ -554,7 +554,7 @@ Settings). It is **not** a general-purpose API key:
   reveal — nothing about the audit trail changes except that one marker.
 
 **What the extension cannot do (v1 scope).** It only reads a vaulted
-secret and fills a form — no credential capture, no write-back to pamv1.
+secret and fills a form — no credential capture, no write-back to PAMv1.
 It also has **no way to browse your vault**: there is no route that lists
 credentials for an extension-scoped token, so a user manually maps one
 hostname to one credential ID in the extension's own settings (which
@@ -573,8 +573,8 @@ can discover).
 
 ### Rotation & reconciliation (credential lifecycle)
 
-pamv1 can change the password **on the target** and re-vault it, so the account's
-secret is one only pamv1 knows — and can prove is current. Rotation and
+PAMv1 can change the password **on the target** and re-vault it, so the account's
+secret is one only PAMv1 knows — and can prove is current. Rotation and
 reconciliation run over the same secure protocols as the proxy: SSH (`chpasswd`,
 fed on stdin so the new password never hits a shell command line) and WinRM
 (`net user`). The rotating account must be able to set its own password (root /
@@ -676,11 +676,11 @@ on SSH; `net user` + `net localgroup Administrators` on WinRM), then
 cross-references every discovered account name against **every** credential
 already vaulted for that target. An account with no matching credential comes
 back `"managed":false` — CyberArk DNA-style: a login-capable local or service
-account the host has, that pamv1 is not tracking, rotating or auditing access
+account the host has, that PAMv1 is not tracking, rotating or auditing access
 to. `manage_targets`, not `connect` — this is a management action, not a
 brokered session, so it does not touch the live-session registry or recording
 requirements. The command itself still goes through the command-deny policy
-(`PAM_COMMAND_DENY_FILE`) like every other discrete command pamv1 runs:
+(`PAM_COMMAND_DENY_FILE`) like every other discrete command PAMv1 runs:
 
 ```bash
 curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/targets/1/discover-accounts
@@ -691,7 +691,7 @@ curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/targets/1/di
 
 Console: menu 1 (*Work with Targets*), option **9=Discover accounts**
 (ssh/winrm targets only) opens a results screen listing every account found,
-whether it is privileged, and whether pamv1 manages it. Scope: SSH and WinRM
+whether it is privileged, and whether PAMv1 manages it. Scope: SSH and WinRM
 only (RDP/VNC/PostgreSQL/SQL Server have no equivalent shell command surface);
 Unix privilege detection is UID-based only (root, or a group-membership-aware
 follow-on is not attempted in v1); a target needs at least one already-vaulted
@@ -743,11 +743,11 @@ touches a DoubleLocked credential either way.
 
 ### Zero Standing Privilege: ephemeral SSH certificates (Phase 22)
 
-Instead of storing a password or key for an account, pamv1 can sign a
+Instead of storing a password or key for an account, PAMv1 can sign a
 **short-lived SSH certificate just-in-time** for each session. The account then
-has **no standing secret at all** — the target trusts only the pamv1 CA, and each
+has **no standing secret at all** — the target trusts only the PAMv1 CA, and each
 certificate is minted fresh and expires in minutes (the Teleport / CyberArk ZSP
-model). Enable it by giving pamv1 a persistent CA key path:
+model). Enable it by giving PAMv1 a persistent CA key path:
 
 ```bash
 PAM_SSH_CA_KEY=/data/pamv1_ssh_ca      # created on first use (0600); keep it persistent
@@ -817,7 +817,7 @@ Audit: `ssh.cert_issued` / `ssh.cert_denied` (bad proof of possession) /
 ### Kubernetes clusters (Phase 155)
 
 A `kubernetes` target is a cluster's **API server**, not a host: there is no
-session to proxy, so pamv1 brokers **discrete, audited kubectl-shaped
+session to proxy, so PAMv1 brokers **discrete, audited kubectl-shaped
 operations** over `POST /api/targets/{id}/kubectl` — the same shape as the WinRM
 REST endpoint, and gated the same way. The vaulted credential is a **service-account
 bearer token** (`k8s_token`), injected just-in-time as the `Authorization` header
@@ -855,11 +855,11 @@ can carry:
 | `container` / `tail_lines` | logs | one container of many; how many lines (default 200, max 10000) |
 | `manifest` | apply | the YAML or JSON, sent verbatim as a **server-side apply** patch with `fieldManager=pamv1` |
 
-**What the cluster decides, and what pamv1 decides.** pamv1 does not
+**What the cluster decides, and what PAMv1 decides.** PAMv1 does not
 re-implement Kubernetes RBAC: what the token may do is the cluster's business,
 and a cluster-side refusal comes back as its own `403` inside the envelope (with
-`status:403` on the audit row) — an answer, not a pamv1 error, exactly as a
-non-zero exit code is on the WinRM endpoint. pamv1 decides everything else: the
+`status:403` on the audit row) — an answer, not a PAMv1 error, exactly as a
+non-zero exit code is on the WinRM endpoint. PAMv1 decides everything else: the
 protocol policy (`PAM_ALLOWED_PROTOCOLS`), per-target grants and safes, the
 four-eyes approval gate, the vendor contract gate, the concurrent-session cap,
 the source-IP allowlist and device/posture checks (they ride the ordinary `authz`
@@ -897,7 +897,7 @@ operation form and shows the cluster's answer.
   out of scope rather than half-built. Use the SSH proxy to reach a node, or a
   cluster-side break-glass procedure, when you need an interactive shell in a pod.
 - **Bearer tokens only.** Client-certificate credentials are a keypair, not a
-  string, and a cluster cannot revoke one — which conflicts with pamv1's
+  string, and a cluster cannot revoke one — which conflicts with PAMv1's
   revoke-and-rotate model. Use a service-account token (ideally short-lived and
   re-issued by your own automation into the vault).
 - **No discovery.** The API version is explicit (defaulting to `v1`) rather than
@@ -915,9 +915,9 @@ the transcript + its hash), `k8s.denied` (target policy / vendor contract),
 `k8s.refused` (recording required), `k8s.error` (the call never got an answer),
 plus `command.blocked` and the usual `access.denied` from the shared gates.
 
-### Outbound-only endpoint agents — reaching targets pamv1 cannot dial (Phase 153)
+### Outbound-only endpoint agents — reaching targets PAMv1 cannot dial (Phase 153)
 
-Every session path above has pamv1 **dialing out** to the target. For a target
+Every session path above has PAMv1 **dialing out** to the target. For a target
 that has no reachable listening port at all — a NAT'd branch box, a CGNAT'd
 contractor laptop, an unattended host behind a firewall that admits nothing
 inbound, a machine on a network where "open 22 from the PAM" is not an option
@@ -925,7 +925,7 @@ inbound, a machine on a network where "open 22 from the PAM" is not an option
 either: the bastion still has to be able to reach the target. Phase 153
 inverts the direction for exactly that endpoint (BeyondTrust "Jump
 Client"-style): a small **`pam-agent`** binary on the endpoint dials **out** to
-pamv1's existing SSH listener (`:2222`), authenticates as
+PAMv1's existing SSH listener (`:2222`), authenticates as
 `endpoint-agent:<name>` with its own bearer key, requests a **reverse tunnel**
 (RFC 4254 `tcpip-forward`, the mechanism behind `ssh -R`), and holds it open.
 From then on, when an operator connects to that target, the proxy opens a
@@ -942,8 +942,8 @@ is not accepted by default). Then, per endpoint:
 1. Create the target as usual (menu 1 / `POST /api/targets`, protocol `ssh`)
    with the host:port **as seen from the endpoint itself** — normally
    `127.0.0.1:22`, since the agent delivers each tunneled stream to its own
-   local sshd. That address is what pamv1 pins in `PAM_SSH_KNOWN_HOSTS` and
-   writes in the audit trail; it is never dialed by pamv1.
+   local sshd. That address is what PAMv1 pins in `PAM_SSH_KNOWN_HOSTS` and
+   writes in the audit trail; it is never dialed by PAMv1.
 2. Register the agent — menu **28** (*Work with endpoint agents*), F6, or:
 
    ```bash
@@ -971,7 +971,7 @@ is not accepted by default). Then, per endpoint:
    ./pam-agent
    ```
 
-   `PAM_AGENT_SERVER_HOST_KEY` is **required**: the agent verifies pamv1's SSH
+   `PAM_AGENT_SERVER_HOST_KEY` is **required**: the agent verifies PAMv1's SSH
    host key (one key cluster-wide, under shared custody, so a single value
    covers every replica) and refuses to run without it — a network attacker
    who could impersonate pam-server would otherwise harvest the agent key.
@@ -996,7 +996,7 @@ What the design guarantees, and what it does not:
   where to dial; it can only open a stream that lands on the agent's own
   `PAM_AGENT_LOCAL_ADDR`. A compromised pam-server therefore cannot use an
   agent as a pivot into the endpoint's network.
-- **The agent's connection carries nothing toward pamv1.** It may open no
+- **The agent's connection carries nothing toward PAMv1.** It may open no
   channels (a session or `direct-tcpip` attempt is refused), may request only
   one `tcpip-forward` (a second is refused), `cancel-tcpip-forward` and
   keepalives; it holds no capability set and is never an `auth.Principal`.
@@ -1010,7 +1010,7 @@ What the design guarantees, and what it does not:
   replica the agent is not connected to reports it offline and cannot reach
   it — which is why `PAM_AGENT_SERVERS` takes a list. Point every agent at
   every replica.
-- Not an "endpoint privilege management" agent (pamv1's documented non-goal):
+- Not an "endpoint privilege management" agent (PAMv1's documented non-goal):
   it elevates nothing, installs nothing, and does nothing on the endpoint but
   pipe bytes to one local port. Not to be confused with the AI-agent broker's
   agent keys (menu 26) either.
@@ -1029,7 +1029,7 @@ disabled on a refusal), and the operator's `session.start` row gains
 
 Create a Windows target (`os_type=windows`, `protocol=winrm`, port `5986` for
 HTTPS) with a credential (an AD-joined domain account like `CONTOSO\\svc-admin`
-works). Users with the connect capability run commands through pamv1 — the
+works). Users with the connect capability run commands through PAMv1 — the
 credential is injected just-in-time and never shown:
 
 ```bash
@@ -1045,8 +1045,8 @@ disable basic auth — set `PAM_WINRM_AUTH=ntlm` for NTLMv2.
 
 ### RDP (via Apache Guacamole)
 
-pamv1 brokers RDP through [Apache Guacamole](https://guacamole.apache.org/)'s
-`guacd` daemon so the operator sees the desktop but never the password — pamv1 is
+PAMv1 brokers RDP through [Apache Guacamole](https://guacamole.apache.org/)'s
+`guacd` daemon so the operator sees the desktop but never the password — PAMv1 is
 a **client** of guacd, not a Guacamole server.
 
 **guacd now ships with the deploys.** The Docker compose (`deploy/docker/`) runs a
@@ -1190,7 +1190,7 @@ pattern.
 ### Zero Standing Privilege: ephemeral database roles (Phase 129)
 
 Extends Phase 22's SSH-only ZSP to **PostgreSQL**: instead of a stored,
-standing database credential, pamv1 mints a fresh, randomly-named role with a
+standing database credential, PAMv1 mints a fresh, randomly-named role with a
 random password at connect time, connects the operator's session as that
 role, and drops it the instant the session ends — no vaulted secret exists
 for the connecting identity at all. This needs two credentials on the
@@ -1386,7 +1386,7 @@ change mid-session.
 
 **Live device posture.** Set `PAM_POSTURE_ATTEST_URL` to your EDR/posture
 system's webhook (CrowdStrike, Defender, SentinelOne, or anything that
-answers HTTP). pamv1 `POST`s `{"user":"<username>"}` and requires a `2xx` for
+answers HTTP). PAMv1 `POST`s `{"user":"<username>"}` and requires a `2xx` for
 the device to be considered healthy; anything else refuses the request. Unset
 (the default), no check ever runs. Because this is a live outbound endpoint,
 it also joins the `PAM_OT_AIRGAP` conflict list — an air-gapped deployment
@@ -1397,7 +1397,7 @@ startup, the same as every other webhook this guide documents.
 your TLS-terminating reverse proxy injects with the client certificate's
 fingerprint (nginx's `$ssl_client_fingerprint`, or your ingress's equivalent)
 — **only if that proxy performs real mTLS and strips any client-supplied
-copy of the header first**; pamv1 trusts the value verbatim. Enroll a user's
+copy of the header first**; PAMv1 trusts the value verbatim. Enroll a user's
 fingerprint the same way you set their IP allowlist:
 
 ```bash
@@ -1425,9 +1425,9 @@ check ever applies to the AI-agent broker's own tool calls (§7's
 
 ### SCIM 2.0 user provisioning (Phase 149)
 
-`POST /api/identity/reconcile` is **pull**: pamv1 asks your directory who's
+`POST /api/identity/reconcile` is **pull**: PAMv1 asks your directory who's
 still enabled, on your schedule. SCIM is the **push** complement — your IdP
-tells pamv1 the moment a user is created, renamed, or deprovisioned, without
+tells PAMv1 the moment a user is created, renamed, or deprovisioned, without
 waiting for the next reconcile. Both mechanisms can run side by side.
 
 **Turn it on.** Set `PAM_SCIM_ENABLED=true` (default off — this is a new
@@ -1448,7 +1448,7 @@ it at `https://your-pamv1-host/scim/v2` as the base URL — most IdPs append
 `/Users` themselves. Revoke with `DELETE /v1/scim-keys/{id}`, the same as
 revoking an app key.
 
-**What a SCIM key can and cannot do.** It authenticates outside pamv1's
+**What a SCIM key can and cannot do.** It authenticates outside PAMv1's
 normal RBAC entirely — it is not an `admin`/`user`/`auditor`/`approver`
 principal and holds none of their capabilities, only the ability to
 create/read/update/deactivate the user roster over `/scim/v2/Users`. Every
@@ -1459,7 +1459,7 @@ promote a SCIM-provisioned user the normal way afterward
 
 **Deactivation actually cuts access.** `PATCH .../active:false` (or
 `DELETE`, which does the same thing — see below) immediately blocks that
-user's own local pamv1 token: their next authenticated call gets a plain
+user's own local PAMv1 token: their next authenticated call gets a plain
 401, exactly like an unknown token, not just a cosmetic flag flip. Directory
 (AD/SSO/OIDC) logins are unaffected by this switch — govern those the way
 you already do, with `POST /api/identity/reconcile` or upstream directory
@@ -1473,17 +1473,17 @@ different from `DELETE /api/users/{id}`, which still hard-deletes: SCIM's
 whole provisioning model expects a deprovisioned identity to be
 reactivatable later, which a hard delete would foreclose.
 
-**A SCIM-provisioned user's local pamv1 token is never handed back over
+**A SCIM-provisioned user's local PAMv1 token is never handed back over
 SCIM.** One is minted internally (every user row needs one), but SCIM's
 schema has no field for a bearer secret, and the realistic expectation is
 that this user signs in through the same IdP doing the provisioning
-(AD/Entra/OIDC), not a standalone pamv1 credential. If you specifically need
+(AD/Entra/OIDC), not a standalone PAMv1 credential. If you specifically need
 one, mint it the normal way instead: delete and re-create the user via
 `POST /api/users`.
 
 **Idempotent provisioning.** Before creating a user, a well-behaved IdP
 checks whether one already exists — `GET /scim/v2/Users?filter=userName eq
-"alice"` (or `externalId`) — and pamv1 answers with an empty result set
+"alice"` (or `externalId`) — and PAMv1 answers with an empty result set
 (`totalResults:0`), not an error, when there's no match. This is the one
 filter shape this server understands; it does not implement SCIM's full
 filter grammar.
@@ -1493,7 +1493,7 @@ filter grammar.
 > RFC 7644's standard `PATCH` shape and Azure AD's documented "no path,
 > attributes directly in `value`" variant — is implemented and tested
 > against a hand-rolled fake, per [EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md).
-> Test your own IdP's connector against a non-production pamv1 instance
+> Test your own IdP's connector against a non-production PAMv1 instance
 > before relying on it.
 
 ### Safes: delegated-access containers (Phase 17)
@@ -1625,7 +1625,7 @@ curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/credentials/
 
 When a service account's password rotates, the **Windows Services, Scheduled
 Tasks and IIS App Pools** that log on with it must be updated too — otherwise
-rotation breaks production. Declare those consumers and pamv1 updates each over
+rotation breaks production. Declare those consumers and PAMv1 updates each over
 WinRM after the rotation:
 
 ```bash
@@ -1634,7 +1634,7 @@ curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/credentials/
 # kinds: windows_service | scheduled_task | iis_apppool ; port defaults to 5985 (WinRM)
 ```
 
-On the next rotation of credential 3, pamv1 sets the new password on the target,
+On the next rotation of credential 3, PAMv1 sets the new password on the target,
 re-vaults it, then runs the appropriate WinRM command on each consumer's host
 (`sc.exe config` / `schtasks /Change /RP` / `appcmd …processModel.password`) with
 the new secret. A propagation failure is audited (`credential.dependency_failed`)
@@ -1642,8 +1642,8 @@ but does **not** fail the rotation — the new secret is already vaulted, so the
 fix is to update the stale consumer, not to roll back.
 
 **Which account does the updating (Phase 61).** `management_credential_id` names
-the credential pamv1 **logs into that host as** to make the change. Set it.
-Without it, pamv1 connects as the service account it is rotating, which means
+the credential PAMv1 **logs into that host as** to make the change. Set it.
+Without it, PAMv1 connects as the service account it is rotating, which means
 that account needs remote-management and local-administrator rights on the
 consumer's host — the opposite of what a service account should hold, and
 hardened ones usually cannot log on remotely at all, so propagation fails
@@ -1654,7 +1654,7 @@ rotating *because* the account is broken.
   records which one was used (`managed_via:credential:7`) — never its secret.
 - An id that names no credential is refused **when you declare the dependency**
   (422), not silently at 3am during an unattended rotation.
-- **Naming a credential here is a use of it (Phase 61a).** pamv1 will present
+- **Naming a credential here is a use of it (Phase 61a).** PAMv1 will present
   that password to the `host` you give on the same request, so declaring the
   dependency requires the same authorization as revealing the credential:
   the `reveal_secret` capability, a grant on **that credential's own target**,
@@ -1753,7 +1753,7 @@ PAM_LDAP_GROUP_APPROVER=CN=PAM-Approvers,OU=Groups,DC=example,DC=com
 `PAM_LDAP_INSECURE_SKIP_VERIFY=true` disables LDAPS certificate verification.
 It exists for a lab with a self-signed DC certificate and **must never be set in
 production** — it would let anything that can answer on port 636 harvest the
-credentials pamv1 binds with. It is deliberately *not* overridable from the
+credentials PAMv1 binds with. It is deliberately *not* overridable from the
 runtime configuration console (§4.1): turning it on requires a restart with a
 changed environment, which is auditable at the deployment layer.
 
@@ -1766,7 +1766,7 @@ returns a **session token** (12h) that works in the portal and the SSH proxy
 exactly like a per-user token. A user in no mapped group is rejected. Keep the bootstrap `PAM_API_KEY` and break-glass key as
 the local emergency path if AD is unreachable.
 
-**Identity reconciliation.** With LDAP configured, revoke pamv1 access for users
+**Identity reconciliation.** With LDAP configured, revoke PAMv1 access for users
 the directory has **disabled** (AD `userAccountControl`), and surface local-only
 accounts:
 
@@ -1783,7 +1783,7 @@ local service accounts). A directory error never revokes.
 ### Microsoft Entra ID (Azure AD) login (optional)
 
 For cloud identities, enable Entra ID login alongside or instead of on-prem AD.
-pamv1 uses the OAuth2 **resource-owner-password** grant against your tenant and
+PAMv1 uses the OAuth2 **resource-owner-password** grant against your tenant and
 reads the user's **app roles** (or group ids) from the token to derive roles —
 several matched app-roles/groups grant the **union** of their capabilities, the
 same as on-prem AD.
@@ -1803,15 +1803,15 @@ PAM_ENTRA_ROLE_APPROVER=pam.approver
 Setup in Azure: create an **app registration**, define **app roles** (e.g.
 `pam.admin`) and assign users/groups to them, add a **client secret**, and enable
 the ROPC (password) grant for the app. If both LDAP and Entra are configured,
-pamv1 tries each (chain). **Caveats:** ROPC does not trigger Entra Conditional
-Access or IdP-side MFA — layer pamv1's own TOTP MFA on top; the OIDC auth-code
+PAMv1 tries each (chain). **Caveats:** ROPC does not trigger Entra Conditional
+Access or IdP-side MFA — layer PAMv1's own TOTP MFA on top; the OIDC auth-code
 flow is the production-recommended upgrade (roadmap). Always use HTTPS.
 
 ### OIDC single sign-on (recommended for Entra)
 
 The **Authorization Code + PKCE** flow is the production-grade alternative to
 ROPC: the user authenticates *at the IdP* (so its MFA and Conditional Access
-apply) and pamv1 validates the returned ID token's **RS256 signature** against
+apply) and PAMv1 validates the returned ID token's **RS256 signature** against
 the IdP's JWKS. Enable it:
 
 ```bash
@@ -1832,26 +1832,26 @@ for an IdP without a discovery document. `PAM_OIDC_SCOPES` replaces the requeste
 scopes (default `openid profile`) when your IdP needs an extra one to emit the
 role or group claim. Users click
 **Single sign-on** on the portal (or hit `/api/auth/oidc/start`); after the IdP,
-the callback issues a pamv1 session and returns to the portal. Note: pamv1's own
+the callback issues a PAMv1 session and returns to the portal. Note: PAMv1's own
 TOTP is not layered on OIDC (the IdP owns MFA there). The OIDC login state is
 held in a shared store (Phase 10), so the callback can land on any replica in HA.
 
 ### SAML 2.0 single sign-on (Phase 151 — ADFS, Okta, OneLogin, Entra SAML apps)
 
 For an IdP that speaks **SAML 2.0 but not OIDC** — on-prem **AD FS** being the
-canonical case — pamv1 can act as a SAML **Service Provider** (Web Browser SSO
+canonical case — PAMv1 can act as a SAML **Service Provider** (Web Browser SSO
 profile, **SP-initiated** flow). The user authenticates *at the IdP*; the IdP
-posts a signed `<Response>` back to pamv1's Assertion Consumer Service (ACS),
-pamv1 verifies the **XML-DSig signature** against the certificate in the IdP's
+posts a signed `<Response>` back to PAMv1's Assertion Consumer Service (ACS),
+PAMv1 verifies the **XML-DSig signature** against the certificate in the IdP's
 metadata, checks the audience, destination, issuer, timing and request binding,
-maps the group/role attribute to a pamv1 role and issues a session — the same
+maps the group/role attribute to a PAMv1 role and issues a session — the same
 landing the OIDC callback uses, so the console needs nothing SAML-specific.
 Enable it:
 
 ```bash
-PAM_SAML_SP_URL=https://pam.example.com                 # pamv1's PUBLIC base URL (presence enables SAML)
+PAM_SAML_SP_URL=https://pam.example.com                 # PAMv1's PUBLIC base URL (presence enables SAML)
 PAM_SAML_IDP_METADATA_URL=https://adfs.corp.example/FederationMetadata/2007-06/FederationMetadata.xml
-#   …or, air-gapped / metadata endpoint unreachable from pamv1:
+#   …or, air-gapped / metadata endpoint unreachable from PAMv1:
 # PAM_SAML_IDP_METADATA_FILE=/etc/pamv1/idp-metadata.xml
 PAM_SAML_ROLE_ADMIN=PAM-Admins                          # group / role attribute VALUE -> role
 PAM_SAML_ROLE_USER=PAM-Users
@@ -1859,13 +1859,13 @@ PAM_SAML_ROLE_AUDITOR=PAM-Auditors                      # optional, same mapping
 PAM_SAML_ROLE_APPROVER=PAM-Approvers
 ```
 
-Then register pamv1 at the IdP by importing its SP metadata from
+Then register PAMv1 at the IdP by importing its SP metadata from
 **`https://pam.example.com/api/auth/saml/metadata`** (ADFS: *Add Relying Party
 Trust → Import data about the relying party published online*; Okta/Entra:
 upload the metadata file, or enter the values by hand — entity ID
 `https://pam.example.com/api/auth/saml/metadata`, ACS URL
 `https://pam.example.com/api/auth/saml/acs`, HTTP-POST binding). Configure the
-IdP to emit a **group or role claim**: pamv1 reads, by default, any attribute
+IdP to emit a **group or role claim**: PAMv1 reads, by default, any attribute
 named `groups`, `memberOf`, `role`, ADFS's Token-Groups
 (`http://schemas.xmlsoap.org/claims/Group`) or Role
 (`http://schemas.microsoft.com/ws/2008/06/identity/claims/role`) claim types,
@@ -1880,7 +1880,7 @@ Options and boundaries:
 
 - **`PAM_SAML_SP_ENTITY_ID`** overrides the SP entity ID (default: the metadata
   URL, the SAML convention). **`PAM_SAML_SP_KEY_FILE` + `PAM_SAML_SP_CERT_FILE`**
-  (an RSA key pair, PEM, set together) make pamv1 **sign its AuthnRequests**
+  (an RSA key pair, PEM, set together) make PAMv1 **sign its AuthnRequests**
   (RSA-SHA256, for an IdP configured to require signed requests) and **publish
   the certificate for encryption**, so an IdP that encrypts assertions to the SP
   works; without them the SP still verifies every IdP signature — the pair only
@@ -1913,7 +1913,7 @@ Options and boundaries:
 
 ### Multi-factor authentication (TOTP)
 
-pamv1 offers two independent second-factor types, TOTP and (Phase 124)
+PAMv1 offers two independent second-factor types, TOTP and (Phase 124)
 WebAuthn — either one alone satisfies MFA at login; a user is never required
 to have both. This section covers TOTP; WebAuthn follows immediately after.
 
@@ -2161,13 +2161,13 @@ know.
 **What an inventory tool answers with (Phase 169).** `list_targets` and
 `list_credentials` report only the targets the calling agent may reach — the same
 direct-grant ∪ safe-membership check every acting tool applies. A target with no
-grants and no safe stays visible to everyone, as it is everywhere else in pamv1,
+grants and no safe stays visible to everyone, as it is everywhere else in PAMv1,
 so the way to narrow an agent's view of the estate is to grant it the targets it
 should reach (which gates the rest). Naming an ungranted target explicitly —
 `{"target":"prod-dc-01"}` — is refused with `agent not authorized for target`,
 not answered with an empty list. Before 169 both tools answered for the whole
 estate regardless of grants, so an agent entitled to one host could still
-enumerate every hostname, OS, protocol and privileged account name pamv1 knew.
+enumerate every hostname, OS, protocol and privileged account name PAMv1 knew.
 
 **Mint an agent identity** (admin, `CapManageUsers`); the token is shown once:
 
@@ -2266,7 +2266,7 @@ curl -s -X POST https://pam.example.com/v1/token \
 ```
 
 The issued token carries an RFC 8693 §4.4 `may_act` claim, and the **next**
-exchange refuses any actor it does not name. pamv1 has enforced that claim since
+exchange refuses any actor it does not name. PAMv1 has enforced that claim since
 delegation shipped and never issued it, so until now every minted token was
 unpinned past the first hop.
 
@@ -2274,7 +2274,7 @@ unpinned past the first hop.
   parties, all inside your trust domain, and never the token's own subject.
 - Omitting it leaves the token unpinned — the behaviour of every token minted
   before this release, and still the default.
-- `may_act` is a **pamv1 extension parameter**. RFC 8693 defines the claim, not a
+- `may_act` is a **PAMv1 extension parameter**. RFC 8693 defines the claim, not a
   request field for it, so no other implementation will accept the same request.
 - The pin is on the trail (`broker.token.exchanged … may_act:…`), so an
   investigator can answer "who was this token allowed to be handed to" without
@@ -2363,7 +2363,7 @@ attested agent has no key to suspend, so quarantine is the stop it has.
 ### Who owns a SPIFFE agent (Phase 170)
 
 An agent that authenticates with a SPIFFE SVID is admitted by your trust domain,
-not minted here, so pamv1 had nowhere to record the human accountable for it.
+not minted here, so PAMv1 had nowhere to record the human accountable for it.
 Two shipped controls read that owner, and both were silently inert for this
 identity kind:
 
@@ -2408,7 +2408,7 @@ domain can still authenticate; this records who answers for the ones you named.
 
 **The inventory builds itself (Phase 174).** Recording an owner only helped for
 the identities you thought to type in — and any workload your trust domain
-vouches for can authenticate. So pamv1 now records **every** SPIFFE identity
+vouches for can authenticate. So PAMv1 now records **every** SPIFFE identity
 that calls: the first sighting creates a row marked **seen** (no owner, audited
 once as `agent.identity_first_seen`), and every call after stamps its last-seen.
 The console list (menu 26 → F8) shows both states:
@@ -2429,7 +2429,7 @@ identity nobody has claimed is refused at the door (`agent.not_enrolled`, the
 same 401 a bad bearer gets, so it learns nothing from the reply). The sighting is
 still recorded — you enrol *from* that list, so an identity that knocked and was
 turned away has to appear in it. Plan the order: enrol first, then turn the flag
-on. Static agent keys are unaffected; pamv1 issued those itself.
+on. Static agent keys are unaffected; PAMv1 issued those itself.
 
 **What this is not.** Enrolling is not attestation. It admits no workload — your
 trust domain already decided that — and proves nothing about the process holding
@@ -2459,7 +2459,7 @@ must also send a `DPoP` header** — a short JWT signed by the matching private
 key, naming this request's method (`htm`) and URI (`htu`), the SHA-256 of the
 token itself (`ath`), a fresh `iat` and a one-use `jti`. Any standard DPoP client
 library produces it; the shape is RFC 9449 §4.2. The token may be presented as
-`Authorization: DPoP <token>` or `Authorization: Bearer <token>` — pamv1 reads
+`Authorization: DPoP <token>` or `Authorization: Bearer <token>` — PAMv1 reads
 the binding from the token, never from the header word.
 
 Three behaviours worth knowing before you turn this on:
@@ -2470,7 +2470,7 @@ Three behaviours worth knowing before you turn this on:
 - **A proof is single-use — per replica.** Headers are not secret, so a captured proof would
   otherwise be replayable; the second use is refused.
 - **`PAM_BROKER_PUBLIC_URL` is not optional behind a proxy.** The proof is signed
-  over the URL the *client* used. If anything terminates TLS in front of pamv1,
+  over the URL the *client* used. If anything terminates TLS in front of PAMv1,
   set it, or every bound agent is refused with `reason:proof-uri-mismatch`.
 
 **To require binding**, set `PAM_BROKER_REQUIRE_POP=true`: an SVID-authenticated
@@ -2479,7 +2479,7 @@ agent whose token carries no `cnf` is refused (`agent.pop_denied`,
 tokens first, then set the flag. Unbound tokens are completely unaffected until
 you do, so upgrading changes nothing on its own.
 
-**What this is not.** The *delegator* names the key, and pamv1 cannot check that
+**What this is not.** The *delegator* names the key, and PAMv1 cannot check that
 the key belongs to the sub-agent rather than to the delegator itself. What you
 get is that a token lifted off the wire or out of a log is useless without the
 private key — theft, contained. Binding a credential to the process holding it is
@@ -2496,7 +2496,7 @@ Audit: `agent.identity_register` · `agent.identity_owner_set` ·
 `agent.not_enrolled` · `agent.quarantine_failed` (the cascade's failure record,
 the quarantine twin of `agent.disable.failed`).
 
-**Why this is its own phase.** Humans in pamv1 get certification campaigns,
+**Why this is its own phase.** Humans in PAMv1 get certification campaigns,
 checkout leases and revocation; agent identities held an immortal standing
 bearer credential that nothing reviewed, nothing expired and nothing could
 pause. Phase 153's endpoint agents — a much newer non-human identity — already
@@ -2534,23 +2534,23 @@ curl -s https://pam.example/v1/tool-calls -H "Authorization: Bearer $AGENT_TOKEN
 
 `session_id` is the agent's own run/conversation id and `client` is what software
 and model is driving it. Both appear in the trail as `session:` and `client:`, and
-both are **declared by the caller and never verified** — pamv1 records them so an
+both are **declared by the caller and never verified** — PAMv1 records them so an
 investigator can group a run, and never consults them for a decision. Treat them
 as provenance, not evidence. Over MCP you do not send them: the protocol session
 is the run id and `clientInfo` from `initialize` is the client.
 
-You also get `jti:` on parked calls, which pamv1 computes itself: it is the resume
+You also get `jti:` on parked calls, which PAMv1 computes itself: it is the resume
 token's id, so the "parked for approval", "approved", and "the agent collected the
 result" events all name the same ticket. That last event is new to the
 hash-chained broker audit — the authoritative record used to end at the human's
-decision, which meant the moment a `reveal_credential` result actually left pamv1
+decision, which meant the moment a `reveal_credential` result actually left PAMv1
 was recorded only in the ordinary trail.
 
 ### Application-secrets API (Phase 24, Tier-4)
 
 For a **non-agent application** (a CI job, a legacy service) that just needs to
 fetch a secret at startup — not an operator through the proxy, not the AI-agent
-tool broker — pamv1 offers a **Conjur-style** delivery path. It is **opt-in** and
+tool broker — PAMv1 offers a **Conjur-style** delivery path. It is **opt-in** and
 **default-deny**: an app retrieves only the specific credentials it has been
 explicitly granted.
 
@@ -2749,7 +2749,7 @@ confidentiality of the data keys.
 
 ## 9. Logs & audit
 
-pamv1 produces **two** independent streams — keep them both:
+PAMv1 produces **two** independent streams — keep them both:
 
 ### 9.1 Operational logs (stdout)
 
@@ -2846,7 +2846,7 @@ truncated. This is the same signed-head mechanism the broker chain exposes at
 `GET /v1/audit/head`.
 
 **Streaming to a SIEM (Phase 35).** To feed a SIEM (Splunk, QRadar, Sentinel, …)
-continuously rather than exporting on demand, point pamv1 at a syslog/CEF
+continuously rather than exporting on demand, point PAMv1 at a syslog/CEF
 collector:
 
 ```bash
@@ -2905,7 +2905,7 @@ export PAM_RETENTION_ARCHIVE_DIR=/mnt/worm/pamv1
 - Each export appends `audit.archived` / `recording.archived` naming the file and
   stamping the **SHA-256 of the bytes on disk**, so an auditor re-hashes the
   archive and proves it is what was removed.
-- Files are written once (`O_EXCL`, mode `0400`) and never overwritten. pamv1
+- Files are written once (`O_EXCL`, mode `0400`) and never overwritten. PAMv1
   can't make your storage immutable — that's the mount — but it will not replace
   an archived artifact.
 - **With the HMAC chain on you now still get the scheduled export**; only the
@@ -2967,7 +2967,7 @@ your credentials (local, Vault Transit, AWS KMS or a PKCS#11 HSM). Practical not
   the audited hash covers the bytes as stored.
 - **Nothing is orphaned.** The format is detected per file, so recordings written
   before you enabled it keep replaying.
-- **You lose direct `asciinema` playback** of the raw `.cast`; replay through pamv1
+- **You lose direct `asciinema` playback** of the raw `.cast`; replay through PAMv1
   (which is the audited path anyway).
 - **A KEK outage fails closed** — the session is refused rather than recorded in
   the clear.
@@ -3029,21 +3029,21 @@ curl -s "https://pam.example/api/recordings/search?q=aws_secret_access_key" -H "
 A session recording shows what was **typed**. That is not the same as what
 **ran**: `echo Y3VybCAtcyBodHRwOi8vZXZpbA== | base64 -d | sh` records one
 innocuous-looking line, and `stty -echo` records nothing at all. §9.4's command
-control has the same blind spot by design — pamv1 never parses an interactive
+control has the same blind spot by design — PAMv1 never parses an interactive
 PTY, and its own documentation says so.
 
-**Why pamv1 cannot solve this with a kernel probe.** Teleport closes this gap
+**Why PAMv1 cannot solve this with a kernel probe.** Teleport closes this gap
 with eBPF because its SSH service runs *on the node*: a session's processes are
-its own children, in its own kernel. pamv1 is a **proxy** — your shell runs on
+its own children, in its own kernel. PAMv1 is a **proxy** — your shell runs on
 the target, under the target's sshd, in the target's kernel — so an eBPF exec
-tracer on the pamv1 host would see exactly nothing of a brokered session.
-Kernel-level in-session tracing would mean putting pamv1 inside the target,
+tracer on the PAMv1 host would see exactly nothing of a brokered session.
+Kernel-level in-session tracing would mean putting PAMv1 inside the target,
 which is a different product shape. That limitation is permanent and documented
 ([EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md)), not a to-do.
 
-**What pamv1 does instead.** The target's own kernel already keeps the record —
+**What PAMv1 does instead.** The target's own kernel already keeps the record —
 the Linux audit subsystem, fed by the same syscall hooks an eBPF probe taps.
-When an interactive SSH session ends, pamv1 runs ONE fixed, read-only command
+When an interactive SSH session ends, PAMv1 runs ONE fixed, read-only command
 over that target's own vaulted credential, on a fresh connection (never the live
 session), filters the records to the session's window, and stores the result as
 a hash-chained artifact beside the recording:
@@ -3069,7 +3069,7 @@ usual rule is:
 ```
 
 and the vaulted credential must be able to read the audit log (root, or an
-account your `sudo`/file policy permits). If it cannot, pamv1 says so —
+account your `sudo`/file policy permits). If it cannot, PAMv1 says so —
 `session.forensics_unavailable` with the reason, and an artifact that reads
 `UNAVAILABLE: …`. **"The target could not tell us" never renders as "nothing
 ran."** A target whose sessions cannot be reconstructed is itself a finding
@@ -3102,7 +3102,7 @@ auditd's hex and chunked encodings decoded.
 
 Audit: `session.forensics` (events, window, artifact + hash),
 `session.forensics_unavailable` (the finding above), `session.forensics_failed`
-(pamv1 could not ask: dial/exec/decrypt failure, or a deny pattern that matched
+(PAMv1 could not ask: dial/exec/decrypt failure, or a deny pattern that matched
 its own literal — also audited as `command.blocked … path:forensics`).
 
 ### 9.4 Supervising live sessions & command control (Phase 16)
@@ -3286,7 +3286,7 @@ Three behaviors to know before enabling it:
   unparsable. The same stance covers requests it cannot *account for*: an
   artifact that cannot be written, a request id reused while another is still
   in flight, `copy-data@openssh.com` (which copies inside the server, where no
-  bytes cross the proxy), and any `SSH_FXP_EXTENDED` operation pamv1 does not
+  bytes cross the proxy), and any `SSH_FXP_EXTENDED` operation PAMv1 does not
   recognize. Each refusal is audited `sftp.blocked` with its reason.
 - **The cap refuses, it does not truncate.** `PAM_SSH_SFTP_CAPTURE_MAX_MB`
   (0 = unlimited) refuses data past the cap with a permission-denied — the
@@ -3363,7 +3363,7 @@ ssh -L 5432:localhost:5432 root@web-01@pam.example
   `ssh -L X:localhost:Y` form above is the common case, not an edge case.
 - **Any other host is refused before it is ever dialed** — `forward.refused
   reason:not-same-host` — closing what would otherwise be an SSRF pivot
-  into the target's own network using pamv1 as the launch point.
+  into the target's own network using PAMv1 as the launch point.
 - **Three sessions never get it, regardless of `PAM_SSH_PORT_FORWARD`**: an
   **observer** session (`+observe`) — forwarding would be a full read-write
   data path wearing a read-only label; a session while
@@ -3424,7 +3424,7 @@ point during the wait (on any replica, per the cross-replica relay in 9.4)
 releases the session immediately; most sessions never notice the check, since a
 supervisor who is already watching the queue satisfies it before the channel
 even opens. A session that times out unwatched is refused
-(`pamv1: no supervisor attached to watch this session; refused`) and audited
+(`PAMv1: no supervisor attached to watch this session; refused`) and audited
 `session.unsupervised` with the target, credential username and configured
 timeout — nothing reaches the target.
 
@@ -3451,7 +3451,7 @@ principal **decides**.
 ```bash
 # 1. Request a share on a live session (needs `connect` — the operator
 #    running it). mode: view_only | view_control. kind: internal (a named
-#    pamv1 user, by username) or external (an email address — no account
+#    PAMv1 user, by username) or external (an email address — no account
 #    needed).
 curl -sX POST https://pam.example/api/sessions/<id>/share -H "X-API-Key: $OPERATOR" \
   -d '{"mode":"view_control","kind":"internal","invitee":"carol"}'
@@ -3476,11 +3476,11 @@ ssh -p 2222 join:7f3a9c...@pam.example
 # Password: <Carol's own PAM token — not the invite token>
 ```
 
-pamv1 authenticates that password first — the same resolution an ordinary
+PAMv1 authenticates that password first — the same resolution an ordinary
 connection goes through, so an enroll-only or tunnel-only principal is refused
 here too — and only then checks the invite: `invitee` must equal Carol
 (case-insensitive), and `kind` must be `internal` (an external invite redeemed
-this way is refused: *"pamv1: this invite must be redeemed via its emailed
+this way is refused: *"PAMv1: this invite must be redeemed via its emailed
 link"*). `view_control` additionally needs Carol to hold `connect` herself. A
 join skips the ordinary connect-admission gates (safe membership, grants,
 ticket, approval) by design — it "creates no new access," in the code's own
@@ -3490,7 +3490,7 @@ legitimately.
 **External invite — a QR code, redeemed on the web, never SSH.** With
 `kind:"external"` and an `email`, approval sends the guest a link **and an
 embedded QR code** pointing at `<PAM_PORTAL_URL>/share.html?token=...` — a
-page that needs no pamv1 account at all. It calls
+page that needs no PAMv1 account at all. It calls
 `POST /api/share/redeem/{token}` once, consuming the token, to mint a random
 256-bit **guest key**; from then on it authenticates with that key as a query
 parameter — `GET /api/share/stream?key=...` for the live output (SSE) and,
@@ -3598,7 +3598,7 @@ form the protocol actually supports:
   a **one-time banner** written into the stream the moment the session
   starts, the same `Hub.Publish` mechanism a WinRM run's own live notices
   already use — so a supervisor watching live (§9.4) or replaying the
-  recording later (§9.3) sees exactly who was connected, without pamv1
+  recording later (§9.3) sees exactly who was connected, without PAMv1
   needing to parse or reformat protocol-specific frames to show it.
 
 There is nothing to configure and nothing to enable — every new session
@@ -3732,7 +3732,7 @@ Three things to know before turning it on:
   knob off in that deployment.
 - **What it proves is narrower than it looks.** For a laptop your EDR system
   knows the device. For a workload, the webhook is answering about a *name*
-  pamv1 verified cryptographically — not about the process holding the
+  PAMv1 verified cryptographically — not about the process holding the
   credential. Binding a credential to its process is workload attestation
   (SPIRE), which stays external. Read an agent posture answer as "the fleet
   manager believes this identity's workload is healthy", never as proof that the
@@ -3743,7 +3743,7 @@ returns the same 401 a bad bearer gets — the agent learns nothing from the rep
 
 **Four-eyes says when it could not check (Phase 176).** The refusal is
 `owner == approver`, so an owner nobody holds — `caro1`, or `platform-team` —
-can never match, and the real owner can approve their own agent's call. pamv1
+can never match, and the real owner can approve their own agent's call. PAMv1
 does not guess: the decision proceeds and the trail records
 `broker.approval.four_eyes_unverified` naming the owner. Set
 `PAM_BROKER_REQUIRE_KNOWN_OWNER=true` and that decision is refused instead (the
@@ -3753,13 +3753,13 @@ checking the flags below, or approvals for team-owned agents will start failing.
 **An owner nobody can offboard is flagged.** An owner is free text on both
 identity kinds, and the offboarding cascade matches it as a username *string* —
 so `caro1` instead of `carol` means deleting that human will never suspend the
-agent, while the row still reads as though somebody were accountable. pamv1 does
+agent, while the row still reads as though somebody were accountable. PAMv1 does
 not refuse an owner it does not recognise (a team address or a service account is
 a legitimate answer), so it reports one instead: `owner_known` on
 `GET /v1/agents` and `GET /v1/agents/identities`, a red owner with a `?` on
 console menus 26 and F8, and a WARNING inside the campaign item where a reviewer
 is already asking the question. The check is **exact-case**, because every owner
-lookup in pamv1 is: an agent owned by `Carol` while the user is `carol` is
+lookup in PAMv1 is: an agent owned by `Carol` while the user is `carol` is
 flagged, and it is right to flag it — deleting `carol` would not suspend that
 agent.
 
@@ -3790,7 +3790,7 @@ unreviewable campaign the scope exists to prevent.
 #### Repeat it, so it does not depend on remembering (Phase 68)
 
 `recur_days` makes a campaign the **anchor** of a recurring series: every N days
-pamv1 opens a fresh campaign with the same name and scope, snapshotting access as
+PAMv1 opens a fresh campaign with the same name and scope, snapshotting access as
 it stands then. Recertification is a calendar obligation, and a control that
 needs somebody to remember a button lapses the first busy quarter.
 
@@ -3835,7 +3835,7 @@ curl -s https://pam.example/api/campaigns/mine -H "X-API-Key: $REVIEWER_TOKEN"
 #### Nudge before it lapses (Phase 70)
 
 Recertification lapses quietly: the campaign stays open, the items stay pending,
-and nothing happens until an auditor asks. Set a **due date** and pamv1 nudges.
+and nothing happens until an auditor asks. Set a **due date** and PAMv1 nudges.
 
 - The first reminder fires **`PAM_CERT_REMIND_DAYS`** (default `7`, `0` disables, maximum `366` — outside that range the server refuses to start rather than reminding on every campaign at once)
   before the due date, then **daily** while items are pending.
@@ -3940,7 +3940,7 @@ curl -sX POST https://pam.example/api/approval-invites/7/revoke -H "X-API-Key: $
 # → the link stops working even though its TTL hasn't expired
 ```
 
-- **The recipient never needs a pamv1 account.** `approve.html` is
+- **The recipient never needs a PAMv1 account.** `approve.html` is
   unauthenticated — reached only by knowing the single-use token in the
   link — and shows the requester, target and reason before asking for a
   decision.
@@ -3968,7 +3968,7 @@ curl -sX POST https://pam.example/api/approval-invites/7/revoke -H "X-API-Key: $
 
 ### 9.7 Privileged threat analytics (Phase 23)
 
-pamv1 scores the audit trail into **behavioral risk** per actor, so a supervisor
+PAMv1 scores the audit trail into **behavioral risk** per actor, so a supervisor
 can see who is behaving abnormally — and optionally respond automatically. The
 scoring is deliberately **explainable**: every point traces to a named signal
 (break-glass use, blocked commands, authentication-failure bursts, off-hours
@@ -4044,7 +4044,7 @@ identity were compromised, what could it actually reach? `POST /api/blast/analyz
 (`read_audit`) runs a read-only analysis over a **normalized identity graph** you
 submit — no cloud credentials are involved and nothing is persisted. Producing
 the graph (from AWS `GetAccountAuthorizationDetails`, Okta, GitHub, Workspace…)
-is an **external ingester's** job; pamv1 ships the engine, not the collector.
+is an **external ingester's** job; PAMv1 ships the engine, not the collector.
 
 ```bash
 curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/blast/analyze -d '{
@@ -4080,8 +4080,8 @@ are capped at 4 MiB. Every analysis is audited `blast.analyze`.
 ### 9.9 What can this subject reach? (Phase 189)
 
 §9.8 asks the structural question about a graph you submit; this asks it about
-**pamv1's own grants**, and it is the question an investigator actually starts
-with. Every grant lookup inside pamv1 is target-indexed — "who may reach this
+**PAMv1's own grants**, and it is the question an investigator actually starts
+with. Every grant lookup inside PAMv1 is target-indexed — "who may reach this
 target" — which is what the connect gate needs and the reverse of what a review
 needs. Answering the review's question used to mean opening every target in turn
 and working it out by hand.
@@ -4132,7 +4132,7 @@ whole answer at once:
 | `key_disabled` | a static agent key revoked or suspended — what a certification campaign's revoke does to one |
 | `key_expired` | a static agent key past its `expires_at` |
 | `quarantined` | the identity is under the agent stop-switch; checked for **every** agent subject, including one no registry lists |
-| `not_enrolled` | an attested identity pamv1 recorded on sight that nobody has claimed — **only when `PAM_BROKER_REQUIRE_ENROLLED_SVID` is on**, because with it off (the default) an unclaimed identity authenticates perfectly well and reaches every ungated target |
+| `not_enrolled` | an attested identity PAMv1 recorded on sight that nobody has claimed — **only when `PAM_BROKER_REQUIRE_ENROLLED_SVID` is on**, because with it off (the default) an unclaimed identity authenticates perfectly well and reaches every ungated target |
 | `budget_zero` | an agent key with an explicit per-day budget of **0** — a deliberate hard stop of no brokered calls at all, not an unset budget |
 | `quarantine_unknown` | the quarantine table could not be read, so whether this agent is stopped is unknown — reported rather than swallowed, because an empty `blocked` means "nothing stops this subject" |
 
@@ -4154,7 +4154,7 @@ Two things it deliberately does **not** do:
   worth having. Claim the identity (menu 26 → F8) to make it reviewable, and see
   `PAM_BROKER_REQUIRE_ENROLLED_SVID` to make claiming mandatory.
 - **A directory-authenticated identity (AD/LDAP/Entra/OIDC/SAML) returns 404.**
-  Its roles are decided by group mapping at login, so pamv1 has nothing to
+  Its roles are decided by group mapping at login, so PAMv1 has nothing to
   evaluate between logins; answering with the built-in defaults would be
   inventing an identity. Local users and agent identities are reviewable this way.
 
@@ -4220,12 +4220,12 @@ entitlement.
 
 | Date | Change |
 |---|---|
-| 2026-08-25 | **Phase 197 — pamv1 as an External Secrets Operator backend.** An application grant can carry a stable `alias` (`POST /v1/apps/{id}/grants/{gid}/alias`, `reveal_secret`, console option `8`), and `GET /v1/app-secrets/by-alias/{alias}` fetches by that name — because a declarative consumer holds the identifier in a manifest in git, and a credential's row id is not stable across environments or a restore. Status codes are a contract with ESO and one of them is destructive: **404 means "deleted"** and removes the workload's Secret, so a revoked or ungranted credential answers **403, never 404**. Manifests and a cluster-test checklist in `deploy/k8s/eso/` |
+| 2026-08-25 | **Phase 197 — PAMv1 as an External Secrets Operator backend.** An application grant can carry a stable `alias` (`POST /v1/apps/{id}/grants/{gid}/alias`, `reveal_secret`, console option `8`), and `GET /v1/app-secrets/by-alias/{alias}` fetches by that name — because a declarative consumer holds the identifier in a manifest in git, and a credential's row id is not stable across environments or a restore. Status codes are a contract with ESO and one of them is destructive: **404 means "deleted"** and removes the workload's Secret, so a revoked or ungranted credential answers **403, never 404**. Manifests and a cluster-test checklist in `deploy/k8s/eso/` |
 | 2026-08-25 | **Phase 191 — `blocked` on the reachability review.** §9.9 gains the reason table: `no_usable_capability`, `deactivated`, `key_disabled`, `key_expired`, `quarantined`, `not_enrolled`. The targets and the total are unchanged when it is non-empty — a suspended account's grants are still grants — but an auditor reaching every ungated target, a deprovisioned user and a revoked agent key all used to read as live entitlement. `access.reach_query`'s audit detail carries the reasons |
-| 2026-08-23 | **Phase 189 — "what can this subject reach?"** A new review read, `GET /api/access/reach?subject=&kind=user|agent` (`read_audit`, audited `access.reach_query`), and console menu **31** — plus option `5` on a user row (menu 8) and option `8` on an agent-key row (menu 26). It answers the question pamv1 could not: every grant lookup was target-indexed, so "what can this agent reach?" meant opening every target in turn. The answer names each reachable target AND why — a direct grant, a role grant, safe membership, the admin bypass, or **open** (nothing gates the target, so anyone connect-capable reaches it), with per-reason counts, because "40 targets, 37 of them open" is a different finding from 40 deliberate grants. An agent in no registry is answered rather than refused (`"known": false` — an unenrolled workload reaching every ungated target is the finding); a directory-authenticated identity returns 404, since its roles are decided at login. Standing access only: the gates a connect still passes can narrow the list, never widen it. New migration `0047` (indexes both grant tables by subject). See §9.9 |
-| 2026-08-17 | **Phase 157 — post-session forensic reconstruction (the eBPF finding).** The planned mechanism (eBPF on the pam-server host) turned out to be architecturally impossible for a proxy: an operator's shell runs in the TARGET's kernel, so a probe here would observe zero events — verified, and documented as permanent. Shipped instead: after an interactive SSH session ends, pamv1 runs ONE fixed, read-only command (`ausearch -m EXECVE -ts today | tail -c 1048576`) over that target's own vaulted credential on a fresh connection, filters the target's kernel audit records to the session's window, and stores them as a hash-chained `.forensics.log` beside the recording — so an obfuscated (`base64 -d | sh`) or unechoed command still leaves a structured record of what actually ran. `PAM_SESSION_FORENSICS` (off by default), `_MAX_EVENTS`, `_TIMEOUT_SEC`. "Unavailable" (no auditd, no permission) is an audited FINDING, never silence; ZSP sessions are refused loudly; pamv1's own literal still obeys command control. New audit family `session.forensics*`. Also fixes a Phase 155 call site: `.k8s.log` transcripts were invisible to the recordings listing/playback, and both new artifact kinds are now listed and servable. Interactive SSH only, audit-only, no schema change. See §9.3b |
+| 2026-08-23 | **Phase 189 — "what can this subject reach?"** A new review read, `GET /api/access/reach?subject=&kind=user|agent` (`read_audit`, audited `access.reach_query`), and console menu **31** — plus option `5` on a user row (menu 8) and option `8` on an agent-key row (menu 26). It answers the question PAMv1 could not: every grant lookup was target-indexed, so "what can this agent reach?" meant opening every target in turn. The answer names each reachable target AND why — a direct grant, a role grant, safe membership, the admin bypass, or **open** (nothing gates the target, so anyone connect-capable reaches it), with per-reason counts, because "40 targets, 37 of them open" is a different finding from 40 deliberate grants. An agent in no registry is answered rather than refused (`"known": false` — an unenrolled workload reaching every ungated target is the finding); a directory-authenticated identity returns 404, since its roles are decided at login. Standing access only: the gates a connect still passes can narrow the list, never widen it. New migration `0047` (indexes both grant tables by subject). See §9.9 |
+| 2026-08-17 | **Phase 157 — post-session forensic reconstruction (the eBPF finding).** The planned mechanism (eBPF on the pam-server host) turned out to be architecturally impossible for a proxy: an operator's shell runs in the TARGET's kernel, so a probe here would observe zero events — verified, and documented as permanent. Shipped instead: after an interactive SSH session ends, PAMv1 runs ONE fixed, read-only command (`ausearch -m EXECVE -ts today | tail -c 1048576`) over that target's own vaulted credential on a fresh connection, filters the target's kernel audit records to the session's window, and stores them as a hash-chained `.forensics.log` beside the recording — so an obfuscated (`base64 -d | sh`) or unechoed command still leaves a structured record of what actually ran. `PAM_SESSION_FORENSICS` (off by default), `_MAX_EVENTS`, `_TIMEOUT_SEC`. "Unavailable" (no auditd, no permission) is an audited FINDING, never silence; ZSP sessions are refused loudly; PAMv1's own literal still obeys command control. New audit family `session.forensics*`. Also fixes a Phase 155 call site: `.k8s.log` transcripts were invisible to the recordings listing/playback, and both new artifact kinds are now listed and servable. Interactive SSH only, audit-only, no schema change. See §9.3b |
 | 2026-08-16 | **Phase 155 — Kubernetes targets (discrete operations).** A new `kubernetes` target protocol (port defaults to 6443) whose credential is a vaulted service-account bearer token (`k8s_token`), and `POST /api/targets/{id}/kubectl` (`connect`) brokering one audited operation at a time: `get`, `logs`, `apply` (server-side apply, `fieldManager=pamv1`) and `delete`. Same gates as the WinRM REST twin (protocol policy, grants/safes, approval, vendor contract, session cap + registry), same command control (the canonical `kubectl …` line is what deny/allow patterns match), same transcript (`.k8s.log`, hash on the audit row), same withheld-result contract when the audit write fails. The cluster's own RBAC decides what the token may do; its refusal comes back as `status:403` in the envelope. New `PAM_K8S_CA_FILE` / `PAM_K8S_INSECURE_SKIP_VERIFY` / `PAM_K8S_TIMEOUT_SEC` / `PAM_K8S_MAX_RESPONSE_KB`. New audit family `k8s.*`. Console: *Work with Targets* option 6. `exec`/`attach`/`port-forward` (streaming), client-certificate credentials and API discovery are deliberate v1 exclusions. No schema change. **Not verified against a real cluster** — proven against an in-process API server that accepts only the vaulted token. See "Kubernetes clusters" under §6 |
-| 2026-08-16 | **Phase 153 — outbound-only endpoint agents (Jump Client-style reachability).** For targets pamv1 cannot dial into: a new `pam-agent` binary (Release assets `pam-agent_linux_{amd64,arm64}` + `SHA256SUMS`) dials OUT to the existing `:2222` listener as `endpoint-agent:<name>` with its own bearer key, holds an RFC 4254 reverse tunnel, and the proxy reaches the bound target through it — never dialing it. `PAM_ENDPOINT_AGENTS_ENABLED` (default off); `POST/GET /api/endpoint-agents`, `DELETE /api/endpoint-agents/{id}` (`manage_targets` to create/revoke, `read_inventory` to list); console menu 28. One live agent per target; revoke kicks the live tunnel; SSH targets only. New migration `0042` (`endpoint_agents`). New audit family `endpoint_agent.*` plus `via:endpoint-agent:<name>` on `session.start`. The agent pins pam-server's host key (`PAM_AGENT_SERVER_HOST_KEY`, required), exposes exactly one local address, may open nothing toward pamv1, and lists every replica in HA. Proven end to end against a real upstream sshd through the tunnel; not verified across a real NAT. See "Outbound-only endpoint agents" under §6 |
+| 2026-08-16 | **Phase 153 — outbound-only endpoint agents (Jump Client-style reachability).** For targets PAMv1 cannot dial into: a new `pam-agent` binary (Release assets `pam-agent_linux_{amd64,arm64}` + `SHA256SUMS`) dials OUT to the existing `:2222` listener as `endpoint-agent:<name>` with its own bearer key, holds an RFC 4254 reverse tunnel, and the proxy reaches the bound target through it — never dialing it. `PAM_ENDPOINT_AGENTS_ENABLED` (default off); `POST/GET /api/endpoint-agents`, `DELETE /api/endpoint-agents/{id}` (`manage_targets` to create/revoke, `read_inventory` to list); console menu 28. One live agent per target; revoke kicks the live tunnel; SSH targets only. New migration `0042` (`endpoint_agents`). New audit family `endpoint_agent.*` plus `via:endpoint-agent:<name>` on `session.start`. The agent pins pam-server's host key (`PAM_AGENT_SERVER_HOST_KEY`, required), exposes exactly one local address, may open nothing toward PAMv1, and lists every replica in HA. Proven end to end against a real upstream sshd through the tunnel; not verified across a real NAT. See "Outbound-only endpoint agents" under §6 |
 | 2026-08-16 | **Phase 151 — SAML 2.0 single sign-on (Service Provider).** For IdPs with no OIDC endpoint (on-prem AD FS, SAML-only Okta/OneLogin/Entra apps): SP-initiated Web Browser SSO — `GET /api/auth/saml/start` (AuthnRequest, HTTP-Redirect), `POST /api/auth/saml/acs` (the IdP's signed Response, HTTP-POST), `GET /api/auth/saml/metadata` (the SP descriptor an IdP admin imports). `PAM_SAML_SP_URL` enables it (presence, like `PAM_OIDC_ISSUER`); IdP metadata from `PAM_SAML_IDP_METADATA_URL` or `_FILE`; group/role attribute → role via `PAM_SAML_ROLE_*`; optional `PAM_SAML_SP_KEY_FILE`/`_CERT_FILE` sign AuthnRequests and accept encrypted assertions; `PAM_SAML_NAME_ATTR`/`_GROUP_ATTR` pick the attributes. Hot-swappable except the three `_FILE` paths; `PAM_OT_AIRGAP` refuses the metadata URL. XML-DSig verification is delegated to a well-audited library (the WebAuthn precedent — see PROTOCOLS-AND-CRYPTO.md §"SAML"). Login state rides the same single-use store the OIDC flow uses, so the ACS can land on any replica. Login audited as `login … via:saml`. No schema change. **Not verified against a live IdP** — proven against a real in-process SAML IdP instead. See the "SAML 2.0 single sign-on" section above |
 | 2026-08-16 | **Phase 149 — SCIM 2.0 user provisioning.** New `/scim/v2/Users` (RFC 7643/7644), authenticated by a new non-human `ScimKey` bearer identity (`POST /v1/scim-keys`, `manage_users` to mint), never a human principal — every SCIM-provisioned user gets the fixed `user` role, no way to request more. `store.User` gains `ExternalID` and `Active`; deactivating (`PATCH active:false` or `DELETE`, which is a soft-delete) now actually blocks that user's local token from authenticating, not just a flag — proven end to end. Reactivation restores the same token, nothing re-minted. Complements the existing pull-based `POST /api/identity/reconcile`. `PAM_SCIM_ENABLED` (default off). **Not interactively verified against a real IdP** — no Okta/Azure AD/OneLogin account in this environment; both RFC 7644's standard `PATCH` shape and Azure AD's documented no-path variant are implemented and tested against a fake. See §7 |
 | 2026-08-16 | **Phase 147 — browser-extension password autofill.** New `extension/` (Manifest V3) calls the existing `POST /api/credentials/{id}/reveal` with a new `POST /api/extension-token`-minted bearer token (`CapRevealSecret` required to mint) that inherits the caller's own role/capabilities but is refused on every route except reveal — a new `ExtensionOnly` principal flag, narrower than the RDP/VNC viewer scope's blanket refusal. `PAM_EXTENSION_TOKEN_TTL_HOURS` (default 24, max 720). Reveal audits gain a `via:extension` marker; new audit action `extension.token_issued`. No schema change, no way for the extension to browse the vault (one hostname → one credential ID, configured manually). **Not interactively verified against a real browser** — no GUI browser in this environment; JS syntax-checked, manifest JSON-validated. See §6 |
@@ -4238,8 +4238,8 @@ entitlement.
 | 2026-08-14 | **Phase 135 — DoubleLock.** A named person's password, additionally required (on top of `reveal_secret`) to reveal or check out a credential; disabling it needs the password too, so an admin alone cannot strip the protection. Kept deliberately outside the KEK (`POST`/`DELETE /api/credentials/{id}/doublelock`), so `-rotate-kek` needs no special case for it. See §6 |
 | 2026-08-14 | **Phase 133 — device-aware access control.** A live EDR-posture webhook (`PAM_POSTURE_ATTEST_URL`) re-checked on every connect and every authenticated call, and an optional device-identity binding (`PAM_DEVICE_HEADER` + a per-user `device_fingerprint`) trusting a reverse-proxy-injected client-certificate fingerprint on the REST surface only. Both break-glass exempt. See §7 |
 | 2026-08-14 | **Phase 131 — command allow-listing.** `PAM_COMMAND_ALLOW_FILE`, same regex-file format as `PAM_COMMAND_DENY_FILE`, once set narrows every command-control path (SSH `exec`, WinRM command loop, PostgreSQL/SQL Server statements, `POST /api/targets/{id}/winrm`, the agent broker's `ssh_exec`/`winrm_exec`) to ONLY the listed commands — Delinea's Command Menus is the closest commercial-PAM analogue. `cmdguard.Guard` gains an `Allowed(cmd)` method reading the exact same compiled pattern set `Blocked` does, so an allow-list is just a second `*cmdguard.Guard` value used the other way round — zero changes to `New`/`ParseDeny`. Deny always wins when both would match; a refusal from the allow-list audits `command.blocked` with `pattern:not-allowed`. Optional and independent of the deny file — unset, every path stays exactly deny-only. Proven end-to-end (real SSH exec, real Postgres wire-protocol session, REST WinRM) including the deny-wins-over-allow edge case. No schema change; no new route. See §9.4 |
-| 2026-08-14 | **Phase 129 — Zero Standing Privilege for PostgreSQL.** Extends Phase 22's SSH-only ZSP to databases: a new `db_zsp` credential type stores no secret; at connect time pamv1 dials the target's separately vaulted `provisioner` credential and runs `CREATE ROLE ... WITH LOGIN PASSWORD ... VALID UNTIL ...` (a 30-minute hard-ceiling safety net independent of teardown), connects the operator's real session as that fresh role, and `DROP ROLE`s it on session end — the operator's real session never touches the provisioner's own credential. Exactly one provisioner per target; zero or more than one refuses the connect (fail-closed, never guessed). Proven end-to-end against a real Postgres wire-protocol fake that authenticates twice with two different, dynamically-generated credentials in one test run. **RDP cut before any code was written**: Guacamole's own documentation confirms no certificate/smartcard RDP auth parameter exists — a permanent protocol limitation, not an infra gap. **SQL Server deferred**: `internal/tds` only ever parses what a client sends; issuing pamv1's own `CREATE LOGIN` needs a client-side response-token reader that doesn't exist yet. New audit actions `db.zsp_provisioned`/`db.zsp_provision_failed`/`db.zsp_teardown`/`db.zsp_teardown_failed`. New migration `0036` (`credentials.is_provisioner`). See "Zero Standing Privilege: ephemeral database roles" above |
-| 2026-08-14 | **Phase 128 — authenticated post-login account discovery.** Returns to the original CyberArk/Wallix competitive-research backlog's remaining item now that the Wallix-weighted plan (116–126) is closed: enumerate local/service accounts on a target pamv1 already holds a credential for, and flag ones with no matching vaulted credential (CyberArk DNA-style). New `POST /api/targets/{id}/discover-accounts` (`manage_targets`): dials fresh with the target's first credential (SSH: `cat /etc/passwd`; WinRM: `net user` + `net localgroup Administrators`, both through `guardCommand` like every other discrete command pamv1 runs), parses with the new pure `internal/accountscan` package, and cross-references every found username against **all** the target's vaulted credentials — `"managed":false` is the finding. Deliberately not built on `execWinRM` (which drags in the live-session registry, recording requirements and vendor gating meant for a supervised operator session) — a lean, dedicated path reusing only `guardCommand`/`vault.Decrypt`/`sshConnector.Exec`/`winrm.Run` directly. Console: menu 1, option **9=Discover accounts**. New audit actions `target.accounts_scanned`/`target.accounts_scan_failed`. No schema change; store surface unchanged; route count +1. See "Authenticated post-login account discovery" above |
+| 2026-08-14 | **Phase 129 — Zero Standing Privilege for PostgreSQL.** Extends Phase 22's SSH-only ZSP to databases: a new `db_zsp` credential type stores no secret; at connect time PAMv1 dials the target's separately vaulted `provisioner` credential and runs `CREATE ROLE ... WITH LOGIN PASSWORD ... VALID UNTIL ...` (a 30-minute hard-ceiling safety net independent of teardown), connects the operator's real session as that fresh role, and `DROP ROLE`s it on session end — the operator's real session never touches the provisioner's own credential. Exactly one provisioner per target; zero or more than one refuses the connect (fail-closed, never guessed). Proven end-to-end against a real Postgres wire-protocol fake that authenticates twice with two different, dynamically-generated credentials in one test run. **RDP cut before any code was written**: Guacamole's own documentation confirms no certificate/smartcard RDP auth parameter exists — a permanent protocol limitation, not an infra gap. **SQL Server deferred**: `internal/tds` only ever parses what a client sends; issuing PAMv1's own `CREATE LOGIN` needs a client-side response-token reader that doesn't exist yet. New audit actions `db.zsp_provisioned`/`db.zsp_provision_failed`/`db.zsp_teardown`/`db.zsp_teardown_failed`. New migration `0036` (`credentials.is_provisioner`). See "Zero Standing Privilege: ephemeral database roles" above |
+| 2026-08-14 | **Phase 128 — authenticated post-login account discovery.** Returns to the original CyberArk/Wallix competitive-research backlog's remaining item now that the Wallix-weighted plan (116–126) is closed: enumerate local/service accounts on a target PAMv1 already holds a credential for, and flag ones with no matching vaulted credential (CyberArk DNA-style). New `POST /api/targets/{id}/discover-accounts` (`manage_targets`): dials fresh with the target's first credential (SSH: `cat /etc/passwd`; WinRM: `net user` + `net localgroup Administrators`, both through `guardCommand` like every other discrete command PAMv1 runs), parses with the new pure `internal/accountscan` package, and cross-references every found username against **all** the target's vaulted credentials — `"managed":false` is the finding. Deliberately not built on `execWinRM` (which drags in the live-session registry, recording requirements and vendor gating meant for a supervised operator session) — a lean, dedicated path reusing only `guardCommand`/`vault.Decrypt`/`sshConnector.Exec`/`winrm.Run` directly. Console: menu 1, option **9=Discover accounts**. New audit actions `target.accounts_scanned`/`target.accounts_scan_failed`. No schema change; store surface unchanged; route count +1. See "Authenticated post-login account discovery" above |
 | 2026-08-14 | **Phase 126 — portal color themes.** Every hardcoded color in the console's inline stylesheet became a CSS custom property on `:root` (exact values preserved); two new `[data-theme="amber"\|"slate"]` blocks redefine only those tokens, so layout/spacing/font/scanlines are identical across all three palettes. **F2** cycles the theme client-side (`localStorage`, no login required) — no new store table, route or audit event, since a color preference isn't an authorization-relevant fact. `TestConsoleThemeTokensAreConsistent` guards token-name consistency between the base palette and every theme override. No schema/route change. |
 | 2026-08-14 | **Phase 124 — FIDO2/WebAuthn passwordless MFA.** A second, independent second-factor type alongside TOTP — either alone satisfies MFA. `PAM_WEBAUTHN_RP_ID`/`_RP_ORIGIN` (presence enables it, restart-only) turn it on; self-service `POST /api/webauthn/register/{begin,finish}` (any signed-in identity, and an enrollment-only session too) registers a key, `GET`/`DELETE /api/webauthn/credentials{,/{id}}` manage them. Login for a WebAuthn-enrolled user with no confirmed TOTP is necessarily two calls, not one — password-only `POST /api/login` returns a narrow, 5-minute `MFAPending` token good for nothing but `POST /api/webauthn/login/{begin,finish}`, which the console drives automatically. A user may register more than one key; public keys are stored in the clear (not a secret, unlike the TOTP secret). New migration `0035` (`webauthn_credentials`, `mfa_webauthn_challenges`); store surface 164 → 171. New audit actions `mfa.webauthn_registered`/`_register_failed`/`_deleted`. See the "Multi-factor authentication (WebAuthn, Phase 124)" section above |
 | 2026-08-14 | **Phase 122 — suspend vs. terminate a live session.** `POST /api/sessions/{id}/suspend`/`.../resume` (`approve`) freeze and unfreeze an operator's input without ending the session, riding Phase 116's session-sharing input mux rather than new plumbing; `GET .../suspend` (`read_audit`) reports current state, 404ing if the session isn't live on this replica. Both actions are idempotent, and the operator gets a `Stderr` banner the instant either fires — freezing input silently would look like a hang, not a policy action. Replica-local, like sharing: no cross-replica bus yet. Console: live-watch pane shows an amber *SUSPENDED* banner; **F8** toggles for anyone holding `approve`. New audit actions `session.suspended`/`session.resumed`; no new migration (suspend state is in-memory only). See §9.4d |
@@ -4250,8 +4250,8 @@ entitlement.
 | 2026-08-12 | **Phase 112 — mandatory live supervision.** `PAM_REQUIRE_LIVE_SUPERVISION=true` holds an interactive SSH channel — before it dials the target — until a supervisor is actually watching (`GET /api/sessions/{id}/stream`) or `PAM_LIVE_SUPERVISION_TIMEOUT_SEC` (default 120) elapses; a timeout refuses the session and is audited `session.unsupervised`. Observer sessions and break-glass are exempt. SSH only for now — the database/WinRM proxies register their live session after dialing, so they're left for a future phase. See §9.4b |
 | 2026-08-12 | **Phase 110 — SSH session recordings are searchable by content.** `GET /api/recordings/search?q=` finds text anywhere in a recording's output, even split across several writes, and reports each hit's snippet plus the playback time to jump to. Console: **F4** from *Session Recordings* (menu 19). Same `read_audit` gate as playback; the search itself is audited (`session.search`) with the query. RDP/VNC and WinRM are not covered. See §9.3 |
 | 2026-08-06 | **Phase 60a — the ticket re-check no longer misfires when you hold more than one approval.** With `PAM_TICKET_REVALIDATE=true`, each live approval for the target is now checked in turn and the one admitted is the one whose ticket passed. Before, a second concurrent connection could be let in on an approval whose change had been cancelled (its ticket was never put to the ITSM at all), and one cancelled change could block a valid approval behind it for the rest of the window. Up to 8 approvals are considered and the whole walk shares the same 5-second ITSM budget. Nothing to configure. See §9.5 |
-| 2026-08-06 | **Phase 61a — naming a management credential now takes the same authorization as revealing it.** Declaring a dependent account with `management_credential_id` makes pamv1 present that password to the host on the same request, so it now requires `reveal_secret`, a grant on that credential's **own** target, an approved access request where that target needs one, and an in-contract vendor grant for a vendor — refusals audited as `dependency.create_denied`. It also must be a **password**: an SSH key or a zero-standing-privilege credential is refused, at declaration and again at use. Nothing changes for an administrator who was already entitled to the credential they name. See §7 |
-| 2026-08-02 | **Phase 61 — say which account updates a dependent service.** Declaring a dependent account (a Windows service, scheduled task or app pool) now takes an optional **management credential**: the account pamv1 logs into that host as in order to reconfigure the consumer. Until now it logged in as the service account it was rotating, which needs administrator rights on the host — and hardened service accounts usually cannot log on remotely at all, so propagation failed there. *Work with Dependent Accounts* shows a **Managed via** column; anything reading `this account` in amber is still on the old path. If the credential you name is later deleted, the update fails closed and says so rather than falling back. See §7 |
+| 2026-08-06 | **Phase 61a — naming a management credential now takes the same authorization as revealing it.** Declaring a dependent account with `management_credential_id` makes PAMv1 present that password to the host on the same request, so it now requires `reveal_secret`, a grant on that credential's **own** target, an approved access request where that target needs one, and an in-contract vendor grant for a vendor — refusals audited as `dependency.create_denied`. It also must be a **password**: an SSH key or a zero-standing-privilege credential is refused, at declaration and again at use. Nothing changes for an administrator who was already entitled to the credential they name. See §7 |
+| 2026-08-02 | **Phase 61 — say which account updates a dependent service.** Declaring a dependent account (a Windows service, scheduled task or app pool) now takes an optional **management credential**: the account PAMv1 logs into that host as in order to reconfigure the consumer. Until now it logged in as the service account it was rotating, which needs administrator rights on the host — and hardened service accounts usually cannot log on remotely at all, so propagation failed there. *Work with Dependent Accounts* shows a **Managed via** column; anything reading `this account` in amber is still on the old path. If the credential you name is later deleted, the update fails closed and says so rather than falling back. See §7 |
 | 2026-08-02 | **Phase 60 — change tickets are re-checked when access is used.** Until now a ticket was validated when the access request was filed; if the change was cancelled an hour later, the approval kept working for the rest of its window. Set **`PAM_TICKET_REVALIDATE=true`** and every privileged use — SSH, PostgreSQL, SQL Server, the in-portal viewer, reveal, check-out, WinRM run and agent tools — puts the ticket back to your ITSM first, refusing with `access.ticket_revoked` if it no longer validates. Two things to plan for: your ITSM is now on the connect path (bounded at 5 seconds), and a ticket that cannot be **confirmed** refuses, including when the ITSM is unreachable. Left unset, nothing changes. See §5 |
 | 2026-08-02 | **Phase 59a — fifteen fixes to the capture, from its own review.** Nothing to reconfigure. What changed that you can observe: the per-file cap now bounds **downloads** as well as uploads (it counts the bytes reads have asked for, not only what came back), `lsetstat` and unrecognized SFTP extensions are refused under read-only and under capture, `copy-data` is refused under capture because it copies inside the server where the proxy cannot see it, and the console reports the hash verdict when you download captured content instead of staying silent. Several bypasses of capture were closed (a flagless open, a reused request id, an overflowing write offset), and artifact names are now guaranteed to stay inside the recording directory and to be listable. See §5 |
 | 2026-08-01 | **Phase 59 — SFTP transfers can now be recorded in full.** `PAM_SSH_SFTP_CAPTURE` (`uploads`/`downloads`/`all`) makes every file moved through the SSH proxy leave a sealed, hash-chained artifact beside the session recordings, attributed in the audit trail (`sftp.file_recorded`) and downloadable hash-verified from menu 19. `PAM_SSH_SFTP_CAPTURE_MAX_MB` caps a file by **refusing** data past the cap (a size limit, not a silent gap), and while capture is on an unparsable SFTP stream is refused rather than forwarded opaque. Also fixed: OpenSSH's `posix-rename`/`hardlink` extension requests now obey readonly mode and the path denylist — a modern client renames via the extension, which previously slid past both. See §5 |

@@ -110,10 +110,10 @@ type scimMeta struct {
 	LastModified string `json:"lastModified"`
 }
 
-// scimUser is the wire representation of a pamv1 user. pamv1's User model
+// scimUser is the wire representation of a PAMv1 user. PAMv1's User model
 // has no name/emails fields, so — honestly, rather than fabricating
 // placeholder values — this resource only ever carries the attributes
-// pamv1 actually has: id, userName, externalId, active. An IdP that sends
+// PAMv1 actually has: id, userName, externalId, active. An IdP that sends
 // name/emails on create/update has them silently accepted and dropped, the
 // same way any SCIM server drops attributes it does not implement.
 type scimUser struct {
@@ -133,9 +133,9 @@ func scimUserFromStore(u *store.User) scimUser {
 		ExternalID: u.ExternalID,
 		UserName:   u.Username,
 		Active:     u.Active,
-		// pamv1 does not track a separate update timestamp for a user row;
+		// PAMv1 does not track a separate update timestamp for a user row;
 		// Created is the only real one available, so it is reused for both
-		// rather than fabricating a LastModified pamv1 cannot actually attest to.
+		// rather than fabricating a LastModified PAMv1 cannot actually attest to.
 		Meta: scimMeta{ResourceType: "User", Created: ts, LastModified: ts},
 	}
 }
@@ -149,7 +149,7 @@ type scimListResponse struct {
 }
 
 // scimWriteError writes a SCIM-shaped error body (RFC 7644 §3.12), so a real
-// SCIM client's error handling — which looks for "detail", not pamv1's own
+// SCIM client's error handling — which looks for "detail", not PAMv1's own
 // generic {"error": msg} — actually sees the failure reason.
 func scimWriteError(w http.ResponseWriter, status int, detail string) {
 	writeJSON(w, status, map[string]any{
@@ -321,7 +321,7 @@ type scimUserIn struct {
 // A local access token is still minted (every store.User row needs one),
 // but never returned here: a SCIM-provisioned user is expected to
 // authenticate through the same IdP that is provisioning them (AD/Entra/
-// OIDC), not a standalone pamv1 bearer token — see ADMIN-GUIDE.md.
+// OIDC), not a standalone PAMv1 bearer token — see ADMIN-GUIDE.md.
 func (s *Server) createScimUser(w http.ResponseWriter, r *http.Request, key *store.ScimKey) {
 	var in scimUserIn
 	if !scimReadJSON(w, r, &in) {
@@ -383,7 +383,7 @@ func (s *Server) getScimUser(w http.ResponseWriter, r *http.Request, _ *store.Sc
 }
 
 // replaceScimUser implements PUT /scim/v2/Users/{id}: a full-replace request
-// that, given pamv1's user model, can only actually change ExternalID and
+// that, given PAMv1's user model, can only actually change ExternalID and
 // Active. userName is immutable everywhere else in this codebase ("re-keying
 // an identity is a delete + re-mint, not an edit" — see UserStore.
 // UpdateUserRole's own doc comment) and stays immutable here too: a PUT
@@ -408,7 +408,7 @@ func (s *Server) replaceScimUser(w http.ResponseWriter, r *http.Request, key *st
 		return
 	}
 	if in.UserName != "" && in.UserName != u.Username {
-		scimWriteError(w, http.StatusBadRequest, "userName is immutable in pamv1; delete and re-create this user instead of renaming")
+		scimWriteError(w, http.StatusBadRequest, "userName is immutable in PAMv1; delete and re-create this user instead of renaming")
 		return
 	}
 	if in.ExternalID != u.ExternalID {
@@ -449,7 +449,7 @@ type scimPatchIn struct {
 // as an object in "value" ({"op":"Replace","value":{"active":false}}).
 // Unrecognized operations/paths are skipped rather than failing the whole
 // request — a PATCH may bundle several operations, and this server
-// implements only the two attributes pamv1 actually has (active,
+// implements only the two attributes PAMv1 actually has (active,
 // externalId), the same "accept and drop what you don't model" posture
 // createScimUser already takes for name/emails.
 func (s *Server) patchScimUser(w http.ResponseWriter, r *http.Request, key *store.ScimKey) {

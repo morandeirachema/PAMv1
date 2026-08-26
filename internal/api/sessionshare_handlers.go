@@ -34,7 +34,7 @@ import (
 type shareInviteIn struct {
 	Mode    string `json:"mode"`              // view_only | view_control
 	Kind    string `json:"kind"`              // internal | external
-	Invitee string `json:"invitee,omitempty"` // internal: a pamv1 username
+	Invitee string `json:"invitee,omitempty"` // internal: a PAMv1 username
 	Email   string `json:"email,omitempty"`   // external: recipient address
 }
 
@@ -291,9 +291,9 @@ func (s *Server) sendShareInviteEmail(ctx context.Context, inv store.SessionShar
 	if inv.Mode == "view_control" {
 		verb = "watch and interact with"
 	}
-	subject := "You've been invited to a live pamv1 session"
+	subject := "You've been invited to a live PAMv1 session"
 	body := fmt.Sprintf(`<html><body style="font-family:sans-serif;background:#050705;color:#eaffea;padding:24px">
-<p>You have been invited to %s a live pamv1 session.</p>
+<p>You have been invited to %s a live PAMv1 session.</p>
 <p><a href="%s" style="color:#4be0e0">%s</a></p>
 <p>Or scan this code:</p>
 <img src="cid:qr" alt="QR code" width="256" height="256">
@@ -361,7 +361,7 @@ func (s *Server) redeemShareInvite(w http.ResponseWriter, r *http.Request) {
 
 // streamShareGuest is GET /api/share/stream?key=... — the guest page's
 // EventSource. It is streamSession's shape (see handlers.go), reused for a
-// guest key instead of a pamv1 principal's CapReadAudit, since a browser
+// guest key instead of a PAMv1 principal's CapReadAudit, since a browser
 // EventSource cannot set the X-API-Key header the normal stream requires.
 func (s *Server) streamShareGuest(w http.ResponseWriter, r *http.Request) {
 	if s.shares == nil || s.live == nil {
@@ -392,10 +392,10 @@ func (s *Server) streamShareGuest(w http.ResponseWriter, r *http.Request) {
 	// guest closed their tab without the underlying session ever ending.
 	joined := time.Now()
 	kicked := s.shares.Track(sid, key, actor, mode)
-	s.shares.Notify(sid, fmt.Sprintf("pamv1: %s joined this session (%s)", actor, mode))
+	s.shares.Notify(sid, fmt.Sprintf("PAMv1: %s joined this session (%s)", actor, mode))
 	defer func() {
 		s.shares.Untrack(sid, key)
-		s.shares.Notify(sid, fmt.Sprintf("pamv1: %s left this session", actor))
+		s.shares.Notify(sid, fmt.Sprintf("PAMv1: %s left this session", actor))
 		_ = s.auditAs(r.Context(), actor, "session.share_ended", fmt.Sprintf("session:%s duration:%s", sid, time.Since(joined).Round(time.Second)))
 	}()
 	_ = s.auditAs(r.Context(), actor, "session.monitor", "session:"+sid+" via:share-guest")

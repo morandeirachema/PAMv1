@@ -84,7 +84,7 @@ func TestFromAuditShape(t *testing.T) {
 
 // TestSuffixSeparatorsBothMatch pins the dot/underscore rule in isFinding so a
 // later "simplification" back to a single separator fails here instead of in
-// production. pamv1 writes both shapes — `proxy.auth_failed` and
+// production. PAMv1 writes both shapes — `proxy.auth_failed` and
 // `agent.disable.failed` — and for a long while only the underscore form was
 // recognised, so dotted failures were exported as routine API Activity. Each
 // verb is therefore asserted with BOTH separators.

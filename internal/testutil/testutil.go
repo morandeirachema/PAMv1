@@ -1,4 +1,4 @@
-// Package testutil holds small helpers shared across pamv1's test suites. It is
+// Package testutil holds small helpers shared across PAMv1's test suites. It is
 // imported only by _test.go files, so its dependency on the testing package
 // never reaches a production binary.
 package testutil

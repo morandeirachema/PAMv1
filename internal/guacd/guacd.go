@@ -1,5 +1,5 @@
 // Package guacd speaks the Apache Guacamole protocol to a guacd daemon so
-// pamv1 can broker RDP (and VNC/SSH) sessions to Windows targets. The target's
+// PAMv1 can broker RDP (and VNC/SSH) sessions to Windows targets. The target's
 // credential is injected just-in-time into the guacd handshake — it never
 // reaches the operator's browser, which only sees the rendered display.
 //

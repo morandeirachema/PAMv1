@@ -49,7 +49,7 @@ func (s *Server) agentAuth(next agentHandler) http.HandlerFunc {
 		// Quarantine is the incident responder's stop button, and it is keyed on
 		// the agent's canonical NAME rather than on an agent_keys row id on
 		// purpose: an SVID-authenticated agent has no row to disable (its
-		// identity is attested by SPIFFE, pamv1 never issued it a key), and for
+		// identity is attested by SPIFFE, PAMv1 never issued it a key), and for
 		// that identity kind AgentName IS the full SPIFFE ID — see svid.go, where
 		// the JWT subject is assigned to both AgentName and SPIFFEID. Keying on
 		// the name is therefore the one containment control that covers BOTH
@@ -196,10 +196,10 @@ func quarantineHitField(id *agentid.Identity, hit string) string {
 // PAM_BROKER_REQUIRE_ENROLLED_SVID is set, refuses one nobody has enrolled. It
 // reports whether the call may proceed, writing the refusal itself when not.
 //
-// **Why an inventory at all.** A static agent key exists because pamv1 minted
+// **Why an inventory at all.** A static agent key exists because PAMv1 minted
 // it, so the set of static agents is knowable by definition. An SVID is the
 // opposite: any workload the trust domain vouches for can authenticate, and
-// until Phase 174 pamv1 knew only about the ones an admin had happened to type
+// until Phase 174 PAMv1 knew only about the ones an admin had happened to type
 // into the owner registry. There was no list to review, no first-seen, no
 // last-seen — and the containment built in 159/169/170 all keys on a SUBJECT a
 // responder has to be able to name. Recording every identity that calls is what
@@ -247,7 +247,7 @@ func (s *Server) noteSVID(w http.ResponseWriter, r *http.Request, id *agentid.Id
 // The chain is included (Phase 176) because those identities are verified facts
 // inside a signed token, and the controls that read the inventory read the whole
 // chain: quarantine walks it (169) and four-eyes resolves an owner for every
-// link (170). Without this, a delegating root that never calls pamv1 directly
+// link (170). Without this, a delegating root that never calls PAMv1 directly
 // has no row, so an operator cannot enrol it from the list — they have to know
 // the SPIFFE ID and type it — and every approval of a call it delegated is
 // refused as unattributed until they do.
@@ -271,7 +271,7 @@ func (s *Server) seeSVID(r *http.Request, id *agentid.Identity) {
 }
 
 // viaField names the presenting agent when the identity being recorded is one it
-// merely acts for, so the trail says how pamv1 came to know about it.
+// merely acts for, so the trail says how PAMv1 came to know about it.
 func viaField(id *agentid.Identity, subject string) string {
 	if subject == id.AgentName {
 		return ""
@@ -632,12 +632,12 @@ func (s *Server) decideBrokerApproval(w http.ResponseWriter, r *http.Request) {
 		}
 		// An owner nobody holds cannot be compared to anybody (Phase 176). The
 		// gate refuses when owner == approver, so an owner of "caro1" — a typo,
-		// or a team address that is not a pamv1 account — can never match, and
+		// or a team address that is not a PAMv1 account — can never match, and
 		// carol may approve her own agent's call while the row still reads as
 		// though somebody were accountable. That is four-eyes silently not
 		// applying, which is worse than four-eyes visibly absent.
 		//
-		// pamv1 records it rather than guessing: the decision is audited as
+		// PAMv1 records it rather than guessing: the decision is audited as
 		// unverified, naming the owner, so the trail says the second pair of eyes
 		// could not be established. A deployment that wants the stricter reading
 		// sets PAM_BROKER_REQUIRE_KNOWN_OWNER and the decision is refused instead
@@ -651,7 +651,7 @@ func (s *Server) decideBrokerApproval(w http.ResponseWriter, r *http.Request) {
 				s.audit(r.Context(), "broker.approval.refused", detail)
 				writeError(w, http.StatusForbidden,
 					"this call's agent is owned by "+strings.Join(unknown, ", ")+
-						", which is not a pamv1 user, so four-eyes cannot be established")
+						", which is not a PAMv1 user, so four-eyes cannot be established")
 				return
 			}
 			s.audit(r.Context(), "broker.approval.four_eyes_unverified", detail)

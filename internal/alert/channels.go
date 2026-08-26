@@ -51,7 +51,7 @@ type Syslog struct {
 }
 
 // NewSyslog returns a Syslog notifier for the given transport ("udp"/"tcp") and
-// address (host:port); tag defaults to "pamv1".
+// address (host:port); tag defaults to "PAMv1".
 func NewSyslog(network, addr, tag string) *Syslog {
 	if tag == "" {
 		tag = "pamv1"
@@ -163,7 +163,7 @@ func SendMailBounded(addr string, a smtp.Auth, from string, to []string, msg []b
 func (m *Email) Notify(_ context.Context, e Event) {
 	// Strip CR/LF so an actor/type from a directory claim cannot inject SMTP
 	// headers via the Subject line.
-	subject := fmt.Sprintf("[pamv1] %s by %s", auditfmt.OneLine(e.Type), auditfmt.OneLine(e.Actor))
+	subject := fmt.Sprintf("[PAMv1] %s by %s", auditfmt.OneLine(e.Type), auditfmt.OneLine(e.Actor))
 	body := fmt.Sprintf("Type: %s\r\nActor: %s\r\nDetail: %s\r\nRemote: %s\r\nTime: %s\r\n",
 		e.Type, e.Actor, e.Detail, e.Remote, stamp(e.Time))
 	msg := []byte(fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n%s",

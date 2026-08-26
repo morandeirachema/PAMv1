@@ -22,7 +22,7 @@ import (
 // with a certificate signed by caPub (no password auth is offered at all), so a
 // successful session proves the client presented a CA-signed cert — there is no
 // standing secret it could have used. It stands in for a target whose sshd sets
-// TrustedUserCAKeys to the pamv1 CA.
+// TrustedUserCAKeys to the PAMv1 CA.
 func startCertUpstream(t *testing.T, caPub ssh.PublicKey, wantUser, output string) (host string, port int) {
 	t.Helper()
 	checker := &ssh.CertChecker{
@@ -84,7 +84,7 @@ func seedZSPTarget(t *testing.T, st store.Store, name, host string, port int) *s
 
 // TestZeroStandingPrivilege is the flagship ZSP proof: the operator authenticates
 // to the proxy with the PAM key, no secret is stored for the account, yet the
-// command runs on an upstream that accepts ONLY a certificate signed by the pamv1
+// command runs on an upstream that accepts ONLY a certificate signed by the PAMv1
 // CA. The certificate can only have been minted just-in-time by the proxy.
 func TestZeroStandingPrivilege(t *testing.T) {
 	ca := newTestCA(t)

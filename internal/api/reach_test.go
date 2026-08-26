@@ -363,7 +363,7 @@ func TestSubjectReachBlocked(t *testing.T) {
 		t.Errorf("a zero-budget agent key must be flagged: %+v", a)
 	}
 
-	// An attested identity pamv1 recorded on sight and nobody has claimed.
+	// An attested identity PAMv1 recorded on sight and nobody has claimed.
 	// SeeAgentIdentity is the path that builds that row; enrolment is what
 	// claiming it means (an operator-registered identity is enrolled already).
 	//

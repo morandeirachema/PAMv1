@@ -1,4 +1,4 @@
-# pamv1 — documentation
+# PAMv1 — documentation
 
 > Last updated: 2026-08-26 · Reflects: Phases 0–212 and release v0.57.1 (see [CHANGELOG.md](../CHANGELOG.md)).
 
@@ -21,7 +21,7 @@
 > [Español](https://claude.ai/code/artifact/b9f19443-5ad1-42d2-955f-e43ca17ac542)).
 > `ARCHITECTURE-DIAGRAMS.md` is **code-generated** (`go run ./cmd/archgen`, CI-enforced) — never hand-edited.
 
-> ⚠️ **Beta · for learning purposes.** pamv1 is feature-complete against its
+> ⚠️ **Beta · for learning purposes.** PAMv1 is feature-complete against its
 > [roadmap](../ROADMAP.md) and has closed every finding of its own security
 > self-audit, but it has not been audited by anyone outside the project and is not
 > production-ready.
@@ -54,26 +54,26 @@
 - **[REQUIREMENTS.md](REQUIREMENTS.md)** — run specs: ports, resource requests/limits, versions, rough sizing.
 - **[PORTS-AND-FLOWS.md](PORTS-AND-FLOWS.md)** — the listener/egress matrix for firewalls, security groups, NetworkPolicies and OT segmentation.
 - **[VNC-TESTING.md](VNC-TESTING.md)** — run the in-portal VNC viewer end to end against a real TigerVNC desktop with the bundled demo stack.
-- **[PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md)** — every protocol pamv1 speaks or brokers and every cryptographic mechanism it relies on, with where each is implemented and where verification is opt-in.
+- **[PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md)** — every protocol PAMv1 speaks or brokers and every cryptographic mechanism it relies on, with where each is implemented and where verification is opt-in.
 - **[BACKUP-AND-RESTORE.md](BACKUP-AND-RESTORE.md)** — runbook for backing up the database and the vault KEK *separately*.
 - **[EXTERNAL-INFRA-GAPS.md](EXTERNAL-INFRA-GAPS.md)** — what needs a real host/account to verify honestly before you rely on it.
 - **[RDP-TESTING.md](RDP-TESTING.md)** — the procedure to verify the RDP path end to end: automated tests, a local runbook, and troubleshooting.
 
 ### Security, compliance & OT
-- **[PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md)** — every protocol pamv1 speaks or brokers and every cryptographic mechanism it relies on: the vault envelope and its KEK providers, the audit chains, key custody, per-protocol TLS posture, and a single table of where verification is opt-in.
+- **[PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md)** — every protocol PAMv1 speaks or brokers and every cryptographic mechanism it relies on: the vault envelope and its KEK providers, the audit chains, key custody, per-protocol TLS posture, and a single table of where verification is opt-in.
 - **[SECURITY-GAPS.md](SECURITY-GAPS.md)** — a security self-audit: every gap found, and whether it was fixed, mitigated or deferred.
 - **[AGENT-THREAT-MODEL.md](AGENT-THREAT-MODEL.md)** — the AI-agent access broker's threat model: OWASP LLM Top 10 & MITRE ATLAS mapped to broker controls.
-- **[NIS2-COMPLIANCE.md](NIS2-COMPLIANCE.md)** — maps pamv1 features to Directive (EU) 2022/2555 (NIS2) Art. 21/23.
+- **[NIS2-COMPLIANCE.md](NIS2-COMPLIANCE.md)** — maps PAMv1 features to Directive (EU) 2022/2555 (NIS2) Art. 21/23.
 - **[OT-DEPLOYMENT.md](OT-DEPLOYMENT.md)** — the IEC 62443 / Purdue-model deployment pattern and OT-specific controls.
 
 ### Landscape
-- **[RELATED-PROJECTS.md](RELATED-PROJECTS.md)** — where pamv1 sits among open-source projects and commercial PAM vendors.
+- **[RELATED-PROJECTS.md](RELATED-PROJECTS.md)** — where PAMv1 sits among open-source projects and commercial PAM vendors.
 
 ## House style (for doc authors)
 
 Keep the set reading as one product:
 
-1. **H1** is `# pamv1 — <Title>` (project name first, em-dash separator, one per file).
+1. **H1** is `# PAMv1 — <Title>` (project name first, em-dash separator, one per file).
 2. **Status header**, a blockquote right under the H1: `> Last updated: YYYY-MM-DD · Reflects: Phases 0–N …` (use `Last updated`, ISO dates).
 3. **Living-document note** (a blockquote) for any doc that tracks code — either `> **Living document.** Update when <trigger> changes.` or the newer `> 🟢 **Living document** — updated in the same change as the code`. Generated docs say `> **Do not edit by hand.**` instead.
 4. **Maturity banner** (`> ⚠️ **Beta · for learning purposes.** …`) on any doc a newcomer might land on first — the guides, the compliance and deployment docs, this hub. Reference docs read in context (the architecture pair, CODE-GUIDE, SECURITY-GAPS) do not repeat it. Keep the wording in step with the [README](../README.md); the two disagreeing is worse than neither carrying it.

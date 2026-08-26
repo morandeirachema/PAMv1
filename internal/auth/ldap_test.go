@@ -126,7 +126,7 @@ func TestLDAPWrongPassword(t *testing.T) {
 	}
 }
 
-// TestLDAPNoMappedGroup proves a user in no pamv1 group returns ErrUnauthorized.
+// TestLDAPNoMappedGroup proves a user in no PAMv1 group returns ErrUnauthorized.
 func TestLDAPNoMappedGroup(t *testing.T) {
 	conn := &fakeLDAP{
 		binds:    map[string]string{"CN=svc,DC=example,DC=com": "svc-pw", "CN=eve,DC=example,DC=com": "eve-pw"},

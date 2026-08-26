@@ -203,7 +203,7 @@ func fakeJira(t *testing.T, key, status, assignee, reporter string) *httptest.Se
 func TestJiraAcceptsAnInProgressIssueAssignedToTheOperator(t *testing.T) {
 	srv := fakeJira(t, "OPS-42", "In Progress", "alice@acme.com", "bob@acme.com")
 	p := NewJira(ProviderConfig{BaseURL: srv.URL, User: "e@acme.com", Token: "t", BindActor: true})
-	// The operator is `alice` in pamv1 and alice@acme.com in Jira: matching on
+	// The operator is `alice` in PAMv1 and alice@acme.com in Jira: matching on
 	// the local part is what keeps the control usable rather than turned off.
 	if err := p.Check(context.Background(), "OPS-42", "alice", at(t, testNow)); err != nil {
 		t.Fatalf("an in-progress issue assigned to the operator was refused: %v", err)

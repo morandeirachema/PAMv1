@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>pamv1 Autofill — Settings</title>
+<title>PAMv1 Autofill — Settings</title>
 <style>
   body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 560px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
   h1 { font-size: 1.1rem; }
@@ -21,15 +21,15 @@
 </style>
 </head>
 <body>
-  <h1>pamv1 Autofill</h1>
+  <h1>PAMv1 Autofill</h1>
   <p class="muted">
-    This extension calls pamv1's own <code>POST /api/credentials/&lt;id&gt;/reveal</code> —
+    This extension calls PAMv1's own <code>POST /api/credentials/&lt;id&gt;/reveal</code> —
     the same audited path the portal uses — with a token that can do nothing else.
-    Nothing typed here ever leaves your browser except to the pamv1 server URL below.
+    Nothing typed here ever leaves your browser except to the PAMv1 server URL below.
   </p>
 
   <h2>Server connection</h2>
-  <label for="serverUrl">pamv1 server URL</label>
+  <label for="serverUrl">PAMv1 server URL</label>
   <input id="serverUrl" type="url" placeholder="https://pam.example.com" autocomplete="off">
 
   <label for="extensionToken">Extension token</label>

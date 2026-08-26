@@ -1,5 +1,5 @@
 // Package metrics exposes a tiny, dependency-free Prometheus text-format
-// collector for pamv1. It tracks a deliberately small, low-sensitivity set of
+// collector for PAMv1. It tracks a deliberately small, low-sensitivity set of
 // counters and gauges (request counts by status, audit volume, break-glass use,
 // active sessions) — enough for dashboards and alerting without pulling in a
 // metrics client library or leaking secret material.

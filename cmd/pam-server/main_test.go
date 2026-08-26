@@ -1267,7 +1267,7 @@ func TestRunErrors(t *testing.T) {
 			env: map[string]string{
 				"PAM_BROKER_TRUST_DOMAIN_JWKS": "/nonexistent/jwks.json",
 				"PAM_BROKER_TRUST_DOMAIN":      "example.org",
-				"PAM_BROKER_AUDIENCE":          "pamv1",
+				"PAM_BROKER_AUDIENCE":          "PAMv1",
 			},
 			want: "broker SVID verifier",
 		},
@@ -1287,7 +1287,7 @@ func TestRunErrors(t *testing.T) {
 					"PAM_BROKER_TOKEN_EXCHANGE":    "true",
 					"PAM_BROKER_TRUST_DOMAIN_JWKS": writeTemp(t, "jwks.json", `{"keys":[]}`),
 					"PAM_BROKER_TRUST_DOMAIN":      "example.org",
-					"PAM_BROKER_AUDIENCE":          "pamv1",
+					"PAM_BROKER_AUDIENCE":          "PAMv1",
 				}
 			},
 			want: "PAM_BROKER_TOKEN_EXCHANGE",

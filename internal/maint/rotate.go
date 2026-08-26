@@ -1,4 +1,4 @@
-// Package maint holds offline maintenance operations for pamv1.
+// Package maint holds offline maintenance operations for PAMv1.
 package maint
 
 import (

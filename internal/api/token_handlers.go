@@ -17,7 +17,7 @@ const maxExchangeBodyBytes = 64 << 10
 // broker-signed, short-lived delegated JWT-SVID whose actor chain grows by
 // exactly one link. Phase 13 shipped only the verifying half of delegation;
 // this is the minting half, and it is what makes the accountability chain the
-// audit trail records something pamv1 can *issue* rather than only *observe*.
+// audit trail records something PAMv1 can *issue* rather than only *observe*.
 //
 // It authenticates like every other broker call (agentAuth), so the delegator
 // is the authenticated caller — never a token in the body. That is the

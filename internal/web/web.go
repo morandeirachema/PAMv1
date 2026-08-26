@@ -16,7 +16,7 @@ var indexHTML []byte
 
 // shareHTML is the guest-viewer page a session-share invite's emailed
 // link/QR code opens (Phase 116) — a separate, deliberately minimal page,
-// not the management portal itself: its visitor has no pamv1 login, only the
+// not the management portal itself: its visitor has no PAMv1 login, only the
 // invite token in the URL.
 //
 //go:embed static/share.html
@@ -24,7 +24,7 @@ var shareHTML []byte
 
 // approveHTML is the decision page a magic-link approval invite's emailed
 // link opens (Phase 137) — like shareHTML, a separate, minimal page: its
-// visitor has no pamv1 login, only the invite token in the URL. Unlike
+// visitor has no PAMv1 login, only the invite token in the URL. Unlike
 // shareHTML it never auto-fires its state-changing call on load — only an
 // explicit Approve/Deny click does, so a mail client's link-prefetcher
 // visiting the URL cannot trigger a decision.

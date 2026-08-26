@@ -616,7 +616,7 @@ func TestSFTPExtendedRenameGoverned(t *testing.T) {
 	if typ, body3, _ := readPacket(ch2); typ != tStatus || binary.BigEndian.Uint32(body3[4:8]) != 3 {
 		t.Fatalf("denied-path lsetstat reply type = %d, want STATUS(permission denied)", typ)
 	}
-	// An extension pamv1 knows to be harmless still flows: statvfs reaches the
+	// An extension PAMv1 knows to be harmless still flows: statvfs reaches the
 	// target as before.
 	ch2.Write(sftpPacket(tExtended, be32(4), sftpStr("statvfs@openssh.com"), sftpStr("/srv")))
 	if typ, _, _ := readPacket(ch2); typ != tStatus { // the fake upstream acks with ok
@@ -648,7 +648,7 @@ func TestSFTPExtendedRenameGoverned(t *testing.T) {
 	assertAuditContains(t, st2, "sftp.blocked", `op:lsetstat path:"/etc/shadow" reason:path-denied`)
 }
 
-// TestSFTPUngovernedExtensionRefusedUnderReadOnly proves an extension pamv1
+// TestSFTPUngovernedExtensionRefusedUnderReadOnly proves an extension PAMv1
 // does not recognize is refused where it could do harm — read-only mode —
 // rather than forwarded because it is unfamiliar. `lsetstat@openssh.com` was
 // exactly that case: a real, path-mutating request that sailed through both

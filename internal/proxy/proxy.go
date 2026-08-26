@@ -1,4 +1,4 @@
-// Package proxy is the pamv1 SSH session gateway. Operators connect to it
+// Package proxy is the PAMv1 SSH session gateway. Operators connect to it
 // instead of to targets directly; the proxy authenticates them, pulls the
 // right credential from the vault and injects it just-in-time (JIT) into the
 // upstream SSH connection — the operator never sees the secret. Every session
@@ -54,7 +54,7 @@ type Config struct {
 	// (global OT policy); per-target Target.RequireApproval also applies.
 	RequireApproval bool
 	// RequireTargetGrant refuses a session to a target with NO grants at all
-	// (PAM_REQUIRE_TARGET_GRANT, Phase 203). False keeps pamv1's historical
+	// (PAM_REQUIRE_TARGET_GRANT, Phase 203). False keeps PAMv1's historical
 	// behaviour, where an unrestricted target is reachable by anyone who may
 	// connect at all.
 	RequireTargetGrant bool
@@ -175,7 +175,7 @@ type Config struct {
 	ICAPClient *icap.Client
 	// OnSessionForensics, if set, is called after an interactive SSH session
 	// ends (Phase 157) with the facts needed to reconstruct what actually
-	// executed on the target: pamv1 cannot see inside a PTY, and the target's
+	// executed on the target: PAMv1 cannot see inside a PTY, and the target's
 	// own kernel audit records are the only place that answer exists for a
 	// proxy. It runs as a tracked background task, like the post-session
 	// rotation callback, and must not block.
@@ -404,7 +404,7 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 		// worker deliberately refuses to prune those rows. This mirrors the API
 		// middleware, which returns before auditing for exactly this reason.
 		p.log.Warn("authentication rate limited", "login", auditField(c.User(), 64), "remote", c.RemoteAddr().String())
-		return nil, fmt.Errorf("pamv1: too many attempts; try again shortly")
+		return nil, fmt.Errorf("PAMv1: too many attempts; try again shortly")
 	}
 	// An outbound-only endpoint agent (Phase 153) authenticates as
 	// "endpoint-agent:<name>" with its own bearer key — a wholly separate
@@ -428,7 +428,7 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 		// quarter-megabyte of padding into a column the retention worker refuses
 		// to prune when the HMAC chain is enabled.
 		p.audit(context.Background(), auditField(c.User(), 64), "proxy.auth_failed", "remote:"+remote)
-		return nil, fmt.Errorf("pamv1: authentication failed")
+		return nil, fmt.Errorf("PAMv1: authentication failed")
 	}
 	// A tunnel-scoped token (the in-portal RDP/VNC viewer) authenticates ONLY at
 	// its viewer tunnel. It travels in a WebSocket URL — browsers cannot set
@@ -464,7 +464,7 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 			p.log.Warn("narrow-scoped token presented to the SSH proxy", "actor", principal.Name, "scope", reason, "remote", remote)
 			p.audit(context.Background(), principal.Name, "session.denied",
 				"login:"+auditField(c.User(), 64)+" remote:"+remote+" reason:"+reason)
-			return nil, fmt.Errorf("pamv1: authentication failed")
+			return nil, fmt.Errorf("PAMv1: authentication failed")
 		}
 	}
 	p.noteBreakGlass(context.Background(), principal, "ssh login:"+auditField(c.User(), 64)+" remote:"+c.RemoteAddr().String())
@@ -483,7 +483,7 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 		if principal.EnrollOnly {
 			p.audit(context.Background(), principal.Name, "session.share_join_denied",
 				"reason:enrollment-incomplete")
-			return nil, fmt.Errorf("pamv1: authentication failed")
+			return nil, fmt.Errorf("PAMv1: authentication failed")
 		}
 		ext := map[string]string{
 			"login":      c.User(),
@@ -592,7 +592,7 @@ func (p *Proxy) Serve(ctx context.Context, ln net.Listener) error {
 // the SSH handshake, and the PostgreSQL startup/authentication exchange.
 //
 // 120 seconds, matching OpenSSH's LoginGraceTime, because this phase is NOT
-// machine-speed. pamv1's documented flow has a human typing or pasting the API
+// machine-speed. PAMv1's documented flow has a human typing or pasting the API
 // key at the password prompt — and OpenSSH re-prompts up to three times within
 // one connection. An earlier value of 30s was measured cutting off a client
 // whose operator took 32 seconds, with no message and no audit event, which
@@ -676,7 +676,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	principal, ok := p.loadPrincipal(ext["princ"])
 	if !ok {
 		p.log.Error("authenticated connection without a resolved principal", "actor", actor, "remote", remote)
-		rejectAll(chans, ssh.Prohibited, "pamv1: internal authorization error")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: internal authorization error")
 		return
 	}
 
@@ -745,7 +745,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	if agentErr != nil {
 		p.log.Error("endpoint agent lookup failed", "actor", actor, "target", target.Name, "err", agentErr)
 		p.audit(ctx, actor, "session.error", fmt.Sprintf("target:%s reason:endpoint-agent-lookup-failed", target.Name))
-		rejectAll(chans, ssh.ConnectionFailed, "pamv1: upstream connection failed")
+		rejectAll(chans, ssh.ConnectionFailed, "PAMv1: upstream connection failed")
 		return
 	}
 	// The endpoint-agent tunnel is an SSH-only path in v1 (the API refuses to
@@ -753,7 +753,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	// target's agent row be silently ignored by a direct HTTP dial.
 	if viaAgent != nil && target.Protocol != "ssh" {
 		p.audit(ctx, actor, "session.error", fmt.Sprintf("target:%s reason:endpoint-agent-unsupported-protocol protocol:%s", target.Name, target.Protocol))
-		rejectAll(chans, ssh.ConnectionFailed, "pamv1: endpoint agents reach SSH targets only")
+		rejectAll(chans, ssh.ConnectionFailed, "PAMv1: endpoint agents reach SSH targets only")
 		return
 	}
 
@@ -765,7 +765,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		p.log.Error("zero-standing-privilege credential but no SSH CA configured", "actor", actor, "target", target.Name)
 		p.audit(ctx, actor, "session.error",
 			fmt.Sprintf("target:%s cred_user:%s reason:no-ssh-ca", target.Name, cred.Username))
-		rejectAll(chans, ssh.ConnectionFailed, "pamv1: zero standing privilege is not configured on this server")
+		rejectAll(chans, ssh.ConnectionFailed, "PAMv1: zero standing privilege is not configured on this server")
 		return
 	}
 
@@ -784,7 +784,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 			"host", fmt.Sprintf("%s:%d", target.Host, target.Port), "err", err)
 		p.audit(ctx, actor, "session.error",
 			fmt.Sprintf("target:%s host:%s:%d error:%v", target.Name, auditField(target.Host, 255), target.Port, err))
-		rejectAll(chans, ssh.ConnectionFailed, "pamv1: upstream connection failed")
+		rejectAll(chans, ssh.ConnectionFailed, "PAMv1: upstream connection failed")
 		return
 	}
 	defer upstream.Close()
@@ -825,7 +825,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		// Force post-session credential rotation, if configured, so a secret
 		// used in one session cannot be reused in the next.
 		p.fireSessionEnd(cred.ID)
-		// Post-session forensic reconstruction (Phase 157): pamv1 never parses
+		// Post-session forensic reconstruction (Phase 157): PAMv1 never parses
 		// the PTY, so what actually ran is only knowable from the target's own
 		// kernel audit records — pulled here, after the session, over the same
 		// credential on a fresh connection.
@@ -850,7 +850,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		switch nc.ChannelType() {
 		case "session":
 			if live.Load() >= maxChannelsPerConn {
-				nc.Reject(ssh.ResourceShortage, "pamv1: too many concurrent channels")
+				nc.Reject(ssh.ResourceShortage, "PAMv1: too many concurrent channels")
 				continue
 			}
 			interactive.Store(true)
@@ -864,7 +864,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 			}(nc)
 		case "direct-tcpip":
 			if live.Load() >= maxChannelsPerConn {
-				nc.Reject(ssh.ResourceShortage, "pamv1: too many concurrent channels")
+				nc.Reject(ssh.ResourceShortage, "PAMv1: too many concurrent channels")
 				continue
 			}
 			// Phase 141: ssh -L style forwarding, scoped to the target's own
@@ -873,13 +873,13 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 			// outright rather than silently admitting an uncovered path.
 			switch {
 			case !p.portForward:
-				nc.Reject(ssh.Prohibited, "pamv1: port forwarding is disabled by policy")
+				nc.Reject(ssh.Prohibited, "PAMv1: port forwarding is disabled by policy")
 			case observe:
-				nc.Reject(ssh.Prohibited, "pamv1: port forwarding is not available in an observer session")
+				nc.Reject(ssh.Prohibited, "PAMv1: port forwarding is not available in an observer session")
 			case p.requireSup:
-				nc.Reject(ssh.Prohibited, "pamv1: port forwarding is unavailable when live supervision is required")
+				nc.Reject(ssh.Prohibited, "PAMv1: port forwarding is unavailable when live supervision is required")
 			case p.requireRec:
-				nc.Reject(ssh.Prohibited, "pamv1: port forwarding is unavailable when session recording is required")
+				nc.Reject(ssh.Prohibited, "PAMv1: port forwarding is unavailable when session recording is required")
 			default:
 				live.Add(1)
 				wg.Add(1)
@@ -891,7 +891,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 				}(nc)
 			}
 		default:
-			nc.Reject(ssh.UnknownChannelType, "pamv1: only session channels are proxied")
+			nc.Reject(ssh.UnknownChannelType, "PAMv1: only session channels are proxied")
 		}
 	}
 	// The chans range ends when the client connection closes — the true
@@ -930,80 +930,80 @@ func (p *Proxy) refuse(ctx context.Context, chans <-chan ssh.NewChannel, res adm
 	case gateEnrollOnly:
 		p.log.Warn("session denied: mfa enrollment incomplete", "actor", actor, "remote", remote)
 		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
-		rejectAll(chans, ssh.Prohibited, "pamv1: complete MFA enrollment first")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: complete MFA enrollment first")
 	case gateExtensionOnly:
 		// Normally unreachable on SSH — refused at authentication above, like
 		// gateTunnelOnly — but if it ever is reached it must REJECT, not merely
 		// audit. The first draft of this arm did only the latter.
 		p.log.Warn("session denied: browser-extension token", "actor", actor, "remote", remote)
 		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:extension-scoped-token")
-		rejectAll(chans, ssh.Prohibited, "pamv1: a browser-extension token cannot open a session")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: a browser-extension token cannot open a session")
 	case gateMFAPending:
 		p.log.Warn("session denied: webauthn sign-in pending", "actor", actor, "remote", remote)
 		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:mfa-webauthn-pending")
-		rejectAll(chans, ssh.Prohibited, "pamv1: complete WebAuthn sign-in first")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: complete WebAuthn sign-in first")
 	case gateRoleConnect:
 		p.log.Warn("session denied by role", "actor", actor, "role", string(role), "remote", remote)
 		p.audit(ctx, actor, "session.denied",
 			fmt.Sprintf("login:%s role:%s reason:role may not connect", auditField(login, 64), role))
-		rejectAll(chans, ssh.Prohibited, "pamv1: your role may not open sessions")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: your role may not open sessions")
 	case gateIPAllowlist:
 		p.log.Warn("session denied: source address not allowed", "actor", actor, "remote", remote)
 		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:source-ip-not-allowed")
-		rejectAll(chans, ssh.Prohibited, "pamv1: this account may not connect from this network")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: this account may not connect from this network")
 	case gatePosture:
 		p.log.Warn("session denied: device posture check failed", "actor", actor, "remote", remote)
 		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:posture-check-failed")
-		rejectAll(chans, ssh.Prohibited, "pamv1: your device failed its posture check")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: your device failed its posture check")
 	case gateResolve:
 		p.log.Warn("session denied", "actor", actor, "login", auditField(login, 64), "reason", res.reason, "remote", remote)
 		p.audit(ctx, actor, "session.denied", fmt.Sprintf("login:%s reason:%s", auditField(login, 64), auditValue(res.reason, 200)))
-		rejectAll(chans, ssh.Prohibited, "pamv1: "+res.reason)
+		rejectAll(chans, ssh.Prohibited, "PAMv1: "+res.reason)
 	case gateProtocolAllowed:
 		p.log.Warn("session denied: protocol not allowed", "actor", actor, "target", res.target.Name, "protocol", res.target.Protocol)
 		p.audit(ctx, actor, "access.denied", "target:"+res.target.Name+" reason:protocol-not-allowed")
-		rejectAll(chans, ssh.Prohibited, "pamv1: this protocol is not allowed by policy")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: this protocol is not allowed by policy")
 	case gateTargetGrants:
 		// admit logged "target grants lookup failed"; fail closed on the wire.
-		rejectAll(chans, ssh.Prohibited, "pamv1: authorization check failed")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: authorization check failed")
 	case gateTargetPolicy:
 		p.log.Warn("session denied: target policy", "actor", actor, "target", res.target.Name, "remote", remote)
 		p.audit(ctx, actor, "session.denied", "target:"+res.target.Name+" reason:target-policy")
-		rejectAll(chans, ssh.Prohibited, "pamv1: not authorized for this target")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: not authorized for this target")
 	case gateApprovalPolicy, gateApprovalClaim:
 		// admit logged the specific approval error; fail closed on the wire.
-		rejectAll(chans, ssh.Prohibited, "pamv1: approval check failed")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: approval check failed")
 	case gateApproval:
 		// admit already audited access.denied with the reason.
 		p.log.Warn("session denied", "actor", actor, "target", res.target.Name, "remote", remote, "reason", res.reason)
-		rejectAll(chans, ssh.Prohibited, "pamv1: connection requires an approved access request")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: connection requires an approved access request")
 	case gateVendorCheck:
 		// admit logged "vendor gate check failed"; fail closed on the wire.
-		rejectAll(chans, ssh.Prohibited, "pamv1: authorization check failed")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: authorization check failed")
 	case gateVendor:
 		// admit already audited access.denied reason:vendor-contract. access.denied,
 		// not session.denied: the SQL listeners, the viewer tunnel and the REST
 		// paths all record a vendor-contract refusal under access.denied, and the
 		// OCSF exporter and risk analytics key off that vocabulary.
 		p.log.Warn("session denied: vendor contract", "actor", actor, "target", res.target.Name, "remote", remote)
-		rejectAll(chans, ssh.Prohibited, "pamv1: vendor access requires an approved, in-window contract grant")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: vendor access requires an approved, in-window contract grant")
 	case gateProtocolProxyable:
 		p.log.Warn("session denied: protocol not proxyable", "actor", actor, "target", res.target.Name, "protocol", res.target.Protocol)
 		p.audit(ctx, actor, "session.denied", "target:"+res.target.Name+" reason:protocol-not-proxyable")
-		rejectAll(chans, ssh.Prohibited, "pamv1: this target's protocol is not available through the proxy")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: this target's protocol is not available through the proxy")
 	case gateSessionLimit:
 		p.log.Warn("session denied: concurrent-session limit", "actor", actor, "target", res.target.Name)
 		p.audit(ctx, actor, "session.denied", "target:"+res.target.Name+" reason:session-limit")
-		rejectAll(chans, ssh.Prohibited, "pamv1: too many concurrent sessions")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: too many concurrent sessions")
 	case gateAudit:
 		// admit's fail-closed session.start write did not land; refuse unaudited.
-		rejectAll(chans, ssh.ConnectionFailed, "pamv1: audit log unavailable; session refused")
+		rejectAll(chans, ssh.ConnectionFailed, "PAMv1: audit log unavailable; session refused")
 	case gateDecrypt:
 		// admit already audited credential.decrypt_failed and logged the error.
-		rejectAll(chans, ssh.ConnectionFailed, "pamv1: credential unavailable")
+		rejectAll(chans, ssh.ConnectionFailed, "PAMv1: credential unavailable")
 	default:
 		p.log.Error("unhandled admit refusal on the SSH proxy", "gate", int(res.gate), "actor", actor, "remote", remote)
-		rejectAll(chans, ssh.Prohibited, "pamv1: not authorized")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: not authorized")
 	}
 }
 
@@ -1168,13 +1168,13 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	if p.requireSup && !observe && !breakGlass && !p.awaitSupervision(ctx, sid) {
 		p.audit(ctx, actor, "session.unsupervised",
 			fmt.Sprintf("target:%s cred_user:%s timeout:%s", target.Name, cred.Username, p.supTimeout))
-		fmt.Fprintln(clientChan.Stderr(), "pamv1: no supervisor attached to watch this session; refused")
+		fmt.Fprintln(clientChan.Stderr(), "PAMv1: no supervisor attached to watch this session; refused")
 		return
 	}
 
 	upChan, upReqs, err := upstream.OpenChannel("session", nil)
 	if err != nil {
-		fmt.Fprintln(clientChan.Stderr(), "pamv1: could not open upstream session")
+		fmt.Fprintln(clientChan.Stderr(), "PAMv1: could not open upstream session")
 		return
 	}
 	defer upChan.Close()
@@ -1189,7 +1189,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		if p.requireRec {
 			// Through the live tee, not just stderr: a supervisor already watching
 			// this registered session must see why it ends, not an empty stream.
-			fmt.Fprintln(p.teeLive(clientChan.Stderr(), sid), "pamv1: session recording is unavailable; session refused")
+			fmt.Fprintln(p.teeLive(clientChan.Stderr(), sid), "PAMv1: session recording is unavailable; session refused")
 			return
 		}
 	}
@@ -1261,7 +1261,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		}
 		if p.sftpMode == SFTPDeny {
 			if rec != nil {
-				_, _ = io.WriteString(rec, "pamv1: SFTP is disabled by policy\r\n")
+				_, _ = io.WriteString(rec, "PAMv1: SFTP is disabled by policy\r\n")
 			}
 			p.audit(ctx, actor, "sftp.denied", fmt.Sprintf("target:%s cred_user:%s", target.Name, cred.Username))
 			return false
@@ -1400,7 +1400,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 
 // directTCPIPExtra is the RFC 4254 §7.2 direct-tcpip channel-open payload a
 // client sends to request forwarding (the wire shape behind `ssh -L`).
-// Marshaled by an ssh.Client's own Dial when pamv1 acts as the client (see
+// Marshaled by an ssh.Client's own Dial when PAMv1 acts as the client (see
 // jumpDial); this is the mirror-image server-side decode, needed only since
 // Phase 141 accepts a client-initiated direct-tcpip channel for the first
 // time — every prior use of this shape in this codebase was outbound.
@@ -1445,21 +1445,21 @@ func sameHostAsTarget(addr string, target *store.Target) bool {
 func (p *Proxy) handleDirectTCPIP(ctx context.Context, nc ssh.NewChannel, upstream *ssh.Client, target *store.Target, actor string) {
 	var d directTCPIPExtra
 	if err := ssh.Unmarshal(nc.ExtraData(), &d); err != nil {
-		nc.Reject(ssh.Prohibited, "pamv1: malformed forwarding request")
+		nc.Reject(ssh.Prohibited, "PAMv1: malformed forwarding request")
 		return
 	}
 	dest := net.JoinHostPort(d.DestAddr, strconv.Itoa(int(d.DestPort)))
 	if !sameHostAsTarget(d.DestAddr, target) {
 		p.audit(ctx, actor, "forward.refused",
 			fmt.Sprintf("target:%s dest:%s reason:not-same-host", target.Name, auditField(dest, 255)))
-		nc.Reject(ssh.Prohibited, "pamv1: forwarding is only permitted to the connected target's own host")
+		nc.Reject(ssh.Prohibited, "PAMv1: forwarding is only permitted to the connected target's own host")
 		return
 	}
 	upConn, err := upstream.Dial("tcp", dest)
 	if err != nil {
 		p.audit(ctx, actor, "forward.refused",
 			fmt.Sprintf("target:%s dest:%s reason:dial-failed", target.Name, auditField(dest, 255)))
-		nc.Reject(ssh.ConnectionFailed, "pamv1: could not reach the forwarding destination")
+		nc.Reject(ssh.ConnectionFailed, "PAMv1: could not reach the forwarding destination")
 		return
 	}
 	ch, reqs, err := nc.Accept()
@@ -1509,14 +1509,14 @@ func (p *Proxy) handleDirectTCPIP(ctx context.Context, nc ssh.NewChannel, upstre
 // a session whose own admit() already ran when the primary operator
 // connected. External/vendor invites (email + QR) are never redeemed here —
 // they are redeemed over HTTP by a different handler entirely, since the
-// recipient has no pamv1 login to present as an SSH password; an external
+// recipient has no PAMv1 login to present as an SSH password; an external
 // invite's token presented to this login path is refused, not silently
 // honored, so the "email address is the identity anchor" story for that path
 // cannot be sidestepped by an insider who learns the token.
 func (p *Proxy) handleJoinConn(ctx context.Context, chans <-chan ssh.NewChannel, principal *auth.Principal, token, remote string) {
 	if p.live == nil {
 		p.audit(ctx, principal.Name, "session.share_join_denied", "reason:live-monitoring-not-configured")
-		rejectAll(chans, ssh.Prohibited, "pamv1: session sharing is not configured on this server")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: session sharing is not configured on this server")
 		return
 	}
 	// Consume the token FIRST (atomically single-use), before any further
@@ -1528,34 +1528,34 @@ func (p *Proxy) handleJoinConn(ctx context.Context, chans <-chan ssh.NewChannel,
 	inv, err := p.store.ConsumeSessionShareInviteByTokenHash(ctx, auth.TokenHash(token), time.Now())
 	if err != nil {
 		p.audit(ctx, principal.Name, "session.share_join_denied", "reason:invalid-expired-or-used-token")
-		rejectAll(chans, ssh.Prohibited, "pamv1: this invite is invalid, expired or already used")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: this invite is invalid, expired or already used")
 		return
 	}
 	if inv.Kind != "internal" {
 		p.audit(ctx, principal.Name, "session.share_join_denied",
 			fmt.Sprintf("invite:%d reason:wrong-redemption-path", inv.ID))
-		rejectAll(chans, ssh.Prohibited, "pamv1: this invite must be redeemed via its emailed link")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: this invite must be redeemed via its emailed link")
 		return
 	}
-	// The invite names WHO it was issued to; redeemed by a different pamv1
+	// The invite names WHO it was issued to; redeemed by a different PAMv1
 	// user than named, even with the right token, is refused — a leaked
 	// token must not let a different user impersonate the invitee.
 	if !strings.EqualFold(inv.Invitee, principal.Name) {
 		p.audit(ctx, principal.Name, "session.share_join_denied",
 			fmt.Sprintf("invite:%d reason:invitee-mismatch", inv.ID))
-		rejectAll(chans, ssh.Prohibited, "pamv1: this invite was not issued to you")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: this invite was not issued to you")
 		return
 	}
 	if inv.Mode == "view_control" && !principal.Can(auth.CapConnect) {
 		p.audit(ctx, principal.Name, "session.share_join_denied",
 			fmt.Sprintf("invite:%d reason:no-connect-capability", inv.ID))
-		rejectAll(chans, ssh.Prohibited, "pamv1: view-control requires connect capability")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: view-control requires connect capability")
 		return
 	}
 	if p.sessions == nil || !p.sessions.Exists(inv.SessionID) {
 		p.audit(ctx, principal.Name, "session.share_join_denied",
 			fmt.Sprintf("invite:%d session:%s reason:not-live", inv.ID, inv.SessionID))
-		rejectAll(chans, ssh.Prohibited, "pamv1: this session is no longer live")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: this session is no longer live")
 		return
 	}
 
@@ -1563,7 +1563,7 @@ func (p *Proxy) handleJoinConn(ctx context.Context, chans <-chan ssh.NewChannel,
 	var wg sync.WaitGroup
 	for nc := range chans {
 		if nc.ChannelType() != "session" {
-			nc.Reject(ssh.UnknownChannelType, "pamv1: only session channels are proxied")
+			nc.Reject(ssh.UnknownChannelType, "PAMv1: only session channels are proxied")
 			continue
 		}
 		wg.Add(1)
@@ -1594,8 +1594,8 @@ func (p *Proxy) handleJoinSession(ctx context.Context, nc ssh.NewChannel, joinAc
 	sid := inv.SessionID
 	kicked := p.shares.Track(sid, joinID, joinActor, inv.Mode)
 	defer p.shares.Untrack(sid, joinID)
-	p.shares.Notify(sid, fmt.Sprintf("pamv1: %s joined this session (%s)", joinActor, inv.Mode))
-	defer p.shares.Notify(sid, fmt.Sprintf("pamv1: %s left this session", joinActor))
+	p.shares.Notify(sid, fmt.Sprintf("PAMv1: %s joined this session (%s)", joinActor, inv.Mode))
+	defer p.shares.Notify(sid, fmt.Sprintf("PAMv1: %s left this session", joinActor))
 
 	// Full trace of the connection: invite, session, mode and the redeeming
 	// connection's own source address — matching session.start's own detail
@@ -1637,7 +1637,7 @@ func (p *Proxy) handleJoinSession(ctx context.Context, nc ssh.NewChannel, joinAc
 		select {
 		case b, ok := <-frames:
 			if !ok {
-				fmt.Fprintln(clientChan.Stderr(), "pamv1: session ended")
+				fmt.Fprintln(clientChan.Stderr(), "PAMv1: session ended")
 				return
 			}
 			if _, werr := clientChan.Write(b); werr != nil {
@@ -1646,7 +1646,7 @@ func (p *Proxy) handleJoinSession(ctx context.Context, nc ssh.NewChannel, joinAc
 		case <-ctx.Done():
 			return
 		case <-kicked:
-			fmt.Fprintln(clientChan.Stderr(), "pamv1: you have been removed from this session")
+			fmt.Fprintln(clientChan.Stderr(), "PAMv1: you have been removed from this session")
 			return
 		}
 	}
@@ -1685,7 +1685,7 @@ func (p *Proxy) serveWinRM(ctx context.Context, sconn *ssh.ServerConn, chans <-c
 	if target.Protocol != "winrm" || p.winrm == nil {
 		p.log.Warn("session denied: protocol not proxyable", "actor", actor, "target", target.Name, "protocol", target.Protocol)
 		p.audit(ctx, actor, "session.denied", "target:"+target.Name+" reason:protocol-not-proxyable")
-		rejectAll(chans, ssh.Prohibited, "pamv1: this target's protocol is not available through the proxy")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: this target's protocol is not available through the proxy")
 		return
 	}
 	mode := "interactive"
@@ -1711,7 +1711,7 @@ func (p *Proxy) serveWinRM(ctx context.Context, sconn *ssh.ServerConn, chans <-c
 
 	for nc := range chans {
 		if nc.ChannelType() != "session" {
-			nc.Reject(ssh.UnknownChannelType, "pamv1: only session channels are proxied")
+			nc.Reject(ssh.UnknownChannelType, "PAMv1: only session channels are proxied")
 			continue
 		}
 		p.handleWinRMSession(ctx, nc, target, cred, secret, actor, observe, sid)
@@ -1740,7 +1740,7 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 			// Through the live tee, not just the channel: a supervisor already
 			// subscribed to this registered session must see why it ends, not an
 			// empty stream.
-			fmt.Fprintln(p.teeLive(ch, sid), "pamv1: session recording is unavailable; session refused")
+			fmt.Fprintln(p.teeLive(ch, sid), "PAMv1: session recording is unavailable; session refused")
 			return
 		}
 	}
@@ -1799,8 +1799,8 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 // session — and so does the recording size cap, which cw latches: a session the
 // recording refuses does not keep running unrecorded.
 func (p *Proxy) winrmShellLoop(ctx context.Context, ch ssh.Channel, out io.Writer, cw *capWriter, target *store.Target, cred *store.Credential, secret, actor string, observe bool, sid string) {
-	fmt.Fprintf(out, "pamv1 WinRM shell for %s (each line is a separate command; type 'exit' to quit)\r\n", target.Name)
-	prompt := "pamv1 " + target.Name + "> "
+	fmt.Fprintf(out, "PAMv1 WinRM shell for %s (each line is a separate command; type 'exit' to quit)\r\n", target.Name)
+	prompt := "PAMv1 " + target.Name + "> "
 	scanner := bufio.NewScanner(ch)
 	scanner.Buffer(make([]byte, 0, 4096), 1<<20)
 	for {
@@ -1838,7 +1838,7 @@ func (p *Proxy) winrmRun(ctx context.Context, out io.Writer, target *store.Targe
 	// was run — the non-repudiation guarantee.
 	fmt.Fprintf(out, "%s\r\n", command)
 	if observe {
-		fmt.Fprint(out, "pamv1: read-only session, command ignored\r\n")
+		fmt.Fprint(out, "PAMv1: read-only session, command ignored\r\n")
 		p.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:observer-winrm cmd:"+auditCmd(command))
 		return 1
 	}
@@ -1847,13 +1847,13 @@ func (p *Proxy) winrmRun(ctx context.Context, out io.Writer, target *store.Targe
 		pat, blocked = "not-allowed", true
 	}
 	if blocked {
-		fmt.Fprint(out, "pamv1: command blocked by policy\r\n")
+		fmt.Fprint(out, "PAMv1: command blocked by policy\r\n")
 		p.audit(ctx, actor, "command.blocked", fmt.Sprintf("target:%s via:proxy pattern:%s cmd:%s", target.Name, pat, auditCmd(command)))
 		return 1
 	}
 	res, err := p.winrm.Run(ctx, target.Host, target.Port, cred.Username, secret, command)
 	if err != nil {
-		fmt.Fprintf(out, "pamv1: winrm error: %v\r\n", err)
+		fmt.Fprintf(out, "PAMv1: winrm error: %v\r\n", err)
 		p.audit(ctx, actor, "winrm.error", fmt.Sprintf("target:%s via:proxy error:%v", target.Name, err))
 		return 1
 	}
@@ -1863,7 +1863,7 @@ func (p *Proxy) winrmRun(ctx context.Context, out io.Writer, target *store.Targe
 	// target either way; what fails closed is the evidence reaching the operator.
 	if aerr := appendAuditErr(ctx, p.store, p.log, actor, "winrm.run",
 		fmt.Sprintf("target:%s cred_user:%s via:proxy exit:%d cmd:%s", target.Name, cred.Username, res.ExitCode, auditCmd(command))); aerr != nil {
-		fmt.Fprint(out, "pamv1: audit log unavailable; output withheld\r\n")
+		fmt.Fprint(out, "PAMv1: audit log unavailable; output withheld\r\n")
 		return 1
 	}
 	if res.Stdout != "" {
@@ -1963,7 +1963,7 @@ func (p *Proxy) winrmCapStop(ctx context.Context, cw *capWriter, ch io.Writer, s
 	if !cw.audited {
 		cw.audited = true
 		p.audit(ctx, actor, "session.record_limit", "target:"+target.Name+" cred_user:"+cred.Username+" reason:recording-size-cap")
-		const notice = "pamv1: recording size limit reached; session closed\r\n"
+		const notice = "PAMv1: recording size limit reached; session closed\r\n"
 		io.WriteString(ch, notice)
 		p.live.Publish(sid, []byte(notice))
 	}

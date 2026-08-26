@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// Every credential pamv1 issues to something that is not a person, and the exact
+// Every credential PAMv1 issues to something that is not a person, and the exact
 // set of routes a bearer of it reaches. Adding a route here WIDENS what one of
 // these credentials can do, which is a decision worth writing down rather than a
 // line somebody adds to server.go on the way past.
@@ -33,7 +33,7 @@ var nonHumanReach = map[string]map[string]string{
 	},
 	// An IdP's SCIM client key. This surface CREATES AND DELETES USERS, which is
 	// why it is worth a written list: a route added here is reachable by a
-	// bearer token an IdP holds, with no pamv1 capability check anywhere.
+	// bearer token an IdP holds, with no PAMv1 capability check anywhere.
 	"SCIM client key": {
 		"GET /scim/v2/ServiceProviderConfig": "SCIM discovery document",
 		"GET /scim/v2/Users":                 "list provisioned users",
@@ -50,7 +50,7 @@ var nonHumanReach = map[string]map[string]string{
 		"GET /v1/app-secrets/{id}":             "fetch one granted application secret",
 		"GET /v1/app-secrets/by-alias/{alias}": "the same fetch, addressed by the grant's stable alias, for declarative consumers such as an External Secrets Operator SecretStore (Phase 197) — it resolves only within this app's own grants, so it reaches nothing the id route does not",
 	},
-	// Guest links: a single-use token emailed to somebody with no pamv1 login,
+	// Guest links: a single-use token emailed to somebody with no PAMv1 login,
 	// for one session share or one approval decision.
 	"token (single-use link)": {
 		"GET /api/approval/preview/{token}": "show the decision the invite is for",
@@ -141,7 +141,7 @@ func TestNonHumanCredentialReach(t *testing.T) {
 //
 // server.go says of the reveal route: "browser-extension tokens (Phase 147) reach
 // only this route". That is the entire scoping of a credential deliberately
-// issued to a browser extension — a thing running in a page, on a machine pamv1
+// issued to a browser extension — a thing running in a page, on a machine PAMv1
 // does not control.
 //
 // TestExtensionTokenRefusedEverywhereElse already checks the BEHAVIOUR, and it is
@@ -166,7 +166,7 @@ func TestExtensionTokenReachIsOneRoute(t *testing.T) {
 	if len(got) != len(want) || (len(got) == 1 && got[0] != want[0]) {
 		t.Fatalf("browser-extension tokens reach %v, want exactly %v\n"+
 			"authzExtOK widens a route to a credential held by an extension running in a page on a "+
-			"machine pamv1 does not control. If a second route genuinely needs it, change this test "+
+			"machine PAMv1 does not control. If a second route genuinely needs it, change this test "+
 			"deliberately and say why in the phase — do not let the scoping drift.", got, want)
 	}
 }
