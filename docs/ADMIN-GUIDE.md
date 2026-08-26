@@ -2467,7 +2467,7 @@ Three behaviours worth knowing before you turn this on:
 - **A bound token cannot delegate to an unbound one.** If the delegator's own
   token carries a `cnf`, `cnf_jkt` is required on the next exchange. Otherwise
   the constraint could be walked off at the next hop.
-- **A proof is single-use.** Headers are not secret, so a captured proof would
+- **A proof is single-use — per replica.** Headers are not secret, so a captured proof would
   otherwise be replayable; the second use is refused.
 - **`PAM_BROKER_PUBLIC_URL` is not optional behind a proxy.** The proof is signed
   over the URL the *client* used. If anything terminates TLS in front of pamv1,

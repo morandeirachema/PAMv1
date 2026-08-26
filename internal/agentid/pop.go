@@ -22,7 +22,10 @@ package agentid
 //   - Every call presenting that token must also send a `DPoP` header holding a
 //     short JWT — the PROOF — signed by the matching private key and covering
 //     this request's method and URI, this token, and a fresh, one-use id.
-//   - A captured token without the private key proves nothing and is refused.
+//   - A captured token without the private key proves nothing and is refused —
+//     at the ingress AND at the token exchange, which refuses a bound token as
+//     actor_token outright since it cannot demand the actor's proof (T-2 of the
+//     2026-08-26 audit; before that the exchange was the one door left open).
 //
 // WHAT IT DOES NOT CLAIM. The thumbprint is supplied by the DELEGATOR at mint
 // time (`cnf_jkt`, see exchange.go), and pamv1 cannot verify that the key
@@ -176,7 +179,13 @@ func AccessTokenHash(token string) string {
 }
 
 // ProofChecker verifies RFC 9449 proofs and remembers the ones it has seen, so a
-// captured proof cannot be replayed inside its own freshness window. It is safe
+// captured proof cannot be replayed inside its own freshness window ON THIS
+// REPLICA. The cache is an in-process map, one per api.Server, with no shared
+// backing — so in a multi-replica deployment a captured token+proof pair can be
+// replayed once per replica inside the ±leeway window. That is the residual an
+// operator accepts by running several replicas without a shared nonce store,
+// and it was undocumented until the 2026-08-26 audit (T-3). RFC 9449's
+// server-issued `nonce` is the standard's answer and is not implemented. Safe
 // for concurrent use.
 type ProofChecker struct {
 	leeway time.Duration

@@ -2734,7 +2734,8 @@ members from [RFC 8037 §2](https://datatracker.ietf.org/doc/html/rfc8037#sectio
   plain http on an internal name, so deriving the origin per request would refuse
   every bound agent. `X-Forwarded-*` is deliberately **not** consulted — letting
   a caller choose what its own proof is checked against would remove the check.
-  Both knobs fail the startup loudly when their prerequisite is absent, the idiom
+  Both knobs fail the startup loudly when their prerequisite is absent (true of
+  `REQUIRE_POP`; false of `PUBLIC_URL` until Phase 212 — see the audit), the idiom
   Phase 182 established
 - [x] **The end-to-end test is the claim, not a header check.** The SAME
   delegated token is presented by a "thief" holding only the token and by the

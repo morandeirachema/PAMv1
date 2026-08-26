@@ -1105,6 +1105,10 @@ func Load() (*Config, error) {
 			{"PAM_BROKER_POSTURE_REQUIRED", cfg.BrokerPostureRequired},
 			{"PAM_BROKER_REQUIRE_POP", cfg.BrokerRequirePoP},
 			{"PAM_BROKER_MAX_CALLS_PER_TOKEN", cfg.BrokerMaxCallsPerToken > 0},
+			// Added by the 2026-08-26 audit (T-4): four documents claimed this
+			// knob "fails the startup loudly" without its prerequisite, and it
+			// did not — only its URL shape was checked.
+			{"PAM_BROKER_PUBLIC_URL", cfg.BrokerPublicURL != ""},
 		} {
 			if k.set {
 				errs = append(errs, k.name+" needs the agent broker enabled (PAM_BROKER_POLICY_FILE)")
