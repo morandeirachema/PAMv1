@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–209 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–210 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,43 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 210 — v0.57.0 ✅
+
+Releases **208 and 209**. The one that changes what the binary does is 209 — a
+ceiling on what a single token may spend — and it is what makes this release due
+at all: 208 is docs plus one test, and on its own would have shipped an artifact
+byte-identical to v0.56.0, which is the case the v0.54.0 pass decided not to cut.
+
+No schema change (high-water stays `0048`), no new route, **one new env var**,
+no upgrade note.
+
+- [x] **v0.57.0** through the test-gated pipeline. `.github/` was **untouched**
+  since v0.56.0 — checked with a diff on `release.yml` specifically, per the
+  refined rule — so the v0.11.1 rehearsal did not apply. Published 2026-08-26 as
+  `ghcr.io/morandeirachema/pamv1:0.57.0` (also `latest`), digest recorded in the
+  follow-up, **public** (anonymous pull on both tags, both resolving to the same
+  digest), signed and attested, with the `pam-agent` binaries, the SPDX SBOM and
+  `SHA256SUMS` attached
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm chart
+  `version` 0.47.0 -> **0.48.0**, a minor alongside an app minor
+- [x] `store.Store` **217 -> 218** (Phase 209's `CountAgentCallsForTokenSince`);
+  migration high-water unchanged at `0048`; routes unchanged at **193**
+- [x] **The generalized version sweep from Phase 207 ran and came back clean** —
+  every remaining `0.56.0` in the tree is correctly-attributed history in
+  `CHANGELOG.md`, `ROADMAP.md` or the docs-hub change log. That check exists
+  because `NIS2-COMPLIANCE.md` drifted four releases behind while being named in
+  the checklist; a grep that enumerates the places cannot go stale the way a list
+  of them did
+- [x] Both READMEs restated; every `Reflects:` header, `docs/README.md` and this
+  banner
+- [x] `CHANGELOG.md` leads with **what the release bounds rather than what it
+  adds** — one credential rather than one agent — because the interesting fact
+  about the new knob is not that it exists but which of the three existing limits
+  it is *not*. The entry also states the two identity kinds it deliberately does
+  not cover, since that is the part an operator would otherwise find by experiment
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
 
 ## Phase 209 — A ceiling on one token, and the correction that came with it ✅
 
