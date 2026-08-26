@@ -63,9 +63,13 @@ import (
 // of two reads per target, and an agent's access can be reviewed rather than
 // reconstructed. Phase 193 added GrantStore.ReachGrantSnapshot (1), which
 // returns those same two answers from ONE consistent view — reading them
-// separately is wrong in one direction whichever order you pick.
+// separately is wrong in one direction whichever order you pick. Phase 209 added
+// BrokerStore.CountAgentCallsForTokenSince (1) — the same trail the daily budget
+// reads, grouped by the presented token's `jti` instead of by the agent, because
+// a ceiling on a single run cannot be keyed on the caller-declared `session:`
+// the party being limited chooses for itself.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 217
+	const want = 218
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

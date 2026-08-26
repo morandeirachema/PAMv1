@@ -437,14 +437,15 @@ func brokerCallDetail(id *agentid.Identity, in toolCallIn, out broker.Outcome) s
 	// the RESUME token's id: one call can carry both, and an investigator must
 	// not have to guess which identifier they are reading.
 	if id != nil && id.TokenID != "" {
-		detail += " svid_jti:" + auditField(id.TokenID, maxJTIField)
+		// Written through store.AgentTokenAuditField rather than assembled here,
+		// because Phase 209's per-token ceiling SEARCHES the trail for this exact
+		// field. Two sides producing the bytes independently is the hazard
+		// CredentialAAD already taught this repo: a divergence would match
+		// nothing, and a ceiling that counts zero never fires.
+		detail += store.AgentTokenAuditField(id.TokenID)
 	}
 	return detail
 }
-
-// maxJTIField bounds the token id on the trail; the verifier already truncates
-// what it accepts, and this is the belt to that braces.
-const maxJTIField = 64
 
 // runField renders one optional correlation field for an audit detail, or ""
 // when the value is absent — so an event about a call that declared no run id is

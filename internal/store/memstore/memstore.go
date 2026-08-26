@@ -1810,6 +1810,38 @@ func (m *Memstore) CountAgentToolCallsSince(_ context.Context, agent string, sin
 	return n, nil
 }
 
+// CountAgentCallsForTokenSince counts the brokered tool calls made while
+// presenting one token, identified by its `jti`.
+//
+// The needle is built through store.AgentTokenAuditField, the same function the
+// API writes the field with, so this backend and pgstore and the writer all
+// agree on the exact bytes. Matching a quoted field rather than a bare id is
+// what stops one jti matching as a prefix of another.
+//
+// Actor is matched too, so quoting another agent's jti cannot spend its ceiling.
+func (m *Memstore) CountAgentCallsForTokenSince(_ context.Context, agent, jti string, since time.Time) (int, error) {
+	if jti == "" {
+		return 0, nil // a static agent key has no token id; see the interface doc
+	}
+	needle := store.AgentTokenAuditField(jti)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, e := range m.audit {
+		if e.Actor != agent {
+			continue
+		}
+		if e.Action != store.AuditActionToolCallExecuted && e.Action != store.AuditActionToolCallResumed {
+			continue
+		}
+		// !Before rather than After: `since` is inclusive, matching its sibling.
+		if !e.TS.Before(since) && strings.Contains(e.Detail, needle) {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // QuarantineAgent stops one agent by subject, assigning ID and CreatedAt;
 // ErrConflict if that subject is already quarantined.
 func (m *Memstore) QuarantineAgent(_ context.Context, q *store.AgentQuarantine) error {

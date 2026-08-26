@@ -340,6 +340,12 @@ type Options struct {
 	// BrokerPostureRequired extends the posture webhook to agent identities
 	// (Phase 180). Off by default; needs PostureAttestor to be configured too.
 	BrokerPostureRequired bool
+	// BrokerMaxCallsPerToken caps how many brokered calls may be spent while
+	// presenting ONE token, keyed on its `jti` (Phase 209). 0 = off. It is a
+	// separate control from BrokerBudgetPerDay, not a replacement: the budget
+	// bounds an agent's day, this bounds a single credential's whole life.
+	// Identities that carry no token id (static agent keys) are unaffected.
+	BrokerMaxCallsPerToken int
 	// BrokerRequirePoP refuses an SVID-authenticated agent whose token carries no
 	// RFC 7800 `cnf` binding (Phase 206) — i.e. it makes sender-constrained
 	// tokens mandatory rather than available. Off by default, because turning it
@@ -563,9 +569,12 @@ type Server struct {
 	// checked against ("" = derive it from the request). popChecker verifies the
 	// proofs and remembers them so none is accepted twice; nil unless the broker
 	// is enabled.
-	brokerRequirePoP bool
-	brokerPublicURL  string
-	popChecker       *agentid.ProofChecker
+	// brokerMaxCallsPerToken caps calls spent under one token's `jti` (Phase
+	// 209); 0 = off. Read on the same path as the daily budget.
+	brokerMaxCallsPerToken int
+	brokerRequirePoP       bool
+	brokerPublicURL        string
+	popChecker             *agentid.ProofChecker
 	// svidSeen damps the inventory's last-seen writes to one per identity per
 	// sightingInterval (Phase 176). Keyed by SPIFFE ID; values are time.Time.
 	svidSeen sync.Map
