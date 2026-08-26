@@ -9,6 +9,79 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.58.2] — 2026-08-27
+
+A patch that ships **the second security audit's fixes** — two HIGH, one
+MEDIUM, three LOW, found by a fresh five-pass read of v0.58.1 one day after the
+first audit's fixes shipped; the redacted record is
+`docs/SECURITY-AUDIT-2026-08-27.md`. **No schema, route or env-var change**,
+no upgrade note that needs an action — but two behaviours an operator will
+notice, stated first.
+
+**An account change now ends the sessions the account holds.** Deleting a user
+(`DELETE /api/users/{id}`), deactivating one over SCIM (`active:false`), or
+changing a user's role revokes every login session minted for that user — a
+browser-extension token that lives for `PAM_EXTENSION_TOKEN_TTL_HOURS`, a
+viewer token, a directory login — and kills their live proxied sessions,
+audited as `session.revoked reason:user-deleted|deactivated|role-changed`.
+Until now none of those paths did, so a deleted user's extension token kept
+revealing secrets until it expired. Independently, the resolver refuses any
+session whose local user row is inactive, so a deactivated user is cut off even
+by a path that forgets to revoke.
+
+**A session token now carries its user's IP allowlist and device binding.**
+Only the per-user-token path ever copied them, so an extension or viewer token
+of a local user was never network-restricted — the ADMIN-GUIDE's "enforced
+everywhere that principal authenticates" was false for every session. It is
+true now, and true on two doors that had run no source check at all: the
+authenticated-only routes (`/api/me`, MFA enrollment) and the RDP/VNC viewer
+tunnel.
+
+### Fixed
+
+- **A-1 — sessions outlived the account** (HIGH): see above. New
+  `session.revoke_failed` audit action for the case the revoke itself fails
+  (logged, audited, never reverses the account change).
+- **A-2 — the web guest's bearer key was its roster id** (HIGH). A session-share
+  guest was tracked under its raw key, so `GET /api/sessions/{id}/share/roster`
+  served every `read_audit` reader the guest's live credential as `join_id`,
+  and `session.share_kicked` wrote it into the audit trail — a supervisor could
+  watch as the guest or, for `view_control`, type as the guest. **`join_id` is
+  now the SHA-256 of the key**; it still targets `POST .../share/kick`, and it
+  resolves to nothing when presented as a key. A client that had used `join_id`
+  as a guest key was doing something it never should have been able to.
+- **A-3 — session principals carried no allowlist or device binding** (MED):
+  see above.
+- **A-4/A-5 — two doors with a shorter checklist**: the `authenticated`
+  middleware and the viewer tunnel now run the same source gates (IP allowlist,
+  device fingerprint, posture) as `authz` and the proxies, through one shared
+  function, so a gate added to one cannot miss the others — the shape the
+  2026-08-26 audit's H-1/H-2 had, found in two more places.
+- **A-6 — personal-safe integrity** (LOW). A plain `manage_targets` /
+  `manage_credentials` profile could add a credential to, delete a credential
+  of, or delete a target in someone else's personal safe. Refused now unless
+  the caller is the safe's owner, a `can_manage` member, holds
+  `unlimited_vault_access`, or is a built-in admin (a write reveals nothing,
+  and provisioning a personal safe is an admin's job).
+
+### Changed
+
+- **Documentation.** The 2026-08-26 audit report moved to
+  `docs/SECURITY-AUDIT-2026-08-26.md` (the repository root keeps its fixed
+  file set); both reports are indexed in `docs/README.md` and linked from
+  `SECURITY.md`. Three claims the audit found false are corrected in place.
+  The README's verification commands gain a one-line tip for a Docker config
+  that names a credential helper you do not have.
+
+### Upgrade notes
+
+None that require an action. Two to know: an existing browser-extension token
+belonging to a user who is later deleted, deactivated or re-roled stops working
+at that moment rather than at its expiry; and a session-share supervisor's
+console reads the same roster — only the value of `join_id` changed.
+
+Helm chart `0.49.1` → `0.49.2`, a patch alongside an app patch.
+
 ## [0.58.1] — 2026-08-26
 
 **The artifacts for 0.58.0.** That tag exists and stays where it is — the Go
@@ -2531,7 +2604,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.1...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.58.2]: https://github.com/morandeirachema/pamv1/releases/tag/v0.58.2
 [0.58.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.58.1
 [0.58.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.58.0
 [0.57.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.57.1
