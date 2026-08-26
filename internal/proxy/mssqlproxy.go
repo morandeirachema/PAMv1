@@ -288,6 +288,17 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		c = tds.NewConn(conn) // re-frame over TLS
 	}
 
+	// Throttle BEFORE reading LOGIN7. The read is already bounded, so unlike the
+	// PostgreSQL proxy there was no allocation hazard here — but the limiter's
+	// job is to stop an abusive source from costing anything, and a peer that
+	// is already rate-limited should not get to make us parse one more login.
+	// Refused with a bare close rather than a TDS error: we have not read the
+	// client's TDS version yet, so we cannot frame a reply it would understand.
+	if !m.authLimiter.Allow(remoteHost(nConn.RemoteAddr())) {
+		m.log.Warn("mssql authentication rate limited", "remote", remote)
+		return
+	}
+
 	// --- LOGIN7 ---
 	typ, _, payload, err = c.ReadMessage(maxHandshakeMessage)
 	if err != nil || typ != tds.PacketLogin7 {
@@ -307,15 +318,6 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	}
 
 	loginName := login.UserName
-	// Throttle online guessing of the PAM key before any resolve work.
-	if !m.authLimiter.Allow(remoteHost(nConn.RemoteAddr())) {
-		// Log but do NOT append — as in the SSH and DB proxies: the preceding
-		// failures are the signal, and appending per attempt under a flood turns
-		// the system of record into the amplifier.
-		m.log.Warn("mssql authentication rate limited", "login", auditField(loginName, 64), "remote", remote)
-		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: too many attempts; try again shortly", tds72)
-		return
-	}
 	principal, err := m.resolver.Resolve(ctx, login.Password)
 	if err != nil {
 		m.log.Warn("mssql authentication failed", "login", auditField(loginName, 64), "remote", remote)

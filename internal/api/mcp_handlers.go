@@ -232,8 +232,7 @@ func (s *Server) mcpDispatcher(id *agentid.Identity, sess *mcpSession) mcp.Dispa
 			if !ok {
 				return nil, mcp.Errorf(mcp.CodeInvalidParams, "invalid, expired, or already-used resume token")
 			}
-			s.auditAs(ctx, id.AgentName, broker.ActionToolCallResumed,
-				fmt.Sprintf("tool:%s call:%s status:%s%s via:mcp", auditField(out.Tool, 64), out.CallID, out.Status, runField("session", out.SessionID)))
+			s.auditAs(ctx, id.AgentName, broker.ActionToolCallResumed, resumeDetail(id, out)+" via:mcp")
 			return toolResult(out), nil
 		},
 	}
