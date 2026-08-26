@@ -287,8 +287,8 @@ func TestShareRegistryKickDisconnects(t *testing.T) {
 }
 
 // TestShareRegistryKickRevokesGuestKey proves Kick also revokes a web guest's
-// key (joinID and guest key are the same string for a web join — see
-// streamShareGuest), so a request already in flight when Kick is called
+// key (a web join is tracked under GuestJoinID, the guests map's own key —
+// see streamShareGuest), so a request already in flight when Kick is called
 // cannot be followed by a new one even if it raced the closed channel.
 func TestShareRegistryKickRevokesGuestKey(t *testing.T) {
 	r := NewShareRegistry()
@@ -299,9 +299,9 @@ func TestShareRegistryKickRevokesGuestKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueGuestKey: %v", err)
 	}
-	r.Track("s1", key, "guest:bob@vendor.com", "view_only")
-	if !r.Kick("s1", key) {
-		t.Fatal("Kick on the tracked guest key returned false")
+	r.Track("s1", GuestJoinID(key), "guest:bob@vendor.com", "view_only")
+	if !r.Kick("s1", GuestJoinID(key)) {
+		t.Fatal("Kick on the tracked guest join id returned false")
 	}
 	if _, _, _, ok := r.ResolveGuestKey(key); ok {
 		t.Fatal("guest key still resolves after Kick")
@@ -486,5 +486,50 @@ func TestShareRegistryNilSuspendResume(t *testing.T) {
 	}
 	if r.Suspended("s1") {
 		t.Fatal("Suspended on a nil registry returned true")
+	}
+}
+
+// TestShareRegistryGuestJoinIDIsNotTheKey pins the 2026-08-27 audit fix: a web
+// guest is tracked on the roster under GuestJoinID, which must identify the
+// join without being usable as the guest's key, and Kick by that id must
+// still revoke the key. Before the fix the roster carried the raw key, so any
+// CapReadAudit reader of the roster held the guest's live credential.
+func TestShareRegistryGuestJoinIDIsNotTheKey(t *testing.T) {
+	r := NewShareRegistry()
+	r.Open("s1")
+	defer r.Close("s1")
+
+	key, err := r.IssueGuestKey("s1", "guest:bob@vendor.com", "view_control", time.Hour)
+	if err != nil {
+		t.Fatalf("IssueGuestKey: %v", err)
+	}
+	joinID := GuestJoinID(key)
+	if joinID == key || joinID == "" {
+		t.Fatalf("GuestJoinID(%q) = %q, want a distinct non-empty id", key, joinID)
+	}
+	r.Track("s1", joinID, "guest:bob@vendor.com", "view_control")
+	roster := r.Roster("s1")
+	if len(roster) != 1 || roster[0].JoinID != joinID {
+		t.Fatalf("roster = %+v, want one entry under the join id", roster)
+	}
+	if roster[0].JoinID == key {
+		t.Fatal("roster exposes the raw guest key")
+	}
+	// The id that the roster hands out resolves to nothing as a key...
+	if _, _, _, ok := r.ResolveGuestKey(roster[0].JoinID); ok {
+		t.Fatal("the roster's join_id resolved as a guest key")
+	}
+	// ...while the key itself still works until the id is kicked.
+	if _, _, _, ok := r.ResolveGuestKey(key); !ok {
+		t.Fatal("the real guest key stopped resolving before any kick")
+	}
+	if !r.Kick("s1", roster[0].JoinID) {
+		t.Fatal("Kick by the roster's join_id found no join")
+	}
+	if _, _, _, ok := r.ResolveGuestKey(key); ok {
+		t.Fatal("the guest key still resolves after a kick by join_id")
+	}
+	if got := r.Roster("s1"); len(got) != 0 {
+		t.Fatalf("roster after kick = %+v, want empty", got)
 	}
 }

@@ -145,6 +145,11 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
+	if u.Role != in.Role {
+		// A session carries the role it was minted with, so the old role would
+		// otherwise keep acting through it until it expired (2026-08-27 audit).
+		s.cutUserAccess(r.Context(), u.Username, "role-changed")
+	}
 	auditDetail := fmt.Sprintf("%s role:%s->%s", u.Username, u.Role, in.Role)
 	if in.IPAllowlist != nil {
 		if err := s.store.UpdateUserIPAllowlist(r.Context(), id, *in.IPAllowlist); err != nil {
@@ -188,6 +193,7 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r.Context(), "user.delete", strconv.FormatInt(id, 10))
+	s.cutUserAccess(r.Context(), u.Username, "user-deleted")
 	s.suspendOwnedAgents(r.Context(), u.Username)
 	// The same cascade for the identity kind that has no key to suspend: a
 	// SPIFFE-attested agent is stopped by quarantining its subject (Phase 170).
@@ -265,6 +271,32 @@ func (s *Server) revokeLoginSessions(w http.ResponseWriter, r *http.Request) {
 	killed := s.killUserSessions(r.Context(), in.Username, "login-revoked")
 	s.audit(r.Context(), "session.revoked", fmt.Sprintf("user:%s sessions:%d killed:%d", in.Username, n, killed))
 	writeJSON(w, http.StatusOK, map[string]any{"username": in.Username, "revoked": n, "killed": killed})
+}
+
+// cutUserAccess ends every way a username can still act once its account has
+// been deleted, deactivated or re-roled: the login-session rows the resolver
+// turns into principals — a browser-extension token lives for
+// PAM_EXTENSION_TOKEN_TTL_HOURS, a viewer token for seconds, a directory
+// login for its TTL — and its live proxied sessions. Until the 2026-08-27
+// audit none of those write paths did this: a deleted or SCIM-deactivated
+// user kept a working extension token until it expired, and a re-roled user
+// kept the old role's sessions. The resolver now also refuses a session whose
+// local row is inactive (defence in depth), but a deleted row cannot be
+// consulted and a role change is not a deactivation, so the sessions are cut
+// here, at the write, the way POST /api/login-sessions/revoke always could.
+//
+// Never reported to the caller as a failure: the account change has already
+// happened and must not be reversed by a follow-up problem. A failed revoke is
+// logged and audited so a half-finished offboarding is visible.
+func (s *Server) cutUserAccess(ctx context.Context, username, reason string) {
+	n, err := s.store.DeleteSessionsByUsername(ctx, username)
+	if err != nil {
+		s.log.Error("could not revoke login sessions", "user", username, "reason", reason, "err", err)
+		s.audit(ctx, "session.revoke_failed", fmt.Sprintf("user:%s reason:%s", username, reason))
+		return
+	}
+	killed := s.killUserSessions(ctx, username, reason)
+	s.audit(ctx, "session.revoked", fmt.Sprintf("user:%s sessions:%d killed:%d reason:%s", username, n, killed, reason))
 }
 
 // killUserSessions terminates every live proxied session an actor holds (via the

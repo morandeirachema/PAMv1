@@ -58,7 +58,7 @@ on what you have deployed.
 
 A minor that ships a **security audit's fixes**: one CRITICAL, five HIGH and every
 MEDIUM but one, from a five-pass read-only audit of v0.57.1 whose redacted record
-is `SECURITY-AUDIT-2026-08-26.md`. Migration high-water `0048` → **`0049`**,
+is `docs/SECURITY-AUDIT-2026-08-26.md`. Migration high-water `0048` → **`0049`**,
 **one new env var**, no new route — and **four upgrade notes, the first of which
 can refuse a startup**. Read those before pulling the image.
 

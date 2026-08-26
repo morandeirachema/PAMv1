@@ -4,7 +4,9 @@
 
 PAMv1 is an **educational** Privileged Access Management system. It is
 feature-complete against its [roadmap](ROADMAP.md) and has closed every finding
-of its own [security self-audit](docs/SECURITY-GAPS.md), but it **has not been
+of its own [security self-audit](docs/SECURITY-GAPS.md) and of its two dated
+audit passes ([2026-08-26](docs/SECURITY-AUDIT-2026-08-26.md),
+[2026-08-27](docs/SECURITY-AUDIT-2026-08-27.md)), but it **has not been
 audited by anyone outside the project** and is **not production-ready**.
 
 Please do not use it to guard real privileged credentials. If you have, treat
