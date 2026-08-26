@@ -27,6 +27,29 @@ type actClaim struct {
 	Act *actClaim `json:"act"`
 }
 
+// cnfClaim is an RFC 7800 §3.1 "cnf" (confirmation) claim. Only the RFC 9449
+// `jkt` member is read: pamv1 binds tokens to a key THUMBPRINT, never to an
+// embedded key, so there is nothing here to reconstruct a key from.
+type cnfClaim struct {
+	JKT string `json:"jkt"`
+}
+
+// thumbprint returns the bound key's thumbprint, or "" for a token that carries
+// no confirmation at all.
+//
+// A `cnf` this verifier cannot enforce is refused by Verify rather than reduced
+// to "" here, and the difference matters: treating an unreadable confirmation as
+// "unbound" would DOWNGRADE a token its issuer had deliberately constrained —
+// the one outcome a binding must never produce. RFC 7800 defines `jwk` and `kid`
+// confirmations too; pamv1 enforces only `jkt`, so a token using either is
+// refused instead of quietly honoured as a bearer credential.
+func (c *cnfClaim) thumbprint() string {
+	if c == nil {
+		return ""
+	}
+	return c.JKT
+}
+
 // mayActClaim is an RFC 8693 §4.4 "may_act" claim: which party (or parties) the
 // token's holder permits to act for it. The RFC's example carries a single
 // `sub`; a list is the natural generalization and both are accepted.
@@ -172,6 +195,11 @@ func (v *SVIDVerifier) Verify(_ context.Context, bearer string) (*Identity, erro
 		// through to Identity so the token-exchange minter can enforce it
 		// (exchange.go); absent means unpinned, never "anyone is named".
 		MayAct *mayActClaim `json:"may_act"`
+		// RFC 7800 §3.1 confirmation: the key this token is bound to, as an RFC
+		// 9449 `jkt` thumbprint. Carried through to Identity so the ingress can
+		// demand a proof of possession (pop.go); absent means an ordinary bearer
+		// token.
+		Cnf *cnfClaim `json:"cnf"`
 	}
 	if err := jwtutil.DecodeSegment(parts[1], &claims); err != nil {
 		return nil, ErrUnauthenticated
@@ -187,12 +215,17 @@ func (v *SVIDVerifier) Verify(_ context.Context, bearer string) (*Identity, erro
 	if !v.inTrustDomain(claims.Sub) {
 		return nil, ErrUnauthenticated
 	}
+	// A confirmation claim this verifier cannot enforce fails closed (Phase 206).
+	if claims.Cnf != nil && !ValidThumbprint(claims.Cnf.JKT) {
+		return nil, ErrUnauthenticated
+	}
 	chain, ok := v.actorChain(claims.Sub, claims.Act)
 	if !ok {
 		return nil, ErrUnauthenticated // delegation too deep, or a delegate outside the trust domain
 	}
 	id := &Identity{AgentName: claims.Sub, SPIFFEID: claims.Sub, ActorChain: chain,
 		ExpiresAt: time.Unix(claims.Exp, 0), MayAct: claims.MayAct.subjects(),
+		ConfirmationKey: claims.Cnf.thumbprint(),
 		// Recorded, never trusted for a decision: `jti` is an identifier the
 		// issuer chose, so it can join a mint to its uses and must not gate
 		// anything. Bounded here rather than at every audit site.

@@ -240,6 +240,14 @@ data:
   # shared custody unless PAM_BROKER_TOKEN_SIGN_SEED is set (a Secret, not here).
   # PAM_BROKER_TOKEN_EXCHANGE: "false"
   # PAM_BROKER_EXCHANGE_TTL_MIN: "5"
+  # Proof of possession (Phase 206, RFC 9449). A minted token is a BEARER
+  # credential unless the exchange names a key (cnf_jkt); bound tokens need a
+  # `DPoP` proof on every call, so a leaked token buys nothing on its own.
+  # Bind your tokens BEFORE requiring it. PAM_BROKER_PUBLIC_URL is mandatory
+  # in practice here: an Ingress terminates TLS, so the request arrives as
+  # plain http on an internal name while the client signed the external URL.
+  # PAM_BROKER_REQUIRE_POP: "false"
+  # PAM_BROKER_PUBLIC_URL: "https://pam.example.com"
 
   # --- Application-secrets API ---------------------------------------------
   # PAM_APP_SECRETS_ENABLED: "false"     # vends plaintext to machines; front with TLS
