@@ -9,6 +9,40 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.57.1] — 2026-08-26
+
+**A version bump with no functional change.** Cut deliberately, on request, and
+recorded as such rather than dressed up: the only commits between `v0.57.0` and
+this tag are the two that wrote v0.57.0's own image digest into `ROADMAP.md` and
+`README.md`. No Go source, no schema, no route, no env var, no dependency.
+
+**What that means for you: nothing.** The binary in `0.57.1` behaves exactly as
+the one in `0.57.0`. If you are running v0.57.0 there is no reason to move, and
+if you pin by digest you may ignore this release entirely. Every manifest in the
+repository has been repointed at `0.57.1` so the shipped examples stay
+self-consistent, which is the only practical effect.
+
+**Why it is a patch and not a minor.** Nothing was added. Semantic versioning
+asks what changed in the artifact, and the honest answer here is "the build
+metadata", so the patch component is the one that moves. The Helm chart follows
+with a patch of its own (`0.48.0` → `0.48.1`) rather than a minor, matching how
+v0.54.1 was handled.
+
+**Note for anyone comparing digests.** The image published here will NOT have the
+same digest as v0.57.0 despite being built from equivalent sources — this build
+is not bit-reproducible across runs, which v0.55.0 demonstrated when a pipeline
+re-run produced a different digest from the same commit. A differing digest
+between these two tags is expected and is not evidence that something changed.
+
+### Changed
+
+- Deployment pins, the Helm chart, both READMEs and the documentation set moved
+  from `0.57.0` to `0.57.1`.
+
+### Upgrade notes
+
+None, and none needed. This release exists to move a version number.
+
 ## [0.57.0] — 2026-08-26
 
 A minor that bounds **one credential** rather than one agent. The per-minute rate
@@ -2332,7 +2366,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.57.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.57.1...HEAD
+[0.57.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.57.1
 [0.57.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.57.0
 [0.56.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.56.0
 [0.55.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.55.0

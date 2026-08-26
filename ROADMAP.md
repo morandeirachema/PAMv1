@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–210 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–211 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,41 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 211 — v0.57.1 ✅
+
+**A release with no functional change, cut on request and recorded as such.**
+The only commits between `v0.57.0` and this tag are the two that wrote v0.57.0's
+own digest into `ROADMAP.md` and `README.md`. No Go source, no schema, no route,
+no env var.
+
+This is the case every previous release pass in this project deliberately
+declined to cut — the reasoning is written into Phase 200 and again into Phase
+210: a version bump whose artifact behaves identically to the last one is noise.
+It was raised, the answer was to cut anyway, and the useful thing is that the
+CHANGELOG says exactly that rather than implying content the release does not
+have. A version number that moved for a reason outside the code is fine; a
+changelog that hides it is not.
+
+- [x] **v0.57.1** through the test-gated pipeline. `.github/` untouched since
+  v0.57.0, so no rehearsal — checked with the usual `release.yml` diff.
+  Published 2026-08-26 as `ghcr.io/morandeirachema/pamv1:0.57.1` (also
+  `latest`), digest recorded in the follow-up, **public**, signed and attested,
+  with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS` attached
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm chart
+  `version` 0.48.0 -> **0.48.1**: a PATCH alongside an app patch, the shape
+  v0.54.1 established, not a minor
+- [x] **A patch and not a minor, on purpose.** Nothing was added, so the
+  component that moves is the one that describes "the build metadata changed"
+- [x] **The CHANGELOG warns that the digest will differ from v0.57.0's** despite
+  equivalent sources, because this build is not bit-reproducible across runs —
+  v0.55.0 proved that when a pipeline re-run produced a different digest from the
+  same commit. Without the note, a reader comparing the two tags would reasonably
+  conclude something changed
+- [x] `store.Store` unchanged at **218**; migration high-water unchanged at
+  `0048`; routes unchanged at **193**
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
 
 ## Phase 210 — v0.57.0 ✅
 
