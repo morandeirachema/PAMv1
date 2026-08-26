@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/morandeirachema/pamv1/internal/store"
 )
@@ -175,6 +176,16 @@ type fakeDir struct {
 func (f fakeDir) GetUserByTokenHash(_ context.Context, h string) (*store.User, error) {
 	if u, ok := f.users[h]; ok {
 		return u, nil
+	}
+	return nil, store.ErrNotFound
+}
+
+// GetUserByUsername returns the seeded user with that username, or store.ErrNotFound.
+func (f fakeDir) GetUserByUsername(_ context.Context, username string) (*store.User, error) {
+	for _, u := range f.users {
+		if u.Username == username {
+			return u, nil
+		}
 	}
 	return nil, store.ErrNotFound
 }
@@ -404,5 +415,49 @@ func TestResolveThreadsIPAllowlist(t *testing.T) {
 	}
 	if p.IPAllowlist != "" {
 		t.Fatalf("bootstrap-admin's Principal.IPAllowlist = %q, want empty", p.IPAllowlist)
+	}
+}
+
+// TestResolveSessionConsultsLocalUserRow pins the 2026-08-27 audit fix: a
+// session token minted for a LOCAL user is refused once that user's row is
+// inactive, and carries the row's IP allowlist and device binding — neither
+// was true before, so a deactivated user's extension token kept working and a
+// session never had an allowlist at all. A directory identity (no local row)
+// is untouched.
+func TestResolveSessionConsultsLocalUserRow(t *testing.T) {
+	future := time.Now().Add(time.Hour)
+	dir := fakeDir{
+		users: map[string]*store.User{
+			hashOf("bob-token"):   {Username: "bob", Role: "user", Active: false},
+			hashOf("carol-token"): {Username: "carol", Role: "user", Active: true, IPAllowlist: "10.0.0.0/8", DeviceFingerprint: "dev-1"},
+		},
+		sessions: map[string]*store.Session{
+			hashOf("bob-session"):   {Username: "bob", Role: "user", Scope: SessionScopeExtension, ExpiresAt: future},
+			hashOf("carol-session"): {Username: "carol", Role: "user", Scope: SessionScopeExtension, ExpiresAt: future},
+			hashOf("ad-session"):    {Username: "ad-alice", Role: "approver", ExpiresAt: future},
+		},
+	}
+	r, err := NewResolver(dir, "bootstrap", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	if _, err := r.Resolve(ctx, "bob-session"); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("a deactivated local user's session resolved: err=%v", err)
+	}
+	if _, err := r.Resolve(ctx, "bob-token"); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("a deactivated local user's token resolved: err=%v", err)
+	}
+	p, err := r.Resolve(ctx, "carol-session")
+	if err != nil {
+		t.Fatalf("active local user's session: %v", err)
+	}
+	if !p.ExtensionOnly || p.IPAllowlist != "10.0.0.0/8" || p.DeviceFingerprint != "dev-1" {
+		t.Fatalf("session principal = %+v, want the row's allowlist and device binding carried over", p)
+	}
+	p, err = r.Resolve(ctx, "ad-session")
+	if err != nil || p.Name != "ad-alice" || p.IPAllowlist != "" {
+		t.Fatalf("directory session = %+v, %v; want unaffected", p, err)
 	}
 }

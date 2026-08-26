@@ -195,6 +195,14 @@ func (s *Server) deleteTarget(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	target, err := s.store.GetTarget(r.Context(), id)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	if !s.guardPersonalTargetWrite(w, r, target) {
+		return
+	}
 	if err := s.store.DeleteTarget(r.Context(), id); err != nil {
 		storeError(w, err)
 		return

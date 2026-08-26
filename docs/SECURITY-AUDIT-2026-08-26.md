@@ -7,7 +7,9 @@
 > class of each finding, where it lived, and how it was closed — enough to review
 > the fix, not enough to weaponize against an unpatched checkout.
 >
-> Fixes shipped on the `phase-212-*` branch. The full gate suite (build, gofmt,
+> Fixes shipped on the `phase-212-*` branch and released as **v0.58.1** (Phase
+> 214; the `v0.58.0` tag carries an unsigned image — see the CHANGELOG). The
+> next pass is [SECURITY-AUDIT-2026-08-27.md](SECURITY-AUDIT-2026-08-27.md). The full gate suite (build, gofmt,
 > vet, staticcheck, gosec, govulncheck, archgen) and the race-enabled test suite
 > pass, and the fixed binary was re-verified booting and serving end to end.
 
@@ -62,6 +64,8 @@ reference them; exploitation detail is intentionally omitted.
 | M-8 | MED | SSH proxy | Unbounded channels per connection | **Fixed** — per-connection cap |
 | F-5 | (LOW→) | SCIM | A connector could act on a privileged user | **Fixed** — refused by effective capability, not role string; the deprovisioning error now surfaces |
 | F-8 | INFO | middleware | Scope refusals were unaudited | **Fixed** — now audited with the shared reason slug |
+| M-6 | MED | `pgstore` contract suite | Twenty store methods absent from the backend-parity contract suite | **Deferred** — test-coverage debt, not a live defect (see §3); recorded in ROADMAP "What is left" §2 |
+| F-7 | LOW | broker resume tokens | A resume token is not bound to the identity that parked the call | **Deferred** — single-use bearer by design, 96-bit call ids; needs a schema column (see §3); ROADMAP §3 |
 | — | LOW | DB proxy SCRAM; JWK member check; guest key | Bound an upstream-supplied iteration count; case-fold the private-member check; store the guest bearer key by hash like every other token | **Fixed** |
 
 ## 3. Deferred, with rationale

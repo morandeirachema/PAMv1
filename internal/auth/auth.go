@@ -624,6 +624,13 @@ func ParseCapabilities(names []string) (CapSet, error) {
 type Directory interface {
 	GetUserByTokenHash(ctx context.Context, tokenHashHex string) (*store.User, error)
 	GetSessionByTokenHash(ctx context.Context, tokenHashHex string) (*store.Session, error)
+	// GetUserByUsername returns the LOCAL user row behind a username, or
+	// store.ErrNotFound for an identity that has none (a directory login).
+	// Resolve consults it for a session token (2026-08-27 audit) so a
+	// deactivated local user's still-live sessions stop resolving the moment
+	// the row says so, and so the row's IP allowlist and device binding apply
+	// to those sessions exactly as they apply to the per-user token.
+	GetUserByUsername(ctx context.Context, username string) (*store.User, error)
 }
 
 // ProfileSource looks up a custom permission profile by name. Optional: nil
@@ -827,13 +834,35 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (*Principal, error) 
 				return &Principal{Name: s.Username, Role: RoleAdmin, BreakGlass: true}, nil
 			}
 			p, perr := r.principalFor(ctx, s.Username, s.Role, s.Scope == SessionScopeEnroll)
-			if perr == nil {
-				p.Roles = SplitRoles(s.Roles) // restore the multi-group union
-				p.TunnelOnly = IsViewerScope(s.Scope)
-				p.MFAPending = s.Scope == SessionScopeMFAPending
-				p.ExtensionOnly = s.Scope == SessionScopeExtension
+			if perr != nil {
+				return nil, perr
 			}
-			return p, perr
+			p.Roles = SplitRoles(s.Roles) // restore the multi-group union
+			p.TunnelOnly = IsViewerScope(s.Scope)
+			p.MFAPending = s.Scope == SessionScopeMFAPending
+			p.ExtensionOnly = s.Scope == SessionScopeExtension
+			// A session is minted from a principal and then lives on its own row,
+			// so nothing above re-reads the user it was minted for. For a LOCAL
+			// user that was a gap the per-user-token path never had (2026-08-27
+			// audit): SCIM deactivation flips users.active and the token path
+			// refuses it, but an extension token (hours) or a viewer token minted
+			// before the flip kept resolving until it expired — and, because only
+			// the token path copied them, the row's IP allowlist and device
+			// binding never applied to a session at all. Refuse an inactive row,
+			// fail closed on a lookup error, and carry the row's restrictions. A
+			// directory identity has no local row (ErrNotFound) and is governed by
+			// its session's own TTL and POST /api/login-sessions/revoke, as before.
+			switch u, uerr := r.dir.GetUserByUsername(ctx, s.Username); {
+			case uerr == nil:
+				if !u.Active {
+					return nil, ErrUnauthorized
+				}
+				p.IPAllowlist = u.IPAllowlist
+				p.DeviceFingerprint = u.DeviceFingerprint
+			case !errors.Is(uerr, store.ErrNotFound):
+				return nil, ErrUnauthorized
+			}
+			return p, nil
 		}
 	}
 	return nil, ErrUnauthorized

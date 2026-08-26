@@ -318,6 +318,39 @@ func (s *Server) guardPersonalSafe(w http.ResponseWriter, r *http.Request, safeI
 	return true
 }
 
+// guardPersonalTargetWrite refuses a WRITE to a target that sits in a personal
+// safe — adding or deleting one of its credentials, deleting the target —
+// unless the caller may manage that safe (canManageSafe: its owner or a
+// can_manage member, or CapUnlimitedVaultAccess). Phase 212's M-5 guarded
+// the three ways a plain target manager could bypass a personal safe's
+// PRIVACY; the 2026-08-27 audit found its INTEGRITY still open — a plain
+// manage_targets / manage_credentials principal could delete the owner's
+// target or plant a credential on it. Unlike guardPersonalTarget (grants,
+// which nobody but the override may add), the owner is admitted here: a
+// personal safe's owner must be able to keep their own target. A built-in
+// admin is admitted too: a write reveals nothing, and provisioning a personal
+// safe (create it for the owner, add the target, vault its credential) is an
+// admin's job — the bound this closes is the DELEGATED manager's, whose
+// custom profile was never meant to reach into someone's personal folder. A
+// target in no safe, or in an ordinary safe, passes untouched.
+func (s *Server) guardPersonalTargetWrite(w http.ResponseWriter, r *http.Request, t *store.Target) bool {
+	if t.SafeID == nil || principalFrom(r.Context()).IsAdmin() {
+		return true
+	}
+	personal, err := store.EffectiveSafePersonal(r.Context(), s.store, t)
+	if err != nil {
+		s.audit(r.Context(), "authz.denied", fmt.Sprintf("target:%d reason:personal-safe-check-failed", t.ID))
+		writeError(w, http.StatusForbidden, "not authorized for this target")
+		return false
+	}
+	if !personal || s.canManageSafe(r.Context(), *t.SafeID) {
+		return true
+	}
+	s.audit(r.Context(), "authz.denied", fmt.Sprintf("target:%d reason:personal-safe", t.ID))
+	writeError(w, http.StatusForbidden, "this target is in a personal safe")
+	return false
+}
+
 func (s *Server) canManageSafe(ctx context.Context, safeID int64) bool {
 	p := principalFrom(ctx)
 	sf, err := s.store.GetSafe(ctx, safeID)

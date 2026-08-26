@@ -162,6 +162,14 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 		writeError(w, http.StatusForbidden, msg)
 		return
 	}
+	// The same three gates the authz middleware runs between the scope test
+	// and the capability test (IP allowlist, device, posture) — absent here
+	// until the 2026-08-27 audit; see sourceGates.
+	if reason, msg := s.sourceGates(r.Context(), principal, r); reason != "" {
+		s.audit(r.Context(), "authz.denied", r.Method+" "+r.URL.Path+" reason:"+reason)
+		writeError(w, http.StatusForbidden, msg)
+		return
+	}
 	if !principal.Can(auth.CapConnect) {
 		s.log.Warn("authorization denied", "actor", principal.Name, "role", string(principal.Role),
 			"method", r.Method, "path", r.URL.Path)

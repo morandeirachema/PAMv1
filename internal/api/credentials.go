@@ -76,6 +76,9 @@ func (s *Server) createCredential(w http.ResponseWriter, r *http.Request) {
 			in.SecretType+" credentials are only valid on "+strings.Join(protocolsFor(in.SecretType), " or ")+" targets")
 		return
 	}
+	if !s.guardPersonalTargetWrite(w, r, target) {
+		return
+	}
 	// Insert first so the row has an ID, then bind the ciphertext to (target,
 	// credential) via the AAD and store it. Roll the row back if either fails.
 	c := store.Credential{TargetID: target.ID, Username: in.Username, SecretType: in.SecretType, Provisioner: in.Provisioner}
@@ -237,6 +240,13 @@ func (s *Server) revealCredential(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteCredential(w http.ResponseWriter, r *http.Request) {
 	id, ok := idParam(w, r)
 	if !ok {
+		return
+	}
+	_, target, ok := s.loadCredentialTarget(w, r, id)
+	if !ok {
+		return
+	}
+	if !s.guardPersonalTargetWrite(w, r, target) {
 		return
 	}
 	if err := s.store.DeleteCredential(r.Context(), id); err != nil {
