@@ -2437,8 +2437,17 @@ changelog that hides it is not.
 - [x] **v0.57.1** through the test-gated pipeline. `.github/` untouched since
   v0.57.0, so no rehearsal — checked with the usual `release.yml` diff.
   Published 2026-08-26 as `ghcr.io/morandeirachema/pamv1:0.57.1` (also
-  `latest`), digest recorded in the follow-up, **public**, signed and attested,
-  with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS` attached
+  `latest`), digest
+  `sha256:279a5d8b82d698a4215d7076bc548a93f1cddd954e709c17af9c8c433a51b875`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
+  digest), signed and attested, with the `pam-agent` binaries, the SPDX SBOM and
+  `SHA256SUMS` attached
+- [x] **The digest warning proved itself, which is why it was worth writing.**
+  v0.57.1 published `sha256:279a5d8b…` where v0.57.0 published
+  `sha256:75a2a43d58dc01247d4af1a56ac56ae3bd2fe535bcec0aedc93791375f995ad0`
+  — two different digests from sources that differ only in two documentation
+  strings. Anyone diffing the tags would have concluded something changed; the
+  CHANGELOG says up front that they will not match and why
 - [x] All pins via the sweep — exactly one release under `deploy/`. Helm chart
   `version` 0.48.0 -> **0.48.1**: a PATCH alongside an app patch, the shape
   v0.54.1 established, not a minor

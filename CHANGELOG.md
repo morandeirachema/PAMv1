@@ -28,8 +28,9 @@ metadata", so the patch component is the one that moves. The Helm chart follows
 with a patch of its own (`0.48.0` → `0.48.1`) rather than a minor, matching how
 v0.54.1 was handled.
 
-**Note for anyone comparing digests.** The image published here will NOT have the
-same digest as v0.57.0 despite being built from equivalent sources — this build
+**Note for anyone comparing digests — and this happened.** v0.57.1 published
+`sha256:279a5d8b…` where v0.57.0 published `sha256:75a2a43d…`. The image here
+does NOT have the same digest as v0.57.0 despite being built from equivalent sources — this build
 is not bit-reproducible across runs, which v0.55.0 demonstrated when a pipeline
 re-run produced a different digest from the same commit. A differing digest
 between these two tags is expected and is not evidence that something changed.
