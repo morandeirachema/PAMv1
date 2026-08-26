@@ -1,6 +1,34 @@
 # pamv1 — security audit, 2026-08-26
 
-> Audit of `main` at `f3fc356`, release **v0.57.1**. Five parallel read-only
+> **RESOLUTION STATUS (Phase 212).** Every CRITICAL and HIGH finding, all four
+> session-introduced defects, and every MEDIUM except M-6 have been fixed on
+> branch `phase-212-*`, each with a regression test and most pinned by mutation.
+> The full gate suite (build, gofmt, vet, staticcheck, gosec, govulncheck,
+> archgen) and the race-enabled test suite pass, and the fixed binary was
+> re-verified booting and serving end to end. Per-finding status is marked
+> inline below as **[FIXED]**, **[FIXED — docs]**, or **[DEFERRED]** with a
+> reason.
+>
+> **Deferred, with rationale:**
+> - **M-6** (20 store methods absent from the contract suite) — test-coverage
+>   debt, not a live defect: the methods work and are exercised through handler
+>   tests against memstore. Adding them to the pgstore contract suite is a
+>   sizable, purely-additive test task best done as its own pass.
+> - **M-3 reservation half** — the name-uniqueness half is FIXED (migration
+>   0049). The budget-over-run-under-concurrent-bursts half needs a new atomic
+>   compare-and-spend store primitive; the per-minute rate limit already bounds
+>   burst volume, so the residual is small and the fix is a deliberate design
+>   change, not a patch.
+> - **F-7** (broker resume token not bound to the collecting agent) — needs an
+>   `agent` column on `broker_tokens` and interface threading; the token is
+>   single-use bearer by explicit design and call IDs are 96-bit random, so this
+>   is a defence-in-depth improvement deferred rather than a live hole.
+> - The remaining **informational** items (OCSF detail influence, auditfwd UDP
+>   cursor, ExportAudit HMAC-in-archive, sshca challenge replay, recording
+>   tail-truncation) are recorded but were assessed non-exploitable or
+>   already-documented.
+
+> Original audit of `main` at `f3fc356`, release **v0.57.1**. Five parallel read-only
 > passes (crypto/secrets · authn/authz · proxies & parsers · store/data ·
 > documentation fact-check), plus an independent runtime verification.
 >
