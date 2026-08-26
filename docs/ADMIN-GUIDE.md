@@ -727,7 +727,7 @@ curl -H "X-API-Key: $PAM_API_KEY" -X DELETE \
   http://localhost:8080/api/credentials/7/doublelock -d '{"password":"a-second-secret"}'
 ```
 
-**The password must be at least 16 characters** (v0.58.0, the 2026-08-26
+**The password must be at least 16 characters** (v0.58.1, the 2026-08-26
 audit's H-3), and `PAM_DOUBLELOCK_MIN_LENGTH` can raise that floor — never
 lower it. A shorter one is refused with `422` and the reason, which is worth
 understanding: this password is the *only* key in front of `DoubleLockEnc`, a
@@ -735,7 +735,7 @@ copy of the secret that deliberately lives outside the vault KEK, so a
 database-only compromise leaves an attacker an offline guess at it, and
 length — entropy — is what defeats that, not iteration count. The derivation
 is PBKDF2-HMAC-SHA-256 at **600 000 iterations** (the OWASP figure; it was
-100 000), with the count stored per record, so a lock set before v0.58.0
+100 000), with the count stored per record, so a lock set before v0.58.1
 still opens at the count it was sealed with; disable and re-enable it to
 reseal at the new count. Locks already in place are otherwise untouched —
 only *enabling* is gated.

@@ -9,7 +9,45 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
-## [0.58.0] — 2026-08-26
+## [0.58.1] — 2026-08-26
+
+**The artifacts for 0.58.0.** That tag exists and stays where it is — the Go
+module proxy had already cached it (checked before deciding, as Phase 65c
+taught), so re-pointing it would leave a permanent checksum mismatch for anyone
+running `go get …@v0.58.0` — but its release pipeline failed *after the push*:
+an image was pushed under `0.58.0` (and, until this release, `latest`) and then
+the SBOM, the signature, both attestations and the GitHub Release never happened.
+**An image exists under `0.58.0` that nothing verifies. Do not deploy it.**
+0.58.1 is the same source plus the one pipeline fix, and it is what every
+manifest pins. Everything the `[0.58.0]` entry below describes ships here.
+
+- **The release workflow no longer builds the image reference from
+  `github.repository`.** The repository was renamed `PAMv1` alongside the
+  display-name change below, and `github.repository` followed — but an OCI
+  reference must be lowercase. `docker/metadata-action` lowercases the tags it
+  emits, so the build and push succeeded; `Generate SBOM`, `cosign sign` and
+  both attestations assemble their reference from the raw variable, and the
+  first of them refused `ghcr.io/morandeirachema/PAMv1@sha256:…`. The name is
+  now lowercased once, in a step that also *refuses* an uppercase result, and
+  that step runs in the `workflow_dispatch` rehearsal too.
+- **The README's verification commands** accept the repository's case in the
+  signing identity (`(?i)` on `--certificate-identity-regexp`; the repository's
+  real name on `gh attestation verify --repo`). The image name stays lowercase.
+- **The release checklist gained the clause it was missing.** "`.github/`
+  untouched since the last tag, so no rehearsal" had been the rule since v0.11.2
+  and was applied correctly here — the diff was empty. A workflow reads its
+  environment as well as its file, and the environment changed under an
+  unchanged file. A rehearsal is now due when anything the workflow *reads* has
+  changed, and the repository's name is on that list.
+
+Helm chart `0.49.0` → `0.49.1`, a patch alongside an app patch. No Go source,
+schema, route or env var changed between `v0.58.0` and this tag.
+
+## [0.58.0] — 2026-08-26 · unsigned image only, superseded by 0.58.1
+
+> **Do not deploy `0.58.0`.** Its pipeline failed after the image push and before
+> the SBOM, signature, attestations and GitHub Release — see `[0.58.1]` above,
+> which ships exactly the content described here, verified.
 
 A minor that ships a **security audit's fixes**: one CRITICAL, five HIGH and every
 MEDIUM but one, from a five-pass read-only audit of v0.57.1 whose redacted record
@@ -2486,7 +2524,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.1...HEAD
+[0.58.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.58.1
 [0.58.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.58.0
 [0.57.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.57.1
 [0.57.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.57.0

@@ -2419,12 +2419,13 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
-## Phase 214 — v0.58.0 ✅
+## Phase 214 — v0.58.0, and v0.58.1 because a tag is not free to move ✅
 
 Releases **212 and 213** — and 212 is the reason this release is due at all: a
 CRITICAL (an unauthenticated ~2 GiB allocation on the PostgreSQL proxy, ahead of
-the rate limiter) and five HIGHs have sat on `main` since the audit merged, and
-a fix nobody can deploy is a fix on paper. 213 is display-only.
+the rate limiter) and five HIGHs had sat on `main` since the audit merged, and a
+fix nobody can deploy is a fix on paper. 213 is display-only — and it is also
+what broke the pipeline.
 
 A **minor**, not a patch. v0.18.2 and v0.54.1 were patches because they moved no
 schema, route or env var; this one moves two of the three — migration
@@ -2433,13 +2434,47 @@ and changes two things an operator can observe (a DoubleLock password now has a
 minimum length; the CEF/LEEF vendor field reads `PAMv1`). Four upgrade notes,
 one of which can refuse a startup.
 
-- [x] **v0.58.0** through the test-gated pipeline. `.github/` untouched since
-  v0.57.1 — checked with a diff on `release.yml` — so no rehearsal. Published
-  2026-08-26 as `ghcr.io/morandeirachema/pamv1:0.58.0` (also `latest`), digest
+**What happened to v0.58.0.** The tag's pipeline built and pushed the image and
+then failed in `Generate SBOM`. The GitHub repository had been renamed `PAMv1`
+alongside Phase 213 — outside the code, so `.github/` showed no diff — and
+`release.yml` assembled its image reference from `github.repository`. An OCI
+reference must be lowercase: `docker/metadata-action` lowercases the tags it
+emits, which is why the push succeeded, while syft, `cosign sign` and both
+attestations build the reference from the raw variable, and the first of them
+refused `ghcr.io/morandeirachema/PAMv1@sha256:…`. So an image exists under
+`0.58.0` that nothing verifies, and the Go module proxy had already cached the
+tag (checked before deciding — HTTP 200 on `@v/v0.58.0.info`), so the Phase 65c
+rule applies: **the tag stays, the CHANGELOG says not to deploy it, and v0.58.1
+is the release** — the same source, one pipeline fix, every pin moved to it.
+
+- [x] **v0.58.1** through the test-gated pipeline, **rehearsed first** with the
+  `workflow_dispatch` build, because this time `.github/` did change. Published
+  2026-08-26 as `ghcr.io/morandeirachema/pamv1:0.58.1` (also `latest`), digest
   recorded once the publish workflow has run, signed and attested, with the
   `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS` attached
+- [x] **The image name is lowercased once and refused if it is not.** A first
+  step in the release job writes `IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}` and
+  exits non-zero on any uppercase survivor; it runs in the rehearsal too, so a
+  regression fails a dry run before it burns a tag
+- [x] **The release-checklist rule gained the clause it was missing.** Since
+  v0.11.2 the rule was "`.github/` untouched since the last tag → no rehearsal",
+  and it was applied correctly here: the diff was empty. The hole is that a
+  workflow reads its environment as well as its file — the repository's name,
+  the runner's tools — and the environment changed under an unchanged file. The
+  rule is now: rehearse when anything the workflow *reads* has changed, and a
+  rename of the repository is on that list
+- [x] **v0.58.0 stays exactly where it is**, recorded in the CHANGELOG as an
+  unsigned-image-only tag, superseded rather than quietly overwritten. The
+  `0.58.0` image in GHCR is left in place and documented as not to be deployed;
+  `latest` moves on to 0.58.1
+- [x] **The README's verification commands survive the rename**: the cosign
+  identity regexps are case-insensitive (`(?i)`), because the certificate's
+  identity carries the repository's own case, and `gh attestation verify
+  --repo` names the repository as it is; the image name in both stays
+  lowercase, as it must
 - [x] All pins via the sweep — exactly one release under `deploy/`. Helm chart
-  `version` 0.48.1 -> **0.49.0**, a minor alongside an app minor
+  `version` 0.48.1 -> 0.49.0 -> **0.49.1**: a minor for the app minor, then a
+  patch for the app patch
 - [x] `store.Store` unchanged at **218**; migration high-water `0048` ->
   **`0049`**; routes unchanged at **193**
 - [x] **The pre-release currency check found that Phase 212 had bumped every
@@ -2464,8 +2499,9 @@ one of which can refuse a startup.
   library default of "no bound" and a limiter that ran after the read — and the
   upgrade note that can refuse a startup (two active agent keys sharing a name
   fail migration `0049`) comes before anything else an operator must do
-- [x] The tag is pushed only **after** the release PR is confirmed merged
-- [x] Full CI-gate sweep re-verified clean on `main` before tagging
+- [x] Each tag pushed only **after** its release PR was confirmed merged — both
+  of them
+- [x] Full CI-gate sweep re-verified clean on `main` before each tag
 
 ## Phase 213 — The name reads `PAMv1`; the identifiers stay `pamv1` ✅
 
@@ -2509,6 +2545,10 @@ machine ownership identifier with upgrade implications).
   secret)
 - [x] No schema, route, env-var or `store.Store` change (218 / `0049` / 193,
   as Phase 212 left them); `archgen` regenerated for the diagram heading
+- [x] **The GitHub repository itself was renamed `PAMv1` alongside** — outside
+  the code, so no diff shows it — and `release.yml` assembled the image
+  reference from `github.repository`, which must be lowercase in an OCI name.
+  The v0.58.0 tag found that out; Phase 214 records it and fixes it
 
 ## Phase 212 — The security audit, and every finding it could reach ✅
 
