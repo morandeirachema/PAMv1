@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–207 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–208 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,59 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 208 — The doc-currency audit, and the three names nothing could grep ✅
+
+A documentation sweep run against v0.56.0 using the method Phase 205 established
+— diff env vars **both ways**, diff emitted audit actions against §5, check every
+doc that states a version, a phase range or the migration high-water. Three
+classes of finding, and the interesting one is a defect class no previous audit
+could have caught.
+
+- [x] **Eight documents had stalled at `Phases 0–205`** — BACKUP-AND-RESTORE,
+  USER-GUIDE, RDP-TESTING, VNC-TESTING, SYSADMIN-GUIDE, NIS2-COMPLIANCE,
+  OT-DEPLOYMENT and EXTERNAL-INFRA-GAPS. Phases 206 and 207 each bumped the
+  headers that were *already current*, which quietly left the stale ones stale:
+  a sweep keyed on "0–206" cannot see a document that never reached 206. Each
+  now states 0–207 **and says what 206–207 do or do not change for it**, which is
+  the part that makes the header an assertion rather than a stamp — EXTERNAL-INFRA-GAPS
+  records that proof of possession narrows §6's SPIRE row without closing it, and
+  SYSADMIN-GUIDE records that it adds no background worker but does add two env vars
+- [x] **Both READMEs claimed the wrong roadmap range.** The English one said the
+  roadmap "runs 0–205" two phases after it did not, and both beta banners still
+  defined beta as "every phase through 52g has shipped" — a sentence that was
+  true when beta was declared and has been quietly wrong for 150 phases. Now
+  simply "every phase has shipped", which cannot go stale
+- [x] **Three refusal actions were missing from §5, and none of them appears as a
+  literal anywhere in the source.** `gateCredentialAccess` audits its `action`
+  argument **plus `_denied`**, so the emitted name is assembled at runtime:
+  `credential.doublelock_enable_denied` and `credential.doublelock_disable_denied`
+  have been emitted since Phase 135 and were invisible to every audit that
+  grepped for literals. `credential.checkout_extend_denied` (Phase 120) is
+  written out in full and was simply missed — §5 carried the extension's success
+  and not its failure
+- [x] **`TestGateDenialNamesAreDocumented` closes the class rather than the
+  instances.** It reconstructs the refusal name the way the helper does, for
+  every call site, and requires each to appear **inside §5** — not merely
+  somewhere in the file, because a name mentioned in a change-log row is history
+  rather than vocabulary, the distinction Phase 193 had to learn. It also asserts
+  the helper still appends `_denied`, so the guard fails loudly if the thing it
+  assumes stops being true. **Verified by deleting one of the two new entries and
+  watching it fail with that exact name**
+- [x] **Two candidate findings were withdrawn after investigation, and the
+  reasons are worth keeping**, because both are false-positive classes a literal
+  diff will keep producing: `PAM_NEW_KEK_AWS_KEY_ID`/`_REGION` read as
+  "documented but never read" because `kekOptionsFromEnv(prefix)` **builds the
+  name dynamically**, and `PAM_AGENT_LOG_FORMAT` read as "read but undocumented"
+  because ADMIN-GUIDE documents it in the **slash shorthand** `PAM_AGENT_LOG_LEVEL`/`_FORMAT`
+  — the same shorthand whose expansion Phase 108 already had to withdraw a
+  finding over. Otherwise the env-var diff is **zero in both directions**
+- [x] **`config.secret_refresh_failed` is correctly absent from §5**: it is an
+  `alert.Event` type, not an audit action. §5 is the audit vocabulary, and
+  widening it to cover alert types would make the next diff noisier, not truer
+
+No code behaviour change, no schema change, no new route, no new env var — one
+new test.
 
 ## Phase 207 — v0.56.0 ✅
 

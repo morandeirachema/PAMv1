@@ -2,7 +2,7 @@
 
 > ⚠️ **Beta · for learning purposes.** This is an educational project built to explore how a
 > Privileged Access Management system works end to end. **Beta** means feature-complete against
-> its [roadmap](ROADMAP.md) — every phase through 52g has shipped, every finding of its own
+> its [roadmap](ROADMAP.md) — every phase has shipped, every finding of its own
 > [security self-audit](docs/SECURITY-GAPS.md) is closed, and every capability is exercised by
 > tests and deploys as code. It still has **not** been audited by anyone outside the project and
 > is **not** production-ready — do not use it to guard real privileged credentials. Use it to
@@ -37,7 +37,7 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
-runs 0–205 and **every phase has shipped**, and the current
+runs 0–208 and **every phase has shipped**, and the current
 tagged, cosign-signed release is
 **[v0.56.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.56.0)** (2026-08-26;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
