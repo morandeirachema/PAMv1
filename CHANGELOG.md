@@ -9,6 +9,84 @@ pamv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.56.0] — 2026-08-26
+
+A minor that makes a delegated AI-agent token **stop being a bearer credential**.
+Until now, anything that captured one — a log line, a crashed process's
+environment, an over-broad container mount — *was* that sub-agent until the token
+expired. It can now be bound to a key, so holding the token is no longer enough.
+**No schema change** (migration high-water stays `0048`), no new route, **two new
+env vars**, **no upgrade note**.
+
+### Added
+
+- **Proof of possession for delegated agent tokens** —
+  [RFC 9449](https://datatracker.ietf.org/doc/html/rfc9449) (DPoP) over
+  [RFC 7800](https://datatracker.ietf.org/doc/html/rfc7800)'s `cnf` claim and
+  [RFC 7638](https://datatracker.ietf.org/doc/html/rfc7638)'s JWK thumbprint.
+
+  `POST /v1/token` accepts a new `cnf_jkt` parameter naming the thumbprint of the
+  key the sub-agent holds, and stamps `cnf: {"jkt": …}` into the issued token.
+  Every call presenting that token must then carry a `DPoP` header — a short JWT
+  signed by the matching private key and scoped to this request's method and URI,
+  this token, and one use. `Authorization: DPoP <token>` is accepted alongside
+  `Bearer`; which scheme was used is never consulted, because the `cnf` claim
+  inside the token decides whether a proof is demanded, not a header word the
+  caller chose.
+
+  **`cnf_jkt` is a pamv1 extension and is documented as one.** RFC 8693 defines no
+  such request parameter, and RFC 9449's own binding flow has the *client* prove
+  its key at the token endpoint — which cannot apply here, since the party calling
+  the exchange is the delegator, not the sub-agent that will hold what it mints.
+
+  **What this establishes, precisely:** the delegator names the key, so pamv1
+  cannot verify that the key belongs to the sub-agent rather than to the delegator
+  itself. What is gained is that a token lifted off the wire or out of a log is
+  useless without the private key. That bounds the blast radius of token *theft*;
+  binding a credential to the process holding it is workload attestation, and
+  stays SPIRE's job.
+
+- **`PAM_BROKER_REQUIRE_POP`** (default `false`): refuse an SVID-authenticated
+  agent whose token carries no binding, turning sender-constrained tokens from
+  available into mandatory. **Bind your tokens first, then set the flag** — with
+  it on, every unbound token already in circulation is refused. Static agent keys
+  carry no claims and so are exempt by construction; the way to stop accepting
+  bearer agent keys is to stop configuring them.
+
+- **`PAM_BROKER_PUBLIC_URL`**: the base origin agents address the broker at, which
+  a proof's `htu` claim is compared against. **Set it whenever anything terminates
+  TLS in front of pamv1** — otherwise the request arrives as plain HTTP on an
+  internal name while the client signed the external URL, and every key-bound
+  agent is refused. `X-Forwarded-*` is deliberately never consulted: letting a
+  caller choose what its own proof is checked against would remove the check.
+
+  Both variables fail the startup loudly when their prerequisite is absent, the
+  same idiom the other broker refusals already use.
+
+- **`agent.pop_denied`** joins the audit vocabulary, carrying a `reason:` naming
+  which check failed (`proof-header-missing`, `proof-replayed`,
+  `proof-not-bound-to-this-token`, `proof-key-is-not-the-bound-key`,
+  `token-not-key-bound`, …) behind the same opaque 401 a bad bearer credential
+  gets. It also scores as a blocked command in the risk engine: to be refused
+  here, a caller had to present a token whose signature, audience, expiry and
+  trust domain all verified and merely fail to prove key possession — which is the
+  signature of a stolen token being spent.
+
+### Upgrade notes
+
+None. An unbound token behaves exactly as it did before, pinned by its own test,
+and both new variables default to off. Adoption is per token, at the mint: pass
+`cnf_jkt` for the agents you want bound, and set `PAM_BROKER_REQUIRE_POP` only
+once they all are.
+
+Two behaviours to know before enabling it. A **bound delegator cannot mint an
+unbound token** — if the delegating token carries a `cnf`, `cnf_jkt` is required
+on the next exchange, so the constraint cannot be walked off one hop down. And a
+confirmation pamv1 cannot enforce (RFC 7800 also defines `jwk` and `kid` forms)
+**refuses the token** rather than reading as "unbound", since treating an
+unreadable binding as no binding would downgrade a token its issuer deliberately
+constrained.
+
 ## [0.55.0] — 2026-08-25
 
 A minor that closes **two estate-wide defaults** — the kind of thing that is not
@@ -2190,7 +2268,8 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.55.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.56.0...HEAD
+[0.56.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.56.0
 [0.55.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.55.0
 [0.54.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.54.1
 [0.54.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.54.0
