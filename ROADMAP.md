@@ -2434,10 +2434,18 @@ no upgrade note.
   since v0.55.0, so the v0.11.1 rehearsal rule did not apply — checked with a
   diff on `release.yml` specifically, per the refined rule, rather than by
   eyeballing `.github/` as a whole. Published 2026-08-26 as
-  `ghcr.io/morandeirachema/pamv1:0.56.0` (also `latest`), digest recorded in the
-  follow-up, **public** (anonymous pull on both tags, both resolving to the same
+  `ghcr.io/morandeirachema/pamv1:0.56.0` (also `latest`), digest
+  `sha256:6cc80bac424f22dd696cac7898b1b4837e95a3ac82be95da7000bfe1188df415`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
   digest), signed and attested, with the `pam-agent` binaries, the SPDX SBOM and
   `SHA256SUMS` attached
+- [x] **The pipeline succeeded on the first attempt**, which is worth recording
+  only because the last two releases did not: v0.55.0 hit a transient cosign OIDC
+  failure and needed a re-run. Signing was verified the way that actually works —
+  reading the workflow's own step conclusions (`Sign the image (keyless)`,
+  `Attest the SBOM`, `Attest build provenance (SLSA)`, all `success`) rather than
+  probing `.sig`/`.att` tags or the GHCR referrers API, both of which return
+  nothing even for known-good releases
 - [x] All pins via the sweep, which is the check that cannot go stale:
   `grep -rhoE "pamv1:0\.[0-9]+\.[0-9]+|tag: v0\.[0-9]+\.[0-9]+|appVersion: \"[0-9.]+\"" deploy/`
   must return exactly one release. Helm chart `version` 0.46.0 -> **0.47.0**, a
