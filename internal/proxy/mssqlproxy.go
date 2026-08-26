@@ -807,6 +807,9 @@ func (m *MSSQLProxy) refuse(ctx context.Context, c *tds.Conn, res admitResult, a
 	case gateEnrollOnly:
 		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
 		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: complete MFA enrollment first", tds72)
+	case gateExtensionOnly:
+		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:extension-scoped-token")
+		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: a browser-extension token cannot open a database session", tds72)
 	case gateMFAPending:
 		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-webauthn-pending")
 		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: complete WebAuthn sign-in first", tds72)

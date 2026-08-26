@@ -437,12 +437,35 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 	// refusal for the proxy, which resolves its own principal and would otherwise
 	// accept it as a password for ANY target the owner may reach, for an
 	// unbounded session, from a 60-second token.
-	if principal.TunnelOnly {
+	// The SSH proxy refuses narrow scopes HERE, at authentication, rather than
+	// in admit(): a refused password is the cheapest and quietest outcome, and
+	// it happens before any channel exists. That made this a fifth hand-written
+	// copy of the scope test — and the 2026-08-26 audit found it, like the
+	// proxies' admit() gate, checking TunnelOnly and nothing newer. The test now
+	// has one implementation, and this callback only maps its answer to the
+	// audit reason each scope has always used.
+	if !principal.MayOpenSession(auth.ScopeNone) {
 		remote := c.RemoteAddr().String()
-		p.log.Warn("tunnel-scoped token presented to the SSH proxy", "actor", principal.Name, "remote", remote)
-		p.audit(context.Background(), principal.Name, "session.denied",
-			"login:"+auditField(c.User(), 64)+" remote:"+remote+" reason:tunnel-only-token")
-		return nil, fmt.Errorf("pamv1: authentication failed")
+		reason := "narrow-scoped-token"
+		switch principal.NarrowScope() {
+		case auth.ScopeTunnelOnly:
+			reason = "tunnel-only-token"
+		case auth.ScopeExtensionOnly:
+			reason = "extension-scoped-token"
+		case auth.ScopeEnrollOnly, auth.ScopeMFAPending:
+			// Reachable here in principle, but these two have always been
+			// admitted to authentication and refused by admit() one step later
+			// with their own richer wording — keep that behaviour by letting
+			// them through, so the channel-level refusal (and its test) stays
+			// the one that fires.
+			reason = ""
+		}
+		if reason != "" {
+			p.log.Warn("narrow-scoped token presented to the SSH proxy", "actor", principal.Name, "scope", reason, "remote", remote)
+			p.audit(context.Background(), principal.Name, "session.denied",
+				"login:"+auditField(c.User(), 64)+" remote:"+remote+" reason:"+reason)
+			return nil, fmt.Errorf("pamv1: authentication failed")
+		}
 	}
 	p.noteBreakGlass(context.Background(), principal, "ssh login:"+auditField(c.User(), 64)+" remote:"+c.RemoteAddr().String())
 
@@ -873,14 +896,22 @@ func (p *Proxy) loadPrincipal(token string) (*auth.Principal, bool) {
 // proxies (access.denied for the approval and vendor denials, and
 // credential.decrypt_failed) and the shared check-failed error logs; this adds
 // only the SSH-transport-specific wording. The switch is exhaustive over the
-// gates reachable on the SSH path; gateTunnelOnly (refused at authentication)
-// and gateProtocolMatch (a DB-only gate) fall to the fail-closed default.
+// gates reachable on the SSH path; gateTunnelOnly and gateExtensionOnly (both
+// refused at authentication) and gateProtocolMatch (a DB-only gate) fall to
+// the fail-closed default in practice, and each still rejects if reached.
 func (p *Proxy) refuse(ctx context.Context, chans <-chan ssh.NewChannel, res admitResult, actor, login string, role auth.Role, remote string) {
 	switch res.gate {
 	case gateEnrollOnly:
 		p.log.Warn("session denied: mfa enrollment incomplete", "actor", actor, "remote", remote)
 		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
 		rejectAll(chans, ssh.Prohibited, "pamv1: complete MFA enrollment first")
+	case gateExtensionOnly:
+		// Normally unreachable on SSH — refused at authentication above, like
+		// gateTunnelOnly — but if it ever is reached it must REJECT, not merely
+		// audit. The first draft of this arm did only the latter.
+		p.log.Warn("session denied: browser-extension token", "actor", actor, "remote", remote)
+		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:extension-scoped-token")
+		rejectAll(chans, ssh.Prohibited, "pamv1: a browser-extension token cannot open a session")
 	case gateMFAPending:
 		p.log.Warn("session denied: webauthn sign-in pending", "actor", actor, "remote", remote)
 		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:mfa-webauthn-pending")

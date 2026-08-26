@@ -706,6 +706,9 @@ func (d *DBProxy) refuse(ctx context.Context, backend *pgproto3.Backend, res adm
 	case gateEnrollOnly:
 		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
 		d.fail(backend, "28000", "pamv1: complete MFA enrollment first")
+	case gateExtensionOnly:
+		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:extension-scoped-token")
+		d.fail(backend, "28000", "pamv1: a browser-extension token cannot open a database session")
 	case gateMFAPending:
 		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-webauthn-pending")
 		d.fail(backend, "28000", "pamv1: complete WebAuthn sign-in first")
