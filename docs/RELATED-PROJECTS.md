@@ -1,10 +1,10 @@
-# pamv1 — Related PAM Projects (open-source & commercial landscape)
+# PAMv1 — Related PAM Projects (open-source & commercial landscape)
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](README.md)).
 
-> How pamv1 sits in the wider Privileged Access Management landscape — both the
+> How PAMv1 sits in the wider Privileged Access Management landscape — both the
 > **open-source** projects and the **commercial** products (including the many
-> commercial offerings that are built on, or "follow", open-source cores). pamv1
+> commercial offerings that are built on, or "follow", open-source cores). PAMv1
 > is an educational project, not a competitor to any of these; the per-capability
 > comparison lives in the README's
 > [coverage section](../README.md#coverage-vs-commercial-pam-cyberark-wallix-).
@@ -53,28 +53,28 @@ flowchart TB
     FI["FreeIPA"]
     KC["Keycloak"]
   end
-  PAM["pamv1<br/>(this project)"] -.compares to.-> P
+  PAM["PAMv1<br/>(this project)"] -.compares to.-> P
   PAM -.uses ideas from.-> S & Z & G
 ```
 
-### Full-featured PAM / access bastions (closest to pamv1)
+### Full-featured PAM / access bastions (closest to PAMv1)
 
-| Project | License | What it is | Relation to pamv1 |
+| Project | License | What it is | Relation to PAMv1 |
 |---|---|---|---|
-| [JumpServer](https://github.com/jumpserver/jumpserver) | GPLv3 | Arguably the most complete open-source PAM/bastion: brokered SSH/RDP/VNC/database/Kubernetes access, session recording, command filtering, MFA, RBAC, an audit console | Same problem space; much larger and more mature. pamv1 is deliberately smaller/educational |
-| [Teleport](https://goteleport.com/) | Apache-2.0 (Community Edition) | Access to SSH, Kubernetes, databases, web apps and Windows/RDP built on **short-lived certificates**, session recording, RBAC. Governance features are in the paid editions | Its short-lived-cert model is exactly what pamv1's **Zero Standing Privilege** (Phase 22) borrows |
-| [Warpgate](https://github.com/warp-tech/warpgate) | Apache-2.0 | A lightweight, agentless SSH/HTTP/MySQL bastion (Rust) with session recording and a web admin UI | The leanest modern analogue of pamv1's proxy |
+| [JumpServer](https://github.com/jumpserver/jumpserver) | GPLv3 | Arguably the most complete open-source PAM/bastion: brokered SSH/RDP/VNC/database/Kubernetes access, session recording, command filtering, MFA, RBAC, an audit console | Same problem space; much larger and more mature. PAMv1 is deliberately smaller/educational |
+| [Teleport](https://goteleport.com/) | Apache-2.0 (Community Edition) | Access to SSH, Kubernetes, databases, web apps and Windows/RDP built on **short-lived certificates**, session recording, RBAC. Governance features are in the paid editions | Its short-lived-cert model is exactly what PAMv1's **Zero Standing Privilege** (Phase 22) borrows |
+| [Warpgate](https://github.com/warp-tech/warpgate) | Apache-2.0 | A lightweight, agentless SSH/HTTP/MySQL bastion (Rust) with session recording and a web admin UI | The leanest modern analogue of PAMv1's proxy |
 | [Bastillion](https://github.com/bastillion-io/Bastillion) | source-available (non-commercial; was GPLv3) | Web-based SSH bastion + SSH-key distribution + session auditing | An older SSH-centric take; check the license before use |
 | [sshportal](https://github.com/moul/sshportal) | Apache-2.0 | A small single-binary SSH bastion with host/user management, ACLs and recording | PAM-lite; similar "one binary, Postgres/SQLite" spirit |
 | [HashiCorp Boundary](https://www.boundaryproject.io/) | BUSL (source-available) | Identity-based session brokering with credential injection, pairs with Vault | Same "broker the session, inject the credential" idea; different licensing posture |
 
 ### Secrets / credential management (the vault half of PAM)
 
-| Project | License | What it is | Relation to pamv1 |
+| Project | License | What it is | Relation to PAMv1 |
 |---|---|---|---|
-| [HashiCorp Vault](https://www.vaultproject.io/) | BUSL | Dynamic secrets, database credentials, and an **SSH secrets engine that signs certificates** | pamv1's vault + KEK + SSH-CA cover a small, opinionated subset |
+| [HashiCorp Vault](https://www.vaultproject.io/) | BUSL | Dynamic secrets, database credentials, and an **SSH secrets engine that signs certificates** | PAMv1's vault + KEK + SSH-CA cover a small, opinionated subset |
 | [OpenBao](https://openbao.org/) | MPL-2.0 | The Linux-Foundation, fully-open fork of Vault after its relicensing | The OSI-open alternative if licensing matters |
-| [CyberArk Conjur (OSS)](https://www.conjur.org/) | Apache-2.0 | Machine-identity secrets for apps/DevOps | pamv1 can **source its own bootstrap secrets** from Conjur (Phase 18), and its Tier-4 **application-secrets API** (Phase 24) is "Conjur-style" |
+| [CyberArk Conjur (OSS)](https://www.conjur.org/) | Apache-2.0 | Machine-identity secrets for apps/DevOps | PAMv1 can **source its own bootstrap secrets** from Conjur (Phase 18), and its Tier-4 **application-secrets API** (Phase 24) is "Conjur-style" |
 | [Infisical](https://github.com/Infisical/infisical) · [Passbolt](https://www.passbolt.com/) | MIT core / AGPL | Secrets & team-password vaulting | Vault-only; no session brokering |
 
 ### Ephemeral credentials / SSH certificate authorities (Zero Standing Privilege)
@@ -84,14 +84,14 @@ flowchart TB
 | [Smallstep `step-ca`](https://smallstep.com/docs/step-ca/) | Apache-2.0 | An open CA that issues short-lived SSH and X.509 certificates |
 | [Netflix BLESS](https://github.com/Netflix/bless) | Apache-2.0 | A Lambda-based SSH certificate authority for ephemeral access |
 
-pamv1's Phase 22 (`internal/sshca`) is a small, self-contained version of this idea wired
+PAMv1's Phase 22 (`internal/sshca`) is a small, self-contained version of this idea wired
 directly into the proxy — no external CA service required.
 
 ### Session gateways / clientless remote access
 
-| Project | License | What it is | Relation to pamv1 |
+| Project | License | What it is | Relation to PAMv1 |
 |---|---|---|---|
-| [Apache Guacamole](https://guacamole.apache.org/) | Apache-2.0 | Clientless RDP/VNC/SSH through the browser, with server-side recording | pamv1 **uses `guacd`** for its RDP brokering (Phase 4) |
+| [Apache Guacamole](https://guacamole.apache.org/) | Apache-2.0 | Clientless RDP/VNC/SSH through the browser, with server-side recording | PAMv1 **uses `guacd`** for its RDP brokering (Phase 4) |
 
 ### Identity layer (adjacent — usually paired with a PAM, not a PAM themselves)
 
@@ -99,7 +99,7 @@ directly into the proxy — no external CA service required.
 |---|---|---|
 | [Pomerium](https://www.pomerium.com/) | Apache-2.0 | An identity-aware access proxy (zero-trust access to internal apps) |
 | [FreeIPA](https://www.freeipa.org/) | GPLv3 | Linux identity management: host-based access control, sudo rules, SSH keys, a built-in CA |
-| [Keycloak](https://www.keycloak.org/) | Apache-2.0 | IAM / SSO — the login and federation side (pamv1 integrates via OIDC) |
+| [Keycloak](https://www.keycloak.org/) | Apache-2.0 | IAM / SSO — the login and federation side (PAMv1 integrates via OIDC) |
 
 ---
 
@@ -171,7 +171,7 @@ built directly on top of, one of the open-source projects in Part 1.
 
 ---
 
-## Where pamv1 fits
+## Where PAMv1 fits
 
 If you need a PAM today, **[JumpServer](https://github.com/jumpserver/jumpserver)** and
 **[Teleport](https://goteleport.com/)** are the two closest to a complete open-source
@@ -181,7 +181,7 @@ is a leaner modern option, and **[Vault](https://www.vaultproject.io/)/[OpenBao]
 foundation. The commercial leaders (CyberArk, BeyondTrust, Delinea, Wallix) go far deeper
 on governance, connectors and analytics.
 
-pamv1 does not compete with any of these — it is a **single Go + PostgreSQL binary**, built
+PAMv1 does not compete with any of these — it is a **single Go + PostgreSQL binary**, built
 **phase by phase** where every phase is functional end to end, **educational** rather than
 production-hardened, with a deliberately austere **AS/400 / 5250 console** and two more
 unusual angles: an **AI-agent access broker** (policy over a tool *and its arguments*, JIT
@@ -198,4 +198,4 @@ needs a real account or host to build.
 | Date | Change |
 |---|---|
 | 2026-07-22 | Merged the commercial-product landscape (Part 2 — traditional leaders, cloud-native/CIEM, and commercial products built on open-source cores) into this doc alongside the open-source landscape (Part 1). |
-| 2026-07-21 | Initial landscape of related open-source PAM / bastion / secrets / SSH-CA / gateway projects and where pamv1 fits. |
+| 2026-07-21 | Initial landscape of related open-source PAM / bastion / secrets / SSH-CA / gateway projects and where PAMv1 fits. |

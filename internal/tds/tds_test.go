@@ -475,7 +475,7 @@ func TestRefusalTokenBytes(t *testing.T) {
 	out := Refusal(50000, 16, "no", PacketSQLBatch, true)
 	// ERROR: token, length, number(4), state, class, msglen(2), msg, srvlen,
 	// srv, proclen, linenumber(4).
-	msg, srv := stringToUCS2("no"), stringToUCS2("pamv1")
+	msg, srv := stringToUCS2("no"), stringToUCS2("PAMv1")
 	bodyLen := 4 + 1 + 1 + 2 + len(msg) + 1 + len(srv) + 1 + 4
 	want := []byte{TokenError, byte(bodyLen), 0x00, 0x50, 0xc3, 0x00, 0x00, 0x01, 0x10, 0x02, 0x00}
 	want = append(want, msg...)

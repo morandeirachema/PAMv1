@@ -35,7 +35,7 @@ func TestOperatorCertIssuanceAndRevocation(t *testing.T) {
 		t.Fatalf("seed credential: %d %s", st, d)
 	}
 
-	// The operator's own keypair (pamv1 only signs the public half).
+	// The operator's own keypair (PAMv1 only signs the public half).
 	opPub, opPriv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)

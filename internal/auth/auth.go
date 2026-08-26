@@ -1,4 +1,4 @@
-// Package auth defines pamv1's identity and role-based access control.
+// Package auth defines PAMv1's identity and role-based access control.
 //
 // There are four profiles (roles):
 //
@@ -195,7 +195,7 @@ type UngatedDefault int
 
 const (
 	// UngatedOpen: a target nobody has restricted is reachable by any
-	// connect-capable principal. This is what pamv1 has always done, and it stays
+	// connect-capable principal. This is what PAMv1 has always done, and it stays
 	// the default so an upgrade changes nothing — but it is an estate-wide
 	// default rather than a decision anyone made about a particular system, which
 	// is why the reachability review renders those targets in red.
@@ -756,7 +756,7 @@ func NewResolver(dir Directory, apiKey, breakGlassHashHex string) (*Resolver, er
 func (r *Resolver) BreakGlassEnabled() bool { return len(r.keys.Load().breakGlassHash) != 0 }
 
 // TokenHash returns the hex-encoded SHA-256 of a bearer secret. It is the single
-// definition of how pamv1 derives the stored lookup key for every kind of token
+// definition of how PAMv1 derives the stored lookup key for every kind of token
 // — per-user access tokens, agent keys, application keys, session tokens,
 // recovery codes and the broker's resume JTIs — so the plaintext is never
 // persisted and the hashing cannot drift between the places that write a hash

@@ -1,7 +1,7 @@
-# pamv1 appliance (OVA)
+# PAMv1 appliance (OVA)
 
 A single-file virtual appliance: **Debian 13 (trixie)**, PostgreSQL, the
-`pam-server` binary and the **full pamv1 source tree**, packaged as an `.ova` you
+`pam-server` binary and the **full PAMv1 source tree**, packaged as an `.ova` you
 can import into VirtualBox, VMware Workstation/Fusion or ESXi.
 
 It is built by [`build.sh`](build.sh), which needs **no root, no VirtualBox and no
@@ -10,7 +10,7 @@ unattended `debian-installer` run driven by [`http/preseed.cfg`](http/preseed.cf
 the OVA is assembled by hand, because an OVA is nothing more than a tar of an OVF
 descriptor, a SHA-256 manifest and a disk image.
 
-> ⚠️ **Educational build.** pamv1 is not production-hardened and has never been
+> ⚠️ **Educational build.** PAMv1 is not production-hardened and has never been
 > externally audited. The appliance is a way to *run and read* it end to end in
 > minutes — not somewhere to put real production credentials.
 
@@ -31,7 +31,7 @@ keep the work directory, `HTTP_PORT=` if 8099 is taken.
 The build refuses to package an image it has not seen work. After the install it
 boots the finished disk — on a **throwaway copy-on-write overlay**, never the image
 you ship, because booting consumes first boot — and polls the guest's `/healthz`
-through a forwarded port. Packaging only happens once pamv1 answers, which
+through a forwarded port. Packaging only happens once PAMv1 answers, which
 transitively proves the binary installed, PostgreSQL came up, the role and database
 were created, first boot generated its keys and the systemd sandbox did not block
 the service.
@@ -80,9 +80,9 @@ console. It is also in `/root/pamv1-credentials.txt`. Then:
 - **SSH session proxy** — `ssh -p 2222 <credential-user>@<target>@127.0.0.1`,
   using the admin key as the SSH password.
 - **Appliance shell** — user `pam` (`ssh -p 2200 pam@127.0.0.1`). The placeholder
-  password is `pamv1` and is **force-expired**: you must set a new one on first
+  password is `PAMv1` and is **force-expired**: you must set a new one on first
   login. Add an SSH key and turn off `PasswordAuthentication` in
-  `/etc/ssh/sshd_config.d/10-pamv1.conf`.
+  `/etc/ssh/sshd_config.d/10-PAMv1.conf`.
 
 ## What is inside
 
@@ -96,16 +96,16 @@ console. It is also in `/root/pamv1-credentials.txt`. Then:
 | `/var/log/pamv1-provision.log` | What the build did inside the guest |
 
 ```bash
-systemctl status pamv1          # the service
-journalctl -u pamv1 -f          # its logs
-sudo -u pamv1 pam-server -healthcheck   # what the readiness probe uses
+systemctl status PAMv1          # the service
+journalctl -u PAMv1 -f          # its logs
+sudo -u PAMv1 pam-server -healthcheck   # what the readiness probe uses
 cat /etc/pamv1/build-info       # version, commit, base image, binary digest
 ```
 
 Every other `PAM_*` knob is documented in
 [`../docker/.env.example`](../docker/.env.example) (shipped at
 `/opt/pamv1/src/deploy/docker/.env.example`). Add lines to
-`/etc/pamv1/pamv1.env`, then `systemctl restart pamv1`.
+`/etc/pamv1/pamv1.env`, then `systemctl restart PAMv1`.
 
 ## Design decisions worth knowing
 
@@ -121,7 +121,7 @@ database password, SSH host keys and machine-id are all generated on **first
 boot** ([`firstboot.sh`](firstboot.sh)), which is idempotent, so a reboot never
 rotates a running appliance's keys.
 
-**PostgreSQL is localhost-only and pamv1 is not a superuser.** The `pam` role owns
+**PostgreSQL is localhost-only and PAMv1 is not a superuser.** The `pam` role owns
 its database and nothing else, and `pg_hba.conf` allows only `127.0.0.1`. The
 vault's KEK is outside the database, so a database-only compromise yields
 ciphertext — but note that since Phase 55 the same connection also carries the

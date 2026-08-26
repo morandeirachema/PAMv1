@@ -1,4 +1,4 @@
-# pamv1 — security audit, 2026-08-26 (redacted)
+# PAMv1 — security audit, 2026-08-26 (redacted)
 
 > **Status: closed.** Every finding below is either **fixed** (with a regression
 > test, most pinned by mutation) or **deferred** with a stated reason. This is

@@ -1,7 +1,7 @@
-// Package k8s is the narrow Kubernetes API client behind pamv1's brokered
+// Package k8s is the narrow Kubernetes API client behind PAMv1's brokered
 // kubectl-shaped operations (Phase 155). It speaks the Kubernetes REST API
 // directly — plain HTTPS + JSON — and deliberately does NOT vendor
-// k8s.io/client-go: what pamv1 needs is four discrete request shapes
+// k8s.io/client-go: what PAMv1 needs is four discrete request shapes
 // (`get`, `logs`, `apply`, `delete`), and client-go would pull in hundreds of
 // packages, its own scheme/codec machinery and a release cadence tied to the
 // cluster's, to reach the same four HTTP calls. That is the same reasoning
@@ -26,7 +26,7 @@
 // kubectl maps `deployments` → `/apis/apps/v1/...` by querying the cluster's
 // discovery endpoints (`/api`, `/apis`, `/apis/{group}/{version}`), which is
 // N+2 requests per operation unless a cache with its own staleness semantics is
-// introduced. pamv1 instead takes the API version explicitly (defaulting to
+// introduced. PAMv1 instead takes the API version explicitly (defaulting to
 // core `v1`), so a request names exactly the API it will call: one HTTP request
 // per operation, no cache to go stale, CRDs work on day one
 // (`resource:"widgets", api_version:"example.com/v1"`), and the audited command
@@ -58,7 +58,7 @@ import (
 	"time"
 )
 
-// The verbs pamv1 brokers. Anything else is refused by Validate — an unknown
+// The verbs PAMv1 brokers. Anything else is refused by Validate — an unknown
 // verb must never fall through to a request nobody described.
 const (
 	VerbGet    = "get"
@@ -72,11 +72,11 @@ const (
 // and the rest of `/api/v1`.
 const DefaultAPIVersion = "v1"
 
-// FieldManager identifies pamv1 as the owner of the fields it applies
+// FieldManager identifies PAMv1 as the owner of the fields it applies
 // (Kubernetes server-side apply requires a field manager, and records it on the
-// object). Seeing `pamv1` in `metadata.managedFields` on a cluster object is
+// object). Seeing `PAMv1` in `metadata.managedFields` on a cluster object is
 // itself a useful audit signal.
-const FieldManager = "pamv1"
+const FieldManager = "PAMv1"
 
 // defaultTailLines bounds a `logs` read that does not ask for a specific
 // number. A pod's log is unbounded; a brokered, audited, transcript-recorded
@@ -85,7 +85,7 @@ const defaultTailLines = 200
 
 // applyContentType is the media type Kubernetes server-side apply expects. The
 // manifest travels as the operator wrote it (YAML or JSON — the API server
-// accepts both under this type), so pamv1 never re-serializes what it is about
+// accepts both under this type), so PAMv1 never re-serializes what it is about
 // to apply.
 const applyContentType = "application/apply-patch+yaml"
 
@@ -201,7 +201,7 @@ func New(cfg Config) (*Client, error) {
 }
 
 // Request is one brokered operation. It is the whole vocabulary: what the
-// caller cannot express here, pamv1 does not do to a cluster.
+// caller cannot express here, PAMv1 does not do to a cluster.
 type Request struct {
 	// Verb is get, logs, apply or delete.
 	Verb string
@@ -226,13 +226,13 @@ type Request struct {
 	// TailLines bounds a logs read (default 200).
 	TailLines int
 	// Manifest is the apply body, exactly as the operator supplied it (YAML or
-	// JSON); pamv1 never rewrites it.
+	// JSON); PAMv1 never rewrites it.
 	Manifest []byte
 }
 
 // Result is one brokered operation's outcome. Status is the cluster's own HTTP
 // status — including 403 when the cluster's RBAC refuses the vaulted
-// credential, which is an answer, not a pamv1 failure — and Body is the
+// credential, which is an answer, not a PAMv1 failure — and Body is the
 // response as the API server sent it, capped.
 type Result struct {
 	Status int    `json:"status"`
@@ -329,7 +329,7 @@ func (r Request) Validate() error {
 		}
 	case VerbDelete:
 		if r.Name == "" {
-			// Kubernetes can delete a whole collection; pamv1 will not offer a
+			// Kubernetes can delete a whole collection; PAMv1 will not offer a
 			// verb whose blast radius is "everything the selector matched".
 			return errors.New("k8s: delete requires a name (collection deletes are not brokered)")
 		}
@@ -443,7 +443,7 @@ func (r Request) build() (method, path string, query url.Values, body []byte, co
 		method, accept = http.MethodDelete, "application/json"
 	case VerbApply:
 		// Server-side apply: one idempotent PATCH that creates the object if it
-		// does not exist and reconciles it if it does, with pamv1 recorded as
+		// does not exist and reconciles it if it does, with PAMv1 recorded as
 		// the field manager. `force` resolves conflicts with fields another
 		// manager owns — brokered, audited administrative access is exactly the
 		// case where the operator means it, and the alternative (a 409 an
@@ -477,7 +477,7 @@ func (c *Client) Do(ctx context.Context, r Request) (Result, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", accept)
-	req.Header.Set("User-Agent", "pamv1")
+	req.Header.Set("User-Agent", "PAMv1")
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}

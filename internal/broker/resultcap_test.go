@@ -42,7 +42,7 @@ func TestCapResultTruncatesAndSaysSo(t *testing.T) {
 	if !strings.HasPrefix(got, "AAAA") {
 		t.Fatal("the beginning of the output must be preserved — that is the part worth keeping")
 	}
-	if !strings.Contains(got, "truncated by pamv1") {
+	if !strings.Contains(got, "truncated by PAMv1") {
 		t.Fatalf("the shortened text must say so in the text itself, got: %q", got[len(got)-80:])
 	}
 	if out.Data["truncated"] != true {

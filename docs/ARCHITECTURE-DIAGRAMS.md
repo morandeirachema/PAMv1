@@ -1,4 +1,4 @@
-# pamv1 — Architecture Diagrams (generated)
+# PAMv1 — Architecture Diagrams (generated)
 
 > **Do not edit by hand.** This file is regenerated from the source by
 > `go run ./cmd/archgen` (or `go generate ./...`). CI runs the

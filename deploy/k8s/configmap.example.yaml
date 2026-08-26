@@ -1,4 +1,4 @@
-# pamv1 — non-secret configuration for Kubernetes.
+# PAMv1 — non-secret configuration for Kubernetes.
 #
 # This is the Kubernetes twin of deploy/docker/.env.example: same knobs, same
 # grouping, expressed as a ConfigMap. Secret-valued variables do NOT belong here
@@ -35,7 +35,7 @@
 #      # then here:
 #      PAM_COMMAND_DENY_FILE: "/etc/pamv1/deny.txt"
 #
-# Every variable pamv1 reads is documented in
+# Every variable PAMv1 reads is documented in
 # docs/ARCHITECTURE-LOW-LEVEL.md §"Configuration"; defaults shown in brackets.
 apiVersion: v1
 kind: ConfigMap
@@ -64,7 +64,7 @@ data:
   # PAM_TLS_CERT: "/etc/pamv1/tls/tls.crt"
   # PAM_TLS_KEY: "/etc/pamv1/tls/tls.key"
   # PAM_REQUIRE_HTTPS: "false"
-  # Behind an Ingress, tell pamv1 how many proxy hops to trust so per-IP rate
+  # Behind an Ingress, tell PAMv1 how many proxy hops to trust so per-IP rate
   # limiting sees the real client instead of the ingress controller's address.
   # PAM_TRUSTED_PROXY_HOPS: "1"
   # PAM_AUTH_RATE_LIMIT: "20"        # auth attempts / client IP / minute
@@ -149,7 +149,7 @@ data:
   # PAM_ENTRA_TENANT_ID: ""
   # PAM_ENTRA_CLIENT_ID: ""
   # PAM_OIDC_ISSUER: "https://idp.example/realms/main"
-  # PAM_OIDC_CLIENT_ID: "pamv1"
+  # PAM_OIDC_CLIENT_ID: "PAMv1"
   # PAM_OIDC_REDIRECT_URL: "https://pam.example.com/api/auth/oidc/callback"
   # PAM_OIDC_ROLE_ADMIN: "pam-admins"
   # SAML 2.0 SP (Phase 151; ADFS and other SAML-only IdPs) — no secrets: the
@@ -202,9 +202,9 @@ data:
   # PAM_ALERT_WEBHOOK: "https://alerts.internal/pamv1"
   # PAM_ALERT_SYSLOG: "udp://syslog.internal:514"
   # PAM_ALERT_EMAIL_SMTP: "smtp.internal:587"
-  # PAM_ALERT_EMAIL_FROM: "pamv1@example.com"
+  # PAM_ALERT_EMAIL_FROM: "PAMv1@example.com"
   # PAM_ALERT_EMAIL_TO: "soc@example.com,oncall@example.com"
-  # PAM_ALERT_EMAIL_USER: "pamv1"
+  # PAM_ALERT_EMAIL_USER: "PAMv1"
 
   # --- Break-glass (the key HASH and shares live in the Secret) ------------
   # PAM_BREAK_GLASS_THRESHOLD: "0"       # M ≥ 2 enables M-of-N quorum unseal
@@ -223,12 +223,12 @@ data:
   # PAM_BROKER_RATE_PER_MIN: "0"
   # PAM_BROKER_AUDIT_CHECKPOINT_EVERY: "0"
   # PAM_BROKER_MAX_DELEGATION_DEPTH: "1"
-  # PAM_BROKER_REQUIRE_KNOWN_OWNER: "false"   # refuse an approval whose agent owner is not a pamv1 user
+  # PAM_BROKER_REQUIRE_KNOWN_OWNER: "false"   # refuse an approval whose agent owner is not a PAMv1 user
   # PAM_BROKER_POSTURE_REQUIRED: "false"      # ask PAM_POSTURE_ATTEST_URL about agents too
   # SPIFFE/SVID identity for agents:
   # PAM_BROKER_TRUST_DOMAIN_JWKS: "/etc/pamv1/spiffe-jwks.json"
   # PAM_BROKER_TRUST_DOMAIN: "example.org"
-  # PAM_BROKER_AUDIENCE: "pamv1"
+  # PAM_BROKER_AUDIENCE: "PAMv1"
   # A target with NO grants at all is reachable by everyone who may connect —
   # an estate-wide default, not a decision about that system. Turn this on to
   # require a grant. Read the reachability review (console menu 31) first: it
@@ -271,21 +271,21 @@ data:
   # --- KEK provider (the local key and provider tokens go in the Secret) ---
   # PAM_KEK_PROVIDER: "local"            # local | vault-transit | aws-kms | pkcs11
   # PAM_KEK_TRANSIT_ADDR: "https://vault.internal:8200"
-  # PAM_KEK_TRANSIT_KEY: "pamv1"
+  # PAM_KEK_TRANSIT_KEY: "PAMv1"
   # PAM_KEK_AWS_KEY_ID: "arn:aws:kms:eu-west-1:123456789012:key/abcd-..."
   # PAM_KEK_AWS_REGION: "eu-west-1"
   # pkcs11 needs the pkcs11-tagged image (Dockerfile.pkcs11), not the default one:
   # PAM_KEK_PKCS11_MODULE: "/usr/lib/softhsm/libsofthsm2.so"
   # PAM_KEK_PKCS11_KEY_LABEL: "pamv1-kek"
-  # PAM_KEK_PKCS11_TOKEN_LABEL: "pamv1"
+  # PAM_KEK_PKCS11_TOKEN_LABEL: "PAMv1"
 
   # --- Conjur bootstrap-secret sourcing ------------------------------------
-  # An alternative to a Kubernetes Secret: pamv1 fetches any EMPTY bootstrap
+  # An alternative to a Kubernetes Secret: PAMv1 fetches any EMPTY bootstrap
   # variable from Conjur at startup. See deploy/k8s/conjur/.
   # PAM_SECRETS_PROVIDER: "conjur"       # makes PAM_CONJUR_URL required (fail-loud)
   # PAM_CONJUR_URL: "https://conjur.example"
   # PAM_CONJUR_ACCOUNT: "default"
-  # PAM_CONJUR_POLICY_PREFIX: "pamv1"
+  # PAM_CONJUR_POLICY_PREFIX: "PAMv1"
   # PAM_CONJUR_AUTHN_JWT_SERVICE_ID: "kubernetes"
   # PAM_CONJUR_JWT_FILE: "/var/run/secrets/conjur/token"
   # PAM_CONJUR_CACERT: "/etc/conjur/ca.pem"

@@ -13,7 +13,7 @@ type identityResult struct {
 	Revoked  bool   `json:"revoked,omitempty"`
 }
 
-// reconcileIdentities checks every local pamv1 user against the directory and
+// reconcileIdentities checks every local PAMv1 user against the directory and
 // **revokes (deletes) users the directory reports as disabled** — leaving absent
 // (local-only) accounts in place but surfacing them as not_in_directory. With
 // ?dry_run=true it reports what it would do without changing anything. Requires a
@@ -69,7 +69,7 @@ func (s *Server) reconcileIdentities(w http.ResponseWriter, r *http.Request) {
 
 // reconcileSessions revokes active login sessions whose subject the directory
 // reports disabled or absent, so a centrally-deprovisioned directory user loses
-// their pamv1 session promptly instead of at TTL expiry. Returns (revoked,
+// their PAMv1 session promptly instead of at TTL expiry. Returns (revoked,
 // distinctSubjectsChecked). Never revokes on a transient directory error.
 func (s *Server) reconcileSessions(ctx context.Context, dryRun bool) (revoked, checked int) {
 	sessions, err := s.store.ListSessions(ctx)

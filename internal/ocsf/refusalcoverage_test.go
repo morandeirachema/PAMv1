@@ -18,7 +18,7 @@ var deliberatelyNotFindings = map[string]string{
 	"dependency.create_denied": "input validation on an admin's own request",
 }
 
-// refusalShaped matches the naming pamv1 uses when something was refused,
+// refusalShaped matches the naming PAMv1 uses when something was refused,
 // blocked, or could not be verified. It is the vocabulary's own convention, so a
 // new action that follows it is exactly the kind a SIEM should see.
 var refusalShaped = regexp.MustCompile(`(_|\.)(denied|refused|failed|blocked|unverified)$|(^|\.)not_`)
@@ -27,8 +27,8 @@ var refusalShaped = regexp.MustCompile(`(_|\.)(denied|refused|failed|blocked|unv
 // TestFindingExactActionsAreEmittable leaves open, in the other direction.
 //
 // That test catches a classification no code can emit — coverage advertised and
-// absent. This one catches the inverse: an action pamv1 really emits, named the
-// way pamv1 names a refusal, that no classification reaches. Between Phases 174
+// absent. This one catches the inverse: an action PAMv1 really emits, named the
+// way PAMv1 names a refusal, that no classification reaches. Between Phases 174
 // and 185 there were two — `agent.not_enrolled` and
 // `broker.approval.four_eyes_unverified` — and both exported to a SIEM as
 // routine API activity, which is how `broker.tool_call.denied` spent four phases

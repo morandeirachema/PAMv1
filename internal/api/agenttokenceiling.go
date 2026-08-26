@@ -11,7 +11,7 @@ package api
 // party it constrains. It would be a lint, not a control.
 //
 // So the ceiling is keyed on the presented token's `jti`, which the ISSUER
-// chooses: pamv1 itself for a delegated token. An agent cannot mint itself a
+// chooses: PAMv1 itself for a delegated token. An agent cannot mint itself a
 // fresh allowance without going back through the exchange, and that path is
 // audited, depth-capped, `may_act`-gated and — since Phase 206 — able to require
 // proof of possession.

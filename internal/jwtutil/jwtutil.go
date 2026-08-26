@@ -1,5 +1,5 @@
 // Package jwtutil holds the JWT/JWKS primitives shared by the two independent
-// token verifiers in pamv1 — internal/oidc (OpenID Connect id_tokens) and
+// token verifiers in PAMv1 — internal/oidc (OpenID Connect id_tokens) and
 // internal/agentid (SPIFFE JWT-SVIDs). Both base64url-decode JWT segments,
 // check the "aud" claim, and rebuild an RSA public key from a JWK; keeping one
 // copy of each means a security-relevant validator (the audience check

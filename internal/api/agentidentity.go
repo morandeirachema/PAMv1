@@ -23,7 +23,7 @@ const (
 )
 
 // spiffePrefix is the scheme every SPIFFE ID starts with. The registry stores
-// only SPIFFE IDs, because the identity kind it exists for is the one pamv1
+// only SPIFFE IDs, because the identity kind it exists for is the one PAMv1
 // never issued a key to; a static key already carries its owner in its own row.
 const spiffePrefix = "spiffe://"
 
@@ -43,7 +43,7 @@ type agentIdentityIn struct {
 //
 // This is deliberately NOT enrollment: registering an identity admits nothing
 // (the trust domain already decided who may authenticate) and attests nothing.
-// It records one fact — who pamv1 holds responsible — which the broker's
+// It records one fact — who PAMv1 holds responsible — which the broker's
 // four-eyes refusal and the offboarding cascade both need and neither could
 // read for an identity with no agent_keys row.
 func (s *Server) createAgentIdentity(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +73,7 @@ func (s *Server) createAgentIdentity(w http.ResponseWriter, r *http.Request) {
 	a := store.AgentIdentity{SPIFFEID: in.SPIFFEID, Owner: in.Owner, Note: in.Note, CreatedBy: actorFrom(r.Context())}
 	if err := s.store.CreateAgentIdentity(r.Context(), &a); err != nil {
 		// A conflict is ambiguous since Phase 174, and the two cases mean opposite
-		// things. If the row is one pamv1 created for itself when this identity
+		// things. If the row is one PAMv1 created for itself when this identity
 		// first called — seen, unenrolled, nobody's — then registering it is the
 		// operator ADOPTING it, which is exactly what this route is for, and
 		// refusing would leave them unable to claim what the inventory just told
@@ -135,7 +135,7 @@ func (s *Server) listAgentIdentities(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// agentIdentityView is a registration plus whether its owner is a pamv1 user
+// agentIdentityView is a registration plus whether its owner is a PAMv1 user
 // (Phase 175). Derived per request rather than stored, because it is a fact
 // about the user roster at this moment, not about the identity.
 type agentIdentityView struct {
@@ -189,7 +189,7 @@ func (s *Server) deleteAgentIdentity(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// knownUsernames returns the set of usernames pamv1 has a user row for, so a
+// knownUsernames returns the set of usernames PAMv1 has a user row for, so a
 // listing can flag an agent whose owner is not one of them.
 //
 // The set is EXACT-CASE on purpose (Phase 176). Every control this report speaks
@@ -207,7 +207,7 @@ func (s *Server) deleteAgentIdentity(w http.ResponseWriter, r *http.Request) {
 // matches it against a username STRING: deleting "carol" suspends the agents
 // owned by "carol" and reaches nothing owned by "caro1" or by "carol " — a typo
 // makes an agent no cascade can ever reach, silently, with the row still reading
-// as though somebody were accountable. pamv1 does not refuse an owner it does
+// as though somebody were accountable. PAMv1 does not refuse an owner it does
 // not recognise (a team address or a service account is a legitimate answer to
 // "who answers for this"), so instead it says so where a human is already
 // looking: the agent listings and the recertification campaign.
@@ -229,7 +229,7 @@ func (s *Server) knownUsernames(ctx context.Context) map[string]bool {
 	return known
 }
 
-// ownerIsKnown reports whether owner matches a pamv1 user. With no roster (the
+// ownerIsKnown reports whether owner matches a PAMv1 user. With no roster (the
 // lookup failed) it answers true, so a failure reads as "no finding" rather than
 // as an accusation against every agent in the list.
 func ownerIsKnown(known map[string]bool, owner string) bool {
@@ -299,7 +299,7 @@ func (s *Server) accountableOwners(ctx context.Context, ident broker.ApprovalIde
 			return nil, "", err
 		}
 		// A row existing is not the same as somebody answering for it: since
-		// Phase 174 pamv1 creates an UNOWNED row the first time an identity
+		// Phase 174 PAMv1 creates an UNOWNED row the first time an identity
 		// calls, so an inventory entry with no owner is exactly as unattributed
 		// as no entry at all — and must refuse the decision the same way. The
 		// alternative would be a four-eyes gate satisfied by an empty string.
@@ -314,7 +314,7 @@ func (s *Server) accountableOwners(ctx context.Context, ident broker.ApprovalIde
 	return owners, "", nil
 }
 
-// unknownOwners returns the owners in the list that match no pamv1 user, in
+// unknownOwners returns the owners in the list that match no PAMv1 user, in
 // order and without duplicates. An unreadable roster returns none: a decision
 // must not be coloured — or refused — by a database hiccup.
 func (s *Server) unknownOwners(ctx context.Context, owners []string) []string {

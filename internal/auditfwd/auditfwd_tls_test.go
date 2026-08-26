@@ -122,7 +122,7 @@ func TestForwardLEEF(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := collect(t, sink, 1)[0]
-	for _, want := range []string{"LEEF:2.0|pamv1|pamv1|1|session.kill|", "usrName=alice", "devTime="} {
+	for _, want := range []string{"LEEF:2.0|PAMv1|PAMv1|1|session.kill|", "usrName=alice", "devTime="} {
 		if !strings.Contains(m, want) {
 			t.Fatalf("LEEF record missing %q: %q", want, m)
 		}

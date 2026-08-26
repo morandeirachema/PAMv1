@@ -1,5 +1,5 @@
 [Unit]
-Description=pamv1 Privileged Access Management
+Description=PAMv1 Privileged Access Management
 Documentation=https://github.com/morandeirachema/pamv1
 # The env file is written by pamv1-firstboot. Requiring it means a failed first
 # boot leaves this service DOWN and visible, rather than up with no vault key.
@@ -20,7 +20,7 @@ Restart=on-failure
 RestartSec=5s
 
 # --- Sandboxing --------------------------------------------------------------
-# pamv1 needs: its state dir, the loopback network, and outbound access to
+# PAMv1 needs: its state dir, the loopback network, and outbound access to
 # targets. It never needs root, devices, kernel tunables or anything under /home.
 NoNewPrivileges=yes
 PrivateTmp=yes

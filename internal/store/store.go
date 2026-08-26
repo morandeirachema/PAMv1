@@ -216,7 +216,7 @@ type CampaignItem struct {
 
 // CredentialDependency declares a consumer of a credential — a Windows Service,
 // Scheduled Task or IIS App Pool that logs on with the account — so that when
-// the credential is rotated, pamv1 also updates the consumer over WinRM and the
+// the credential is rotated, PAMv1 also updates the consumer over WinRM and the
 // rotation does not break production (Phase 17).
 type CredentialDependency struct {
 	ID           int64  `json:"id"`
@@ -225,9 +225,9 @@ type CredentialDependency struct {
 	Host         string `json:"host"` // WinRM-reachable host running the consumer
 	Port         int    `json:"port"` // WinRM port (0 → 5985)
 	Name         string `json:"name"` // service / task / app-pool name
-	// ManagementCredentialID names the credential pamv1 connects to Host WITH in
+	// ManagementCredentialID names the credential PAMv1 connects to Host WITH in
 	// order to update this consumer (Phase 61). 0 means "connect as the rotated
-	// account", which is what pamv1 did before this existed — and what it should
+	// account", which is what PAMv1 did before this existed — and what it should
 	// rarely do, since reconfiguring a service needs administrative rights on the
 	// host that a service account is not supposed to hold.
 	ManagementCredentialID int64 `json:"management_credential_id,omitempty"`
@@ -396,7 +396,7 @@ const (
 	// rotated like any other secret, injected just-in-time as the
 	// `Authorization: Bearer …` header of one brokered API call and never
 	// handed to the operator. What that token may do is decided by the
-	// CLUSTER's own RBAC; pamv1 brokers and audits the call, it does not
+	// CLUSTER's own RBAC; PAMv1 brokers and audits the call, it does not
 	// re-implement Kubernetes authorization.
 	SecretTypeK8sToken = "k8s_token"
 )
@@ -475,7 +475,7 @@ type Checkout struct {
 // request-then-approve shape as an AccessRequest/VendorGrant — four eyes: the
 // Requester and the Approver must differ, and nothing is redeemable (no email
 // sent, no join: token valid) until Status=="approved". Kind distinguishes the
-// two invite surfaces: "internal" resolves Invitee as an existing pamv1
+// two invite surfaces: "internal" resolves Invitee as an existing PAMv1
 // username, redeemed by an SSH login; "external" resolves Email as an
 // unauthenticated contact address, redeemed via a mailed link + QR code by a
 // browser. TokenHash and ExpiresAt are populated only once approved — ExpiresAt
@@ -504,7 +504,7 @@ type SessionShareInvite struct {
 }
 
 // ApprovalInvite is a magic link that lets a named person decide a pending
-// AccessRequest without ever logging into pamv1 (Phase 137) — BeyondTrust's
+// AccessRequest without ever logging into PAMv1 (Phase 137) — BeyondTrust's
 // out-of-band approval, the buildable "link" half (no native mobile app).
 // Minting one requires CapApprove (the same capability the authenticated
 // approve/deny routes require), so it is a delegation of a capability the
@@ -637,7 +637,7 @@ type ScimKey struct {
 }
 
 // EndpointAgent is an OUTBOUND-ONLY connectivity agent installed on a target
-// endpoint that pamv1 cannot dial into — a NAT'd branch box, a CGNAT'd
+// endpoint that PAMv1 cannot dial into — a NAT'd branch box, a CGNAT'd
 // contractor laptop, an unattended host with no inbound firewall rule (Phase
 // 153, BeyondTrust "Jump Client"-style). The agent (cmd/pam-agent) dials OUT
 // to pam-server's SSH listener as "endpoint-agent:<Name>" with the bearer key
@@ -650,8 +650,8 @@ type ScimKey struct {
 //
 // Not to be confused with AgentKey, the AI-agent identity for the access
 // broker: an endpoint agent is infrastructure (a tunnel), holds no capability
-// set, is never an auth.Principal, and can open nothing toward pamv1 — its
-// connection only ever carries channels pamv1 opens toward IT.
+// set, is never an auth.Principal, and can open nothing toward PAMv1 — its
+// connection only ever carries channels PAMv1 opens toward IT.
 type EndpointAgent struct {
 	ID        int64      `json:"id"`
 	Name      string     `json:"name"`
@@ -773,7 +773,7 @@ func (k *AgentKey) Active(now time.Time) bool {
 //
 // It is keyed by name rather than by agent_keys row ID precisely because an
 // SVID-authenticated agent has NO row in agent_keys at all — its identity is
-// attested by the SPIFFE workload API, and pamv1 never issued it a key it
+// attested by the SPIFFE workload API, and PAMv1 never issued it a key it
 // could disable. Without a subject-keyed quarantine there would be no local
 // way to stop such an agent short of changing the trust domain itself.
 // Quarantine is therefore the one containment control that covers every agent
@@ -786,7 +786,7 @@ type AgentQuarantine struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// AgentIdentity records the accountable human behind an agent identity pamv1
+// AgentIdentity records the accountable human behind an agent identity PAMv1
 // never issued a key to: a SPIFFE/SVID-authenticated workload, whose credential
 // is attested by the trust domain rather than minted here.
 //
@@ -798,7 +798,7 @@ type AgentQuarantine struct {
 // the refusal could not fire and the human operating an agent could approve its
 // privileged calls alone. And deleting a human suspends every agent key they
 // owned, which reaches nothing when the agent has no key row. Both need one
-// fact pamv1 had nowhere to record: the person accountable for a SPIFFE ID.
+// fact PAMv1 had nowhere to record: the person accountable for a SPIFFE ID.
 //
 // This is an OWNER registry, not enrollment or attestation. Recording an owner
 // does not admit a workload (the trust domain already did that) and does not
@@ -807,7 +807,7 @@ type AgentQuarantine struct {
 // is the question both controls above were asking.
 // Enrolled (Phase 174) separates the two ways a row gets here, which mean
 // opposite things to an operator: an ENROLLED row was recorded deliberately by
-// an admin, and an unenrolled one was created by pamv1 the first time that
+// an admin, and an unenrolled one was created by PAMv1 the first time that
 // SPIFFE ID authenticated — a workload nobody has claimed, listed so it can be
 // reviewed rather than discovered from a refused approval. FirstSeen/LastSeen
 // exist for the same reason: an inventory that only holds what somebody
@@ -880,7 +880,7 @@ type VendorGrant struct {
 	CreatedAt  time.Time  `json:"created_at"`
 }
 
-// SSHCert records an operator-issued SSH certificate (Phase 28): pamv1 signed the
+// SSHCert records an operator-issued SSH certificate (Phase 28): PAMv1 signed the
 // operator's own public key into a short-lived cert scoped to a target account.
 // The row is the revocation handle — a KRL revoking Serial is published so a
 // target's sshd cuts the cert off before ValidBefore. RevokedAt is nil until
@@ -1689,7 +1689,7 @@ type BrokerStore interface {
 	// It is keyed on `jti` rather than on the caller's declared `session:` run id
 	// deliberately, and that is the whole point of the method: `session:` is
 	// chosen by the party being limited, so a ceiling built on it is escaped by
-	// sending a different string. A `jti` is chosen by the ISSUER — pamv1 itself
+	// sending a different string. A `jti` is chosen by the ISSUER — PAMv1 itself
 	// for a delegated token — so the agent cannot mint itself a fresh allowance
 	// without going back through the exchange, which is audited, depth-capped
 	// and `may_act`-gated.
@@ -1728,7 +1728,7 @@ type BrokerStore interface {
 	// accountable for — the offboarding cascade's query, mirroring
 	// ListAgentKeysByOwner for the identity kind that has no key row.
 	ListAgentIdentitiesByOwner(ctx context.Context, owner string) ([]AgentIdentity, error)
-	// EnrollAgentIdentity claims an identity pamv1 discovered for itself: it sets
+	// EnrollAgentIdentity claims an identity PAMv1 discovered for itself: it sets
 	// the owner and note and marks the row enrolled. It is the "adopt what you
 	// saw" half of the inventory — a first sighting creates an unowned row, and
 	// enrolling it is how a human takes responsibility for it without losing

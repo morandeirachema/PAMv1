@@ -71,7 +71,7 @@ const iacSecretPlaceholder = "CHANGE_ME__set_from_secret_store"
 // renderEnv renders the overrides as a dotenv file.
 func renderEnv(settings []store.Setting) string {
 	var b strings.Builder
-	b.WriteString("# pamv1 configuration overrides (exported from the console).\n")
+	b.WriteString("# PAMv1 configuration overrides (exported from the console).\n")
 	b.WriteString("# Networking/TLS/bootstrap stay in your existing env — these are identity/SSO/policy.\n")
 	for _, st := range settings {
 		if config.IsSecretKey(st.Key) {
@@ -87,7 +87,7 @@ func renderEnv(settings []store.Setting) string {
 // secrets to a secretKeyRef instead of an inline value.
 func renderHelm(settings []store.Setting) string {
 	var b strings.Builder
-	b.WriteString("# pamv1 configuration overrides (exported from the console).\n")
+	b.WriteString("# PAMv1 configuration overrides (exported from the console).\n")
 	b.WriteString("env:\n")
 	for _, st := range settings {
 		if config.IsSecretKey(st.Key) {
@@ -103,7 +103,7 @@ func renderHelm(settings []store.Setting) string {
 // secret values out of state via a placeholder.
 func renderTerraform(settings []store.Setting) string {
 	var b strings.Builder
-	b.WriteString("# pamv1 configuration overrides (exported from the console).\n")
+	b.WriteString("# PAMv1 configuration overrides (exported from the console).\n")
 	b.WriteString("locals {\n  pam_config = {\n")
 	for _, st := range settings {
 		val := st.Value

@@ -1,4 +1,4 @@
-// Package keycustody gives pamv1's long-lived SSH keys — the proxy host key and
+// Package keycustody gives PAMv1's long-lived SSH keys — the proxy host key and
 // the Zero Standing Privilege CA key — a single custodian shared by every replica.
 //
 // Both keys used to live in a local file. That is correct on one node and wrong

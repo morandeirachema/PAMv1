@@ -1,15 +1,15 @@
-# pamv1 as an External Secrets Operator backend
+# PAMv1 as an External Secrets Operator backend
 
-pamv1 delivers a granted secret to a workload in Kubernetes through
+PAMv1 delivers a granted secret to a workload in Kubernetes through
 [External Secrets Operator](https://external-secrets.io/)'s generic **webhook**
-provider. ESO templates a request, pamv1 authenticates the application key,
+provider. ESO templates a request, PAMv1 authenticates the application key,
 checks the grant, audits the retrieval fail-closed, and answers JSON; ESO reads
 `$.secret` out of it and writes a Kubernetes `Secret`.
 
 ## What this is, and what it is not
 
-This makes pamv1 a **source** of secrets for workloads. It does not make pamv1
-manage Kubernetes Secrets, and it is not the same thing as pamv1's *own* secrets
+This makes PAMv1 a **source** of secrets for workloads. It does not make PAMv1
+manage Kubernetes Secrets, and it is not the same thing as PAMv1's *own* secrets
 in a cluster (those are SOPS-sealed and decrypted by Flux — see
 [`../sops/`](../sops/) and [`../flux/`](../flux/)).
 
@@ -45,15 +45,15 @@ named explicitly. That is a property of the provider, not a gap here.
 3. **Give the cluster the key and the CA**, then apply the manifests:
 
    ```bash
-   kubectl -n pamv1 create secret generic pamv1-app-key --from-literal=token='<token>'
-   kubectl -n pamv1 create secret generic pamv1-ca --from-file=ca.crt=/path/to/pam-ca.crt
-   kubectl -n pamv1 apply -f secretstore.yaml -f externalsecret.yaml
+   kubectl -n PAMv1 create secret generic pamv1-app-key --from-literal=token='<token>'
+   kubectl -n PAMv1 create secret generic pamv1-ca --from-file=ca.crt=/path/to/pam-ca.crt
+   kubectl -n PAMv1 apply -f secretstore.yaml -f externalsecret.yaml
    ```
 
 ## Status codes, and why one of them is destructive
 
 ESO assigns meaning to the response code, and **404 means "this secret no longer
-exists" — ESO deletes the Kubernetes Secret it manages.** pamv1 therefore answers:
+exists" — ESO deletes the Kubernetes Secret it manages.** PAMv1 therefore answers:
 
 | Situation | Code | Why |
 |---|---|---|
@@ -77,9 +77,9 @@ rest of the infra-bound items. When you do test it, this is what to check:
 
 - [ ] `kubectl get externalsecret app-db-credentials` reaches `SecretSynced`.
 - [ ] The created `Secret` holds the vaulted password under `password`.
-- [ ] pamv1's audit trail shows `app.secret_retrieved` with
+- [ ] PAMv1's audit trail shows `app.secret_retrieved` with
       `alias:prod-db-password`, once per refresh — and **never the secret itself**.
-- [ ] Rotate the credential in pamv1; after `refreshInterval`, the Kubernetes
+- [ ] Rotate the credential in PAMv1; after `refreshInterval`, the Kubernetes
       Secret carries the new value.
 - [ ] **Revoke the grant.** The Kubernetes Secret **is removed** — the alias goes
       with the grant, the route answers 404, and ESO cleans up. That is the
@@ -88,5 +88,5 @@ rest of the infra-bound items. When you do test it, this is what to check:
 - [ ] **Turn on the reveal kill switch** (`PAM_REVEAL_DISABLED=true`) with the
       grant intact. This is the case that must **not** delete anything: the
       `ExternalSecret` should go to `SecretSyncedError` and the Kubernetes Secret
-      must **still exist** with its last value. If it disappears, pamv1 answered
+      must **still exist** with its last value. If it disappears, PAMv1 answered
       404 where it must answer 403 — please report that.

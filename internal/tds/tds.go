@@ -1268,7 +1268,7 @@ func (d DoneToken) Encode(tds72 bool) []byte {
 // a refusal always leaves the session usable (there is no TDS analogue of the
 // PostgreSQL extended-protocol fail-closed branch).
 func Refusal(number uint32, class byte, message string, reqType byte, tds72 bool) []byte {
-	e := ErrorToken{Number: number, State: 1, Class: class, Message: message, ServerName: "pamv1"}
+	e := ErrorToken{Number: number, State: 1, Class: class, Message: message, ServerName: "PAMv1"}
 	done := DoneToken{Token: TokenDone, Status: uint16(DoneError)}
 	if reqType == PacketRPC {
 		done.Token = TokenDoneProc

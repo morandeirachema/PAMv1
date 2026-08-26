@@ -44,8 +44,8 @@ func NewAWSKMSKEK(ctx context.Context, region, keyID string) (*AWSKMSKEK, error)
 // kmsEncryptionContext binds the wrapped data key to this application at the KMS
 // layer: KMS records it with the ciphertext and requires the identical context
 // on Decrypt, so a principal with kms:Decrypt on the same CMK cannot unwrap a
-// stolen pamv1 blob without it (defense-in-depth on top of the inner GCM).
-var kmsEncryptionContext = map[string]string{"app": "pamv1"}
+// stolen PAMv1 blob without it (defense-in-depth on top of the inner GCM).
+var kmsEncryptionContext = map[string]string{"app": "PAMv1"}
 
 // ID reports the provider identifier, "aws-kms:<keyID>".
 func (k *AWSKMSKEK) ID() string { return "aws-kms:" + k.keyID }

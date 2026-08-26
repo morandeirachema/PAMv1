@@ -60,7 +60,7 @@ func (s *Server) mfaEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"secret":       secret,
-		"otpauth_uri":  mfa.ProvisioningURI(secret, p.Name, "pamv1"),
+		"otpauth_uri":  mfa.ProvisioningURI(secret, p.Name, "PAMv1"),
 		"instructions": "Add this to your authenticator app, then confirm a code at POST /api/mfa/verify.",
 	})
 }

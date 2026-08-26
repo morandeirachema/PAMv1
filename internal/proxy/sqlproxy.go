@@ -154,7 +154,7 @@ func sqlStepUpRefused(ctx context.Context, l *listener, pol *sqlPolicy, cl sqlCl
 		return false // approved — the statement proceeds
 	}
 	l.audit(ctx, actor, "db.stepup_denied", fmt.Sprintf("target:%s%s sql:%s", target.Name, pol.queryTag(), auditCmd(sql)))
-	const msg = "pamv1: statement requires supervisor approval (denied or timed out)"
+	const msg = "PAMv1: statement requires supervisor approval (denied or timed out)"
 	if extended {
 		cl.refuseFatal(msg)
 	} else {
@@ -176,7 +176,7 @@ func sqlBlockedStatement(ctx context.Context, l *listener, pol *sqlPolicy, cl sq
 		return false
 	}
 	l.audit(ctx, actor, "command.blocked", fmt.Sprintf("target:%s via:%s pattern:%s sql:%s", target.Name, pol.via, pat, auditCmd(sql)))
-	const msg = "pamv1: command blocked by policy"
+	const msg = "PAMv1: command blocked by policy"
 	if extended {
 		cl.refuseFatal(msg)
 	} else {
@@ -187,7 +187,7 @@ func sqlBlockedStatement(ctx context.Context, l *listener, pol *sqlPolicy, cl sq
 
 // sqlDeny audits a refused session (db.session.denied) and reports it to the
 // client via the fail closure, which writes the protocol-specific login-failure
-// token with the "pamv1: <reason>" text. The caller logs the refusal itself, so
+// token with the "PAMv1: <reason>" text. The caller logs the refusal itself, so
 // each proxy's log line stays exactly as it was.
 // auditValueDB renders an untrusted database name (unauthenticated wire input on
 // both DB proxies) for a key:value audit detail, colon-escaped so it cannot
@@ -196,5 +196,5 @@ func auditValueDB(database string) string { return auditfmt.Value(database, 128)
 
 func sqlDeny(ctx context.Context, l *listener, pol *sqlPolicy, actor, login, reason string, fail func(msg string)) {
 	l.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+pol.queryTag()+" reason:"+reason)
-	fail("pamv1: " + reason)
+	fail("PAMv1: " + reason)
 }

@@ -1,11 +1,11 @@
 # Changelog
 
-All notable released changes to pamv1 are documented here. The format follows
+All notable released changes to PAMv1 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/) with 0.x semantics — breaking
 changes may land in minor versions until 1.0.
 
-pamv1 is built phase by phase, and the full per-phase history — what shipped in
+PAMv1 is built phase by phase, and the full per-phase history — what shipped in
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
@@ -65,7 +65,7 @@ high-water stays `0048`), no new route, **one new env var**, **no upgrade note**
   **It is keyed on the token's `jti`, not on the caller's declared `session:`.**
   That distinction is the feature. `session:` is chosen by the party being
   limited, so a ceiling built on it is escaped by sending a different string; a
-  `jti` is chosen by the issuer — pamv1 itself for a delegated token — so a fresh
+  `jti` is chosen by the issuer — PAMv1 itself for a delegated token — so a fresh
   allowance costs a trip back through the exchange, which is audited,
   depth-capped, `may_act`-gated and, since v0.56.0, able to require proof of
   possession.
@@ -133,12 +133,12 @@ env vars**, **no upgrade note**.
   inside the token decides whether a proof is demanded, not a header word the
   caller chose.
 
-  **`cnf_jkt` is a pamv1 extension and is documented as one.** RFC 8693 defines no
+  **`cnf_jkt` is a PAMv1 extension and is documented as one.** RFC 8693 defines no
   such request parameter, and RFC 9449's own binding flow has the *client* prove
   its key at the token endpoint — which cannot apply here, since the party calling
   the exchange is the delegator, not the sub-agent that will hold what it mints.
 
-  **What this establishes, precisely:** the delegator names the key, so pamv1
+  **What this establishes, precisely:** the delegator names the key, so PAMv1
   cannot verify that the key belongs to the sub-agent rather than to the delegator
   itself. What is gained is that a token lifted off the wire or out of a log is
   useless without the private key. That bounds the blast radius of token *theft*;
@@ -154,7 +154,7 @@ env vars**, **no upgrade note**.
 
 - **`PAM_BROKER_PUBLIC_URL`**: the base origin agents address the broker at, which
   a proof's `htu` claim is compared against. **Set it whenever anything terminates
-  TLS in front of pamv1** — otherwise the request arrives as plain HTTP on an
+  TLS in front of PAMv1** — otherwise the request arrives as plain HTTP on an
   internal name while the client signed the external URL, and every key-bound
   agent is refused. `X-Forwarded-*` is deliberately never consulted: letting a
   caller choose what its own proof is checked against would remove the check.
@@ -183,7 +183,7 @@ once they all are.
 Two behaviours to know before enabling it. A **bound delegator cannot mint an
 unbound token** — if the delegating token carries a `cnf`, `cnf_jkt` is required
 on the next exchange, so the constraint cannot be walked off one hop down. And a
-confirmation pamv1 cannot enforce (RFC 7800 also defines `jwk` and `kid` forms)
+confirmation PAMv1 cannot enforce (RFC 7800 also defines `jwk` and `kid` forms)
 **refuses the token** rather than reading as "unbound", since treating an
 unreadable binding as no binding would downgrade a token its issuer deliberately
 constrained.
@@ -295,7 +295,7 @@ new route, no new env var, no upgrade note** — upgrade in place.
 ## [0.54.0] — 2026-08-25
 
 A minor whose one user-facing feature answers a question this project could not:
-**how does a workload running in Kubernetes get a secret out of pamv1?** It could
+**how does a workload running in Kubernetes get a secret out of PAMv1?** It could
 already seal its *own* secrets into a cluster, and already brokered privileged
 *access to* Kubernetes Secrets as discrete audited operations — but it was not a
 **source** of secrets for the workloads there. Now it is, through External
@@ -307,7 +307,7 @@ The rest is the review that preceded it, and a flaky test that finally said why.
 
 ### Added
 
-- **pamv1 as an External Secrets Operator backend** (Phase 197). An application
+- **PAMv1 as an External Secrets Operator backend** (Phase 197). An application
   grant can carry a stable **alias**, and `GET /v1/app-secrets/by-alias/{alias}`
   fetches by that name — so an ESO `SecretStore` can reference a secret from a
   manifest held in git. Set one with `POST /v1/apps/{id}/grants/{gid}/alias`
@@ -450,7 +450,7 @@ corrected.
 
 ## [0.52.0] — 2026-08-25
 
-A minor that ships one phase, closing a question pamv1 could not answer about
+A minor that ships one phase, closing a question PAMv1 could not answer about
 itself: **every grant lookup it had was target-indexed**. `EffectiveTargetGrants`
 is exactly what a connect gate needs and exactly the reverse of what a reviewer
 needs, so "what can this agent reach?" could only be answered by walking the
@@ -551,7 +551,7 @@ that will notice next time.
 
 ### Fixed
 
-- **The parity claim is now enforced, not asserted.** pamv1's README and roadmap
+- **The parity claim is now enforced, not asserted.** PAMv1's README and roadmap
   say every shipped capability is operable from the portal; that was last checked
   by hand in Phase 45, and three phases had shipped past it.
   `web.TestConsoleCanReachEveryOperatorRoute` diffs the generated route table
@@ -580,9 +580,9 @@ notes**, one of which can stop a deployment from starting.
   laptop, and the docs say so: the webhook answers about a *name*, not about the
   process holding the credential.
 - **A delegated token can pin its next hop** (Phase 181). `POST /v1/token`
-  accepts `may_act` — a pamv1 extension parameter, since RFC 8693 defines the
+  accepts `may_act` — a PAMv1 extension parameter, since RFC 8693 defines the
   claim and no request field for it — and writes it into the issued token, which
-  the next exchange enforces. pamv1 had enforced that claim since delegation
+  the next exchange enforces. PAMv1 had enforced that claim since delegation
   shipped and never issued it, so beyond the first hop the check had nothing to
   read.
 - **The approver sees the delegation** (Phase 183). `GET /v1/approvals` carries
@@ -594,7 +594,7 @@ notes**, one of which can stop a deployment from starting.
 
 - **A flag that claimed a reachability the control does not have** (Phase 176).
   `owner_known`, added in the previous release, compared owners
-  case-insensitively while every owner lookup in pamv1 is a literal match: an
+  case-insensitively while every owner lookup in PAMv1 is a literal match: an
   agent owned by `Carol` while the user is `carol` reported as fine and is
   unreachable by the offboarding cascade.
 - **Four-eyes that could not be verified now says so** (Phase 176). An owner
@@ -650,7 +650,7 @@ notes**, one of which can stop a deployment from starting.
 
 A minor that finishes the AI-agent-broker batch's identity work and then audits
 its own output. Policy learns **who** is calling, attested identities get an
-inventory pamv1 builds itself, non-human identities are **recertified** like
+inventory PAMv1 builds itself, non-human identities are **recertified** like
 everyone else — and a sweep over those very phases found one live defect and
 fixed it here rather than shipping it. **Schema change** — new migration `0046`
 (three additive columns; applied on startup, no backfill). Two new env vars,
@@ -686,13 +686,13 @@ both default-off. **Three upgrade notes below.**
   accepts `email`, validated and audited. It could be set at creation and never
   corrected, and it is where magic-link approval invites are sent.
 - **`PAM_BROKER_REQUIRE_KNOWN_OWNER`** (default `false`, Phase 176): refuse a
-  broker approval when the calling agent's owner matches no pamv1 user.
+  broker approval when the calling agent's owner matches no PAMv1 user.
 
 ### Fixed
 
 - **A flag that claimed a reachability the control does not have** (Phase 176).
   `owner_known` — new in this release — compared owners case-insensitively while
-  every owner lookup in pamv1 is a literal match. An agent owned by `Carol` while
+  every owner lookup in PAMv1 is a literal match. An agent owned by `Carol` while
   the user is `carol` reported as fine and is unreachable: deleting that user
   suspends nothing. Now exact-case. The four-eyes comparison stays
   case-insensitive on purpose, because there matching more broadly *refuses* more.
@@ -711,7 +711,7 @@ both default-off. **Three upgrade notes below.**
   (Phase 175): a static key is suspended, an attested identity quarantined —
   reversible, audited `reason:certification-revoked`, and the row survives as
   evidence. Revoking a *human's* grant is unchanged.
-- **An owner that matches no pamv1 user is reported** wherever owners are read:
+- **An owner that matches no PAMv1 user is reported** wherever owners are read:
   `owner_known` on both agent listings, a red owner with `?` on console menus 26
   and F8, and a WARNING inside the campaign item.
 - `SetVendorDisabled` is removed from the store surface (Phase 177) — a second,
@@ -738,7 +738,7 @@ both default-off. **Three upgrade notes below.**
 A minor that closes **three live defects in the AI-agent broker**, all found by
 re-reading the tree at HEAD after the 159–167 batch shipped. Two of them made a
 control that reads as covering every agent silently inert for the identity kind
-pamv1 does not issue keys to — a SPIFFE/SVID-authenticated agent, which is the
+PAMv1 does not issue keys to — a SPIFFE/SVID-authenticated agent, which is the
 intended production posture. **Schema change** — new migration `0045` (a new
 table; applied on startup, no backfill). Four new routes, no new env var.
 
@@ -765,7 +765,7 @@ working, not a workaround.
   approving human's username; for an SVID that owner is a SPIFFE ID, which can
   never equal a person's name — so the refusal could not fire and **the human
   operating an agent could approve their own agent's privileged call**. Nothing
-  mapped a SPIFFE ID to a person, so pamv1 now records one (below), and the gate
+  mapped a SPIFFE ID to a person, so PAMv1 now records one (below), and the gate
   resolves owners for the **whole delegation chain**: whoever owns any link is on
   the requesting side of four-eyes.
 - **A policy rule's `ttl_seconds` is a real bound** (Phase 171). It was parsed
@@ -801,7 +801,7 @@ working, not a workaround.
   returned every target's name, host, OS and protocol; the unfiltered
   `list_credentials` added every account name on them. Both now apply the same
   direct-grant ∪ safe-membership check every acting tool applies. Ungated targets
-  (no grants, no safe) stay visible to everyone, as everywhere else in pamv1;
+  (no grants, no safe) stay visible to everyone, as everywhere else in PAMv1;
   naming an ungranted target explicitly is refused rather than answered with an
   empty list. **An agent whose estate is gated by grants now sees less than it
   did.**
@@ -877,7 +877,7 @@ var, one new route.
 
 ## [0.46.0] — 2026-08-18
 
-A minor that closes a **memory-exhaustion vector against the pamv1 host** and
+A minor that closes a **memory-exhaustion vector against the PAMv1 host** and
 bounds how much data an AI agent can pull through the broker. No schema change
 (migration high-water mark stays `0043`). One new env var.
 
@@ -1026,7 +1026,7 @@ One **audit-vocabulary change** and one **SIEM wire-format change** — see
 - **The hash chain records collection.** `broker.tool_call.resumed` is now
   appended to the tamper-evident chain, which previously ended at the human's
   approval decision — the moment an agent actually *took* a result (for
-  `reveal_credential`, the moment a secret left pamv1) was recorded only in the
+  `reveal_credential`, the moment a secret left PAMv1) was recorded only in the
   ordinary trail.
 - Regression guard `ocsf.TestFindingExactActionsAreEmittable`: walks the source
   tree and fails on any action classified for SIEM export that no code can emit.
@@ -1054,7 +1054,7 @@ One **audit-vocabulary change** and one **SIEM wire-format change** — see
 ## [0.43.0] — 2026-08-17
 
 A minor: one new capability, and the first release driven by gap research
-aimed at pamv1's **own AI-agent broker** rather than at its human-operator
+aimed at PAMv1's **own AI-agent broker** rather than at its human-operator
 paths. Schema change — new migration `0043` (additive; applied on startup).
 
 ### Added
@@ -1100,7 +1100,7 @@ BeyondTrust/Delinea/Teleport/StrongDM batch (phases 129–158). No schema change
 ### Added
 
 - **Post-session forensic reconstruction.** After an interactive SSH session
-  ends, pamv1 runs ONE fixed, read-only command over that target's own
+  ends, PAMv1 runs ONE fixed, read-only command over that target's own
   vaulted credential on a fresh connection, pulls the TARGET's own kernel
   audit records (auditd), filters them to that session's window and stores
   them beside the recording as a hash-chained, replayable `.forensics.log`.
@@ -1137,7 +1137,7 @@ A minor: one new capability. No schema change.
   session to proxy — with a vaulted service-account bearer token
   (`k8s_token`) and `POST /api/targets/{id}/kubectl` brokering ONE audited
   operation at a time: `get`, `logs`, `apply` (server-side apply,
-  `fieldManager=pamv1`) and `delete`. The token is injected just-in-time
+  `fieldManager=PAMv1`) and `delete`. The token is injected just-in-time
   and never shown to the operator; what it may do inside the cluster is
   decided by the cluster's own RBAC, whose refusal comes back as its own
   `403` in the response envelope. Same gates, command control (`kubectl …`
@@ -1166,7 +1166,7 @@ A minor: one new capability and a second deployable binary. New migration
 ### Added
 
 - **Outbound-only endpoint agents (Jump Client-style reachability).** For
-  targets pamv1 cannot dial into — NAT'd branch boxes, CGNAT'd contractor
+  targets PAMv1 cannot dial into — NAT'd branch boxes, CGNAT'd contractor
   laptops, hosts with no inbound firewall rule — a new `pam-agent` binary
   (published on this Release as `pam-agent_linux_amd64` /
   `pam-agent_linux_arm64` + `SHA256SUMS`) dials OUT to the existing `:2222`
@@ -1180,7 +1180,7 @@ A minor: one new capability and a second deployable binary. New migration
   revoke drops the live tunnel at once; SSH targets only. The agent alone
   chooses the one local address it exposes, pins pam-server's SSH host key
   (`PAM_AGENT_SERVER_HOST_KEY`, required) and can carry nothing toward
-  pamv1. Per replica: list every replica in `PAM_AGENT_SERVERS`. New audit
+  PAMv1. Per replica: list every replica in `PAM_AGENT_SERVERS`. New audit
   family `endpoint_agent.*` and a `via:endpoint-agent:<name>` marker on
   `session.start`. Not verified across a real NAT path (see
   EXTERNAL-INFRA-GAPS.md).
@@ -1199,7 +1199,7 @@ A minor: one new capability. No schema change.
 
 ### Added
 
-- **SAML 2.0 single sign-on (Service Provider).** pamv1 can act as a SAML
+- **SAML 2.0 single sign-on (Service Provider).** PAMv1 can act as a SAML
   SP in the SP-initiated Web Browser SSO profile, for identity providers
   that speak SAML but not OIDC — on-prem AD FS above all, plus SAML-only
   Okta/OneLogin/Entra applications. New routes `GET /api/auth/saml/start`
@@ -1440,7 +1440,7 @@ A minor: two new capabilities. Schema change (migration `0036`).
   New `internal/accountscan` package; console menu 1, option 9.
 
 - **Zero Standing Privilege for PostgreSQL.** A new `db_zsp` credential
-  type stores no secret; at connect time pamv1 provisions a fresh,
+  type stores no secret; at connect time PAMv1 provisions a fresh,
   randomly-named database role via a separately vaulted `provisioner`
   credential, connects the session as that role, and drops it when the
   session ends — extending Phase 22's SSH-only ZSP to databases. RDP has
@@ -1540,7 +1540,7 @@ A minor: one new capability. Schema change (migration `0032`).
 - **Live session-sharing ("Session Invite").** A running SSH session can be
   shared with a second party, view-only or view-control, via a four-eyes
   request→approve workflow (`POST /api/sessions/{id}/share`, decided by a
-  *different* principal). Internal invites (a named pamv1 user) redeem over
+  *different* principal). Internal invites (a named PAMv1 user) redeem over
   SSH as `join:<token>`; external/vendor invites are delivered by email with
   an embedded QR code, valid 15 minutes, single-use, and redeemed through a
   new unauthenticated guest page (`/share.html`) — never through the SSH
@@ -2263,7 +2263,7 @@ the store or in the API changes.
   carrying Debian 13 (trixie), PostgreSQL, `pam-server` and the full source tree.
   It runs an unattended `debian-installer` under QEMU and assembles the OVA by
   hand, so it needs no root, no VirtualBox and no Packer; the build verifies
-  itself by booting the finished image on a throwaway overlay and asking pamv1 for
+  itself by booting the finished image on a throwaway overlay and asking PAMv1 for
   `/healthz`. No secret is baked into the image — the vault master key, admin API
   key, database password, SSH host keys and machine-id are all generated on first
   boot, so cloning the appliance never clones a root of trust.

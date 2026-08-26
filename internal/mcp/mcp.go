@@ -1,4 +1,4 @@
-// Package mcp is a minimal, hand-rolled JSON-RPC 2.0 core for pamv1's Model
+// Package mcp is a minimal, hand-rolled JSON-RPC 2.0 core for PAMv1's Model
 // Context Protocol endpoint. It handles framing and method dispatch only — the
 // actual methods (initialize, tools/list, tools/call, ping, broker/resume) are
 // supplied by the api layer and share the broker's one policy loop, so an MCP

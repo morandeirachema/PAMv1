@@ -22,6 +22,6 @@ variable "subnet_group_name" {
 }
 
 variable "security_group_ids" {
-  description = "Security groups permitting 5432 only from the pamv1 workloads."
+  description = "Security groups permitting 5432 only from the PAMv1 workloads."
   type        = list(string)
 }
