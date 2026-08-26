@@ -1,6 +1,6 @@
 # pamv1 — documentation
 
-> Last updated: 2026-08-26 · Reflects: Phases 0–206 and release v0.55.0 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-08-26 · Reflects: Phases 0–207 and release v0.56.0 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -107,6 +107,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-08-26 | Release-currency check alongside v0.56.0 found a **four-release drift**: `NIS2-COMPLIANCE.md`'s Art. 21(2)(e) evidence row still named v0.51.0 as the current release, stale since v0.52.0 — in a row whose entire purpose is to be what an auditor reads. It is named in the release checklist by name and was missed anyway, which is the same lesson the `deploy/` pin sweep already encodes: a list of places is only as good as its last update, so the durable check is a grep that enumerates every version string rather than a checklist that remembers them |
 | 2026-08-25 | Documentation currency audit alongside v0.55.0. Verified rather than assumed, in both directions: **zero** documented env vars the code never reads (the Phase 182 defect class), **zero** server env vars absent from every operator-facing doc, and **zero** audit actions the code emits that §5 omits. One real defect found and fixed — BACKUP-AND-RESTORE, SYSADMIN-GUIDE and REQUIREMENTS all stated the migration high-water as `0047` while carrying `Reflects:` headers claiming currency through 205, when Phase 197 moved it to `0048`. A header asserting currency over a body that stopped being true is the same shape as the stale release digest Phase 190 closed |
 | 2026-08-26 | Phase 206 (proof of possession) documented across the set: PROTOCOLS-AND-CRYPTO §2.8 gains a **fifth** JWT verification path and corrects the sentence that said a minted delegated token is a bearer token — it need not be any more; ARCHITECTURE-LOW-LEVEL adds `PAM_BROKER_REQUIRE_POP` and `PAM_BROKER_PUBLIC_URL` to §4 and `agent.pop_denied` to the §5 vocabulary; AGENT-THREAT-MODEL gains the control row and states its limit (the delegator names the key, so this bounds token THEFT, not workload attestation); ADMIN-GUIDE §on agent identity gains a how-to with the exchange call, the three behaviours to know before enabling, and the reason codes |
 | 2026-08-25 | Phase 195 (fail-closed route map): SECURITY-GAPS records that the generated API-surface table had labelled sixteen authenticated routes `public` — the whole AI-agent tool-call surface and the whole SCIM surface among them — because `archgen`'s classifier defaulted to "public" for schemes added after it was written; ARCHITECTURE-LOW-LEVEL and CODE-GUIDE record the fail-closed classifier that replaces it |

@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–206 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–207 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,51 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 207 — v0.56.0 ✅
+
+Releases **206**: a delegated agent token stops being a bearer credential. One
+phase, cut promptly rather than banked, because it changes what the binary does —
+which is exactly the test Phase 200 applied in the other direction when it let
+two docs-only phases ride along instead of cutting a version whose artifact would
+have behaved identically to the last one.
+
+No schema change (high-water stays `0048`), no new route, **two new env vars**,
+no upgrade note.
+
+- [x] **v0.56.0** through the test-gated pipeline. `.github/` was **untouched**
+  since v0.55.0, so the v0.11.1 rehearsal rule did not apply — checked with a
+  diff on `release.yml` specifically, per the refined rule, rather than by
+  eyeballing `.github/` as a whole. Published 2026-08-26 as
+  `ghcr.io/morandeirachema/pamv1:0.56.0` (also `latest`), digest recorded in the
+  follow-up, **public** (anonymous pull on both tags, both resolving to the same
+  digest), signed and attested, with the `pam-agent` binaries, the SPDX SBOM and
+  `SHA256SUMS` attached
+- [x] All pins via the sweep, which is the check that cannot go stale:
+  `grep -rhoE "pamv1:0\.[0-9]+\.[0-9]+|tag: v0\.[0-9]+\.[0-9]+|appVersion: \"[0-9.]+\"" deploy/`
+  must return exactly one release. Helm chart `version` 0.46.0 -> **0.47.0**, a
+  minor alongside an app minor
+- [x] **A four-release drift, found by the sweep and fixed here.**
+  `docs/NIS2-COMPLIANCE.md`'s Art. 21(2)(e) evidence row still named **v0.51.0**
+  as the current release — stale since v0.52.0, through four releases, while the
+  row's whole purpose is to be the evidence an auditor reads. It is named in the
+  release checklist and was missed anyway, which is the same lesson the pin sweep
+  already encodes: a list of places is only as good as its last update, so the
+  durable fix is a grep that enumerates them rather than a list that remembers
+  them. Every doc stating a release version is now checked by pattern
+- [x] Both READMEs restated; every `Reflects:` header, `docs/README.md` and this
+  banner
+- [x] `CHANGELOG.md` leads with **what the release removes rather than what it
+  adds** — that a captured token is no longer sufficient — because the interesting
+  fact about `cnf_jkt` is not that a new parameter exists but that the property it
+  buys did not exist before. The upgrade note states the two behaviours an
+  operator must know before enabling it (binding is inherited down the chain; an
+  unenforceable confirmation refuses rather than degrades)
+- [x] The `PAM_BROKER_PUBLIC_URL` entry says plainly that it is **not optional
+  behind a TLS-terminating proxy**, which is the one way this feature can be
+  turned on and appear broken for a reason that is not in the error
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
 
 ## Phase 206 — A stolen delegated token stops being enough ✅
 
