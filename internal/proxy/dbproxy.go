@@ -364,7 +364,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		expectProtocol: "postgres",
 		skipDecrypt:    func(c *store.Credential) bool { return c.IsZSP() },
 		startAudit: func(t *store.Target, c *store.Credential) (string, string) {
-			return "db.session.start", fmt.Sprintf("target:%s db:%s cred_user:%s", t.Name, database, c.Username)
+			return "db.session.start", fmt.Sprintf("target:%s db:%s cred_user:%s", t.Name, auditValueDB(database), c.Username)
 		},
 	})
 	if res.outcome != admitOK {
@@ -406,7 +406,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	up, err := d.dialUpstream(ctx, target, dialUser, dialSecret, database)
 	if err != nil {
 		d.log.Error("upstream database connection failed", "actor", actor, "target", target.Name, "err", err)
-		d.audit(ctx, actor, "db.session.error", fmt.Sprintf("target:%s db:%s error:%v", target.Name, database, err))
+		d.audit(ctx, actor, "db.session.error", fmt.Sprintf("target:%s db:%s error:%v", target.Name, auditValueDB(database), err))
 		d.fail(backend, "08006", "pamv1: upstream connection failed")
 		return
 	}

@@ -138,6 +138,9 @@ func (s *Server) deleteSafe(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.guardPersonalSafe(w, r, id) {
+		return
+	}
 	if err := s.store.DeleteSafe(r.Context(), id); err != nil {
 		storeError(w, err)
 		return
@@ -258,6 +261,63 @@ func (s *Server) deleteSafeMember(w http.ResponseWriter, r *http.Request) {
 // safe's roster is managed only by its own can_manage member(s) (seeded at
 // creation — see createSafe) or a principal holding CapUnlimitedVaultAccess,
 // the same override CanConnectTarget itself honors.
+// guardPersonalTarget refuses an operation on a target that currently sits in a
+// Personal safe unless the caller holds CapUnlimitedVaultAccess. It returns true
+// when the caller may proceed and, when it does not, has already written the 403
+// and an audit row.
+//
+// This exists because of the 2026-08-26 audit (M-5). Personal-safe privacy was
+// enforced at CONNECT time (auth.CanConnectTarget) and inside canManageSafe, but
+// three management routes that a plain CapManageTargets holder can reach —
+// reassigning a target's safe, deleting the safe, and granting the target
+// directly — went straight to the store with no personal check, so any such
+// admin could unwrap a CISO's private target and reach it. The override
+// capability is the one deliberate exception, matching canManageSafe.
+func (s *Server) guardPersonalTarget(w http.ResponseWriter, r *http.Request, targetID int64) bool {
+	p := principalFrom(r.Context())
+	if p.Can(auth.CapUnlimitedVaultAccess) {
+		return true
+	}
+	t, err := s.store.GetTarget(r.Context(), targetID)
+	if err != nil {
+		storeError(w, err)
+		return false
+	}
+	personal, err := store.EffectiveSafePersonal(r.Context(), s.store, t)
+	if err != nil {
+		// Fail closed: an unreadable safe must not read as "not personal".
+		s.audit(r.Context(), "authz.denied", fmt.Sprintf("target:%d reason:personal-safe-check-failed", targetID))
+		writeError(w, http.StatusForbidden, "not authorized for this target")
+		return false
+	}
+	if personal {
+		s.audit(r.Context(), "authz.denied", fmt.Sprintf("target:%d reason:personal-safe", targetID))
+		writeError(w, http.StatusForbidden, "this target is in a personal safe")
+		return false
+	}
+	return true
+}
+
+// guardPersonalSafe is guardPersonalTarget's sibling for an operation named by
+// SAFE id rather than target id (deleteSafe). Same rule, same override.
+func (s *Server) guardPersonalSafe(w http.ResponseWriter, r *http.Request, safeID int64) bool {
+	p := principalFrom(r.Context())
+	if p.Can(auth.CapUnlimitedVaultAccess) {
+		return true
+	}
+	sf, err := s.store.GetSafe(r.Context(), safeID)
+	if err != nil {
+		storeError(w, err)
+		return false
+	}
+	if sf.Personal {
+		s.audit(r.Context(), "authz.denied", fmt.Sprintf("safe:%d reason:personal-safe", safeID))
+		writeError(w, http.StatusForbidden, "this is a personal safe")
+		return false
+	}
+	return true
+}
+
 func (s *Server) canManageSafe(ctx context.Context, safeID int64) bool {
 	p := principalFrom(ctx)
 	sf, err := s.store.GetSafe(ctx, safeID)
@@ -296,6 +356,9 @@ func (s *Server) setTargetSafe(w http.ResponseWriter, r *http.Request) {
 	}
 	var in targetSafeIn
 	if !readJSON(w, r, &in) {
+		return
+	}
+	if !s.guardPersonalTarget(w, r, id) {
 		return
 	}
 	if err := s.store.AssignTargetSafe(r.Context(), id, in.SafeID); err != nil {

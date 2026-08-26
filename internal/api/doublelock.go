@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"golang.org/x/crypto/pbkdf2"
@@ -42,13 +43,27 @@ import (
 // are gated.
 
 const (
-	// doubleLockIters is the PBKDF2 iteration count for both the verifier
-	// hash and the encryption key. This is a defense-in-depth check, not a
-	// primary authentication credential, so it does not need to match the
-	// OWASP guidance for a login password hash.
-	doubleLockIters = 100_000
-	doubleLockSalt  = 16 // bytes
-	doubleLockKey   = 32 // bytes (AES-256)
+	// doubleLockIters is the PBKDF2 iteration count for a NEWLY sealed
+	// DoubleLock. Raised to the OWASP PBKDF2-HMAC-SHA256 figure by the
+	// 2026-08-26 audit (H-3), which found the previous 100 000 — with the old
+	// comment reasoning it "does not need to match OWASP guidance" — protecting
+	// a copy of a privileged secret at rest, keyed by a password the code
+	// validated only for being non-empty. That comment was wrong: DoubleLockEnc
+	// is deliberately outside the KEK, so a database-only compromise yields an
+	// offline-crackable copy, and this password is the ONLY thing standing in
+	// front of it. The iteration count is now stored per record (see
+	// sealDoubleLock's format), so raising this does not break existing values;
+	// they open at whatever count they were sealed with.
+	doubleLockIters       = 600_000
+	doubleLockLegacyIters = 100_000 // records with no stored count predate H-3
+	doubleLockSalt        = 16      // bytes
+	doubleLockKey         = 32      // bytes (AES-256)
+	// doubleLockMinLen is the floor for a DoubleLock password. The real defense
+	// against the offline attack is entropy, not iteration count: a long
+	// passphrase is infeasible to brute-force at any reasonable cost, while a
+	// short human password falls to a GPU regardless of PBKDF2 rounds. This is
+	// the minimum; PAM_DOUBLELOCK_MIN_LENGTH can raise it.
+	doubleLockMinLen = 16
 )
 
 // deriveDoubleLock returns the two independent PBKDF2 outputs DoubleLock
@@ -56,10 +71,27 @@ const (
 // compare, never used for the real decrypt) and an AES-256 key (used only
 // once the verifier has already matched). Purpose-suffixing the password
 // domain-separates the two outputs from a shared salt.
-func deriveDoubleLock(password string, salt []byte) (verifier, key []byte) {
-	verifier = pbkdf2.Key([]byte(password+"|verify"), salt, doubleLockIters, doubleLockKey, sha256.New)
-	key = pbkdf2.Key([]byte(password+"|key"), salt, doubleLockIters, doubleLockKey, sha256.New)
+func deriveDoubleLock(password string, salt []byte, iters int) (verifier, key []byte) {
+	verifier = pbkdf2.Key([]byte(password+"|verify"), salt, iters, doubleLockKey, sha256.New)
+	key = pbkdf2.Key([]byte(password+"|key"), salt, iters, doubleLockKey, sha256.New)
 	return verifier, key
+}
+
+// dlParams strips an optional `i=<n>;` iteration-count prefix from a stored
+// DoubleLock string, returning the count and the remainder. A value with no
+// prefix predates the 2026-08-26 audit and was sealed at the legacy count — the
+// `i=` marker can never be confused with the hex salt that otherwise leads these
+// strings, since hex never begins with `i`. This is what lets doubleLockIters
+// rise without a migration: every record carries the count it was sealed with.
+func dlParams(stored string) (iters int, rest string) {
+	if body, ok := strings.CutPrefix(stored, "i="); ok {
+		if n, tail, ok := strings.Cut(body, ";"); ok {
+			if v, err := strconv.Atoi(n); err == nil && v > 0 {
+				return v, tail
+			}
+		}
+	}
+	return doubleLockLegacyIters, stored
 }
 
 // sealDoubleLock encrypts plaintext under a key derived from password,
@@ -70,7 +102,7 @@ func sealDoubleLock(plaintext, password string) (verifier, enc string, err error
 	if _, err := rand.Read(salt); err != nil {
 		return "", "", err
 	}
-	verifierKey, aesKey := deriveDoubleLock(password, salt)
+	verifierKey, aesKey := deriveDoubleLock(password, salt, doubleLockIters)
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		return "", "", err
@@ -84,9 +116,10 @@ func sealDoubleLock(plaintext, password string) (verifier, enc string, err error
 		return "", "", err
 	}
 	ct := aead.Seal(nil, nonce, []byte(plaintext), nil)
+	prefix := "i=" + strconv.Itoa(doubleLockIters) + ";"
 	saltHex := hex.EncodeToString(salt)
-	verifier = saltHex + ":" + hex.EncodeToString(verifierKey)
-	enc = saltHex + ":" + hex.EncodeToString(nonce) + ":" + hex.EncodeToString(ct)
+	verifier = prefix + saltHex + ":" + hex.EncodeToString(verifierKey)
+	enc = prefix + saltHex + ":" + hex.EncodeToString(nonce) + ":" + hex.EncodeToString(ct)
 	return verifier, enc, nil
 }
 
@@ -94,7 +127,8 @@ func sealDoubleLock(plaintext, password string) (verifier, enc string, err error
 // constant time. Checked before ever attempting the real decrypt, so a wrong
 // password can be reported cleanly and distinctly from a corrupted enc value.
 func verifyDoubleLockPassword(verifier, password string) bool {
-	saltHex, wantHex, ok := strings.Cut(verifier, ":")
+	iters, body := dlParams(verifier)
+	saltHex, wantHex, ok := strings.Cut(body, ":")
 	if !ok {
 		return false
 	}
@@ -106,7 +140,7 @@ func verifyDoubleLockPassword(verifier, password string) bool {
 	if err != nil {
 		return false
 	}
-	got, _ := deriveDoubleLock(password, salt)
+	got, _ := deriveDoubleLock(password, salt, iters)
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
@@ -116,7 +150,8 @@ var errDoubleLockCorrupt = errors.New("doublelock: corrupted ciphertext")
 // confirmed the password via verifyDoubleLockPassword — a failure here means
 // a genuinely corrupted or tampered value, not a wrong password.
 func openDoubleLock(enc, password string) (string, error) {
-	parts := strings.SplitN(enc, ":", 3)
+	iters, body := dlParams(enc)
+	parts := strings.SplitN(body, ":", 3)
 	if len(parts) != 3 {
 		return "", errDoubleLockCorrupt
 	}
@@ -126,7 +161,7 @@ func openDoubleLock(enc, password string) (string, error) {
 	if err1 != nil || err2 != nil || err3 != nil {
 		return "", errDoubleLockCorrupt
 	}
-	_, aesKey := deriveDoubleLock(password, salt)
+	_, aesKey := deriveDoubleLock(password, salt, iters)
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		return "", errDoubleLockCorrupt
@@ -195,6 +230,17 @@ type doubleLockIn struct {
 	Password string `json:"password"`
 }
 
+// doubleLockMinLen is the enforced minimum DoubleLock password length: the
+// configured value when it is set higher than the built-in floor, else the
+// floor. It is never below doubleLockMinLen so a misconfiguration cannot weaken
+// the control below what the audit set.
+func (s *Server) doubleLockMinLen() int {
+	if s.doubleLockMin > doubleLockMinLen {
+		return s.doubleLockMin
+	}
+	return doubleLockMinLen
+}
+
 // setDoubleLock enables DoubleLock on a credential: from now on, reveal and
 // checkout additionally require this password. Requires re-reading the
 // current plaintext (via the standard SecretEnc decrypt — unaffected by
@@ -211,6 +257,16 @@ func (s *Server) setDoubleLock(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Holder == "" || in.Password == "" {
 		writeError(w, http.StatusUnprocessableEntity, "holder and password are required")
+		return
+	}
+	// The DoubleLock password is the ONLY key protecting DoubleLockEnc, a copy
+	// of the secret that lives outside the KEK — so its entropy, not the PBKDF2
+	// count, is what defeats an offline attack after a database compromise. A
+	// minimum length is enforced (2026-08-26 audit, H-3); before it, any
+	// non-empty string was accepted.
+	if minLen := s.doubleLockMinLen(); len([]rune(in.Password)) < minLen {
+		writeError(w, http.StatusUnprocessableEntity,
+			fmt.Sprintf("the double-lock password must be at least %d characters — it is the only key protecting this secret at rest", minLen))
 		return
 	}
 	c, target, ok := s.loadCredentialTarget(w, r, id)

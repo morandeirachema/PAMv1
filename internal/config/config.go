@@ -452,7 +452,10 @@ type Config struct {
 	// _LOWER/_UPPER/_DIGIT/_SYMBOL). Defaults (24, 1, 1, 1, 1) reproduce the
 	// hardcoded policy every password had before this field existed, so an
 	// unconfigured deployment generates byte-for-byte-equivalent passwords.
-	PasswordMinLength                                                       int
+	PasswordMinLength int
+	// DoubleLockMinLength — PAM_DOUBLELOCK_MIN_LENGTH — minimum length for a
+	// DoubleLock password (2026-08-26 audit H-3); 0 uses the built-in floor of 16.
+	DoubleLockMinLength                                                     int
 	PasswordMinLower, PasswordMinUpper, PasswordMinDigit, PasswordMinSymbol int
 	// PasswordHistoryCount is how many of a credential's past rotation hashes
 	// are checked to refuse reissuing a recently-used password
@@ -892,6 +895,7 @@ func Load() (*Config, error) {
 		BrokerTokenTTL:             time.Duration(integer("PAM_BROKER_TOKEN_TTL_MIN", 15)) * time.Minute,
 		CertRemindDays:             integer("PAM_CERT_REMIND_DAYS", 7),
 		PasswordMinLength:          integer("PAM_PASSWORD_MIN_LENGTH", 24),
+		DoubleLockMinLength:        integer("PAM_DOUBLELOCK_MIN_LENGTH", 0),
 		PasswordMinLower:           integer("PAM_PASSWORD_MIN_LOWER", 1),
 		PasswordMinUpper:           integer("PAM_PASSWORD_MIN_UPPER", 1),
 		PasswordMinDigit:           integer("PAM_PASSWORD_MIN_DIGIT", 1),

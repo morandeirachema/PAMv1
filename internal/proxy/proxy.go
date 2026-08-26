@@ -931,7 +931,7 @@ func (p *Proxy) refuse(ctx context.Context, chans <-chan ssh.NewChannel, res adm
 		rejectAll(chans, ssh.Prohibited, "pamv1: your device failed its posture check")
 	case gateResolve:
 		p.log.Warn("session denied", "actor", actor, "login", auditField(login, 64), "reason", res.reason, "remote", remote)
-		p.audit(ctx, actor, "session.denied", fmt.Sprintf("login:%s reason:%s", auditField(login, 64), res.reason))
+		p.audit(ctx, actor, "session.denied", fmt.Sprintf("login:%s reason:%s", auditField(login, 64), auditValue(res.reason, 200)))
 		rejectAll(chans, ssh.Prohibited, "pamv1: "+res.reason)
 	case gateProtocolAllowed:
 		p.log.Warn("session denied: protocol not allowed", "actor", actor, "target", res.target.Name, "protocol", res.target.Protocol)
@@ -1227,10 +1227,10 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		_ = ssh.Unmarshal(payload, &m)
 		if m.Name != "sftp" {
 			if p.sftpMode == SFTPDeny {
-				p.audit(ctx, actor, "sftp.denied", fmt.Sprintf("target:%s cred_user:%s subsystem:%s", target.Name, cred.Username, m.Name))
+				p.audit(ctx, actor, "sftp.denied", fmt.Sprintf("target:%s cred_user:%s subsystem:%s", target.Name, cred.Username, auditValue(m.Name, 64)))
 				return false
 			}
-			p.audit(ctx, actor, "session.subsystem", fmt.Sprintf("target:%s cred_user:%s name:%s", target.Name, cred.Username, m.Name))
+			p.audit(ctx, actor, "session.subsystem", fmt.Sprintf("target:%s cred_user:%s name:%s", target.Name, cred.Username, auditValue(m.Name, 64)))
 			return true
 		}
 		if p.sftpMode == SFTPDeny {
@@ -1852,6 +1852,11 @@ func (p *Proxy) winrmRun(ctx context.Context, out io.Writer, target *store.Targe
 // auditCmd renders a command for an audit detail, quoted and length-capped so a
 // long or newline-bearing command can't bloat or break the audit row.
 func auditCmd(command string) string { return auditField(command, 400) }
+
+// auditValue is auditField plus colon-escaping: for an untrusted string that
+// could itself be shaped like a key:value pair (a subsystem name, a database
+// name, a resolve reason). See auditfmt.Value and the 2026-08-26 audit's M-1.
+func auditValue(s string, limit int) string { return auditfmt.Value(s, limit) }
 
 // auditField makes an untrusted string safe to place in an audit detail or actor:
 // bounded in length and quoted, so embedded newlines, quotes and forged

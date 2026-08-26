@@ -346,6 +346,9 @@ type Options struct {
 	// bounds an agent's day, this bounds a single credential's whole life.
 	// Identities that carry no token id (static agent keys) are unaffected.
 	BrokerMaxCallsPerToken int
+	// DoubleLockMinLength raises the minimum DoubleLock password length above the
+	// built-in floor (PAM_DOUBLELOCK_MIN_LENGTH). 0 uses the floor.
+	DoubleLockMinLength int
 	// BrokerRequirePoP refuses an SVID-authenticated agent whose token carries no
 	// RFC 7800 `cnf` binding (Phase 206) — i.e. it makes sender-constrained
 	// tokens mandatory rather than available. Off by default, because turning it
@@ -572,9 +575,12 @@ type Server struct {
 	// brokerMaxCallsPerToken caps calls spent under one token's `jti` (Phase
 	// 209); 0 = off. Read on the same path as the daily budget.
 	brokerMaxCallsPerToken int
-	brokerRequirePoP       bool
-	brokerPublicURL        string
-	popChecker             *agentid.ProofChecker
+	// doubleLockMin is the configured minimum DoubleLock password length (H-3);
+	// the effective minimum is never below the built-in floor.
+	doubleLockMin    int
+	brokerRequirePoP bool
+	brokerPublicURL  string
+	popChecker       *agentid.ProofChecker
 	// svidSeen damps the inventory's last-seen writes to one per identity per
 	// sightingInterval (Phase 176). Keyed by SPIFFE ID; values are time.Time.
 	svidSeen sync.Map
@@ -759,6 +765,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		requireRecording:     opts.RequireRecording,
 		portalURL:            portalURL,
 		guacdAddr:            opts.GuacdAddr,
+		doubleLockMin:        opts.DoubleLockMinLength,
 		guacdRecordingPath:   opts.GuacdRecordingPath,
 		guacdRDPSecurity:     opts.GuacdRDPSecurity,
 		guacdIgnoreCert:      opts.GuacdIgnoreCert,

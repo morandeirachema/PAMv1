@@ -364,7 +364,7 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	up, loginResp, err := m.dialUpstream(ctx, target, cred.Username, secret, login)
 	if err != nil {
 		m.log.Error("upstream database connection failed", "actor", actor, "target", target.Name, "err", err)
-		m.audit(ctx, actor, "db.session.error", fmt.Sprintf("target:%s db:%s via:mssql error:%v", target.Name, database, err))
+		m.audit(ctx, actor, "db.session.error", fmt.Sprintf("target:%s db:%s via:mssql error:%v", target.Name, auditValueDB(database), err))
 		m.fail(c, mssqlErrLoginFailed, 14, "pamv1: upstream connection failed", tds72)
 		return
 	}
