@@ -786,6 +786,40 @@ type AgentQuarantine struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// AgentCallReservation is one compare-and-spend against an agent's daily budget
+// and, when the call presented a token, that token's ceiling (Phase 219; the
+// 2026-08-26 audit's M-3, reservation half).
+//
+// Both limits are COUNTED from the audit trail — that is what an operator
+// reads, and it stays that way — but a count followed by a call is a
+// check-then-act: two calls arriving together each read the same number, both
+// pass, and the limit over-runs by the width of the burst. A reservation is the
+// row the gate writes at the instant of its decision, under the store's own
+// serialisation, so the comparison and the spend are one operation. It is kept
+// when the call does work and released when it does not, and a row older than
+// the rolling window is purged by the next reservation for that agent.
+type AgentCallReservation struct {
+	ID      int64
+	Agent   string
+	TokenID string
+	At      time.Time
+	// Refused names the limit that refused the reservation —
+	// ReservationRefusedBudget or ReservationRefusedToken — and is empty when
+	// the reservation was made (ID is then non-zero).
+	Refused string
+	// AgentUsed and TokenUsed are the reservations already standing in the
+	// window for the agent and for the token at the instant of the decision,
+	// this one excluded — the "used" an exhaustion record reports.
+	AgentUsed int
+	TokenUsed int
+}
+
+// The two limits ReserveAgentCall can refuse on, in the order it checks them.
+const (
+	ReservationRefusedBudget = "budget"
+	ReservationRefusedToken  = "token"
+)
+
 // AgentIdentity records the accountable human behind an agent identity PAMv1
 // never issued a key to: a SPIFFE/SVID-authenticated workload, whose credential
 // is attested by the trust domain rather than minted here.
@@ -1701,6 +1735,30 @@ type BrokerStore interface {
 	// token id, and answering "unlimited" for it is correct rather than a
 	// fallback: its ceiling is the per-day budget on its own key row.
 	CountAgentCallsForTokenSince(ctx context.Context, agent, jti string, since time.Time) (int, error)
+	// ReserveAgentCall atomically records one call about to be made by agent —
+	// and, when jti is non-empty, under that token — provided both limits hold
+	// at the instant of recording; see AgentCallReservation for why (Phase 219).
+	//
+	// The reservations counted are those stamped at or after `since` (the
+	// rolling window the caller computed, the same one the audit-trail counts
+	// use); older rows for this agent are purged first, so the ledger never
+	// grows past one window per agent. agentLimit < 0 means no daily budget
+	// applies; 0 is a hard stop and refuses. tokenLimit <= 0, or an empty jti,
+	// means no ceiling applies to the token. The budget is checked before the
+	// ceiling, matching the gate: an agent out of budget for the day is told
+	// that rather than told about one of its tokens.
+	//
+	// A refusal writes nothing and returns Refused set with ID zero; it is not
+	// an error. Two reservations for the same agent can never both read the
+	// count the other is about to change: pgstore holds a per-agent
+	// transaction-level advisory lock across the purge, the counts and the
+	// insert; memstore holds its one lock.
+	ReserveAgentCall(ctx context.Context, agent, jti string, at, since time.Time, agentLimit, tokenLimit int) (AgentCallReservation, error)
+	// ReleaseAgentCallReservation deletes a reservation whose call did no work
+	// (refused by policy, failed, withdrawn, denied by the approver, or expired
+	// unapproved), so it stops counting. ErrNotFound if unknown — including a
+	// second release of the same id and one already purged by age.
+	ReleaseAgentCallReservation(ctx context.Context, id int64) error
 	// QuarantineAgent stops one agent by subject, populating ID and CreatedAt;
 	// ErrConflict if that subject is already quarantined (quarantine is a
 	// set-membership fact, so re-adding is a caller error, not a no-op).

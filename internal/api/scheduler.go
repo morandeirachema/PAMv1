@@ -512,8 +512,11 @@ func (s *Server) RunGC(ctx context.Context) {
 			} else if n > 0 {
 				s.log.Debug("broker token GC swept expired/used tokens", "deleted", n)
 			}
-			if n := s.broker.SweepExpiredParked(ctx, time.Now()); n > 0 {
-				s.log.Debug("broker swept abandoned parked approvals", "evicted", n)
+			if expired := s.broker.SweepExpiredParked(ctx, time.Now()); len(expired) > 0 {
+				s.log.Debug("broker swept abandoned parked approvals", "evicted", len(expired))
+				for _, callID := range expired {
+					s.settleParkedSpend(sysCtx, callID, false) // never executed: give the slot back
+				}
 			}
 		}
 	}

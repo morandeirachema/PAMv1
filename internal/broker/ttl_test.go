@@ -82,7 +82,7 @@ func TestRuleTTLBoundsTheApprovalWindow(t *testing.T) {
 
 	// Two minutes on — well inside the deployment's 30 minutes, well past the
 	// rule's 60 seconds — the call is swept, terminal and unexecuted.
-	if n := b.SweepExpiredParked(context.Background(), time.Now().Add(2*time.Minute)); n != 1 {
+	if n := len(b.SweepExpiredParked(context.Background(), time.Now().Add(2*time.Minute))); n != 1 {
 		t.Fatalf("sweep evicted %d, want 1: the rule's ttl_seconds must bound the window", n)
 	}
 	got, ok := b.Lookup(out.CallID)
@@ -111,7 +111,7 @@ func TestRuleTTLCannotExceedTheDeploymentTTL(t *testing.T) {
 	if time.Until(out.ExpiresAt) > 2*time.Minute {
 		t.Fatalf("expires_at = %v: a rule must not extend the deployment's 1-minute window", out.ExpiresAt)
 	}
-	if n := b.SweepExpiredParked(context.Background(), time.Now().Add(90*time.Second)); n != 1 {
+	if n := len(b.SweepExpiredParked(context.Background(), time.Now().Add(90*time.Second))); n != 1 {
 		t.Fatalf("sweep evicted %d, want 1: the deployment TTL still binds", n)
 	}
 }
@@ -127,7 +127,7 @@ func TestNoRuleTTLKeepsTheDeploymentWindow(t *testing.T) {
 	if d := time.Until(out.ExpiresAt); d < 9*time.Minute || d > 10*time.Minute+time.Second {
 		t.Fatalf("expires_at = %v, want the deployment's 10-minute window", out.ExpiresAt)
 	}
-	if n := b.SweepExpiredParked(context.Background(), time.Now().Add(5*time.Minute)); n != 0 {
+	if n := len(b.SweepExpiredParked(context.Background(), time.Now().Add(5*time.Minute))); n != 0 {
 		t.Fatalf("a call inside its window must survive the sweep, evicted %d", n)
 	}
 }

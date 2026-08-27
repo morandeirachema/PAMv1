@@ -76,19 +76,25 @@ func (s *Server) tokenCeilingRefusal(ctx context.Context, id *agentid.Identity, 
 	if used < s.brokerMaxCallsPerToken {
 		return nil
 	}
-	// Its own action rather than a generic denial, for the same reason
-	// `agent.budget_exhausted` has one: "this token hit its ceiling" is a fact an
-	// operator alerts on directly, and it reads as a runaway sub-agent as often
-	// as it reads as a ceiling set too low. The `svid_jti:` field is written
-	// through the same helper the count searches for, so an investigator can join
-	// this record to the calls that spent it and to the mint that issued it.
+	return s.refuseTokenExhausted(ctx, id, tool, used, s.brokerMaxCallsPerToken)
+}
+
+// refuseTokenExhausted audits and returns the per-token refusal. Its own action
+// rather than a generic denial, for the same reason `agent.budget_exhausted` has
+// one: "this token hit its ceiling" is a fact an operator alerts on directly,
+// and it reads as a runaway sub-agent as often as it reads as a ceiling set too
+// low. The `svid_jti:` field is written through the same helper the count
+// searches for, so an investigator can join this record to the calls that spent
+// it and to the mint that issued it. Both the trail count and the reservation
+// (Phase 219) refuse through here, so the record is the same whichever fired.
+func (s *Server) refuseTokenExhausted(ctx context.Context, id *agentid.Identity, tool string, used, limit int) *broker.Outcome {
 	_ = s.auditAs(ctx, id.AgentName, "agent.token_budget_exhausted",
 		fmt.Sprintf("agent:%s tool:%s used:%d limit:%d window:24h%s",
 			auditField(id.AgentName, 200), auditField(tool, 64),
-			used, s.brokerMaxCallsPerToken, store.AgentTokenAuditField(id.TokenID)))
+			used, limit, store.AgentTokenAuditField(id.TokenID)))
 	return &broker.Outcome{
 		Status: broker.StatusDenied,
 		Reason: fmt.Sprintf("this token has spent its ceiling: %d of %d calls. A new token starts a new ceiling.",
-			used, s.brokerMaxCallsPerToken),
+			used, limit),
 	}
 }

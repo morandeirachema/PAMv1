@@ -241,6 +241,15 @@ erDiagram
     int RecurDays
     ptr_time_Time NextRunAt
   }
+  AgentCallReservation {
+    int64 ID
+    string Agent
+    string TokenID
+    time_Time At
+    string Refused
+    int AgentUsed
+    int TokenUsed
+  }
   AgentIdentity {
     int64 ID
     string SPIFFEID

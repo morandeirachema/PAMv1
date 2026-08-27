@@ -67,9 +67,13 @@ import (
 // BrokerStore.CountAgentCallsForTokenSince (1) — the same trail the daily budget
 // reads, grouped by the presented token's `jti` instead of by the agent, because
 // a ceiling on a single run cannot be keyed on the caller-declared `session:`
-// the party being limited chooses for itself.
+// the party being limited chooses for itself. Phase 219 added
+// BrokerStore.{ReserveAgentCall,ReleaseAgentCallReservation} (2) — the
+// compare-and-spend behind both of those counts, because a count followed by a
+// call is a check-then-act and a burst at the boundary over-ran the limit by
+// the burst's width (the 2026-08-26 audit's M-3, reservation half).
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 218
+	const want = 220
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

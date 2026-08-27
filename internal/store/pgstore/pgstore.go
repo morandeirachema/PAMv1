@@ -1563,6 +1563,60 @@ func (s *PGStore) CountAgentCallsForTokenSince(ctx context.Context, agent, jti s
 	return n, err
 }
 
+// agentReservationLockClass is the first key of the two-key advisory lock
+// ReserveAgentCall takes per agent. The two-integer form lives in a keyspace of
+// its own, apart from the single-bigint leader and audit-chain locks, so a
+// hashtext collision with one of those keys is not possible.
+const agentReservationLockClass = 219
+
+// ReserveAgentCall is the compare-and-spend behind the agent budget and the
+// per-token ceiling (Phase 219). Everything happens in one transaction under a
+// per-agent, transaction-level advisory lock — the purge of aged rows, both
+// counts and the insert — so every reservation for one agent, on every
+// replica, serialises through the same lock and no two can read the count the
+// other is about to change. A refusal still commits, so the purge it did is
+// kept. See the interface doc for the limit semantics.
+func (s *PGStore) ReserveAgentCall(ctx context.Context, agent, jti string, at, since time.Time, agentLimit, tokenLimit int) (store.AgentCallReservation, error) {
+	res := store.AgentCallReservation{Agent: agent, TokenID: jti, At: at.UTC()}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return res, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, hashtext($2))`, agentReservationLockClass, agent); err != nil {
+		return res, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM agent_call_reservations WHERE agent = $1 AND ts < $2`, agent, since.UTC()); err != nil {
+		return res, err
+	}
+	if err := tx.QueryRow(ctx,
+		`SELECT count(*), count(*) FILTER (WHERE $3 <> '' AND token_id = $3)
+		 FROM agent_call_reservations WHERE agent = $1 AND ts >= $2`,
+		agent, since.UTC(), jti).Scan(&res.AgentUsed, &res.TokenUsed); err != nil {
+		return res, err
+	}
+	switch {
+	case agentLimit >= 0 && res.AgentUsed >= agentLimit:
+		res.Refused = store.ReservationRefusedBudget
+		return res, tx.Commit(ctx)
+	case jti != "" && tokenLimit > 0 && res.TokenUsed >= tokenLimit:
+		res.Refused = store.ReservationRefusedToken
+		return res, tx.Commit(ctx)
+	}
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO agent_call_reservations (agent, token_id, ts) VALUES ($1, $2, $3) RETURNING id`,
+		agent, jti, at.UTC()).Scan(&res.ID); err != nil {
+		return res, err
+	}
+	return res, tx.Commit(ctx)
+}
+
+// ReleaseAgentCallReservation deletes a reservation whose call did no work, or
+// ErrNotFound.
+func (s *PGStore) ReleaseAgentCallReservation(ctx context.Context, id int64) error {
+	return execExpectingRow(ctx, s.pool, `DELETE FROM agent_call_reservations WHERE id = $1`, id)
+}
+
 // QuarantineAgent stops one agent by subject, populating ID and CreatedAt;
 // ErrConflict if that subject is already quarantined.
 func (s *PGStore) QuarantineAgent(ctx context.Context, q *store.AgentQuarantine) error {

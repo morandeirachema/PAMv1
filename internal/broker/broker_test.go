@@ -127,11 +127,11 @@ func TestSweepExpiredParked(t *testing.T) {
 	}
 
 	// Inside the TTL nothing is evicted.
-	if n := b.SweepExpiredParked(context.Background(), time.Now()); n != 0 {
+	if n := len(b.SweepExpiredParked(context.Background(), time.Now())); n != 0 {
 		t.Fatalf("early sweep evicted %d, want 0", n)
 	}
 	// Past the TTL the call is evicted, terminal, and audited.
-	if n := b.SweepExpiredParked(context.Background(), time.Now().Add(16*time.Minute)); n != 1 {
+	if n := len(b.SweepExpiredParked(context.Background(), time.Now().Add(16*time.Minute))); n != 1 {
 		t.Fatalf("sweep evicted %d, want 1", n)
 	}
 	if n := len(b.PendingApprovals()); n != 0 {

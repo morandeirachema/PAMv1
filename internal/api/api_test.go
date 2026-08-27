@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -735,6 +736,7 @@ func TestLoginNotConfigured(t *testing.T) {
 
 // fakeWinRM records what it was asked to run and returns a canned result.
 type fakeWinRM struct {
+	mu                                sync.Mutex // Run is called from the broker's request goroutines, concurrently under a burst (Phase 219)
 	gotHost, gotUser, gotPass, gotCmd string
 	gotPort                           int
 	result                            winrm.Result
@@ -743,6 +745,8 @@ type fakeWinRM struct {
 
 // Run records the dial parameters and command, then returns the canned result/error.
 func (f *fakeWinRM) Run(_ context.Context, host string, port int, user, password, command string) (winrm.Result, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.gotHost, f.gotPort, f.gotUser, f.gotPass, f.gotCmd = host, port, user, password, command
 	return f.result, f.err
 }

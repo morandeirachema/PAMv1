@@ -486,10 +486,12 @@ func (s *Server) processToolCall(w http.ResponseWriter, r *http.Request, id *age
 	// bounds NEW work only: collecting the result of a call a human already
 	// approved must not be refused for budget, because the work is done and
 	// withholding the result would hide it while keeping the side effect.
-	if s.refuseOverBudget(w, r, id, in.Tool) {
+	refused, spend := s.refuseOverBudget(w, r, id, in.Tool)
+	if refused {
 		return
 	}
 	out := s.broker.ProcessCall(r.Context(), id, broker.Call{SessionID: in.SessionID, Client: in.Client, Tool: in.Tool, Args: in.Args})
+	s.settleSpend(r.Context(), spend, out)
 	// Surface broker activity in the unified audit trail too; the hash chain
 	// remains the authoritative, verifiable record.
 	//
@@ -668,6 +670,9 @@ func (s *Server) decideBrokerApproval(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "unknown or already-decided approval")
 		return
 	}
+	// The parked call held a budget slot since it was requested; it keeps it
+	// only if the approval actually ran the tool.
+	s.settleParkedSpend(r.Context(), out.CallID, out.Status == broker.StatusExecuted)
 	s.audit(r.Context(), "broker.approval."+map[bool]string{true: "granted", false: "denied"}[in.Approve],
 		fmt.Sprintf("call:%s status:%s", out.CallID, out.Status))
 	writeJSON(w, http.StatusOK, out)
