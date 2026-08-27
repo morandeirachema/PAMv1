@@ -15,3 +15,8 @@ func TestMemstoreContract(t *testing.T) {
 func TestMemstoreAuditChainContract(t *testing.T) {
 	storetest.RunAuditChainContract(t, New())
 }
+
+// TestMemstoreCloseContract runs the shared Close conformance check.
+func TestMemstoreCloseContract(t *testing.T) {
+	storetest.RunCloseContract(t, New())
+}
