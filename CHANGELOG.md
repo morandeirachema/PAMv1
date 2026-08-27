@@ -9,6 +9,42 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.60.0] — 2026-08-27
+
+A minor that ships **Phase 222** — a broker resume token is bound to the agent
+that parked the call — and **Phase 221**, a documentation resync. A minor
+rather than a patch because the schema moves: migration `0051` adds a
+`subject` column to `broker_tokens`, applied automatically on startup. **No
+env var, route or audit-action change**, and nothing an operator configures
+changes.
+
+**A leaked resume token is now worth nothing to another agent.** The token was
+already single-use and its call id 96-bit random (the 2026-08-26 audit rated
+the gap LOW for that reason), so a token that reached another agent was worth
+one collection at most. It is now bound to the identity that parked the call —
+a static key's row id, or an attested workload's SPIFFE ID — and any other
+presenter, even one holding both the token and the call id, gets the same
+answer a bad token gets, at the peek and inside the atomic spend. Its attempt
+spends nothing; the owner still collects exactly once. With this, **every
+finding of the 2026-08-26 security audit is closed.**
+
+### Added
+
+- `broker_tokens.subject` (migration `0051`), written when a call parks and
+  required to collect its result. `ConsumeBrokerToken`/`PeekBrokerToken` take
+  the presenter's subject (Go API only; `store.Store` stays at 220 methods).
+
+### Operational notes
+
+- A token minted before the upgrade carries no subject and keeps spending for
+  any presenter until it expires — at most one `PAM_BROKER_TOKEN_TTL_MIN`
+  window, for calls parked across a rolling deploy.
+- Phase 221 corrected two long-stale "latest migration" marks in the
+  architecture and code guides and brought several change logs up to date;
+  documentation only.
+
+Helm chart `0.50.0` → `0.51.0`, a minor alongside an app minor.
+
 ## [0.59.0] — 2026-08-27
 
 A minor that ships **Phase 219** — the agent budget and the per-token ceiling
@@ -2697,6 +2733,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.60.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.60.0
 [0.59.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.59.0
 [0.58.3]: https://github.com/morandeirachema/pamv1/releases/tag/v0.58.3
 [0.58.2]: https://github.com/morandeirachema/pamv1/releases/tag/v0.58.2
