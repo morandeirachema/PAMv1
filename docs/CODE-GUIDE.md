@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-27 · Reflects: Phases 0–220 + the 2026-07 hardening passes.
+> Last updated: 2026-08-27 · Reflects: Phases 0–221 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -325,7 +325,7 @@ Sentinel errors `ErrNotFound` / `ErrConflict` map to HTTP/SSH errors upstream.
   `migrations/*.sql` files, each run once inside its own transaction, tracked in a
   `schema_migrations` table, under a session-level `pg_advisory_lock` so concurrent
   replicas booting together don't race. `0001_init.sql` is the idempotent baseline;
-  every later change is a new numbered file (through `0018_audit_chain.sql` at time of writing).
+  every later change is a new numbered file (through `0050_agent_call_reservations.sql` at time of writing).
 
   Two implementation details are load-bearing:
   - **Error mapping is the contract.** A pgx `PgError` SQLSTATE is translated to
@@ -340,14 +340,25 @@ Sentinel errors `ErrNotFound` / `ErrConflict` map to HTTP/SSH errors upstream.
     exclusivity rests on a partial unique index (`checkouts_one_active_idx`), the
     TOTP anti-replay guard is a conditional `UPDATE … WHERE $step > last_totp_step`,
     and a broker resume token is spent by `UPDATE … SET used_at=now() WHERE jti=$1
-    AND used_at IS NULL AND expires_at>now() RETURNING call_id`.
-  - **Two distinct advisory locks**: the migration lock and the broker-audit-chain
+    AND used_at IS NULL AND expires_at>now() RETURNING call_id`. The agent budget
+    and the per-token ceiling are spent by `ReserveAgentCall` (Phase 219): the
+    purge, both counts and the insert run in one transaction under a per-agent
+    advisory lock, so a burst cannot all pass on the same count.
+  - **Three distinct advisory locks**: the migration lock and the broker-audit-chain
     append lock (`AppendBrokerAuditLinked`, `pg_advisory_xact_lock`) use different
-    keys, so a running append never blocks a migration or vice-versa.
+    single-key values, so a running append never blocks a migration or vice-versa;
+    the per-agent reservation lock uses the **two-key** form
+    (`pg_advisory_xact_lock(219, hashtext(agent))`), a keyspace of its own, so a
+    `hashtext` collision with either of the others is not possible.
 
 The shared conformance suite `storetest.RunStoreContract` exercises the whole
-interface against both implementations (and, in CI, against a live PostgreSQL via
-`PAM_TEST_DATABASE_URL`) — so the pgstore SQL is verified, not just assumed.
+interface — every one of its 220 methods since Phase 217 — against both
+implementations (and, in CI, against a live PostgreSQL via
+`PAM_TEST_DATABASE_URL`), so the pgstore SQL is verified, not just assumed. Its
+assertions are written from the interface's doc comments, not from either
+implementation: that is how Phase 217 found four places the two stores
+disagreed. `TestStoreMethodSetIsUnchanged` pins the method count, so a role
+dropped from the composition fails loudly rather than compiling away.
 
 ### 3.4 `auth` — RBAC and identity resolution
 
@@ -1177,6 +1188,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-27 | Phases 217 and 219: §3.3 (`store`) — the conformance suite covers every method (217; four backend divergences found and fixed), new `BrokerStore.ReserveAgentCall`/`ReleaseAgentCallReservation` (218 -> 220 methods) over `agent_call_reservations` (migration `0050`, now the high-water mark stated here — it had read `0018`), the reservation added to the atomic single-winner list and a third advisory lock (two-key form) to the lock list. `internal/api/agentbudget.go` — `budgetRefusal` returns the reservation, `settleSpend`/`settleParkedSpend` keep or release it on both transports; `Broker.SweepExpiredParked` returns the evicted ids. The `fakeWinRM` test runner is now mutex-guarded (the burst test is the first to drive it concurrently). |
 | 2026-08-25 | Phase 199 (a flake, named): `internal/proxy/forensics_test.go`'s audit fixture now writes the real millisecond component instead of `.000`. Flooring to a whole second made the record's survival depend on `frac + delta <= 1s` against `Parse`'s one-second window slack — a ~1% failure rate, reproduced deterministically before the change. `TestWindowSlackEdges` in `internal/sessionforensics` now pins that slack at its edges. Test-only; no production code changed. |
 | 2026-08-27 | Phase 215 (second audit): §3.4 (`auth`) — `Directory` gains `GetUserByUsername`; `Resolve` re-reads the local row for a session token (inactive → refused; allowlist/device carried). §4.1/4.2 — `Server.sourceGates` (IP allowlist, device, posture) shared by `authz`, `authenticated` and the viewer tunnel. §4.5 — `Server.cutUserAccess` (users.go) called by `deleteUser`, `updateUser` on a role change, and SCIM `applyScimActiveChange`; `guardPersonalTargetWrite` (safes_handlers.go) on `createCredential`/`deleteCredential`/`deleteTarget`. §5.6 — `session.GuestJoinID`; `ShareRegistry.Kick` revokes a guest by that id. Tests: `useraccesscut_test.go`, `rdp_gates_test.go`, `personalsafe_write_test.go` |
 | 2026-08-26 | Phase 212 (security audit): §3.4 (`auth`) — `Principal.MayOpenSession(serving SessionScope)`, the single "may this token open a session" answer both proxies, the desktop and the viewer tunnel now call. §3.5 — `auditfmt.Value` (colon-escaping for any wire-sourced audit-detail value; `proxy.auditPath` generalised). §5.4 — `newBoundedBackend` + `pgPreAuthMaxBody`/`pgSessionMaxBody`, the `pgproto3` body bound a constructor cannot forget, with the rate limiter ahead of the first read; §5.1 — `maxChannelsPerConn`. §4.5 — `api/doublelock.go`: `deriveDoubleLock`, `dlParams` (per-record iteration prefix), `Server.doubleLockMinLen`; §3.1 — `config.DoubleLockMinLength` (`PAM_DOUBLELOCK_MIN_LENGTH`). §10 — one `resumeDetail` shared by both broker transports. §3.3 — migration `0049` (`agent_keys_active_name_unique`); method count unchanged at 218. Phase 213 (display name): comments and display strings say `PAMv1`; identifiers do not — no structural change |
