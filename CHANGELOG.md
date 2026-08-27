@@ -33,7 +33,8 @@ reload, and a bundle that tries to shadow its key id is refused whole.
 - `agentid.SVIDVerifier` re-reads its bundle on change (`Reload`,
   `SetBundleRecheck`, `WithLogger` — Go API only). Nothing to configure.
 
-Helm chart `0.51.0` → `0.52.0`, a minor alongside an app minor.
+Helm chart `0.51.0` → `0.52.0`, a minor alongside an app minor. Image digest
+`sha256:50be5f7c…` (the full value is in the README and on the release page).
 
 ## [0.60.0] — 2026-08-27
 
