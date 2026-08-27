@@ -2433,9 +2433,12 @@ found, as Phase 212's did.
   v0.58.1 and — the rule Phase 214 added — nothing the workflow *reads* has
   changed either (same repository name, same runner image), so no rehearsal.
   Published 2026-08-27 as `ghcr.io/morandeirachema/pamv1:0.58.2` (also
-  `latest`), digest recorded once the publish workflow has run, signed and
-  attested, with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS`
-  attached
+  `latest`), digest
+  `sha256:89cfc84e630e5ad93a814cc00da9d33090263b8b7ecab49ebe92e2c928d54e09`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
+  digest), signed and attested — every publishing step's own conclusion
+  `success`, and the README's `cosign verify` run against it — with the
+  `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS` attached
 - [x] All pins via the sweep — exactly one release under `deploy/`. Helm chart
   `version` 0.49.1 -> **0.49.2**, a patch alongside an app patch
 - [x] `store.Store` unchanged at **218**; migration high-water unchanged at
