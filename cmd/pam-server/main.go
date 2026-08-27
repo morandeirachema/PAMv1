@@ -1067,6 +1067,10 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("broker SVID verifier: %w", err)
 		}
+		// The bundle is re-read when the file changes (Phase 224), so a SPIRE
+		// key rotation no longer needs a restart; reloads and refusals go to the
+		// server log under the verifier's own lines.
+		sv.WithLogger(log.With("service", "svid"))
 		// Token exchange (Phase 57): the broker signs delegated SVIDs with a
 		// shared-custody ed25519 key and must therefore TRUST that key at ingress —
 		// otherwise it would mint tokens it could not itself accept. Wired here,

@@ -211,3 +211,141 @@ func TestSVIDVerifyRS256(t *testing.T) {
 		t.Fatalf("RS256 svid: id=%+v err=%v", id, err)
 	}
 }
+
+// --- the bundle is re-read when the file changes (Phase 224) ---
+
+// rewriteJWKS overwrites path with a bundle holding the given ed25519 keys,
+// nudging the modification time forward so a rewrite inside the same
+// timestamp granularity still reads as a new version.
+func rewriteJWKS(t *testing.T, path string, keys map[string]ed25519.PublicKey) {
+	t.Helper()
+	list := make([]map[string]string, 0, len(keys))
+	for kid, pub := range keys {
+		list = append(list, map[string]string{"kty": "OKP", "crv": "Ed25519", "kid": kid, "x": b64url(pub)})
+	}
+	b, _ := json.Marshal(map[string]any{"keys": list})
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, st.ModTime().Add(2*time.Second), st.ModTime().Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func svidFor(t *testing.T, priv ed25519.PrivateKey, kid string) string {
+	t.Helper()
+	return makeEdDSA(t, priv, kid, map[string]any{
+		"sub": "spiffe://example.org/agent/rot", "aud": "pam-broker", "exp": time.Now().Add(time.Hour).Unix(),
+	})
+}
+
+// TestSVIDBundleReloadsOnRotation is the phase in one test: the issuer adds a
+// key and later retires the old one, and the verifier follows without a
+// restart — a token under the new key is refused only until the file changes,
+// and a token under the retired key is refused as soon as it is gone.
+func TestSVIDBundleReloadsOnRotation(t *testing.T) {
+	pub1, priv1, _ := ed25519.GenerateKey(rand.Reader)
+	pub2, priv2, _ := ed25519.GenerateKey(rand.Reader)
+	path := edJWKS(t, pub1, "k1")
+	v, err := agentid.NewSVIDVerifier(path, "example.org", "pam-broker", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.SetBundleRecheck(0)
+	if _, err := v.Verify(context.Background(), svidFor(t, priv2, "k2")); err == nil {
+		t.Fatal("a token under a key the bundle does not hold must be refused")
+	}
+	// Rotation, step one: the issuer publishes k2 beside k1.
+	rewriteJWKS(t, path, map[string]ed25519.PublicKey{"k1": pub1, "k2": pub2})
+	if _, err := v.Verify(context.Background(), svidFor(t, priv2, "k2")); err != nil {
+		t.Fatalf("after the bundle gained k2 the verifier must accept it without a restart: %v", err)
+	}
+	if _, err := v.Verify(context.Background(), svidFor(t, priv1, "k1")); err != nil {
+		t.Fatalf("k1 is still in the bundle and must still verify: %v", err)
+	}
+	// Step two: k1 is retired.
+	rewriteJWKS(t, path, map[string]ed25519.PublicKey{"k2": pub2})
+	if _, err := v.Verify(context.Background(), svidFor(t, priv1, "k1")); err == nil {
+		t.Fatal("a key the issuer removed from the bundle must stop verifying")
+	}
+	if _, err := v.Verify(context.Background(), svidFor(t, priv2, "k2")); err != nil {
+		t.Fatalf("k2 must keep verifying after k1's retirement: %v", err)
+	}
+}
+
+// TestSVIDBundleKeepsLastGoodOnBadRewrite: a half-written or empty bundle —
+// what a rotation looks like for a moment — must not turn into an outage. The
+// verifier keeps the keys it had, reports the failure, and picks up the file
+// once it is whole again.
+func TestSVIDBundleKeepsLastGoodOnBadRewrite(t *testing.T) {
+	pub1, priv1, _ := ed25519.GenerateKey(rand.Reader)
+	path := edJWKS(t, pub1, "k1")
+	v, err := agentid.NewSVIDVerifier(path, "example.org", "pam-broker", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.SetBundleRecheck(0)
+	for name, junk := range map[string]string{"garbage": "{not json", "empty set": `{"keys":[]}`} {
+		if err := os.WriteFile(path, []byte(junk), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		st, _ := os.Stat(path)
+		_ = os.Chtimes(path, st.ModTime().Add(2*time.Second), st.ModTime().Add(2*time.Second))
+		if changed, err := v.Reload(false); err == nil || changed {
+			t.Fatalf("%s: Reload must fail and change nothing: changed=%v err=%v", name, changed, err)
+		}
+		if _, err := v.Verify(context.Background(), svidFor(t, priv1, "k1")); err != nil {
+			t.Fatalf("%s: the last good bundle must stay in force: %v", name, err)
+		}
+	}
+	// And a file removed outright is the same case, not a reason to trust nobody.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.Verify(context.Background(), svidFor(t, priv1, "k1")); err != nil {
+		t.Fatalf("with the bundle file gone the last good keys must still verify: %v", err)
+	}
+}
+
+// TestSVIDBundleReloadPreservesIssuer: the broker's own token-exchange key,
+// trusted through TrustIssuer, is not in the file and must survive every
+// reload — and a rotated bundle that tries to shadow its kid is refused whole,
+// the same refusal the startup path makes.
+func TestSVIDBundleReloadPreservesIssuer(t *testing.T) {
+	pub1, _, _ := ed25519.GenerateKey(rand.Reader)
+	pub2, priv2, _ := ed25519.GenerateKey(rand.Reader)
+	issuerPub, issuerPriv, _ := ed25519.GenerateKey(rand.Reader)
+	path := edJWKS(t, pub1, "k1")
+	v, err := agentid.NewSVIDVerifier(path, "example.org", "pam-broker", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.SetBundleRecheck(0)
+	if err := v.TrustIssuer("broker-1", issuerPub); err != nil {
+		t.Fatal(err)
+	}
+	rewriteJWKS(t, path, map[string]ed25519.PublicKey{"k2": pub2})
+	if _, err := v.Verify(context.Background(), svidFor(t, priv2, "k2")); err != nil {
+		t.Fatalf("rotated bundle: %v", err)
+	}
+	if _, err := v.Verify(context.Background(), svidFor(t, issuerPriv, "broker-1")); err != nil {
+		t.Fatalf("the issuer key must survive a bundle reload: %v", err)
+	}
+	// A bundle shadowing the issuer's kid is refused; k2 stays, broker-1 stays
+	// the broker's own key, and the impostor never verifies.
+	impostorPub, impostorPriv, _ := ed25519.GenerateKey(rand.Reader)
+	rewriteJWKS(t, path, map[string]ed25519.PublicKey{"k2": pub2, "broker-1": impostorPub})
+	if changed, err := v.Reload(false); err == nil || changed {
+		t.Fatalf("a bundle shadowing the issuer kid must be refused whole: changed=%v err=%v", changed, err)
+	}
+	if _, err := v.Verify(context.Background(), svidFor(t, impostorPriv, "broker-1")); err == nil {
+		t.Fatal("a bundle key shadowing the issuer kid was trusted")
+	}
+	if _, err := v.Verify(context.Background(), svidFor(t, issuerPriv, "broker-1")); err != nil {
+		t.Fatalf("the issuer's own key must still verify after the refused bundle: %v", err)
+	}
+}
