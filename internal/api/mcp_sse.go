@@ -163,7 +163,7 @@ func (s *mcpSession) resolveElicit(reqID string, res elicitResult) bool {
 }
 
 // serveMCPStream is the MCP SSE transport (GET /mcp). It opens an event stream,
-// emits the `endpoint` event naming the message-POST URL (per the 2024-11-05 MCP
+// emits the `endpoint` event naming the message-POST URL (the HTTP+SSE transport of the 2024-11-05 revision, which later revisions keep for backwards compatibility — per that MCP
 // HTTP+SSE transport), then relays server-initiated messages and heartbeats until
 // the client disconnects. Auth is the same agent bearer as POST /mcp.
 func (s *Server) serveMCPStream(w http.ResponseWriter, r *http.Request, id *agentid.Identity) {
