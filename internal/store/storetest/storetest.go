@@ -3395,59 +3395,91 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 
 	// --- broker single-use resume tokens (Phase 13) ---
-	if err := st.CreateBrokerToken(ctx, &store.BrokerToken{JTI: "jti-1", CallID: "call_abc", ExpiresAt: time.Now().Add(time.Hour).UTC()}); err != nil {
+	if err := st.CreateBrokerToken(ctx, &store.BrokerToken{Subject: "contract-agent", JTI: "jti-1", CallID: "call_abc", ExpiresAt: time.Now().Add(time.Hour).UTC()}); err != nil {
 		t.Fatalf("CreateBrokerToken: %v", err)
 	}
 	// A duplicate JTI is a conflict in both stores (not a silent overwrite).
-	if err := st.CreateBrokerToken(ctx, &store.BrokerToken{JTI: "jti-1", CallID: "call_other", ExpiresAt: time.Now().Add(time.Hour).UTC()}); !errors.Is(err, store.ErrConflict) {
+	if err := st.CreateBrokerToken(ctx, &store.BrokerToken{Subject: "contract-agent", JTI: "jti-1", CallID: "call_other", ExpiresAt: time.Now().Add(time.Hour).UTC()}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("CreateBrokerToken(dup): want ErrConflict, got %v", err)
 	}
 	// First consume wins and returns the bound call id.
-	if cid, err := st.ConsumeBrokerToken(ctx, "jti-1"); err != nil || cid != "call_abc" {
+	if cid, err := st.ConsumeBrokerToken(ctx, "jti-1", "contract-agent"); err != nil || cid != "call_abc" {
 		t.Fatalf("ConsumeBrokerToken: cid=%q err=%v", cid, err)
 	}
 	// A second consume of the same token fails — single-use.
-	if _, err := st.ConsumeBrokerToken(ctx, "jti-1"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := st.ConsumeBrokerToken(ctx, "jti-1", "contract-agent"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("ConsumeBrokerToken(reuse): want ErrNotFound, got %v", err)
 	}
 	// An unknown token fails.
-	if _, err := st.ConsumeBrokerToken(ctx, "jti-nope"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := st.ConsumeBrokerToken(ctx, "jti-nope", "contract-agent"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("ConsumeBrokerToken(unknown): want ErrNotFound, got %v", err)
 	}
 	// An expired token cannot be consumed.
-	if err := st.CreateBrokerToken(ctx, &store.BrokerToken{JTI: "jti-exp", CallID: "call_x", ExpiresAt: time.Now().Add(-time.Minute).UTC()}); err != nil {
+	if err := st.CreateBrokerToken(ctx, &store.BrokerToken{Subject: "contract-agent", JTI: "jti-exp", CallID: "call_x", ExpiresAt: time.Now().Add(-time.Minute).UTC()}); err != nil {
 		t.Fatalf("CreateBrokerToken(expired): %v", err)
 	}
-	if _, err := st.ConsumeBrokerToken(ctx, "jti-exp"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := st.ConsumeBrokerToken(ctx, "jti-exp", "contract-agent"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("ConsumeBrokerToken(expired): want ErrNotFound, got %v", err)
 	}
 
 	// Peek returns the bound call id WITHOUT spending the token (repeatable), then
 	// Consume spends it and Peek reports it gone.
-	if err := st.CreateBrokerToken(ctx, &store.BrokerToken{JTI: "jti-peek", CallID: "call_peek", ExpiresAt: time.Now().Add(time.Hour).UTC()}); err != nil {
+	if err := st.CreateBrokerToken(ctx, &store.BrokerToken{Subject: "contract-agent", JTI: "jti-peek", CallID: "call_peek", ExpiresAt: time.Now().Add(time.Hour).UTC()}); err != nil {
 		t.Fatalf("CreateBrokerToken(peek): %v", err)
 	}
 	for i := 0; i < 2; i++ {
-		if cid, err := st.PeekBrokerToken(ctx, "jti-peek"); err != nil || cid != "call_peek" {
+		if cid, err := st.PeekBrokerToken(ctx, "jti-peek", "contract-agent"); err != nil || cid != "call_peek" {
 			t.Fatalf("PeekBrokerToken (unspent): cid=%q err=%v", cid, err)
 		}
 	}
-	if _, err := st.ConsumeBrokerToken(ctx, "jti-peek"); err != nil {
+	if _, err := st.ConsumeBrokerToken(ctx, "jti-peek", "contract-agent"); err != nil {
 		t.Fatalf("ConsumeBrokerToken(peek): %v", err)
 	}
-	if _, err := st.PeekBrokerToken(ctx, "jti-peek"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := st.PeekBrokerToken(ctx, "jti-peek", "contract-agent"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("PeekBrokerToken(spent): want ErrNotFound, got %v", err)
 	}
 
 	// GC removes spent + expired tokens; an unexpired unused one survives.
-	if err := st.CreateBrokerToken(ctx, &store.BrokerToken{JTI: "jti-live", CallID: "call_live", ExpiresAt: time.Now().Add(time.Hour).UTC()}); err != nil {
+	if err := st.CreateBrokerToken(ctx, &store.BrokerToken{Subject: "contract-agent", JTI: "jti-live", CallID: "call_live", ExpiresAt: time.Now().Add(time.Hour).UTC()}); err != nil {
 		t.Fatalf("CreateBrokerToken(live): %v", err)
 	}
 	if n, err := st.DeleteExpiredBrokerTokens(ctx); err != nil || n < 1 {
 		t.Fatalf("DeleteExpiredBrokerTokens: n=%d err=%v", n, err)
 	}
-	if cid, err := st.PeekBrokerToken(ctx, "jti-live"); err != nil || cid != "call_live" {
+	if cid, err := st.PeekBrokerToken(ctx, "jti-live", "contract-agent"); err != nil || cid != "call_live" {
 		t.Fatalf("GC removed a live token: cid=%q err=%v", cid, err)
+	}
+
+	// --- the collector binding (2026-08-26 audit F-7, Phase 222) ---
+	// A token spends only for the subject that parked its call. Any other
+	// presenter is answered as if the token did not exist — at Peek and at
+	// Consume alike, so a stranger learns neither the call id nor that there is
+	// a token at all — and a refused presentation spends nothing.
+	if err := st.CreateBrokerToken(ctx, &store.BrokerToken{Subject: "agent-key:7", JTI: "jti-bound", CallID: "call_bound", ExpiresAt: time.Now().Add(time.Hour).UTC()}); err != nil {
+		t.Fatalf("CreateBrokerToken(bound): %v", err)
+	}
+	if _, err := st.PeekBrokerToken(ctx, "jti-bound", "agent-key:8"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("PeekBrokerToken(another subject): want ErrNotFound, got %v", err)
+	}
+	if _, err := st.ConsumeBrokerToken(ctx, "jti-bound", "agent-key:8"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ConsumeBrokerToken(another subject): want ErrNotFound, got %v", err)
+	}
+	if _, err := st.ConsumeBrokerToken(ctx, "jti-bound", ""); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("ConsumeBrokerToken(empty subject against a bound token): want ErrNotFound, got %v", err)
+	}
+	if cid, err := st.PeekBrokerToken(ctx, "jti-bound", "agent-key:7"); err != nil || cid != "call_bound" {
+		t.Fatalf("PeekBrokerToken(owner) after refused strangers: cid=%q err=%v — a refused presentation must spend nothing", cid, err)
+	}
+	if cid, err := st.ConsumeBrokerToken(ctx, "jti-bound", "agent-key:7"); err != nil || cid != "call_bound" {
+		t.Fatalf("ConsumeBrokerToken(owner): cid=%q err=%v", cid, err)
+	}
+	// A row minted before the binding existed carries no subject and spends for
+	// any presenter until it expires: the upgrade window, bounded by the TTL.
+	if err := st.CreateBrokerToken(ctx, &store.BrokerToken{JTI: "jti-legacy", CallID: "call_legacy", ExpiresAt: time.Now().Add(time.Hour).UTC()}); err != nil {
+		t.Fatalf("CreateBrokerToken(legacy): %v", err)
+	}
+	if cid, err := st.ConsumeBrokerToken(ctx, "jti-legacy", "agent-key:9"); err != nil || cid != "call_legacy" {
+		t.Fatalf("ConsumeBrokerToken(legacy row, any subject): cid=%q err=%v", cid, err)
 	}
 
 	// --- leader lock ---

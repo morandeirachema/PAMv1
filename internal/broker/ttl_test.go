@@ -76,7 +76,7 @@ func TestRuleTTLBoundsTheApprovalWindow(t *testing.T) {
 	if out.ResumeToken == "" || out.jti == "" {
 		t.Fatal("a parked call under an approval rule should carry a resume token")
 	}
-	if _, err := st.PeekBrokerToken(context.Background(), out.jti); err != nil {
+	if _, err := st.PeekBrokerToken(context.Background(), out.jti, "bot"); err != nil {
 		t.Fatalf("the minted token should be peekable inside its window: %v", err)
 	}
 

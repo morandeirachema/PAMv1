@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/agentid"
+	"github.com/morandeirachema/pamv1/internal/alert"
 	"github.com/morandeirachema/pamv1/internal/auditchain"
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/policy"
@@ -377,5 +378,43 @@ func TestDecideFailsClosedWhenAuditUnavailable(t *testing.T) {
 	}
 	if ran {
 		t.Fatal("the tool ran with no durable record that it was going to")
+	}
+}
+
+// TestResumeRejectsForeignCollector — Phase 222 (the 2026-08-26 audit's F-7):
+// a resume token is bound to the identity that parked the call, keyed the way
+// sameAgent keys — by static-key row id, since agent names are documented as
+// non-unique. A stranger sharing the NAME and holding the token is answered as
+// if the token did not exist, and the owner still collects afterwards.
+func TestResumeRejectsForeignCollector(t *testing.T) {
+	st := memstore.New()
+	chain := newTestChain(t, st)
+	reg := NewRegistry()
+	ran := false
+	reg.Register(recordingTool{ran: &ran})
+	b := New(parkEngine(t), reg, chain).WithApproval(st, alert.Noop{}, 15*time.Minute)
+
+	owner := &agentid.Identity{AgentName: "bot-a", KeyID: 1}
+	parked := b.ProcessCall(context.Background(), owner, Call{Tool: "t"})
+	if parked.Status != StatusPendingApproval || parked.ResumeToken == "" {
+		t.Fatalf("expected a parked call with a resume token, got %+v", parked)
+	}
+	if out, ok, err := b.Decide(context.Background(), parked.CallID, Approver{Name: "human", IsAdmin: true}, true); err != nil || !ok || out.Status != StatusExecuted {
+		t.Fatalf("approve: ok=%v err=%v out=%+v", ok, err, out)
+	}
+
+	stranger := &agentid.Identity{AgentName: "bot-a", KeyID: 2}
+	if _, ok := b.Resume(context.Background(), stranger, parked.ResumeToken, parked.CallID); ok {
+		t.Fatal("a different agent collected with the owner's token; the binding is only worth something because the identity must match")
+	}
+	if _, ok := b.Resume(context.Background(), nil, parked.ResumeToken, parked.CallID); ok {
+		t.Fatal("a nil presenter collected a parked call's result")
+	}
+	// The refused attempts spent nothing: the owner collects exactly once.
+	if out, ok := b.Resume(context.Background(), owner, parked.ResumeToken, parked.CallID); !ok || out.Status != StatusExecuted {
+		t.Fatalf("the owner must still collect after a stranger's refused attempt: ok=%v out=%+v", ok, out)
+	}
+	if _, ok := b.Resume(context.Background(), owner, parked.ResumeToken, parked.CallID); ok {
+		t.Fatal("the token was collectable twice")
 	}
 }

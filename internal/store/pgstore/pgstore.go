@@ -2184,8 +2184,8 @@ func (s *PGStore) AppMayAccessCredential(ctx context.Context, appID, credentialI
 // CreateBrokerToken stores a single-use resume token for a parked tool call.
 func (s *PGStore) CreateBrokerToken(ctx context.Context, t *store.BrokerToken) error {
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO broker_tokens (jti, call_id, expires_at) VALUES ($1, $2, $3)`,
-		t.JTI, t.CallID, t.ExpiresAt)
+		`INSERT INTO broker_tokens (jti, call_id, subject, expires_at) VALUES ($1, $2, $3, $4)`,
+		t.JTI, t.CallID, t.Subject, t.ExpiresAt)
 	if pgCode(err) == pgUniqueViolation {
 		return store.ErrConflict // a duplicate jti maps to the sentinel, like sibling Create*
 	}
@@ -2195,12 +2195,17 @@ func (s *PGStore) CreateBrokerToken(ctx context.Context, t *store.BrokerToken) e
 // ConsumeBrokerToken atomically spends a token, returning its bound call id. The
 // UPDATE ... WHERE used_at IS NULL AND expires_at > now() RETURNING makes the
 // spend a single winner; a used, expired, or unknown jti returns ErrNotFound.
-func (s *PGStore) ConsumeBrokerToken(ctx context.Context, jti string) (string, error) {
+func (s *PGStore) ConsumeBrokerToken(ctx context.Context, jti, subject string) (string, error) {
 	var callID string
+	// The collector binding (Phase 222) is part of the single atomic statement,
+	// not a check before it: a token bound to another subject is refused the
+	// same way a spent one is. `subject = ''` admits only a row minted before
+	// the binding existed, for the remainder of its TTL.
 	err := s.pool.QueryRow(ctx,
 		`UPDATE broker_tokens SET used_at = now()
 		 WHERE jti = $1 AND used_at IS NULL AND expires_at > now()
-		 RETURNING call_id`, jti).Scan(&callID)
+		   AND (subject = $2 OR subject = '')
+		 RETURNING call_id`, jti, subject).Scan(&callID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", store.ErrNotFound
 	}
@@ -2208,11 +2213,12 @@ func (s *PGStore) ConsumeBrokerToken(ctx context.Context, jti string) (string, e
 }
 
 // PeekBrokerToken returns a token's bound call id without spending it.
-func (s *PGStore) PeekBrokerToken(ctx context.Context, jti string) (string, error) {
+func (s *PGStore) PeekBrokerToken(ctx context.Context, jti, subject string) (string, error) {
 	var callID string
 	err := s.pool.QueryRow(ctx,
-		`SELECT call_id FROM broker_tokens WHERE jti = $1 AND used_at IS NULL AND expires_at > now()`,
-		jti).Scan(&callID)
+		`SELECT call_id FROM broker_tokens
+		 WHERE jti = $1 AND used_at IS NULL AND expires_at > now() AND (subject = $2 OR subject = '')`,
+		jti, subject).Scan(&callID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", store.ErrNotFound
 	}

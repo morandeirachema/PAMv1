@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–221 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–222 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,45 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 222 — A resume token is worth nothing to anyone else ✅
+
+The 2026-08-26 audit's F-7, and with it the last open finding of that report.
+A resume token was single-use and its call id 96-bit random, so a token that
+leaked from one agent to another was already worth **one collection at most**
+— which is why the audit rated it LOW and Phase 212 deferred it. It is now
+worth nothing to anyone but the agent whose call it belongs to.
+
+- [x] **Which identity to bind — the decision the deferral named.** The
+  audit offered three: the agent key, the SVID `jti`, or the `cnf`
+  thumbprint. The token `jti` is wrong because a sub-agent legitimately
+  renews its token through the exchange inside a fifteen-minute approval
+  window and would then be locked out of its own result; the `cnf`
+  thumbprint is wrong because only a bound token carries one and a static
+  key never does. The binding is to the **subject the broker already uses to
+  tell agents apart** — a static key's row id (names are documented as
+  non-unique), else the attested SPIFFE ID — the same order `sameAgent`
+  compares in, so "the agent that parked it" means one thing across
+  withdrawal, quarantine and collection. `broker.collectorSubject` is the one
+  function that says so
+- [x] **`broker_tokens.subject`** (migration `0051`, additive, defaulted to
+  `''`), written at mint by `park` and required by both
+  `PeekBrokerToken` and `ConsumeBrokerToken` (`store.Store` stays at **220**;
+  two signatures change). A mismatch is `ErrNotFound` at the peek AND inside
+  the atomic spend, so a stranger learns neither the call id nor that a token
+  exists, and its attempt spends nothing — the owner still collects once
+- [x] **The upgrade window is stated, not hidden.** A row minted before the
+  migration carries no subject and spends for any presenter until it expires
+  — at most one resume-token TTL, for calls parked across a rolling deploy.
+  Both backends carry the same `subject = $2 OR subject = ''`, and the
+  contract suite pins it beside the binding itself
+- [x] Pinned on both backends in the contract suite, at the broker (a
+  stranger sharing the owner's **name** with a different key id), and end to
+  end over REST (another agent holding the token and the call id — everything
+  a leak would give it — gets the answer a bad token gets, and the owner
+  collects afterwards); each verified to fail with the binding removed
+- [x] No env var, route or audit-action change. Schema moved, so a minor
+  release follows
 
 ## Phase 221 — Documentation resync ✅
 
@@ -10158,12 +10197,15 @@ Buildable without external infrastructure, each deferred by the phase named.
   stay in front of it as what an operator reads. The same test found that a
   parked call never held a slot at all — an agent could park any number of
   calls under a budget of one and have every one approved — and closed that too.
-- **Bind a broker resume token to its collector** (212, audit F-7) — ⬜
-  open. A resume token is single-use bearer by explicit design and call ids
-  are 96-bit random, so this is defence-in-depth rather than a live hole;
-  binding it to the identity that parked the call needs a schema column and
-  a decision about which identity to bind (agent key, SVID `jti`, or `cnf`
-  thumbprint).
+- ~~**Bind a broker resume token to its collector** (212, audit F-7)~~ — ✅
+  closed 2026-08-27 (Phase 222): `broker_tokens.subject` (migration `0051`)
+  carries the identity that parked the call — the static key's row id or the
+  SPIFFE ID, the same subject `Withdraw` and quarantine key on, chosen over
+  the token `jti` (renewed legitimately inside a 15-minute approval window)
+  and the `cnf` thumbprint (only bound tokens carry one) — and both the peek
+  and the atomic spend refuse any other presenter as if the token did not
+  exist. The last finding of the 2026-08-26 audit; that report is now closed
+  in full.
 
 #### 3b. The AI-agent broker batch (2026-08-17/18 research)
 
