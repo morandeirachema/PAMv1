@@ -9,6 +9,44 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.58.3] — 2026-08-27
+
+A patch that ships **Phase 217** — the 2026-08-26 audit's last deferred
+test-coverage finding (M-6) closed, and the four backend divergences that
+closing it exposed. **No schema, route or env-var change**, no upgrade note
+that needs an action, and nothing an operator does changes: every fix is at
+the store's own edges, on paths no API handler as written reaches. They ship
+anyway, because a store used by the tests and a store used in production that
+disagree is the highest-leverage class of bug this codebase has (the AF/AL
+findings of 2026-07-30), and the rule since Phase 200 is that a differing
+binary does not bank on `main`.
+
+### Fixed
+
+- **A denied session-share invite no longer keeps a token on PostgreSQL.**
+  `DecideSessionShareInvite` stores `token_hash` and `expires_at` only on
+  approval — as its contract always said and as the in-memory store always
+  did. The API passes empty values on a denial, so no denial was ever
+  redeemable; the stored row now matches the contract on both backends.
+- **`CreateApprovalInvite` reports its constraints the same way on both
+  backends**: `ErrNotFound` for an access request that does not exist,
+  `ErrConflict` for a duplicate token hash — previously a raw SQLSTATE on
+  PostgreSQL and no check at all in memory.
+- **Deleting a target removes the approval invites of its access requests in
+  the in-memory store**, matching PostgreSQL's `ON DELETE CASCADE` chain.
+- **Session-share and approval-invite listings order deterministically** —
+  `created_at` descending with an `id` tie-break on both backends (the
+  in-memory sort was unstable and PostgreSQL had no tie-break).
+
+### Changed
+
+- The store contract suite (`internal/store/storetest`) covers every one of
+  `store.Store`'s 218 methods: the twenty the 2026-08-26 audit found absent
+  are in, and `Close` has its own `RunCloseContract`. Test-only; the CI job
+  against live PostgreSQL runs it.
+
+Helm chart `0.49.2` → `0.49.3`, a patch alongside an app patch.
+
 ## [0.58.2] — 2026-08-27
 
 A patch that ships **the second security audit's fixes** — two HIGH, one
@@ -2606,6 +2644,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.58.3]: https://github.com/morandeirachema/pamv1/releases/tag/v0.58.3
 [0.58.2]: https://github.com/morandeirachema/pamv1/releases/tag/v0.58.2
 [0.58.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.58.1
 [0.58.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.58.0

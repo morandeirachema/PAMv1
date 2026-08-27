@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–217 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–218 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,40 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 218 — v0.58.3 ✅
+
+Releases **217** — the contract-suite closure and the four backend divergences
+it found. A **patch**: no schema, route or env var moved (the precedent of
+v0.18.2, v0.54.1 and v0.58.2), and what changed is what the four fixes change —
+a denied share invite stores no token on PostgreSQL, `CreateApprovalInvite`
+answers with the interface's sentinels on both backends, a target delete takes
+its approval invites with it in memory, and the two invite listings have a
+tie-break. None reachable through a handler as written; but the binary
+differs, and the rule since Phase 200 is that it does not bank.
+
+- [x] **v0.58.3** through the test-gated pipeline. `.github/` untouched since
+  v0.58.1 and — the rule Phase 214 added — nothing the workflow *reads* has
+  changed either (same repository name, same runner image), so no rehearsal.
+  Published 2026-08-27 as `ghcr.io/morandeirachema/pamv1:0.58.3` (also
+  `latest`), digest recorded once the publish workflow has run, signed and
+  attested, with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS`
+  attached
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm chart
+  `version` 0.49.2 -> **0.49.3**, a patch alongside an app patch
+- [x] `store.Store` unchanged at **218**; migration high-water unchanged at
+  `0049`; routes unchanged at **193**
+- [x] Both READMEs restated; every `Reflects:` header, `docs/README.md`,
+  `NIS2-COMPLIANCE.md`'s evidence row and this banner. One correction on the
+  way: the README's `cosign verify` note said the certificate identity carries
+  `PAMv1` "since v0.58.2" — each release had bumped it mechanically. It is
+  since **v0.58.1**, the first signed image after Phase 213's rename, and now
+  says so and stays there
+- [x] `CHANGELOG.md` leads with the fact that **nothing an operator does
+  changes**, then states the four store-edge behaviours that do and why they
+  ship rather than bank
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
 
 ## Phase 217 — Twenty store methods join the contract, and the four gaps they found ✅
 
