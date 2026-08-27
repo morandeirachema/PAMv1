@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–228 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -10485,26 +10485,43 @@ PAMv1 is an MCP **server**. Different product shape, not a gap.
   store contract suite legitimately uses, kept and recorded so the next scan does
   not re-find them.
 
-#### 3d. A flaky test — now able to say why (open, cause unproven)
+#### 3d. A flaky test — the next occurrence named it, and it was not a timeout (open, cause narrowed — Phase 228)
 
 `proxy.TestDBProxyZSPProvisionsAndTearsDownRole` failed once in CI on the
 v0.49.0 release PR — a commit that changes no Go code — and passed on the rerun.
-It has not been reproduced since: forty local `-race` runs of the ZSP tests and
-six full `-race` passes of the whole proxy package under saturated CPU with
-`GOMAXPROCS=1` all pass.
+**It recurred once more on 2026-08-27**, on the v0.62.0 digest PR (#371) — again
+a docs-only commit — and passed on the rerun. Between the two it has never
+reproduced locally: forty local `-race` runs of the ZSP tests, six full `-race`
+passes of the whole proxy package under saturated CPU with `GOMAXPROCS=1`, and
+now **two hundred `-race` runs at `GOMAXPROCS=2`** all pass.
 
-**Phase 179 did what could be done honestly**: the test can now report its own
-cause (it printed the proxy's client-facing wire message and nothing else, while
-the real error sat in the audit trail it never read), and the arbitrary 5-second
-dial bound it set — tighter than the 10 seconds production defaults to — is
-gone, since a test that fails because IT chose to be more impatient than the
-product is testing its own impatience. That second change is a *candidate* fix,
-not a diagnosis, and is labelled as one in the code.
+**Phase 179 did what could be done honestly**: it made the test report its own
+cause (it had printed the proxy's client-facing wire message and nothing else,
+while the real error sat in the audit trail it never read), and removed the
+arbitrary 5-second dial bound it had set — tighter than the 10 seconds
+production defaults to — since a test that fails because IT chose to be more
+impatient than the product is testing its own impatience.
 
-**What is still open**: the cause. The next occurrence will name it — the
-failing test now prints `db.session.error … error:<real error>` alongside the
-wire message — and until then, guessing at timing code would be changing
-behaviour on a hunch.
+**What the 2026-08-27 occurrence named** (Phase 228, from the audit trail Phase
+179 taught it to print): the failure is **not a dial timeout**, which is what
+that 5-second bound and its removal had assumed. The trail reads
+`db.session.start → db.zsp_provisioned → db.session.error … error:upstream
+rejected authentication: password authentication failed → db.zsp_teardown`. So
+**provisioning succeeded and teardown succeeded; only the ephemeral role's own
+dial was rejected** by the fake upstream — a `28P01`, not a slow or refused
+connection. That eliminates the timeout hypothesis the candidate fix targeted,
+and it is why that fix is (correctly) labelled a candidate and not a diagnosis.
+
+**What is still open**: why the rejection. In the fake (`fakePGProvisioner`) the
+`CREATE ROLE` credential is stored under the mutex *before* the `ReadyForQuery`
+the proxy waits on, and the ephemeral-role dial reads it under the same mutex —
+so by the happens-before the two connections share, an auth failure on that leg
+should be unreachable. That it happens only on a saturated CI runner and never
+locally points at runner-level scheduling or resource pressure rather than a
+logic error, but the mechanism is not proven, and — as before — changing the
+fake or the timing on a hunch would be changing behaviour to quiet a signal
+rather than to fix a cause. The next occurrence will narrow it further; the
+trail now distinguishes an auth rejection from a timeout, which this one did.
 
 #### 4. Repo furniture — ✅ closed 2026-07-28
 
