@@ -43,7 +43,8 @@ finding of the 2026-08-26 security audit is closed.**
   architecture and code guides and brought several change logs up to date;
   documentation only.
 
-Helm chart `0.50.0` → `0.51.0`, a minor alongside an app minor.
+Helm chart `0.50.0` → `0.51.0`, a minor alongside an app minor. Image digest
+`sha256:55f70935…` (the full value is in the README and on the release page).
 
 ## [0.59.0] — 2026-08-27
 
