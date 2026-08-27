@@ -1,6 +1,6 @@
 # PAMv1 — documentation
 
-> Last updated: 2026-08-27 · Reflects: Phases 0–223 and release v0.60.0 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-08-27 · Reflects: Phases 0–224 and release v0.60.0 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-08-27 | Phase 224 (the trust bundle follows the file) documented: ARCHITECTURE-LOW-LEVEL's `PAM_BROKER_TRUST_DOMAIN_JWKS` row and change log, ADMIN-GUIDE's SPIFFE paragraph, EXTERNAL-INFRA-GAPS's SVID row, AGENT-THREAT-MODEL's evidence table, CODE-GUIDE's change log. |
 | 2026-08-27 | Phase 222 (a resume token bound to its collector — the 2026-08-26 audit's F-7, its last finding) documented: ARCHITECTURE-LOW-LEVEL's table list, migration mark (`0051`) and change log; CODE-GUIDE §3.3's atomic-spend statement and §3.5's park/mint sentence; AGENT-THREAT-MODEL's `jti:` paragraph and evidence table; ADMIN-GUIDE's approval walkthrough; PROTOCOLS-AND-CRYPTO's credential table; BACKUP-AND-RESTORE, REQUIREMENTS and SYSADMIN-GUIDE headers; the audit report's F-7 row and §3 (every finding of that audit now closed) and SECURITY-GAPS's register. |
 | 2026-08-27 | Phase 221 (documentation resync after 217–220): two stale "latest migration" marks corrected (`0025` → `0050` in ARCHITECTURE-LOW-LEVEL §2.2, `0018` → `0050` in CODE-GUIDE §3.3), CODE-GUIDE's atomic-operation and advisory-lock bullets taught the reservation, the 2026-08-26 audit report's M-3/M-6 rows marked closed, change-log rows for 217/219 added to ADMIN-GUIDE, ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE and BACKUP-AND-RESTORE (whose high-water narrative now reaches `0050`), REQUIREMENTS and SYSADMIN-GUIDE headers state that 217–220 add no requirement and no worker, and SECURITY-GAPS's register records the two closures with F-7 as the one finding still open. |
 | 2026-08-27 | Phase 219 (the budget becomes a compare-and-spend — the 2026-08-26 audit's M-3, reservation half) documented: ARCHITECTURE-LOW-LEVEL's table list gains `agent_call_reservations` (`0050`) and its change log the design; AGENT-THREAT-MODEL's budget section states that the trail count is now the reported number and the reservation the enforced one, why the two never disagree in the permissive direction, and that a parked call holds its slot — with the burst test in its evidence table; ADMIN-GUIDE's `PAM_BROKER_BUDGET_PER_DAY` and `PAM_BROKER_MAX_CALLS_PER_TOKEN` rows say the limit holds under a burst. |

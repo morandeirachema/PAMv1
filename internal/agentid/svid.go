@@ -12,9 +12,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/jwtutil"
@@ -93,45 +95,220 @@ func (m *mayActClaim) subjects() []string {
 // SPIRE agent). It requires the subject to be a SPIFFE ID in the configured trust
 // domain, the audience to match, and the token to be unexpired (fail-closed).
 // RFC 8693 nested "act" claims become a delegation actor chain bounded by maxDepth.
+//
+// The bundle is re-read when the file changes (Phase 224): SPIRE rotates its
+// signing keys and rewrites the bundle on its own schedule, and until this
+// phase a rotation meant a restart — a verifier that had read the file once at
+// startup refused every SVID signed by a key it had never seen. Verify compares
+// the file's modification time and size at most every recheckEvery, and
+// re-reads it immediately (rate-limited) when a token names a kid it does not
+// hold, which is the moment a rotation shows up. A re-read that fails — the file
+// mid-rewrite, unparsable, empty, or shadowing an issuer key — keeps the LAST
+// GOOD bundle and reports the error through the logger: refusing everyone
+// because the issuer's file was half-written would turn a routine rotation
+// into an outage, and a key that should stop being trusted is retired by the
+// issuer removing it, which the next successful read honours.
 type SVIDVerifier struct {
 	trustDomain string // e.g. "example.org" (the host of spiffe://example.org/...)
 	audience    string
 	maxDepth    int
-	keys        map[string]crypto.PublicKey // kid -> public key
+	path        string
+	log         *slog.Logger
+
+	mu     sync.RWMutex
+	keys   map[string]crypto.PublicKey // kid -> public key: the bundle's keys plus the issuer's
+	issuer map[string]crypto.PublicKey // TrustIssuer keys, re-applied on every reload
+	// stamp is what the current keys were parsed from; a different stamp on
+	// disk is what triggers a re-read.
+	stamp bundleStamp
+	// recheckEvery bounds how often Verify stats the file; lastCheck is the
+	// last time it did, lastForced the last time an unknown kid made it re-read
+	// regardless — so a stream of junk kids costs one stat per second at most.
+	recheckEvery          time.Duration
+	lastCheck, lastForced time.Time
 }
+
+// bundleStamp identifies a version of the bundle file without reading it.
+type bundleStamp struct {
+	modTime time.Time
+	size    int64
+}
+
+// DefaultBundleRecheck is how often Verify compares the bundle file's stamp
+// with the one it loaded. A stat, not a read; the read happens only on change.
+const DefaultBundleRecheck = 30 * time.Second
+
+// forcedRecheckMinGap bounds how often an unknown kid can make Verify re-read
+// the bundle regardless of the periodic check.
+const forcedRecheckMinGap = time.Second
 
 // NewSVIDVerifier loads the trust-domain JWKS from jwksPath and returns a
 // verifier. trustDomain is the SPIFFE trust domain host, audience the required
-// aud, maxDepth the delegation-depth cap (<=0 becomes 1).
+// aud, maxDepth the delegation-depth cap (<=0 becomes 1). The file is re-read
+// when it changes; see the type's doc.
 func NewSVIDVerifier(jwksPath, trustDomain, audience string, maxDepth int) (*SVIDVerifier, error) {
 	if trustDomain == "" {
 		return nil, errors.New("agentid: svid trust domain is required")
 	}
-	data, err := os.ReadFile(jwksPath) // #nosec G304 -- operator-configured SVID trust-domain JWKS path
+	keys, stamp, err := loadBundle(jwksPath)
 	if err != nil {
-		return nil, fmt.Errorf("agentid: read svid jwks: %w", err)
+		return nil, err
 	}
+	if maxDepth <= 0 {
+		maxDepth = 1
+	}
+	return &SVIDVerifier{
+		trustDomain: trustDomain, audience: audience, maxDepth: maxDepth, path: jwksPath,
+		log:  slog.Default(),
+		keys: keys, issuer: map[string]crypto.PublicKey{}, stamp: stamp,
+		recheckEvery: DefaultBundleRecheck, lastCheck: time.Now(),
+	}, nil
+}
+
+// WithLogger sets where reloads and reload failures are reported.
+func (v *SVIDVerifier) WithLogger(l *slog.Logger) *SVIDVerifier {
+	if l != nil {
+		v.log = l
+	}
+	return v
+}
+
+// SetBundleRecheck changes how often Verify stats the bundle file; zero makes
+// every Verify look, which tests use to make a rotation visible at once.
+func (v *SVIDVerifier) SetBundleRecheck(d time.Duration) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.recheckEvery = d
+}
+
+// loadBundle reads and parses the JWKS file, returning its keys and the stamp
+// they were read under. Every failure is an error rather than an empty set: a
+// bundle with no usable keys is a misconfiguration, not a trust domain with no
+// members.
+func loadBundle(path string) (map[string]crypto.PublicKey, bundleStamp, error) {
+	f, err := os.Open(path) // #nosec G304 -- operator-configured SVID trust-domain JWKS path
+	if err != nil {
+		return nil, bundleStamp{}, fmt.Errorf("agentid: read svid jwks: %w", err)
+	}
+	defer f.Close()
+	// Stat the open handle, so the stamp belongs to the bytes read and not to
+	// a file that was replaced between a stat and a read.
+	info, err := f.Stat()
+	if err != nil {
+		return nil, bundleStamp{}, fmt.Errorf("agentid: stat svid jwks: %w", err)
+	}
+	stamp := bundleStamp{modTime: info.ModTime(), size: info.Size()}
 	var set struct {
 		Keys []jwtutil.JWK `json:"keys"`
 	}
-	if err := json.Unmarshal(data, &set); err != nil {
-		return nil, fmt.Errorf("agentid: parse svid jwks: %w", err)
+	if err := json.NewDecoder(f).Decode(&set); err != nil {
+		return nil, bundleStamp{}, fmt.Errorf("agentid: parse svid jwks: %w", err)
 	}
 	keys := map[string]crypto.PublicKey{}
 	for _, k := range set.Keys {
 		pub, err := publicKeyFromJWK(k)
 		if err != nil {
-			return nil, err
+			return nil, bundleStamp{}, err
 		}
 		keys[k.Kid] = pub
 	}
 	if len(keys) == 0 {
-		return nil, errors.New("agentid: svid jwks has no usable keys")
+		return nil, bundleStamp{}, errors.New("agentid: svid jwks has no usable keys")
 	}
-	if maxDepth <= 0 {
-		maxDepth = 1
+	return keys, stamp, nil
+}
+
+// Reload re-reads the bundle file if its stamp differs from the one the current
+// keys were parsed under (always, when force is set), and swaps the keys in
+// atomically. It reports whether the keys changed. On any failure the current
+// keys stay in force and the error is returned — and logged, since the callers
+// on the verify path have nobody to return it to.
+func (v *SVIDVerifier) Reload(force bool) (changed bool, err error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	now := time.Now()
+	v.lastCheck = now
+	if force {
+		v.lastForced = now
+	} else {
+		info, serr := os.Stat(v.path)
+		if serr != nil {
+			v.log.Warn("svid trust bundle unreadable; keeping the last good keys", "path", v.path, "err", serr)
+			return false, serr
+		}
+		if info.ModTime().Equal(v.stamp.modTime) && info.Size() == v.stamp.size {
+			return false, nil
+		}
 	}
-	return &SVIDVerifier{trustDomain: trustDomain, audience: audience, maxDepth: maxDepth, keys: keys}, nil
+	keys, stamp, lerr := loadBundle(v.path)
+	if lerr != nil {
+		v.log.Warn("svid trust bundle re-read failed; keeping the last good keys", "path", v.path, "err", lerr)
+		return false, lerr
+	}
+	for kid, pub := range v.issuer {
+		if _, clash := keys[kid]; clash {
+			// The same refusal TrustIssuer makes at startup: a bundle key that
+			// shadows the broker's own signing kid would be a trust substitution
+			// nobody could see, so the new bundle is refused whole.
+			cerr := fmt.Errorf("agentid: reloaded bundle has a key colliding with issuer kid %q", kid)
+			v.log.Error("svid trust bundle refused; keeping the last good keys", "path", v.path, "err", cerr)
+			return false, cerr
+		}
+		keys[kid] = pub
+	}
+	if stamp == v.stamp {
+		return false, nil
+	}
+	added, removed := diffKids(v.keys, keys)
+	v.keys, v.stamp = keys, stamp
+	v.log.Info("svid trust bundle reloaded", "path", v.path, "keys", len(keys)-len(v.issuer), "added", added, "removed", removed)
+	return true, nil
+}
+
+// diffKids reports which kids a reload added and removed, for the log line an
+// operator reads to confirm a rotation landed.
+func diffKids(old, cur map[string]crypto.PublicKey) (added, removed []string) {
+	for kid := range cur {
+		if _, ok := old[kid]; !ok {
+			added = append(added, kid)
+		}
+	}
+	for kid := range old {
+		if _, ok := cur[kid]; !ok {
+			removed = append(removed, kid)
+		}
+	}
+	return added, removed
+}
+
+// keyFor resolves a kid, re-reading the bundle when it is due and — once,
+// rate-limited — when the kid is unknown, which is what a rotation looks like
+// from here.
+func (v *SVIDVerifier) keyFor(kid string) (crypto.PublicKey, bool) {
+	v.mu.RLock()
+	due := time.Since(v.lastCheck) >= v.recheckEvery
+	pub, ok := v.keys[kid]
+	v.mu.RUnlock()
+	if due {
+		_, _ = v.Reload(false)
+		v.mu.RLock()
+		pub, ok = v.keys[kid]
+		v.mu.RUnlock()
+	}
+	if ok {
+		return pub, true
+	}
+	v.mu.RLock()
+	mayForce := time.Since(v.lastForced) >= forcedRecheckMinGap
+	v.mu.RUnlock()
+	if !mayForce {
+		return nil, false
+	}
+	_, _ = v.Reload(true)
+	v.mu.RLock()
+	pub, ok = v.keys[kid]
+	v.mu.RUnlock()
+	return pub, ok
 }
 
 // TrustIssuer adds the broker's OWN token-exchange signing key to the verifier,
@@ -150,10 +327,13 @@ func (v *SVIDVerifier) TrustIssuer(kid string, pub ed25519.PublicKey) error {
 	if kid == "" || len(pub) != ed25519.PublicKeySize {
 		return errors.New("agentid: issuer key must have a kid and be an ed25519 public key")
 	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	if _, clash := v.keys[kid]; clash {
 		return fmt.Errorf("agentid: issuer kid %q collides with a trust-domain key", kid)
 	}
 	v.keys[kid] = pub
+	v.issuer[kid] = pub // survives every reload of the bundle
 	return nil
 }
 
@@ -173,7 +353,7 @@ func (v *SVIDVerifier) Verify(_ context.Context, bearer string) (*Identity, erro
 	if err := jwtutil.DecodeSegment(parts[0], &hdr); err != nil {
 		return nil, ErrUnauthenticated
 	}
-	pub, ok := v.keys[hdr.Kid]
+	pub, ok := v.keyFor(hdr.Kid)
 	if !ok {
 		return nil, ErrUnauthenticated
 	}

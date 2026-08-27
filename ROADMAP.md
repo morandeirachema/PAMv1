@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–223 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–224 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,45 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 224 — The trust bundle follows the file ✅
+
+The first of §3b's "smaller, named so they are not forgotten" limits. The
+SPIFFE trust-domain JWKS (`PAM_BROKER_TRUST_DOMAIN_JWKS`) was read once, in
+`NewSVIDVerifier`, and never again: SPIRE rotates its signing keys and rewrites
+the bundle on its own schedule, and every rotation meant restarting PAMv1 —
+until then, every SVID under the new key was refused, and the refusal is
+deliberately indistinguishable from any other, so the operator saw agents
+failing to authenticate with nothing to say why.
+
+- [x] **Re-read on change, not on a timer.** `Verify` compares the file's
+  modification time and size at most every 30 seconds — a stat, not a read —
+  and re-reads the bundle when they differ. A token naming a `kid` the
+  verifier does not hold triggers an immediate re-read as well (rate-limited
+  to one per second, so a stream of junk kids costs one stat), because an
+  unknown kid is exactly what a rotation looks like from the verifier's side.
+  The stamp is taken from the open handle, so it belongs to the bytes parsed
+  and not to a file replaced between a stat and a read
+- [x] **A failed re-read keeps the last good bundle.** A half-written file, an
+  unparsable one, an empty key set, a file that has vanished — each is logged
+  and changes nothing, because refusing everyone while the issuer's writer is
+  mid-rewrite would turn a routine rotation into an outage. A key that should
+  stop being trusted is retired by the issuer removing it, and the next
+  successful read honours that: the rotation test proves a retired key stops
+  verifying and a new one starts, with no restart
+- [x] **The broker's own signing key survives every reload.** `TrustIssuer`
+  keys are held apart and re-applied after each read — and a rotated bundle
+  that shadows the issuer's `kid` is refused whole, the same refusal the
+  startup path has always made, since a bundle key silently replacing the
+  broker's own would be a trust substitution nobody could see
+- [x] `SVIDVerifier` gains a lock (`Verify` runs on every agent request; the
+  swap is atomic), `Reload(force)`, `SetBundleRecheck` and `WithLogger`; the
+  server wires its logger so reloads (`added`/`removed` kids) and refusals
+  appear as `service=svid` lines. No env var: the interval is a constant and
+  the behaviour has no sensible "off"
+- [x] Three tests, the rotation one verified to fail with the reload removed.
+  No schema, route or audit-action change; the behaviour is observable (a
+  rotation no longer needs a restart), so a minor release follows
 
 ## Phase 223 — v0.60.0 ✅
 
@@ -10319,8 +10358,8 @@ reason, and a set of smaller limits named so they are not forgotten:
   on a minted delegated token, so bearer remains bearer~~ (✅ Phase 206 — with
   **WIMSE still open**: the binding is DPoP-shaped, and PAMv1 cannot attest that
   the bound key belongs to the sub-agent rather than to the delegator that named
-  it, which is workload attestation and stays in §5). What is left: the trust
-  bundle is read once at startup; MCP is pinned at protocol `2024-11-05`; the
+  it, which is workload attestation and stays in §5). What is left: ~~the trust
+  bundle is read once at startup~~ (✅ Phase 224 — re-read when the file changes, last good bundle kept on a failed read); MCP is pinned at protocol `2024-11-05`; the
   SVID verifier allows 60 seconds of clock leeway past `exp`, normal practice but
   permissive in a system where a delegated token's TTL is its other containment;
   and ~~there is no ceiling on a single *run* — calls or targets touched under one
