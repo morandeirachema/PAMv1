@@ -2952,6 +2952,108 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		}
 	}
 
+	// --- atomic call reservation (2026-08-26 audit M-3, Phase 219) ---
+	// The compare-and-spend behind the daily budget and the per-token ceiling:
+	// the count and the row are one decision, so a burst at the boundary cannot
+	// over-run. Reporting still reads the audit trail; this ledger is only what
+	// the gate serialises on.
+	rsvAt := now.Truncate(time.Microsecond)
+	rsvSince := rsvAt.Add(-24 * time.Hour)
+	var rsvIDs []int64
+	for i := 0; i < 2; i++ {
+		r, err := st.ReserveAgentCall(ctx, "rsv-agent", "", rsvAt, rsvSince, 2, 0)
+		if err != nil || r.Refused != "" || r.ID == 0 || r.AgentUsed != i || !r.At.Equal(rsvAt) {
+			t.Fatalf("ReserveAgentCall(%d of 2): %+v err %v", i+1, r, err)
+		}
+		rsvIDs = append(rsvIDs, r.ID)
+	}
+	// The third is refused BY NAME, writes nothing, and reports what stood.
+	if r, err := st.ReserveAgentCall(ctx, "rsv-agent", "", rsvAt, rsvSince, 2, 0); err != nil ||
+		r.Refused != store.ReservationRefusedBudget || r.ID != 0 || r.AgentUsed != 2 {
+		t.Fatalf("third reservation against a budget of 2: %+v err %v", r, err)
+	}
+	// Another agent's reservations are its own.
+	if r, err := st.ReserveAgentCall(ctx, "rsv-other", "", rsvAt, rsvSince, 2, 0); err != nil || r.Refused != "" || r.AgentUsed != 0 {
+		t.Fatalf("a reservation must count only its own agent: %+v err %v", r, err)
+	}
+	// Releasing one — the call did no work — frees the slot; releasing it twice
+	// is ErrNotFound, and so is releasing a reservation that never existed.
+	if err := st.ReleaseAgentCallReservation(ctx, rsvIDs[0]); err != nil {
+		t.Fatalf("ReleaseAgentCallReservation: %v", err)
+	}
+	if err := st.ReleaseAgentCallReservation(ctx, rsvIDs[0]); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("second release: want ErrNotFound, got %v", err)
+	}
+	if err := st.ReleaseAgentCallReservation(ctx, 999999); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("release of an unknown reservation: want ErrNotFound, got %v", err)
+	}
+	if r, err := st.ReserveAgentCall(ctx, "rsv-agent", "", rsvAt, rsvSince, 2, 0); err != nil || r.Refused != "" || r.AgentUsed != 1 {
+		t.Fatalf("a released slot must be reservable again: %+v err %v", r, err)
+	}
+	// No daily budget (-1) reserves without a budget check — the row still
+	// counts for a ceiling — and a hard stop (0) refuses before anything is written.
+	if r, err := st.ReserveAgentCall(ctx, "rsv-agent", "", rsvAt, rsvSince, -1, 0); err != nil || r.Refused != "" || r.ID == 0 || r.AgentUsed != 2 {
+		t.Fatalf("an unlimited budget must reserve past any count: %+v err %v", r, err)
+	}
+	if r, err := st.ReserveAgentCall(ctx, "rsv-stop", "", rsvAt, rsvSince, 0, 0); err != nil || r.Refused != store.ReservationRefusedBudget || r.ID != 0 {
+		t.Fatalf("a budget of 0 is a hard stop: %+v err %v", r, err)
+	}
+	// The per-token ceiling is counted inside the agent's own rows: token A
+	// spends its one, token B still has its own, an empty jti is never limited,
+	// and a different agent quoting A's jti cannot spend A's ceiling.
+	if r, err := st.ReserveAgentCall(ctx, "rsv-tok", "jti-A", rsvAt, rsvSince, -1, 1); err != nil || r.Refused != "" || r.TokenUsed != 0 {
+		t.Fatalf("first reservation under jti-A: %+v err %v", r, err)
+	}
+	if r, err := st.ReserveAgentCall(ctx, "rsv-tok", "jti-A", rsvAt, rsvSince, -1, 1); err != nil ||
+		r.Refused != store.ReservationRefusedToken || r.ID != 0 || r.TokenUsed != 1 || r.AgentUsed != 1 {
+		t.Fatalf("second reservation under jti-A against a ceiling of 1: %+v err %v", r, err)
+	}
+	if r, err := st.ReserveAgentCall(ctx, "rsv-tok", "jti-B", rsvAt, rsvSince, -1, 1); err != nil || r.Refused != "" || r.TokenUsed != 0 || r.AgentUsed != 1 {
+		t.Fatalf("a second token has its own ceiling: %+v err %v", r, err)
+	}
+	if r, err := st.ReserveAgentCall(ctx, "rsv-tok", "", rsvAt, rsvSince, -1, 1); err != nil || r.Refused != "" || r.TokenUsed != 0 {
+		t.Fatalf("an empty jti is never limited by a ceiling: %+v err %v", r, err)
+	}
+	if r, err := st.ReserveAgentCall(ctx, "rsv-impostor", "jti-A", rsvAt, rsvSince, -1, 1); err != nil || r.Refused != "" || r.TokenUsed != 0 {
+		t.Fatalf("another agent quoting the jti must not spend its ceiling: %+v err %v", r, err)
+	}
+	// The budget is checked before the ceiling: an agent out of budget for the
+	// day is told that, not told about one of its tokens.
+	if r, err := st.ReserveAgentCall(ctx, "rsv-tok", "jti-A", rsvAt, rsvSince, 3, 1); err != nil || r.Refused != store.ReservationRefusedBudget || r.AgentUsed != 3 {
+		t.Fatalf("budget before ceiling: %+v err %v", r, err)
+	}
+	// A reservation older than the window neither counts nor lingers: the next
+	// reservation for that agent purges it (self-GC on write, like OIDC states).
+	rsvOld, err := st.ReserveAgentCall(ctx, "rsv-old", "", rsvAt.Add(-48*time.Hour), rsvAt.Add(-72*time.Hour), 1, 0)
+	if err != nil || rsvOld.Refused != "" {
+		t.Fatalf("ReserveAgentCall(two days ago): %+v err %v", rsvOld, err)
+	}
+	if r, err := st.ReserveAgentCall(ctx, "rsv-old", "", rsvAt, rsvSince, 1, 0); err != nil || r.Refused != "" || r.AgentUsed != 0 {
+		t.Fatalf("an aged-out reservation must not count: %+v err %v", r, err)
+	}
+	if err := st.ReleaseAgentCallReservation(ctx, rsvOld.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("an aged-out reservation must have been purged, got %v", err)
+	}
+	// Exactly N of a burst succeed against a limit of N — the property the
+	// count-then-call gates could not hold, and the reason the method exists.
+	const rsvLimit = 5
+	var rsvWG sync.WaitGroup
+	rsvWon := make(chan int64, 20)
+	for i := 0; i < 20; i++ {
+		rsvWG.Add(1)
+		go func() {
+			defer rsvWG.Done()
+			if r, err := st.ReserveAgentCall(ctx, "rsv-burst", "", rsvAt, rsvSince, rsvLimit, 0); err == nil && r.Refused == "" {
+				rsvWon <- r.ID
+			}
+		}()
+	}
+	rsvWG.Wait()
+	close(rsvWon)
+	if n := len(rsvWon); n != rsvLimit {
+		t.Fatalf("a burst of 20 against a limit of %d made %d reservations, want exactly %d", rsvLimit, n, rsvLimit)
+	}
+
 	// --- operator SSH certificates + KRL revocation (Phase 28) ---
 	vb := future
 	c1 := &store.SSHCert{Serial: 1001, KeyID: "pamv1:alice@web", Principal: "root", Actor: "alice", ValidBefore: &vb}

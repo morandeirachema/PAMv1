@@ -794,8 +794,10 @@ func (b *Broker) ApprovalIdentity(callID string) (ApprovalIdentity, bool) {
 // the parked cap. Each swept call is recorded as a terminal
 // failed outcome (so an agent polling its status sees a resolution instead of an
 // eternal pending) and appended to the tamper-evident chain (so the trail shows
-// how the parked call ended). Returns the number evicted.
-func (b *Broker) SweepExpiredParked(ctx context.Context, now time.Time) int {
+// how the parked call ended). Returns the ids evicted, so the caller can settle
+// whatever it holds against them — the budget reservation each one carried
+// (Phase 219).
+func (b *Broker) SweepExpiredParked(ctx context.Context, now time.Time) []string {
 	b.mu.Lock()
 	var expired []*parkedCall
 	for id, p := range b.parked {
@@ -808,14 +810,16 @@ func (b *Broker) SweepExpiredParked(ctx context.Context, now time.Time) int {
 		}
 	}
 	b.mu.Unlock()
+	ids := make([]string, 0, len(expired))
 	for _, p := range expired {
 		out := Outcome{CallID: p.callID, RuleID: p.ruleID, Scope: p.scope, Status: StatusFailed, Reason: "approval expired before a decision"}
 		b.remember(out)
 		if err := b.chainEvent(ctx, p.id, p.call, ActionToolCallFailed, out, out.Reason); err != nil {
 			b.log.Error("broker sweep audit append failed", "call", p.callID, "err", err)
 		}
+		ids = append(ids, p.callID)
 	}
-	return len(expired)
+	return ids
 }
 
 // Resume spends a single-use token and returns the stored outcome for its bound

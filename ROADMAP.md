@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–218 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–219 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,59 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 219 — The budget becomes a compare-and-spend ✅
+
+The 2026-08-26 audit's M-3, reservation half — the last open store-level
+finding, which Phase 212 deferred as "a new atomic store primitive, a design
+change". The daily budget (167) and the per-token ceiling (209) were both
+**count-then-call**: each call counted the audit trail and then ran, so a burst
+arriving together all read the same number, all passed, and the limit over-ran
+by the width of the burst. The per-minute rate limit bounded the residual; it
+did not close it. Writing the burst as a test made it plain — **twelve calls
+against a budget of two: twelve executed.**
+
+- [x] **`BrokerStore.ReserveAgentCall` / `ReleaseAgentCallReservation`**
+  (`store.Store` 218 -> **220**), over a new `agent_call_reservations` table
+  (migration `0050`). A reservation is the row the gate writes at the instant of
+  its decision, under the store's own serialisation — pgstore holds a per-agent
+  transaction-level advisory lock across the purge, both counts and the insert;
+  memstore holds its one lock — so the comparison and the spend are one
+  operation. Kept when the call does work, released when it does not. The
+  contract suite drives twenty goroutines at a limit of five on both backends
+  and gets exactly five
+- [x] **The audit trail stays what an operator reads.** Phase 167's principle —
+  the number shown and the number enforced are the same number — is kept
+  deliberately: the trail counts still run first and still refuse with their
+  own numbers, and they are what covers the window before the ledger has seen
+  a call (after an upgrade, or a call audited by a path that did not reserve).
+  The reservation sits *behind* them and only ever adds strictness. Both layers
+  refuse under the same audit actions with the same detail fields; an
+  investigator cannot tell which one fired, and does not need to
+- [x] **Denials and failures still consume nothing**, which is the budget's own
+  contract: a reservation is released when the policy refuses, when the tool
+  fails, when an approver denies, when the requester withdraws, and when a
+  parked call expires unapproved — `SweepExpiredParked` now returns the ids it
+  evicted so the scheduler can settle them. Each release path is a one-line
+  call on the outcome, and the parked call's reservation is carried in this
+  replica's memory beside the parked call itself
+- [x] **A parked call holds its slot** — the second hole the reservation closes,
+  found by the same test. The trail counted approval-path work only once the
+  agent *collected* it, and `Decide` never re-checked, so an agent could park
+  any number of calls under a budget of one and have every one approved. A
+  reservation is made when the work is requested, so the budget bounds what an
+  agent may *ask for*, not only what it has already been handed
+- [x] **Fail-closed in every direction that matters.** An unreadable ledger
+  refuses the call, the rule the trail counts already followed. A release that
+  fails, or a parked call lost to a restart, leaves its reservation standing
+  until it ages out of the window — the agent is under-served for a day, never
+  over-served. Nothing is limited, nothing is reserved: an unlimited agent pays
+  for no ledger row
+- [x] Four end-to-end tests, each verified to **fail with the fix removed**: the
+  burst (12 against 2 → exactly 2), a policy refusal giving its slot back, a
+  parked call holding it, an approver's denial returning it. No new env var,
+  route or audit action; the two exhaustion actions carry the same fields as
+  before
 
 ## Phase 218 — v0.58.3 ✅
 
@@ -10042,14 +10095,13 @@ Buildable without external infrastructure, each deferred by the phase named.
   back out of the cluster. Building what the docs described also turned up the
   quickstart bug where `kubectl apply -f deploy/k8s/` overwrote the secret you
   had just created with `CHANGE_ME`.
-- **Atomic budget reservation for agent calls** (212, audit M-3's second
-  half) — ⬜ open. Migration `0049` closed the name half (two active keys can
-  no longer share a name and pool one budget under two limits); the
-  count-then-call shape of the per-day budget and the per-token ceiling
-  remains a check-then-act, so a concurrent burst at the boundary can
-  over-run by the burst's width. Closing it is a new compare-and-spend store
-  primitive — a design change, not a fix — and the per-minute rate limit
-  already bounds the burst, so the residual is small.
+- ~~**Atomic budget reservation for agent calls** (212, audit M-3's second
+  half)~~ — ✅ closed 2026-08-27 (Phase 219): `ReserveAgentCall` is the
+  compare-and-spend, written under the store's own serialisation at the instant
+  the gate decides and released when the call does no work; the trail counts
+  stay in front of it as what an operator reads. The same test found that a
+  parked call never held a slot at all — an agent could park any number of
+  calls under a budget of one and have every one approved — and closed that too.
 - **Bind a broker resume token to its collector** (212, audit F-7) — ⬜
   open. A resume token is single-use bearer by explicit design and call ids
   are 96-bit random, so this is defence-in-depth rather than a live hole;
