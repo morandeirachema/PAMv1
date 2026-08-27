@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–225 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–226 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,48 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 226 — The protocol revision is negotiated, not pinned ✅
+
+The second of §3b's remaining limits. `initialize` answered every client with
+`2024-11-05` and never read the revision the client asked for — so a client
+speaking a newer revision was told, wrongly, that the server did not, and had
+to work out for itself whether to proceed. Reading the surface PAMv1 actually
+implements against the three published revisions showed more than a pin:
+
+- [x] **Negotiation the way every revision's lifecycle section prescribes.**
+  `mcp.Negotiate`: the client's revision when this server speaks it, else the
+  latest it does (`2025-06-18`), after which the client decides. `Supported`
+  lists `2025-06-18`, `2025-03-26`, `2024-11-05`, newest first, and is what the
+  tests iterate — a revision added to the set is negotiated and tested at once
+- [x] **Two capabilities the server claimed and should not have.** `logging`
+  was advertised and `logging/setLevel` never existed; `elicitation` is a
+  *client* capability in every revision — the server asks, the client
+  answers, and whether it can is what the client's own `initialize` says
+  (which is what the session records). The server now advertises what exists:
+  `tools`, with `listChanged: false`
+- [x] **Batches, received.** The 2025-03-26 revision requires a server to
+  accept a JSON-RPC batch; this one answered it with a parse error. `HandleBatch`
+  dispatches each element in order, omits notifications, answers an empty
+  array with one invalid-request error and an all-notification batch with
+  nothing (`204`). 2025-06-18 forbids *sending* batches, which this server
+  never does
+- [x] **The `MCP-Protocol-Version` header.** 2025-06-18 has HTTP clients name
+  the negotiated revision on every request after `initialize`; a revision this
+  server does not speak is refused at the transport (`400`, naming what it
+  does speak), and an absent header is a pre-2025-06-18 client, served as
+  before
+- [x] **What "speaks 2025-06-18" honestly covers, stated in `mcp.Latest`'s own
+  doc**: the message layer — `initialize`/`ping`/`tools/list`/`tools/call`,
+  and the server-sent `elicitation/create` whose `message`/`requestedSchema`/
+  `action` shape (built in Phase 27, ahead of the spec) is that revision's.
+  **What it does not**: the Streamable HTTP transport. The transport stays the
+  HTTP+SSE pair every revision keeps for backwards compatibility, and that is
+  now the bullet §3b carries in this one's place
+- [x] Unit tests for negotiation and batch framing; three end-to-end tests
+  (echo/latest/absent + honest capabilities, the header, a batch over HTTP).
+  No schema, route or env var; the behaviour is wire-visible, so a minor
+  release follows
 
 ## Phase 225 — v0.61.0 ✅
 
@@ -10388,7 +10430,7 @@ reason, and a set of smaller limits named so they are not forgotten:
   **WIMSE still open**: the binding is DPoP-shaped, and PAMv1 cannot attest that
   the bound key belongs to the sub-agent rather than to the delegator that named
   it, which is workload attestation and stays in §5). What is left: ~~the trust
-  bundle is read once at startup~~ (✅ Phase 224 — re-read when the file changes, last good bundle kept on a failed read); MCP is pinned at protocol `2024-11-05`; the
+  bundle is read once at startup~~ (✅ Phase 224 — re-read when the file changes, last good bundle kept on a failed read); ~~MCP is pinned at protocol `2024-11-05`~~ (✅ Phase 226 — negotiated across 2024-11-05, 2025-03-26 and 2025-06-18; **what remains** is the Streamable HTTP transport, which the server does not offer — its transport stays the HTTP+SSE pair every revision keeps for backwards compatibility); the
   SVID verifier allows 60 seconds of clock leeway past `exp`, normal practice but
   permissive in a system where a delegated token's TTL is its other containment;
   and ~~there is no ceiling on a single *run* — calls or targets touched under one

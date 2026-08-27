@@ -38,9 +38,17 @@ func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request, id *agentid.Id
 		w.WriteHeader(http.StatusAccepted) // an elicitation answer, delivered to the waiting call
 		return
 	}
-	resp, ok := s.mcpDispatcher(id, sess).Handle(r.Context(), body)
+	// The 2025-06-18 revision has HTTP clients name the negotiated revision on
+	// every request after initialize. A revision this server does not speak is
+	// refused at the transport, as that revision prescribes; an absent header
+	// is a pre-2025-06-18 client and is served as before.
+	if v := r.Header.Get("MCP-Protocol-Version"); v != "" && !mcp.IsSupported(v) {
+		writeError(w, http.StatusBadRequest, "unsupported MCP-Protocol-Version "+v+"; this server speaks "+strings.Join(mcp.Supported, ", "))
+		return
+	}
+	resp, ok := s.mcpDispatcher(id, sess).HandleBatch(r.Context(), body)
 	if !ok {
-		w.WriteHeader(http.StatusNoContent) // JSON-RPC notification: no response body
+		w.WriteHeader(http.StatusNoContent) // JSON-RPC notification(s): no response body
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -113,38 +121,44 @@ func mcpClient(sess *mcpSession) string {
 func (s *Server) mcpDispatcher(id *agentid.Identity, sess *mcpSession) mcp.Dispatcher {
 	return mcp.Dispatcher{
 		"initialize": func(_ context.Context, params json.RawMessage) (any, *mcp.Error) {
+			var p struct {
+				ProtocolVersion string `json:"protocolVersion"`
+				Capabilities    struct {
+					Elicitation *json.RawMessage `json:"elicitation"`
+				} `json:"capabilities"`
+				ClientInfo struct {
+					Name    string `json:"name"`
+					Version string `json:"version"`
+				} `json:"clientInfo"`
+			}
+			_ = json.Unmarshal(params, &p) // a malformed initialize negotiates as an empty one
 			// Note whether the client advertised elicitation support so a later
 			// approval-gated tool call can prompt the running user over the SSE stream.
 			if sess != nil {
-				var p struct {
-					Capabilities struct {
-						Elicitation *json.RawMessage `json:"elicitation"`
-					} `json:"capabilities"`
-					ClientInfo struct {
-						Name    string `json:"name"`
-						Version string `json:"version"`
-					} `json:"clientInfo"`
+				if p.Capabilities.Elicitation != nil {
+					sess.elicitCapable.Store(true)
 				}
-				if json.Unmarshal(params, &p) == nil {
-					if p.Capabilities.Elicitation != nil {
-						sess.elicitCapable.Store(true)
-					}
-					// Keep the client's self-description for the audit trail. MCP
-					// puts provenance here, once per session, rather than on each
-					// call — so this is the only chance to learn what software is
-					// driving the agent, and it is recorded as declared, never
-					// checked.
-					if p.ClientInfo.Name != "" {
-						sess.client.Store(strings.TrimSuffix(p.ClientInfo.Name+"/"+p.ClientInfo.Version, "/"))
-					}
+				// Keep the client's self-description for the audit trail. MCP
+				// puts provenance here, once per session, rather than on each
+				// call — so this is the only chance to learn what software is
+				// driving the agent, and it is recorded as declared, never
+				// checked.
+				if p.ClientInfo.Name != "" {
+					sess.client.Store(strings.TrimSuffix(p.ClientInfo.Name+"/"+p.ClientInfo.Version, "/"))
 				}
 			}
+			// The revision is negotiated, not pinned (Phase 226): the client's
+			// own when this server speaks it, else the latest it does — the
+			// client then decides. The capabilities are the ones that exist.
+			// Until this phase the server also advertised `logging` (no
+			// logging/setLevel was ever implemented) and `elicitation`, which
+			// is a CLIENT capability in every revision — the server asks, the
+			// client answers; whether it can is what the client's initialize
+			// says, and that is what is read above.
 			return map[string]any{
-				"protocolVersion": mcp.Version,
+				"protocolVersion": mcp.Negotiate(p.ProtocolVersion),
 				"capabilities": map[string]any{
-					"tools":       map[string]any{},
-					"logging":     map[string]any{},
-					"elicitation": map[string]any{},
+					"tools": map[string]any{"listChanged": false},
 				},
 				"serverInfo": map[string]any{"name": "pamv1-broker", "version": "27"},
 			}, nil

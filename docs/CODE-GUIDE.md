@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-27 · Reflects: Phases 0–225 + the 2026-07 hardening passes.
+> Last updated: 2026-08-27 · Reflects: Phases 0–226 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -1004,6 +1004,11 @@ only the result. "Trust the chokepoint, not the agent." Opt-in via
   (`initialize`, `tools/list`, `tools/call`, `ping`, `broker/resume`) behind the
   same agent auth and the same `ProcessCall`/`Resume` loop, so an MCP call is
   policy-gated, JIT-injected, single-use-resumed, and audited identically to REST.
+  The protocol revision is negotiated (`mcp.Negotiate`, Phase 226): the client's
+  when it is one of `mcp.Supported`, else `mcp.Latest`. Batches are accepted
+  (`Dispatcher.HandleBatch`) and an unsupported `MCP-Protocol-Version` header is
+  refused with 400. The transport itself is the HTTP+SSE pair (`GET /mcp` emits
+  the `endpoint` event); Streamable HTTP is not offered.
 
 ```mermaid
 sequenceDiagram
@@ -1190,6 +1195,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-27 | Phase 226 (the MCP revision negotiated, not pinned): §3.5 — `mcp.Latest`/`Supported`/`Negotiate`/`IsSupported`, `Dispatcher.HandleBatch`; `internal/api/mcp_handlers.go` — `initialize` reads `protocolVersion` and advertises only `tools`, `serveMCP` checks `MCP-Protocol-Version` and dispatches batches. |
 | 2026-08-27 | Phase 224 (the trust bundle follows the file): `internal/agentid/svid.go` — `SVIDVerifier` holds its bundle path and stamp behind a lock, `loadBundle` parses from the open handle, `keyFor` re-reads on a due check or an unknown kid (`Reload(force)`), issuer keys re-applied after every read; `SetBundleRecheck`/`WithLogger` for tests and wiring. |
 | 2026-08-27 | Phase 222 (resume token bound to its collector): §3.3 — `store.BrokerToken.Subject`, `ConsumeBrokerToken`/`PeekBrokerToken` take the presenter's subject, migration `0051` (now the high-water mark stated here); §3.5 (`broker`) — `collectorSubject`, written by `park` and presented by `Resume`. |
 | 2026-08-27 | Phases 217 and 219: §3.3 (`store`) — the conformance suite covers every method (217; four backend divergences found and fixed), new `BrokerStore.ReserveAgentCall`/`ReleaseAgentCallReservation` (218 -> 220 methods) over `agent_call_reservations` (migration `0050`, now the high-water mark stated here — it had read `0018`), the reservation added to the atomic single-winner list and a third advisory lock (two-key form) to the lock list. `internal/api/agentbudget.go` — `budgetRefusal` returns the reservation, `settleSpend`/`settleParkedSpend` keep or release it on both transports; `Broker.SweepExpiredParked` returns the evicted ids. The `fakeWinRM` test runner is now mutex-guarded (the burst test is the first to drive it concurrently). |
