@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–219 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–220 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,35 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 220 — v0.59.0 ✅
+
+Releases **219** — the budget as a compare-and-spend. A **minor**, because the
+schema moves (migration `0050`, `agent_call_reservations`), which the precedent
+of every migration-carrying release makes a minor whether or not an operator
+does anything about it — and here nothing needs doing: it applies on startup.
+No env var, route or audit action moved. What changed is that a budget now
+holds under a burst and that a parked call holds a slot while it waits, which
+is a behaviour an operator running agents near their limits will notice.
+
+- [x] **v0.59.0** through the test-gated pipeline. `.github/` untouched since
+  v0.58.1 and — the rule Phase 214 added — nothing the workflow *reads* has
+  changed either (same repository name, same runner image), so no rehearsal.
+  Published 2026-08-27 as `ghcr.io/morandeirachema/pamv1:0.59.0` (also
+  `latest`), digest recorded once the publish workflow has run, signed and
+  attested, with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS`
+  attached
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm chart
+  `version` 0.49.3 -> **0.50.0**, a minor alongside an app minor
+- [x] `store.Store` at **220** (was 218); migration high-water `0049` ->
+  **`0050`**; routes unchanged at **193**
+- [x] Both READMEs restated; every `Reflects:` header, `docs/README.md`,
+  `NIS2-COMPLIANCE.md`'s evidence row and this banner
+- [x] `CHANGELOG.md` leads with **what holds now that did not** — a burst
+  cannot over-run a budget, and a parked call holds a slot — and states that
+  nothing configured changes and the migration needs no action
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
 
 ## Phase 219 — The budget becomes a compare-and-spend ✅
 

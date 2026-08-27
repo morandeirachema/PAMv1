@@ -9,6 +9,57 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.59.0] — 2026-08-27
+
+A minor that ships **Phase 219** — the agent budget and the per-token ceiling
+become a **compare-and-spend**. A minor rather than a patch because the schema
+moves: migration `0050` adds `agent_call_reservations`, applied automatically
+on startup like every migration before it. **No env var, route or audit-action
+change**, and nothing an operator configures changes; what changes is that a
+limit now holds under load.
+
+**A burst of calls can no longer over-run a budget.** Both limits were counted
+from the audit trail and then the call ran — so calls arriving together all
+read the same count, all passed, and the limit over-ran by the width of the
+burst (twelve calls against a budget of two: twelve executed). The gate now
+also writes a reservation at the instant of its decision, under the store's
+own serialisation, and exactly the allowed number get through. The audit trail
+is still what the console and `GET /v1/agents` report, and it still refuses
+first with its own numbers; the reservation sits behind it and can only refuse,
+never admit. Refusals are audited under the same `agent.budget_exhausted` /
+`agent.token_budget_exhausted` actions with the same fields as before.
+
+**A call parked for approval now holds a budget slot from the moment it is
+requested.** Until now the trail counted approval-path work only once the
+agent collected it and the approval path never re-checked, so an agent could
+park any number of calls under a budget of one and have every one approved.
+The slot is returned if the approver denies, the requester withdraws, or the
+approval expires — a refused or failed call never consumes budget, as before.
+
+### Added
+
+- `agent_call_reservations` (migration `0050`) and
+  `BrokerStore.ReserveAgentCall` / `ReleaseAgentCallReservation` — the
+  compare-and-spend ledger. It holds at most one rolling window per agent and
+  purges itself on write; nothing is written for an agent nothing limits.
+
+### Changed
+
+- A parked call holds its budget slot while it waits (see above).
+- `Broker.SweepExpiredParked` returns the ids it evicted rather than a count
+  (Go API only; the scheduler uses it to settle the reservations of expired
+  approvals).
+
+### Operational notes
+
+- Fail-closed in every direction that matters: if the ledger cannot be read
+  the call is refused (the rule the trail counts already followed); if a
+  release fails, or a parked call is lost to a restart, its reservation stands
+  until it ages out of the 24-hour window — the agent is under-served for a
+  day, never over-served.
+
+Helm chart `0.49.3` → `0.50.0`, a minor alongside an app minor.
+
 ## [0.58.3] — 2026-08-27
 
 A patch that ships **Phase 217** — the 2026-08-26 audit's last deferred
@@ -2645,6 +2696,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.59.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.59.0
 [0.58.3]: https://github.com/morandeirachema/pamv1/releases/tag/v0.58.3
 [0.58.2]: https://github.com/morandeirachema/pamv1/releases/tag/v0.58.2
 [0.58.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.58.1
