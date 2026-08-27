@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-08-27 · Reflects: Phases 0–221 + the 2026-07 hardening passes.
+> Last updated: 2026-08-27 · Reflects: Phases 0–222 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -325,7 +325,7 @@ Sentinel errors `ErrNotFound` / `ErrConflict` map to HTTP/SSH errors upstream.
   `migrations/*.sql` files, each run once inside its own transaction, tracked in a
   `schema_migrations` table, under a session-level `pg_advisory_lock` so concurrent
   replicas booting together don't race. `0001_init.sql` is the idempotent baseline;
-  every later change is a new numbered file (through `0050_agent_call_reservations.sql` at time of writing).
+  every later change is a new numbered file (through `0051_broker_token_subject.sql` at time of writing).
 
   Two implementation details are load-bearing:
   - **Error mapping is the contract.** A pgx `PgError` SQLSTATE is translated to
@@ -340,7 +340,9 @@ Sentinel errors `ErrNotFound` / `ErrConflict` map to HTTP/SSH errors upstream.
     exclusivity rests on a partial unique index (`checkouts_one_active_idx`), the
     TOTP anti-replay guard is a conditional `UPDATE … WHERE $step > last_totp_step`,
     and a broker resume token is spent by `UPDATE … SET used_at=now() WHERE jti=$1
-    AND used_at IS NULL AND expires_at>now() RETURNING call_id`. The agent budget
+    AND used_at IS NULL AND expires_at>now() AND (subject=$2 OR subject='')
+    RETURNING call_id` — the collector binding (Phase 222) is inside the one
+    atomic statement, not a check before it. The agent budget
     and the per-token ceiling are spent by `ReserveAgentCall` (Phase 219): the
     purge, both counts and the insert run in one transaction under a per-agent
     advisory lock, so a burst cannot all pass on the same count.
@@ -966,7 +968,7 @@ only the result. "Trust the chokepoint, not the agent." Opt-in via
   `broker.tool_call.requested` **before** the side effect and refuses to run if the
   chain append fails (no executed action is ever unaudited), then executes the tool
   JIT and returns the result; `require_approval` → **park** the call (bounded by
-  `maxParked`), mint a single-use resume token, and alert an approver; `deny` →
+  `maxParked`), mint a single-use resume token **bound to the requesting agent's subject** (`collectorSubject`: key row id, else SPIFFE ID — Phase 222; any other presenter is answered as a bad token), and alert an approver; `deny` →
   refuse. A parked call is **re-validated at decision time** (`revalidateAgent` — a
   static key disabled/revoked or an SVID expired since parking is refused). The
   agent collects a post-approval result exactly once via
@@ -1188,6 +1190,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-27 | Phase 222 (resume token bound to its collector): §3.3 — `store.BrokerToken.Subject`, `ConsumeBrokerToken`/`PeekBrokerToken` take the presenter's subject, migration `0051` (now the high-water mark stated here); §3.5 (`broker`) — `collectorSubject`, written by `park` and presented by `Resume`. |
 | 2026-08-27 | Phases 217 and 219: §3.3 (`store`) — the conformance suite covers every method (217; four backend divergences found and fixed), new `BrokerStore.ReserveAgentCall`/`ReleaseAgentCallReservation` (218 -> 220 methods) over `agent_call_reservations` (migration `0050`, now the high-water mark stated here — it had read `0018`), the reservation added to the atomic single-winner list and a third advisory lock (two-key form) to the lock list. `internal/api/agentbudget.go` — `budgetRefusal` returns the reservation, `settleSpend`/`settleParkedSpend` keep or release it on both transports; `Broker.SweepExpiredParked` returns the evicted ids. The `fakeWinRM` test runner is now mutex-guarded (the burst test is the first to drive it concurrently). |
 | 2026-08-25 | Phase 199 (a flake, named): `internal/proxy/forensics_test.go`'s audit fixture now writes the real millisecond component instead of `.000`. Flooring to a whole second made the record's survival depend on `frac + delta <= 1s` against `Parse`'s one-second window slack — a ~1% failure rate, reproduced deterministically before the change. `TestWindowSlackEdges` in `internal/sessionforensics` now pins that slack at its edges. Test-only; no production code changed. |
 | 2026-08-27 | Phase 215 (second audit): §3.4 (`auth`) — `Directory` gains `GetUserByUsername`; `Resolve` re-reads the local row for a session token (inactive → refused; allowlist/device carried). §4.1/4.2 — `Server.sourceGates` (IP allowlist, device, posture) shared by `authz`, `authenticated` and the viewer tunnel. §4.5 — `Server.cutUserAccess` (users.go) called by `deleteUser`, `updateUser` on a role change, and SCIM `applyScimActiveChange`; `guardPersonalTargetWrite` (safes_handlers.go) on `createCredential`/`deleteCredential`/`deleteTarget`. §5.6 — `session.GuestJoinID`; `ShareRegistry.Kick` revokes a guest by that id. Tests: `useraccesscut_test.go`, `rdp_gates_test.go`, `personalsafe_write_test.go` |

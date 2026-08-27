@@ -2888,11 +2888,11 @@ func (m *Memstore) CreateBrokerToken(_ context.Context, t *store.BrokerToken) er
 
 // ConsumeBrokerToken spends a token under the lock, so only the first caller
 // wins; a used, expired, or unknown jti returns ErrNotFound.
-func (m *Memstore) ConsumeBrokerToken(_ context.Context, jti string) (string, error) {
+func (m *Memstore) ConsumeBrokerToken(_ context.Context, jti, subject string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t, ok := m.brokerTok[jti]
-	if !ok || t.UsedAt != nil || time.Now().After(t.ExpiresAt) {
+	if !ok || t.UsedAt != nil || time.Now().After(t.ExpiresAt) || !tokenPresentableBy(t, subject) {
 		return "", store.ErrNotFound
 	}
 	now := time.Now().UTC()
@@ -2902,14 +2902,22 @@ func (m *Memstore) ConsumeBrokerToken(_ context.Context, jti string) (string, er
 }
 
 // PeekBrokerToken returns a token's bound call id without spending it.
-func (m *Memstore) PeekBrokerToken(_ context.Context, jti string) (string, error) {
+func (m *Memstore) PeekBrokerToken(_ context.Context, jti, subject string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t, ok := m.brokerTok[jti]
-	if !ok || t.UsedAt != nil || time.Now().After(t.ExpiresAt) {
+	if !ok || t.UsedAt != nil || time.Now().After(t.ExpiresAt) || !tokenPresentableBy(t, subject) {
 		return "", store.ErrNotFound
 	}
 	return t.CallID, nil
+}
+
+// tokenPresentableBy is the collector binding (Phase 222): a token spends only
+// for the subject that parked its call, except a row minted before the binding
+// existed (empty Subject), which spends for anyone until it expires — the same
+// `subject = $2 OR subject = ”` pgstore's UPDATE and SELECT carry.
+func tokenPresentableBy(t store.BrokerToken, subject string) bool {
+	return t.Subject == "" || t.Subject == subject
 }
 
 // DeleteExpiredBrokerTokens removes spent or expired tokens (periodic GC).

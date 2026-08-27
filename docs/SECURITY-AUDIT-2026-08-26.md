@@ -65,7 +65,7 @@ reference them; exploitation detail is intentionally omitted.
 | F-5 | (LOW→) | SCIM | A connector could act on a privileged user | **Fixed** — refused by effective capability, not role string; the deprovisioning error now surfaces |
 | F-8 | INFO | middleware | Scope refusals were unaudited | **Fixed** — now audited with the shared reason slug |
 | M-6 | MED | `pgstore` contract suite | Twenty store methods absent from the backend-parity contract suite | **Fixed** — all twenty in the contract suite (**Phase 217**, released v0.58.3); writing it exposed four backend divergences, each fixed there |
-| F-7 | LOW | broker resume tokens | A resume token is not bound to the identity that parked the call | **Deferred** — single-use bearer by design, 96-bit call ids; needs a schema column (see §3); ROADMAP §3 |
+| F-7 | LOW | broker resume tokens | A resume token is not bound to the identity that parked the call | **Fixed** — `broker_tokens.subject` (migration 0051, **Phase 222**): bound to the parking agent's key id or SPIFFE ID, refused at peek and spend alike |
 | — | LOW | DB proxy SCRAM; JWK member check; guest key | Bound an upstream-supplied iteration count; case-fold the private-member check; store the guest bearer key by hash like every other token | **Fixed** |
 
 ## 3. Deferred, with rationale
@@ -79,9 +79,13 @@ reference them; exploitation detail is intentionally omitted.
   under the store's own serialisation at the instant the gate decides; the
   audit-trail counts stay in front as what an operator reads. The same test
   found that a parked call never held a budget slot, and closed that too.
-- **F-7** — binding a broker resume token to its collector needs a schema column;
-  the token is single-use bearer by explicit design and call ids are 96-bit
-  random, so this is defence-in-depth rather than a live hole.
+- ~~**F-7** — binding a broker resume token to its collector needs a schema
+  column.~~ Closed by **Phase 222** (2026-08-27): `broker_tokens.subject`,
+  bound to the identity that parked the call (key row id or SPIFFE ID — not
+  the token `jti`, which a sub-agent renews inside an approval window, and not
+  the `cnf` thumbprint, which only bound tokens carry); a mismatch reads as an
+  unknown token at the peek and inside the atomic spend. **With it, every
+  finding of this audit is closed.**
 - Remaining informational items were assessed non-exploitable or already
   documented.
 

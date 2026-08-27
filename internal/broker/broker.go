@@ -214,8 +214,25 @@ const (
 // storage-agnostic.
 type TokenStore interface {
 	CreateBrokerToken(ctx context.Context, t *store.BrokerToken) error
-	ConsumeBrokerToken(ctx context.Context, jti string) (callID string, err error)
-	PeekBrokerToken(ctx context.Context, jti string) (callID string, err error)
+	ConsumeBrokerToken(ctx context.Context, jti, subject string) (callID string, err error)
+	PeekBrokerToken(ctx context.Context, jti, subject string) (callID string, err error)
+}
+
+// collectorSubject is the identity a resume token is bound to (Phase 222): the
+// static key's row id when the agent has one, else the attested SPIFFE ID, else
+// the name — the same order sameAgent compares in, so "the agent that parked
+// it" means one thing across withdrawal and collection. A row id rather than
+// the name because agent names are documented as non-unique.
+func collectorSubject(id *agentid.Identity) string {
+	switch {
+	case id == nil:
+		return ""
+	case id.KeyID > 0:
+		return fmt.Sprintf("agent-key:%d", id.KeyID)
+	case id.SPIFFEID != "":
+		return id.SPIFFEID
+	}
+	return id.AgentName
 }
 
 // parkedCall is a require_approval tool call awaiting a human decision. It holds
@@ -572,7 +589,7 @@ func (b *Broker) park(ctx context.Context, id *agentid.Identity, c Call, approve
 
 	if b.tokens != nil {
 		token := newOpaqueToken()
-		bt := store.BrokerToken{JTI: hashToken(token), CallID: out.CallID, ExpiresAt: expires}
+		bt := store.BrokerToken{JTI: hashToken(token), CallID: out.CallID, Subject: collectorSubject(id), ExpiresAt: expires}
 		if err := b.tokens.CreateBrokerToken(ctx, &bt); err != nil {
 			b.log.Error("broker resume token mint failed", "call", out.CallID, "err", err)
 		} else {
@@ -829,14 +846,19 @@ func (b *Broker) SweepExpiredParked(ctx context.Context, now time.Time) []string
 // is still pending (so an early resume — or a wrong path id — can't burn the
 // ticket before the result exists); the token is consumed only once a terminal
 // outcome is actually returned. A mismatched, used, expired, unknown token, or a
-// still-pending call yields ok=false. A collected Sensitive result is then
-// stripped from the cache so the secret does not linger past its single delivery.
+// still-pending call yields ok=false — and so does a presenter other than the
+// agent that parked the call (Phase 222), which is told nothing it could not
+// have guessed. A collected Sensitive result is then stripped from the cache so
+// the secret does not linger past its single delivery.
 func (b *Broker) Resume(ctx context.Context, id *agentid.Identity, token, wantCallID string) (Outcome, bool) {
 	if b.tokens == nil {
 		return Outcome{}, false
 	}
-	jti := hashToken(token)
-	callID, err := b.tokens.PeekBrokerToken(ctx, jti)
+	// The token is bound to the identity that parked the call (Phase 222): a
+	// different agent presenting it — even one sharing the name — is answered
+	// exactly as an unknown token would be, at the peek and again at the spend.
+	jti, subject := hashToken(token), collectorSubject(id)
+	callID, err := b.tokens.PeekBrokerToken(ctx, jti, subject)
 	if err != nil {
 		return Outcome{}, false
 	}
@@ -847,7 +869,7 @@ func (b *Broker) Resume(ctx context.Context, id *agentid.Identity, token, wantCa
 	if !ok || !out.Status.terminal() {
 		return Outcome{}, false // don't spend the token before the call is collectable
 	}
-	if _, err := b.tokens.ConsumeBrokerToken(ctx, jti); err != nil {
+	if _, err := b.tokens.ConsumeBrokerToken(ctx, jti, subject); err != nil {
 		return Outcome{}, false // lost the single-use race
 	}
 	b.stripSensitive(callID)

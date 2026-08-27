@@ -1,0 +1,15 @@
+-- 0051: bind a broker resume token to the identity that parked the call.
+--
+-- 2026-08-26 audit, F-7. A resume token was single-use and its call id 96-bit
+-- random, so this is defence-in-depth rather than a live hole: a token that
+-- leaked from one agent to another was already worth one collection at most.
+-- It is now worth nothing to anyone but the agent whose call it belongs to —
+-- Peek and Consume both require the presenter's subject to match — and it
+-- tells a stranger nothing, since a mismatch reads exactly like an unknown
+-- token. The subject is the string the broker already uses to tell agents
+-- apart (a static key's row id, an attested workload's SPIFFE ID).
+--
+-- Additive, defaulted to '' so rows minted before this migration keep
+-- spending for anyone until they expire (at most one resume-token TTL): the
+-- upgrade path for calls parked across a rolling deploy, not a bypass.
+ALTER TABLE broker_tokens ADD COLUMN IF NOT EXISTS subject TEXT NOT NULL DEFAULT '';

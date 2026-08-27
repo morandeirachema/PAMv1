@@ -963,8 +963,16 @@ type AppSecretGrant struct {
 // resume and collect the post-approval result exactly once; the stored JTI is the
 // token's SHA-256 hash, bound to the parked call and an expiry.
 type BrokerToken struct {
-	JTI       string     `json:"-"` // SHA-256 hex of the opaque token
-	CallID    string     `json:"call_id"`
+	JTI    string `json:"-"` // SHA-256 hex of the opaque token
+	CallID string `json:"call_id"`
+	// Subject is the identity that parked the call and may therefore collect
+	// its result (Phase 222; the 2026-08-26 audit's F-7): the same subject
+	// string the broker uses to tell one agent from another — a static key's
+	// row id, an attested workload's SPIFFE ID. Peek and Consume refuse any
+	// other presenter as if the token did not exist. Empty on a row minted
+	// before the binding existed, which spends for anyone for the remainder
+	// of its TTL — the one-window upgrade path, not a bypass.
+	Subject   string     `json:"-"`
 	ExpiresAt time.Time  `json:"expires_at"`
 	UsedAt    *time.Time `json:"used_at,omitempty"`
 }
@@ -1810,14 +1818,20 @@ type BrokerStore interface {
 	// CreateBrokerToken stores a single-use resume token (its JTI is the token's
 	// SHA-256 hash) for a parked, approval-pending tool call.
 	CreateBrokerToken(ctx context.Context, t *BrokerToken) error
-	// ConsumeBrokerToken atomically spends the token identified by jti, returning
-	// the bound call id. It succeeds at most once: a used, expired, or unknown jti
-	// yields ErrNotFound, so a replayed token can never collect a result twice.
-	ConsumeBrokerToken(ctx context.Context, jti string) (callID string, err error)
+	// ConsumeBrokerToken atomically spends the token identified by jti when
+	// presented by subject, returning the bound call id. It succeeds at most
+	// once: a used, expired, or unknown jti yields ErrNotFound, so a replayed
+	// token can never collect a result twice — and so does a jti bound to a
+	// DIFFERENT subject (Phase 222), so a token that leaked to another agent is
+	// worth nothing to it and tells it nothing. A row whose Subject is empty
+	// predates the binding and spends for any presenter until it expires.
+	ConsumeBrokerToken(ctx context.Context, jti, subject string) (callID string, err error)
 	// PeekBrokerToken returns the call id a token is bound to WITHOUT spending it
-	// (ErrNotFound if used/expired/unknown), so a resume can avoid burning the
-	// token before the parked call is ready to collect.
-	PeekBrokerToken(ctx context.Context, jti string) (callID string, err error)
+	// (ErrNotFound if used/expired/unknown — or bound to another subject, the
+	// same refusal Consume makes, so a stranger cannot learn a call id it could
+	// never collect), so a resume can avoid burning the token before the parked
+	// call is ready to collect.
+	PeekBrokerToken(ctx context.Context, jti, subject string) (callID string, err error)
 	// DeleteExpiredBrokerTokens removes spent or expired tokens, returning the
 	// count deleted; a periodic sweep keeps the table bounded.
 	DeleteExpiredBrokerTokens(ctx context.Context) (int64, error)
