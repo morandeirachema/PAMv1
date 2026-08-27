@@ -58,7 +58,8 @@ approval expires — a refused or failed call never consumes budget, as before.
   until it ages out of the 24-hour window — the agent is under-served for a
   day, never over-served.
 
-Helm chart `0.49.3` → `0.50.0`, a minor alongside an app minor.
+Helm chart `0.49.3` → `0.50.0`, a minor alongside an app minor. Image digest
+`sha256:cc5ae871…` (the full value is in the README and on the release page).
 
 ## [0.58.3] — 2026-08-27
 
