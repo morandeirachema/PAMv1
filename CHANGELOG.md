@@ -45,7 +45,8 @@ binary does not bank on `main`.
   are in, and `Close` has its own `RunCloseContract`. Test-only; the CI job
   against live PostgreSQL runs it.
 
-Helm chart `0.49.2` → `0.49.3`, a patch alongside an app patch.
+Helm chart `0.49.2` → `0.49.3`, a patch alongside an app patch. Image digest
+`sha256:7367417a…` (the full value is in the README and on the release page).
 
 ## [0.58.2] — 2026-08-27
 
