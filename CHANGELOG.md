@@ -9,6 +9,35 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.62.0] — 2026-08-27
+
+A minor that ships **Phase 226** — the MCP endpoint negotiates the protocol
+revision with each client instead of answering every `initialize` with
+`2024-11-05`. No schema, env var, route or audit-action change; a minor
+because the wire behaviour is visible to every MCP client.
+
+**What an MCP client sees now.** `initialize` answers with the client's own
+revision when PAMv1 speaks it — `2024-11-05`, `2025-03-26` or `2025-06-18` —
+and with `2025-06-18` otherwise, after which the client decides. JSON-RPC
+batches are accepted (the 2025-03-26 revision requires it) and answered
+element by element. A request carrying an `MCP-Protocol-Version` header that
+names a revision PAMv1 does not speak is refused with `400`; a request without
+the header is served as before. The advertised server capabilities are now the
+ones that exist — `tools` — where `logging` (never implemented) and
+`elicitation` (a client capability) had been listed too.
+
+**What has not changed.** The transport: `GET /mcp` for the SSE stream, `POST
+/mcp` for messages — the HTTP+SSE pair every revision keeps for backwards
+compatibility. The Streamable HTTP transport is not offered.
+
+### Changed
+
+- `initialize` negotiates `protocolVersion`; server capabilities list only
+  `tools`.
+- `POST /mcp` accepts JSON-RPC batches and validates `MCP-Protocol-Version`.
+
+Helm chart `0.52.0` → `0.53.0`, a minor alongside an app minor.
+
 ## [0.61.0] — 2026-08-27
 
 A minor that ships **Phase 224** — the SPIFFE trust bundle is re-read when the
@@ -2761,6 +2790,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.62.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.62.0
 [0.61.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.61.0
 [0.60.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.60.0
 [0.59.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.59.0
