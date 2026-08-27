@@ -34,28 +34,31 @@ type Memstore struct {
 	agentKeys       map[int64]store.AgentKey
 	agentQuarantine map[int64]store.AgentQuarantine
 	agentIdentities map[int64]store.AgentIdentity
-	sshCerts        map[int64]store.SSHCert
-	vendors         map[int64]store.Vendor
-	vendorGrants    map[int64]store.VendorGrant
-	appKeys         map[int64]store.AppKey
-	appGrants       map[int64]store.AppSecretGrant
-	scimKeys        map[int64]store.ScimKey
-	endpointAgents  map[int64]store.EndpointAgent
-	brokerLog       []store.BrokerAuditEvent
-	brokerTok       map[string]store.BrokerToken
-	settings        map[string]store.Setting
-	keyMaterial     map[string]string
-	profiles        map[int64]store.Profile
-	safes           map[int64]store.Safe
-	safeMembers     map[int64]store.SafeMember
-	credDeps        map[int64]store.CredentialDependency
-	campaigns       map[int64]store.Campaign
-	campaignItems   map[int64]store.CampaignItem
-	shareInvites    map[int64]store.SessionShareInvite
-	approvalInvites map[int64]store.ApprovalInvite
-	pwHistory       map[int64][]pwHistoryEntry // credentialID -> hashes, oldest first
-	webauthnCreds   map[int64]store.WebAuthnCredential
-	webauthnChal    map[webauthnChalKey]webauthnChallenge
+	// callReservations is the compare-and-spend ledger behind the agent budget
+	// and the per-token ceiling (Phase 219), keyed by reservation id.
+	callReservations map[int64]store.AgentCallReservation
+	sshCerts         map[int64]store.SSHCert
+	vendors          map[int64]store.Vendor
+	vendorGrants     map[int64]store.VendorGrant
+	appKeys          map[int64]store.AppKey
+	appGrants        map[int64]store.AppSecretGrant
+	scimKeys         map[int64]store.ScimKey
+	endpointAgents   map[int64]store.EndpointAgent
+	brokerLog        []store.BrokerAuditEvent
+	brokerTok        map[string]store.BrokerToken
+	settings         map[string]store.Setting
+	keyMaterial      map[string]string
+	profiles         map[int64]store.Profile
+	safes            map[int64]store.Safe
+	safeMembers      map[int64]store.SafeMember
+	credDeps         map[int64]store.CredentialDependency
+	campaigns        map[int64]store.Campaign
+	campaignItems    map[int64]store.CampaignItem
+	shareInvites     map[int64]store.SessionShareInvite
+	approvalInvites  map[int64]store.ApprovalInvite
+	pwHistory        map[int64][]pwHistoryEntry // credentialID -> hashes, oldest first
+	webauthnCreds    map[int64]store.WebAuthnCredential
+	webauthnChal     map[webauthnChalKey]webauthnChallenge
 
 	killMu   sync.Mutex
 	killSubs map[chan session.KillSelector]struct{} // cross-replica kill fan-out
@@ -73,45 +76,46 @@ type Memstore struct {
 // New returns an empty in-memory store ready for use.
 func New() *Memstore {
 	return &Memstore{
-		targets:         make(map[int64]store.Target),
-		creds:           make(map[int64]store.Credential),
-		users:           make(map[int64]store.User),
-		sessions:        make(map[int64]store.Session),
-		mfa:             make(map[string]store.MFAEnrollment),
-		recovery:        make(map[string]map[string]bool),
-		webauthnCreds:   make(map[int64]store.WebAuthnCredential),
-		webauthnChal:    make(map[webauthnChalKey]webauthnChallenge),
-		grants:          make(map[int64]store.TargetGrant),
-		accessReq:       make(map[int64]store.AccessRequest),
-		checkouts:       make(map[int64]store.Checkout),
-		agentKeys:       make(map[int64]store.AgentKey),
-		agentQuarantine: make(map[int64]store.AgentQuarantine),
-		agentIdentities: make(map[int64]store.AgentIdentity),
-		sshCerts:        make(map[int64]store.SSHCert),
-		vendors:         make(map[int64]store.Vendor),
-		vendorGrants:    make(map[int64]store.VendorGrant),
-		appKeys:         make(map[int64]store.AppKey),
-		appGrants:       make(map[int64]store.AppSecretGrant),
-		scimKeys:        make(map[int64]store.ScimKey),
-		endpointAgents:  make(map[int64]store.EndpointAgent),
-		brokerTok:       make(map[string]store.BrokerToken),
-		settings:        make(map[string]store.Setting),
-		keyMaterial:     make(map[string]string),
-		profiles:        make(map[int64]store.Profile),
-		safes:           make(map[int64]store.Safe),
-		safeMembers:     make(map[int64]store.SafeMember),
-		credDeps:        make(map[int64]store.CredentialDependency),
-		campaigns:       make(map[int64]store.Campaign),
-		campaignItems:   make(map[int64]store.CampaignItem),
-		shareInvites:    make(map[int64]store.SessionShareInvite),
-		approvalInvites: make(map[int64]store.ApprovalInvite),
-		pwHistory:       make(map[int64][]pwHistoryEntry),
-		killSubs:        make(map[chan session.KillSelector]struct{}),
-		liveSessions:    make(map[string]liveRow),
-		frameSubs:       make(map[chan session.LiveFrame]struct{}),
-		interestSubs:    make(map[chan string]struct{}),
-		stepups:         make(map[string]stepUpRow),
-		stepupSubs:      make(map[chan session.StepUpDecision]struct{}),
+		targets:          make(map[int64]store.Target),
+		creds:            make(map[int64]store.Credential),
+		users:            make(map[int64]store.User),
+		sessions:         make(map[int64]store.Session),
+		mfa:              make(map[string]store.MFAEnrollment),
+		recovery:         make(map[string]map[string]bool),
+		webauthnCreds:    make(map[int64]store.WebAuthnCredential),
+		webauthnChal:     make(map[webauthnChalKey]webauthnChallenge),
+		grants:           make(map[int64]store.TargetGrant),
+		accessReq:        make(map[int64]store.AccessRequest),
+		checkouts:        make(map[int64]store.Checkout),
+		agentKeys:        make(map[int64]store.AgentKey),
+		agentQuarantine:  make(map[int64]store.AgentQuarantine),
+		agentIdentities:  make(map[int64]store.AgentIdentity),
+		callReservations: make(map[int64]store.AgentCallReservation),
+		sshCerts:         make(map[int64]store.SSHCert),
+		vendors:          make(map[int64]store.Vendor),
+		vendorGrants:     make(map[int64]store.VendorGrant),
+		appKeys:          make(map[int64]store.AppKey),
+		appGrants:        make(map[int64]store.AppSecretGrant),
+		scimKeys:         make(map[int64]store.ScimKey),
+		endpointAgents:   make(map[int64]store.EndpointAgent),
+		brokerTok:        make(map[string]store.BrokerToken),
+		settings:         make(map[string]store.Setting),
+		keyMaterial:      make(map[string]string),
+		profiles:         make(map[int64]store.Profile),
+		safes:            make(map[int64]store.Safe),
+		safeMembers:      make(map[int64]store.SafeMember),
+		credDeps:         make(map[int64]store.CredentialDependency),
+		campaigns:        make(map[int64]store.Campaign),
+		campaignItems:    make(map[int64]store.CampaignItem),
+		shareInvites:     make(map[int64]store.SessionShareInvite),
+		approvalInvites:  make(map[int64]store.ApprovalInvite),
+		pwHistory:        make(map[int64][]pwHistoryEntry),
+		killSubs:         make(map[chan session.KillSelector]struct{}),
+		liveSessions:     make(map[string]liveRow),
+		frameSubs:        make(map[chan session.LiveFrame]struct{}),
+		interestSubs:     make(map[chan string]struct{}),
+		stepups:          make(map[string]stepUpRow),
+		stepupSubs:       make(map[chan session.StepUpDecision]struct{}),
 	}
 }
 
@@ -1862,6 +1866,52 @@ func (m *Memstore) CountAgentCallsForTokenSince(_ context.Context, agent, jti st
 		}
 	}
 	return n, nil
+}
+
+// ReserveAgentCall is the compare-and-spend under the store's one lock: the
+// purge, both counts and the insert happen while no other reservation can, so
+// two calls arriving together cannot both read the count the other is about to
+// change. See the interface doc for the limit semantics.
+func (m *Memstore) ReserveAgentCall(_ context.Context, agent, jti string, at, since time.Time, agentLimit, tokenLimit int) (store.AgentCallReservation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	res := store.AgentCallReservation{Agent: agent, TokenID: jti, At: at.UTC()}
+	for id, r := range m.callReservations {
+		if r.Agent != agent {
+			continue
+		}
+		if r.At.Before(since) {
+			delete(m.callReservations, id) // aged out of every window: self-GC on write
+			continue
+		}
+		res.AgentUsed++
+		if jti != "" && r.TokenID == jti {
+			res.TokenUsed++
+		}
+	}
+	if agentLimit >= 0 && res.AgentUsed >= agentLimit {
+		res.Refused = store.ReservationRefusedBudget
+		return res, nil
+	}
+	if jti != "" && tokenLimit > 0 && res.TokenUsed >= tokenLimit {
+		res.Refused = store.ReservationRefusedToken
+		return res, nil
+	}
+	res.ID = m.id()
+	m.callReservations[res.ID] = res
+	return res, nil
+}
+
+// ReleaseAgentCallReservation deletes a reservation whose call did no work, or
+// ErrNotFound.
+func (m *Memstore) ReleaseAgentCallReservation(_ context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.callReservations[id]; !ok {
+		return store.ErrNotFound
+	}
+	delete(m.callReservations, id)
+	return nil
 }
 
 // QuarantineAgent stops one agent by subject, assigning ID and CreatedAt;

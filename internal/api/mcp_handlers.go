@@ -184,13 +184,15 @@ func (s *Server) mcpDispatcher(id *agentid.Identity, sess *mcpSession) mcp.Dispa
 			// The same cumulative budget the REST path enforces: a limit that
 			// only one transport honours is not a limit, and MCP is the transport
 			// an agent framework actually speaks.
-			if refusal := s.budgetRefusal(ctx, id, p.Name); refusal != nil {
+			refusal, spend := s.budgetRefusal(ctx, id, p.Name)
+			if refusal != nil {
 				s.auditAs(ctx, id.AgentName, broker.ActionFor(refusal.Status),
 					fmt.Sprintf("tool:%s status:%s reason:budget via:mcp", auditField(p.Name, 64), refusal.Status))
 				return toolResult(*refusal), nil
 			}
 			in := toolCallIn{SessionID: mcpRunID(sess), Client: mcpClient(sess), Tool: p.Name, Args: p.Arguments}
 			out := s.broker.ProcessCall(ctx, id, broker.Call{SessionID: in.SessionID, Client: in.Client, Tool: in.Tool, Args: in.Args})
+			s.settleSpend(ctx, spend, out)
 			s.auditAs(ctx, id.AgentName, broker.ActionFor(out.Status), brokerCallDetail(id, in, out)+" via:mcp")
 			// Elicitation (Phase 27): if the call parked for approval and the client
 			// declared elicitation support, ask the running user to confirm over the
@@ -212,6 +214,7 @@ func (s *Server) mcpDispatcher(id *agentid.Identity, sess *mcpSession) mcp.Dispa
 					// only copy of the resume token) rather than an empty one, so the
 					// already-executed result stays collectable.
 					if wout, ok := s.broker.Withdraw(ctx, out.CallID, id); ok {
+						s.settleParkedSpend(ctx, out.CallID, false) // withdrawn: never executed
 						s.auditAs(ctx, id.AgentName, "broker.elicit.declined", fmt.Sprintf("tool:%s call:%s via:mcp", p.Name, out.CallID))
 						return toolResult(wout), nil
 					}

@@ -575,6 +575,11 @@ type Server struct {
 	// brokerMaxCallsPerToken caps calls spent under one token's `jti` (Phase
 	// 209); 0 = off. Read on the same path as the daily budget.
 	brokerMaxCallsPerToken int
+	// parkedSpends maps a parked call's id to the budget reservation it holds
+	// (Phase 219), so the reservation can be settled when the call ends without
+	// executing — denied by the approver, withdrawn, or expired. Parked calls
+	// live in this replica's broker memory, and so does this.
+	parkedSpends sync.Map
 	// doubleLockMin is the configured minimum DoubleLock password length (H-3);
 	// the effective minimum is never below the built-in floor.
 	doubleLockMin    int
