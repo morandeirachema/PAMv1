@@ -47,6 +47,7 @@ func TestPGStoreContract(t *testing.T) {
 
 	storetest.RunStoreContract(t, st)
 	storetest.RunAuditChainContract(t, st)
+	storetest.RunCloseContract(t, st) // last: the deferred Close above is then the third call
 }
 
 // TestPGStoreAuditChainTamperDetection proves the primary-audit chain catches a

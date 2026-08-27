@@ -243,6 +243,12 @@ func (m *Memstore) DeleteTarget(_ context.Context, id int64) error {
 	for aid, ar := range m.accessReq {
 		if ar.TargetID == id {
 			delete(m.accessReq, aid)
+			// approval_invites.access_request_id cascades in pgstore (Phase 137) — match it.
+			for iid, inv := range m.approvalInvites {
+				if inv.AccessRequestID == aid {
+					delete(m.approvalInvites, iid)
+				}
+			}
 		}
 	}
 	// endpoint_agents.target_id cascades in pgstore (Phase 153) — match it.
@@ -2328,7 +2334,14 @@ func (m *Memstore) ListSessionShareInvites(_ context.Context, sessionID string) 
 			out = append(out, inv)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	// Newest first with an id tie-break, matching pgstore's ORDER BY, so two
+	// rows created in one instant order the same way in both stores.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID > out[j].ID
+	})
 	return out, nil
 }
 
@@ -2400,6 +2413,17 @@ func (m *Memstore) ConsumeSessionShareInviteByTokenHash(_ context.Context, token
 func (m *Memstore) CreateApprovalInvite(_ context.Context, inv *store.ApprovalInvite) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// The two constraints approval_invites carries in pgstore (a foreign key to
+	// the request, a unique token hash) — matched here so the contract suite
+	// holds both stores to them (Phase 217).
+	if _, ok := m.accessReq[inv.AccessRequestID]; !ok {
+		return store.ErrNotFound
+	}
+	for _, existing := range m.approvalInvites {
+		if existing.TokenHash == inv.TokenHash {
+			return store.ErrConflict
+		}
+	}
 	inv.ID = m.id()
 	inv.CreatedAt = time.Now().UTC()
 	m.approvalInvites[inv.ID] = *inv
@@ -2428,7 +2452,14 @@ func (m *Memstore) ListApprovalInvitesForRequest(_ context.Context, accessReques
 			out = append(out, inv)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	// Newest first with an id tie-break, matching pgstore's ORDER BY, so two
+	// rows created in one instant order the same way in both stores.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID > out[j].ID
+	})
 	return out, nil
 }
 

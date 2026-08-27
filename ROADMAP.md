@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–216 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–217 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,56 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 217 — Twenty store methods join the contract, and the four gaps they found ✅
+
+The 2026-08-26 audit's M-6, which Phase 212 deferred as "test-coverage debt,
+not a live defect": twenty of `store.Store`'s 218 methods were exercised only
+through handler tests — against memstore — so nothing held pgstore to the same
+edge behaviour. The whole `ShareInviteStore` role (6, Phase 116), the whole
+`ApprovalInviteStore` role (7, Phase 137), `ListSessions`,
+`DeleteSessionsByUsername`, `EnrollAgentIdentity`, `ListAppKeys`,
+`UpdateVendorEmail`, `RevokeVendorGrant` and `Close`. Every one is in
+`storetest.RunStoreContract` now (`Close` in its own `RunCloseContract`, run
+last by both backends), and writing the assertions **from the interface's doc
+comments rather than from either implementation** turned up four places where
+the two stores disagreed — each fixed so the comment is true on both:
+
+- [x] **A denied share invite kept its token on PostgreSQL.**
+  `DecideSessionShareInvite`'s contract says denying "leaves them nil";
+  memstore did, pgstore's UPDATE wrote `token_hash` and `expires_at`
+  unconditionally. The only caller passes empty values on deny, so nothing
+  could redeem a denial — but the comment asserted a property the code did not
+  deliver, the defect class the audit named. Cleared in Go before the UPDATE,
+  and the contract now denies WITH a token to prove it stays empty
+- [x] **`CreateApprovalInvite` surfaced the schema's constraints as raw
+  SQLSTATEs on one store and not at all on the other.** pgstore's foreign key
+  and unique index came back as pgx errors; memstore accepted an invite for a
+  request that does not exist and two invites sharing one hash. `ErrNotFound`
+  and `ErrConflict` on both now, stated on the interface
+- [x] **Deleting a target left its approval invites behind on memstore.**
+  pgstore's FK chain (`targets → access_requests → approval_invites`) drops
+  them; memstore's hand-coded cascade stopped at the access request. The
+  delete-cascade contract now creates a request and an invite under the target
+  it deletes
+- [x] **The two invite listings had no tie-break.** "Newest first" by
+  `created_at` alone — an unstable sort on one side, no `id` on the other, the
+  exact defect Phase 99 fixed for `ListSessions`. Both order
+  `created_at DESC, id DESC` now, so the contract asserts an order, not a set
+- [x] What the contract pins besides parity: single-use redemption, strict at
+  the expiry instant, for both invite kinds; an empty hash never redeems; the
+  read-only preview consumes nothing and goes dark once the invite does;
+  revocation refuses a token whose TTL is still good; `ListSessions` hides
+  expired rows and orders id-desc on ties while `DeleteSessionsByUsername`
+  counts the expired rows too and is idempotent; `ListAppKeys` includes the
+  disabled key the token lookup hides; `EnrollAgentIdentity` keeps the sighting
+  stamps; `RevokeVendorGrant` leaves the vendor's other grant alone and
+  offboarding revokes the already-revoked one without complaint
+- [x] Mutation-pinned on memstore (the constraint check and the cascade hop
+  each removed and the suite watched to fail); the pgstore side runs in the
+  live-PostgreSQL CI job, which is where the `token_hash` clearing and the
+  SQLSTATE mappings are proven. `store.Store` unchanged at **218**; no schema,
+  route or env-var change — but the binary differs, so this banks for a patch
 
 ## Phase 216 — v0.58.2 ✅
 
@@ -9858,12 +9908,15 @@ last to hold, and now does:
   EOF, oversized length, garbage, `ready` without a connection id) all surface
   as errors; and `oidc.Discover` resolves endpoints (trailing slash included)
   and errors on unreachable or malformed metadata.
-- **Twenty store methods absent from the pgstore contract suite** (212, the
-  2026-08-26 audit's M-6) — ⬜ open. Test-coverage debt, not a live defect:
-  the methods work and are exercised through handler tests against both
-  backends; what is missing is the contract suite's guarantee that memstore
-  and pgstore agree on each one's edge behaviour. Purely additive, and
-  sizable, which is why the audit phase deferred it rather than half-doing it.
+- ~~**Twenty store methods absent from the pgstore contract suite** (212, the
+  2026-08-26 audit's M-6)~~ — ✅ closed 2026-08-27 (Phase 217): all twenty are
+  in the contract, and writing it from the interface's doc comments exposed
+  **four backend divergences**, each fixed — a denied share invite kept its
+  token on PostgreSQL; an approval invite for a missing request or with a
+  duplicate hash was accepted by memstore and a raw SQLSTATE on pgstore; a
+  target delete left approval invites behind on memstore; the two invite
+  listings had no tie-break. "Not a live defect" held: none was reachable
+  through a handler as written.
 
 #### 3. Feature follow-ons, in process
 
