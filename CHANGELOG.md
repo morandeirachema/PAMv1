@@ -9,6 +9,32 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.61.0] — 2026-08-27
+
+A minor that ships **Phase 224** — the SPIFFE trust bundle is re-read when the
+file changes, so an issuer key rotation no longer needs a restart. No schema,
+env var, route or audit-action change; a minor rather than a patch because the
+behaviour is observable and was, until now, an operational step.
+
+**A SPIRE key rotation no longer needs a restart.** The trust-domain JWKS
+(`PAM_BROKER_TRUST_DOMAIN_JWKS`) was read once at startup, so every SVID under a
+newly published key was refused — indistinguishably from any other bad token —
+until PAMv1 was restarted. The file's modification time and size are now
+checked at most every 30 seconds, and the bundle is re-read at once when a token
+arrives under a key id PAMv1 does not hold (rate-limited to one re-read per
+second). A half-written, unparsable, empty or missing file keeps the **last good
+bundle** in force and is logged under `service=svid` — a rotation in progress is
+never treated as "trust nobody". A key the issuer removes stops verifying on the
+next successful read. The broker's own token-exchange key survives every
+reload, and a bundle that tries to shadow its key id is refused whole.
+
+### Changed
+
+- `agentid.SVIDVerifier` re-reads its bundle on change (`Reload`,
+  `SetBundleRecheck`, `WithLogger` — Go API only). Nothing to configure.
+
+Helm chart `0.51.0` → `0.52.0`, a minor alongside an app minor.
+
 ## [0.60.0] — 2026-08-27
 
 A minor that ships **Phase 222** — a broker resume token is bound to the agent
@@ -2734,6 +2760,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.61.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.61.0
 [0.60.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.60.0
 [0.59.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.59.0
 [0.58.3]: https://github.com/morandeirachema/pamv1/releases/tag/v0.58.3
