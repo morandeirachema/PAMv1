@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–224 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–225 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,32 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 225 — v0.61.0 ✅
+
+Releases **224** — the trust bundle follows the file. A **minor**: no schema,
+env var, route or audit action moved, but the behaviour is observable and was
+an operational step until now (a SPIRE key rotation meant restarting PAMv1),
+so it is not a patch in the v0.18.2/v0.54.1/v0.58.2 sense.
+
+- [x] **v0.61.0** through the test-gated pipeline. `.github/` untouched since
+  v0.58.1 and — the rule Phase 214 added — nothing the workflow *reads* has
+  changed either (same repository name, same runner image), so no rehearsal.
+  Published 2026-08-27 as `ghcr.io/morandeirachema/pamv1:0.61.0` (also
+  `latest`), digest recorded once the publish workflow has run, signed and
+  attested, with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS`
+  attached
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm chart
+  `version` 0.51.0 -> **0.52.0**, a minor alongside an app minor
+- [x] `store.Store` unchanged at **220**; migration high-water unchanged at
+  `0051`; routes unchanged at **193**
+- [x] Both READMEs restated; every `Reflects:` header, `docs/README.md`,
+  `NIS2-COMPLIANCE.md`'s evidence row and this banner
+- [x] `CHANGELOG.md` leads with **the restart that is no longer needed** and
+  states what a broken rewrite of the bundle does (keeps the last good keys,
+  logs) so an operator is not surprised in either direction
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
 
 ## Phase 224 — The trust bundle follows the file ✅
 
