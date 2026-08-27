@@ -1914,13 +1914,15 @@ type ShareInviteStore interface {
 	// GetSessionShareInvite returns one invite by id, or ErrNotFound.
 	GetSessionShareInvite(ctx context.Context, id int64) (*SessionShareInvite, error)
 	// ListSessionShareInvites lists a session's invites (requested, active and
-	// ended), newest first — backs the console roster and the outstanding-invite
-	// screen.
+	// ended), newest first (created_at then id, both descending) — backs the
+	// console roster and the outstanding-invite screen.
 	ListSessionShareInvites(ctx context.Context, sessionID string) ([]SessionShareInvite, error)
 	// DecideSessionShareInvite records an approver's decision. Approving stamps
 	// tokenHash and expiresAt (the redemption window starts NOW, not at the
 	// original request time) and moves Status to "approved"; denying leaves
-	// them nil and moves Status to "denied". ErrNotFound if unknown. Matching
+	// them empty — whatever the caller passed — and moves Status to "denied",
+	// so a denial can never be redeemed by a hash minted before the decision.
+	// ErrNotFound if unknown. Matching
 	// DecideAccessRequest's own convention, the caller — not this method — is
 	// responsible for checking the invite is still pending and that approver
 	// differs from Requester before calling this.
@@ -1947,12 +1949,16 @@ type ApprovalInviteStore interface {
 	// caller has already generated and hashed the token and computed
 	// ExpiresAt — unlike SessionShareInvite, there is no separate approval
 	// stage for the invite itself: minting one already requires CapApprove,
-	// so the invite IS the delegation.
+	// so the invite IS the delegation. ErrNotFound if the access request does
+	// not exist and ErrConflict on a duplicate token hash — the two
+	// constraints the schema enforces, which the demo store must too (Phase 217).
 	CreateApprovalInvite(ctx context.Context, inv *ApprovalInvite) error
 	// GetApprovalInvite returns one invite by id, or ErrNotFound.
 	GetApprovalInvite(ctx context.Context, id int64) (*ApprovalInvite, error)
 	// ListApprovalInvitesForRequest lists an access request's invites
-	// (outstanding, consumed and revoked), newest first.
+	// (outstanding, consumed and revoked), newest first — created_at then id,
+	// both descending, the tie-break both backends share so two invites
+	// minted in one instant list identically everywhere.
 	ListApprovalInvitesForRequest(ctx context.Context, accessRequestID int64) ([]ApprovalInvite, error)
 	// RevokeApprovalInvite marks a not-yet-consumed invite revoked, so a later
 	// redemption attempt fails even though the token and TTL would otherwise

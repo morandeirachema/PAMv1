@@ -2698,7 +2698,7 @@ func (s *PGStore) GetSessionShareInvite(ctx context.Context, id int64) (*store.S
 // ListSessionShareInvites lists a session's invites, newest first.
 func (s *PGStore) ListSessionShareInvites(ctx context.Context, sessionID string) ([]store.SessionShareInvite, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT `+sessionShareInviteCols+` FROM session_share_invites WHERE session_id = $1 ORDER BY created_at DESC`,
+		`SELECT `+sessionShareInviteCols+` FROM session_share_invites WHERE session_id = $1 ORDER BY created_at DESC, id DESC`,
 		sessionID)
 	if err != nil {
 		return nil, err
@@ -2717,6 +2717,12 @@ func (s *PGStore) DecideSessionShareInvite(ctx context.Context, id int64, status
 	if expiresAt != nil {
 		e := expiresAt.UTC()
 		exp = &e
+	}
+	// A denial carries no token and no window, whatever the caller passed: the
+	// contract says so and memstore honoured it, while this UPDATE wrote both
+	// columns unconditionally until the contract suite covered it (Phase 217).
+	if status != "approved" {
+		tokenHash, exp = "", nil
 	}
 	return execExpectingRow(ctx, s.pool,
 		`UPDATE session_share_invites SET status = $2, approver = $3, decided_at = $4, token_hash = $5, expires_at = $6 WHERE id = $1`,
@@ -2765,11 +2771,20 @@ const approvalInviteCols = `id, access_request_id, email, created_by, token_hash
 // CreateApprovalInvite records a new magic-link invite; the caller has
 // already generated and hashed the token and computed ExpiresAt.
 func (s *PGStore) CreateApprovalInvite(ctx context.Context, inv *store.ApprovalInvite) error {
-	return s.pool.QueryRow(ctx,
+	err := s.pool.QueryRow(ctx,
 		`INSERT INTO approval_invites (access_request_id, email, created_by, token_hash, expires_at)
 		 VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
 		inv.AccessRequestID, inv.Email, inv.CreatedBy, inv.TokenHash, inv.ExpiresAt.UTC(),
 	).Scan(&inv.ID, &inv.CreatedAt)
+	// The schema's two constraints, surfaced as the sentinels the interface
+	// promises rather than as raw SQLSTATEs (Phase 217).
+	switch pgCode(err) {
+	case pgForeignKeyViolation:
+		return store.ErrNotFound
+	case pgUniqueViolation:
+		return store.ErrConflict
+	}
+	return err
 }
 
 // GetApprovalInvite returns one invite by id, or ErrNotFound.
@@ -2781,7 +2796,7 @@ func (s *PGStore) GetApprovalInvite(ctx context.Context, id int64) (*store.Appro
 // ListApprovalInvitesForRequest lists an access request's invites, newest first.
 func (s *PGStore) ListApprovalInvitesForRequest(ctx context.Context, accessRequestID int64) ([]store.ApprovalInvite, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT `+approvalInviteCols+` FROM approval_invites WHERE access_request_id = $1 ORDER BY created_at DESC`,
+		`SELECT `+approvalInviteCols+` FROM approval_invites WHERE access_request_id = $1 ORDER BY created_at DESC, id DESC`,
 		accessRequestID)
 	if err != nil {
 		return nil, err

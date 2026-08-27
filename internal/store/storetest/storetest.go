@@ -1255,6 +1255,234 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("one single-use approval admitted %d racing claims by id, want exactly 1", n)
 	}
 
+	// --- session-share invites (Phase 116; 2026-08-26 audit M-6, Phase 217) ---
+	// The whole ShareInviteStore role was absent from the contract. An invite
+	// is requested, decided, and — only if approved — redeemed ONCE by its
+	// token hash; every refusal is ErrNotFound, so the store never tells a
+	// caller why (the fail-closed shape TakeOIDCState uses).
+	ssReq := &store.SessionShareInvite{SessionID: "share-sess-1", Mode: "view_only", Kind: "external", Email: "guest@example.org", Status: "pending", Requester: "alice"}
+	if err := st.CreateSessionShareInvite(ctx, ssReq); err != nil {
+		t.Fatalf("CreateSessionShareInvite: %v", err)
+	}
+	if ssReq.ID == 0 || ssReq.CreatedAt.IsZero() {
+		t.Fatalf("CreateSessionShareInvite must populate ID and CreatedAt: %+v", ssReq)
+	}
+	ssGot, err := st.GetSessionShareInvite(ctx, ssReq.ID)
+	if err != nil || ssGot.Status != "pending" || ssGot.Mode != "view_only" || ssGot.Kind != "external" ||
+		ssGot.Email != "guest@example.org" || ssGot.Requester != "alice" || ssGot.TokenHash != "" ||
+		ssGot.ExpiresAt != nil || ssGot.DecidedAt != nil || ssGot.ConsumedAt != nil || ssGot.RevokedAt != nil {
+		t.Fatalf("GetSessionShareInvite(pending): %+v err %v", ssGot, err)
+	}
+	if _, err := st.GetSessionShareInvite(ctx, 999999); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetSessionShareInvite(unknown): want ErrNotFound, got %v", err)
+	}
+	// Nothing is redeemable before a decision, and an EMPTY hash — what every
+	// undecided row carries — must never match anything.
+	if _, err := st.ConsumeSessionShareInviteByTokenHash(ctx, "", now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("consume with an empty hash: want ErrNotFound, got %v", err)
+	}
+	ssDecidedAt := now.Truncate(time.Microsecond)
+	ssExp := ssDecidedAt.Add(10 * time.Minute)
+	if err := st.DecideSessionShareInvite(ctx, ssReq.ID, "approved", "bob", ssDecidedAt, "share-tok-1", &ssExp); err != nil {
+		t.Fatalf("DecideSessionShareInvite(approve): %v", err)
+	}
+	ssGot, err = st.GetSessionShareInvite(ctx, ssReq.ID)
+	if err != nil || ssGot.Status != "approved" || ssGot.Approver != "bob" || ssGot.TokenHash != "share-tok-1" ||
+		ssGot.DecidedAt == nil || !ssGot.DecidedAt.Equal(ssDecidedAt) || ssGot.ExpiresAt == nil || !ssGot.ExpiresAt.Equal(ssExp) {
+		t.Fatalf("an approval must stamp approver, decided_at, token and window: %+v err %v", ssGot, err)
+	}
+	if err := st.DecideSessionShareInvite(ctx, 999999, "approved", "bob", ssDecidedAt, "x", &ssExp); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("DecideSessionShareInvite(unknown): want ErrNotFound, got %v", err)
+	}
+	// The wrong hash, and the right hash at the very instant it expires —
+	// expiry is strict — are both refused, and neither refusal consumes.
+	if _, err := st.ConsumeSessionShareInviteByTokenHash(ctx, "share-tok-wrong", ssDecidedAt); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("consume with the wrong hash: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.ConsumeSessionShareInviteByTokenHash(ctx, "share-tok-1", ssExp); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("consume at the expiry instant: want ErrNotFound, got %v", err)
+	}
+	if ssGot, _ = st.GetSessionShareInvite(ctx, ssReq.ID); ssGot.ConsumedAt != nil {
+		t.Fatal("a refused redemption must not consume the invite")
+	}
+	ssRedeemAt := ssDecidedAt.Add(time.Minute)
+	ssRedeemed, err := st.ConsumeSessionShareInviteByTokenHash(ctx, "share-tok-1", ssRedeemAt)
+	if err != nil || ssRedeemed.ID != ssReq.ID || ssRedeemed.Mode != "view_only" ||
+		ssRedeemed.ConsumedAt == nil || !ssRedeemed.ConsumedAt.Equal(ssRedeemAt) {
+		t.Fatalf("ConsumeSessionShareInviteByTokenHash: %+v err %v", ssRedeemed, err)
+	}
+	// Single use: the same token is dead now, and the stored row says so.
+	if _, err := st.ConsumeSessionShareInviteByTokenHash(ctx, "share-tok-1", ssRedeemAt.Add(time.Second)); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("second redemption of one token: want ErrNotFound, got %v", err)
+	}
+	if ssGot, _ = st.GetSessionShareInvite(ctx, ssReq.ID); ssGot.ConsumedAt == nil || !ssGot.ConsumedAt.Equal(ssRedeemAt) {
+		t.Fatalf("a redemption must be visible on the row: %+v", ssGot)
+	}
+	// A denial carries no token and no window — WHATEVER the caller passed —
+	// so a hash minted before the decision can never redeem it.
+	ssDeny := &store.SessionShareInvite{SessionID: "share-sess-1", Mode: "view_control", Kind: "internal", Invitee: "carol", Status: "pending", Requester: "alice"}
+	if err := st.CreateSessionShareInvite(ctx, ssDeny); err != nil {
+		t.Fatalf("CreateSessionShareInvite(deny): %v", err)
+	}
+	if err := st.DecideSessionShareInvite(ctx, ssDeny.ID, "denied", "bob", ssDecidedAt, "share-tok-denied", &ssExp); err != nil {
+		t.Fatalf("DecideSessionShareInvite(deny): %v", err)
+	}
+	if ssGot, _ = st.GetSessionShareInvite(ctx, ssDeny.ID); ssGot.Status != "denied" || ssGot.Approver != "bob" ||
+		ssGot.DecidedAt == nil || ssGot.TokenHash != "" || ssGot.ExpiresAt != nil {
+		t.Fatalf("a denial must leave token and window empty: %+v", ssGot)
+	}
+	if _, err := st.ConsumeSessionShareInviteByTokenHash(ctx, "share-tok-denied", ssRedeemAt); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("a denied invite must not redeem: want ErrNotFound, got %v", err)
+	}
+	// Revoked after approval: the token and the window are still good, and it
+	// is refused anyway.
+	ssRev := &store.SessionShareInvite{SessionID: "share-sess-1", Mode: "view_only", Kind: "external", Email: "late@example.org", Status: "pending", Requester: "alice"}
+	if err := st.CreateSessionShareInvite(ctx, ssRev); err != nil {
+		t.Fatalf("CreateSessionShareInvite(revoke): %v", err)
+	}
+	if err := st.DecideSessionShareInvite(ctx, ssRev.ID, "approved", "bob", ssDecidedAt, "share-tok-rev", &ssExp); err != nil {
+		t.Fatalf("DecideSessionShareInvite(approve, to revoke): %v", err)
+	}
+	ssRevokedAt := ssDecidedAt.Add(2 * time.Minute)
+	if err := st.RevokeSessionShareInvite(ctx, ssRev.ID, ssRevokedAt); err != nil {
+		t.Fatalf("RevokeSessionShareInvite: %v", err)
+	}
+	if ssGot, _ = st.GetSessionShareInvite(ctx, ssRev.ID); ssGot.RevokedAt == nil || !ssGot.RevokedAt.Equal(ssRevokedAt) || ssGot.TokenHash != "share-tok-rev" {
+		t.Fatalf("a revocation stamps revoked_at and leaves the rest: %+v", ssGot)
+	}
+	if _, err := st.ConsumeSessionShareInviteByTokenHash(ctx, "share-tok-rev", ssRedeemAt); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("a revoked invite must not redeem: want ErrNotFound, got %v", err)
+	}
+	if err := st.RevokeSessionShareInvite(ctx, 999999, now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("RevokeSessionShareInvite(unknown): want ErrNotFound, got %v", err)
+	}
+	// The listing is per session, carries every state, and is newest first
+	// with the id tie-break both stores share — so it is the reverse of
+	// creation whether or not two rows landed in one instant.
+	ssList, err := st.ListSessionShareInvites(ctx, "share-sess-1")
+	if err != nil || len(ssList) != 3 {
+		t.Fatalf("ListSessionShareInvites: %d invites err %v, want 3", len(ssList), err)
+	}
+	for i, want := range []int64{ssRev.ID, ssDeny.ID, ssReq.ID} {
+		if ssList[i].ID != want {
+			t.Fatalf("ListSessionShareInvites order: position %d is id %d, want %d (newest first)", i, ssList[i].ID, want)
+		}
+	}
+	if none, err := st.ListSessionShareInvites(ctx, "share-sess-none"); err != nil || len(none) != 0 {
+		t.Fatalf("ListSessionShareInvites(unknown session) = %+v, %v; want empty, nil", none, err)
+	}
+
+	// --- approval invites (Phase 137; 2026-08-26 audit M-6, Phase 217) ---
+	// Minting one already requires CapApprove, so the invite IS the
+	// delegation: no decision stage, just a hashed token with a TTL, a
+	// read-only preview, and one consuming redemption.
+	aiExp := future.Truncate(time.Microsecond)
+	aiInv := &store.ApprovalInvite{AccessRequestID: ar.ID, Email: "approver@example.org", CreatedBy: "bob", TokenHash: "ap-tok-1", ExpiresAt: aiExp}
+	if err := st.CreateApprovalInvite(ctx, aiInv); err != nil {
+		t.Fatalf("CreateApprovalInvite: %v", err)
+	}
+	if aiInv.ID == 0 || aiInv.CreatedAt.IsZero() {
+		t.Fatalf("CreateApprovalInvite must populate ID and CreatedAt: %+v", aiInv)
+	}
+	// An invite cannot point at a request that does not exist, and two
+	// invites cannot share a hash — the schema's two constraints, which the
+	// demo store must enforce too.
+	if err := st.CreateApprovalInvite(ctx, &store.ApprovalInvite{AccessRequestID: 999999, Email: "x@example.org", CreatedBy: "bob", TokenHash: "ap-tok-orphan", ExpiresAt: aiExp}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("CreateApprovalInvite(unknown request): want ErrNotFound, got %v", err)
+	}
+	if err := st.CreateApprovalInvite(ctx, &store.ApprovalInvite{AccessRequestID: ar.ID, Email: "x@example.org", CreatedBy: "bob", TokenHash: "ap-tok-1", ExpiresAt: aiExp}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("CreateApprovalInvite(duplicate hash): want ErrConflict, got %v", err)
+	}
+	aiGot, err := st.GetApprovalInvite(ctx, aiInv.ID)
+	if err != nil || aiGot.AccessRequestID != ar.ID || aiGot.Email != "approver@example.org" || aiGot.CreatedBy != "bob" ||
+		aiGot.TokenHash != "ap-tok-1" || !aiGot.ExpiresAt.Equal(aiExp) || aiGot.Decision != "" ||
+		aiGot.ConsumedAt != nil || aiGot.RevokedAt != nil {
+		t.Fatalf("GetApprovalInvite: %+v err %v", aiGot, err)
+	}
+	if _, err := st.GetApprovalInvite(ctx, 999999); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetApprovalInvite(unknown): want ErrNotFound, got %v", err)
+	}
+	// The preview is read-only: a mail scanner can follow the link any number
+	// of times and consume nothing.
+	for i := 0; i < 2; i++ {
+		if p, err := st.GetApprovalInviteByTokenHash(ctx, "ap-tok-1"); err != nil || p.ID != aiInv.ID || p.ConsumedAt != nil {
+			t.Fatalf("GetApprovalInviteByTokenHash(preview %d): %+v err %v", i, p, err)
+		}
+	}
+	if _, err := st.GetApprovalInviteByTokenHash(ctx, "ap-tok-wrong"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("preview with the wrong hash: want ErrNotFound, got %v", err)
+	}
+	// Redemption is strict at the expiry instant and single-use.
+	if _, err := st.ConsumeApprovalInviteByTokenHash(ctx, "ap-tok-1", aiExp); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("consume at the expiry instant: want ErrNotFound, got %v", err)
+	}
+	aiRedeemAt := now.Truncate(time.Microsecond)
+	aiRedeemed, err := st.ConsumeApprovalInviteByTokenHash(ctx, "ap-tok-1", aiRedeemAt)
+	if err != nil || aiRedeemed.ID != aiInv.ID || aiRedeemed.ConsumedAt == nil || !aiRedeemed.ConsumedAt.Equal(aiRedeemAt) {
+		t.Fatalf("ConsumeApprovalInviteByTokenHash: %+v err %v", aiRedeemed, err)
+	}
+	if _, err := st.ConsumeApprovalInviteByTokenHash(ctx, "ap-tok-1", aiRedeemAt); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("second redemption of one token: want ErrNotFound, got %v", err)
+	}
+	// ...and the preview goes dark with it: a dead invite leaks no request details.
+	if _, err := st.GetApprovalInviteByTokenHash(ctx, "ap-tok-1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("preview of a consumed invite: want ErrNotFound, got %v", err)
+	}
+	if err := st.RecordApprovalInviteDecision(ctx, aiInv.ID, "approved"); err != nil {
+		t.Fatalf("RecordApprovalInviteDecision: %v", err)
+	}
+	if aiGot, _ = st.GetApprovalInvite(ctx, aiInv.ID); aiGot.Decision != "approved" || aiGot.ConsumedAt == nil || !aiGot.ConsumedAt.Equal(aiRedeemAt) {
+		t.Fatalf("the decision must be stamped beside the consumption: %+v", aiGot)
+	}
+	if err := st.RecordApprovalInviteDecision(ctx, 999999, "denied"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("RecordApprovalInviteDecision(unknown): want ErrNotFound, got %v", err)
+	}
+	// Revoked before use: token and TTL still valid, preview and redemption both refuse.
+	aiRev := &store.ApprovalInvite{AccessRequestID: ar.ID, Email: "second@example.org", CreatedBy: "bob", TokenHash: "ap-tok-2", ExpiresAt: aiExp}
+	if err := st.CreateApprovalInvite(ctx, aiRev); err != nil {
+		t.Fatalf("CreateApprovalInvite(to revoke): %v", err)
+	}
+	aiRevokedAt := aiRedeemAt.Add(time.Minute)
+	if err := st.RevokeApprovalInvite(ctx, aiRev.ID, aiRevokedAt); err != nil {
+		t.Fatalf("RevokeApprovalInvite: %v", err)
+	}
+	if aiGot, _ = st.GetApprovalInvite(ctx, aiRev.ID); aiGot.RevokedAt == nil || !aiGot.RevokedAt.Equal(aiRevokedAt) || aiGot.ConsumedAt != nil {
+		t.Fatalf("a revocation stamps revoked_at and nothing else: %+v", aiGot)
+	}
+	if _, err := st.GetApprovalInviteByTokenHash(ctx, "ap-tok-2"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("preview of a revoked invite: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.ConsumeApprovalInviteByTokenHash(ctx, "ap-tok-2", aiRedeemAt); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("a revoked invite must not redeem: want ErrNotFound, got %v", err)
+	}
+	if err := st.RevokeApprovalInvite(ctx, 999999, now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("RevokeApprovalInvite(unknown): want ErrNotFound, got %v", err)
+	}
+	// Already expired: refused by both lookups although unrevoked and unconsumed.
+	aiOld := &store.ApprovalInvite{AccessRequestID: ar.ID, Email: "late@example.org", CreatedBy: "bob", TokenHash: "ap-tok-3", ExpiresAt: now.Add(-time.Minute)}
+	if err := st.CreateApprovalInvite(ctx, aiOld); err != nil {
+		t.Fatalf("CreateApprovalInvite(expired): %v", err)
+	}
+	if _, err := st.GetApprovalInviteByTokenHash(ctx, "ap-tok-3"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("preview of an expired invite: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.ConsumeApprovalInviteByTokenHash(ctx, "ap-tok-3", now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("an expired invite must not redeem: want ErrNotFound, got %v", err)
+	}
+	// Per request, every state, newest first with the id tie-break.
+	aiList, err := st.ListApprovalInvitesForRequest(ctx, ar.ID)
+	if err != nil || len(aiList) != 3 {
+		t.Fatalf("ListApprovalInvitesForRequest: %d invites err %v, want 3", len(aiList), err)
+	}
+	for i, want := range []int64{aiOld.ID, aiRev.ID, aiInv.ID} {
+		if aiList[i].ID != want {
+			t.Fatalf("ListApprovalInvitesForRequest order: position %d is id %d, want %d (newest first)", i, aiList[i].ID, want)
+		}
+	}
+	if none, err := st.ListApprovalInvitesForRequest(ctx, 999999); err != nil || len(none) != 0 {
+		t.Fatalf("ListApprovalInvitesForRequest(unknown request) = %+v, %v; want empty, nil", none, err)
+	}
+
 	// --- checkouts (exclusive lease) ---
 	co := &store.Checkout{CredentialID: cred.ID, TargetID: tgt.ID, Holder: "alice", ExpiresAt: future}
 	if err := st.CreateCheckout(ctx, co, now); err != nil {
@@ -1718,6 +1946,63 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("DeleteSession(gc-live): %v", err)
 	}
 
+	// --- ListSessions + DeleteSessionsByUsername (2026-08-26 audit M-6, Phase 217) ---
+	// The admin's "who is logged in" view and the account-change cut (Phase
+	// 215) rest on these two, and neither was in the contract: Phase 99 gave
+	// ListSessions its id tie-break in both stores "behind the suite" — which
+	// never called it.
+	lsA := &store.Session{Username: "list-a", Role: "user", TokenHash: "list-a-1", ExpiresAt: future}
+	lsB1 := &store.Session{Username: "list-b", Role: "admin", TokenHash: "list-b-1", ExpiresAt: future}
+	lsB2 := &store.Session{Username: "list-b", Role: "admin", Scope: "enroll", TokenHash: "list-b-2", ExpiresAt: future}
+	for _, s := range []*store.Session{lsA, lsB1, lsB2} {
+		if err := st.CreateSession(ctx, s); err != nil {
+			t.Fatalf("CreateSession(%s): %v", s.TokenHash, err)
+		}
+	}
+	// An expired row for list-b: invisible to the listing, still counted by the cut.
+	if err := st.CreateSession(ctx, &store.Session{Username: "list-b", Role: "admin", TokenHash: "list-b-old", ExpiresAt: now.Add(-time.Minute)}); err != nil {
+		t.Fatalf("CreateSession(list-b-old): %v", err)
+	}
+	lsListed, err := st.ListSessions(ctx)
+	if err != nil || len(lsListed) != 3 {
+		t.Fatalf("ListSessions: %d sessions err %v, want the 3 live ones (the expired row hidden): %+v", len(lsListed), err, lsListed)
+	}
+	// Newest first with the id tie-break both stores share, so the order is
+	// the reverse of creation whether or not two rows landed in one instant.
+	for i, want := range []string{"list-b-2", "list-b-1", "list-a-1"} {
+		if lsListed[i].TokenHash != want {
+			t.Fatalf("ListSessions order: position %d is %q, want %q (newest first, id desc on ties)", i, lsListed[i].TokenHash, want)
+		}
+	}
+	if lsListed[0].ID != lsB2.ID || lsListed[0].Username != "list-b" || lsListed[0].Role != "admin" || lsListed[0].Scope != "enroll" ||
+		lsListed[0].CreatedAt.IsZero() || !lsListed[0].ExpiresAt.Truncate(time.Microsecond).Equal(future.Truncate(time.Microsecond)) {
+		t.Fatalf("ListSessions must return every field: %+v", lsListed[0])
+	}
+	// The cut takes every row for the name — live and expired alike — and
+	// nobody else's; a second cut, or one for a name nobody holds, is 0 and
+	// not an error.
+	if cut, err := st.DeleteSessionsByUsername(ctx, "list-b"); err != nil || cut != 3 {
+		t.Fatalf("DeleteSessionsByUsername(list-b) = %d, %v; want 3 (two live rows and the expired one)", cut, err)
+	}
+	if _, err := st.GetSessionByTokenHash(ctx, "list-b-1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("a cut session must be gone: %v", err)
+	}
+	if s, err := st.GetSessionByTokenHash(ctx, "list-a-1"); err != nil || s.Username != "list-a" {
+		t.Fatalf("the cut took another user's session: %+v err %v", s, err)
+	}
+	if again, err := st.DeleteSessionsByUsername(ctx, "list-b"); err != nil || again != 0 {
+		t.Fatalf("second DeleteSessionsByUsername = %d, %v; want 0, nil", again, err)
+	}
+	if n, err := st.DeleteSessionsByUsername(ctx, "nobody-ever"); err != nil || n != 0 {
+		t.Fatalf("DeleteSessionsByUsername(unknown) = %d, %v; want 0, nil", n, err)
+	}
+	if lsListed, err = st.ListSessions(ctx); err != nil || len(lsListed) != 1 || lsListed[0].TokenHash != "list-a-1" {
+		t.Fatalf("ListSessions after the cut: %+v err %v", lsListed, err)
+	}
+	if err := st.DeleteSession(ctx, "list-a-1"); err != nil {
+		t.Fatalf("DeleteSession(list-a-1): %v", err)
+	}
+
 	// --- MFA enrollment + recovery codes ---
 	if err := st.UpsertMFAEnrollment(ctx, &store.MFAEnrollment{Username: "u1", SecretEnc: "v2:totp", Confirmed: false}); err != nil {
 		t.Fatalf("UpsertMFAEnrollment: %v", err)
@@ -1917,9 +2202,25 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.CreateCheckout(ctx, &store.Checkout{CredentialID: cc.ID, TargetID: casc.ID, Holder: "h", ExpiresAt: future}, now); err != nil {
 		t.Fatalf("CreateCheckout(cascade): %v", err)
 	}
-	// Deleting the target cascades to its credentials, grants and checkouts.
+	cascAR := &store.AccessRequest{Requester: "alice", TargetID: casc.ID, Reason: "cascade", Status: "pending", ExpiresAt: future}
+	if err := st.CreateAccessRequest(ctx, cascAR); err != nil {
+		t.Fatalf("CreateAccessRequest(cascade): %v", err)
+	}
+	cascInv := &store.ApprovalInvite{AccessRequestID: cascAR.ID, Email: "x@example.org", CreatedBy: "bob", TokenHash: "ap-tok-cascade", ExpiresAt: future}
+	if err := st.CreateApprovalInvite(ctx, cascInv); err != nil {
+		t.Fatalf("CreateApprovalInvite(cascade): %v", err)
+	}
+	// Deleting the target cascades to its credentials, grants, checkouts and
+	// access requests — and through those to their approval invites, the
+	// second hop pgstore's FK chain takes and memstore had to be taught (Phase 217).
 	if err := st.DeleteTarget(ctx, casc.ID); err != nil {
 		t.Fatalf("DeleteTarget: %v", err)
+	}
+	if _, err := st.GetAccessRequest(ctx, cascAR.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("access request was not cascaded on target delete: %v", err)
+	}
+	if _, err := st.GetApprovalInvite(ctx, cascInv.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("approval invite was not cascaded with its access request: %v", err)
 	}
 	if _, err := st.GetCredential(ctx, cc.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("credential was not cascaded on target delete")
@@ -2323,7 +2624,39 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		got.LastSeen == nil || !got.LastSeen.Equal(seenAgainAt.Add(time.Minute)) {
 		t.Fatalf("a sighting must stamp an enrolled row without downgrading it: %+v err %v", got, gerr3)
 	}
-	for _, id := range []int64{sighted.ID, enrolledIdent.ID} {
+	// Enrolling a discovered row — the "adopt what you saw" half of Phase 174
+	// — names an owner and a note and flips it enrolled, and leaves the
+	// sighting stamps alone: the point of adopting rather than re-creating.
+	const adopteeID = "spiffe://example.org/agent/adoptee"
+	if fresh, serr := st.SeeAgentIdentity(ctx, adopteeID, firstSeenAt); serr != nil || !fresh {
+		t.Fatalf("SeeAgentIdentity(adoptee): created=%v err %v", fresh, serr)
+	}
+	adoptee, gerr4 := st.GetAgentIdentity(ctx, adopteeID)
+	if gerr4 != nil || adoptee.Enrolled {
+		t.Fatalf("a sighted row starts unenrolled: %+v err %v", adoptee, gerr4)
+	}
+	if err := st.EnrollAgentIdentity(ctx, adoptee.ID, "dave", "nightly batch runner"); err != nil {
+		t.Fatalf("EnrollAgentIdentity: %v", err)
+	}
+	if got, gerr5 := st.GetAgentIdentity(ctx, adopteeID); gerr5 != nil || !got.Enrolled || got.Owner != "dave" || got.Note != "nightly batch runner" ||
+		got.FirstSeen == nil || !got.FirstSeen.Equal(firstSeenAt) || got.LastSeen == nil || !got.LastSeen.Equal(firstSeenAt) {
+		t.Fatalf("enrolling must set owner, note and enrolled and keep the sighting stamps: %+v err %v", got, gerr5)
+	}
+	adopted := false
+	if owned, err := st.ListAgentIdentitiesByOwner(ctx, "dave"); err != nil {
+		t.Fatalf("ListAgentIdentitiesByOwner(dave): %v", err)
+	} else {
+		for _, o := range owned {
+			adopted = adopted || o.ID == adoptee.ID
+		}
+	}
+	if !adopted {
+		t.Fatal("an enrolled identity must be listed under its new owner")
+	}
+	if err := st.EnrollAgentIdentity(ctx, 999999, "dave", ""); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("EnrollAgentIdentity(unknown): want ErrNotFound, got %v", err)
+	}
+	for _, id := range []int64{sighted.ID, enrolledIdent.ID, adoptee.ID} {
 		if err := st.DeleteAgentIdentity(ctx, id); err != nil {
 			t.Fatalf("DeleteAgentIdentity(cleanup %d): %v", id, err)
 		}
@@ -2681,6 +3014,24 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.UpdateVendorOrg(ctx, 999999, "x"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("UpdateVendorOrg missing: want ErrNotFound, got %v", err)
 	}
+	// The on-file contact address — where a magic-link invite is sent — can
+	// be set, corrected and cleared (the setter Phase 177 found wired to
+	// nothing; in the contract since Phase 217).
+	if err := st.UpdateVendorEmail(ctx, ven.ID, "noc@acme.example"); err != nil {
+		t.Fatalf("UpdateVendorEmail: %v", err)
+	}
+	if v, _ := st.GetVendorByUsername(ctx, "acme-tech"); v.Email != "noc@acme.example" {
+		t.Fatalf("after UpdateVendorEmail: %+v", v)
+	}
+	if err := st.UpdateVendorEmail(ctx, ven.ID, ""); err != nil {
+		t.Fatalf("UpdateVendorEmail(clear): %v", err)
+	}
+	if v, _ := st.GetVendorByUsername(ctx, "acme-tech"); v.Email != "" {
+		t.Fatalf("UpdateVendorEmail(\"\") must clear the address: %+v", v)
+	}
+	if err := st.UpdateVendorEmail(ctx, 999999, "x@example.org"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateVendorEmail missing: want ErrNotFound, got %v", err)
+	}
 	if _, err := st.GetVendorByUsername(ctx, "nobody"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("unknown vendor: want ErrNotFound, got %v", err)
 	}
@@ -2725,6 +3076,57 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, "root", future.Add(time.Minute)); ok {
 		t.Fatal("a grant past its window must not allow access")
 	}
+	// Revoking ONE grant — the customer ending a contract early — closes the
+	// window it opened, stamps when, leaves the vendor's other grants alone,
+	// and is idempotent; offboarding below is the same verb over every grant.
+	vgEarly := &store.VendorGrant{VendorID: ven.ID, TargetID: tgt.ID, Principal: "postgres", NotAfter: future}
+	if err := st.CreateVendorGrant(ctx, vgEarly); err != nil {
+		t.Fatalf("CreateVendorGrant(early): %v", err)
+	}
+	if err := st.ApproveVendorGrant(ctx, vgEarly.ID, "customer-appr", now); err != nil {
+		t.Fatalf("ApproveVendorGrant(early): %v", err)
+	}
+	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, "postgres", now); !ok {
+		t.Fatal("the second approved grant must admit its own account")
+	}
+	vgRevokedAt := now.Truncate(time.Microsecond)
+	if err := st.RevokeVendorGrant(ctx, vgEarly.ID, vgRevokedAt); err != nil {
+		t.Fatalf("RevokeVendorGrant: %v", err)
+	}
+	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, "postgres", now); ok {
+		t.Fatal("a revoked grant must not admit, even inside its window")
+	}
+	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, "root", now); !ok {
+		t.Fatal("revoking one grant must not touch the vendor's other grant")
+	}
+	if err := st.RevokeVendorGrant(ctx, vgEarly.ID, vgRevokedAt.Add(time.Minute)); err != nil {
+		t.Fatalf("re-revoke: %v, want nil (idempotent)", err)
+	}
+	if err := st.RevokeVendorGrant(ctx, 999999, now); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("RevokeVendorGrant(unknown): want ErrNotFound, got %v", err)
+	}
+	vgSeen := 0
+	if vgs, err := st.ListVendorGrants(ctx, ven.ID); err != nil || len(vgs) != 2 {
+		t.Fatalf("ListVendorGrants: %d grants err %v, want 2", len(vgs), err)
+	} else {
+		for _, g := range vgs {
+			switch g.ID {
+			case vgEarly.ID:
+				if g.Status != "revoked" || g.RevokedAt == nil {
+					t.Fatalf("the revoked grant must list as revoked with its stamp: %+v", g)
+				}
+				vgSeen++
+			case grant.ID:
+				if g.Status != "approved" || g.RevokedAt != nil {
+					t.Fatalf("the untouched grant must still list as approved: %+v", g)
+				}
+				vgSeen++
+			}
+		}
+	}
+	if vgSeen != 2 {
+		t.Fatal("ListVendorGrants must list both of the vendor's grants")
+	}
 	// Offboard cascade: disables the vendor and revokes the grant.
 	if err := st.OffboardVendor(ctx, ven.ID, now); err != nil {
 		t.Fatalf("OffboardVendor: %v", err)
@@ -2735,8 +3137,14 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if _, ok, _ := st.VendorSessionAllowed(ctx, "acme-tech", tgt.Name, "root", now); ok {
 		t.Fatal("an offboarded vendor must not have access")
 	}
-	if grants, err := st.ListVendorGrants(ctx, ven.ID); err != nil || len(grants) != 1 || grants[0].Status != "revoked" {
-		t.Fatalf("ListVendorGrants after offboard: %+v err %v", grants, err)
+	vgOffboarded, err := st.ListVendorGrants(ctx, ven.ID)
+	if err != nil || len(vgOffboarded) != 2 {
+		t.Fatalf("ListVendorGrants after offboard: %+v err %v", vgOffboarded, err)
+	}
+	for _, g := range vgOffboarded {
+		if g.Status != "revoked" || g.RevokedAt == nil {
+			t.Fatalf("offboarding must leave every grant revoked, the already-revoked one included: %+v", g)
+		}
 	}
 	if err := st.OffboardVendor(ctx, 999999, now); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("offboard unknown vendor: want ErrNotFound, got %v", err)
@@ -2759,11 +3167,33 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if got, err := st.GetAppKeyByTokenHash(ctx, "apphash1"); err != nil || got.Name != "ci-runner" {
 		t.Fatalf("GetAppKeyByTokenHash: %+v err %v", got, err)
 	}
-	if err := st.CreateAppKey(ctx, &store.AppKey{Name: "off", TokenHash: "apphash2", Disabled: true}); err != nil {
+	akOff := &store.AppKey{Name: "off", TokenHash: "apphash2", Disabled: true}
+	if err := st.CreateAppKey(ctx, akOff); err != nil {
 		t.Fatalf("CreateAppKey(disabled): %v", err)
 	}
 	if _, err := st.GetAppKeyByTokenHash(ctx, "apphash2"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("a disabled app key must not resolve")
+	}
+	// The listing is the admin's inventory: id-ascending and INCLUDING the
+	// disabled key the token lookup just hid (Phase 217).
+	akSawLive, akSawOff := false, false
+	if akList, err := st.ListAppKeys(ctx); err != nil {
+		t.Fatalf("ListAppKeys: %v", err)
+	} else {
+		for i, k := range akList {
+			if i > 0 && akList[i-1].ID >= k.ID {
+				t.Fatalf("ListAppKeys must be id-ascending: %+v", akList)
+			}
+			switch k.ID {
+			case app.ID:
+				akSawLive = !k.Disabled && k.Name == "ci-runner" && k.Owner == "team" && k.TokenHash == "apphash1"
+			case akOff.ID:
+				akSawOff = k.Disabled && k.Name == "off"
+			}
+		}
+	}
+	if !akSawLive || !akSawOff {
+		t.Fatalf("ListAppKeys must list the live key (%v) and the disabled one (%v) with their fields", akSawLive, akSawOff)
 	}
 	// Default-deny before a grant.
 	if ok, err := st.AppMayAccessCredential(ctx, app.ID, appCred.ID); err != nil || ok {
@@ -2818,6 +3248,15 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 	if _, err := st.GetAppKeyByTokenHash(ctx, "apphash1"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("a deleted app key must not resolve")
+	}
+	if akList, err := st.ListAppKeys(ctx); err != nil {
+		t.Fatalf("ListAppKeys after delete: %v", err)
+	} else {
+		for _, k := range akList {
+			if k.ID == app.ID {
+				t.Fatal("a deleted app key must leave the listing")
+			}
+		}
 	}
 	if ok, _ := st.AppMayAccessCredential(ctx, app.ID, appCred2.ID); ok {
 		t.Fatal("grant should cascade on app delete")
@@ -3375,3 +3814,14 @@ func aliasContract(t *testing.T, st store.Store, grants []store.AppSecretGrant) 
 
 // itoaTest is a tiny local helper so the fixture can build distinct token hashes.
 func itoaTest(i int) string { return string(rune('0' + i)) }
+
+// RunCloseContract pins Close's one shared guarantee: it is safe to call more
+// than once. memstore has nothing to release and pgstore closes a pool that
+// guards itself, so a deferred Close after an explicit one must never panic.
+// Run it LAST — what a store answers after Close is backend-specific (pgstore
+// refuses, memstore does not) and deliberately not part of the contract.
+func RunCloseContract(t *testing.T, st store.Store) {
+	t.Helper()
+	st.Close()
+	st.Close()
+}
