@@ -18,7 +18,7 @@ variable "namespace" {
 variable "image" {
   description = "pam-server container image (pin to an immutable tag or @sha256 digest; a security appliance must not track a mutable :latest)"
   type        = string
-  default     = "ghcr.io/morandeirachema/pamv1:0.59.0"
+  default     = "ghcr.io/morandeirachema/pamv1:0.60.0"
 }
 
 variable "replicas" {
