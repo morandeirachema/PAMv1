@@ -57,25 +57,28 @@ reference them; exploitation detail is intentionally omitted.
 | T-4 | LOW | config validation | A knob was documented as failing closed without its prerequisite but did not | **Fixed** — added to the startup prerequisite group |
 | M-1 | MED | audit details (proxies) | Untrusted values could forge `key:value` fields the trail is parsed by | **Fixed** — shared `auditfmt.Value` at every sink; unit-guarded |
 | M-2 | MED | login audit actor | An unauthenticated username reached the audit actor unbounded/unquoted | **Fixed** — bounded and quoted, matching the proxy |
-| M-3 | MED | agent keys / budgets | Two active keys could share a name and pool one budget | **Fixed (name half)** — partial unique index (migration 0049). Reservation half **deferred** (see below) |
+| M-3 | MED | agent keys / budgets | Two active keys could share a name and pool one budget | **Fixed** — name half: partial unique index (migration 0049, Phase 212); reservation half: the compare-and-spend ledger `agent_call_reservations` (migration 0050, **Phase 219**, released v0.59.0) |
 | M-4 | MED | approval decision | A racing approve could overwrite a final deny | **Fixed** — compare-and-set on `pending`, both backends |
 | M-5 | MED | personal safes | A plain target manager could reach a private target three ways | **Fixed** — one fail-closed guard on all three |
 | M-7 | MED | SFTP guard | Link operations could launder a denied path | **Fixed** — both paths of both link ops checked, every mode; mutation-pinned |
 | M-8 | MED | SSH proxy | Unbounded channels per connection | **Fixed** — per-connection cap |
 | F-5 | (LOW→) | SCIM | A connector could act on a privileged user | **Fixed** — refused by effective capability, not role string; the deprovisioning error now surfaces |
 | F-8 | INFO | middleware | Scope refusals were unaudited | **Fixed** — now audited with the shared reason slug |
-| M-6 | MED | `pgstore` contract suite | Twenty store methods absent from the backend-parity contract suite | **Deferred** — test-coverage debt, not a live defect (see §3); recorded in ROADMAP "What is left" §2 |
+| M-6 | MED | `pgstore` contract suite | Twenty store methods absent from the backend-parity contract suite | **Fixed** — all twenty in the contract suite (**Phase 217**, released v0.58.3); writing it exposed four backend divergences, each fixed there |
 | F-7 | LOW | broker resume tokens | A resume token is not bound to the identity that parked the call | **Deferred** — single-use bearer by design, 96-bit call ids; needs a schema column (see §3); ROADMAP §3 |
 | — | LOW | DB proxy SCRAM; JWK member check; guest key | Bound an upstream-supplied iteration count; case-fold the private-member check; store the guest bearer key by hash like every other token | **Fixed** |
 
 ## 3. Deferred, with rationale
 
-- **M-6** — 20 store methods absent from the pgstore contract suite. Test-coverage
-  debt, not a live defect: the methods work and are exercised through handler
-  tests. Adding them to the contract suite is a sizable, purely-additive task.
-- **M-3 reservation half** — the concurrent-burst budget over-run needs a new
-  atomic compare-and-spend store primitive (a design change). The per-minute rate
-  limit already bounds burst volume, so the residual is small.
+- ~~**M-6** — 20 store methods absent from the pgstore contract suite.~~ Closed
+  by **Phase 217** (2026-08-27): all twenty are in the contract suite, and
+  writing the assertions from the interface's doc comments exposed four
+  backend divergences — none reachable through a handler — each fixed there.
+- ~~**M-3 reservation half** — the concurrent-burst budget over-run.~~ Closed by
+  **Phase 219** (2026-08-27): `ReserveAgentCall`, a compare-and-spend written
+  under the store's own serialisation at the instant the gate decides; the
+  audit-trail counts stay in front as what an operator reads. The same test
+  found that a parked call never held a budget slot, and closed that too.
 - **F-7** — binding a broker resume token to its collector needs a schema column;
   the token is single-use bearer by explicit design and call ids are 96-bit
   random, so this is defence-in-depth rather than a live hole.
