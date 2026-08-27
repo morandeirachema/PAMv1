@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–220 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–221 are shipped.** Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2418,30 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 221 — Documentation resync ✅
+
+A currency pass after 217–220, in the shape Phases 107 and 208 took: read the
+set against the tree rather than assume it, in both directions. The release
+plumbing was current — every `Reflects:` header, every deploy pin and both
+READMEs already stated v0.59.0 — and the **content** was not, in nine places:
+
+- [x] Two "latest numbered migration" marks were many phases stale:
+  `ARCHITECTURE-LOW-LEVEL` §2.2 had read `0025` since Phase 55 and `CODE-GUIDE`
+  §3.3 had read `0018`. Both now `0050`, and BACKUP-AND-RESTORE's high-water
+  narrative, which had stopped at `0049`, reaches it too
+- [x] `CODE-GUIDE` §3.3's atomic-single-winner list and advisory-lock list did
+  not know the reservation or its two-key lock; the conformance-suite paragraph
+  now says it covers every method and that its assertions come from the
+  interface's doc comments
+- [x] The 2026-08-26 audit report still carried M-3's reservation half and M-6
+  as **deferred**; both rows and §3 now name the phases that closed them
+- [x] `ADMIN-GUIDE`, `ARCHITECTURE-HIGH-LEVEL`, `CODE-GUIDE` and
+  `BACKUP-AND-RESTORE` had no change-log rows for 217 or 219; `REQUIREMENTS`
+  and `SYSADMIN-GUIDE` had not stated that 217–220 add no requirement and no
+  background worker; `SECURITY-GAPS`'s register had no row for the two closures
+  and now names F-7 as the one finding of that audit still open
+- [x] No code change, no release: nothing the artifact contains moved
 
 ## Phase 220 — v0.59.0 ✅
 
