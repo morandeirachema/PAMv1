@@ -36,7 +36,8 @@ compatibility. The Streamable HTTP transport is not offered.
   `tools`.
 - `POST /mcp` accepts JSON-RPC batches and validates `MCP-Protocol-Version`.
 
-Helm chart `0.52.0` → `0.53.0`, a minor alongside an app minor.
+Helm chart `0.52.0` → `0.53.0`, a minor alongside an app minor. Image digest
+`sha256:8145ca1b…` (the full value is in the README and on the release page).
 
 ## [0.61.0] — 2026-08-27
 
