@@ -783,10 +783,15 @@ sequenceDiagram
   `/api/mfa/*`) plus `/api/webauthn/login/*`, reachable only by an
   `MFAPending`-scoped session `login()` mints after a correct password when
   the user has no confirmed TOTP but does have a registered credential — see
-  `auth.SessionScopeMFAPending` and the `mfaPendingOnly` middleware.
-  `store.EffectiveMFAFactors` (`internal/store/mfapolicy.go`) is the one place
-  that widens "has TOTP" to "has any confirmed factor". Credential public
-  keys are stored in the clear (not a shared secret, unlike the TOTP secret).
+  `auth.SessionScopeMFAPending` and the `mfaPendingOnly` middleware. Credential
+  public keys are stored in the clear (not a shared secret, unlike the TOTP
+  secret). Each of `login`/`mfaEnroll`/`mfaDisable`/`mfaRecoveryCodes` reads
+  `GetMFAEnrollment`/`ListWebAuthnCredentials` directly rather than through a
+  shared "has any factor" helper — `store.EffectiveMFAFactors` (Phase 124)
+  attempted that centralization but had no caller that could actually adopt a
+  collapsed boolean, since each site needs the concrete `MFAEnrollment` to
+  re-prove the current TOTP factor or to branch per-factor; deleted in
+  Phase 229.
 
 Session tokens, per-user tokens, recovery codes, and the break-glass key are all
 stored **only as SHA-256** — the plaintext is shown once and never persisted.
@@ -1195,6 +1200,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-08-31 | Phase 229 (a gap-analysis pass): §11 — `store.EffectiveMFAFactors`/`internal/store/mfapolicy.go` deleted, zero production callers; `cmd/pam-server` now parses `PAM_SSH_SFTP` through `proxy.ParseSFTPMode` instead of casting the raw string. No schema/route change. |
 | 2026-08-27 | Phase 226 (the MCP revision negotiated, not pinned): §3.5 — `mcp.Latest`/`Supported`/`Negotiate`/`IsSupported`, `Dispatcher.HandleBatch`; `internal/api/mcp_handlers.go` — `initialize` reads `protocolVersion` and advertises only `tools`, `serveMCP` checks `MCP-Protocol-Version` and dispatches batches. |
 | 2026-08-27 | Phase 224 (the trust bundle follows the file): `internal/agentid/svid.go` — `SVIDVerifier` holds its bundle path and stamp behind a lock, `loadBundle` parses from the open handle, `keyFor` re-reads on a due check or an unknown kid (`Reload(force)`), issuer keys re-applied after every read; `SetBundleRecheck`/`WithLogger` for tests and wiring. |
 | 2026-08-27 | Phase 222 (resume token bound to its collector): §3.3 — `store.BrokerToken.Subject`, `ConsumeBrokerToken`/`PeekBrokerToken` take the presenter's subject, migration `0051` (now the high-water mark stated here); §3.5 (`broker`) — `collectorSubject`, written by `park` and presented by `Resume`. |
