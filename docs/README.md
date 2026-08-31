@@ -1,6 +1,6 @@
 # PAMv1 — documentation
 
-> Last updated: 2026-08-31 · Reflects: Phases 0–227 and 229–232, and release v0.62.1 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-08-31 · Reflects: Phases 0–227 and 229–233, and release v0.63.0 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
