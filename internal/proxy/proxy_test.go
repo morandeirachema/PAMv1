@@ -22,6 +22,7 @@ import (
 
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
+	"github.com/morandeirachema/pamv1/internal/oncall"
 	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/proxy"
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -1045,6 +1046,69 @@ func TestPostureGateProxy(t *testing.T) {
 	sess, err := client2.NewSession()
 	if err != nil {
 		t.Fatalf("a healthy posture check must admit the session: %v", err)
+	}
+	defer sess.Close()
+	if out, err := sess.Output("run"); err != nil || string(out) != targetOutput {
+		t.Fatalf("session output = %q err %v", out, err)
+	}
+}
+
+// TestOnCallGateProxy proves Phase 232's live on-call check end to end,
+// modeled on TestPostureGateProxy: a failing (or unreachable) on-call
+// webhook refuses a real SSH session before the target is even resolved, a
+// passing one admits it, and break-glass bypasses the check entirely.
+func TestOnCallGateProxy(t *testing.T) {
+	host, port := startUpstream(t, upstreamUser, upstreamSecret, targetOutput)
+	st := memstore.New()
+	v := mustVault(t)
+	seedTarget(t, st, v, host, port)
+	resolver, err := auth.NewResolver(st, proxyAPIKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var onCall atomic.Bool
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if onCall.Load() {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(http.StatusForbidden)
+		}
+	}))
+	defer webhook.Close()
+
+	px, err := proxy.New(st, v, resolver, proxy.Config{
+		HostKey: mustSigner(t), RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second,
+		OnCallAttestor: oncall.NewAttestor(webhook.URL),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := serveProxy(t, px)
+
+	// Not on call: the operator's key still authenticates the SSH transport,
+	// but no channel opens — refused before target resolution.
+	client, err := dialProxy(t, addr, upstreamUser+"@web-01", proxyAPIKey)
+	if err != nil {
+		t.Fatalf("ssh auth should pass even though the on-call check will refuse: %v", err)
+	}
+	if sess, serr := client.NewSession(); serr == nil {
+		sess.Close()
+		client.Close()
+		t.Fatal("a failed on-call check must refuse the session")
+	}
+	client.Close()
+
+	// On call: the session is admitted, reaching the real target.
+	onCall.Store(true)
+	client2, err := dialProxy(t, addr, upstreamUser+"@web-01", proxyAPIKey)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client2.Close()
+	sess, err := client2.NewSession()
+	if err != nil {
+		t.Fatalf("an on-call user must be admitted: %v", err)
 	}
 	defer sess.Close()
 	if out, err := sess.Output("run"); err != nil || string(out) != targetOutput {

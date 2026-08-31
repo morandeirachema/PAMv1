@@ -34,6 +34,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/icap"
 	"github.com/morandeirachema/pamv1/internal/logging"
+	"github.com/morandeirachema/pamv1/internal/oncall"
 	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
 	"github.com/morandeirachema/pamv1/internal/recording"
@@ -164,6 +165,9 @@ type Config struct {
 	// PostureAttestor (optional) validates a user's live device posture on
 	// every connect (Phase 133); nil disables posture checking.
 	PostureAttestor *posture.Attestor
+	// OnCallAttestor (optional) validates a user is currently on call on
+	// every connect (Phase 232); nil disables on-call checking.
+	OnCallAttestor *oncall.Attestor
 	// SFTPCaptureMaxBytes caps the captured bytes per file (0 = unlimited).
 	// Beyond the cap the transfer is REFUSED, not merely unrecorded — the same
 	// posture as the session-recording cap (PAM_SSH_SFTP_CAPTURE_MAX_MB).
@@ -254,6 +258,7 @@ type Proxy struct {
 	icapClient  *icap.Client
 	ticketCheck store.TicketChecker
 	posture     *posture.Attestor
+	oncall      *oncall.Attestor
 	gate        *gates // the shared admission-gate sequence (gates.go)
 	// endpointAgents is the shared live registry of connected endpoint agents
 	// (Phase 153); nil = feature disabled.
@@ -343,6 +348,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		icapClient:     cfg.ICAPClient,
 		ticketCheck:    cfg.TicketCheck,
 		posture:        cfg.PostureAttestor,
+		oncall:         cfg.OnCallAttestor,
 	}
 	p.gate = &gates{
 		store:        st,
@@ -354,6 +360,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		ticketCheck:  p.ticketCheck,
 		sessions:     p.sessions,
 		posture:      p.posture,
+		oncall:       p.oncall,
 	}
 	if p.certTTL <= 0 {
 		p.certTTL = 2 * time.Minute
@@ -955,6 +962,10 @@ func (p *Proxy) refuse(ctx context.Context, chans <-chan ssh.NewChannel, res adm
 		p.log.Warn("session denied: device posture check failed", "actor", actor, "remote", remote)
 		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:posture-check-failed")
 		rejectAll(chans, ssh.Prohibited, "PAMv1: your device failed its posture check")
+	case gateOnCall:
+		p.log.Warn("session denied: on-call check failed", "actor", actor, "remote", remote)
+		p.audit(ctx, actor, "session.denied", "login:"+auditField(login, 64)+" reason:oncall-check-failed")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: you are not currently on call")
 	case gateResolve:
 		p.log.Warn("session denied", "actor", actor, "login", auditField(login, 64), "reason", res.reason, "remote", remote)
 		p.audit(ctx, actor, "session.denied", fmt.Sprintf("login:%s reason:%s", auditField(login, 64), auditValue(res.reason, 200)))

@@ -53,6 +53,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/maint"
 	"github.com/morandeirachema/pamv1/internal/oidc"
+	"github.com/morandeirachema/pamv1/internal/oncall"
 	"github.com/morandeirachema/pamv1/internal/policy"
 	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/proxy"
@@ -1197,6 +1198,14 @@ func run() error {
 		log.Info("device posture checking enabled")
 	}
 
+	// On-call attestation (Phase 232): same shared-value idiom as
+	// postureAttestor above, resolved once so every gate checks the same
+	// webhook.
+	oncallAttestor := oncall.NewAttestor(cfg.OnCallAttestURL)
+	if oncallAttestor.Enabled() {
+		log.Info("on-call checking enabled")
+	}
+
 	// ICAP file-transfer scanning (Phase 143): resolved once here, same
 	// shared-value idiom as postureAttestor above. cfg's own validation
 	// already confirmed the URL's shape, so a construction error here would
@@ -1344,6 +1353,7 @@ func run() error {
 		SSHOperatorCertTTL:        cfg.SSHOperatorCertTTL,
 		VendorAttestor:            vendor.NewAttestor(cfg.VendorAttestURL),
 		PostureAttestor:           postureAttestor,
+		OnCallAttestor:            oncallAttestor,
 		DeviceHeader:              cfg.DeviceHeader,
 		Analytics:                 analyticsEngine,
 		AnalyticsWindow:           cfg.AnalyticsWindow,
@@ -1524,6 +1534,7 @@ func run() error {
 			SFTPPathGuard:        sftpPathGuard,
 			TicketCheck:          ticketRecheck,
 			PostureAttestor:      postureAttestor,
+			OnCallAttestor:       oncallAttestor,
 			SFTPCapture:          sftpCapture,
 			SFTPCaptureMaxBytes:  int64(cfg.SSHSFTPCaptureMaxMB) * 1024 * 1024,
 			PortForward:          cfg.SSHPortForward,
@@ -1594,6 +1605,7 @@ func run() error {
 			RequireTargetGrant:   cfg.RequireTargetGrant,
 			TicketCheck:          ticketRecheck,
 			PostureAttestor:      postureAttestor,
+			OnCallAttestor:       oncallAttestor,
 			AllowedProtocols:     splitAndTrim(cfg.AllowedProtocols),
 			RequireRecording:     cfg.RequireRecording,
 			ClientTLS:            dbClientTLS,
@@ -1641,6 +1653,7 @@ func run() error {
 			RequireTargetGrant:   cfg.RequireTargetGrant,
 			TicketCheck:          ticketRecheck,
 			PostureAttestor:      postureAttestor,
+			OnCallAttestor:       oncallAttestor,
 			AllowedProtocols:     splitAndTrim(cfg.AllowedProtocols),
 			RequireRecording:     cfg.RequireRecording,
 			ClientTLS:            dbClientTLS,

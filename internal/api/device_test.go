@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/morandeirachema/pamv1/internal/api"
+	"github.com/morandeirachema/pamv1/internal/oncall"
 	"github.com/morandeirachema/pamv1/internal/posture"
 )
 
@@ -207,5 +208,72 @@ func TestAuthzRefusesFailedPosture(t *testing.T) {
 	healthy.Store(false)
 	if code := get(breakGlassKey); code != http.StatusOK {
 		t.Fatalf("break-glass request while posture fails: %d, want 200 (break-glass bypasses)", code)
+	}
+}
+
+// TestAuthzRefusesFailedOnCall proves the shared authz middleware checks
+// live on-call status on every authenticated request when an OnCallAttestor
+// is configured (Phase 232), and that break-glass bypasses it — the same
+// shape TestAuthzRefusesFailedPosture proves for the posture gate this one
+// is modeled on.
+func TestAuthzRefusesFailedOnCall(t *testing.T) {
+	var onCall atomic.Bool
+	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if onCall.Load() {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(http.StatusForbidden)
+		}
+	}))
+	defer webhook.Close()
+
+	srv, st := newTestServerOpts(t, nil, api.Options{OnCallAttestor: oncall.NewAttestor(webhook.URL)})
+	// On-call must pass to create the user in the first place — the gate
+	// applies to every authenticated call, including this setup step.
+	onCall.Store(true)
+	_, data := do(t, srv, http.MethodPost, "/api/users", testAPIKey, map[string]any{"username": "bob", "role": "user"})
+	tok := jsonMap(t, data)["token"].(string)
+	onCall.Store(false)
+
+	get := func(key string) int {
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/targets", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("X-API-Key", key)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := get(tok); code != http.StatusForbidden {
+		t.Fatalf("request while not on call: %d, want 403", code)
+	}
+	onCall.Store(true)
+	if code := get(tok); code != http.StatusOK {
+		t.Fatalf("request once on call: %d, want 200", code)
+	}
+
+	events, err := st.ListAudit(context.Background(), 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Action == "authz.denied" && strings.Contains(e.Detail, "reason:oncall-check-failed") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no authz.denied reason:oncall-check-failed audit event")
+	}
+
+	// Break-glass bypasses the on-call gate, matching every other gate it
+	// already bypasses — proven against the SAME still-refusing webhook.
+	onCall.Store(false)
+	if code := get(breakGlassKey); code != http.StatusOK {
+		t.Fatalf("break-glass request while not on call: %d, want 200 (break-glass bypasses)", code)
 	}
 }

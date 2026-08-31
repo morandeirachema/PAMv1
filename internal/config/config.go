@@ -301,6 +301,14 @@ type Config struct {
 	// once at approval, since posture — unlike vendor employment — can change
 	// between one connection and the next. Empty disables posture checking.
 	PostureAttestURL string
+	// OnCallAttestURL (Phase 232) is a webhook the deployment's on-call
+	// scheduler (PagerDuty, Opsgenie, an internal roster) answers 2xx for a
+	// currently on-call user; checked on every connect and every
+	// authenticated call, the same shape and same reasoning as
+	// PostureAttestURL above — schedule-aware access control, the pattern
+	// HashiCorp Boundary documents as context-based access via shift status.
+	// Empty disables on-call checking.
+	OnCallAttestURL string
 	// DeviceHeader (Phase 133) is the name of an HTTP header a trusted
 	// reverse proxy injects with the terminated client certificate's
 	// fingerprint (the common nginx/Envoy mTLS-terminated-upstream pattern).
@@ -853,6 +861,7 @@ func Load() (*Config, error) {
 		VendorAttestURL:      getenv("PAM_VENDOR_ATTEST_URL", ""),
 		VendorSweepInterval:  time.Duration(integer("PAM_VENDOR_SWEEP_INTERVAL_MIN", 0)) * time.Minute,
 		PostureAttestURL:     getenv("PAM_POSTURE_ATTEST_URL", ""),
+		OnCallAttestURL:      getenv("PAM_ONCALL_ATTEST_URL", ""),
 		DeviceHeader:         getenv("PAM_DEVICE_HEADER", ""),
 		AirGap:               boolean("PAM_OT_AIRGAP", false),
 		CheckoutTTL:          time.Duration(integer("PAM_CHECKOUT_TTL_MIN", 30)) * time.Minute,
@@ -1363,6 +1372,7 @@ func airGapConflicts(cfg *Config) []string {
 		{"PAM_TICKET_VALIDATE_URL", cfg.TicketValidateURL},
 		{"PAM_VENDOR_ATTEST_URL", cfg.VendorAttestURL},
 		{"PAM_POSTURE_ATTEST_URL", cfg.PostureAttestURL},
+		{"PAM_ONCALL_ATTEST_URL", cfg.OnCallAttestURL},
 		{"PAM_ICAP_URL", cfg.ICAPURL},
 		{"PAM_AUDIT_FORWARD_ADDR", cfg.AuditForwardAddr},
 		{"PAM_OIDC_ISSUER", cfg.OIDCIssuer},

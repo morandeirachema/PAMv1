@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–231 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–232 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,62 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 232 — On-call/schedule-aware access gating ✅
+
+With Phase 231 closed, the "What is left" backlog was genuinely empty —
+everything remaining was either shipped, deliberately deferred with a
+stated architectural reason, or infra-bound (a real KDC, a live cloud
+account, SPIRE, a real IdP tenant — catalogued in
+[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md)). Confirmed with
+the user rather than assumed. Per the established pattern — every prior
+feature batch (the Wallix-weighted plan, the BeyondTrust/Delinea/
+Teleport/StrongDM research) started this way — a fresh competitive-research
+pass ran against two vendors this project had not yet compared itself
+against: HashiCorp Boundary and Britive. Two real, fact-checked candidates
+came back; the user chose to build both, on-call gating first.
+
+- [x] **On-call/schedule-aware access gating**, from
+  [HashiCorp Boundary's context-based access control](https://developer.hashicorp.com/boundary/docs/overview/pam):
+  permissions that follow an IdP-reported shift status, so an identity's
+  standing access is usable only while it is actually on call. New
+  `internal/oncall.Attestor` — a webhook the deployment's on-call scheduler
+  (PagerDuty, Opsgenie, an internal roster) answers 2xx for a currently
+  on-call user — mirrors `internal/posture`'s shape byte-for-byte
+  (`NewAttestor`, `Enabled`, `Attest`, the nil-accepts-everyone default),
+  because the reasoning is identical: on-call status, like device posture
+  and unlike vendor employment, can change between one connection and the
+  next, so it has to be re-checked on every connect and every authenticated
+  call, not once at approval
+- [x] **Wired everywhere posture is, deliberately not everywhere posture
+  reaches.** `gates.go` gains gate 7 `gateOnCall` (renumbering 7–16 to
+  8–17) in the shared `admit()` sequence all three session proxies run, and
+  `Server.sourceGates` checks it alongside posture for the REST `authz`
+  middleware and the RDP/VNC viewer tunnel — both break-glass exempt, the
+  same as every other admission gate. **Not** wired into `agentAuth`: "on
+  call" is a human-shift concept a non-human AI-agent identity does not
+  have, so extending it there the way Phase 180 extended posture to agents
+  would be answering a question that makes no sense to ask. Stated as a
+  deliberate scope decision, not an oversight
+- [x] **`PAM_ONCALL_ATTEST_URL`** (endpoint-shaped, joins the
+  `PAM_OT_AIRGAP` conflict list like every other outbound-URL knob). New
+  audit reason `reason:oncall-check-failed` under the existing
+  `authz.denied`/`session.denied`/`db.session.denied` families — no new
+  action name, matching how posture's own reasons were added
+- [x] Proven end-to-end against a real in-process sshd
+  (`TestOnCallGateProxy`, modeled directly on `TestPostureGateProxy`: a
+  failing webhook refuses before target resolution, a passing one admits
+  and reaches the real target, break-glass bypasses) plus a fake webhook at
+  the REST layer (`TestAuthzRefusesFailedOnCall`) and the `gates.go`
+  table-driven suite (both the refusal and its break-glass bypass)
+- [x] No schema, route or `store.Store` change. One new package
+  (`internal/oncall`), one new env var. `archgen` confirms the new package
+  in the graph; route count and store surface both unchanged
+- [x] README.md gains a new Tier 7 — on-call gating shipped, and a second
+  candidate from the same research pass (Slack chat-ops approval, Britive)
+  named as a follow-on rather than built now, since it is a channel on top
+  of the already-shipped approval workflow rather than a new security
+  control
 
 ## Phase 231 — The review of 229/230, and what it found ✅
 

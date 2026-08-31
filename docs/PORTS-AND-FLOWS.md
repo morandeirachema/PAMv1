@@ -60,6 +60,12 @@
 > two new routes ride the existing `:8080` REST listener, and the
 > extra encryption/decryption it does is entirely in-process, no
 > outbound call of any kind.
+> **Phase 232 adds no new listener, but it IS a new outbound flow when
+> configured** — `PAM_ONCALL_ATTEST_URL` is called on every connect and
+> every authenticated call, the same shape as `PAM_POSTURE_ATTEST_URL`
+> above, so an egress firewall rule to that destination is real
+> infrastructure this deployment now depends on if it enables on-call
+> gating.
 > **Phase 137 adds no new egress purpose either** — magic-link approval
 > email rides the same **E9b** flow (session-share invite email) Phase
 > 116 already added on `:587`, not a new destination; its five new REST

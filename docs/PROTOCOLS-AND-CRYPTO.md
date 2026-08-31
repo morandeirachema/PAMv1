@@ -537,8 +537,9 @@ whole set.
 
 **Air-gapped deployments** (`PAM_OT_AIRGAP`) refuse to start alongside the
 egressing integrations they gate — the ITSM webhook, the vendor-attestation
-webhook, the posture-attestation webhook, the ICAP AV/DLP gateway, the SIEM
-forwarder, Conjur and the webhook alerter — and **hard-refuse**
+webhook, the posture-attestation webhook, the on-call-attestation webhook,
+the ICAP AV/DLP gateway, the SIEM forwarder, Conjur and the webhook
+alerter — and **hard-refuse**
 the AWS-KMS KEK and Entra outright. Name a variable in `PAM_OT_AIRGAP_ALLOW` to
 assert it resolves inside the enclave. Four caveats an auditor should know:
 **alerting is disabled entirely** under air-gap regardless of the allow-list (the

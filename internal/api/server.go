@@ -27,6 +27,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/metrics"
 	"github.com/morandeirachema/pamv1/internal/oidc"
+	"github.com/morandeirachema/pamv1/internal/oncall"
 	"github.com/morandeirachema/pamv1/internal/policy"
 	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
@@ -402,6 +403,10 @@ type Options struct {
 	// every authenticated call and every session connect (Phase 133); nil
 	// disables posture checking.
 	PostureAttestor *posture.Attestor
+	// OnCallAttestor (optional) validates a user is currently on call on
+	// every authenticated call and every session connect (Phase 232); nil
+	// disables on-call checking.
+	OnCallAttestor *oncall.Attestor
 	// DeviceHeader (optional) names the HTTP header a trusted reverse proxy
 	// injects with the terminated client certificate's fingerprint
 	// (Phase 133); empty disables device-identity checking entirely.
@@ -515,6 +520,7 @@ type Server struct {
 	sshOperatorCertTTL time.Duration
 	vendorAttestor     *vendor.Attestor
 	postureAttestor    *posture.Attestor
+	oncallAttestor     *oncall.Attestor
 	deviceHeader       string
 	analytics          *analytics.Engine
 	analyticsWindow    time.Duration
@@ -810,6 +816,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		sshOperatorCertTTL:   opts.SSHOperatorCertTTL,
 		vendorAttestor:       opts.VendorAttestor,
 		postureAttestor:      opts.PostureAttestor,
+		oncallAttestor:       opts.OnCallAttestor,
 		deviceHeader:         opts.DeviceHeader,
 		analytics:            opts.Analytics,
 		analyticsWindow:      opts.AnalyticsWindow,
@@ -1386,12 +1393,13 @@ func (s *Server) authzCore(cap auth.Capability, allowExtension bool, next http.H
 	})
 }
 
-// sourceGates runs the three per-request principal gates that sit between the
+// sourceGates runs the four per-request principal gates that sit between the
 // scope test and the capability test — the source-IP allowlist (Phase 118),
-// the enrolled device fingerprint and live posture (Phase 133) — and returns
-// the audit reason slug and the refusal message of the first that trips, or
-// "" when all pass. Break-glass bypasses all three, as it does every other
-// gate: emergency access is already loud on its own.
+// the enrolled device fingerprint and live posture (Phase 133), and on-call
+// attestation (Phase 232) — and returns the audit reason slug and the
+// refusal message of the first that trips, or "" when all pass. Break-glass
+// bypasses all four, as it does every other gate: emergency access is
+// already loud on its own.
 //
 // One function because two doors need it: the authz middleware, and the
 // RDP/VNC viewer tunnel, which resolves its own principal from a query-string
@@ -1399,8 +1407,8 @@ func (s *Server) authzCore(cap auth.Capability, allowExtension bool, next http.H
 // minted from inside a user's allowlist opened the desktop from anywhere it
 // was relayed to. That is the "self-resolving entry point with a shorter
 // checklist" shape the 2026-08-26 audit's H-1/H-2 had; a gate added here
-// lands on both doors at once, and the session proxies run the same three in
-// admit() (gates 5-6).
+// lands on both doors at once, and the session proxies run the same checks in
+// admit() (gates 5-7).
 func (s *Server) sourceGates(ctx context.Context, p *auth.Principal, r *http.Request) (reason, msg string) {
 	if p.BreakGlass {
 		return "", ""
@@ -1419,6 +1427,13 @@ func (s *Server) sourceGates(ctx context.Context, p *auth.Principal, r *http.Req
 	if s.postureAttestor.Enabled() {
 		if err := s.postureAttestor.Attest(ctx, p.Name); err != nil {
 			return "posture-check-failed", "your device failed its posture check"
+		}
+	}
+	// On-call attestation (Phase 232): same shape as posture above, re-checked
+	// on every authenticated call since shift status can change mid-session.
+	if s.oncallAttestor.Enabled() {
+		if err := s.oncallAttestor.Attest(ctx, p.Name); err != nil {
+			return "oncall-check-failed", "you are not currently on call"
 		}
 	}
 	return "", ""
