@@ -39,7 +39,7 @@ is that a differing binary does not bank on `main`.
   a code-free flake investigation was "shipped."
 
 Helm chart `0.53.0` → `0.53.1`, a patch alongside an app patch. Image digest
-recorded once the publish workflow has run.
+`sha256:38ad4e2b…` (the full value is in the README and on the release page).
 
 ## [0.62.0] — 2026-08-27
 
