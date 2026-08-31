@@ -2433,8 +2433,12 @@ and the SFTP-mode enum now parses through the same function either way.
   since v0.58.1 and nothing the workflow *reads* has changed either (same
   repository name, same runner image), so no rehearsal. Published
   2026-08-31 as `ghcr.io/morandeirachema/pamv1:0.62.1` (also `latest`),
-  digest recorded once the publish workflow has run, signed and attested,
-  with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS` attached
+  digest
+  `sha256:38ad4e2b6e7014c5558c3cf678f82c3b33775ce881ccf677d626468cf9cd4783`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
+  digest), signed and attested — every publishing step's own conclusion
+  `success`, and the README's `cosign verify` run against it — with the
+  `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS` attached
 - [x] All pins via the sweep — exactly one release under `deploy/`. Helm
   chart `version` 0.53.0 -> **0.53.1**, a patch alongside an app patch
 - [x] `store.Store` unchanged at **220**; migration high-water unchanged at
