@@ -997,6 +997,16 @@ func run() error {
 		log.Info("sftp path control enabled", "patterns", sftpPathGuard.Size())
 	}
 
+	// SFTP file-transfer policy (Phase 32): the enum was already validated
+	// fail-loud by config.Load; parsing again here converts it to the proxy's
+	// type through the same parser config validates against, rather than a raw
+	// cast that would silently diverge if a mode were ever added to one side
+	// and not the other.
+	sftpMode, err := proxy.ParseSFTPMode(cfg.SSHSFTPMode)
+	if err != nil {
+		return fmt.Errorf("PAM_SSH_SFTP: %w", err)
+	}
+
 	// SFTP content capture (Phase 59): record the bytes of every file moved over
 	// SFTP into per-file artifacts beside the session recordings. The enum was
 	// already validated fail-loud by config.Load; parsing again here converts it
@@ -1510,7 +1520,7 @@ func run() error {
 			MaxRecordingBytes:    maxRecBytes,
 			EncryptRecordings:    cfg.EncryptRecordings,
 			OpaqueRecordingNames: cfg.OpaqueRecordingNames,
-			SFTPMode:             proxy.SFTPMode(cfg.SSHSFTPMode),
+			SFTPMode:             sftpMode,
 			SFTPPathGuard:        sftpPathGuard,
 			TicketCheck:          ticketRecheck,
 			PostureAttestor:      postureAttestor,

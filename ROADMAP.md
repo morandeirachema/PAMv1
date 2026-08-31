@@ -6,7 +6,10 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–228 are shipped.** Phases 96–108 are a refactor, security-hardening
+**Phases 0–227 and 229 are shipped** (Phase 228 recorded an open flake
+investigation with no code change — see §3d below — so it does not count
+toward "shipped" per this doc's own guiding principle above; it is
+superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
 and documentation-currency arc that sits on top of the feature work below:
 cross-path security-parity fixes (96), observability parity (97), shared-helper
 consolidation (98), store/API ergonomics (99), wiring readability (100), test
@@ -2418,6 +2421,46 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 229 — A gap-analysis pass, and the banner it corrected ✅
+
+The 96-108 arc's pattern repeated: a fresh sweep (security invariants against
+`docs/ARCHITECTURE-LOW-LEVEL.md` §5/§6, authorization dispatch, doc-vs-code
+currency, dead code, untested fail paths, `TODO`/`FIXME` markers) — no
+security-invariant regression found, no authorization inconsistency, no
+`TODO` left in the tree. Four real findings, all closed:
+
+- [x] **Nine live env vars had no row in §4's config table**, documented only
+  in §8's phase-history prose — `PAM_WEBAUTHN_RP_ID`/`_RP_ORIGIN` (124), the
+  six password-policy vars (120), `PAM_APPROVAL_INVITE_TTL_MIN` (137),
+  `PAM_CREDENTIAL_FILE_MAX_KB` (145). Same defect class Phase 108 fixed for a
+  different set. All nine now have a row
+- [x] **`store.EffectiveMFAFactors` was never wired in.** Phase 124's own
+  changelog entry claimed it "centralizes... four call sites that each
+  inlined a bare `MFAEnrollment.Confirmed` check" — but all four
+  (`login`, `mfaEnroll`, `mfaDisable`, `mfaRecoveryCodes`) need the concrete
+  `MFAEnrollment` to re-prove the *current* TOTP factor or to branch
+  per-factor (login's TOTP-vs-WebAuthn-vs-neither switch), not a collapsed
+  "has any factor" boolean — so none of the four could have adopted it as
+  written, and none did. Zero production callers, confirmed by grep. Deleted
+  (`internal/store/mfapolicy.go`) rather than force-fit; the doc had
+  overclaimed what the code did
+- [x] **`cmd/pam-server` cast `proxy.SFTPMode(cfg.SSHSFTPMode)` directly**
+  instead of calling `proxy.ParseSFTPMode`, while `internal/config` separately
+  re-validated the same three-value enum with its own `switch` — two
+  implementations of one enum, safe today only because both happen to agree.
+  `PAM_SSH_SFTP_CAPTURE` next to it already went through its own `Parse*`
+  function (Phase 59); `PAM_SSH_SFTP` now matches that shape
+- [x] **This banner overclaimed.** Phase 228 bumped it to "Phases 0–228 are
+  shipped" while recording an open flake investigation with, by its own
+  commit message, "no code change" — the exact opposite of this doc's
+  guiding principle at the top. Reverted to 227; Phase 228 stays named in §3d
+  (still open) rather than promoted to its own heading, the same treatment a
+  phase that ships no code has always gotten (contrast Phase 179, which
+  *did* ship a code change and earned one)
+- [x] `store.Store` unchanged; migration high-water unchanged; routes
+  unchanged. No schema, env-var, route or audit-action change — `archgen`
+  confirms no diagram drift
 
 ## Phase 227 — v0.62.0 ✅
 
