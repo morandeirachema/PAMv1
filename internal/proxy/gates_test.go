@@ -27,6 +27,7 @@ import (
 	"testing"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
+	"github.com/morandeirachema/pamv1/internal/oncall"
 	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -188,6 +189,34 @@ func TestAdmitDeniesEachGate(t *testing.T) {
 				}))
 				t.Cleanup(fail.Close)
 				env.g.posture = posture.NewAttestor(fail.URL)
+				p := gatesUser("alice")
+				p.BreakGlass = true
+				return p, baseReq(p)
+			},
+			wantKind: admitOK, wantGate: gateNone, wantSecret: true,
+			wantAudits: []string{"session.start"},
+		},
+		{
+			name: "on-call check fails",
+			build: func(t *testing.T, env *testEnv) (*auth.Principal, admitRequest) {
+				fail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusForbidden)
+				}))
+				t.Cleanup(fail.Close)
+				env.g.oncall = oncall.NewAttestor(fail.URL)
+				p := gatesUser("alice")
+				return p, baseReq(p)
+			},
+			wantKind: admitDenied, wantGate: gateOnCall,
+		},
+		{
+			name: "break-glass bypasses the on-call gate",
+			build: func(t *testing.T, env *testEnv) (*auth.Principal, admitRequest) {
+				fail := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusForbidden)
+				}))
+				t.Cleanup(fail.Close)
+				env.g.oncall = oncall.NewAttestor(fail.URL)
 				p := gatesUser("alice")
 				p.BreakGlass = true
 				return p, baseReq(p)

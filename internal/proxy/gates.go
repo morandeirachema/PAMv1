@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
+	"github.com/morandeirachema/pamv1/internal/oncall"
 	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
 	"github.com/morandeirachema/pamv1/internal/session"
@@ -66,6 +67,7 @@ const (
 	gateRoleConnect                 // role/profile lacks CapConnect
 	gateIPAllowlist                 // principal's source address is outside its IP allowlist
 	gatePosture                     // live device-posture attestation failed
+	gateOnCall                      // on-call attestation failed (Phase 232)
 	gateResolve                     // target/credential could not be resolved (reason = the error text)
 	gateProtocolMatch               // target is not the exact protocol this proxy brokers (DB proxies)
 	gateProtocolAllowed             // protocol forbidden by the OT allowlist
@@ -166,6 +168,10 @@ type gates struct {
 	// rotate.SSHConnector, a separate one-shot path), so this gate can never
 	// fire for a RoleAgent identity — no explicit exemption needed.
 	posture *posture.Attestor
+	// oncall (optional) validates a user is currently on call on every
+	// connect (Phase 232); nil disables on-call checking. Same shape and
+	// same broker exemption as posture above.
+	oncall *oncall.Attestor
 }
 
 // admit runs every authorization gate in the fixed order below and, only if all
@@ -180,16 +186,17 @@ type gates struct {
 //  4. role CapConnect            — the role/profile must be allowed to connect
 //  5. IP allowlist               — source address must fall inside the principal's CIDR allowlist, if it has one; break-glass bypasses
 //  6. live device posture        — re-checked every connect, not just at approval; break-glass bypasses
-//  7. resolve target+credential  — WITHOUT decrypting the secret
-//  8. exact-protocol match       — DB proxies only (expectProtocol)
-//  9. protocol allowlist         — OT policy may forbid the protocol
-//  10. per-target authorization  — effective grants ∪ safe membership
-//  11. approval gate             — 4-eyes / OT window; break-glass bypasses; single-use burned here
-//  12. vendor contract gate      — a vendor needs an active, in-window contract
-//  13. protocol proxyable        — SSH proxy only (can this gateway broker it)
-//  14. concurrent-session cap    — before any secret is decrypted
-//  15. fail-closed session-start audit — durable evidence BEFORE decryption
-//  16. just-in-time decryption   — plaintext exists only from here, never for a denied session
+//  7. on-call attestation        — re-checked every connect, same shape as posture; break-glass bypasses
+//  8. resolve target+credential  — WITHOUT decrypting the secret
+//  9. exact-protocol match       — DB proxies only (expectProtocol)
+//  10. protocol allowlist         — OT policy may forbid the protocol
+//  11. per-target authorization  — effective grants ∪ safe membership
+//  12. approval gate             — 4-eyes / OT window; break-glass bypasses; single-use burned here
+//  13. vendor contract gate      — a vendor needs an active, in-window contract
+//  14. protocol proxyable        — SSH proxy only (can this gateway broker it)
+//  15. concurrent-session cap    — before any secret is decrypted
+//  16. fail-closed session-start audit — durable evidence BEFORE decryption
+//  17. just-in-time decryption   — plaintext exists only from here, never for a denied session
 //
 // admit itself emits only the audits that are byte-identical across all three
 // proxies and are intrinsic to a gate rather than to a refusal: the approval
@@ -253,25 +260,38 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 		}
 	}
 
-	// 7. Resolve the target and the credential WITHOUT decrypting the secret, so
+	// 7. On-call attestation (Phase 232): re-checked on every connect, the same
+	// shape and same reasoning as posture above — whether an identity is
+	// currently on shift can change between one connection and the next. A
+	// nil/unconfigured attestor always passes. Break-glass bypasses. The
+	// broker's ssh_exec/winrm_exec tools never reach admit(), so this can
+	// never fire for a RoleAgent identity — "on call" is a human-shift
+	// concept, not something an agent identity has.
+	if !principal.BreakGlass && g.oncall.Enabled() {
+		if err := g.oncall.Attest(ctx, actor); err != nil {
+			return admitResult{outcome: admitDenied, gate: gateOnCall}
+		}
+	}
+
+	// 8. Resolve the target and the credential WITHOUT decrypting the secret, so
 	// every gate below runs before any plaintext exists.
 	target, cred, err := lookupTargetCred(ctx, g.store, req.targetName, req.credUser)
 	if err != nil {
 		return admitResult{outcome: admitDenied, gate: gateResolve, reason: err.Error()}
 	}
 
-	// 8. Exact-protocol gate (DB proxies): a PostgreSQL/SQL Server broker refuses
+	// 9. Exact-protocol gate (DB proxies): a PostgreSQL/SQL Server broker refuses
 	// a target of any other protocol here.
 	if req.expectProtocol != "" && target.Protocol != req.expectProtocol {
 		return admitResult{outcome: admitDenied, gate: gateProtocolMatch, target: target, cred: cred}
 	}
 
-	// 9. Protocol allowlist (OT policy): refuse a forbidden protocol.
+	// 10. Protocol allowlist (OT policy): refuse a forbidden protocol.
 	if g.allowedProto != nil && !g.allowedProto[target.Protocol] {
 		return admitResult{outcome: admitDenied, gate: gateProtocolAllowed, target: target, cred: cred}
 	}
 
-	// 10. Per-target authorization: honor effective grants (direct ∪ safe members).
+	// 11. Per-target authorization: honor effective grants (direct ∪ safe members).
 	grants, err := g.store.EffectiveTargetGrants(ctx, target.ID)
 	if err != nil {
 		g.log.Error("target grants lookup failed", "target", target.Name, "err", err)
@@ -297,7 +317,7 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 		return admitResult{outcome: admitDenied, gate: gateTargetPolicy, target: target, cred: cred}
 	}
 
-	// 11. Approval gate (4-eyes / OT window). Break-glass bypasses. A single-use
+	// 12. Approval gate (4-eyes / OT window). Break-glass bypasses. A single-use
 	// approval is BURNED by the connection it admits (consume-on-connect), even
 	// one that later fails upstream, so it can never authorize a second session.
 	// The policy is the strictest of the global flag, the target's own flag and
@@ -322,7 +342,7 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 		}
 	}
 
-	// 12. Vendor contract gate: a third-party vendor may reach a target only while
+	// 13. Vendor contract gate: a third-party vendor may reach a target only while
 	// an approved, in-window contract grant is active. Non-vendors are unaffected.
 	if isVendor, allowed, verr := g.store.VendorSessionAllowed(ctx, actor, target.Name, cred.Username, time.Now()); verr != nil {
 		g.log.Error("vendor gate check failed", "target", target.Name, "err", verr)
@@ -333,21 +353,21 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 		return admitResult{outcome: admitDenied, gate: gateVendor, target: target, cred: cred}
 	}
 
-	// 13. Refuse a protocol this gateway cannot broker (SSH proxy: ssh always,
+	// 14. Refuse a protocol this gateway cannot broker (SSH proxy: ssh always,
 	// winrm only with a runner configured) — before decrypting, so plaintext
 	// never materializes for a session about to be denied.
 	if req.proxyable != nil && !req.proxyable(target) {
 		return admitResult{outcome: admitDenied, gate: gateProtocolProxyable, target: target, cred: cred}
 	}
 
-	// 14. Concurrent-session cap: refuse a session that would exceed the per-user
+	// 15. Concurrent-session cap: refuse a session that would exceed the per-user
 	// or global limit BEFORE any secret is decrypted, so one (or a compromised)
 	// identity cannot exhaust connections, goroutines or recording disk.
 	if g.sessions != nil && !g.sessions.AllowNew(actor) {
 		return admitResult{outcome: admitSessionLimited, gate: gateSessionLimit, target: target, cred: cred}
 	}
 
-	// 15. Fail closed: durably audit the session start BEFORE any secret is
+	// 16. Fail closed: durably audit the session start BEFORE any secret is
 	// decrypted or a certificate minted. If the audit store is unavailable we
 	// refuse rather than open an unaudited privileged session — the audit
 	// analogue of the fail-closed recording policy.
@@ -356,7 +376,7 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 		return admitResult{outcome: admitAuditUnavailable, gate: gateAudit, target: target, cred: cred}
 	}
 
-	// 16. Just-in-time decryption. A credential the caller declared has no stored
+	// 17. Just-in-time decryption. A credential the caller declared has no stored
 	// secret (SSH Zero Standing Privilege) is left for dial-time certificate
 	// minting; every other secret is decrypted here — plaintext exists only from
 	// this point, never for a session that was denied above.
