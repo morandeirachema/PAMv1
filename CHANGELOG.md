@@ -9,6 +9,34 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.63.0] — 2026-08-31
+
+A minor that ships **Phase 232** — on-call/schedule-aware access gating,
+from a fresh competitive-research pass against HashiCorp Boundary. **No
+schema or route change**, but a new env var and observable behaviour when
+it's set, which is why it is not a patch.
+
+**What an operator can now configure.** Set `PAM_ONCALL_ATTEST_URL` to an
+on-call scheduler's webhook (PagerDuty, Opsgenie, an internal roster) and
+PAMv1 checks it on every connect and every authenticated call, the same
+shape as the existing `PAM_POSTURE_ATTEST_URL` device-posture check — a
+2xx means the user is currently on call, anything else refuses. Break-glass
+is exempt, like every other admission gate. Human operators only: it is
+never asked about the AI-agent broker's own calls, since "on call"
+describes a shift a non-human identity doesn't have.
+
+**What has not changed.** Unset (the default), no check ever runs and
+nothing about an existing deployment's behaviour is different.
+
+### Added
+
+- `internal/oncall.Attestor`, checked in the session-proxy `admit()`
+  sequence and the REST `authz`/viewer-tunnel `sourceGates`.
+- `PAM_ONCALL_ATTEST_URL` (joins the `PAM_OT_AIRGAP` conflict list).
+
+Helm chart `0.53.1` → `0.54.0`, a minor alongside an app minor. Image digest
+recorded once the publish workflow has run.
+
 ## [0.62.1] — 2026-08-31
 
 A patch that ships **Phase 229** — a gap-analysis pass. **No schema, route or
@@ -2823,6 +2851,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.63.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.63.0
 [0.62.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.62.1
 [0.62.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.62.0
 [0.61.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.61.0
