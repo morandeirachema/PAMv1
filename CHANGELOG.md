@@ -33,7 +33,7 @@ is that a differing binary does not bank on `main`.
 
 ### Docs
 
-- `docs/ARCHITECTURE-LOW-LEVEL.md`'s §4 config table gained nine rows for
+- `docs/ARCHITECTURE-LOW-LEVEL.md`'s §4 config table gained rows for eleven
   live env vars that were previously documented only in phase-history prose.
 - `ROADMAP.md`'s own top banner, corrected: Phase 228 had bumped it to claim
   a code-free flake investigation was "shipped."
@@ -2823,6 +2823,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.62.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.62.1
 [0.62.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.62.0
 [0.61.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.61.0
 [0.60.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.60.0
