@@ -319,6 +319,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_CHECKOUT_TTL_MIN` | | `30` | Credential checkout lease lifetime (minutes). |
 | `PAM_VENDOR_ATTEST_URL` | | (off) | Employment-attestation webhook consulted when a vendor contract grant is approved (Phase 29): PAMv1 `POST`s `{"vendor":…,"org":…}` and the vendor-management system answers `2xx` for a currently-employed technician, so access is refused the moment their own employer offboards them. See §7. |
 | `PAM_POSTURE_ATTEST_URL` | | (off) | Live device-posture webhook, checked on every connect and every authenticated call, not just once at approval (Phase 133). See §7. |
+| `PAM_ONCALL_ATTEST_URL` | | (off) | On-call scheduler webhook, checked on every connect and every authenticated call, the same shape as `PAM_POSTURE_ATTEST_URL` above (Phase 232). Human operators only. See §7. |
 | `PAM_DEVICE_HEADER` | | (off) | Name of an HTTP header a trusted reverse proxy injects with a terminated client certificate's fingerprint; once set, a user with an enrolled `device_fingerprint` must present a matching value (Phase 133). See §7. |
 | `PAM_VENDOR_SWEEP_INTERVAL_MIN` | | `0` (off) | How often the sweeper cuts a vendor's **live** session once its contract grant's window closes (`vendor.session_expired`), so access ends with the contract rather than at the next connect. |
 | `PAM_OT_AIRGAP` | | `false` | Air-gapped sites. Forces the no-op alerter **and refuses to start** alongside anything that would call out of the enclave — the ITSM webhook, vendor attestation, the SIEM forwarder, Conjur, the alert webhook, `PAM_OIDC_ISSUER` and `PAM_SAML_IDP_METADATA_URL` (use `PAM_SAML_IDP_METADATA_FILE` inside the enclave) — and rejects `PAM_KEK_PROVIDER=aws-kms` and `PAM_ENTRA_TENANT_ID` outright. It is a fail-closed startup gate, not a mute switch. |
@@ -1439,6 +1440,28 @@ session proxies too.
 Break-glass is exempt from both, like every other admission gate. Neither
 check ever applies to the AI-agent broker's own tool calls (§7's
 "AI-agent access broker" below), which authenticate on a separate path.
+
+### On-call / schedule-aware access gating (Phase 232)
+
+An identity's standing access can be gated on whether it is currently on
+call — [HashiCorp Boundary's](https://developer.hashicorp.com/boundary/docs/overview/pam)
+context-based access control, adapted to PAMv1's webhook-attestation shape.
+
+Set `PAM_ONCALL_ATTEST_URL` to your on-call scheduler's webhook (PagerDuty,
+Opsgenie, or an internal roster endpoint — anything that answers HTTP).
+PAMv1 `POST`s `{"user":"<username>"}` and requires a `2xx` for the user to
+be considered on call; anything else refuses the request. Unset (the
+default), no check ever runs. Checked on every connect and every
+authenticated call, not just at login, since shift status can change
+mid-session — the same shape and same reasoning as live device posture
+above. Because this is a live outbound endpoint, it also joins the
+`PAM_OT_AIRGAP` conflict list.
+
+**Human operators only.** Unlike device posture, this check is never
+extended to the AI-agent broker's own tool calls — "on call" describes a
+person's shift, not something a non-human identity has, so there is no
+`PAM_BROKER_ONCALL_REQUIRED` knob to reach for. Break-glass is exempt, like
+every other admission gate.
 
 ### SCIM 2.0 user provisioning (Phase 149)
 
@@ -4261,6 +4284,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-08-31 | **Phase 232 (on-call/schedule-aware access gating).** New §7 subsection: `PAM_ONCALL_ATTEST_URL`, the same webhook shape as live device posture, checked on every connect and every authenticated call. Human operators only — never extended to the AI-agent broker, since "on call" describes a shift a non-human identity does not have. Off by default. |
 | 2026-08-27 | **Phase 226 (the MCP revision negotiated, not pinned).** The AI-agent broker section now says which protocol revisions the MCP endpoint negotiates (2024-11-05, 2025-03-26, 2025-06-18), that batches are accepted and an unsupported `MCP-Protocol-Version` header is refused, and that the transport is HTTP+SSE — Streamable HTTP is not offered. Nothing to configure. |
 | 2026-08-27 | **Phase 224 (the trust bundle follows the file).** The SPIFFE section now says the trust-domain JWKS is re-read when it changes — every 30 seconds and on an unknown key id — so a SPIRE key rotation no longer needs a restart, and that a broken rewrite keeps the last good bundle and is logged under `service=svid`. Nothing to configure. |
 | 2026-08-27 | **Phase 222 (a resume token bound to its collector).** "Approving a parked call" now says that only the agent that parked a call can collect its result: the single-use resume token is bound to that agent's identity (key row id or SPIFFE ID), and any other presenter — even one holding the token and the call id — gets the answer a bad token gets. Nothing to configure; migration `0051` applies on startup, and a token minted before the upgrade keeps spending for its remaining TTL. |

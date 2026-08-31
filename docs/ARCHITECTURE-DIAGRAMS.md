@@ -77,6 +77,7 @@ flowchart LR
     n_k8s[k8s]
     n_keycustody[keycustody]
     n_ocsf[ocsf]
+    n_oncall[oncall]
     n_pam_agent[pam-agent]
     n_posture[posture]
     n_ratelimit[ratelimit]
@@ -117,6 +118,7 @@ flowchart LR
   n_api --> n_mfa
   n_api --> n_ocsf
   n_api --> n_oidc
+  n_api --> n_oncall
   n_api --> n_policy
   n_api --> n_posture
   n_api --> n_ratelimit
@@ -175,6 +177,7 @@ flowchart LR
   n_pam_server --> n_maint
   n_pam_server --> n_memstore
   n_pam_server --> n_oidc
+  n_pam_server --> n_oncall
   n_pam_server --> n_pgstore
   n_pam_server --> n_policy
   n_pam_server --> n_posture
@@ -198,6 +201,7 @@ flowchart LR
   n_proxy --> n_cmdguard
   n_proxy --> n_icap
   n_proxy --> n_logging
+  n_proxy --> n_oncall
   n_proxy --> n_posture
   n_proxy --> n_ratelimit
   n_proxy --> n_recording
