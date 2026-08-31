@@ -9,6 +9,38 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.62.1] — 2026-08-31
+
+A patch that ships **Phase 229** — a gap-analysis pass. **No schema, route or
+env-var change**, no upgrade note that needs an action, and nothing an
+operator does changes: the fixes are doc-currency, dead code, and this
+project's own bookkeeping. They ship anyway because the rule since Phase 200
+is that a differing binary does not bank on `main`.
+
+### Fixed
+
+- **`cmd/pam-server` now parses `PAM_SSH_SFTP` through `proxy.ParseSFTPMode`**
+  instead of casting the raw string, matching the shape
+  `PAM_SSH_SFTP_CAPTURE` already used — closes a latent duplicate-validation
+  risk between `internal/config` and `internal/proxy`, not a live bug.
+
+### Removed
+
+- **`store.EffectiveMFAFactors`** (Phase 124) had zero production callers;
+  its own doc comment overclaimed that it centralized four call sites which
+  in fact each need the concrete `MFAEnrollment`, not a collapsed boolean.
+  Deleted rather than force-fit.
+
+### Docs
+
+- `docs/ARCHITECTURE-LOW-LEVEL.md`'s §4 config table gained nine rows for
+  live env vars that were previously documented only in phase-history prose.
+- `ROADMAP.md`'s own top banner, corrected: Phase 228 had bumped it to claim
+  a code-free flake investigation was "shipped."
+
+Helm chart `0.53.0` → `0.53.1`, a patch alongside an app patch. Image digest
+recorded once the publish workflow has run.
+
 ## [0.62.0] — 2026-08-27
 
 A minor that ships **Phase 226** — the MCP endpoint negotiates the protocol
