@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–230 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–231 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2422,6 +2422,33 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 231 — The review of 229/230, and what it found ✅
+
+A `/code-review xhigh` over Phase 229's own contents, run by the user while
+v0.62.1 was in flight. It found real drift in the release plumbing itself —
+the exact class of thing the gap-analysis pass had just gone looking for
+elsewhere in the tree, missed in its own edits:
+
+- [x] **The "nine" count was wrong.** Phase 229's actual doc change added
+  seven table rows covering **eleven** distinct env-var names, not nine —
+  `PAM_CHECKOUT_MAX_EXTEND_MIN` had a real row and was never named in any
+  enumeration of the count (ROADMAP, CHANGELOG, both ARCHITECTURE
+  changelogs). All four corrected
+- [x] **`docs/CODE-GUIDE.md` still described the deleted function as
+  current.** §11's WebAuthn section named `store.EffectiveMFAFactors`
+  (`internal/store/mfapolicy.go`) as "the one place" something happened,
+  after Phase 229 deleted it — while Phase 229 had bumped CODE-GUIDE's own
+  banner to certify currency through the deletion. Rewritten to state what
+  actually happened and why the four call sites couldn't adopt it
+- [x] **`docs/CODE-GUIDE.md`'s own §17 change log had no row for Phase
+  229**, unlike its two sibling living docs (`ARCHITECTURE-HIGH-LEVEL.md`,
+  `ARCHITECTURE-LOW-LEVEL.md`), which both gained one. Added
+- [x] **`CHANGELOG.md`'s `## [0.62.1]` heading had no matching `[0.62.1]:`
+  reference-link definition** — every other version in the file has one,
+  including every prior patch; without it the heading renders as literal
+  bracketed text in some renderers. Added
+- [x] No code change, no release: nothing the artifact contains moved
+
 ## Phase 230 — v0.62.1 ✅
 
 Releases **229** — the gap-analysis pass and the banner correction. A
@@ -2459,11 +2486,12 @@ currency, dead code, untested fail paths, `TODO`/`FIXME` markers) — no
 security-invariant regression found, no authorization inconsistency, no
 `TODO` left in the tree. Four real findings, all closed:
 
-- [x] **Nine live env vars had no row in §4's config table**, documented only
-  in §8's phase-history prose — `PAM_WEBAUTHN_RP_ID`/`_RP_ORIGIN` (124), the
-  six password-policy vars (120), `PAM_APPROVAL_INVITE_TTL_MIN` (137),
-  `PAM_CREDENTIAL_FILE_MAX_KB` (145). Same defect class Phase 108 fixed for a
-  different set. All nine now have a row
+- [x] **Eleven live env vars had no row in §4's config table**, documented
+  only in §8's phase-history prose — `PAM_WEBAUTHN_RP_ID`/`_RP_ORIGIN` (124),
+  `PAM_CHECKOUT_MAX_EXTEND_MIN` and the six password-policy vars (120),
+  `PAM_APPROVAL_INVITE_TTL_MIN` (137), `PAM_CREDENTIAL_FILE_MAX_KB` (145).
+  Same defect class Phase 108 fixed for a different set. All eleven now have
+  a row, across seven new table rows
 - [x] **`store.EffectiveMFAFactors` was never wired in.** Phase 124's own
   changelog entry claimed it "centralizes... four call sites that each
   inlined a bare `MFAEnrollment.Confirmed` check" — but all four
