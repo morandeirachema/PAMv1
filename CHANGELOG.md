@@ -35,7 +35,7 @@ nothing about an existing deployment's behaviour is different.
 - `PAM_ONCALL_ATTEST_URL` (joins the `PAM_OT_AIRGAP` conflict list).
 
 Helm chart `0.53.1` → `0.54.0`, a minor alongside an app minor. Image digest
-recorded once the publish workflow has run.
+`sha256:5ecdd799…` (the full value is in the README and on the release page).
 
 ## [0.62.1] — 2026-08-31
 
