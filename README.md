@@ -490,14 +490,12 @@ each phase ships, not pre-declared as a block.
 ### Tier 7 — HashiCorp Boundary / Britive gap research (2026-08-31)
 
 A fresh research pass once Tiers 1–6 closed out — two vendors this doc had
-not yet compared itself against. One finding buildable and shipped so far;
-a second, weaker-on-substance finding (Slack chat-ops approval, Britive) is
-a named follow-on, not yet built.
+not yet compared itself against. Both findings are now shipped.
 
 | Gap | Leaders | PAMv1 today |
 |---|---|---|
 | ~~**On-call/schedule-aware access gating**~~ **✅ shipped (Phase 232)** | [HashiCorp Boundary](https://developer.hashicorp.com/boundary/docs/overview/pam)'s context-based access control: permissions that follow an IdP-reported shift status, so standing access is usable only while an identity is actually on call | `internal/oncall.Attestor` mirrors `internal/posture`'s webhook shape exactly (Phase 133) — a nil Attestor accepts everyone, a configured one is asked 2xx/non-2xx per user — checked on every connect and every authenticated call, break-glass exempt. `PAM_ONCALL_ATTEST_URL`. Human-only by design: never wired into the AI-agent broker's auth path, since "on call" is a shift concept, not something a non-human identity has |
-| **Chat-ops (Slack) interactive approval** | [Britive](https://www.britive.com/resource/blog/secure-privileged-access-management-slack-integration): approve/deny access requests and check profiles in/out directly from Slack | Not yet built. A channel on top of the *already-shipped* approval workflow (Phase 21/137), not a new security control — the plan is a new `internal/slack` package (HMAC-SHA256 interactivity-payload verification, testable against a known signing secret without a live workspace) reusing the existing `ApprovalInvite` decision path, the way Phase 137's magic-link approval reused the same underlying mechanism with email instead of Slack as the transport |
+| ~~**Chat-ops (Slack) interactive approval**~~ **✅ shipped (Phase 234)** | [Britive](https://www.britive.com/resource/blog/secure-privileged-access-management-slack-integration): approve/deny access requests and check profiles in/out directly from Slack | A channel on top of the already-shipped approval workflow, not a new security control — new `internal/slack` package (v0 HMAC-SHA256 request-signature verification, a compact PAMv1-signed token per button rather than a database-backed invite, since `decideAccessRequest`'s existing compare-and-set already makes the DECISION single-use). `POST /api/access-requests/{id}/slack-notify` (`CapApprove`, same four-eyes-at-creation rule as the magic-link invite) posts an interactive Approve/Deny message; `POST /api/slack/interactivity` (Slack's own signature is the authentication) decides the request through the exact same `decideAccessRequest` an authenticated approve uses, and posts an async replacement message back. Console: `8=Notify Slack` on the requests screen |
 
 ### Deliberate non-goal
 

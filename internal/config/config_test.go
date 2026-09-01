@@ -33,6 +33,30 @@ func TestLoadValidation(t *testing.T) {
 			t.Fatalf("Load() = %v, want PAM_ALERT_EMAIL error", err)
 		}
 	})
+	t.Run("slack webhook without signing secret", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/x")
+		// PAM_SLACK_SIGNING_SECRET deliberately omitted.
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PAM_SLACK_WEBHOOK_URL") {
+			t.Fatalf("Load() = %v, want PAM_SLACK_WEBHOOK_URL error", err)
+		}
+	})
+	t.Run("slack signing secret without webhook", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_SLACK_SIGNING_SECRET", "shh")
+		// PAM_SLACK_WEBHOOK_URL deliberately omitted.
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PAM_SLACK_WEBHOOK_URL") {
+			t.Fatalf("Load() = %v, want PAM_SLACK_WEBHOOK_URL error", err)
+		}
+	})
+	t.Run("slack webhook and signing secret together", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/x")
+		t.Setenv("PAM_SLACK_SIGNING_SECRET", "shh")
+		if _, err := Load(); err != nil {
+			t.Fatalf("both set together must be accepted: %v", err)
+		}
+	})
 	t.Run("ldap insecure not overridable", func(t *testing.T) {
 		if IsOverridable("PAM_LDAP_INSECURE_SKIP_VERIFY") {
 			t.Fatal("PAM_LDAP_INSECURE_SKIP_VERIFY must not be a runtime-overridable setting")
@@ -247,6 +271,7 @@ func TestAirGapRefusesEgressingIntegrations(t *testing.T) {
 		{"vendor attestation", "PAM_VENDOR_ATTEST_URL", "https://vendor.example/attest", "PAM_VENDOR_ATTEST_URL"},
 		{"posture attestation", "PAM_POSTURE_ATTEST_URL", "https://edr.example/posture", "PAM_POSTURE_ATTEST_URL"},
 		{"on-call attestation", "PAM_ONCALL_ATTEST_URL", "https://oncall.example/attest", "PAM_ONCALL_ATTEST_URL"},
+		{"Slack webhook", "PAM_SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/x", "PAM_SLACK_WEBHOOK_URL"},
 		{"SIEM forwarder", "PAM_AUDIT_FORWARD_ADDR", "siem.example:514", "PAM_AUDIT_FORWARD_ADDR"},
 		{"OIDC issuer", "PAM_OIDC_ISSUER", "https://idp.example", "PAM_OIDC_ISSUER"},
 		{"Conjur", "PAM_CONJUR_URL", "https://conjur.example", "PAM_CONJUR_URL"},

@@ -222,6 +222,13 @@ type Options struct {
 	// invite stays redeemable (Phase 137) — see config.Config.ApprovalInviteTTL's
 	// doc comment.
 	ApprovalInviteTTL time.Duration
+	// SlackWebhookURL/SlackSigningSecret (Phase 234) enable chat-ops access-
+	// request approval — see config.Config's doc comments on both. Empty
+	// disables the notify route; the interactivity callback route stays
+	// registered either way but always refuses without a signing secret to
+	// verify against.
+	SlackWebhookURL    string
+	SlackSigningSecret string
 	// ShareSMTP{Addr,From,User,Pass} are the SMTP settings session-share
 	// invite emails send through (Phase 116) — reused verbatim from
 	// PAM_ALERT_EMAIL_* by main.go, so enabling security-alert email also
@@ -495,6 +502,8 @@ type Server struct {
 	shareInviteTTL     time.Duration
 	shareGuestTTL      time.Duration
 	approvalInviteTTL  time.Duration
+	slackWebhookURL    string
+	slackSigningSecret string
 	shareSMTPAddr      string
 	shareSMTPFrom      string
 	shareSMTPUser      string
@@ -794,6 +803,8 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		shares:               opts.Shares,
 		shareInviteTTL:       opts.ShareInviteTTL,
 		approvalInviteTTL:    opts.ApprovalInviteTTL,
+		slackWebhookURL:      opts.SlackWebhookURL,
+		slackSigningSecret:   opts.SlackSigningSecret,
 		shareGuestTTL:        opts.ShareGuestSessionTTL,
 		shareSMTPAddr:        opts.ShareSMTPAddr,
 		shareSMTPFrom:        opts.ShareSMTPFrom,
@@ -1100,6 +1111,14 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/approval-invites/{id}/revoke", s.authz(auth.CapApprove, s.revokeApprovalInvite))
 	s.mux.HandleFunc("GET /api/approval/preview/{token}", s.previewApprovalInvite)
 	s.mux.HandleFunc("POST /api/approval/redeem/{token}", s.redeemApprovalInvite)
+
+	// Slack chat-ops approval (Phase 234): the notify route needs
+	// CapApprove exactly like the magic-link invite above; the
+	// interactivity callback is registered WITHOUT authz(...) for the same
+	// reason the redeem route above is — Slack's own request signature is
+	// the authentication, checked first inside the handler.
+	s.mux.Handle("POST /api/access-requests/{id}/slack-notify", s.authz(auth.CapApprove, s.notifySlackAccessRequest))
+	s.mux.HandleFunc("POST /api/slack/interactivity", s.slackInteractivity)
 
 	s.mux.Handle("GET /api/audit", s.authz(auth.CapReadAudit, s.listAudit))
 	s.mux.Handle("GET /api/audit/export", s.authz(auth.CapReadAudit, s.exportAudit))

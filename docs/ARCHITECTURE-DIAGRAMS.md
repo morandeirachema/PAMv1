@@ -85,6 +85,7 @@ flowchart LR
     n_saml[saml]
     n_samltest[samltest]
     n_sessionforensics[sessionforensics]
+    n_slack[slack]
     n_sshca[sshca]
     n_testutil[testutil]
     n_ticket[ticket]
@@ -128,6 +129,7 @@ flowchart LR
   n_api --> n_session
   n_api --> n_sessionforensics
   n_api --> n_shamir
+  n_api --> n_slack
   n_api --> n_sshca
   n_api --> n_store
   n_api --> n_ticket
@@ -575,7 +577,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 193 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 195 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -585,6 +587,7 @@ The 193 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/access-requests/{id}/deny` | CapApprove |
 | POST | `/api/access-requests/{id}/invite` | CapApprove |
 | GET | `/api/access-requests/{id}/invites` | CapApprove |
+| POST | `/api/access-requests/{id}/slack-notify` | CapApprove |
 | POST | `/api/access-requests/{id}/stop-recurrence` | CapApprove |
 | GET | `/api/access/reach` | CapReadAudit |
 | GET | `/api/analytics/risk` | CapReadAudit |
@@ -686,6 +689,7 @@ The 193 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/share/input` | token (single-use link) |
 | POST | `/api/share/redeem/{token}` | token (single-use link) |
 | GET | `/api/share/stream` | token (single-use link) |
+| POST | `/api/slack/interactivity` | Slack request signature (HMAC) |
 | GET | `/api/targets` | CapReadInventory |
 | POST | `/api/targets` | CapManageTargets |
 | DELETE | `/api/targets/{id}` | CapManageTargets |
