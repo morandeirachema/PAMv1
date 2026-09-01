@@ -13,7 +13,7 @@
 # Base images are pinned by digest for the same reason as the default image; see
 # the comment there.
 
-FROM golang:1.27-bookworm@sha256:484ef6066fa69acb059fdfeda7ba2b8f7391f2ef6abc6f9b8411e669ebd56466 AS build
+FROM golang:1.27-bookworm@sha256:ded31c68586d2e49e760acc2e65a884b23d032e9bbbed0ae0c55abd3fcaf4452 AS build
 # Stamped exactly as the default image stamps them. Without these the PKCS#11
 # build reported `pam-server dev (none)` from `-version`, from the startup log
 # and from the pam_build_info metric — so the one deployment flavour used with an
