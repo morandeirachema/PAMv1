@@ -2432,9 +2432,12 @@ request from Slack — so it is not a patch.
 - [x] **v0.64.0** through the test-gated pipeline. `.github/` untouched
   since v0.58.1 and nothing the workflow *reads* has changed either, so no
   rehearsal. Published 2026-09-01 as `ghcr.io/morandeirachema/pamv1:0.64.0`
-  (also `latest`), digest recorded once the publish workflow has run,
-  signed and attested, with the `pam-agent` binaries, the SPDX SBOM and
-  `SHA256SUMS` attached
+  (also `latest`), digest
+  `sha256:767016459749bb845e72a9af7b25f19b4bd4e02fdec5a769c267f26bb8ccd46d`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
+  digest), signed and attested — every publishing step's own conclusion
+  `success`, and the README's `cosign verify` run against it — with the
+  `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS` attached
 - [x] All pins via the sweep — exactly one release under `deploy/`. Helm
   chart `version` 0.54.0 -> **0.55.0**, a minor alongside an app minor
 - [x] `store.Store` unchanged at **220**; migration high-water unchanged at
