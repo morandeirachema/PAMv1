@@ -538,8 +538,8 @@ whole set.
 **Air-gapped deployments** (`PAM_OT_AIRGAP`) refuse to start alongside the
 egressing integrations they gate — the ITSM webhook, the vendor-attestation
 webhook, the posture-attestation webhook, the on-call-attestation webhook,
-the ICAP AV/DLP gateway, the SIEM forwarder, Conjur and the webhook
-alerter — and **hard-refuse**
+the Slack notification webhook, the ICAP AV/DLP gateway, the SIEM
+forwarder, Conjur and the webhook alerter — and **hard-refuse**
 the AWS-KMS KEK and Entra outright. Name a variable in `PAM_OT_AIRGAP_ALLOW` to
 assert it resolves inside the enclave. Four caveats an auditor should know:
 **alerting is disabled entirely** under air-gap regardless of the allow-list (the
@@ -562,7 +562,7 @@ For an auditor who wants the whole list on one screen.
 | Primitive | Used for |
 |---|---|
 | AES-256-GCM | Secrets at rest, recording chunks, local/PKCS#11 KEK wrap |
-| HMAC-SHA-256 | Audit chains, SCRAM, the operator-certificate challenge MAC (its key is derived by plain SHA-256 over a CA signature) |
+| HMAC-SHA-256 | Audit chains, SCRAM, the operator-certificate challenge MAC (its key is derived by plain SHA-256 over a CA signature), Slack's own v0 request-signing scheme (`internal/slack.VerifySignature`, Phase 234) and the button-value tokens it signs |
 | SHA-256 | Key/token hashing, recording and export digests, recording hash chain, PKCE challenge |
 | HMAC-SHA-1 | TOTP only (RFC 6238 compatibility) |
 | MD5 | PostgreSQL MD5 auth (wire-protocol mandated) |

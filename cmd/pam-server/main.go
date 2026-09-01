@@ -1206,6 +1206,10 @@ func run() error {
 		log.Info("on-call checking enabled")
 	}
 
+	if cfg.SlackWebhookURL != "" {
+		log.Info("Slack chat-ops access-request approval enabled")
+	}
+
 	// ICAP file-transfer scanning (Phase 143): resolved once here, same
 	// shared-value idiom as postureAttestor above. cfg's own validation
 	// already confirmed the URL's shape, so a construction error here would
@@ -1268,6 +1272,8 @@ func run() error {
 		ShareInviteTTL:            cfg.ShareInviteTTL,
 		ShareGuestSessionTTL:      cfg.ShareGuestSessionTTL,
 		ApprovalInviteTTL:         cfg.ApprovalInviteTTL,
+		SlackWebhookURL:           cfg.SlackWebhookURL,
+		SlackSigningSecret:        cfg.SlackSigningSecret,
 		ShareSMTPAddr:             cfg.AlertEmailSMTP,
 		ShareSMTPFrom:             cfg.AlertEmailFrom,
 		ShareSMTPUser:             cfg.AlertEmailUser,
