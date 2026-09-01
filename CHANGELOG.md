@@ -9,6 +9,38 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.64.0] — 2026-09-01
+
+A minor that ships **Phase 234** — Slack chat-ops access-request approval,
+the second finding from the research pass Phase 232 opened, against
+Britive. **No schema change**, but two new routes, a new env-var pair and
+observable behaviour when they're set, which is why it is not a patch.
+
+**What an operator can now configure.** Set `PAM_SLACK_WEBHOOK_URL` and
+`PAM_SLACK_SIGNING_SECRET` (required together) and a `CapApprove` holder
+can post an interactive Approve/Deny message to Slack for a pending access
+request (`POST /api/access-requests/{id}/slack-notify`, or console menu
+Work with Access Requests option 8). Clicking either button in Slack
+decides the request through the same path an authenticated approve/deny
+call uses — no PAMv1 login needed to click, but Slack's own request
+signature is verified on every callback.
+
+**What has not changed.** Unset (the default), no routes behave
+differently and nothing about an existing deployment changes. The
+underlying approval workflow (multi-tier chains, tickets, magic-link
+invites) is untouched — Slack is one more way to reach the same decision.
+
+### Added
+
+- `internal/slack` package: Slack v0 request-signature verification, and a
+  compact signed token per Approve/Deny button.
+- `POST /api/access-requests/{id}/slack-notify`, `POST /api/slack/interactivity`.
+- `PAM_SLACK_WEBHOOK_URL`, `PAM_SLACK_SIGNING_SECRET` (join the
+  `PAM_OT_AIRGAP` conflict list).
+
+Helm chart `0.54.0` → `0.55.0`, a minor alongside an app minor. Image digest
+recorded once the publish workflow has run.
+
 ## [0.63.0] — 2026-08-31
 
 A minor that ships **Phase 232** — on-call/schedule-aware access gating,
@@ -2851,6 +2883,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.64.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.64.0
 [0.63.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.63.0
 [0.62.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.62.1
 [0.62.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.62.0
