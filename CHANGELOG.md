@@ -39,7 +39,7 @@ invites) is untouched — Slack is one more way to reach the same decision.
   `PAM_OT_AIRGAP` conflict list).
 
 Helm chart `0.54.0` → `0.55.0`, a minor alongside an app minor. Image digest
-recorded once the publish workflow has run.
+`sha256:76701645…` (the full value is in the README and on the release page).
 
 ## [0.63.0] — 2026-08-31
 
