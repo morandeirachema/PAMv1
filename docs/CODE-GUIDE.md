@@ -196,6 +196,7 @@ flowchart TB
     ratelimit["ratelimit — per-IP auth throttling"]
     posture["posture — device/EDR posture attestation webhook"]
     oncall["oncall — on-call/shift attestation webhook"]
+    slack["slack — chat-ops request signing + Block Kit messages"]
     icap["icap — ICAP AV/DLP scan client (RFC 3507)"]
     k8sc["k8s — Kubernetes API client (brokered kubectl ops)"]
     sforensics["sessionforensics — post-session exec reconstruction (parsing)"]
@@ -204,7 +205,7 @@ flowchart TB
     logging["logging"]
   end
   main --> core & front & identity & lifecycle & agents & zsp & support
-  api --> core & identity & lifecycle & agents & zsp & session & winrm & guacd & alert & ticket & vendor & recording & ocsf & auditfwd & posture & oncall
+  api --> core & identity & lifecycle & agents & zsp & session & winrm & guacd & alert & ticket & vendor & recording & ocsf & auditfwd & posture & oncall & slack
   proxy --> core & session & sshca & winrm & tds & recording & posture & oncall & icap
 ```
 
@@ -1201,6 +1202,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-09-01 | Phase 234 (Slack chat-ops access-request approval): new leaf package `internal/slack` (request-signature verification, button-value token sign/parse, Block Kit message building), added to the package map's "Supporting" subgraph, used by `api` only. New `internal/api/slack_handlers.go` — `POST /api/access-requests/{id}/slack-notify` (`CapApprove`) and `POST /api/slack/interactivity` (Slack's own request signature is the authentication, registered without `authz(...)` like the magic-link redeem route). `cmd/archgen`'s `guardByWrapper` gained an entry for the interactivity route. Console: `requests()` screen gains option `8=Notify Slack`. No schema/store-surface change. |
 | 2026-08-31 | Phase 232 (on-call/schedule-aware access gating): new leaf package `internal/oncall` (mirrors `internal/posture` exactly), added to the package map's "Supporting" subgraph. §5 (`internal/proxy`) — `gates.go` gains gate 7 `gateOnCall` (renumbering 7–16 to 8–17), all three proxy `Config`s gain `OnCallAttestor`. §4 (`internal/api`) — `Server.sourceGates` (§4.1/4.2) checks it alongside posture. Human-only by design: never wired into `agentAuth`. One new env var (`PAM_ONCALL_ATTEST_URL`); no schema/route change. |
 | 2026-08-31 | Phase 229 (a gap-analysis pass): §11 — `store.EffectiveMFAFactors`/`internal/store/mfapolicy.go` deleted, zero production callers; `cmd/pam-server` now parses `PAM_SSH_SFTP` through `proxy.ParseSFTPMode` instead of casting the raw string. No schema/route change. |
 | 2026-08-27 | Phase 226 (the MCP revision negotiated, not pinned): §3.5 — `mcp.Latest`/`Supported`/`Negotiate`/`IsSupported`, `Dispatcher.HandleBatch`; `internal/api/mcp_handlers.go` — `initialize` reads `protocolVersion` and advertises only `tools`, `serveMCP` checks `MCP-Protocol-Version` and dispatches batches. |

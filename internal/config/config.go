@@ -347,6 +347,18 @@ type Config struct {
 	// not open for hours, closer in profile to a password-reset link than to
 	// a live-session join link — 24 hours by default.
 	ApprovalInviteTTL time.Duration
+	// SlackWebhookURL (Phase 234) is an incoming webhook PAMv1 posts an
+	// interactive Approve/Deny message to when a CapApprove holder asks it
+	// to notify Slack about a pending access request — Britive's chat-ops
+	// finding. Empty disables the notify route. Requires SlackSigningSecret
+	// too (config.go's own validation refuses one without the other).
+	SlackWebhookURL string
+	// SlackSigningSecret (Phase 234) verifies an inbound Slack interactivity
+	// callback really came from Slack (v0 HMAC-SHA256 request signing) —
+	// the interactivity route has no other authentication, since Slack's
+	// own signature IS the authentication. Empty disables the callback
+	// route.
+	SlackSigningSecret string
 	// AllowedProtocols restricts which target protocols may be created and
 	// connected to (comma-separated, e.g. "ssh,winrm"); empty = all allowed. Used
 	// in OT zones to forbid protocols like RDP.
@@ -868,6 +880,8 @@ func Load() (*Config, error) {
 		CheckoutMaxExtend:    time.Duration(integer("PAM_CHECKOUT_MAX_EXTEND_MIN", 240)) * time.Minute,
 		ShareInviteTTL:       time.Duration(integer("PAM_SESSION_SHARE_INVITE_TTL_SEC", 900)) * time.Second,
 		ApprovalInviteTTL:    time.Duration(integer("PAM_APPROVAL_INVITE_TTL_MIN", 1440)) * time.Minute,
+		SlackWebhookURL:      getenv("PAM_SLACK_WEBHOOK_URL", ""),
+		SlackSigningSecret:   getenv("PAM_SLACK_SIGNING_SECRET", ""),
 		ShareGuestSessionTTL: time.Duration(integer("PAM_SESSION_SHARE_GUEST_TTL_MIN", 240)) * time.Minute,
 		AllowedProtocols:     os.Getenv("PAM_ALLOWED_PROTOCOLS"),
 		CommandDenyFile:      os.Getenv("PAM_COMMAND_DENY_FILE"),
@@ -1065,6 +1079,14 @@ func Load() (*Config, error) {
 	}
 	if cfg.BrokerTrustDomainJWKS != "" && (cfg.BrokerTrustDomain == "" || cfg.BrokerAudience == "") {
 		errs = append(errs, "PAM_BROKER_TRUST_DOMAIN and PAM_BROKER_AUDIENCE are required when PAM_BROKER_TRUST_DOMAIN_JWKS is set")
+	}
+	// Slack chat-ops approval (Phase 234) needs both halves or neither: the
+	// webhook posts a message with no way to decide it back if there is no
+	// signing secret to verify the click came from Slack, and a signing
+	// secret with no webhook verifies callbacks for a notification that can
+	// never be sent.
+	if (cfg.SlackWebhookURL == "") != (cfg.SlackSigningSecret == "") {
+		errs = append(errs, "PAM_SLACK_WEBHOOK_URL and PAM_SLACK_SIGNING_SECRET must be set together: one enables notifying Slack, the other verifies the click back")
 	}
 	// A control that is ON but cannot act is the failure this batch keeps
 	// closing, one level up: not a dead field in the code, but a live field in
@@ -1373,6 +1395,7 @@ func airGapConflicts(cfg *Config) []string {
 		{"PAM_VENDOR_ATTEST_URL", cfg.VendorAttestURL},
 		{"PAM_POSTURE_ATTEST_URL", cfg.PostureAttestURL},
 		{"PAM_ONCALL_ATTEST_URL", cfg.OnCallAttestURL},
+		{"PAM_SLACK_WEBHOOK_URL", cfg.SlackWebhookURL},
 		{"PAM_ICAP_URL", cfg.ICAPURL},
 		{"PAM_AUDIT_FORWARD_ADDR", cfg.AuditForwardAddr},
 		{"PAM_OIDC_ISSUER", cfg.OIDCIssuer},

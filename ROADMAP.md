@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–233 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–234 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,65 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 234 — Slack chat-ops access-request approval ✅
+
+The second finding from the same fresh competitive-research pass Phase 232
+closed the first from (§ "What is next" and Phase 232's own entry below) —
+this time against [Britive](https://www.britive.com/resource/blog/secure-privileged-access-management-slack-integration):
+approve or deny an access request from Slack, without a PAMv1 login.
+
+- [x] **Structurally the magic-link approval invite (Phase 137), with Slack
+  as the transport instead of email.** Creating a Slack notification
+  already requires `CapApprove` — the same four-eyes-at-creation
+  self-approval check `createApprovalInvite` enforces — so notifying Slack
+  IS the delegation, not a request for one. Unlike the magic link, there is
+  no database-backed invite: `decideAccessRequest`'s existing
+  compare-and-set on the request's `pending` status already makes the
+  DECISION single-use, so each button's value only has to resist forgery,
+  not replay
+- [x] **New `internal/slack` package**, deliberately not a general SDK:
+  `VerifySignature` implements Slack's own v0 HMAC-SHA256 request-signing
+  scheme with a 5-minute freshness window against replay — the same class
+  of "verify who really sent this" primitive this codebase already
+  hand-rolls for SAML, WebAuthn and DPoP proofs — and `SignToken`/
+  `ParseToken`, a compact PAMv1-signed token binding (request id, decision,
+  expiry) into one Approve or Deny button's value
+- [x] **`POST /api/access-requests/{id}/slack-notify`** (`CapApprove`)
+  posts an interactive Block Kit message to `PAM_SLACK_WEBHOOK_URL`.
+  **`POST /api/slack/interactivity`** (registered without `authz(...)`,
+  like the magic-link redeem route — Slack's own request signature IS the
+  authentication) verifies the signature, decodes the clicked button's
+  token, and decides the request through the exact same
+  `decideAccessRequest` an authenticated approve/deny call uses, then
+  posts an async replacement message to the payload's `response_url` so
+  the channel shows the outcome instead of live buttons forever
+- [x] **Both env vars must be set together** (`PAM_SLACK_WEBHOOK_URL`,
+  `PAM_SLACK_SIGNING_SECRET`) — config validation refuses one without the
+  other, the same "a live field whose prerequisite is absent" idiom Phase
+  182 established. Both join the `PAM_OT_AIRGAP` conflict list
+- [x] **`cmd/archgen`'s route classifier caught a real gap before it
+  shipped**: the interactivity route's registration matched no recognised
+  auth wrapper, and the generator fails the build rather than defaulting
+  an unrecognised registration to "public" — exactly the discipline that
+  keeps a route from being silently mis-published as unauthenticated (the
+  lesson the agent-broker and SCIM surfaces taught this codebase once
+  already). Fixed by naming the route's real authentication —  Slack's own
+  signature — in `guardByWrapper`, not by suppressing the check
+- [x] **Console parity held it honest too**: `TestConsoleCanReachEveryOperatorRoute`
+  refused to let the new route go unreachable from the portal. Rather than
+  add it to `notOperable`, the `requests()` screen gained a real
+  `8=Notify Slack` option, matching this project's actual practice of
+  building the screen rather than carving out an exception
+- [x] Proven end to end against a fake Slack webhook and a correctly (and
+  incorrectly) signed interactivity callback: notify → click Approve →
+  request decided with actor `slack:<username>` → replacement message
+  observed at `response_url` → a second click on the same (now-decided)
+  request's Deny button refused with 409, request status unchanged. Plus
+  self-approval, already-decided, unconfigured, bad-signature and
+  expired-token refusals, each with its own test
+- [x] No schema, `store.Store` or migration change. Two new routes; one new
+  package; console gains one option
 
 ## Phase 233 — v0.63.0 ✅
 

@@ -320,6 +320,8 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_VENDOR_ATTEST_URL` | | (off) | Employment-attestation webhook consulted when a vendor contract grant is approved (Phase 29): PAMv1 `POST`s `{"vendor":…,"org":…}` and the vendor-management system answers `2xx` for a currently-employed technician, so access is refused the moment their own employer offboards them. See §7. |
 | `PAM_POSTURE_ATTEST_URL` | | (off) | Live device-posture webhook, checked on every connect and every authenticated call, not just once at approval (Phase 133). See §7. |
 | `PAM_ONCALL_ATTEST_URL` | | (off) | On-call scheduler webhook, checked on every connect and every authenticated call, the same shape as `PAM_POSTURE_ATTEST_URL` above (Phase 232). Human operators only. See §7. |
+| `PAM_SLACK_WEBHOOK_URL` | | (off) | Incoming webhook a `slack-notify` call posts an interactive Approve/Deny access-request message to (Phase 234). Must be set together with `PAM_SLACK_SIGNING_SECRET`. See §7. |
+| `PAM_SLACK_SIGNING_SECRET` | | (off) | Verifies a Slack interactivity callback really came from Slack (v0 request signing) — the only authentication `POST /api/slack/interactivity` has (Phase 234). See §7. |
 | `PAM_DEVICE_HEADER` | | (off) | Name of an HTTP header a trusted reverse proxy injects with a terminated client certificate's fingerprint; once set, a user with an enrolled `device_fingerprint` must present a matching value (Phase 133). See §7. |
 | `PAM_VENDOR_SWEEP_INTERVAL_MIN` | | `0` (off) | How often the sweeper cuts a vendor's **live** session once its contract grant's window closes (`vendor.session_expired`), so access ends with the contract rather than at the next connect. |
 | `PAM_OT_AIRGAP` | | `false` | Air-gapped sites. Forces the no-op alerter **and refuses to start** alongside anything that would call out of the enclave — the ITSM webhook, vendor attestation, the SIEM forwarder, Conjur, the alert webhook, `PAM_OIDC_ISSUER` and `PAM_SAML_IDP_METADATA_URL` (use `PAM_SAML_IDP_METADATA_FILE` inside the enclave) — and rejects `PAM_KEK_PROVIDER=aws-kms` and `PAM_ENTRA_TENANT_ID` outright. It is a fail-closed startup gate, not a mute switch. |
@@ -1462,6 +1464,42 @@ extended to the AI-agent broker's own tool calls — "on call" describes a
 person's shift, not something a non-human identity has, so there is no
 `PAM_BROKER_ONCALL_REQUIRED` knob to reach for. Break-glass is exempt, like
 every other admission gate.
+
+### Slack chat-ops access-request approval (Phase 234)
+
+An approver can decide a pending access request from Slack — approve or
+deny with a button click, no PAMv1 login needed — Britive's chat-ops
+finding, built on the exact same delegation shape as the magic-link
+approval invite (§ above): posting the notification already requires
+`CapApprove`, so it IS the delegation.
+
+**Setup** (once, at [api.slack.com/apps](https://api.slack.com/apps)):
+
+1. Create an app "from scratch" in your workspace.
+2. **Incoming Webhooks** — turn it on, "Add New Webhook to Workspace",
+   choose the channel approvers watch. Copy the webhook URL into
+   `PAM_SLACK_WEBHOOK_URL`.
+3. **Interactivity & Shortcuts** — turn it on, set the Request URL to
+   `https://<your-portal-host>/api/slack/interactivity`.
+4. **Basic Information → App Credentials** — copy the **Signing Secret**
+   into `PAM_SLACK_SIGNING_SECRET`. This is what proves a button click
+   really came from Slack; there is no PAMv1 credential on that route at
+   all.
+
+Both env vars are required together — set one without the other and
+PAMv1 refuses to start.
+
+**Use it**: `POST /api/access-requests/{id}/slack-notify` (`CapApprove`,
+the same requester-cannot-notify-about-their-own-request check the
+magic-link invite enforces) — or console menu **Work with Access
+Requests**, option **8=Notify Slack**. The message posts with Approve and
+Deny buttons; clicking either decides the request through the same path an
+authenticated approve/deny call uses, and the message updates in place to
+show the outcome. A stale or already-decided request's buttons fail
+gracefully with an explanatory message rather than an error.
+
+There is no per-request Slack channel routing in v1 — every notification
+goes to the one channel the incoming webhook was created for.
 
 ### SCIM 2.0 user provisioning (Phase 149)
 
@@ -4284,6 +4322,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-01 | **Phase 234 (Slack chat-ops access-request approval).** New §7 subsection with Slack App setup steps: `PAM_SLACK_WEBHOOK_URL` (Incoming Webhooks) and `PAM_SLACK_SIGNING_SECRET` (verifies the interactivity callback), required together. Console menu Work with Access Requests gains option 8=Notify Slack. |
 | 2026-08-31 | **Phase 232 (on-call/schedule-aware access gating).** New §7 subsection: `PAM_ONCALL_ATTEST_URL`, the same webhook shape as live device posture, checked on every connect and every authenticated call. Human operators only — never extended to the AI-agent broker, since "on call" describes a shift a non-human identity does not have. Off by default. |
 | 2026-08-27 | **Phase 226 (the MCP revision negotiated, not pinned).** The AI-agent broker section now says which protocol revisions the MCP endpoint negotiates (2024-11-05, 2025-03-26, 2025-06-18), that batches are accepted and an unsupported `MCP-Protocol-Version` header is refused, and that the transport is HTTP+SSE — Streamable HTTP is not offered. Nothing to configure. |
 | 2026-08-27 | **Phase 224 (the trust bundle follows the file).** The SPIFFE section now says the trust-domain JWKS is re-read when it changes — every 30 seconds and on an unknown key id — so a SPIRE key rotation no longer needs a restart, and that a broken rewrite keeps the last good bundle and is logged under `service=svid`. Nothing to configure. |

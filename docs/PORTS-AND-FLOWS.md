@@ -66,6 +66,16 @@
 > above, so an egress firewall rule to that destination is real
 > infrastructure this deployment now depends on if it enables on-call
 > gating.
+> **Phase 234 adds no new listener, one new inbound route on the existing
+> `:8080` REST listener, and a new outbound flow when configured** —
+> `POST /api/slack/interactivity` receives Slack's callback (an INBOUND
+> connection FROM Slack's servers, so it needs a publicly reachable portal
+> URL the same way the SAML ACS and OIDC callback routes already do); the
+> notify call and the interactivity handler's response_url follow-up both
+> dial OUT to `hooks.slack.com` (or wherever `PAM_SLACK_WEBHOOK_URL` and
+> the request's own `response_url` point), so both directions of egress
+> and ingress firewall rules are real infrastructure this deployment
+> depends on once Slack chat-ops approval is enabled.
 > **Phase 137 adds no new egress purpose either** — magic-link approval
 > email rides the same **E9b** flow (session-share invite email) Phase
 > 116 already added on `:587`, not a new destination; its five new REST

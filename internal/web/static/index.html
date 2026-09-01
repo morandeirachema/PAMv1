@@ -2819,7 +2819,7 @@ ${fkeys("F3=Exit   F5=Refresh   F9=Download JSON   F12=Cancel")}`;
         const tn = Object.fromEntries(targets.map((t) => [t.id, t.name]));
         term.innerHTML = `${head("PAMWRKREQ", "Work with Access Requests")}
 ${isApprover ? `Pending 4-eyes requests. Type options, press Enter.
-  <span class="cyan">5=Approve   6=Deny   7=Stop recur</span>   <span class="cyan">Apprv = approvals so far / required   Use: 1x = single-use, used = consumed</span>
+  <span class="cyan">5=Approve   6=Deny   7=Stop recur   8=Notify Slack</span>   <span class="cyan">Apprv = approvals so far / required   Use: 1x = single-use, used = consumed</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Requester</th><th>Target</th><th>Reason</th><th>Ticket</th><th>Status</th><th>Apprv</th><th>Use</th><th>Recur</th><th>Active from</th><th>Expires</th></tr>
@@ -2839,6 +2839,7 @@ ${fkeys(`F3=Exit   F5=Refresh   F6=File request   F12=Cancel`)}`;
                 if (o === "5") { await api("POST", `/api/access-requests/${r.id}/approve`, {}); say(`REQUEST ${r.id} APPROVED.`); }
                 else if (o === "6") { await api("POST", `/api/access-requests/${r.id}/deny`, {}); say(`REQUEST ${r.id} DENIED.`); }
                 else if (o === "7") { await api("POST", `/api/access-requests/${r.id}/stop-recurrence`, {}); say(`REQUEST ${r.id} RECURRENCE STOPPED.`); }
+                else if (o === "8") { await api("POST", `/api/access-requests/${r.id}/slack-notify`, {}); say(`REQUEST ${r.id} — SLACK NOTIFIED.`); }
                 else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
               }
               await openRequests();
