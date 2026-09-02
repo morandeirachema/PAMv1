@@ -106,9 +106,14 @@ func TestOperatorCertIssuanceAndRevocation(t *testing.T) {
 	if !ok {
 		t.Fatal("issued object is not a certificate")
 	}
-	checker := &ssh.CertChecker{IsUserAuthority: func(a ssh.PublicKey) bool {
-		return string(a.Marshal()) == string(ca.PublicKey().Marshal())
-	}}
+	checker := &ssh.CertChecker{
+		IsUserAuthority: func(a ssh.PublicKey) bool {
+			return string(a.Marshal()) == string(ca.PublicKey().Marshal())
+		},
+		// x/crypto v0.56.0+: an undeclared critical option fails CheckCert,
+		// as it would on a real sshd — declare the one the CA sets.
+		SupportedCriticalOptions: []string{"source-address"},
+	}
 	if err := checker.CheckCert("svc", cert); err != nil {
 		t.Fatalf("issued cert not accepted for its principal: %v", err)
 	}

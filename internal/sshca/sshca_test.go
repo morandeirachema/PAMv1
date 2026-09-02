@@ -147,7 +147,14 @@ func TestIssueForKeyScopedCert(t *testing.T) {
 	if cert.CriticalOptions["source-address"] != "10.0.0.0/8" {
 		t.Fatalf("source-address not set: %v", cert.CriticalOptions)
 	}
-	checker := &ssh.CertChecker{IsUserAuthority: func(a ssh.PublicKey) bool { return keysEqual(a, ca.PublicKey()) }}
+	// Since x/crypto v0.56.0 CheckCert rejects any critical option the
+	// application has not declared it understands — the same contract a
+	// real sshd applies (OpenSSH enforces source-address; an unknown
+	// critical option fails the cert) — so the checker declares it.
+	checker := &ssh.CertChecker{
+		IsUserAuthority:          func(a ssh.PublicKey) bool { return keysEqual(a, ca.PublicKey()) },
+		SupportedCriticalOptions: []string{"source-address"},
+	}
 	if err := checker.CheckCert("svc", cert); err != nil {
 		t.Fatalf("valid operator cert rejected: %v", err)
 	}

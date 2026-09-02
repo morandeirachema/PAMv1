@@ -1768,6 +1768,38 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.DeleteUser(ctx, u2.ID); err != nil {
 		t.Fatalf("DeleteUser u2: %v", err)
 	}
+	// GetUserBySlackUserID / UpdateUserSlackUserID (Phase 236): the Slack
+	// identity mapping the interactivity callback resolves a click through.
+	// Same shape and same rules as ExternalID above: empty never resolves,
+	// non-empty values are unique, clearing back to empty is allowed.
+	if _, err := st.GetUserBySlackUserID(ctx, ""); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetUserBySlackUserID(\"\") must always miss, got %v", err)
+	}
+	if err := st.UpdateUserSlackUserID(ctx, u.ID, "U0123456789"); err != nil {
+		t.Fatalf("UpdateUserSlackUserID: %v", err)
+	}
+	if by, err := st.GetUserBySlackUserID(ctx, "U0123456789"); err != nil || by.ID != u.ID || by.SlackUserID != "U0123456789" {
+		t.Fatalf("GetUserBySlackUserID: %+v err %v", by, err)
+	}
+	if by, err := st.GetUser(ctx, u.ID); err != nil || by.SlackUserID != "U0123456789" {
+		t.Fatalf("after UpdateUserSlackUserID: %+v err %v", by, err)
+	}
+	if err := st.UpdateUserSlackUserID(ctx, 999999, "U0123456789"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateUserSlackUserID missing: want ErrNotFound, got %v", err)
+	}
+	u3 := &store.User{Username: "u3-slack", Role: "user", TokenHash: "tokhash-slack3"}
+	if err := st.CreateUser(ctx, u3); err != nil {
+		t.Fatalf("CreateUser u3: %v", err)
+	}
+	if err := st.UpdateUserSlackUserID(ctx, u3.ID, "U0123456789"); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate SlackUserID: want ErrConflict, got %v", err)
+	}
+	if err := st.UpdateUserSlackUserID(ctx, u3.ID, ""); err != nil {
+		t.Fatalf("clearing SlackUserID back to empty: %v", err)
+	}
+	if err := st.DeleteUser(ctx, u3.ID); err != nil {
+		t.Fatalf("DeleteUser u3: %v", err)
+	}
 	// UpdateUserActive (Phase 149): SCIM's deprovisioning switch.
 	if err := st.UpdateUserActive(ctx, u.ID, false); err != nil {
 		t.Fatalf("UpdateUserActive(false): %v", err)

@@ -2919,9 +2919,11 @@ A one-time access token is generated and shown once. Only its hash is stored.
 <label>Username  . . . . . :  <input name="username" size="20" required autofocus></label>
 <label>Role / profile  . . :  <select name="role">${["user", "auditor", "approver", "admin"].map((r) => `<option>${r}</option>`).join("")}${profiles.map((p) => `<option value="${esc(p.name)}">${esc(p.name)} (profile)</option>`).join("")}</select></label>
 <label>IP allowlist  . . . :  <input name="ip_allowlist" size="40" placeholder="blank = unrestricted"></label>
+<label>Slack member ID . . :  <input name="slack_user_id" size="20" placeholder="blank = no Slack approvals"></label>
 <input type="submit" hidden>
 </form>
 <div class="cyan indent">IP allowlist: comma-separated CIDR blocks (e.g. 10.0.0.0/8, 192.168.1.0/24) this user may connect from — blank means no restriction.</div>
+<div class="cyan indent">Slack member ID: the workspace "U…" id (Slack profile > Copy member ID) that may decide access requests from Slack as this user — blank means none.</div>
 ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-add").onsubmit = async (ev) => {
           ev.preventDefault();
@@ -2943,7 +2945,8 @@ Editing user <span class="white">${esc(u.username)}</span> (id ${esc(u.id)}). Th
 <form id="f-chg" class="indent">
 <label>Role / profile  . . :  <select name="role" autofocus>${roles.map((r) => `<option${r === u.role ? " selected" : ""}>${r}</option>`).join("")}${profiles.map((p) => `<option value="${esc(p.name)}"${p.name === u.role ? " selected" : ""}>${esc(p.name)} (profile)</option>`).join("")}</select></label>
 <label>IP allowlist  . . . :  <input name="ip_allowlist" size="40" value="${esc(u.ip_allowlist || "")}" placeholder="blank = unrestricted"></label>
-<div class="cyan">You cannot assign capabilities you do not hold. Clearing IP allowlist removes the restriction.</div>
+<label>Slack member ID . . :  <input name="slack_user_id" size="20" value="${esc(u.slack_user_id || "")}" placeholder="blank = no Slack approvals"></label>
+<div class="cyan">You cannot assign capabilities you do not hold. Clearing IP allowlist removes the restriction; clearing Slack member ID stops this user deciding from Slack.</div>
 <input type="submit" hidden>
 </form>
 ${fkeys("F3=Exit   F12=Cancel")}`;
@@ -2951,7 +2954,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
           try {
-            await api("PUT", `/api/users/${u.id}`, { role: f.role, ip_allowlist: f.ip_allowlist || "" });
+            await api("PUT", `/api/users/${u.id}`, { role: f.role, ip_allowlist: f.ip_allowlist || "", slack_user_id: f.slack_user_id || "" });
             say(`USER ${String(u.username).toUpperCase()} IS NOW ${String(f.role).toUpperCase()}.`);
             await openUsers();
           } catch (e) { say("CPF9898: " + e.message, true); render(); }

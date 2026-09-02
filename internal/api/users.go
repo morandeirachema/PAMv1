@@ -24,6 +24,33 @@ type userIn struct {
 	// PAM_DEVICE_HEADER's value at HTTP authz time. Empty (the default)
 	// means unbound.
 	DeviceFingerprint string `json:"device_fingerprint,omitempty"`
+	// SlackUserID optionally links this user to one Slack member ID (Phase
+	// 236, e.g. "U0123456789"), the only way a Slack button click can decide
+	// an access request as this user. Empty (the default) means the user
+	// cannot decide from Slack.
+	SlackUserID string `json:"slack_user_id,omitempty"`
+}
+
+// maxSlackUserIDLen bounds a linked Slack member ID. Real ids are "U" or
+// "W" followed by 8–10 alphanumerics; this is a sanity cap, not a format
+// check, so an enterprise-grid or future id shape is not refused.
+const maxSlackUserIDLen = 64
+
+// validSlackUserID refuses a member id that could not be one: too long, or
+// carrying whitespace/control characters that an audit detail or a lookup
+// key must never contain.
+func validSlackUserID(w http.ResponseWriter, id string) bool {
+	if len(id) > maxSlackUserIDLen {
+		writeError(w, http.StatusUnprocessableEntity, "slack_user_id is too long")
+		return false
+	}
+	for _, c := range id {
+		if c <= ' ' || c == 0x7f {
+			writeError(w, http.StatusUnprocessableEntity, "slack_user_id must not contain whitespace or control characters")
+			return false
+		}
+	}
+	return true
 }
 
 // maxDeviceFingerprintLen bounds the enrolled fingerprint's stored length.
@@ -63,12 +90,15 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "device_fingerprint is too long")
 		return
 	}
+	if !validSlackUserID(w, in.SlackUserID) {
+		return
+	}
 	token, err := generateToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token generation failed")
 		return
 	}
-	u := store.User{Username: in.Username, Role: in.Role, IPAllowlist: in.IPAllowlist, DeviceFingerprint: in.DeviceFingerprint, TokenHash: hashHex(token)}
+	u := store.User{Username: in.Username, Role: in.Role, IPAllowlist: in.IPAllowlist, DeviceFingerprint: in.DeviceFingerprint, SlackUserID: in.SlackUserID, TokenHash: hashHex(token)}
 	if err := s.store.CreateUser(r.Context(), &u); err != nil {
 		storeError(w, err)
 		return
@@ -80,6 +110,9 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	if u.DeviceFingerprint != "" {
 		createDetail += " device_fingerprint:" + auditField(u.DeviceFingerprint, 128)
 	}
+	if u.SlackUserID != "" {
+		createDetail += " slack_user_id:" + auditField(u.SlackUserID, 64)
+	}
 	s.audit(r.Context(), "user.create", createDetail)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":                 u.ID,
@@ -87,6 +120,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		"role":               u.Role,
 		"ip_allowlist":       u.IPAllowlist,
 		"device_fingerprint": u.DeviceFingerprint,
+		"slack_user_id":      u.SlackUserID,
 		"token":              token, // shown once; store it now
 	})
 }
@@ -113,6 +147,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		Role              string  `json:"role"`
 		IPAllowlist       *string `json:"ip_allowlist"`
 		DeviceFingerprint *string `json:"device_fingerprint"`
+		SlackUserID       *string `json:"slack_user_id"`
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -134,6 +169,9 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.DeviceFingerprint != nil && len(*in.DeviceFingerprint) > maxDeviceFingerprintLen {
 		writeError(w, http.StatusUnprocessableEntity, "device_fingerprint is too long")
+		return
+	}
+	if in.SlackUserID != nil && !validSlackUserID(w, *in.SlackUserID) {
 		return
 	}
 	u, err := s.store.GetUser(r.Context(), id)
@@ -166,6 +204,14 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		auditDetail += fmt.Sprintf(" device_fingerprint:%s->%s", auditField(u.DeviceFingerprint, 128), auditField(*in.DeviceFingerprint, 128))
 		u.DeviceFingerprint = *in.DeviceFingerprint
+	}
+	if in.SlackUserID != nil {
+		if err := s.store.UpdateUserSlackUserID(r.Context(), id, *in.SlackUserID); err != nil {
+			storeError(w, err)
+			return
+		}
+		auditDetail += fmt.Sprintf(" slack_user_id:%s->%s", auditField(u.SlackUserID, 64), auditField(*in.SlackUserID, 64))
+		u.SlackUserID = *in.SlackUserID
 	}
 	s.audit(r.Context(), "user.update", auditDetail)
 	u.Role = in.Role

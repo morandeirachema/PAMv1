@@ -327,7 +327,7 @@ Sentinel errors `ErrNotFound` / `ErrConflict` map to HTTP/SSH errors upstream.
   `migrations/*.sql` files, each run once inside its own transaction, tracked in a
   `schema_migrations` table, under a session-level `pg_advisory_lock` so concurrent
   replicas booting together don't race. `0001_init.sql` is the idempotent baseline;
-  every later change is a new numbered file (through `0051_broker_token_subject.sql` at time of writing).
+  every later change is a new numbered file (through `0052_slack_user_id.sql` at time of writing).
 
   Two implementation details are load-bearing:
   - **Error mapping is the contract.** A pgx `PgError` SQLSTATE is translated to
@@ -1202,6 +1202,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-09-02 | Phase 236 (the review of 232–235): §3.3 — `store.User.SlackUserID`, `UserStore.{GetUserBySlackUserID,UpdateUserSlackUserID}`, migration `0052` (now the latest); `store.Store` 220 → 222. `internal/slack` gains `EscapeText` (mrkdwn's three control characters, not `html.EscapeString`), `EphemeralMessage`, and a domain prefix under the token MAC. `internal/api/slack_handlers.go`'s `slackInteractivity` resolves the member id to a PAMv1 user and decides as it, acks (flushed) before any `response_url` call, and captures `decideAccessRequest`'s response in `slackDecisionRecorder`. `golang.org/x/crypto` → v0.56.0. |
 | 2026-09-01 | Phase 234 (Slack chat-ops access-request approval): new leaf package `internal/slack` (request-signature verification, button-value token sign/parse, Block Kit message building), added to the package map's "Supporting" subgraph, used by `api` only. New `internal/api/slack_handlers.go` — `POST /api/access-requests/{id}/slack-notify` (`CapApprove`) and `POST /api/slack/interactivity` (Slack's own request signature is the authentication, registered without `authz(...)` like the magic-link redeem route). `cmd/archgen`'s `guardByWrapper` gained an entry for the interactivity route. Console: `requests()` screen gains option `8=Notify Slack`. No schema/store-surface change. |
 | 2026-08-31 | Phase 232 (on-call/schedule-aware access gating): new leaf package `internal/oncall` (mirrors `internal/posture` exactly), added to the package map's "Supporting" subgraph. §5 (`internal/proxy`) — `gates.go` gains gate 7 `gateOnCall` (renumbering 7–16 to 8–17), all three proxy `Config`s gain `OnCallAttestor`. §4 (`internal/api`) — `Server.sourceGates` (§4.1/4.2) checks it alongside posture. Human-only by design: never wired into `agentAuth`. One new env var (`PAM_ONCALL_ATTEST_URL`); no schema/route change. |
 | 2026-08-31 | Phase 229 (a gap-analysis pass): §11 — `store.EffectiveMFAFactors`/`internal/store/mfapolicy.go` deleted, zero production callers; `cmd/pam-server` now parses `PAM_SSH_SFTP` through `proxy.ParseSFTPMode` instead of casting the raw string. No schema/route change. |

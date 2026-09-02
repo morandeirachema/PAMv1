@@ -608,6 +608,16 @@ type User struct {
 	// user's own login identity. Empty (the default) for every user not
 	// provisioned through /scim/v2/Users; unique among non-empty values.
 	ExternalID string `json:"external_id,omitempty"`
+	// SlackUserID links this user to one Slack member ID (Phase 236, e.g.
+	// "U0123456789" — the workspace-scoped id Slack sends in an
+	// interactivity payload's user.id, never the display handle, which a
+	// member can change at will). It is the ONLY way a Slack button click
+	// becomes a PAMv1 decision: the interactivity handler resolves the
+	// clicking member to this row and decides as that PAMv1 identity, so
+	// four-eyes and distinct-approver checks compare like with like. Empty
+	// (the default) means this user cannot decide from Slack at all; unique
+	// among non-empty values, since one member must not map to two humans.
+	SlackUserID string `json:"slack_user_id,omitempty"`
 	// Active is SCIM's deprovisioning switch (Phase 149): false blocks this
 	// user's own local access token from resolving (see
 	// auth.Resolver.Resolve) without deleting the row, so re-activating (or
@@ -1547,6 +1557,15 @@ type UserStore interface {
 	// User.ExternalID), or ErrNotFound. ErrConflict if another user already
 	// claims the same non-empty value.
 	UpdateUserExternalID(ctx context.Context, id int64, externalID string) error
+	// GetUserBySlackUserID returns one user by their linked Slack member ID
+	// (Phase 236, see User.SlackUserID), or ErrNotFound. An empty id always
+	// misses — the column's default, shared by every unlinked user, must
+	// never resolve to an arbitrary one of them.
+	GetUserBySlackUserID(ctx context.Context, slackUserID string) (*User, error)
+	// UpdateUserSlackUserID sets a user's linked Slack member ID (Phase 236,
+	// see User.SlackUserID), or ErrNotFound. ErrConflict if another user
+	// already claims the same non-empty value.
+	UpdateUserSlackUserID(ctx context.Context, id int64, slackUserID string) error
 
 	// CreateProfile inserts a custom permission profile; ErrConflict on a
 	// duplicate name.
