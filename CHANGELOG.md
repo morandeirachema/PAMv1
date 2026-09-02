@@ -9,6 +9,63 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.65.0] — 2026-09-02
+
+A minor that ships **Phase 236** — the review of Phases 232–235, and what it
+found. **Schema and store surface moved** (`0052`, two `UserStore` methods)
+and one audit action is new, which is why it is a minor and not a patch; no
+route or env var was added.
+
+**What was found, and fixed.** Two Medium authorization findings in the
+Slack chat-ops approval shipped in 0.64.0 shared one root cause: a button
+click was recorded as a synthetic `slack:<handle>` actor, and the four-eyes
+check and the distinct-approver count both compare PAMv1 usernames — so a
+linked requester could approve their own request from the channel, and one
+approver could satisfy a two-person floor once via the API and once via
+Slack. A click is now resolved through a **Slack identity mapping** — the
+new `slack_user_id` on a user (`POST`/`PUT /api/users`, console Add/Change
+User) — to an **active PAMv1 user holding `approve`**, and decided **as that
+identity**; an unlinked member, a deactivated user or a role without the
+capability is refused and audited (`access.decision_denied` with
+`slack-unlinked`/`slack-not-approver`), and every Slack decision is audited
+as `access.slack_decision`. Also: the Slack ack is now flushed before any
+follow-up (it was held until an up-to-8-second `response_url` call
+finished, against Slack's 3-second budget), every refusal reaches the
+clicker as an ephemeral message (Slack ignores the ack body the old code
+wrote it to), a partial approval on a multi-approver chain keeps the buttons
+live, mrkdwn escaping no longer turns `'` into `&#39;`, and the button
+token's MAC is domain-separated from Slack's own request signature.
+
+**What an operator must do to keep using Slack approval.** Link each
+approver's Slack member ID to their PAMv1 user — until then, every click is
+refused with an in-channel note. Deployments without Slack configured are
+unaffected.
+
+**Security.** `golang.org/x/crypto` 0.55.0 → 0.56.0 for
+[GO-2026-6354](https://pkg.go.dev/vuln/GO-2026-6354) and
+[GO-2026-6355](https://pkg.go.dev/vuln/GO-2026-6355) (SSH channel-deadlock
+denial of service, reached from the SSH proxy, the rotator and the endpoint
+agent).
+
+### Added
+
+- `users.slack_user_id` (migration `0052`); `slack_user_id` on
+  `POST`/`PUT /api/users`; audit action `access.slack_decision`.
+
+### Changed
+
+- `POST /api/slack/interactivity` decides as the linked PAMv1 user, or
+  refuses; acks before its `response_url` follow-up; refusals are ephemeral.
+
+### Fixed
+
+- Four-eyes and dual-control bypass via Slack (see above).
+- Slack message escaping, target-name fallback, and the never-rendered
+  "expired" reply.
+
+Helm chart `0.55.0` → `0.56.0`, a minor alongside an app minor. Image digest
+recorded once the publish workflow has run.
+
 ## [0.64.0] — 2026-09-01
 
 A minor that ships **Phase 234** — Slack chat-ops access-request approval,
@@ -2883,6 +2940,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.65.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.65.0
 [0.64.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.64.0
 [0.63.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.63.0
 [0.62.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.62.1
