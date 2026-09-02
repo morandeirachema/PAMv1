@@ -71,9 +71,13 @@ import (
 // BrokerStore.{ReserveAgentCall,ReleaseAgentCallReservation} (2) — the
 // compare-and-spend behind both of those counts, because a count followed by a
 // call is a check-then-act and a burst at the boundary over-ran the limit by
-// the burst's width (the 2026-08-26 audit's M-3, reservation half).
+// the burst's width (the 2026-08-26 audit's M-3, reservation half). Phase 236
+// added UserStore.{GetUserBySlackUserID,UpdateUserSlackUserID} (2) — the Slack
+// identity mapping, because the review of Phase 234 found a button click
+// became an actor in its own "slack:" namespace that no four-eyes or
+// distinct-approver comparison against a PAMv1 username could ever match.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 220
+	const want = 222
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

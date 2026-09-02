@@ -520,6 +520,7 @@ erDiagram
     string IPAllowlist
     string DeviceFingerprint
     string ExternalID
+    string SlackUserID
     bool Active
     time_Time CreatedAt
   }

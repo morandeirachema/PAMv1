@@ -1486,6 +1486,23 @@ approval invite (§ above): posting the notification already requires
    really came from Slack; there is no PAMv1 credential on that route at
    all.
 
+5. **Link each approver to their Slack account** (Phase 236). A button
+   click is honoured only from a Slack member whose id is linked to an
+   **active PAMv1 user holding `CapApprove`**; anyone else in the channel
+   gets an ephemeral "not linked" note and nothing is decided. The id is
+   the stable workspace member id (`U…` — Slack profile → **⋯** → *Copy
+   member ID*), never the display handle, which a member can change at
+   will. Set it on the user (`manage_users`), or in the console's **Add
+   User** / **Change User Role** screens:
+
+   ```bash
+   curl -H "X-API-Key: $PAM_API_KEY" -X PUT http://localhost:8080/api/users/7 \
+     -d '{"role":"approver","slack_user_id":"U0123456789"}'
+   # omit slack_user_id to leave it untouched; "" clears the link
+   ```
+
+   One member id links to at most one user (409 otherwise).
+
 Both env vars are required together — set one without the other and
 PAMv1 refuses to start.
 
@@ -1493,10 +1510,15 @@ PAMv1 refuses to start.
 the same requester-cannot-notify-about-their-own-request check the
 magic-link invite enforces) — or console menu **Work with Access
 Requests**, option **8=Notify Slack**. The message posts with Approve and
-Deny buttons; clicking either decides the request through the same path an
-authenticated approve/deny call uses, and the message updates in place to
-show the outcome. A stale or already-decided request's buttons fail
-gracefully with an explanatory message rather than an error.
+Deny buttons; clicking either decides the request **as the linked PAMv1
+user**, through the same path an authenticated approve/deny call uses — so
+the requester cannot approve their own request from the channel, and a
+two-person floor needs two distinct linked approvers, exactly as it would
+from the API. A recorded decision replaces the message for everyone; a
+refusal (expired buttons, already decided, not linked, wrong role,
+four-eyes) is an ephemeral note only the clicker sees, and the buttons
+stay for the others. Every Slack decision is audited as
+`access.slack_decision`, naming both the PAMv1 user and the member id.
 
 There is no per-request Slack channel routing in v1 — every notification
 goes to the one channel the incoming webhook was created for.
@@ -4322,6 +4344,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-02 | **Phase 236 (the review of 232–235).** Slack chat-ops section gains the **identity mapping** step: a button click is only honoured from a Slack member whose id is linked to an active PAMv1 user holding `CapApprove` (`slack_user_id` on `POST`/`PUT /api/users`, console Add/Change User), and the decision is made as that PAMv1 identity — so four-eyes and two-person floors hold from Slack exactly as they do from the API. Refusals now reach the clicker as an ephemeral Slack message. |
 | 2026-09-01 | **Phase 234 (Slack chat-ops access-request approval).** New §7 subsection with Slack App setup steps: `PAM_SLACK_WEBHOOK_URL` (Incoming Webhooks) and `PAM_SLACK_SIGNING_SECRET` (verifies the interactivity callback), required together. Console menu Work with Access Requests gains option 8=Notify Slack. |
 | 2026-08-31 | **Phase 232 (on-call/schedule-aware access gating).** New §7 subsection: `PAM_ONCALL_ATTEST_URL`, the same webhook shape as live device posture, checked on every connect and every authenticated call. Human operators only — never extended to the AI-agent broker, since "on call" describes a shift a non-human identity does not have. Off by default. |
 | 2026-08-27 | **Phase 226 (the MCP revision negotiated, not pinned).** The AI-agent broker section now says which protocol revisions the MCP endpoint negotiates (2024-11-05, 2025-03-26, 2025-06-18), that batches are accepted and an unsupported `MCP-Protocol-Version` header is refused, and that the transport is HTTP+SSE — Streamable HTTP is not offered. Nothing to configure. |

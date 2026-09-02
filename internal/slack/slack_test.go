@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -75,6 +76,49 @@ func TestSignAndParseToken(t *testing.T) {
 	}
 	if _, _, err := ParseToken(secret, "not-a-token"); err == nil {
 		t.Fatal("a malformed token must not parse")
+	}
+	// Domain separation (Phase 236): a MAC over the bare payload — the shape
+	// a Slack request signature under the same secret would have — is not a
+	// button token.
+	payload := "42|approved|" + strconv.FormatInt(exp.Unix(), 10)
+	bare := hmac.New(sha256.New, []byte(secret))
+	bare.Write([]byte(payload))
+	if _, _, err := ParseToken(secret, payload+"."+hex.EncodeToString(bare.Sum(nil))); err == nil {
+		t.Fatal("a MAC without the token domain prefix must not parse as a token")
+	}
+}
+
+// TestEscapeText proves Slack's three mrkdwn control characters are escaped
+// and, unlike html.EscapeString, quotes are left alone — Slack renders
+// "&#39;" literally.
+func TestEscapeText(t *testing.T) {
+	got := EscapeText(`can't <reach> "db" & friends`)
+	want := `can't &lt;reach&gt; "db" &amp; friends`
+	if got != want {
+		t.Fatalf("EscapeText = %q, want %q", got, want)
+	}
+	msg := string(BuildApprovalMessage("alice", "db-1", "can't reach", "a", "d"))
+	if strings.Contains(msg, "&#39;") {
+		t.Fatalf("approval message must not contain HTML numeric entities: %s", msg)
+	}
+}
+
+// TestFollowUpMessages proves the two response_url shapes: a replacement
+// updates the original message in place, an ephemeral leaves it alone and
+// is visible only to the clicker.
+func TestFollowUpMessages(t *testing.T) {
+	var rep, eph map[string]any
+	if err := json.Unmarshal(ReplacementMessage("done"), &rep); err != nil {
+		t.Fatal(err)
+	}
+	if rep["replace_original"] != true || rep["text"] != "done" {
+		t.Fatalf("replacement: %+v", rep)
+	}
+	if err := json.Unmarshal(EphemeralMessage("nope"), &eph); err != nil {
+		t.Fatal(err)
+	}
+	if eph["replace_original"] != false || eph["response_type"] != "ephemeral" || eph["text"] != "nope" {
+		t.Fatalf("ephemeral: %+v", eph)
 	}
 }
 

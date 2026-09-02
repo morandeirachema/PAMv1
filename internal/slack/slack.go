@@ -17,6 +17,11 @@
 //     on the request's `pending` status is what makes the DECISION
 //     itself single-use, exactly as it already does for the authenticated
 //     approve/deny routes and the magic-link redemption path.
+//
+// Both primitives are keyed by the same signing secret, so the token MAC is
+// computed over a domain-prefixed payload (tokenDomain): a MAC PAMv1 minted
+// for a button can never be mistaken for one over a Slack request body, or
+// vice versa, however the two byte strings happen to line up (Phase 236).
 package slack
 
 import (
@@ -27,7 +32,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"html"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,6 +41,21 @@ import (
 // signatureFreshness is how old a request's timestamp may be before
 // VerifySignature refuses it — Slack's own documented replay window.
 const signatureFreshness = 5 * time.Minute
+
+// tokenDomain is prefixed to a button token's payload before it is MACed,
+// separating the token from Slack's own "v0:<ts>:<body>" request signature
+// under the shared signing secret. It is not part of the token string.
+const tokenDomain = "pamv1-slack-button:"
+
+// mrkdwnEscaper escapes the only three characters Slack's mrkdwn treats as
+// control characters (https://api.slack.com/reference/surfaces/formatting#escaping).
+// html.EscapeString would also turn ' and " into numeric entities, which
+// Slack does NOT decode — a reason of "can't reach db" rendered as
+// "can&#39;t reach db" (Phase 236 review finding).
+var mrkdwnEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+
+// EscapeText escapes s for inclusion in a Slack mrkdwn or plain_text field.
+func EscapeText(s string) string { return mrkdwnEscaper.Replace(s) }
 
 // VerifySignature checks an inbound Slack request against Slack's v0
 // signing scheme: sig must equal HMAC-SHA256("v0:<timestamp>:<body>",
@@ -71,7 +90,7 @@ func VerifySignature(signingSecret, timestamp, body, sig string) bool {
 func SignToken(secret string, requestID int64, decision string, exp time.Time) string {
 	payload := fmt.Sprintf("%d|%s|%d", requestID, decision, exp.Unix())
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(payload))
+	mac.Write([]byte(tokenDomain + payload))
 	return payload + "." + hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -84,7 +103,7 @@ func ParseToken(secret, token string) (requestID int64, decision string, err err
 	}
 	payload, sigHex := token[:i], token[i+1:]
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(payload))
+	mac.Write([]byte(tokenDomain + payload))
 	want := hex.EncodeToString(mac.Sum(nil))
 	if !hmac.Equal([]byte(want), []byte(sigHex)) {
 		return 0, "", fmt.Errorf("invalid signature")
@@ -115,7 +134,7 @@ func ParseToken(secret, token string) (requestID int64, decision string, err err
 // webhook post: requester/target/reason as text, and Approve/Deny buttons
 // carrying the given signed tokens as their value.
 func BuildApprovalMessage(requester, target, reason, approveToken, denyToken string) []byte {
-	text := fmt.Sprintf("*%s* is requesting access to *%s*", html.EscapeString(requester), html.EscapeString(target))
+	text := fmt.Sprintf("*%s* is requesting access to *%s*", EscapeText(requester), EscapeText(target))
 	body := map[string]any{
 		"text": text,
 		"blocks": []map[string]any{
@@ -123,7 +142,7 @@ func BuildApprovalMessage(requester, target, reason, approveToken, denyToken str
 				"type": "section",
 				"text": map[string]string{
 					"type": "mrkdwn",
-					"text": fmt.Sprintf("%s\n>%s", text, html.EscapeString(reason)),
+					"text": fmt.Sprintf("%s\n>%s", text, EscapeText(reason)),
 				},
 			},
 			{
@@ -158,6 +177,21 @@ func BuildApprovalMessage(requester, target, reason, approveToken, denyToken str
 func ReplacementMessage(text string) []byte {
 	b, _ := json.Marshal(map[string]any{
 		"replace_original": true,
+		"text":             text,
+	})
+	return b
+}
+
+// EphemeralMessage returns the response_url body for a follow-up only the
+// clicking member sees, leaving the original message — and its buttons —
+// in place for everyone else. Used for every refused click (expired token,
+// unlinked member, four-eyes, already decided): the ack body of a
+// block_actions callback is ignored by Slack, so response_url is the only
+// way a refusal ever reaches a human (Phase 236 review finding).
+func EphemeralMessage(text string) []byte {
+	b, _ := json.Marshal(map[string]any{
+		"response_type":    "ephemeral",
+		"replace_original": false,
 		"text":             text,
 	})
 	return b
