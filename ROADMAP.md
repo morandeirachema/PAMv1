@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–235 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–236 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2422,6 +2422,101 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 236 — The review of 232–235, and what it found ✅
+
+A `/security-review` and `/code-review` pass over Phases 232–235
+(`3ecdaee..HEAD`: on-call gating, Slack chat-ops approval, v0.64.0 and four
+Dependabot bumps), run by the user on 2026-09-02 in the shape Phase 231 took
+over 229/230. Unlike 231, this one found code, not only docs — two real
+authorization findings in the Slack path, one CI gate about to fail, and four
+correctness items. All closed here; no release until Phase 237.
+
+- [x] **`govulncheck` fails on `main`.** [GO-2026-6354](https://pkg.go.dev/vuln/GO-2026-6354)
+  and [GO-2026-6355](https://pkg.go.dev/vuln/GO-2026-6355) — SSH channel
+  deadlock denial-of-service in `golang.org/x/crypto@v0.55.0` — are reached
+  from `proxy.Proxy.handleConn`, `rotate.SSHConnector.dialAuth` and
+  `endpointagent.serveTunnel`. Both were published after v0.64.0's green
+  runs, so nothing had failed yet; the next push would. Bumped to
+  **v0.56.0** (`go mod tidy` also normalised the `go` directive to `1.26.0`).
+  The bump surfaced one behaviour change: `ssh.CertChecker.CheckCert` now
+  refuses any critical option the application has not declared in
+  `SupportedCriticalOptions`, so the two tests that verify an issued
+  operator certificate in-process declare `source-address` — which is what
+  a real sshd does anyway (OpenSSH enforces it). No production code
+  verifies operator certificates in-process; only the target's sshd does
+- [x] **Four-eyes bypass from the channel (Medium).** Phase 234 decided as a
+  synthetic actor `slack:"<handle>"`, and `decideAccessRequest`'s
+  requester check compares PAMv1 usernames — so it could never match.
+  alice files; bob presses `8=Notify Slack`; alice, in the channel, clicks
+  Approve; the request is approved "by" `slack:"alice"`. The notify-time
+  self-approval check only ever covered who *sent* the notification
+- [x] **Dual-control bypass (Medium).** Distinct approvers are counted by
+  string, so `bob` (via the API) and `slack:"bob"` (via Slack) satisfied a
+  two-person floor with one human — and a request stays `pending` between
+  partial approvals, so notify still worked after the first. The magic-link
+  path has the same shape but needs an explicit invite to a named address;
+  Slack opened it to everyone in the channel
+- [x] **The fix is an identity mapping, not a string check.** New
+  `users.slack_user_id` (`0052_slack_user_id.sql`, empty default, partial
+  unique index like `external_id`); `store.Store` **220 → 222** with
+  `GetUserBySlackUserID`/`UpdateUserSlackUserID` in both stores, covered by
+  `storetest`; `POST`/`PUT /api/users` carry `slack_user_id` (a `*string`
+  on update, the same omitted-vs-cleared discipline as `ip_allowlist`;
+  409 on a duplicate, 422 on whitespace); console **Add User** and
+  **Change User Role** gain a *Slack member ID* field. The interactivity
+  handler resolves the payload's Slack-attested `user.id` (the stable
+  workspace `U…` member id — never the display handle, which a member can
+  change at will) to an **active** PAMv1 user, builds its principal with
+  `PrincipalForRole` and requires `CapApprove`, then decides **as that
+  username** through the unchanged `decideAccessRequest` — so four-eyes
+  and the distinct-approver count now compare like with like. An unlinked
+  member, a deactivated user or a role without `CapApprove` is refused and
+  audited `access.decision_denied` (`slack-unlinked`,
+  `slack-not-approver`); every Slack decision is audited as a new
+  **`access.slack_decision`** with the PAMv1 user and the member id side
+  by side
+- [x] **The ack was not an ack.** The `response_url` follow-up ran
+  synchronously inside the handler and the 200 was never flushed, so Slack
+  received its ack only when the follow-up finished (an 8-second client
+  timeout against Slack's 3-second budget) — the code comment called it
+  "asynchronous". And Slack ignores the ack *body* of a `block_actions`
+  callback, so the "expired" text written there was never rendered and the
+  stale buttons stayed. Now: an empty 200 is written and **flushed before**
+  anything else; every refusal (expired token, unlinked member, four-eyes,
+  already decided, wrong role) is an **ephemeral** `response_url` message
+  only the clicker sees, leaving the buttons for everyone else; a recorded
+  decision **replaces** the message; a partial approval on a multi-approver
+  chain says so and keeps the buttons live for the next approver
+- [x] **Three smaller correctness items.** `html.EscapeString` turned `'`
+  and `"` into numeric entities Slack renders literally (`can&#39;t`) —
+  replaced by `slack.EscapeText`, escaping only the three characters
+  [Slack's mrkdwn treats as control](https://api.slack.com/reference/surfaces/formatting#escaping).
+  The target-name fallback was the request's *reason* (so the message read
+  "requesting access to <reason>" followed by the reason) — now
+  `target #<id>`. And the button token's MAC now covers a domain prefix
+  (`pamv1-slack-button:`) so it can never be confused with Slack's own
+  `v0:<ts>:<body>` signature under the shared secret — hygiene, since no
+  oracle existed
+- [x] **Proven, not asserted**: `TestSlackClickFourEyes` (a linked
+  requester's own click leaves the request pending, audited as
+  `self-approval`), `TestSlackClickDualControl` (one human twice is refused
+  with "already approved"; a second *linked* approver completes the chain),
+  `TestSlackClickRequiresApproverRole`, `TestUserSlackUserIDField`
+  (round-trip, 409, 422, clear and relink), the lifecycle test now proving an
+  unlinked member is acked-but-refused ephemerally and a decided request's
+  approver is the bare PAMv1 username; `internal/slack` gains
+  `TestEscapeText`, `TestFollowUpMessages` and a domain-separation case
+- [x] **What was clean**: Slack's v0 signature verification (constant-time,
+  freshness window), the button token's expiry and single-use via the
+  `pending` compare-and-set, `response_url` (reachable only from a
+  Slack-signed payload), the on-call gate (fail-closed, break-glass bypass,
+  agents outside it because `/mcp` uses `agentAuth`), and every doc row the
+  four phases owed — env table, audit vocabulary, gate renumbering,
+  change logs — all present
+- [x] Schema (`0052`), store surface (222), the users routes' body and one
+  new audit action moved; no new route or env var. **Released by Phase 237
+  as v0.65.0** — a minor, since the schema moved
+
 ## Phase 235 — v0.64.0 ✅
 
 Releases **234** — Slack chat-ops access-request approval. A **minor**: no
@@ -2501,7 +2596,8 @@ approve or deny an access request from Slack, without a PAMv1 login.
   building the screen rather than carving out an exception
 - [x] Proven end to end against a fake Slack webhook and a correctly (and
   incorrectly) signed interactivity callback: notify → click Approve →
-  request decided with actor `slack:<username>` → replacement message
+  request decided with actor `slack:<username>` (superseded by Phase 236,
+  which resolves the click to a PAMv1 identity) → replacement message
   observed at `response_url` → a second click on the same (now-decided)
   request's Deny button refused with 409, request status unchanged. Plus
   self-approval, already-decided, unconfigured, bad-signature and

@@ -1534,6 +1534,10 @@ func (m *Memstore) CreateUser(_ context.Context, u *store.User) error {
 		if existing.Username == u.Username || existing.TokenHash == u.TokenHash {
 			return store.ErrConflict
 		}
+		// ...and the partial unique index on slack_user_id (Phase 236).
+		if u.SlackUserID != "" && existing.SlackUserID == u.SlackUserID {
+			return store.ErrConflict
+		}
 	}
 	u.ID = m.id()
 	u.CreatedAt = time.Now().UTC()
@@ -1670,6 +1674,44 @@ func (m *Memstore) UpdateUserExternalID(_ context.Context, id int64, externalID 
 	}
 	u := m.users[id]
 	u.ExternalID = externalID
+	m.users[id] = u
+	return nil
+}
+
+// GetUserBySlackUserID returns the user linked to the given Slack member ID
+// (Phase 236), or ErrNotFound. An empty id always misses.
+func (m *Memstore) GetUserBySlackUserID(_ context.Context, slackUserID string) (*store.User, error) {
+	if slackUserID == "" {
+		return nil, store.ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, u := range m.users {
+		if u.SlackUserID == slackUserID {
+			return &u, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+// UpdateUserSlackUserID sets a user's linked Slack member ID (Phase 236);
+// ErrNotFound if absent, ErrConflict if another user already claims the same
+// non-empty value.
+func (m *Memstore) UpdateUserSlackUserID(_ context.Context, id int64, slackUserID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.users[id]; !ok {
+		return store.ErrNotFound
+	}
+	if slackUserID != "" {
+		for otherID, other := range m.users {
+			if otherID != id && other.SlackUserID == slackUserID {
+				return store.ErrConflict
+			}
+		}
+	}
+	u := m.users[id]
+	u.SlackUserID = slackUserID
 	m.users[id] = u
 	return nil
 }
