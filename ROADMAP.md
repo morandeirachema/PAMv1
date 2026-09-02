@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–236 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–237 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,32 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 237 — v0.65.0 ✅
+
+Releases **236** — the review of 232–235 and what it found. A **minor**: the
+schema (`0052`) and the store surface moved, one audit action is new, and a
+deployment using Slack approval must link its approvers before clicks work
+again — observable, so not a patch. No route or env var was added.
+
+- [x] **v0.65.0** through the test-gated pipeline. `.github/` untouched
+  since v0.58.1 and nothing the workflow *reads* has changed either, so no
+  rehearsal. Published 2026-09-02 as `ghcr.io/morandeirachema/pamv1:0.65.0`
+  (also `latest`), digest recorded once the publish workflow has run,
+  signed and attested, with the `pam-agent` binaries, the SPDX SBOM and
+  `SHA256SUMS` attached
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm
+  chart `version` 0.55.0 -> **0.56.0**, a minor alongside an app minor
+- [x] `store.Store` **220 -> 222**; migration high-water **`0051` ->
+  `0052`**; routes unchanged at **195**
+- [x] Both READMEs restated; every `Reflects:` header, `docs/README.md`,
+  `NIS2-COMPLIANCE.md`'s evidence row and this banner
+- [x] `CHANGELOG.md` leads with **what was found and fixed** — the two
+  Slack authorization findings and their identity-mapping fix — then
+  states what an operator must do (link approvers) and what has not
+  changed for everyone else
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
 
 ## Phase 236 — The review of 232–235, and what it found ✅
 
