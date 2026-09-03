@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,10 +14,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/api"
+	"github.com/morandeirachema/pamv1/internal/oncall"
 	pamslack "github.com/morandeirachema/pamv1/internal/slack"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
@@ -136,11 +139,8 @@ func TestSlackNotifyAndInteractivityLifecycle(t *testing.T) {
 	}))
 	defer webhook.Close()
 
-	var gotReplacement []byte
-	responseURLServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotReplacement, _ = io.ReadAll(r.Body)
-		w.WriteHeader(http.StatusOK)
-	}))
+	var fu followUps
+	responseURLServer := httptest.NewServer(http.HandlerFunc(fu.handle))
 	defer responseURLServer.Close()
 
 	srv, st := newTestServerOpts(t, nil, api.Options{
@@ -159,7 +159,7 @@ func TestSlackNotifyAndInteractivityLifecycle(t *testing.T) {
 	if gotMessage == nil {
 		t.Fatal("no message was posted to the Slack webhook")
 	}
-	approveToken, _ := extractSlackTokens(t, gotMessage)
+	approveToken, denyToken := extractSlackTokens(t, gotMessage)
 
 	// A wrong signature is refused before the token is ever parsed.
 	badReq, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/slack/interactivity", strings.NewReader("payload=x"))
@@ -185,13 +185,12 @@ func TestSlackNotifyAndInteractivityLifecycle(t *testing.T) {
 	if ar := getAccessRequest(t, srv, bob, reqID); ar["status"] != "pending" {
 		t.Fatalf("an unlinked member must not decide the request, got %v", ar["status"])
 	}
-	assertSlackEphemeral(t, gotReplacement, "not linked")
+	assertSlackEphemeral(t, fu.next(t), "not linked")
 
 	// carol is a PAMv1 approver linked to Slack member U123. Clicking
 	// Approve, correctly signed, decides the request AS carol.
 	carolID, _ := seedUserWithID(t, srv, "carol", "approver")
 	linkSlackUser(t, srv, carolID, "U123")
-	gotReplacement = nil
 	code, respBody = postSlackInteractivity(t, srv, slackSigningSecret, approveToken, "U123", "carol", responseURLServer.URL)
 	if code != http.StatusOK {
 		t.Fatalf("interactivity: %d %s", code, respBody)
@@ -209,9 +208,7 @@ func TestSlackNotifyAndInteractivityLifecycle(t *testing.T) {
 	}
 
 	// The replacement message landed at response_url, naming the outcome.
-	if gotReplacement == nil {
-		t.Fatal("no replacement message was posted to response_url")
-	}
+	gotReplacement := fu.next(t)
 	var replacement struct {
 		ReplaceOriginal bool   `json:"replace_original"`
 		Text            string `json:"text"`
@@ -225,9 +222,15 @@ func TestSlackNotifyAndInteractivityLifecycle(t *testing.T) {
 
 	// A second click on the same (now decided) request is refused
 	// ephemerally — the compare-and-set on `pending` — not re-decided.
-	gotReplacement = nil
 	postSlackInteractivity(t, srv, slackSigningSecret, approveToken, "U123", "carol", responseURLServer.URL)
-	assertSlackEphemeral(t, gotReplacement, "already")
+	assertSlackEphemeral(t, fu.next(t), "already")
+	// ...and so is the still-validly-signed Deny button on the same
+	// message: an approved request cannot be flipped to denied from Slack.
+	postSlackInteractivity(t, srv, slackSigningSecret, denyToken, "U123", "carol", responseURLServer.URL)
+	assertSlackEphemeral(t, fu.next(t), "already")
+	if ar := getAccessRequest(t, srv, bob, reqID); ar["status"] != "approved" {
+		t.Fatalf("a leftover Deny click changed a decided request: %v", ar["status"])
+	}
 
 	// Slack interactivity is audited as its own action, with the PAMv1 user
 	// and the Slack member id side by side.
@@ -395,9 +398,49 @@ func TestUserSlackUserIDField(t *testing.T) {
 	}
 }
 
+// followUps is a response_url endpoint that records every follow-up it
+// receives, in order. Since Phase 238 the ack is complete on the wire BEFORE
+// the follow-up is posted, so a test that has just clicked must WAIT for the
+// follow-up rather than read it — next does, consuming one follow-up per
+// call so a stale one can never satisfy a later click.
+type followUps struct {
+	mu    sync.Mutex
+	got   [][]byte
+	taken int
+}
+
+func (f *followUps) handle(w http.ResponseWriter, r *http.Request) {
+	b, _ := io.ReadAll(r.Body)
+	f.mu.Lock()
+	f.got = append(f.got, b)
+	f.mu.Unlock()
+	w.WriteHeader(http.StatusOK)
+}
+
+// next returns the oldest follow-up not yet returned, waiting up to three
+// seconds for it to arrive.
+func (f *followUps) next(t *testing.T) []byte {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		f.mu.Lock()
+		if f.taken < len(f.got) {
+			b := f.got[f.taken]
+			f.taken++
+			f.mu.Unlock()
+			return b
+		}
+		f.mu.Unlock()
+		if time.Now().After(deadline) {
+			t.Fatal("no follow-up was posted to response_url")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // newSlackTestServer builds a Slack-configured test server whose webhook
 // remembers the last message posted and whose response_url endpoint
-// remembers the last follow-up.
+// records every follow-up; getFollowUp waits for and returns the next one.
 func newSlackTestServer(t *testing.T, opts api.Options) (srv *httptest.Server, st store.Store, responseURL string, getFollowUp func() []byte) {
 	t.Helper()
 	webhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -406,15 +449,8 @@ func newSlackTestServer(t *testing.T, opts api.Options) (srv *httptest.Server, s
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(webhook.Close)
-	var mu sync.Mutex
-	var followUp []byte
-	rurl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		mu.Lock()
-		followUp = b
-		mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-	}))
+	var fu followUps
+	rurl := httptest.NewServer(http.HandlerFunc(fu.handle))
 	t.Cleanup(rurl.Close)
 	opts.SlackWebhookURL = webhook.URL
 	opts.SlackSigningSecret = slackSigningSecret
@@ -423,11 +459,7 @@ func newSlackTestServer(t *testing.T, opts api.Options) (srv *httptest.Server, s
 	}
 	srv, st = newTestServerOpts(t, nil, opts)
 	slackWebhookOf.Store(srv.URL, webhook.URL)
-	return srv, st, rurl.URL, func() []byte {
-		mu.Lock()
-		defer mu.Unlock()
-		return followUp
-	}
+	return srv, st, rurl.URL, func() []byte { return fu.next(t) }
 }
 
 // slackMessages maps a webhook server's host to the last message it received;
@@ -538,4 +570,196 @@ func TestSlackInteractivityRejectsExpiredToken(t *testing.T) {
 	if ar := getAccessRequest(t, srv, bob, reqID); ar["status"] != "pending" {
 		t.Fatalf("an expired token must not decide the request, got status %v", ar["status"])
 	}
+}
+
+// TestSlackAckCompletesBeforeFollowUp proves the ack IS an ack (Phase 238
+// review finding): Slack's client must see a COMPLETE 200 response before
+// PAMv1's response_url follow-up has finished, not just its headers.
+// Phase 236 flushed an empty 200 without a Content-Length, which makes Go
+// send a chunked response whose terminating chunk only goes out when the
+// handler returns — after the follow-up — so a client reading the body
+// (every HTTP client does) still waited the full round-trip. The follow-up
+// server here blocks until the test has read the ack in full; before the
+// fix this read hung until the client timed out.
+//
+// It also proves the follow-up SURVIVES the ack: once the response is
+// complete Slack may close the connection at once, and net/http cancels the
+// request context when the peer goes away — a follow-up posted on that
+// context would be aborted exactly when the ack works. The test closes its
+// connection after reading the ack and checks the blocked follow-up is still
+// wanted when it is released.
+func TestSlackAckCompletesBeforeFollowUp(t *testing.T) {
+	release := make(chan struct{})
+	survived := make(chan bool, 1)
+	rurl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+			survived <- true
+		case <-r.Context().Done():
+			survived <- false
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer rurl.Close()
+	srv, _, _, _ := newSlackTestServer(t, api.Options{})
+	alice := seedUser(t, srv, "alice", "user")
+	bob := seedUser(t, srv, "bob", "approver")
+	_, reqID := seedPendingRequest(t, srv, alice)
+	if code, data := do(t, srv, http.MethodPost, fmt.Sprintf("/api/access-requests/%d/slack-notify", reqID), bob, nil); code != http.StatusOK {
+		t.Fatalf("notify: %d %s", code, data)
+	}
+	approveToken, _ := extractSlackTokens(t, lastSlackMessage(t, srv))
+	carolID, _ := seedUserWithID(t, srv, "carol", "approver")
+	linkSlackUser(t, srv, carolID, "U123")
+
+	pb, _ := json.Marshal(map[string]any{
+		"type":         "block_actions",
+		"user":         map[string]string{"id": "U123", "username": "carol"},
+		"actions":      []map[string]string{{"action_id": "pamv1_approve", "value": approveToken}},
+		"response_url": rurl.URL,
+	})
+	body := "payload=" + url.QueryEscape(string(pb))
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/slack/interactivity", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Slack-Request-Timestamp", ts)
+	req.Header.Set("X-Slack-Signature", signSlackRequest(slackSigningSecret, ts, body))
+	// Slack's real budget is 3 s; a client that has to wait for the
+	// follow-up would not return in time.
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("ack headers did not arrive while the follow-up was pending: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("ack status %d, want 200", resp.StatusCode)
+	}
+	if _, err := io.ReadAll(resp.Body); err != nil {
+		t.Fatalf("ack body did not complete while the follow-up was pending: %v", err)
+	}
+	// Slack hangs up; the follow-up must not be cancelled with it.
+	resp.Body.Close()
+	client.CloseIdleConnections()
+	time.Sleep(300 * time.Millisecond) // let the server notice the closed peer
+	close(release)
+	if !<-survived {
+		t.Fatal("the response_url follow-up was cancelled when the client closed the acked connection")
+	}
+}
+
+// TestSlackClickSourceGates proves the user-keyed gates an authenticated
+// approve call passes — here on-call attestation (Phase 232) — bind a Slack
+// click too (Phase 238 review finding): the same approver, off shift, is
+// refused from Slack exactly as from the API, audited as authz.denied; on
+// shift, the click decides.
+func TestSlackClickSourceGates(t *testing.T) {
+	var onCall atomic.Bool
+	oncallWebhook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if onCall.Load() {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer oncallWebhook.Close()
+	onCall.Store(true) // every authenticated setup call below is gated too
+	srv, st, responseURL, getFollowUp := newSlackTestServer(t, api.Options{OnCallAttestor: oncall.NewAttestor(oncallWebhook.URL)})
+	alice := seedUser(t, srv, "alice", "user")
+	bob := seedUser(t, srv, "bob", "approver")
+	carolID, _ := seedUserWithID(t, srv, "carol", "approver")
+	linkSlackUser(t, srv, carolID, "U123")
+	_, reqID := seedPendingRequest(t, srv, alice)
+	do(t, srv, http.MethodPost, fmt.Sprintf("/api/access-requests/%d/slack-notify", reqID), bob, nil)
+	approveToken, _ := extractSlackTokens(t, lastSlackMessage(t, srv))
+
+	onCall.Store(false)
+	if code, _ := postSlackInteractivity(t, srv, slackSigningSecret, approveToken, "U123", "carol", responseURL); code != http.StatusOK {
+		t.Fatalf("off-shift click must still be acked, got %d", code)
+	}
+	assertSlackEphemeral(t, getFollowUp(), "not currently on call")
+	auditHas(t, st, "authz.denied", "reason:oncall-check-failed")
+
+	onCall.Store(true) // the listing call below is an authenticated call, gated too
+	if ar := getAccessRequest(t, srv, testAPIKey, reqID); ar["status"] != "pending" {
+		t.Fatalf("an off-shift approver decided from Slack: %+v", ar)
+	}
+	postSlackInteractivity(t, srv, slackSigningSecret, approveToken, "U123", "carol", responseURL)
+	getFollowUp()
+	if ar := getAccessRequest(t, srv, testAPIKey, reqID); ar["status"] != "approved" || ar["approver"] != "carol" {
+		t.Fatalf("on-shift click did not decide: %+v", ar)
+	}
+}
+
+// TestSlackFollowUpEscapesUsername proves a username that is legal to
+// validName but is mrkdwn to Slack — <!channel> — renders as text in the
+// replacement message rather than paging the channel (Phase 238 review
+// finding).
+func TestSlackFollowUpEscapesUsername(t *testing.T) {
+	srv, _, responseURL, getFollowUp := newSlackTestServer(t, api.Options{})
+	alice := seedUser(t, srv, "alice", "user")
+	bob := seedUser(t, srv, "bob", "approver")
+	evilID, _ := seedUserWithID(t, srv, "<!channel>", "approver")
+	linkSlackUser(t, srv, evilID, "UEVIL")
+	_, reqID := seedPendingRequest(t, srv, alice)
+	do(t, srv, http.MethodPost, fmt.Sprintf("/api/access-requests/%d/slack-notify", reqID), bob, nil)
+	approveToken, _ := extractSlackTokens(t, lastSlackMessage(t, srv))
+	postSlackInteractivity(t, srv, slackSigningSecret, approveToken, "UEVIL", "evil", responseURL)
+	var m struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(getFollowUp(), &m); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(m.Text, "<!channel>") || !strings.Contains(m.Text, "&lt;!channel&gt;") {
+		t.Fatalf("username reached Slack unescaped: %s", m.Text)
+	}
+}
+
+// TestSlackDecisionAuditActor proves a Slack decision is attributed to the
+// linked PAMv1 user in EVERY audit row it produces (Phase 238 review
+// finding), not only in access.slack_decision's detail. The interactivity
+// route is unauthenticated (Slack's signature is the authentication), so
+// nothing put a principal in the request context and decideAccessRequest's
+// own access.approve row — whose detail does not name the approver — was
+// attributed to actor "unknown".
+func TestSlackDecisionAuditActor(t *testing.T) {
+	srv, st, responseURL, _ := newSlackTestServer(t, api.Options{})
+	alice := seedUser(t, srv, "alice", "user")
+	bob := seedUser(t, srv, "bob", "approver")
+	_, reqID := seedPendingRequest(t, srv, alice)
+	if code, data := do(t, srv, http.MethodPost, fmt.Sprintf("/api/access-requests/%d/slack-notify", reqID), bob, nil); code != http.StatusOK {
+		t.Fatalf("notify: %d %s", code, data)
+	}
+	approveToken, _ := extractSlackTokens(t, lastSlackMessage(t, srv))
+	carolID, _ := seedUserWithID(t, srv, "carol", "approver")
+	linkSlackUser(t, srv, carolID, "U123")
+	if code, data := postSlackInteractivity(t, srv, slackSigningSecret, approveToken, "U123", "carol", responseURL); code != http.StatusOK {
+		t.Fatalf("interactivity: %d %s", code, data)
+	}
+	if ar := getAccessRequest(t, srv, bob, reqID); ar["status"] != "approved" {
+		t.Fatalf("request not approved: %+v", ar)
+	}
+	for _, action := range []string{"access.approve", "access.slack_decision"} {
+		if got := auditActorOf(t, st, action); got != "carol" {
+			t.Fatalf("%s actor = %q, want the linked PAMv1 user %q", action, got, "carol")
+		}
+	}
+}
+
+// auditActorOf returns the actor of the newest audit event with the given
+// action, failing the test if there is none.
+func auditActorOf(t *testing.T, st store.Store, action string) string {
+	t.Helper()
+	events, err := st.ListAudit(context.Background(), 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.Action == action {
+			return e.Actor
+		}
+	}
+	t.Fatalf("no audit event action=%q", action)
+	return ""
 }

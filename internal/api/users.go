@@ -179,6 +179,18 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
+	// The Slack link goes FIRST because it is the one field whose store
+	// write can fail for a reason the caller caused (409: another user
+	// already claims that member id). Writing the role before it meant a
+	// 409 left the role — and cutUserAccess — already applied, a half-done
+	// update answered with an error (Phase 238 review finding); now nothing
+	// has changed when the conflict is reported.
+	if in.SlackUserID != nil {
+		if err := s.store.UpdateUserSlackUserID(r.Context(), id, *in.SlackUserID); err != nil {
+			storeError(w, err)
+			return
+		}
+	}
 	if err := s.store.UpdateUserRole(r.Context(), id, in.Role); err != nil {
 		storeError(w, err)
 		return
@@ -206,10 +218,6 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		u.DeviceFingerprint = *in.DeviceFingerprint
 	}
 	if in.SlackUserID != nil {
-		if err := s.store.UpdateUserSlackUserID(r.Context(), id, *in.SlackUserID); err != nil {
-			storeError(w, err)
-			return
-		}
 		auditDetail += fmt.Sprintf(" slack_user_id:%s->%s", auditField(u.SlackUserID, 64), auditField(*in.SlackUserID, 64))
 		u.SlackUserID = *in.SlackUserID
 	}

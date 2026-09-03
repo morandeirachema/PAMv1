@@ -2,7 +2,9 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/morandeirachema/pamv1/internal/auth"
 	pamslack "github.com/morandeirachema/pamv1/internal/slack"
+	"github.com/morandeirachema/pamv1/internal/store"
 )
 
 // --- Slack chat-ops access-request approval (Phase 234, Britive's chat-ops
@@ -123,10 +126,12 @@ type slackInteractivityPayload struct {
 // anything else runs.
 //
 // Response shape: Slack needs a 2xx ack within 3 seconds and IGNORES the
-// ack's body for a block_actions payload, so the ack is an empty 200 that is
-// flushed BEFORE any follow-up, and everything a human should read goes to
-// the payload's response_url — a replacement of the original message for a
-// recorded decision, an ephemeral note only the clicker sees for a refusal.
+// ack's body for a block_actions payload, so the ack is an empty,
+// Content-Length: 0 200 — complete on the wire — sent after the decision
+// (store work) and BEFORE the follow-up (network), and everything a human
+// should read goes to the payload's response_url — a replacement of the
+// original message for a recorded decision, an ephemeral note only the
+// clicker sees for a refusal.
 func (s *Server) slackInteractivity(w http.ResponseWriter, r *http.Request) {
 	if s.slackSigningSecret == "" {
 		s.authFailed(w, r, "slack-interactivity", "Slack chat-ops approval is not configured")
@@ -158,21 +163,41 @@ func (s *Server) slackInteractivity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "malformed interactivity payload")
 		return
 	}
-	// Everything from here on is a human's click on a genuine Slack message:
-	// ack it now (Slack's 3-second budget starts at delivery, and the
-	// response_url round-trip below is a network call of its own), then tell
-	// the human what happened through response_url.
+	// Everything from here on is a human's click on a genuine Slack message.
+	// The decision itself is a handful of store operations and is made
+	// FIRST, so that when the ack goes out the request's state is already
+	// what a Slack retry would find; only then is Slack acked, and only after
+	// the ack does the follow-up — the one network round-trip of its own —
+	// reach response_url.
+	msg := s.slackDecide(r, payload)
+	// Content-Length: 0 is what makes the ack COMPLETE on the wire (Phase
+	// 238 review finding): without it Go sends the 200 chunked, and the
+	// terminating chunk — the byte every HTTP client waits for before it
+	// treats the response as received — only went out when this handler
+	// returned, i.e. after the response_url round-trip below. With it, the
+	// flushed header IS the whole response.
+	w.Header().Set("Content-Length", "0")
 	w.WriteHeader(http.StatusOK)
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
-	reply := func(msg []byte) {
-		if payload.ResponseURL != "" {
-			// Best-effort, matching redeemApprovalInvite's own "either way"
-			// comment: the ack is already on the wire.
-			_ = pamslack.PostJSON(r.Context(), payload.ResponseURL, msg)
-		}
+	if payload.ResponseURL != "" {
+		// Best-effort, matching redeemApprovalInvite's own "either way"
+		// comment: the ack is already on the wire. DETACHED from the
+		// request's context (Phase 238 review finding): now that the ack is
+		// complete, Slack may close the connection at once, and net/http
+		// cancels r.Context() when the peer goes away — which would abort
+		// this very follow-up precisely because the ack worked. PostJSON's
+		// own client timeout still bounds it.
+		_ = pamslack.PostJSON(context.WithoutCancel(r.Context()), payload.ResponseURL, msg)
 	}
+}
+
+// slackDecide resolves WHO clicked and makes (or refuses) the decision,
+// returning the response_url follow-up that tells the human what happened:
+// an ephemeral note for every refusal, a replacement of the original message
+// for a recorded decision.
+func (s *Server) slackDecide(r *http.Request, payload slackInteractivityPayload) []byte {
 	slackUser := auditField(payload.User.ID, 64)
 
 	action := payload.Actions[0]
@@ -181,8 +206,7 @@ func (s *Server) slackInteractivity(w http.ResponseWriter, r *http.Request) {
 		// The signature over the OUTER payload already proved this came from
 		// Slack; a bad inner token means an expired or tampered button, not
 		// an unauthenticated caller.
-		reply(pamslack.EphemeralMessage("This approval link has expired or is no longer valid."))
-		return
+		return pamslack.EphemeralMessage("This approval link has expired or is no longer valid.")
 	}
 
 	// Slack identity mapping (Phase 236): the member id is Slack-attested
@@ -191,23 +215,50 @@ func (s *Server) slackInteractivity(w http.ResponseWriter, r *http.Request) {
 	// deactivated user, or one whose role lacks CapApprove is refused here,
 	// with the same audit action a self-approval attempt already produces.
 	u, err := s.store.GetUserBySlackUserID(r.Context(), payload.User.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		// A store failure is not "unlinked" (Phase 238 review finding): it
+		// must neither be audited as an authorization refusal nor send a
+		// correctly linked approver chasing a link that exists.
+		s.log.Error("slack interactivity: user lookup failed", "err", err)
+		return pamslack.EphemeralMessage("PAMv1 could not look up your account right now. Try again in a moment.")
+	}
 	if err != nil || !u.Active {
 		s.audit(r.Context(), "access.decision_denied", fmt.Sprintf("request:%d reason:slack-unlinked slack_user:%s", requestID, slackUser))
-		reply(pamslack.EphemeralMessage("Your Slack account is not linked to an active PAMv1 user. Ask an administrator to set your Slack member ID on your PAMv1 user."))
-		return
+		return pamslack.EphemeralMessage("Your Slack account is not linked to an active PAMv1 user. Ask an administrator to set your Slack member ID on your PAMv1 user.")
 	}
 	p, err := s.resolver.PrincipalForRole(r.Context(), u.Username, u.Role)
+	if err == nil {
+		// From here on the click IS this PAMv1 user: put the principal in
+		// the request context exactly where the authz middleware would have,
+		// so every audit row the decision produces — decideAccessRequest's
+		// own access.approve / access.deny / access.approve_partial /
+		// access.decision_denied, whose details do not all name the approver
+		// — is attributed to the human, not to "unknown" (Phase 238 review
+		// finding), and the access log shows who clicked.
+		r = r.WithContext(withPrincipal(r.Context(), p))
+		setActor(r.Context(), u.Username)
+	}
 	if err != nil || !p.Can(auth.CapApprove) {
 		s.audit(r.Context(), "access.decision_denied", fmt.Sprintf("request:%d reason:slack-not-approver user:%s slack_user:%s", requestID, auditField(u.Username, 64), slackUser))
-		reply(pamslack.EphemeralMessage(fmt.Sprintf("PAMv1 user %s is not allowed to decide access requests.", u.Username)))
-		return
+		return pamslack.EphemeralMessage(fmt.Sprintf("PAMv1 user %s is not allowed to decide access requests.", pamslack.EscapeText(u.Username)))
+	}
+	// The per-user gates an authenticated approve call would pass through
+	// authzCore (Phase 238 review finding). The principal built above
+	// carries no IP allowlist and no device fingerprint on purpose: the
+	// request arrives from Slack's servers, so the caller's network and
+	// device are unknowable here and those two gates cannot apply (the
+	// ADMIN-GUIDE says so). The gates keyed on the USER alone — device
+	// posture (Phase 133) and on-call attestation (Phase 232) — do apply,
+	// and are audited exactly as the middleware audits them.
+	if reason, msg := s.sourceGates(r.Context(), p, r); reason != "" {
+		s.audit(r.Context(), "authz.denied", r.Method+" "+r.URL.Path+" reason:"+reason+" slack_user:"+slackUser)
+		return pamslack.EphemeralMessage("Refused: " + msg + ".")
 	}
 
 	// Decide AS the linked PAMv1 identity through the exact path an
 	// authenticated approve/deny call takes. decideAccessRequest writes its
-	// own HTTP response, which Slack would ignore and which is in any case
-	// already acked above, so it is captured here and turned into the
-	// follow-up text instead.
+	// own HTTP response, which Slack would ignore, so it is captured here and
+	// turned into the follow-up text instead.
 	rec := &slackDecisionRecorder{status: http.StatusOK}
 	ok := s.decideAccessRequest(rec, r, requestID, decision, u.Username)
 	s.audit(r.Context(), "access.slack_decision", fmt.Sprintf("request:%d decision:%s user:%s slack_user:%s ok:%t", requestID, decision, auditField(u.Username, 64), slackUser, ok))
@@ -216,17 +267,17 @@ func (s *Server) slackInteractivity(w http.ResponseWriter, r *http.Request) {
 		if reason == "" {
 			reason = "it could not be decided"
 		}
-		reply(pamslack.EphemeralMessage(fmt.Sprintf("Access request #%d was not decided: %s.", requestID, reason)))
-		return
+		return pamslack.EphemeralMessage(fmt.Sprintf("Access request #%d was not decided: %s.", requestID, pamslack.EscapeText(reason)))
 	}
-	outcome := decision
 	if decision == "approved" && rec.status == http.StatusOK && !rec.decided() {
 		// A partial approval on a multi-approver chain: the request is still
 		// pending and the buttons must stay live for the next approver.
-		reply(pamslack.EphemeralMessage(fmt.Sprintf("Your approval of access request #%d was recorded; more approvals are required.", requestID)))
-		return
+		return pamslack.EphemeralMessage(fmt.Sprintf("Your approval of access request #%d was recorded; more approvals are required.", requestID))
 	}
-	reply(pamslack.ReplacementMessage(fmt.Sprintf("Access request #%d %s by %s (via Slack).", requestID, outcome, u.Username)))
+	// The username is mrkdwn like everything else in a Slack text field: a
+	// name such as <!channel> — legal to validName — must render as text,
+	// not page the channel (Phase 238 review finding).
+	return pamslack.ReplacementMessage(fmt.Sprintf("Access request #%d %s by %s (via Slack).", requestID, decision, pamslack.EscapeText(u.Username)))
 }
 
 // slackDecisionRecorder captures what decideAccessRequest would have written
