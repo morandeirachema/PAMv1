@@ -409,6 +409,7 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	if m.sessions != nil {
 		sid = m.sessions.Register(session.Info{
 			Actor: actor, Target: target.Name, Protocol: "mssql", Remote: remote, Started: time.Now(),
+			Deadline: res.bounds.deadline, DeadlineReason: res.bounds.reason,
 		}, func() { conn.Close(); up.conn.Close() })
 		defer m.sessions.Remove(sid)
 		m.live.Publish(sid, watermarkBanner(actor, target.Name))
@@ -627,6 +628,7 @@ func (m *MSSQLProxy) relay(ctx context.Context, client *tds.Conn, up *upstreamMS
 
 	var wg sync.WaitGroup
 	wg.Add(2)
+	touch := m.sessions.Activity(sid)
 	go func() { // client → upstream
 		defer wg.Done()
 		defer once.Do(stop)
@@ -636,6 +638,7 @@ func (m *MSSQLProxy) relay(ctx context.Context, client *tds.Conn, up *upstreamMS
 			if err != nil {
 				return
 			}
+			touch() // any client packet is operator activity (Phase 240 idle timeout)
 			switch typ {
 			case tds.PacketSQLBatch, tds.PacketRPC:
 				reqs, perr := parseTDSRequest(typ, data)

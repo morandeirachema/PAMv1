@@ -89,6 +89,7 @@ flowchart LR
     n_sshca[sshca]
     n_testutil[testutil]
     n_ticket[ticket]
+    n_timeframe[timeframe]
     n_vendor[vendor]
   end
   n_agentid --> n_auditfmt
@@ -133,6 +134,7 @@ flowchart LR
   n_api --> n_sshca
   n_api --> n_store
   n_api --> n_ticket
+  n_api --> n_timeframe
   n_api --> n_vault
   n_api --> n_vendor
   n_api --> n_web
@@ -220,6 +222,7 @@ flowchart LR
   n_storetest --> n_store
   n_store --> n_auditfmt
   n_store --> n_session
+  n_store --> n_timeframe
 ```
 
 ## 2. Domain data model
@@ -446,6 +449,8 @@ erDiagram
     string Subject
     bool CanManage
     string CreatedBy
+    ptr_time_Time ExpiresAt
+    string TimeFrame
   }
   ScimKey {
     int64 ID
@@ -492,6 +497,8 @@ erDiagram
     string Subject
     string Via
     ptr_int64 SafeID
+    ptr_time_Time ExpiresAt
+    string TimeFrame
   }
   Target {
     int64 ID
@@ -512,6 +519,8 @@ erDiagram
     string SubjectType
     string Subject
     string CreatedBy
+    ptr_time_Time ExpiresAt
+    string TimeFrame
   }
   User {
     int64 ID

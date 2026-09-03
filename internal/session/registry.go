@@ -7,9 +7,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/logging"
@@ -26,11 +28,23 @@ type Info struct {
 	// Replica names the replica hosting the session. Stamped by the cluster
 	// inventory (Phase 55); empty in a single-replica deployment.
 	Replica string `json:"replica,omitempty"`
+	// Deadline, when set, is the instant the session must end because the
+	// authorization that admitted it ends then (Phase 240): a grant's expiry
+	// or the close of its time-frame window. DeadlineReason names which
+	// ("grant-expiry" | "time-frame"). The lifetime monitor enforces it; the
+	// deployment-wide maximum duration is not stamped here, it is computed
+	// from Started.
+	Deadline       *time.Time `json:"deadline,omitempty"`
+	DeadlineReason string     `json:"deadline_reason,omitempty"`
 }
 
 type entry struct {
 	info Info
 	kill func()
+	// last is the Unix nanosecond of the most recent operator input (Phase
+	// 240), touched by the proxies' input legs through Activity; the idle
+	// timeout reads it. Register seeds it with Started.
+	last *atomic.Int64
 }
 
 // Registry is a thread-safe set of live sessions.
@@ -104,8 +118,14 @@ func (r *Registry) Register(info Info, kill func()) string {
 	// into the cross-replica inventory, so a mixed local/UTC zone would reach a
 	// SIEM reading the listing; fixing it here covers every caller.
 	info.Started = info.Started.UTC()
+	if info.Deadline != nil {
+		d := info.Deadline.UTC()
+		info.Deadline = &d
+	}
+	last := &atomic.Int64{}
+	last.Store(info.Started.UnixNano())
 	r.mu.Lock()
-	r.m[id] = entry{info: info, kill: kill}
+	r.m[id] = entry{info: info, kill: kill, last: last}
 	c := r.cluster
 	r.mu.Unlock()
 	if c != nil {
@@ -258,4 +278,98 @@ func randID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// Activity returns a function the session's input leg calls on every read of
+// operator input, feeding the idle timeout (Phase 240). It is resolved once
+// per session so the hot path is a single atomic store, not a map lookup. An
+// unknown or empty id (a proxy running without a registry) returns a no-op.
+func (r *Registry) Activity(id string) func() {
+	if r == nil || id == "" {
+		return func() {}
+	}
+	r.mu.Lock()
+	e, ok := r.m[id]
+	r.mu.Unlock()
+	if !ok || e.last == nil {
+		return func() {}
+	}
+	last := e.last
+	return func() { last.Store(time.Now().UnixNano()) }
+}
+
+// LifetimeConfig bounds every session hosted on this replica (Phase 240).
+type LifetimeConfig struct {
+	// MaxDuration ends a session this long after it started, whatever it is
+	// doing (0 = unlimited). IdleTimeout ends a session that has seen no
+	// operator input for this long (0 = never). Either is checked alongside
+	// the per-session Deadline a grant's bounds may have stamped.
+	MaxDuration time.Duration
+	IdleTimeout time.Duration
+	// Tick is how often the monitor looks (default 5s).
+	Tick time.Duration
+	// Audit records each enforced end as "session.killed" with the reason
+	// (max-duration | idle-timeout | grant-expiry | time-frame); nil skips.
+	Audit func(ctx context.Context, action, detail string)
+}
+
+// StartLifetimeMonitor runs the lifetime sweep until ctx ends. It is
+// replica-local by construction: every session it can end is one this
+// replica hosts, so no bus is involved. A monitor with nothing configured —
+// no maximum, no idle timeout — still runs, because a per-session Deadline
+// can be stamped by a grant regardless of deployment-wide limits.
+func (r *Registry) StartLifetimeMonitor(ctx context.Context, cfg LifetimeConfig) {
+	if cfg.Tick <= 0 {
+		cfg.Tick = 5 * time.Second
+	}
+	go func() {
+		t := time.NewTicker(cfg.Tick)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-t.C:
+				r.SweepLifetimes(ctx, now, cfg)
+			}
+		}
+	}()
+}
+
+// SweepLifetimes ends every local session past its deadline, its maximum
+// duration or its idle timeout at now, auditing each, and returns how many
+// it ended. Exported so a test can drive it with a chosen instant.
+func (r *Registry) SweepLifetimes(ctx context.Context, now time.Time, cfg LifetimeConfig) int {
+	type victim struct {
+		e      entry
+		reason string
+	}
+	r.mu.Lock()
+	var victims []victim
+	for _, e := range r.m {
+		if e.kill == nil {
+			continue
+		}
+		switch {
+		case e.info.Deadline != nil && !now.Before(*e.info.Deadline):
+			reason := e.info.DeadlineReason
+			if reason == "" {
+				reason = "deadline"
+			}
+			victims = append(victims, victim{e, reason})
+		case cfg.MaxDuration > 0 && now.Sub(e.info.Started) >= cfg.MaxDuration:
+			victims = append(victims, victim{e, "max-duration"})
+		case cfg.IdleTimeout > 0 && e.last != nil && now.Sub(time.Unix(0, e.last.Load())) >= cfg.IdleTimeout:
+			victims = append(victims, victim{e, "idle-timeout"})
+		}
+	}
+	r.mu.Unlock()
+	for _, v := range victims {
+		r.log.Info("session lifetime reached", "session", v.e.info.ID, "actor", v.e.info.Actor, "target", v.e.info.Target, "reason", v.reason)
+		if cfg.Audit != nil {
+			cfg.Audit(ctx, "session.killed", fmt.Sprintf("session:%s actor:%s target:%s reason:%s", v.e.info.ID, v.e.info.Actor, v.e.info.Target, v.reason))
+		}
+		v.e.kill()
+	}
+	return len(victims)
 }

@@ -335,6 +335,61 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.DeleteTargetGrant(ctx, g.ID); err != nil {
 		t.Fatalf("DeleteTargetGrant: %v", err)
 	}
+	// Grant lifetime (Phase 240): expiry and time frame round-trip through the
+	// management list, an expired row is invisible to the authorization view
+	// and is what the sweeper returns, and an out-of-frame row is invisible
+	// to the authorization view while staying on the management list.
+	grantPast := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
+	grantFuture := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	expiredGrant := &store.TargetGrant{TargetID: tgt.ID, SubjectType: "user", Subject: "expired-eve", ExpiresAt: &grantPast}
+	tempGrant := &store.TargetGrant{TargetID: tgt.ID, SubjectType: "user", Subject: "temp-tom", ExpiresAt: &grantFuture, TimeFrame: "* 00:00-24:00"}
+	offHours := &store.TargetGrant{TargetID: tgt.ID, SubjectType: "user", Subject: "night-nia", TimeFrame: neverFrame()}
+	for _, g := range []*store.TargetGrant{expiredGrant, tempGrant, offHours} {
+		if err := st.CreateTargetGrant(ctx, g); err != nil {
+			t.Fatalf("CreateTargetGrant(%s): %v", g.Subject, err)
+		}
+	}
+	lifeGrants, err := st.ListTargetGrants(ctx, tgt.ID)
+	if err != nil || len(lifeGrants) != 3 {
+		t.Fatalf("ListTargetGrants after lifetime rows: %+v err %v", lifeGrants, err)
+	}
+	for _, g := range lifeGrants {
+		if g.Subject == "temp-tom" && (g.ExpiresAt == nil || !g.ExpiresAt.Equal(grantFuture) || g.TimeFrame != "* 00:00-24:00") {
+			t.Fatalf("lifetime fields did not round-trip: %+v", g)
+		}
+	}
+	// The authorization views return every row WITH its bounds — the decision
+	// (auth.CanConnectTargetAt) is what refuses an expired or out-of-frame
+	// grant, because whether a target is gated at all must still count them.
+	eff, err := st.EffectiveTargetGrants(ctx, tgt.ID)
+	if err != nil || len(eff) != 3 {
+		t.Fatalf("EffectiveTargetGrants must return every row, got %+v err %v", eff, err)
+	}
+	if live := store.LiveTargetGrants(eff, time.Now()); len(live) != 1 || live[0].Subject != "temp-tom" || live[0].ExpiresAt == nil || !live[0].ExpiresAt.Equal(grantFuture) {
+		t.Fatalf("only temp-tom is live, with its bounds carried: %+v", live)
+	}
+	sg, err := st.GrantsForSubjects(ctx, []store.GrantSubject{{Type: "user", Name: "expired-eve"}, {Type: "user", Name: "night-nia"}, {Type: "user", Name: "temp-tom"}})
+	if err != nil || len(sg) != 3 {
+		t.Fatalf("GrantsForSubjects must return every row, got %+v err %v", sg, err)
+	}
+	if live := store.LiveSubjectGrants(sg, time.Now()); len(live) != 1 || live[0].Subject != "temp-tom" || live[0].ExpiresAt == nil {
+		t.Fatalf("only temp-tom is live in the subject view: %+v", live)
+	}
+	sweptGrants, sweptMembers, err := st.SweepExpiredGrants(ctx, time.Now())
+	if err != nil || len(sweptGrants) != 1 || sweptGrants[0].Subject != "expired-eve" || len(sweptMembers) != 0 {
+		t.Fatalf("SweepExpiredGrants: %+v %+v err %v", sweptGrants, sweptMembers, err)
+	}
+	if left, err := st.ListTargetGrants(ctx, tgt.ID); err != nil || len(left) != 2 {
+		t.Fatalf("expired grant must be gone after the sweep: %+v err %v", left, err)
+	}
+	if again, _, err := st.SweepExpiredGrants(ctx, time.Now()); err != nil || len(again) != 0 {
+		t.Fatalf("a second sweep must find nothing: %+v err %v", again, err)
+	}
+	for _, g := range []*store.TargetGrant{tempGrant, offHours} {
+		if err := st.DeleteTargetGrant(ctx, g.ID); err != nil {
+			t.Fatalf("cleanup: %v", err)
+		}
+	}
 
 	// --- safes (Phase 17): container membership as an effective grant ---
 	// The safe carries its own access policy since Phase 58 (require_approval +
@@ -358,6 +413,16 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	sm := &store.SafeMember{SafeID: sf.ID, SubjectType: "role", Subject: "user", CanManage: false, CreatedBy: "grantor-gary"}
 	if err := st.AddSafeMember(ctx, sm); err != nil {
 		t.Fatalf("AddSafeMember: %v", err)
+	}
+	// A safe membership carries the same lifetime bounds (Phase 240): an
+	// expired one is swept, an out-of-frame one does not admit.
+	expiredAt := time.Now().Add(-time.Minute).UTC().Truncate(time.Second)
+	gone := &store.SafeMember{SafeID: sf.ID, SubjectType: "user", Subject: "gone-gus", ExpiresAt: &expiredAt}
+	if err := st.AddSafeMember(ctx, gone); err != nil {
+		t.Fatalf("AddSafeMember(expired): %v", err)
+	}
+	if _, ms, err := st.SweepExpiredGrants(ctx, time.Now()); err != nil || len(ms) != 1 || ms[0].Subject != "gone-gus" || ms[0].ExpiresAt == nil {
+		t.Fatalf("SweepExpiredGrants(safe member): %+v err %v", ms, err)
 	}
 	if ms, err := st.ListSafeMembers(ctx, sf.ID); err != nil || len(ms) != 1 || ms[0].CreatedBy != "grantor-gary" {
 		t.Fatalf("ListSafeMembers created_by: %+v err %v", ms, err)
@@ -3990,4 +4055,12 @@ func RunCloseContract(t *testing.T, st store.Store) {
 	t.Helper()
 	st.Close()
 	st.Close()
+}
+
+// neverFrame returns a time frame that is never live right now: the single
+// weekday two days from today, so no test running at any hour can land in
+// it.
+func neverFrame() string {
+	d := time.Now().UTC().AddDate(0, 0, 2).Weekday().String()[:3]
+	return d + " 00:00-24:00"
 }

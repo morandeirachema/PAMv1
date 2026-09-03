@@ -322,12 +322,36 @@ func (m *Memstore) EffectiveTargetGrants(_ context.Context, targetID int64) ([]s
 	if t, ok := m.targets[targetID]; ok && t.SafeID != nil {
 		for _, sm := range m.safeMembers {
 			if sm.SafeID == *t.SafeID {
-				out = append(out, store.TargetGrant{ID: sm.ID, TargetID: targetID, SubjectType: sm.SubjectType, Subject: sm.Subject})
+				out = append(out, store.TargetGrant{ID: sm.ID, TargetID: targetID, SubjectType: sm.SubjectType, Subject: sm.Subject, ExpiresAt: sm.ExpiresAt, TimeFrame: sm.TimeFrame})
 			}
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+// SweepExpiredGrants deletes every expired grant and safe membership (Phase
+// 240) and returns them, oldest id first.
+func (m *Memstore) SweepExpiredGrants(_ context.Context, now time.Time) ([]store.TargetGrant, []store.SafeMember, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var gs []store.TargetGrant
+	for id, g := range m.grants {
+		if g.ExpiresAt != nil && !g.ExpiresAt.After(now) {
+			gs = append(gs, g)
+			delete(m.grants, id)
+		}
+	}
+	var ms []store.SafeMember
+	for id, sm := range m.safeMembers {
+		if sm.ExpiresAt != nil && !sm.ExpiresAt.After(now) {
+			ms = append(ms, sm)
+			delete(m.safeMembers, id)
+		}
+	}
+	sort.Slice(gs, func(i, j int) bool { return gs[i].ID < gs[j].ID })
+	sort.Slice(ms, func(i, j int) bool { return ms[i].ID < ms[j].ID })
+	return gs, ms, nil
 }
 
 // GrantsForSubjects returns every grant naming any of the given subjects, from
@@ -365,7 +389,7 @@ func (m *Memstore) grantsForSubjectsLocked(subjects []store.GrantSubject) []stor
 		}
 		out = append(out, store.SubjectGrant{
 			TargetID: g.TargetID, TargetName: t.Name, SubjectType: g.SubjectType,
-			Subject: g.Subject, Via: store.GrantViaGrant,
+			Subject: g.Subject, Via: store.GrantViaGrant, ExpiresAt: g.ExpiresAt, TimeFrame: g.TimeFrame,
 		})
 	}
 	for _, sm := range m.safeMembers {
@@ -379,7 +403,7 @@ func (m *Memstore) grantsForSubjectsLocked(subjects []store.GrantSubject) []stor
 			safeID := sm.SafeID
 			out = append(out, store.SubjectGrant{
 				TargetID: t.ID, TargetName: t.Name, SubjectType: sm.SubjectType,
-				Subject: sm.Subject, Via: store.GrantViaSafe, SafeID: &safeID,
+				Subject: sm.Subject, Via: store.GrantViaSafe, SafeID: &safeID, ExpiresAt: sm.ExpiresAt, TimeFrame: sm.TimeFrame,
 			})
 		}
 	}

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/morandeirachema/pamv1/internal/auditfmt"
+	"github.com/morandeirachema/pamv1/internal/timeframe"
 	"strings"
 	"time"
 
@@ -274,6 +275,10 @@ type SafeMember struct {
 	Subject     string `json:"subject"`
 	CanManage   bool   `json:"can_manage"`
 	CreatedBy   string `json:"created_by,omitempty"`
+	// ExpiresAt and TimeFrame bound a standing membership in time (Phase
+	// 240), exactly as on TargetGrant — see there.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	TimeFrame string     `json:"time_frame,omitempty"`
 }
 
 // AccessRequest is a user's request to connect to a target, subject to approval
@@ -421,6 +426,76 @@ type TargetGrant struct {
 	SubjectType string `json:"subject_type"` // user | role
 	Subject     string `json:"subject"`
 	CreatedBy   string `json:"created_by,omitempty"`
+	// ExpiresAt, when set, is the instant the grant stops admitting (Phase
+	// 240): EffectiveTargetGrants and the reach view never return an expired
+	// row, and the expiry sweeper deletes it (audited). Nil is a grant with no
+	// end date — what every row before Phase 240 is.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// TimeFrame, when non-empty, is a recurring weekly window
+	// (timeframe.Parse: "Mon-Fri 08:00-18:00 Europe/Madrid") outside which
+	// the grant does not admit. The row persists; only its effect is
+	// periodic. A session admitted inside the window is given the window's
+	// end as its deadline (auth.GrantDeadline), so it cannot outlive the
+	// authorization that admitted it.
+	TimeFrame string `json:"time_frame,omitempty"`
+}
+
+// GrantLive reports whether a grant with the given bounds admits at now: not
+// expired, and inside its time frame (an unparsable frame is treated as never
+// live, fail-closed — the API refuses to store one, so it cannot occur short
+// of a hand-edited row). Shared by both store implementations so the two
+// paths (direct grants, safe membership) and both engines agree.
+func GrantLive(expiresAt *time.Time, frame string, now time.Time) bool {
+	if expiresAt != nil && !expiresAt.After(now) {
+		return false
+	}
+	if frame == "" {
+		return true
+	}
+	f, err := timeframe.Parse(frame)
+	if err != nil {
+		return false
+	}
+	return f.Contains(now)
+}
+
+// GrantBound returns the instant a live grant stops admitting — the sooner of
+// its expiry and the end of the time-frame window containing now. ok is false
+// for a grant bounded by neither. Callers pass a grant GrantLive said yes to.
+func GrantBound(expiresAt *time.Time, frame string, now time.Time) (bound time.Time, ok bool) {
+	if expiresAt != nil {
+		bound, ok = *expiresAt, true
+	}
+	if frame != "" {
+		if f, err := timeframe.Parse(frame); err == nil {
+			if end, has := f.End(now); has && (!ok || end.Before(bound)) {
+				bound, ok = end, true
+			}
+		}
+	}
+	return bound, ok
+}
+
+// LiveTargetGrants filters gs to the rows admitting at now (GrantLive).
+func LiveTargetGrants(gs []TargetGrant, now time.Time) []TargetGrant {
+	out := make([]TargetGrant, 0, len(gs))
+	for _, g := range gs {
+		if GrantLive(g.ExpiresAt, g.TimeFrame, now) {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// LiveSubjectGrants is LiveTargetGrants for the subject-side view.
+func LiveSubjectGrants(gs []SubjectGrant, now time.Time) []SubjectGrant {
+	out := make([]SubjectGrant, 0, len(gs))
+	for _, g := range gs {
+		if GrantLive(g.ExpiresAt, g.TimeFrame, now) {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 // Grant paths — how a subject came to hold a grant, recorded on SubjectGrant.
@@ -454,6 +529,11 @@ type SubjectGrant struct {
 	// SafeID is the safe the grant came through, set only when Via is
 	// GrantViaSafe (nil for a direct grant).
 	SafeID *int64 `json:"safe_id,omitempty"`
+	// ExpiresAt and TimeFrame are the underlying row's bounds (Phase 240),
+	// reported so an entitlement review can show WHEN a reach ends; the view
+	// itself only ever contains rows live at the time it was taken.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	TimeFrame string     `json:"time_frame,omitempty"`
 }
 
 // Checkout is an exclusive, time-boxed lease on a credential. While a checkout
@@ -1208,6 +1288,10 @@ type GrantStore interface {
 	ListTargetGrants(ctx context.Context, targetID int64) ([]TargetGrant, error)
 	// DeleteTargetGrant removes a grant by ID, or ErrNotFound.
 	DeleteTargetGrant(ctx context.Context, id int64) error
+	// SweepExpiredGrants deletes every target grant and safe membership whose
+	// ExpiresAt is at or before now (Phase 240), returning the deleted rows so
+	// the caller can audit each one. Rows with no expiry are never touched.
+	SweepExpiredGrants(ctx context.Context, now time.Time) ([]TargetGrant, []SafeMember, error)
 	// EffectiveTargetGrants returns a target's direct grants unioned with the
 	// grants derived from its safe's membership (Phase 17). The connect-time
 	// authorization decision uses this, so a target in a safe is reachable by the

@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/morandeirachema/pamv1/internal/store"
 )
@@ -209,6 +210,15 @@ const (
 )
 
 func CanConnectTarget(p *Principal, grants []store.TargetGrant, safeScoped, personal bool, ungated UngatedDefault) bool {
+	return CanConnectTargetAt(p, grants, safeScoped, personal, ungated, time.Now())
+}
+
+// CanConnectTargetAt is CanConnectTarget evaluated at a given instant (Phase
+// 240): a grant that has expired or is outside its time frame at now does
+// not match — but it still COUNTS as a grant, so a target whose last grant
+// expired stays gated (closed to everyone but admins) rather than falling
+// open. Callers that also compute a session deadline pass the same now.
+func CanConnectTargetAt(p *Principal, grants []store.TargetGrant, safeScoped, personal bool, ungated UngatedDefault, now time.Time) bool {
 	if !personal {
 		for _, r := range p.effectiveRoles() {
 			if r == RoleAdmin {
@@ -227,7 +237,7 @@ func CanConnectTarget(p *Principal, grants []store.TargetGrant, safeScoped, pers
 		return true
 	}
 	for _, g := range grants {
-		if SubjectMatches(p, g.SubjectType, g.Subject) {
+		if store.GrantLive(g.ExpiresAt, g.TimeFrame, now) && SubjectMatches(p, g.SubjectType, g.Subject) {
 			return true
 		}
 	}

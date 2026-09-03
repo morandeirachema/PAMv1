@@ -216,6 +216,13 @@ type Config struct {
 	// a single (or compromised) identity. Per-replica in an HA deployment.
 	MaxSessionsPerUser int
 	MaxSessionsTotal   int
+	// SessionMaxDuration ends any brokered session this long after it
+	// started (Phase 240; 0 = unlimited). SessionIdleTimeout ends one that
+	// has seen no operator input for this long (0 = never). Both apply to
+	// every session type the registry hosts — SSH, WinRM, RDP/VNC, PostgreSQL,
+	// SQL Server — and are audited session.killed with their reason.
+	SessionMaxDuration time.Duration
+	SessionIdleTimeout time.Duration
 	// EncryptRecordings seals session recordings and WinRM transcripts at rest,
 	// with a per-recording AES-256-GCM data key wrapped by the configured KEK.
 	// Opt-in: it changes the on-disk format, so a plain `.cast` can no longer be
@@ -842,6 +849,8 @@ func Load() (*Config, error) {
 		SupervisionTimeout:      time.Duration(integer("PAM_LIVE_SUPERVISION_TIMEOUT_SEC", 120)) * time.Second,
 		MaxSessionsPerUser:      integer("PAM_MAX_SESSIONS_PER_USER", 0),
 		MaxSessionsTotal:        integer("PAM_MAX_SESSIONS_TOTAL", 0),
+		SessionMaxDuration:      time.Duration(integer("PAM_SESSION_MAX_MIN", 0)) * time.Minute,
+		SessionIdleTimeout:      time.Duration(integer("PAM_SESSION_IDLE_MIN", 0)) * time.Minute,
 		EncryptRecordings:       boolean("PAM_RECORDING_ENCRYPT", false),
 		OpaqueRecordingNames:    boolean("PAM_RECORDING_OPAQUE_NAMES", false),
 		RDPClipboardAudit:       strings.ToLower(getenv("PAM_RDP_CLIPBOARD_AUDIT", "off")),
@@ -1329,6 +1338,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.MaxSessionsPerUser < 0 || cfg.MaxSessionsTotal < 0 || cfg.MaxRecordingMB < 0 {
 		errs = append(errs, "PAM_MAX_SESSIONS_PER_USER / PAM_MAX_SESSIONS_TOTAL / PAM_MAX_RECORDING_MB must be >= 0 (0 disables)")
+	}
+	if cfg.SessionMaxDuration < 0 || cfg.SessionIdleTimeout < 0 {
+		errs = append(errs, "PAM_SESSION_MAX_MIN / PAM_SESSION_IDLE_MIN must be >= 0 (0 disables)")
 	}
 	if cfg.BrokerRatePerMin < 0 || cfg.BrokerMaxArgBytes < 0 || cfg.BrokerMaxResultBytes < 0 || cfg.BrokerBudgetPerDay < 0 {
 		errs = append(errs, "PAM_BROKER_RATE_PER_MIN, PAM_BROKER_MAX_ARG_BYTES, PAM_BROKER_MAX_RESULT_BYTES and PAM_BROKER_BUDGET_PER_DAY must be >= 0")

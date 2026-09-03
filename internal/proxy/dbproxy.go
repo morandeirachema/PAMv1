@@ -443,6 +443,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 	if d.sessions != nil {
 		sid = d.sessions.Register(session.Info{
 			Actor: actor, Target: target.Name, Protocol: "postgres", Remote: remote, Started: time.Now(),
+			Deadline: res.bounds.deadline, DeadlineReason: res.bounds.reason,
 		}, func() { conn.Close(); up.conn.Close() })
 		defer d.sessions.Remove(sid)
 		d.live.Publish(sid, watermarkBanner(actor, target.Name))
@@ -549,6 +550,7 @@ func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgpr
 	cl := pgSQLClient{send: sendClient}
 	var wg sync.WaitGroup
 	wg.Add(2)
+	touch := d.sessions.Activity(sid)
 	go func() { // client → upstream
 		defer wg.Done()
 		defer once.Do(stop)
@@ -558,6 +560,7 @@ func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgpr
 			if err != nil {
 				return
 			}
+			touch() // any client message is operator activity (Phase 240 idle timeout)
 			switch m := msg.(type) {
 			case *pgproto3.Query:
 				if sqlBlockedStatement(ctx, &d.listener, &d.pol, cl, actor, target, m.String, false) {

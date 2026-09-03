@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -153,6 +154,10 @@ type safeMemberIn struct {
 	SubjectType string `json:"subject_type"`
 	Subject     string `json:"subject"`
 	CanManage   bool   `json:"can_manage"`
+	// ExpiresAt and TimeFrame bound the membership in time (Phase 240), as
+	// on a target grant.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	TimeFrame string     `json:"time_frame,omitempty"`
 }
 
 // addSafeMember adds a member to a safe. The route is open to inventory readers
@@ -185,13 +190,17 @@ func (s *Server) addSafeMember(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	frame, ok := validGrantLifetime(w, in.ExpiresAt, in.TimeFrame)
+	if !ok {
+		return
+	}
 	// The creator is recorded for the certification four-eyes check (Phase 46).
-	m := store.SafeMember{SafeID: id, SubjectType: in.SubjectType, Subject: in.Subject, CanManage: in.CanManage, CreatedBy: actorFrom(r.Context())}
+	m := store.SafeMember{SafeID: id, SubjectType: in.SubjectType, Subject: in.Subject, CanManage: in.CanManage, CreatedBy: actorFrom(r.Context()), ExpiresAt: in.ExpiresAt, TimeFrame: frame}
 	if err := s.store.AddSafeMember(r.Context(), &m); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "safe.member.add", fmt.Sprintf("safe:%d %s:%s manage:%t", id, in.SubjectType, in.Subject, in.CanManage))
+	s.audit(r.Context(), "safe.member.add", fmt.Sprintf("safe:%d %s:%s manage:%t", id, in.SubjectType, in.Subject, in.CanManage)+lifetimeDetail(in.ExpiresAt, frame))
 	writeJSON(w, http.StatusCreated, m)
 }
 

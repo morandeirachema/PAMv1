@@ -904,6 +904,18 @@ func run() error {
 
 	sessions := session.NewRegistry()
 	sessions.SetLimits(cfg.MaxSessionsPerUser, cfg.MaxSessionsTotal)
+	// Session lifetime (Phase 240): the deployment-wide maximum duration and
+	// idle timeout, plus every per-session deadline a grant's expiry or
+	// time-frame edge stamps at admission. Replica-local by construction —
+	// each replica ends only the sessions it hosts — so no bus is involved.
+	sessions.StartLifetimeMonitor(ctx, session.LifetimeConfig{
+		MaxDuration: cfg.SessionMaxDuration, IdleTimeout: cfg.SessionIdleTimeout,
+		Audit: func(actx context.Context, action, detail string) {
+			if aerr := st.AppendAudit(actx, &store.AuditEvent{Actor: "system-lifetime", Action: action, Detail: detail, TS: time.Now().UTC()}); aerr != nil {
+				log.Error("lifetime audit append failed", "action", action, "err", aerr)
+			}
+		},
+	})
 	maxRecBytes := int64(cfg.MaxRecordingMB) * 1024 * 1024
 	liveHub := session.NewHub()
 	// Removing a session from the registry ends its live watch streams, so a
@@ -1402,6 +1414,9 @@ func run() error {
 	// scheduler above, its own worker: unconditional, no interval to
 	// configure, does nothing until a request is filed with recur_days set.
 	go handler.RunAccessRequestScheduler(ctx)
+	// Grant expiry (Phase 240): expired target grants and safe memberships are
+	// deleted and audited; same unconditional shape as the two above.
+	go handler.RunGrantExpirySweeper(ctx)
 	// Runtime secret refresh (Phase 78, rebuilt in Phase 80). Opt-in, and NOT
 	// leader-locked: every replica holds its own copy of these comparison values,
 	// so every replica has to re-read them itself — a leader-only refresh would

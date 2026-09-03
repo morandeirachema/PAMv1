@@ -357,11 +357,15 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	defer s.audit(ctx, proto.name+".end", "target:"+target.Name)
 	s.log.Info("viewer session", "protocol", proto.name, "actor", principal.Name, "target", target.Name)
 
+	var touch = func() {}
 	if s.sessions != nil {
+		deadline, why := s.grantDeadline(ctx, target)
 		sid := s.sessions.Register(session.Info{
 			Actor: principal.Name, Target: target.Name, Protocol: proto.name, Remote: r.RemoteAddr, Started: time.Now(),
+			Deadline: deadline, DeadlineReason: why,
 		}, func() { cancel(); gconn.Close() })
 		defer s.sessions.Remove(sid)
+		touch = s.sessions.Activity(sid)
 	}
 
 	// guacamole-common-js's tunnel needs an internal UUID instruction to consider
@@ -384,7 +388,7 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	// completed as the session tears down is still recorded.
 	clip := guacd.NewClipWatcher(clipAudit)
 	auditCtx := context.WithoutCancel(ctx)
-	bridgeGuacd(ctx, ws, gconn, clip, func(t guacd.ClipTransfer) {
+	bridgeGuacd(ctx, ws, gconn, clip, touch, func(t guacd.ClipTransfer) {
 		s.audit(auditCtx, proto.name+".clipboard", "target:"+target.Name+" "+t.Detail())
 	})
 }
@@ -417,7 +421,7 @@ func guacamolePrelude(uuid, connID string) [][]byte {
 // observes clipboard transfers in both directions (Phase 50) — observation
 // only: every frame is forwarded byte-for-byte regardless, because dropping one
 // would corrupt the display, and blocking the clipboard is Phase 33's gate.
-func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, clip *guacd.ClipWatcher, onClip func(guacd.ClipTransfer)) {
+func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, clip *guacd.ClipWatcher, touch func(), onClip func(guacd.ClipTransfer)) {
 	done := make(chan struct{}, 2)
 	note := func(direction string, frame []byte) {
 		if onClip == nil {
@@ -458,6 +462,7 @@ func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, cli
 			if _, werr := gconn.Write(data); werr != nil {
 				break
 			}
+			touch()          // keyboard/mouse from the browser is operator activity (Phase 240)
 			note("in", data) // pasted INTO the target by the operator
 		}
 		done <- struct{}{}
