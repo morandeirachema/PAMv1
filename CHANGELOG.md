@@ -44,7 +44,7 @@ never) and nothing is locked until an administrator says so.
   options 6=Lock, 7=Unlock, 8=Rotate token.
 
 Helm chart `0.57.0` → `0.58.0`, a minor alongside an app minor. Image digest
-recorded once the publish workflow has run.
+`sha256:e7f1a5ff…` (the full value is in the README and on the release page).
 
 ## [0.66.0] — 2026-09-03
 

@@ -2431,9 +2431,21 @@ actions moved.
 - [x] **v0.67.0** through the test-gated pipeline. `.github/` untouched
   since v0.58.1 and nothing the workflow *reads* has changed either, so no
   rehearsal. Published 2026-09-03 as `ghcr.io/morandeirachema/pamv1:0.67.0`
-  (also `latest`), digest recorded once the publish workflow has run,
-  signed and attested, with the `pam-agent` binaries, the SPDX SBOM and
-  `SHA256SUMS` attached
+  (also `latest`), digest
+  `sha256:e7f1a5ffd28e5a4c8b0f9e2fb296b8e0b3356210a3f61fc49b15ca572e0a81bb`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
+  digest), signed and attested — every publishing step's own conclusion
+  `success`, and the README's `cosign verify` run against it — with the
+  `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS` attached
+- [x] **One re-run, recorded.** The tag's first workflow run failed in its
+  *test* job on `TestSFTPCaptureRefusesReusedRequestID` ("an OPEN reusing
+  an in-flight request id must not yield a handle") — a flake distinct
+  from §3d's `TestDBProxyZSPProvisionsAndTearsDownRole`, on code this
+  release does not touch, and the same commit's CI on `main` had passed
+  minutes earlier. The failed job was re-run (`gh run rerun --failed`,
+  same run id 33745942939); the tag was never moved and the publish job
+  ran once. Left open like §3d: named here so the next occurrence is
+  counted, not discovered
 - [x] All pins via the sweep — exactly one release under `deploy/`. Helm
   chart `version` 0.57.0 -> **0.58.0**, a minor alongside an app minor
 - [x] `store.Store` **223 -> 225**; migration high-water **`0053` ->
