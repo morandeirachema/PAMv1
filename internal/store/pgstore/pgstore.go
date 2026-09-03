@@ -1358,9 +1358,9 @@ func nullableTime(t time.Time) *time.Time {
 // says active:false) makes a separate UpdateUserActive call right after.
 func (s *PGStore) CreateUser(ctx context.Context, u *store.User) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO users (username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash)
-		 VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7) RETURNING id, created_at`,
-		u.Username, u.Role, u.IPAllowlist, u.DeviceFingerprint, u.ExternalID, u.SlackUserID, u.TokenHash,
+		`INSERT INTO users (username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, token_expires_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7, $8) RETURNING id, created_at`,
+		u.Username, u.Role, u.IPAllowlist, u.DeviceFingerprint, u.ExternalID, u.SlackUserID, u.TokenHash, u.TokenExpiresAt,
 	).Scan(&u.ID, &u.CreatedAt)
 	if err != nil {
 		if pgCode(err) == pgUniqueViolation {
@@ -1375,7 +1375,7 @@ func (s *PGStore) CreateUser(ctx context.Context, u *store.User) error {
 // ListUsers returns users in the (limit, afterID) window, ordered by ID.
 func (s *PGStore) ListUsers(ctx context.Context, limit int, afterID int64) ([]store.User, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at FROM users WHERE id > $1 ORDER BY id LIMIT $2`,
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at FROM users WHERE id > $1 ORDER BY id LIMIT $2`,
 		afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
@@ -1386,13 +1386,13 @@ func (s *PGStore) ListUsers(ctx context.Context, limit int, afterID int64) ([]st
 // GetUser returns the user with the given ID, or ErrNotFound.
 func (s *PGStore) GetUser(ctx context.Context, id int64) (*store.User, error) {
 	return getOne(ctx, s.pool, scanUser,
-		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at FROM users WHERE id = $1`, id)
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at FROM users WHERE id = $1`, id)
 }
 
 // GetUserByUsername returns the user with the given username, or ErrNotFound.
 func (s *PGStore) GetUserByUsername(ctx context.Context, username string) (*store.User, error) {
 	return getOne(ctx, s.pool, scanUser,
-		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at FROM users WHERE username = $1`, username)
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at FROM users WHERE username = $1`, username)
 }
 
 // GetUserByExternalID returns the user with the given SCIM externalId, or
@@ -1404,12 +1404,30 @@ func (s *PGStore) GetUserByExternalID(ctx context.Context, externalID string) (*
 		return nil, store.ErrNotFound
 	}
 	return getOne(ctx, s.pool, scanUser,
-		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at FROM users WHERE external_id = $1`, externalID)
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at FROM users WHERE external_id = $1`, externalID)
 }
 
 // UpdateUserActive sets a user's SCIM active flag (Phase 149); ErrNotFound if absent.
 func (s *PGStore) UpdateUserActive(ctx context.Context, id int64, active bool) error {
 	return execExpectingRow(ctx, s.pool, `UPDATE users SET active = $1 WHERE id = $2`, active, id)
+}
+
+// SetUserLock places or clears an administrator's lock (Phase 242); until is
+// stored only alongside a non-empty reason.
+func (s *PGStore) SetUserLock(ctx context.Context, id int64, reason string, until *time.Time) error {
+	if reason == "" {
+		until = nil
+	}
+	return execExpectingRow(ctx, s.pool, `UPDATE users SET locked_reason = $1, locked_until = $2 WHERE id = $3`, reason, until, id)
+}
+
+// RotateUserToken replaces a user's token hash and expiry (Phase 242).
+func (s *PGStore) RotateUserToken(ctx context.Context, id int64, tokenHashHex string, expiresAt *time.Time) error {
+	err := execExpectingRow(ctx, s.pool, `UPDATE users SET token_hash = $1, token_expires_at = $2 WHERE id = $3`, tokenHashHex, expiresAt, id)
+	if pgCode(err) == pgUniqueViolation {
+		return store.ErrConflict
+	}
+	return err
 }
 
 // UpdateUserExternalID sets a user's SCIM externalId (Phase 149); ErrNotFound
@@ -1431,7 +1449,7 @@ func (s *PGStore) GetUserBySlackUserID(ctx context.Context, slackUserID string) 
 		return nil, store.ErrNotFound
 	}
 	return getOne(ctx, s.pool, scanUser,
-		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at FROM users WHERE slack_user_id = $1`, slackUserID)
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at FROM users WHERE slack_user_id = $1`, slackUserID)
 }
 
 // UpdateUserSlackUserID sets a user's linked Slack member ID (Phase 236);
@@ -1466,7 +1484,7 @@ func (s *PGStore) UpdateUserDeviceFingerprint(ctx context.Context, id int64, fin
 // GetUserByTokenHash returns the user whose token hash matches, or ErrNotFound.
 func (s *PGStore) GetUserByTokenHash(ctx context.Context, tokenHashHex string) (*store.User, error) {
 	return getOne(ctx, s.pool, scanUser,
-		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at FROM users WHERE token_hash = $1`,
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at FROM users WHERE token_hash = $1`,
 		tokenHashHex)
 }
 
@@ -3046,7 +3064,7 @@ func scanCredentialMeta(row pgx.CollectableRow) (store.Credential, error) {
 // scanUser maps one result row into a store.User.
 func scanUser(row pgx.CollectableRow) (store.User, error) {
 	var u store.User
-	err := row.Scan(&u.ID, &u.Username, &u.Role, &u.IPAllowlist, &u.DeviceFingerprint, &u.ExternalID, &u.SlackUserID, &u.Active, &u.TokenHash, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.Role, &u.IPAllowlist, &u.DeviceFingerprint, &u.ExternalID, &u.SlackUserID, &u.Active, &u.TokenHash, &u.CreatedAt, &u.LockedReason, &u.LockedUntil, &u.TokenExpiresAt)
 	return u, err
 }
 

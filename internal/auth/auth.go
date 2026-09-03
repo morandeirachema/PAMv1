@@ -828,7 +828,9 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (*Principal, error) 
 			// flag nothing reads. Directory/SSO logins are unaffected: they
 			// resolve through GetSessionByTokenHash below, governed by the
 			// directory's own membership, not this local row's Active flag.
-			if !u.Active {
+			// An administrator's lock and the token's own expiry (Phase 242)
+			// are refused here too, the same way, for the same reason.
+			if !u.Active || u.LockedAt(time.Now()) || u.TokenExpiredAt(time.Now()) {
 				return nil, ErrUnauthorized
 			}
 			p, perr := r.principalFor(ctx, u.Username, u.Role, false)
@@ -864,7 +866,10 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (*Principal, error) 
 			// its session's own TTL and POST /api/login-sessions/revoke, as before.
 			switch u, uerr := r.dir.GetUserByUsername(ctx, s.Username); {
 			case uerr == nil:
-				if !u.Active {
+				// A lock (Phase 242) binds the identity however it
+				// authenticated: a session minted before the lock stops
+				// resolving the moment the lock is placed.
+				if !u.Active || u.LockedAt(time.Now()) {
 					return nil, ErrUnauthorized
 				}
 				p.IPAllowlist = u.IPAllowlist

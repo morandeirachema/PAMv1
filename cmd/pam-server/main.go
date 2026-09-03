@@ -1333,6 +1333,7 @@ func run() error {
 		OneTimeAccess:             cfg.OneTimeAccess,
 		AirGap:                    cfg.AirGap,
 		CheckoutTTL:               cfg.CheckoutTTL,
+		UserTokenTTL:              cfg.UserTokenTTL,
 		CheckoutMaxExtend:         cfg.CheckoutMaxExtend,
 		AllowedProtocols:          splitAndTrim(cfg.AllowedProtocols),
 		Directory:                 directory,

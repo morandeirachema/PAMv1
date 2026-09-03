@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–241 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–242 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,60 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 242 — Identity lock and token expiry ✅
+
+Two more rows of the Tier 8 pass, taken together because they are the same
+control seen from two sides: an identity's access must be **stoppable now**
+(a lock) and must **stop by itself** (a token that expires). Teleport locks,
+CyberArk and WALLIX "disable user", and short-lived credentials everywhere;
+PAMv1 had SCIM deactivation only, and tokens that lived forever.
+
+- [x] **Administrator's lock.** `POST /api/users/{id}/lock` `{reason,
+  until?}` (reason mandatory, `until` RFC 3339 in the future, 422
+  otherwise) and `DELETE /api/users/{id}/lock`; `users.locked_reason` /
+  `locked_until` (`0054`). A lock binds the identity **however it
+  authenticated**: `auth.Resolver.Resolve` refuses the user's token *and*
+  any login session minted for the row; `issueSessionTTL` refuses to mint a
+  new session (an SSO login for a locked local row is audited
+  `login.failed reason:locked` and the portal redirect carries
+  `pam_error=locked`); a Slack click as a locked user is refused
+  (`access.decision_denied reason:locked`); and placing the lock runs
+  `cutUserAccess` — every login session revoked, every live proxied session
+  killed — the path a role change and SCIM deactivation already take.
+  `until` lifts the lock by itself (`User.LockedAt(now)`; nothing sweeps).
+  A caller cannot lock their own identity (403), so the last administrator
+  cannot strand the deployment. Audited `user.lock` (reason, until) and
+  `user.unlock`; console *Work with Users* gains a *Lock* column and
+  options **6=Lock** (a reason + until screen) / **7=Unlock**
+- [x] **Expiring tokens, and rotation without re-minting.**
+  `users.token_expires_at` (`0054`); `PAM_USER_TOKEN_TTL_HOURS` is the
+  deployment default at mint (0 = never, the pre-242 behaviour and every
+  existing token), and `POST /api/users` takes `token_ttl_hours` for one
+  user. The resolver refuses an expired token exactly like an unknown one.
+  `POST /api/users/{id}/token` mints a fresh token, returned once, and
+  invalidates the old one at that instant — the only way to renew without
+  delete + re-mint, which would lose the row's grants, links and history —
+  cutting everything the old token authenticated (`session.revoked
+  reason:token-rotated`), because a rotation is what an operator reaches
+  for when the old token may be in the wrong hands. Audited
+  `user.token_rotate` (with the expiry). `store.UserStore.{SetUserLock,
+  RotateUserToken}` (surface **223 → 225**); console option **8=Rotate
+  token** shows the new token once, and a *Token* column shows each
+  user's expiry (red once past)
+- [x] **Proven, not asserted**: `storetest` (lock round-trip with and
+  without `until`, clearing drops `until`, rotation moves the hash and
+  expiry, a rotation onto another user's hash conflicts);
+  `TestResolveRefusesLockedAndExpired` (token and session both refused
+  while locked, an expired `until` lifts, an expired token refused while
+  the row's login session is not); `TestLockUser` (422 paths, refusal at
+  once, audit, unlock restores, a timed lock lifts by itself, self-lock
+  403); `TestRotateUserTokenAndExpiry` (default TTL at mint, per-request
+  TTL, old token dead and new token live from the same instant, negative
+  TTL 422, an expired token refused and rotatable)
+- [x] Schema (`0054`), store surface (225), routes **195 → 198**, one env
+  var, three audit actions and three new `reason:` values; no new package.
+  No release until Phase 243
 
 ## Phase 241 — v0.66.0 ✅
 

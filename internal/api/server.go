@@ -292,6 +292,11 @@ type Options struct {
 	OneTimeAccess bool
 	// CheckoutTTL is the lifetime of a credential checkout lease (default 30m).
 	CheckoutTTL time.Duration
+	// UserTokenTTL is the default lifetime of a per-user access token minted by
+	// POST /api/users or POST /api/users/{id}/token (Phase 242; 0 = the token
+	// never expires, PAMv1's behaviour before Phase 242). A request may name
+	// its own token_ttl_hours instead.
+	UserTokenTTL time.Duration
 	// AirGap disables all outbound network calls (alert webhooks) for isolated
 	// OT/air-gapped deployments.
 	AirGap bool
@@ -504,6 +509,7 @@ type Server struct {
 	approvalInviteTTL  time.Duration
 	slackWebhookURL    string
 	slackSigningSecret string
+	userTokenTTL       time.Duration
 	shareSMTPAddr      string
 	shareSMTPFrom      string
 	shareSMTPUser      string
@@ -805,6 +811,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		approvalInviteTTL:    opts.ApprovalInviteTTL,
 		slackWebhookURL:      opts.SlackWebhookURL,
 		slackSigningSecret:   opts.SlackSigningSecret,
+		userTokenTTL:         opts.UserTokenTTL,
 		shareGuestTTL:        opts.ShareGuestSessionTTL,
 		shareSMTPAddr:        opts.ShareSMTPAddr,
 		shareSMTPFrom:        opts.ShareSMTPFrom,
@@ -1243,6 +1250,10 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/users", s.authz(auth.CapManageUsers, pagedList(s, s.store.ListUsers)))
 	s.mux.Handle("PUT /api/users/{id}", s.authz(auth.CapManageUsers, s.updateUser))
 	s.mux.Handle("DELETE /api/users/{id}", s.authz(auth.CapManageUsers, s.deleteUser))
+	// Identity lock and token rotation (Phase 242).
+	s.mux.Handle("POST /api/users/{id}/lock", s.authz(auth.CapManageUsers, s.lockUser))
+	s.mux.Handle("DELETE /api/users/{id}/lock", s.authz(auth.CapManageUsers, s.unlockUser))
+	s.mux.Handle("POST /api/users/{id}/token", s.authz(auth.CapManageUsers, s.rotateUserToken))
 	s.mux.Handle("GET /api/login-sessions", s.authz(auth.CapManageUsers, s.listLoginSessions))
 	s.mux.Handle("POST /api/login-sessions/revoke", s.authz(auth.CapManageUsers, s.revokeLoginSessions))
 	s.mux.Handle("POST /api/identity/reconcile", s.authz(auth.CapManageUsers, s.reconcileIdentities))
