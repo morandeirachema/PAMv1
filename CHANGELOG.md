@@ -53,7 +53,7 @@ notice.
   that buttons posted by 0.64.0 stopped verifying at that upgrade.
 
 Helm chart `0.56.0` → `0.56.1`, a patch alongside an app patch. Image digest
-recorded once the publish workflow has run.
+`sha256:4274ec4e…` (the full value is in the README and on the release page).
 
 ## [0.65.0] — 2026-09-02
 
