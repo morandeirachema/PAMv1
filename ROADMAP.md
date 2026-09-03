@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–242 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–243 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2422,6 +2422,30 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 243 — v0.67.0 ✅
+
+Releases **242** — identity lock and token expiry. A **minor**: the schema
+(`0054`), three routes, one env var, the store surface and three audit
+actions moved.
+
+- [x] **v0.67.0** through the test-gated pipeline. `.github/` untouched
+  since v0.58.1 and nothing the workflow *reads* has changed either, so no
+  rehearsal. Published 2026-09-03 as `ghcr.io/morandeirachema/pamv1:0.67.0`
+  (also `latest`), digest recorded once the publish workflow has run,
+  signed and attested, with the `pam-agent` binaries, the SPDX SBOM and
+  `SHA256SUMS` attached
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm
+  chart `version` 0.57.0 -> **0.58.0**, a minor alongside an app minor
+- [x] `store.Store` **223 -> 225**; migration high-water **`0053` ->
+  `0054`**; routes **195 -> 198**
+- [x] Both READMEs restated; every `Reflects:` header, `docs/README.md`,
+  `NIS2-COMPLIANCE.md`'s evidence row and this banner
+- [x] `CHANGELOG.md` leads with **what an operator can now do** — lock an
+  identity, rotate a token, let tokens expire — and states what has not
+  changed: no existing token expires, nothing is locked
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
+
 ## Phase 242 — Identity lock and token expiry ✅
 
 Two more rows of the Tier 8 pass, taken together because they are the same
@@ -2474,7 +2498,7 @@ PAMv1 had SCIM deactivation only, and tokens that lived forever.
   TTL 422, an expired token refused and rotatable)
 - [x] Schema (`0054`), store surface (225), routes **195 → 198**, one env
   var, three audit actions and three new `reason:` values; no new package.
-  No release until Phase 243
+  **Released by Phase 243 as v0.67.0** — a minor, since the schema moved
 
 ## Phase 241 — v0.66.0 ✅
 
