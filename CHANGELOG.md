@@ -9,6 +9,43 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.67.0] — 2026-09-03
+
+A minor that ships **Phase 242** — identity lock and token expiry, two more
+rows of the CyberArk / WALLIX / Teleport research pass. **Schema, three
+routes, one env var, the store surface and three audit actions moved.**
+
+**What an operator can now do.**
+
+- **Lock an identity now** — `POST /api/users/{id}/lock` with a reason and
+  an optional `until`: the user's token and every login session stop
+  resolving at once, no new login is issued (SSO included), a Slack click
+  as that user is refused, and live sessions are cut. `DELETE .../lock`
+  lifts it; so does `until`, by itself. You cannot lock the identity you
+  are calling with.
+- **Rotate a token in place** — `POST /api/users/{id}/token` returns a
+  fresh token once and kills the old one at that instant, cutting what it
+  authenticated; the user's role, grants, Slack link and history survive.
+- **Let tokens expire** — `PAM_USER_TOKEN_TTL_HOURS` as the default at
+  mint, or `token_ttl_hours` per user; an expired token is refused like an
+  unknown one.
+
+**What has not changed.** No existing token expires (the default is 0,
+never) and nothing is locked until an administrator says so.
+
+### Added
+
+- `POST`/`DELETE /api/users/{id}/lock`, `POST /api/users/{id}/token`;
+  `token_ttl_hours` on `POST /api/users`; `locked_reason`, `locked_until`
+  and `token_expires_at` on a user; `PAM_USER_TOKEN_TTL_HOURS`; migration
+  `0054`; audit actions `user.lock`, `user.unlock`, `user.token_rotate`,
+  with `reason:locked` / `token-rotated` on the session-revocation cascade
+  and `login.failed reason:locked`; console *Lock* / *Token* columns and
+  options 6=Lock, 7=Unlock, 8=Rotate token.
+
+Helm chart `0.57.0` → `0.58.0`, a minor alongside an app minor. Image digest
+recorded once the publish workflow has run.
+
 ## [0.66.0] — 2026-09-03
 
 A minor that ships **Phase 240** — session lifetime, grant expiry and time
@@ -3034,6 +3071,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.67.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.67.0
 [0.66.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.66.0
 [0.65.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.65.1
 [0.65.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.65.0
