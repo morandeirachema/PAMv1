@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–238 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–239 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2422,6 +2422,34 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 239 — v0.65.1 ✅
+
+Releases **238** — the review of 236/237 and what it found. A **patch**: no
+schema, route, env var, store surface or audit action moved; what moved is
+behaviour that was wrong (the Slack ack, the actor on a Slack decision's
+audit rows, the user-keyed gates on a click, a half-applied user update)
+and the record of v0.65.0's own digest.
+
+- [x] **v0.65.1** through the test-gated pipeline. `.github/` untouched
+  since v0.58.1 and nothing the workflow *reads* has changed either, so no
+  rehearsal. Published 2026-09-03 as `ghcr.io/morandeirachema/pamv1:0.65.1`
+  (also `latest`), digest recorded once the publish workflow has run,
+  signed and attested, with the `pam-agent` binaries, the SPDX SBOM and
+  `SHA256SUMS` attached
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm
+  chart `version` 0.56.0 -> **0.56.1**, a patch alongside an app patch
+- [x] `store.Store` unchanged at **222**; migration high-water unchanged at
+  `0052`; routes unchanged at **195**
+- [x] Both READMEs restated; every `Reflects:` header, `docs/README.md`,
+  `NIS2-COMPLIANCE.md`'s evidence row and this banner
+- [x] `CHANGELOG.md` leads with **what a Slack-approving deployment gets**
+  — an ack Slack actually receives in time, decisions attributed to the
+  approver, posture/on-call binding the click — and states the one thing
+  an operator may need to know: an approver protected only by an IP
+  allowlist or an enrolled device should not be linked to Slack
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
+
 ## Phase 238 — The review of 236/237, and what it found ✅
 
 A `/security-review` and `/code-review xhigh` pass over Phases 236–237
@@ -2431,7 +2459,8 @@ took. It found that the review phase's own "ack" fix had not fixed the ack,
 that the Slack path audited its decisions as nobody and skipped the
 user-keyed gates every API call passes, one half-applied update, three
 smaller correctness items, and one release step that was never done. The
-identity mapping itself holds. All closed here; no release until Phase 239.
+identity mapping itself holds. All closed here; **released by Phase 239 as
+v0.65.1** — a patch, since only behaviour that was wrong moved.
 
 - [x] **The ack was still not an ack (Medium).** Phase 236 flushed an empty
   200 before the `response_url` follow-up — but without a `Content-Length`,
