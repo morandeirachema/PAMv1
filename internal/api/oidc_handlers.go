@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/subtle"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -114,6 +115,10 @@ func (s *Server) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	principal := &auth.Principal{Name: name, Role: role, Roles: roles}
 	token, _, err := s.issueSession(r.Context(), principal, "")
 	if err != nil {
+		if errors.Is(err, errIdentityLocked) {
+			s.redirectPortal(w, r, "pam_error=locked")
+			return
+		}
 		s.redirectPortal(w, r, "pam_error=session_failed")
 		return
 	}

@@ -327,7 +327,7 @@ Sentinel errors `ErrNotFound` / `ErrConflict` map to HTTP/SSH errors upstream.
   `migrations/*.sql` files, each run once inside its own transaction, tracked in a
   `schema_migrations` table, under a session-level `pg_advisory_lock` so concurrent
   replicas booting together don't race. `0001_init.sql` is the idempotent baseline;
-  every later change is a new numbered file (through `0053_grant_lifetime.sql` at time of writing).
+  every later change is a new numbered file (through `0054_identity_lock_token_expiry.sql` at time of writing).
 
   Two implementation details are load-bearing:
   - **Error mapping is the contract.** A pgx `PgError` SQLSTATE is translated to
@@ -1202,6 +1202,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-09-03 | Phase 242 (identity lock and token expiry): `store.User.{LockedReason,LockedUntil,TokenExpiresAt}` with `LockedAt`/`TokenExpiredAt`, `UserStore.{SetUserLock,RotateUserToken}`; `auth.Resolver.Resolve` checks both on the token path and the lock on the session path; `api.errIdentityLocked` (issued by `issueSessionTTL`, mapped by `storeError`), `lockUser`/`unlockUser`/`rotateUserToken`, `Server.tokenExpiry`, `Options.UserTokenTTL`. §3.3 migration mark `0054`. |
 | 2026-09-03 | Phase 240 (session lifetime, grant expiry and time frames): new leaf package `internal/timeframe` (parse + `Contains`/`End`, no clock of its own — every function takes the instant); `store.GrantLive`/`GrantBound`/`LiveTargetGrants`/`LiveSubjectGrants` next to the grant types, `GrantStore.SweepExpiredGrants`; `auth.CanConnectTargetAt` (the 5-arg `CanConnectTarget` now wraps it with `time.Now()`) and `auth.GrantDeadline`; `session.Registry.Activity`/`StartLifetimeMonitor`/`SweepLifetimes` and `Info.Deadline`; `proxy.sessionBounds` on `admitResult` and `activityReader` on the SSH input leg; `api.RunGrantExpirySweeper`/`SweepExpiredGrants`, `validGrantLifetime`, `lifetimeDetail`, `Server.grantDeadline`. §3.3 migration mark `0053`. |
 | 2026-09-03 | Phase 238 (the review of 236/237): `internal/api/slack_handlers.go` — `slackInteractivity` is now signature check → `slackDecide` (identity → principal installed with `withPrincipal`/`setActor` → `sourceGates` with the bare principal → decision; store work only) → `Content-Length: 0` ack → `response_url` follow-up on `context.WithoutCancel`; the test helper `followUps` waits for and consumes follow-ups in order, because the ack now completes before the follow-up is posted. No package, interface or migration change. |
 | 2026-09-02 | Phase 236 (the review of 232–235): §3.3 — `store.User.SlackUserID`, `UserStore.{GetUserBySlackUserID,UpdateUserSlackUserID}`, migration `0052` (now the latest); `store.Store` 220 → 222. `internal/slack` gains `EscapeText` (mrkdwn's three control characters, not `html.EscapeString`), `EphemeralMessage`, and a domain prefix under the token MAC. `internal/api/slack_handlers.go`'s `slackInteractivity` resolves the member id to a PAMv1 user and decides as it, acks (flushed) before any `response_url` call, and captures `decideAccessRequest`'s response in `slackDecisionRecorder`. `golang.org/x/crypto` → v0.56.0. |

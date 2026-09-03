@@ -2896,11 +2896,11 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         back = "main";
         term.innerHTML = `${head("PAMWRKUSR", "Work with Users & Profiles")}
 Type options, press Enter.
-  <span class="cyan">2=Change role   4=Delete${can("read_audit") ? "   5=What can they reach" : ""}</span>
+  <span class="cyan">2=Change role   4=Delete${can("read_audit") ? "   5=What can they reach" : ""}   6=Lock   7=Unlock   8=Rotate token</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Username</th><th>Role / profile</th><th>IP</th><th>Created</th></tr>
-${users.map((u) => `<tr><td>${opt(u.id)}</td><td>${esc(u.id)}</td><td>${cell(u.username, 18)}</td><td>${cell(u.role, 10)}</td><td class="${u.ip_allowlist ? "amber" : ""}">${pad(u.ip_allowlist ? "restricted" : "-", 10)}</td><td class="cyan">${fmtTime(u.created_at)}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Username</th><th>Role / profile</th><th>IP</th><th>Lock</th><th>Token</th><th>Created</th></tr>
+${users.map((u) => `<tr><td>${opt(u.id)}</td><td>${esc(u.id)}</td><td>${cell(u.username, 18)}</td><td>${cell(u.role, 10)}</td><td class="${u.ip_allowlist ? "amber" : ""}">${pad(u.ip_allowlist ? "restricted" : "-", 10)}</td><td class="${u.locked_reason ? "red" : ""}">${cell(u.locked_reason ? (u.locked_until ? "until " + fmtTs(u.locked_until) : "locked") : "-", 17)}</td><td class="${u.token_expires_at && new Date(u.token_expires_at) < new Date() ? "red" : "cyan"}">${cell(u.token_expires_at ? "exp " + fmtTs(u.token_expires_at) : "no expiry", 17)}</td><td class="cyan">${fmtTime(u.created_at)}</td></tr>`).join("")}
 </table>${users.length ? "" : `<div class="cyan indent">(No users. Press F6 to mint a token.)</div>`}
 <input type="submit" hidden></form>
 <div class="cyan">Built-in roles: admin, user, auditor, approver. Custom profiles: menu 12.</div>
@@ -2915,10 +2915,46 @@ ${fkeys("F3=Exit   F5=Refresh   F6=Add user   F9=Reconcile directory   F12=Cance
               // same way 2=Change does: the review is a screen, not a verb.
               else if (o === "5") { return openReach(u.username, "user"); }
               else if (o === "4") { await api("DELETE", `/api/users/${u.id}`); say(`USER ${String(u.username).toUpperCase()} DELETED.`); }
+              else if (o === "6") { editUser = u; return go("userlock"); }
+              else if (o === "7") { await api("DELETE", `/api/users/${u.id}/lock`); say(`USER ${String(u.username).toUpperCase()} UNLOCKED.`); }
+              else if (o === "8") {
+                if (!confirm(`Rotate ${u.username}'s token? The current token stops working now and every session is cut.`)) continue;
+                const r = await api("POST", `/api/users/${u.id}/token`, {});
+                await openUsers();
+                term.innerHTML = `${head("PAMROTTOK", "Token Rotated")}
+New token for <span class="white">${esc(u.username)}</span> — shown once, store it now:
+
+  <span class="white">${esc(r.token)}</span>
+${r.token_expires_at ? `  Expires: <span class="cyan">${esc(fmtTs(r.token_expires_at))}</span>` : "  <span class=\"cyan\">This token has no expiry.</span>"}
+${fkeys("F3=Exit   F12=Cancel")}`;
+                return;
+              }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
             await openUsers();
           } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      userlock() {
+        back = "users";
+        const u = editUser || {};
+        term.innerHTML = `${head("PAMLCKUSR", "Lock User")}
+Lock <span class="white">${esc(u.username)}</span>: the token stops resolving, every session is cut, and no new login is issued until unlocked.
+
+<form id="f-lock" class="indent">
+<label>Reason  . . . . . . :  <input name="reason" size="40" required autofocus placeholder="e.g. suspected credential theft"></label>
+<label>Until . . . . . . . :  <input name="until" type="datetime-local" size="20">   <span class="cyan">blank = until an administrator unlocks</span></label>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-lock").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          const body = { reason: f.reason };
+          if (f.until) body.until = new Date(f.until).toISOString();
+          try { await api("POST", `/api/users/${u.id}/lock`, body); say(`USER ${String(u.username).toUpperCase()} LOCKED.`); await openUsers(); }
+          catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
       },
 

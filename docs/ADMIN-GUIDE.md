@@ -318,6 +318,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_REQUIRE_REASON` | | `false` | Reject an access request that carries no reason. |
 | `PAM_ACCESS_ONE_TIME` | | `false` | Make **every** access request single-use (Phase 26): the first privileged use its approval admits consumes it. Requests can also opt in individually (`one_time`). |
 | `PAM_CHECKOUT_TTL_MIN` | | `30` | Credential checkout lease lifetime (minutes). |
+| `PAM_USER_TOKEN_TTL_HOURS` | | `0` (never) | Default lifetime of a per-user access token minted by `POST /api/users` or rotated by `POST /api/users/{id}/token` (Phase 242); `token_ttl_hours` in the request overrides it. Existing tokens are untouched. |
 | `PAM_VENDOR_ATTEST_URL` | | (off) | Employment-attestation webhook consulted when a vendor contract grant is approved (Phase 29): PAMv1 `POST`s `{"vendor":…,"org":…}` and the vendor-management system answers `2xx` for a currently-employed technician, so access is refused the moment their own employer offboards them. See §7. |
 | `PAM_POSTURE_ATTEST_URL` | | (off) | Live device-posture webhook, checked on every connect and every authenticated call, not just once at approval (Phase 133). See §7. |
 | `PAM_ONCALL_ATTEST_URL` | | (off) | On-call scheduler webhook, checked on every connect and every authenticated call, the same shape as `PAM_POSTURE_ATTEST_URL` above (Phase 232). Human operators only. See §7. |
@@ -1332,6 +1333,36 @@ Deleting a *role* grant only affects new connections. In a multi-replica
 deployment the kill is broadcast over the store's kill bus (Phase 34), so it cuts
 the session on whichever replica hosts it (see the HA notes in
 [SECURITY-GAPS.md](SECURITY-GAPS.md)).
+
+### Locking an identity and rotating its token (Phase 242)
+
+An administrator can stop an identity **now**, and make its token stop **by
+itself**:
+
+```bash
+# lock: the token and every login session stop resolving at once, live
+# sessions are cut, no new login is issued (SSO included), Slack clicks are
+# refused. reason is mandatory; until (RFC 3339) lifts the lock by itself.
+curl -X POST -H "X-API-Key: $PAM_API_KEY" localhost:8080/api/users/7/lock \
+  -d '{"reason":"suspected credential theft","until":"2026-09-05T09:00:00Z"}'
+curl -X DELETE -H "X-API-Key: $PAM_API_KEY" localhost:8080/api/users/7/lock   # unlock
+
+# rotate: a fresh token, shown once; the old one dies at that instant and
+# everything it authenticated is cut. token_ttl_hours is optional.
+curl -X POST -H "X-API-Key: $PAM_API_KEY" localhost:8080/api/users/7/token \
+  -d '{"token_ttl_hours":168}'
+```
+
+`POST /api/users` also takes `token_ttl_hours`; without it the deployment's
+`PAM_USER_TOKEN_TTL_HOURS` applies (0 = never, which is what every token
+minted before Phase 242 has). An expired token is refused like an unknown
+one, and the user row — role, grants, Slack link, history — is untouched:
+rotate it rather than delete and re-create. You cannot lock the identity you
+are calling with. Audited `user.lock` / `user.unlock` / `user.token_rotate`,
+with the `session.revoked` cascade (`reason:locked` / `token-rotated`); a
+locked identity's login attempt is `login.failed reason:locked`. In the
+console: *Work with Users* → **6=Lock**, **7=Unlock**, **8=Rotate token**,
+with *Lock* and *Token* columns.
 
 ### Roles at a glance
 
@@ -4402,6 +4433,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-03 | **Phase 242 (identity lock and token expiry).** §4 gains `PAM_USER_TOKEN_TTL_HOURS`; new §7 subsection *Locking an identity and rotating its token* — the lock and unlock calls, what a lock stops, `until`, rotation and per-user token TTLs, the audit actions, the console options. |
 | 2026-09-03 | **Phase 240 (session lifetime, grant expiry and time frames).** §4 gains `PAM_SESSION_MAX_MIN` / `PAM_SESSION_IDLE_MIN`; new §7 subsection *Grant lifetime: expiry and time frames* — the `expires_at` / `time_frame` fields on grants and safe memberships, the frame grammar, what a bounded grant does at connect time, the per-session deadline and the expiry sweep. |
 | 2026-09-03 | **Phase 238 (the review of 236/237).** Slack chat-ops section: a Slack decision's audit rows are attributed to the linked PAMv1 user (they carried actor `unknown`), and the Slack ack is complete on the wire before the follow-up (Slack's 3-second budget is now actually met); the section now states which gates a click passes (posture, on-call) and which cannot apply (IP allowlist, enrolled device), and that buttons posted before 0.65.0 must be re-notified. |
 | 2026-09-02 | **Phase 236 (the review of 232–235).** Slack chat-ops section gains the **identity mapping** step: a button click is only honoured from a Slack member whose id is linked to an active PAMv1 user holding `CapApprove` (`slack_user_id` on `POST`/`PUT /api/users`, console Add/Change User), and the decision is made as that PAMv1 identity — so four-eyes and two-person floors hold from Slack exactly as they do from the API. Refusals now reach the clicker as an ephemeral Slack message. |

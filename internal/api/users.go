@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -29,6 +31,25 @@ type userIn struct {
 	// an access request as this user. Empty (the default) means the user
 	// cannot decide from Slack.
 	SlackUserID string `json:"slack_user_id,omitempty"`
+	// TokenTTLHours, when > 0, bounds the minted token's life (Phase 242);
+	// 0 (the default) uses the deployment's PAM_USER_TOKEN_TTL_HOURS, which
+	// itself defaults to "never expires".
+	TokenTTLHours int `json:"token_ttl_hours,omitempty"`
+}
+
+// tokenExpiry resolves a minted token's expiry from the request's own TTL,
+// else the deployment default, else never (nil). A negative request TTL is
+// refused by the caller before this is reached.
+func (s *Server) tokenExpiry(ttlHours int) *time.Time {
+	ttl := s.userTokenTTL
+	if ttlHours > 0 {
+		ttl = time.Duration(ttlHours) * time.Hour
+	}
+	if ttl <= 0 {
+		return nil
+	}
+	t := time.Now().Add(ttl).UTC()
+	return &t
 }
 
 // maxSlackUserIDLen bounds a linked Slack member ID. Real ids are "U" or
@@ -93,12 +114,16 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	if !validSlackUserID(w, in.SlackUserID) {
 		return
 	}
+	if in.TokenTTLHours < 0 {
+		writeError(w, http.StatusUnprocessableEntity, "token_ttl_hours must be >= 0")
+		return
+	}
 	token, err := generateToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token generation failed")
 		return
 	}
-	u := store.User{Username: in.Username, Role: in.Role, IPAllowlist: in.IPAllowlist, DeviceFingerprint: in.DeviceFingerprint, SlackUserID: in.SlackUserID, TokenHash: hashHex(token)}
+	u := store.User{Username: in.Username, Role: in.Role, IPAllowlist: in.IPAllowlist, DeviceFingerprint: in.DeviceFingerprint, SlackUserID: in.SlackUserID, TokenHash: hashHex(token), TokenExpiresAt: s.tokenExpiry(in.TokenTTLHours)}
 	if err := s.store.CreateUser(r.Context(), &u); err != nil {
 		storeError(w, err)
 		return
@@ -113,6 +138,9 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	if u.SlackUserID != "" {
 		createDetail += " slack_user_id:" + auditField(u.SlackUserID, 64)
 	}
+	if u.TokenExpiresAt != nil {
+		createDetail += " token_expires:" + u.TokenExpiresAt.Format(time.RFC3339)
+	}
 	s.audit(r.Context(), "user.create", createDetail)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":                 u.ID,
@@ -121,7 +149,145 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		"ip_allowlist":       u.IPAllowlist,
 		"device_fingerprint": u.DeviceFingerprint,
 		"slack_user_id":      u.SlackUserID,
+		"token_expires_at":   u.TokenExpiresAt,
 		"token":              token, // shown once; store it now
+	})
+}
+
+// lockUser places an administrator's lock on a user (Phase 242): the
+// identity stops resolving at once — its token, any login session minted for
+// it, a Slack click as it — and its live sessions are cut, exactly as SCIM
+// deactivation cuts them. A reason is mandatory (it is what the audit trail
+// and the console show); until is optional (RFC 3339, in the future) and
+// lifts the lock by itself. A caller cannot lock themselves out: locking the
+// identity making the call is refused, so the last administrator cannot
+// strand the deployment by accident.
+func (s *Server) lockUser(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Reason string     `json:"reason"`
+		Until  *time.Time `json:"until,omitempty"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	in.Reason = strings.TrimSpace(in.Reason)
+	switch {
+	case in.Reason == "":
+		writeError(w, http.StatusUnprocessableEntity, "reason is required")
+		return
+	case len(in.Reason) > 200:
+		writeError(w, http.StatusUnprocessableEntity, "reason is too long")
+		return
+	case in.Until != nil && !in.Until.After(time.Now()):
+		writeError(w, http.StatusUnprocessableEntity, "until must be in the future")
+		return
+	}
+	u, err := s.store.GetUser(r.Context(), id)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	if u.Username == actorFrom(r.Context()) {
+		writeError(w, http.StatusForbidden, "you cannot lock your own identity")
+		return
+	}
+	if err := s.store.SetUserLock(r.Context(), id, in.Reason, in.Until); err != nil {
+		storeError(w, err)
+		return
+	}
+	detail := fmt.Sprintf("%s reason:%s", u.Username, auditField(in.Reason, 200))
+	if in.Until != nil {
+		detail += " until:" + in.Until.UTC().Format(time.RFC3339)
+	}
+	s.audit(r.Context(), "user.lock", detail)
+	// The lock must actually cut access, not just change a flag: every login
+	// session is revoked and every live proxied session is killed, the same
+	// path a role change or SCIM deactivation takes.
+	s.cutUserAccess(r.Context(), u.Username, "locked")
+	u.LockedReason = in.Reason
+	u.LockedUntil = nil
+	if in.Until != nil {
+		t := in.Until.UTC()
+		u.LockedUntil = &t
+	}
+	writeJSON(w, http.StatusOK, u)
+}
+
+// unlockUser clears an administrator's lock (Phase 242). Nothing is
+// re-issued: the user's token resolves again by itself; login sessions cut
+// by the lock stay cut and are re-minted by logging in.
+func (s *Server) unlockUser(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	u, err := s.store.GetUser(r.Context(), id)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	if err := s.store.SetUserLock(r.Context(), id, "", nil); err != nil {
+		storeError(w, err)
+		return
+	}
+	s.audit(r.Context(), "user.unlock", u.Username)
+	u.LockedReason, u.LockedUntil = "", nil
+	writeJSON(w, http.StatusOK, u)
+}
+
+// rotateUserToken mints a fresh access token for a user (Phase 242),
+// returned once, and invalidates the old one at the same instant — the only
+// way to renew an expired or expiring token without delete + re-mint, which
+// would lose the row's grants, links and history. Everything the old token
+// authenticated is cut (login sessions, live proxied sessions), because a
+// rotation is what an operator reaches for when the old token may be in the
+// wrong hands. The expiry follows token_ttl_hours, else the deployment
+// default, else never.
+func (s *Server) rotateUserToken(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		TokenTTLHours int `json:"token_ttl_hours,omitempty"`
+	}
+	if r.ContentLength != 0 && !readJSON(w, r, &in) {
+		return
+	}
+	if in.TokenTTLHours < 0 {
+		writeError(w, http.StatusUnprocessableEntity, "token_ttl_hours must be >= 0")
+		return
+	}
+	u, err := s.store.GetUser(r.Context(), id)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	token, err := generateToken()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "token generation failed")
+		return
+	}
+	exp := s.tokenExpiry(in.TokenTTLHours)
+	if err := s.store.RotateUserToken(r.Context(), id, hashHex(token), exp); err != nil {
+		storeError(w, err)
+		return
+	}
+	detail := u.Username
+	if exp != nil {
+		detail += " token_expires:" + exp.Format(time.RFC3339)
+	}
+	s.audit(r.Context(), "user.token_rotate", detail)
+	s.cutUserAccess(r.Context(), u.Username, "token-rotated")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":               u.ID,
+		"username":         u.Username,
+		"token_expires_at": exp,
+		"token":            token, // shown once; store it now
 	})
 }
 

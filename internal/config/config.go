@@ -331,6 +331,9 @@ type Config struct {
 	DeviceHeader string
 	// CheckoutTTL is the lifetime of a credential checkout lease.
 	CheckoutTTL time.Duration
+	// UserTokenTTL is the default lifetime of a per-user access token (Phase
+	// 242; 0 = never expires, the pre-242 behaviour).
+	UserTokenTTL time.Duration
 	// CheckoutMaxExtend (Phase 120, PAM_CHECKOUT_MAX_EXTEND_MIN, default 240)
 	// is the longest a checkout lease may run in total, measured from
 	// CheckedOutAt — the ceiling POST /api/checkouts/{id}/extend enforces, so
@@ -886,6 +889,7 @@ func Load() (*Config, error) {
 		DeviceHeader:         getenv("PAM_DEVICE_HEADER", ""),
 		AirGap:               boolean("PAM_OT_AIRGAP", false),
 		CheckoutTTL:          time.Duration(integer("PAM_CHECKOUT_TTL_MIN", 30)) * time.Minute,
+		UserTokenTTL:         time.Duration(integer("PAM_USER_TOKEN_TTL_HOURS", 0)) * time.Hour,
 		CheckoutMaxExtend:    time.Duration(integer("PAM_CHECKOUT_MAX_EXTEND_MIN", 240)) * time.Minute,
 		ShareInviteTTL:       time.Duration(integer("PAM_SESSION_SHARE_INVITE_TTL_SEC", 900)) * time.Second,
 		ApprovalInviteTTL:    time.Duration(integer("PAM_APPROVAL_INVITE_TTL_MIN", 1440)) * time.Minute,
@@ -1338,6 +1342,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.MaxSessionsPerUser < 0 || cfg.MaxSessionsTotal < 0 || cfg.MaxRecordingMB < 0 {
 		errs = append(errs, "PAM_MAX_SESSIONS_PER_USER / PAM_MAX_SESSIONS_TOTAL / PAM_MAX_RECORDING_MB must be >= 0 (0 disables)")
+	}
+	if cfg.UserTokenTTL < 0 {
+		errs = append(errs, "PAM_USER_TOKEN_TTL_HOURS must be >= 0 (0 = tokens never expire)")
 	}
 	if cfg.SessionMaxDuration < 0 || cfg.SessionIdleTimeout < 0 {
 		errs = append(errs, "PAM_SESSION_MAX_MIN / PAM_SESSION_IDLE_MIN must be >= 0 (0 disables)")

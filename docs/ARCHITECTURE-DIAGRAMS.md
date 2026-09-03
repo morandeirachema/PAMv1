@@ -530,6 +530,9 @@ erDiagram
     string DeviceFingerprint
     string ExternalID
     string SlackUserID
+    string LockedReason
+    ptr_time_Time LockedUntil
+    ptr_time_Time TokenExpiresAt
     bool Active
     time_Time CreatedAt
   }
@@ -587,7 +590,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 195 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 198 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -718,6 +721,9 @@ The 195 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/users` | CapManageUsers |
 | DELETE | `/api/users/{id}` | CapManageUsers |
 | PUT | `/api/users/{id}` | CapManageUsers |
+| DELETE | `/api/users/{id}/lock` | CapManageUsers |
+| POST | `/api/users/{id}/lock` | CapManageUsers |
+| POST | `/api/users/{id}/token` | CapManageUsers |
 | POST | `/api/vendor-grants/{gid}/approve` | CapApprove |
 | POST | `/api/vendor-grants/{gid}/revoke` | CapManageTargets |
 | GET | `/api/vendors` | CapReadInventory |

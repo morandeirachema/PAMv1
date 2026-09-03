@@ -1746,6 +1746,51 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if by, err := st.GetUserByTokenHash(ctx, "tokhash1"); err != nil || by.Username != "u1" {
 		t.Fatalf("GetUserByTokenHash: %+v err %v", by, err)
 	}
+	// Identity lock and token rotation (Phase 242): the lock round-trips with
+	// its optional until, clears, and is not stored with an empty reason; a
+	// rotated token hash is unique across users and carries its expiry.
+	until := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	if err := st.SetUserLock(ctx, u.ID, "stolen laptop", &until); err != nil {
+		t.Fatalf("SetUserLock: %v", err)
+	}
+	if got, _ := st.GetUser(ctx, u.ID); got.LockedReason != "stolen laptop" || got.LockedUntil == nil || !got.LockedUntil.Equal(until) || !got.LockedAt(time.Now()) {
+		t.Fatalf("lock did not round-trip: %+v", got)
+	}
+	if err := st.SetUserLock(ctx, u.ID, "", &until); err != nil {
+		t.Fatalf("clear lock: %v", err)
+	}
+	if got, _ := st.GetUser(ctx, u.ID); got.LockedReason != "" || got.LockedUntil != nil || got.LockedAt(time.Now()) {
+		t.Fatalf("clearing must drop until too: %+v", got)
+	}
+	if err := st.SetUserLock(ctx, 999999, "x", nil); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("SetUserLock missing: want ErrNotFound, got %v", err)
+	}
+	tokExp := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
+	if err := st.RotateUserToken(ctx, u.ID, "tokhash1-rotated", &tokExp); err != nil {
+		t.Fatalf("RotateUserToken: %v", err)
+	}
+	if _, err := st.GetUserByTokenHash(ctx, "tokhash1"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("old hash must stop resolving after rotation, got %v", err)
+	}
+	if by, err := st.GetUserByTokenHash(ctx, "tokhash1-rotated"); err != nil || by.TokenExpiresAt == nil || !by.TokenExpiresAt.Equal(tokExp) {
+		t.Fatalf("rotated hash: %+v err %v", by, err)
+	}
+	other := &store.User{Username: "u-other", Role: "user", TokenHash: "tokhash-other"}
+	if err := st.CreateUser(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RotateUserToken(ctx, other.ID, "tokhash1-rotated", nil); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("rotating onto another user's hash: want ErrConflict, got %v", err)
+	}
+	if err := st.RotateUserToken(ctx, u.ID, "tokhash1", nil); err != nil {
+		t.Fatalf("rotate back: %v", err)
+	}
+	if got, _ := st.GetUser(ctx, u.ID); got.TokenExpiresAt != nil {
+		t.Fatalf("a rotation without expiry must clear it: %+v", got)
+	}
+	if err := st.DeleteUser(ctx, other.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.GetUserByTokenHash(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("GetUserByTokenHash missing: want ErrNotFound, got %v", err)
 	}

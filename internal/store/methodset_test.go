@@ -77,7 +77,7 @@ import (
 // became an actor in its own "slack:" namespace that no four-eyes or
 // distinct-approver comparison against a PAMv1 username could ever match.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 223
+	const want = 225
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

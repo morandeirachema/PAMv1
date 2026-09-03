@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"time"
@@ -131,6 +132,10 @@ func (s *Server) samlACS(w http.ResponseWriter, r *http.Request) {
 	principal := &auth.Principal{Name: claims.Name, Role: role, Roles: roles}
 	token, _, err := s.issueSession(r.Context(), principal, "")
 	if err != nil {
+		if errors.Is(err, errIdentityLocked) {
+			s.redirectPortal(w, r, "pam_error=locked")
+			return
+		}
 		s.redirectPortal(w, r, "pam_error=session_failed")
 		return
 	}

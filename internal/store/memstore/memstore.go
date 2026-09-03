@@ -1702,6 +1702,47 @@ func (m *Memstore) UpdateUserExternalID(_ context.Context, id int64, externalID 
 	return nil
 }
 
+// SetUserLock places or clears an administrator's lock (Phase 242).
+func (m *Memstore) SetUserLock(_ context.Context, id int64, reason string, until *time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	u.LockedReason = reason
+	u.LockedUntil = nil
+	if reason != "" && until != nil {
+		t := until.UTC()
+		u.LockedUntil = &t
+	}
+	m.users[id] = u
+	return nil
+}
+
+// RotateUserToken replaces a user's token hash and expiry (Phase 242).
+func (m *Memstore) RotateUserToken(_ context.Context, id int64, tokenHashHex string, expiresAt *time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	for otherID, other := range m.users {
+		if otherID != id && other.TokenHash == tokenHashHex {
+			return store.ErrConflict
+		}
+	}
+	u.TokenHash = tokenHashHex
+	u.TokenExpiresAt = nil
+	if expiresAt != nil {
+		t := expiresAt.UTC()
+		u.TokenExpiresAt = &t
+	}
+	m.users[id] = u
+	return nil
+}
+
 // GetUserBySlackUserID returns the user linked to the given Slack member ID
 // (Phase 236), or ErrNotFound. An empty id always misses.
 func (m *Memstore) GetUserBySlackUserID(_ context.Context, slackUserID string) (*store.User, error) {

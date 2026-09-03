@@ -698,6 +698,19 @@ type User struct {
 	// (the default) means this user cannot decide from Slack at all; unique
 	// among non-empty values, since one member must not map to two humans.
 	SlackUserID string `json:"slack_user_id,omitempty"`
+	// LockedReason, when non-empty, is an administrator's lock on this
+	// identity (Phase 242): its token does not resolve, a login session
+	// minted for it does not resolve, no new session is issued, a Slack
+	// click as it is refused, and its live sessions were cut when the lock
+	// was placed. LockedUntil, when set, lifts the lock automatically at that
+	// instant (nil = until an administrator unlocks). See User.LockedAt.
+	LockedReason string     `json:"locked_reason,omitempty"`
+	LockedUntil  *time.Time `json:"locked_until,omitempty"`
+	// TokenExpiresAt, when set, is the instant this user's access token stops
+	// authenticating (Phase 242); nil is a token that never expires — every
+	// token minted before Phase 242, and any minted with no TTL configured.
+	// POST /api/users/{id}/token mints a fresh one.
+	TokenExpiresAt *time.Time `json:"token_expires_at,omitempty"`
 	// Active is SCIM's deprovisioning switch (Phase 149): false blocks this
 	// user's own local access token from resolving (see
 	// auth.Resolver.Resolve) without deleting the row, so re-activating (or
@@ -708,6 +721,19 @@ type User struct {
 	Active    bool      `json:"active"`
 	TokenHash string    `json:"-"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// LockedAt reports whether an administrator's lock (Phase 242) is in force
+// at now: a reason is set and either no LockedUntil is set or it has not
+// passed. An expired lock lifts by itself; nothing needs to clear the row.
+func (u User) LockedAt(now time.Time) bool {
+	return u.LockedReason != "" && (u.LockedUntil == nil || u.LockedUntil.After(now))
+}
+
+// TokenExpiredAt reports whether the user's access token has expired at now
+// (Phase 242). A nil TokenExpiresAt never expires.
+func (u User) TokenExpiredAt(now time.Time) bool {
+	return u.TokenExpiresAt != nil && !u.TokenExpiresAt.After(now)
 }
 
 // ScimKey is a non-human client identity for the SCIM 2.0 provisioning API
@@ -1633,6 +1659,15 @@ type UserStore interface {
 	// column's own default, shared by every non-SCIM user, must never
 	// resolve to an arbitrary one of them.
 	GetUserByExternalID(ctx context.Context, externalID string) (*User, error)
+	// SetUserLock places (non-empty reason) or clears (empty reason) an
+	// administrator's lock on a user (Phase 242, see User.LockedReason /
+	// LockedUntil); ErrNotFound if absent. until is stored only with a
+	// non-empty reason.
+	SetUserLock(ctx context.Context, id int64, reason string, until *time.Time) error
+	// RotateUserToken replaces a user's access-token hash and its expiry
+	// (Phase 242); ErrNotFound if absent, ErrConflict if another user already
+	// holds the same hash.
+	RotateUserToken(ctx context.Context, id int64, tokenHashHex string, expiresAt *time.Time) error
 	// UpdateUserActive sets a user's SCIM active flag (Phase 149, see
 	// User.Active), or ErrNotFound. false blocks the user's own local
 	// access token from resolving; see auth.Resolver.Resolve.

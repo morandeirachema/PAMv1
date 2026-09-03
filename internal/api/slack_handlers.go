@@ -222,6 +222,10 @@ func (s *Server) slackDecide(r *http.Request, payload slackInteractivityPayload)
 		s.log.Error("slack interactivity: user lookup failed", "err", err)
 		return pamslack.EphemeralMessage("PAMv1 could not look up your account right now. Try again in a moment.")
 	}
+	if err == nil && u.LockedAt(time.Now()) {
+		s.audit(r.Context(), "access.decision_denied", fmt.Sprintf("request:%d reason:locked user:%s slack_user:%s", requestID, auditField(u.Username, 64), slackUser))
+		return pamslack.EphemeralMessage("Your PAMv1 identity is locked.")
+	}
 	if err != nil || !u.Active {
 		s.audit(r.Context(), "access.decision_denied", fmt.Sprintf("request:%d reason:slack-unlinked slack_user:%s", requestID, slackUser))
 		return pamslack.EphemeralMessage("Your Slack account is not linked to an active PAMv1 user. Ask an administrator to set your Slack member ID on your PAMv1 user.")

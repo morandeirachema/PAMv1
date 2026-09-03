@@ -351,6 +351,8 @@ func storeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, store.ErrConflict):
 		writeError(w, http.StatusConflict, "already exists")
+	case errors.Is(err, errIdentityLocked):
+		writeError(w, http.StatusForbidden, "this identity is locked")
 	default:
 		// storeError is a package function (no *Server receiver), so it cannot
 		// reach s.log; logging.Component is resolved here at call time — a request

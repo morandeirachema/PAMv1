@@ -148,6 +148,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// errIdentityLocked is returned by issueSessionTTL for a locked local user
+// (Phase 242); storeError maps it to 403.
+var errIdentityLocked = errors.New("identity is locked")
+
 // issueSession mints a session token (scope "" = full, "enroll" = MFA setup only).
 func (s *Server) issueSession(ctx context.Context, p *auth.Principal, scope string) (string, store.Session, error) {
 	return s.issueSessionTTL(ctx, p, scope, sessionTTL)
@@ -156,6 +160,15 @@ func (s *Server) issueSession(ctx context.Context, p *auth.Principal, scope stri
 // issueSessionTTL mints a session token with an explicit lifetime (break-glass
 // sessions use a short TTL).
 func (s *Server) issueSessionTTL(ctx context.Context, p *auth.Principal, scope string, ttl time.Duration) (string, store.Session, error) {
+	// A locked identity (Phase 242) gets no session at all, whichever door it
+	// came through — an SSO login for a locked local row is refused here,
+	// audited as a failed login, rather than minting a token the resolver
+	// would refuse on its first use. A directory identity with no local row
+	// is not lockable and passes.
+	if u, uerr := s.store.GetUserByUsername(ctx, p.Name); uerr == nil && u.LockedAt(time.Now()) {
+		s.auditAs(ctx, p.Name, "login.failed", "reason:locked")
+		return "", store.Session{}, errIdentityLocked
+	}
 	token, err := generateToken()
 	if err != nil {
 		return "", store.Session{}, err
