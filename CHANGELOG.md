@@ -9,6 +9,50 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.66.0] — 2026-09-03
+
+A minor that ships **Phase 240** — session lifetime, grant expiry and time
+frames: the first three rows of a fresh research pass against CyberArk PAM,
+WALLIX Bastion and Teleport with the RBAC model and feature set as the
+question. **Schema, store surface, two env vars and two audit actions
+moved**; no route was added.
+
+**What an operator can now do.** A session ends when the authorization that
+admitted it ends:
+
+- **Bound every session's length and idleness** — `PAM_SESSION_MAX_MIN`
+  ends any brokered session (SSH, WinRM, RDP/VNC, PostgreSQL, SQL Server)
+  that long after it started; `PAM_SESSION_IDLE_MIN` ends one that has seen
+  no *operator input* for that long. Each end is audited `session.killed`
+  with its reason.
+- **Put an end date on a standing grant** — `expires_at` on a target grant
+  or safe membership (API and console). An expired row no longer admits,
+  still keeps its target gated (it does not fall open), is swept once a
+  minute and audited `grant.expired` / `safe.member.expired`; a session
+  admitted under it ends **at** the expiry.
+- **Put a weekly window on a standing grant** — `time_frame`, as
+  `"Mon-Fri 08:00-18:00 Europe/Madrid"` (day ranges, overnight windows, IANA
+  zones). Outside the window the grant does not admit; a session admitted
+  inside it ends at the window's edge.
+
+**What has not changed.** Every existing grant and membership is unbounded,
+exactly as before; both new knobs default to off. Nothing an operator does
+today changes until one of them is set.
+
+### Added
+
+- `PAM_SESSION_MAX_MIN`, `PAM_SESSION_IDLE_MIN`; `expires_at` and
+  `time_frame` on `POST /api/targets/{id}/grants` and
+  `POST /api/safes/{id}/members` (listed back on both); `deadline` /
+  `deadline_reason` on a live session; migration `0053`
+  (`target_grants` / `safe_members` gain `expires_at`, `time_frame`);
+  audit actions `grant.expired`, `safe.member.expired`; `session.killed`
+  reasons `max-duration`, `idle-timeout`, `grant-expiry`, `time-frame`;
+  package `internal/timeframe`.
+
+Helm chart `0.56.1` → `0.57.0`, a minor alongside an app minor. Image digest
+recorded once the publish workflow has run.
+
 ## [0.65.1] — 2026-09-03
 
 A patch that ships **Phase 238** — the review of Phases 236 and 237, and
@@ -2990,6 +3034,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.66.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.66.0
 [0.65.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.65.1
 [0.65.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.65.0
 [0.64.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.64.0
