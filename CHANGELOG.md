@@ -64,7 +64,7 @@ agent).
   "expired" reply.
 
 Helm chart `0.55.0` → `0.56.0`, a minor alongside an app minor. Image digest
-recorded once the publish workflow has run.
+`sha256:292045eb…` (the full value is in the README and on the release page).
 
 ## [0.64.0] — 2026-09-01
 

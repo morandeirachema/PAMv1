@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–237 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–238 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2422,6 +2422,70 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 238 — The review of 236/237, and what it found ✅
+
+A `/security-review` and `/code-review xhigh` pass over Phases 236–237
+(`96de95c..HEAD`: the Slack identity mapping with its review fixes, and the
+v0.65.0 release), run by the user on 2026-09-03 in the shape 231 and 236
+took. It found that the review phase's own "ack" fix had not fixed the ack,
+that the Slack path audited its decisions as nobody, one half-applied
+update, and one release step that was never done. No new authorization
+finding: the identity mapping holds. All closed here; no release until
+Phase 239.
+
+- [x] **The ack was still not an ack (Medium).** Phase 236 flushed an empty
+  200 before the `response_url` follow-up — but without a `Content-Length`,
+  so Go sent it **chunked**, and the terminating chunk every HTTP client
+  waits for before it treats a response as received only went out when the
+  handler returned, i.e. after the up-to-8-second follow-up. Slack's
+  3-second clock therefore still ran to the end of the follow-up. Now
+  `Content-Length: 0` is set, so the flushed header **is** the complete
+  response, and the handler is split in two (`slackDecide` + the ack): the
+  decision — store work — is made first, then the ack, then the follow-up,
+  the one network round-trip of its own, so a Slack retry finds the request
+  already decided. Proven by `TestSlackAckCompletesBeforeFollowUp` against a
+  real listener whose `response_url` endpoint blocks until the test has read
+  the ack in full: before the fix that read hung to the client's timeout
+- [x] **Slack decisions were audited as `unknown` (Medium).** The
+  interactivity route is registered without `authz` (Slack's signature is
+  the authentication), so nothing put a principal in the request context —
+  and every audit row `decideAccessRequest` produces for a click carried
+  actor `unknown`: `access.approve` (whose detail does not name the
+  approver at all), `access.deny`, `access.approve_partial` and the
+  four-eyes `access.decision_denied`. Only the new `access.slack_decision`
+  row's *detail* named the human, and the access log showed an empty actor.
+  The handler now places the resolved principal in the context exactly
+  where the middleware would (`withPrincipal` + `setActor`) before
+  deciding, so the Slack path's rows are attributed like the API path's.
+  `TestSlackDecisionAuditActor` asserts the actor of both rows
+- [x] **A half-applied user update.** `PUT /api/users/{id}` wrote the role
+  (and cut the user's live sessions on a role change) before the Slack
+  link, and the link is the one write that can fail for a caller-caused
+  reason (409: member id already claimed) — so a conflict was answered with
+  an error after the role had already moved. The link is written first; a
+  409 now leaves the row untouched
+- [x] **Phase 237's digest was never recorded.** v0.65.0 published, signed
+  and attested on 2026-09-02, but the "record vX's digest" PR that closes
+  every release phase was not opened. Recorded here (ROADMAP, README,
+  CHANGELOG): `ghcr.io/morandeirachema/pamv1:0.65.0` (also `latest`)
+  resolves by anonymous pull to
+  `sha256:292045eba8ed55ad54fae14ff2460ee5d5b47d9731ca278cebb12411c078196c`;
+  every publishing step of the run concluded `success`, and `cosign verify`
+  passes against the README's identity
+- [x] **What was clean**: the identity mapping — the `role` guard on
+  `PUT /api/users` already stops a `manage_users`-only profile from linking
+  its own Slack id to an approver row, because keeping the row an approver
+  means sending `role:approver`, which the caller must cover; SCIM
+  deactivation is honoured by the click path (`Active`);
+  `GetUserBySlackUserID` refuses the empty default in both stores; the
+  button token's domain separation; and every doc row 236 and 237 owed —
+  env table, audit vocabulary, migration mark, all 18 `Reflects:` headers,
+  the `[0.65.0]:` link definition
+- [x] The tests now **wait** for the follow-up instead of reading it (the
+  ack completing first exposed that they had been reading it early, and one
+  read was unsynchronised). No schema, route, store-surface or env-var
+  change
+
 ## Phase 237 — v0.65.0 ✅
 
 Releases **236** — the review of 232–235 and what it found. A **minor**: the
@@ -2432,9 +2496,13 @@ again — observable, so not a patch. No route or env var was added.
 - [x] **v0.65.0** through the test-gated pipeline. `.github/` untouched
   since v0.58.1 and nothing the workflow *reads* has changed either, so no
   rehearsal. Published 2026-09-02 as `ghcr.io/morandeirachema/pamv1:0.65.0`
-  (also `latest`), digest recorded once the publish workflow has run,
-  signed and attested, with the `pam-agent` binaries, the SPDX SBOM and
-  `SHA256SUMS` attached
+  (also `latest`), digest
+  `sha256:292045eba8ed55ad54fae14ff2460ee5d5b47d9731ca278cebb12411c078196c`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
+  digest), signed and attested — every publishing step's own conclusion
+  `success`, and the README's `cosign verify` run against it — with the
+  `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS` attached. The digest
+  was recorded by **Phase 238**: this phase never opened its digest PR
 - [x] All pins via the sweep — exactly one release under `deploy/`. Helm
   chart `version` 0.55.0 -> **0.56.0**, a minor alongside an app minor
 - [x] `store.Store` **220 -> 222**; migration high-water **`0051` ->

@@ -1518,7 +1518,10 @@ from the API. A recorded decision replaces the message for everyone; a
 refusal (expired buttons, already decided, not linked, wrong role,
 four-eyes) is an ephemeral note only the clicker sees, and the buttons
 stay for the others. Every Slack decision is audited as
-`access.slack_decision`, naming both the PAMv1 user and the member id.
+`access.slack_decision`, naming both the PAMv1 user and the member id, and
+the decision's own rows (`access.approve`, `access.deny`,
+`access.approve_partial`) carry the linked PAMv1 user as actor, exactly as
+an API decision's do (Phase 238).
 
 There is no per-request Slack channel routing in v1 — every notification
 goes to the one channel the incoming webhook was created for.
@@ -4344,6 +4347,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-03 | **Phase 238 (the review of 236/237).** Slack chat-ops section: a Slack decision's audit rows are attributed to the linked PAMv1 user (they carried actor `unknown`), and the Slack ack is complete on the wire before the follow-up (Slack's 3-second budget is now actually met). |
 | 2026-09-02 | **Phase 236 (the review of 232–235).** Slack chat-ops section gains the **identity mapping** step: a button click is only honoured from a Slack member whose id is linked to an active PAMv1 user holding `CapApprove` (`slack_user_id` on `POST`/`PUT /api/users`, console Add/Change User), and the decision is made as that PAMv1 identity — so four-eyes and two-person floors hold from Slack exactly as they do from the API. Refusals now reach the clicker as an ephemeral Slack message. |
 | 2026-09-01 | **Phase 234 (Slack chat-ops access-request approval).** New §7 subsection with Slack App setup steps: `PAM_SLACK_WEBHOOK_URL` (Incoming Webhooks) and `PAM_SLACK_SIGNING_SECRET` (verifies the interactivity callback), required together. Console menu Work with Access Requests gains option 8=Notify Slack. |
 | 2026-08-31 | **Phase 232 (on-call/schedule-aware access gating).** New §7 subsection: `PAM_ONCALL_ATTEST_URL`, the same webhook shape as live device posture, checked on every connect and every authenticated call. Human operators only — never extended to the AI-agent broker, since "on call" describes a shift a non-human identity does not have. Off by default. |

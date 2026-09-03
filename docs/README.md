@@ -1,6 +1,6 @@
 # PAMv1 — documentation
 
-> Last updated: 2026-09-02 · Reflects: Phases 0–227 and 229–237, and release v0.65.0 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-09-03 · Reflects: Phases 0–227 and 229–238, and release v0.65.0 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-09-03 | Phase 238 (the review of 236/237) documented: ARCHITECTURE-LOW-LEVEL, ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE and ADMIN-GUIDE change logs (the ack is now complete on the wire, Slack decisions are audited as the linked user, a `PUT /api/users` conflict no longer half-applies); v0.65.0's digest — owed by Phase 237 and never recorded — written into ROADMAP, README and CHANGELOG. No table, vocabulary or env change. |
 | 2026-09-02 | Phase 236 (the review of 232–235) documented: ARCHITECTURE-LOW-LEVEL's table list (`users.slack_user_id`), migration mark (`0052`), user-administration bullet, audit vocabulary (`access.slack_decision`) and change log; ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE (§3.3 migration mark) and ADMIN-GUIDE (the Slack section's new *link each approver* step) change logs. |
 | 2026-08-27 | Phase 226 (the MCP revision negotiated, not pinned) documented: ARCHITECTURE-LOW-LEVEL's change log, CODE-GUIDE's MCP bullet and change log, ADMIN-GUIDE's broker section (revisions, batches, the header, the transport that stays HTTP+SSE), both READMEs' MCP line. |
 | 2026-08-27 | Phase 224 (the trust bundle follows the file) documented: ARCHITECTURE-LOW-LEVEL's `PAM_BROKER_TRUST_DOMAIN_JWKS` row and change log, ADMIN-GUIDE's SPIFFE paragraph, EXTERNAL-INFRA-GAPS's SVID row, AGENT-THREAT-MODEL's evidence table, CODE-GUIDE's change log. |
