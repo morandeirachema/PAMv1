@@ -581,3 +581,41 @@ func credentialAge(cred *store.Credential, now time.Time) time.Duration {
 	}
 	return now.Sub(last)
 }
+
+// RunGrantExpirySweeper deletes expired target grants and safe memberships
+// (Phase 240) once a minute, auditing each one. Unconditional and not
+// leader-locked, like the checkout sweep: the delete is idempotent — a row
+// two replicas both find is deleted by whichever reaches it first, and only
+// that one gets it back to audit. A session admitted under an expiring grant
+// is not this sweeper's concern: it already carries the expiry as its
+// deadline (auth.GrantDeadline) and the lifetime monitor ends it.
+func (s *Server) RunGrantExpirySweeper(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			s.SweepExpiredGrants(ctx, now)
+		}
+	}
+}
+
+// SweepExpiredGrants is one pass of RunGrantExpirySweeper, exported so a test
+// can drive it with a chosen instant. It returns how many rows it removed.
+func (s *Server) SweepExpiredGrants(ctx context.Context, now time.Time) int {
+	ctx = systemContext(ctx)
+	grants, members, err := s.store.SweepExpiredGrants(ctx, now)
+	if err != nil {
+		s.log.Error("grant expiry sweep failed", "err", err)
+		return 0
+	}
+	for _, g := range grants {
+		s.audit(ctx, "grant.expired", fmt.Sprintf("target:%d %s:%s expires:%s", g.TargetID, g.SubjectType, g.Subject, g.ExpiresAt.UTC().Format(time.RFC3339)))
+	}
+	for _, m := range members {
+		s.audit(ctx, "safe.member.expired", fmt.Sprintf("safe:%d %s:%s expires:%s", m.SafeID, m.SubjectType, m.Subject, m.ExpiresAt.UTC().Format(time.RFC3339)))
+	}
+	return len(grants) + len(members)
+}

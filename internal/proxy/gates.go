@@ -100,6 +100,17 @@ type admitResult struct {
 	target *store.Target
 	cred   *store.Credential
 	secret string
+	// bounds is the session lifetime the admitting grant imposes (Phase 240):
+	// stamped on the registered session as its deadline. Zero when the
+	// principal's access is not bounded by a grant edge.
+	bounds sessionBounds
+}
+
+// sessionBounds carries a grant-imposed end for a session: the instant and
+// the reason ("grant-expiry" | "time-frame") the lifetime monitor audits.
+type sessionBounds struct {
+	deadline *time.Time
+	reason   string
 }
 
 // admitRequest bundles admit()'s inputs. principal, targetName and credUser are
@@ -313,8 +324,17 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 		g.log.Error("safe personal lookup failed", "target", target.Name, "err", err)
 		return admitResult{outcome: admitCheckFailed, gate: gateTargetGrants, target: target, cred: cred}
 	}
-	if !auth.CanConnectTarget(principal, grants, target.SafeID != nil, personal, g.ungated) {
+	now := time.Now()
+	if !auth.CanConnectTargetAt(principal, grants, target.SafeID != nil, personal, g.ungated, now) {
 		return admitResult{outcome: admitDenied, gate: gateTargetPolicy, target: target, cred: cred}
+	}
+	// A grant with an edge — an expiry, or a time-frame window that closes —
+	// gives the session that edge as its deadline (Phase 240), so the session
+	// ends with the authorization instead of outliving it. Grants without an
+	// edge, or a principal admitted without needing one, leave it unset.
+	var bounds sessionBounds
+	if dl, why, bounded := auth.GrantDeadline(principal, grants, personal, now); bounded {
+		bounds = sessionBounds{deadline: &dl, reason: why}
 	}
 
 	// 12. Approval gate (4-eyes / OT window). Break-glass bypasses. A single-use
@@ -391,5 +411,5 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 		}
 	}
 
-	return admitResult{outcome: admitOK, gate: gateNone, target: target, cred: cred, secret: secret}
+	return admitResult{outcome: admitOK, gate: gateNone, target: target, cred: cred, secret: secret, bounds: bounds}
 }

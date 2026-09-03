@@ -781,7 +781,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	// Non-SSH targets are brokered differently: WinRM targets get an interactive
 	// command loop (if a runner is configured); anything else is refused.
 	if target.Protocol != "ssh" {
-		p.serveWinRM(ctx, sconn, chans, target, cred, secret, actor, remote, observeMode)
+		p.serveWinRM(ctx, sconn, chans, target, cred, secret, actor, remote, observeMode, res.bounds)
 		return
 	}
 
@@ -806,6 +806,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	if p.sessions != nil {
 		sid = p.sessions.Register(session.Info{
 			Actor: actor, Target: target.Name, Protocol: "ssh", Remote: remote, Started: time.Now(),
+			Deadline: res.bounds.deadline, DeadlineReason: res.bounds.reason,
 		}, func() { sconn.Close() })
 		defer p.sessions.Remove(sid)
 		p.live.Publish(sid, watermarkBanner(actor, target.Name))
@@ -1340,6 +1341,8 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 			go io.Copy(p.shares.Writer(sid), clientChan)
 			keyIn = p.shares.Reader(sid)
 		}
+		// Every read of operator input resets the idle clock (Phase 240).
+		keyIn = activityReader{r: keyIn, touch: p.sessions.Activity(sid)}
 		go func() {
 			// Operator keystrokes -> target. For an SFTP session the inspector parses
 			// this leg to audit + gate file operations; for a shell/exec session it is
@@ -1692,7 +1695,7 @@ func answerJoinRequests(in <-chan *ssh.Request, done <-chan struct{}) {
 // allowlist). Each operator line is run as a separate WinRM command — this is a
 // command loop, not a stateful PowerShell (working directory / variables do not
 // persist across lines). Refuses cleanly when no WinRM runner is configured.
-func (p *Proxy) serveWinRM(ctx context.Context, sconn *ssh.ServerConn, chans <-chan ssh.NewChannel, target *store.Target, cred *store.Credential, secret, actor, remote string, observe bool) {
+func (p *Proxy) serveWinRM(ctx context.Context, sconn *ssh.ServerConn, chans <-chan ssh.NewChannel, target *store.Target, cred *store.Credential, secret, actor, remote string, observe bool, bounds sessionBounds) {
 	if target.Protocol != "winrm" || p.winrm == nil {
 		p.log.Warn("session denied: protocol not proxyable", "actor", actor, "target", target.Name, "protocol", target.Protocol)
 		p.audit(ctx, actor, "session.denied", "target:"+target.Name+" reason:protocol-not-proxyable")
@@ -1711,6 +1714,7 @@ func (p *Proxy) serveWinRM(ctx context.Context, sconn *ssh.ServerConn, chans <-c
 	if p.sessions != nil {
 		sid = p.sessions.Register(session.Info{
 			Actor: actor, Target: target.Name, Protocol: "winrm", Remote: remote, Started: time.Now(),
+			Deadline: bounds.deadline, DeadlineReason: bounds.reason,
 		}, func() { sconn.Close() })
 		defer p.sessions.Remove(sid)
 	}
@@ -1813,6 +1817,7 @@ func (p *Proxy) winrmShellLoop(ctx context.Context, ch ssh.Channel, out io.Write
 	fmt.Fprintf(out, "PAMv1 WinRM shell for %s (each line is a separate command; type 'exit' to quit)\r\n", target.Name)
 	prompt := "PAMv1 " + target.Name + "> "
 	scanner := bufio.NewScanner(ch)
+	touch := p.sessions.Activity(sid)
 	scanner.Buffer(make([]byte, 0, 4096), 1<<20)
 	for {
 		fmt.Fprint(out, prompt)
@@ -1824,6 +1829,7 @@ func (p *Proxy) winrmShellLoop(ctx context.Context, ch ssh.Channel, out io.Write
 		if !scanner.Scan() {
 			return
 		}
+		touch() // a typed command is operator activity (Phase 240 idle timeout)
 		line := strings.TrimRight(scanner.Text(), "\r\n")
 		switch strings.TrimSpace(line) {
 		case "":
@@ -2242,4 +2248,20 @@ func claimApproval(ctx context.Context, st store.Store, tc store.TicketChecker, 
 		return false, "approval-required", nil
 	}
 	return true, "", nil
+}
+
+// activityReader forwards reads and reports each one as operator activity to
+// the session registry's idle timeout (Phase 240). touch is never nil: a
+// proxy without a registry gets Registry.Activity's no-op.
+type activityReader struct {
+	r     io.Reader
+	touch func()
+}
+
+func (a activityReader) Read(b []byte) (int, error) {
+	n, err := a.r.Read(b)
+	if n > 0 {
+		a.touch()
+	}
+	return n, err
 }

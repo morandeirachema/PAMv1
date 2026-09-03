@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"time"
 
 	"github.com/morandeirachema/pamv1/internal/store"
 )
@@ -137,8 +138,12 @@ func ReachableTargets(ctx context.Context, st ReachStore, p *Principal, ungated 
 	for _, id := range gatedIDs {
 		gated[id] = struct{}{}
 	}
+	// Only a grant live NOW is a reach (Phase 240); an expired or out-of-frame
+	// row still gates its target (gatedIDs counts it) but admits nobody —
+	// the same reading CanConnectTargetAt makes.
+	now := time.Now()
 	byTarget := make(map[int64][]store.SubjectGrant, len(grants))
-	for _, g := range grants {
+	for _, g := range store.LiveSubjectGrants(grants, now) {
 		byTarget[g.TargetID] = append(byTarget[g.TargetID], g)
 	}
 	isAdmin := false

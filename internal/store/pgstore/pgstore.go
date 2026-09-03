@@ -9,6 +9,7 @@ import (
 	"crypto/hmac"
 	"errors"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -295,8 +296,8 @@ func (s *PGStore) ClearCredentialDoubleLock(ctx context.Context, id int64) error
 // grant exists, ErrNotFound if the target is missing.
 func (s *PGStore) CreateTargetGrant(ctx context.Context, g *store.TargetGrant) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO target_grants (target_id, subject_type, subject, created_by) VALUES ($1, $2, $3, $4) RETURNING id`,
-		g.TargetID, g.SubjectType, g.Subject, g.CreatedBy,
+		`INSERT INTO target_grants (target_id, subject_type, subject, created_by, expires_at, time_frame) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+		g.TargetID, g.SubjectType, g.Subject, g.CreatedBy, g.ExpiresAt, g.TimeFrame,
 	).Scan(&g.ID)
 	switch pgCode(err) {
 	case pgUniqueViolation:
@@ -310,13 +311,13 @@ func (s *PGStore) CreateTargetGrant(ctx context.Context, g *store.TargetGrant) e
 // ListTargetGrants returns the grants for a target, ordered by ID.
 func (s *PGStore) ListTargetGrants(ctx context.Context, targetID int64) ([]store.TargetGrant, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, target_id, subject_type, subject, created_by FROM target_grants WHERE target_id = $1 ORDER BY id`, targetID)
+		`SELECT id, target_id, subject_type, subject, created_by, expires_at, time_frame FROM target_grants WHERE target_id = $1 ORDER BY id`, targetID)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.TargetGrant, error) {
 		var g store.TargetGrant
-		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject, &g.CreatedBy)
+		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject, &g.CreatedBy, &g.ExpiresAt, &g.TimeFrame)
 		return g, err
 	})
 }
@@ -331,20 +332,60 @@ func (s *PGStore) DeleteTargetGrant(ctx context.Context, id int64) error {
 // members (Phase 17).
 func (s *PGStore) EffectiveTargetGrants(ctx context.Context, targetID int64) ([]store.TargetGrant, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, target_id, subject_type, subject FROM target_grants WHERE target_id = $1
+		`SELECT id, target_id, subject_type, subject, expires_at, time_frame FROM target_grants
+		  WHERE target_id = $1
 		 UNION
-		 SELECT sm.id, $1::bigint, sm.subject_type, sm.subject
+		 SELECT sm.id, $1::bigint, sm.subject_type, sm.subject, sm.expires_at, sm.time_frame
 		   FROM safe_members sm JOIN targets t ON t.safe_id = sm.safe_id
 		  WHERE t.id = $1
 		 ORDER BY id`, targetID)
 	if err != nil {
 		return nil, err
 	}
+	// Every row, bounds included (Phase 240): the DECISION filters expired and
+	// out-of-frame rows (auth.CanConnectTargetAt), because whether a target
+	// is gated at all must still count them.
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.TargetGrant, error) {
 		var g store.TargetGrant
-		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject)
+		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject, &g.ExpiresAt, &g.TimeFrame)
 		return g, err
 	})
+}
+
+// SweepExpiredGrants deletes every expired grant and safe membership (Phase
+// 240), returning the deleted rows.
+func (s *PGStore) SweepExpiredGrants(ctx context.Context, now time.Time) ([]store.TargetGrant, []store.SafeMember, error) {
+	rows, err := s.pool.Query(ctx,
+		`DELETE FROM target_grants WHERE expires_at IS NOT NULL AND expires_at <= $1
+		 RETURNING id, target_id, subject_type, subject, created_by, expires_at, time_frame`, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	gs, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.TargetGrant, error) {
+		var g store.TargetGrant
+		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject, &g.CreatedBy, &g.ExpiresAt, &g.TimeFrame)
+		return g, err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	rows, err = s.pool.Query(ctx,
+		`DELETE FROM safe_members WHERE expires_at IS NOT NULL AND expires_at <= $1
+		 RETURNING id, safe_id, subject_type, subject, can_manage, created_by, expires_at, time_frame`, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	ms, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.SafeMember, error) {
+		var m store.SafeMember
+		err := row.Scan(&m.ID, &m.SafeID, &m.SubjectType, &m.Subject, &m.CanManage, &m.CreatedBy, &m.ExpiresAt, &m.TimeFrame)
+		return m, err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	sort.Slice(gs, func(i, j int) bool { return gs[i].ID < gs[j].ID })
+	sort.Slice(ms, func(i, j int) bool { return ms[i].ID < ms[j].ID })
+	return gs, ms, nil
 }
 
 // GrantsForSubjects returns every grant naming any of the given subjects, from
@@ -396,12 +437,12 @@ func grantsForSubjects(ctx context.Context, q reachQuerier, subjects []store.Gra
 	}
 	rows, err := q.Query(ctx,
 		`WITH subs AS (SELECT * FROM unnest($1::text[], $2::text[]) AS s(subject_type, subject))
-		 SELECT g.target_id, t.name, g.subject_type, g.subject, 'grant'::text, NULL::bigint
+		 SELECT g.target_id, t.name, g.subject_type, g.subject, 'grant'::text, NULL::bigint, g.expires_at, g.time_frame
 		   FROM target_grants g
 		   JOIN targets t ON t.id = g.target_id
 		   JOIN subs ON subs.subject_type = g.subject_type AND subs.subject = g.subject
 		 UNION ALL
-		 SELECT t.id, t.name, sm.subject_type, sm.subject, 'safe'::text, sm.safe_id
+		 SELECT t.id, t.name, sm.subject_type, sm.subject, 'safe'::text, sm.safe_id, sm.expires_at, sm.time_frame
 		   FROM safe_members sm
 		   JOIN targets t ON t.safe_id = sm.safe_id
 		   JOIN subs ON subs.subject_type = sm.subject_type AND subs.subject = sm.subject
@@ -411,7 +452,7 @@ func grantsForSubjects(ctx context.Context, q reachQuerier, subjects []store.Gra
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.SubjectGrant, error) {
 		var g store.SubjectGrant
-		err := row.Scan(&g.TargetID, &g.TargetName, &g.SubjectType, &g.Subject, &g.Via, &g.SafeID)
+		err := row.Scan(&g.TargetID, &g.TargetName, &g.SubjectType, &g.Subject, &g.Via, &g.SafeID, &g.ExpiresAt, &g.TimeFrame)
 		return g, err
 	})
 }
@@ -503,8 +544,8 @@ func (s *PGStore) DeleteSafe(ctx context.Context, id int64) error {
 // AddSafeMember adds a member to a safe.
 func (s *PGStore) AddSafeMember(ctx context.Context, m *store.SafeMember) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO safe_members (safe_id, subject_type, subject, can_manage, created_by) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		m.SafeID, m.SubjectType, m.Subject, m.CanManage, m.CreatedBy,
+		`INSERT INTO safe_members (safe_id, subject_type, subject, can_manage, created_by, expires_at, time_frame) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+		m.SafeID, m.SubjectType, m.Subject, m.CanManage, m.CreatedBy, m.ExpiresAt, m.TimeFrame,
 	).Scan(&m.ID)
 	switch pgCode(err) {
 	case pgUniqueViolation:
@@ -518,13 +559,13 @@ func (s *PGStore) AddSafeMember(ctx context.Context, m *store.SafeMember) error 
 // ListSafeMembers returns a safe's members ordered by id.
 func (s *PGStore) ListSafeMembers(ctx context.Context, safeID int64) ([]store.SafeMember, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, safe_id, subject_type, subject, can_manage, created_by FROM safe_members WHERE safe_id = $1 ORDER BY id`, safeID)
+		`SELECT id, safe_id, subject_type, subject, can_manage, created_by, expires_at, time_frame FROM safe_members WHERE safe_id = $1 ORDER BY id`, safeID)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.SafeMember, error) {
 		var m store.SafeMember
-		err := row.Scan(&m.ID, &m.SafeID, &m.SubjectType, &m.Subject, &m.CanManage, &m.CreatedBy)
+		err := row.Scan(&m.ID, &m.SafeID, &m.SubjectType, &m.Subject, &m.CanManage, &m.CreatedBy, &m.ExpiresAt, &m.TimeFrame)
 		return m, err
 	})
 }
