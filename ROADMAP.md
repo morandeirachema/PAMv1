@@ -2431,9 +2431,12 @@ actions and the grants/members request bodies all moved.
 - [x] **v0.66.0** through the test-gated pipeline. `.github/` untouched
   since v0.58.1 and nothing the workflow *reads* has changed either, so no
   rehearsal. Published 2026-09-03 as `ghcr.io/morandeirachema/pamv1:0.66.0`
-  (also `latest`), digest recorded once the publish workflow has run,
-  signed and attested, with the `pam-agent` binaries, the SPDX SBOM and
-  `SHA256SUMS` attached
+  (also `latest`), digest
+  `sha256:031b4a732b213d672f899ff3c0dd9a6a13d8d10c85b5fee522326795986bd845`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
+  digest), signed and attested — every publishing step's own conclusion
+  `success`, and the README's `cosign verify` run against it — with the
+  `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS` attached
 - [x] All pins via the sweep — exactly one release under `deploy/`. Helm
   chart `version` 0.56.1 -> **0.57.0**, a minor alongside an app minor
 - [x] `store.Store` **222 -> 223**; migration high-water **`0052` ->

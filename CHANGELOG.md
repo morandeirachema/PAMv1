@@ -51,7 +51,7 @@ today changes until one of them is set.
   package `internal/timeframe`.
 
 Helm chart `0.56.1` → `0.57.0`, a minor alongside an app minor. Image digest
-recorded once the publish workflow has run.
+`sha256:031b4a73…` (the full value is in the README and on the release page).
 
 ## [0.65.1] — 2026-09-03
 
