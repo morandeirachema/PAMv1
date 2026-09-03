@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–239 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–240 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,85 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 240 — Session lifetime, grant expiry and time frames ✅
+
+The first three rows of the **Tier 8** research pass (README → *Coverage
+vs. commercial PAM*), run by the user on 2026-09-03 against CyberArk PAM,
+WALLIX Bastion and Teleport with the RBAC model and feature set as the
+question. Every candidate was fact-checked against the routes, env vars,
+`store` types and capability list before being listed; these three were the
+ones every vendor has, PAMv1 had none of, and one phase could close together
+because they share a mechanism: **a session must end when the authorization
+that admitted it ends**.
+
+- [x] **Session maximum duration and idle timeout** (Teleport
+  `max_session_ttl` / `client_idle_timeout`, CyberArk PSM session timeout,
+  WALLIX inactivity timeout). `PAM_SESSION_MAX_MIN` ends any brokered session
+  that long after it started; `PAM_SESSION_IDLE_MIN` ends one that has seen
+  no *operator input* for that long — keystrokes on SSH, typed commands on
+  WinRM, client messages on PostgreSQL and packets on SQL Server, keyboard
+  and mouse on RDP/VNC (output alone does not count: a `tail -f` is idle).
+  Enforced by one **lifetime monitor** on `session.Registry`
+  (`StartLifetimeMonitor`, a 5-second tick), replica-local by construction —
+  each replica ends only the sessions it hosts — so no bus is involved. Each
+  end is audited `session.killed` (actor `system-lifetime`) with its reason:
+  `max-duration`, `idle-timeout`, `grant-expiry` or `time-frame`. Input
+  legs report activity through `Registry.Activity(sid)`, resolved once per
+  session so the hot path is a single atomic store
+- [x] **Expiry on standing grants and safe memberships** (CyberArk safe
+  membership expiration, Teleport access-list member expiry).
+  `target_grants.expires_at` / `safe_members.expires_at` (`0053`, NULL =
+  unbounded, which is every pre-existing row); `POST /api/targets/{id}/grants`
+  and `POST /api/safes/{id}/members` take `expires_at` (RFC 3339, must be in
+  the future, 422 otherwise) and list it back; console *Add grant* / *Add
+  member* gain the field and the lists show it. `RunGrantExpirySweeper`
+  (once a minute, unconditional, idempotent) deletes expired rows and audits
+  each as **`grant.expired`** / **`safe.member.expired`**;
+  `store.GrantStore.SweepExpiredGrants` (surface **222 → 223**) in both stores
+- [x] **Time frames on standing grants** (WALLIX authorization time frames,
+  CyberArk safe access hours). `time_frame` on the same two rows, in a new
+  leaf package **`internal/timeframe`**: `"Mon-Fri 08:00-18:00 Europe/Madrid"`
+  — day names or ranges (wrapping the week), a clock window exclusive of its
+  end, an overnight window when the end is at or before the start, an IANA
+  zone defaulting to UTC. Parsed on write (422 on error), evaluated on every
+  decision; the row persists, only its effect is periodic
+- [x] **One decision, one reading.** `auth.CanConnectTargetAt(…, now)`: a
+  grant that is expired or outside its frame does not *match* — but it still
+  *counts* as a grant, so a target whose last grant expired stays gated
+  (closed to everyone but admins) rather than **falling open** the way a
+  target with no grants at all is under the open default; the review of the
+  first cut caught exactly that. Both stores return every row with its
+  bounds; the decision filters. The reach view (`auth.ReachableTargets`)
+  reads the same way, so the entitlement report and the connect gate cannot
+  disagree (`TestReachHonoursGrantLifetime`)
+- [x] **A session cannot outlive its grant.** At admission the gate computes
+  `auth.GrantDeadline`: the *latest* bound among the grants matching the
+  principal (a subject two grants admit keeps access while either does),
+  unbounded if any matching grant has no edge or the principal needs no grant
+  (an admin, `unlimited_vault_access` in a personal safe, an open target).
+  Stamped on the session as `Deadline`/`DeadlineReason` (visible in the
+  sessions list), enforced by the same monitor. All three proxies via
+  `admit()`'s new `sessionBounds`; the RDP/VNC viewer via the REST twin
+  `grantDeadline`
+- [x] **Proven, not asserted.** `internal/timeframe` table tests (ranges,
+  wrap, overnight legs, zones, exclusive end); `storetest` round-trips both
+  bounds on both rows, proves the authorization views return every row and
+  the sweep removes exactly the expired ones; `TestAdmitGrantLifetime`
+  (expired refuses, out-of-frame refuses, expiring admits with the expiry as
+  deadline, in-frame admits with the window's end, unbounded and admin carry
+  none); `TestSweepLifetimes` (max, idle, deadline, input resets idle);
+  **end to end against the in-process sshd**: `TestSessionMaxDurationProxy`
+  (a 300 ms bound closes the connection under the client, audited
+  `max-duration`; an unbounded one stays up), `TestSessionIdleTimeoutProxy`,
+  and `TestGrantExpiryEndsSessionProxy` (carol's grant expires 700 ms in:
+  her live session ends at the expiry, audited `grant-expiry actor:carol`,
+  and the expired grant then refuses a new one); `TestGrantLifetimeAPI` (422
+  paths, list-back, audit details, the sweep removing exactly the expired
+  membership then the expired grant)
+- [x] Schema (`0053`), store surface (223), two env vars, two audit actions,
+  four `session.killed` reasons, one new package; routes unchanged at
+  **195**, their bodies extended. No release until Phase 241
 
 ## Phase 239 — v0.65.1 ✅
 

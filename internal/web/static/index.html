@@ -226,6 +226,15 @@
   // (internal/web/testdata/console_check.js asserts a row does not widen with
   // its data).
   const cell = (s, n) => { s = String(s ?? ""); return pad(s.length > n ? s.slice(0, n - 1) + "…" : s, n); };
+  const fmtTs = (s) => { const d = new Date(s); return isNaN(d) ? String(s) : d.toLocaleString(); };
+  // grantLifetime folds the optional expiry / time-frame form fields (Phase
+  // 240) into a grant or safe-member body: a datetime-local value is sent as
+  // UTC RFC 3339, blanks are omitted so the API sees "unbounded".
+  const grantLifetime = (body, f) => {
+    if (f.expires_at) body.expires_at = new Date(f.expires_at).toISOString();
+    if (f.time_frame && f.time_frame.trim()) body.time_frame = f.time_frame.trim();
+    return body;
+  };
   const can = (c) => !!(me && me.capabilities && me.capabilities.includes(c));
   const fmtTime = (t) => t ? esc(String(t).replace("T", " ").slice(0, 19)) : "-";
   const now = () => { const d = new Date(), z = (x) => String(x).padStart(2, "0");
@@ -1277,8 +1286,8 @@ A target with no grants is open to any connect-capable identity.
   <span class="cyan">4=Delete</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Subject type</th><th>Subject</th></tr>
-${grants.map((g) => `<tr><td>${opt(g.id)}</td><td>${esc(g.id)}</td><td>${pad(g.subject_type, 10)}</td><td>${esc(g.subject)}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Subject type</th><th>Subject</th><th>Expires</th><th>Time frame</th></tr>
+${grants.map((g) => `<tr><td>${opt(g.id)}</td><td>${esc(g.id)}</td><td>${pad(g.subject_type, 10)}</td><td>${pad(g.subject, 18)}</td><td>${cell(g.expires_at ? fmtTs(g.expires_at) : "-", 17)}</td><td>${esc(g.time_frame || "-")}</td></tr>`).join("")}
 </table>${grants.length ? "" : `<div class="cyan indent">(No grants — target is open to all connect-capable identities. F6 to restrict.)</div>`}
 <input type="submit" hidden></form>
 ${fkeys("F3=Exit   F5=Refresh   F6=Add grant   F12=Cancel")}`;
@@ -1303,13 +1312,16 @@ Grant access to target <span class="white">${esc(targetName(grantsTarget))}</spa
 <form id="f-add" class="indent">
 <label>Subject type  . . . :  <select name="subject_type"><option>role</option><option>user</option></select>   <span class="cyan">role, user</span></label>
 <label>Subject . . . . . . :  <input name="subject" size="24" required autofocus>   <span class="cyan">a role (admin/user/…) or a username</span></label>
+<label>Expires . . . . . . :  <input name="expires_at" type="datetime-local" size="20">   <span class="cyan">blank = no end date (local time)</span></label>
+<label>Time frame  . . . . :  <input name="time_frame" size="36" placeholder="Mon-Fri 08:00-18:00 Europe/Madrid">   <span class="cyan">blank = any time</span></label>
 <input type="submit" hidden>
 </form>
 ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-add").onsubmit = async (ev) => {
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
-          try { await api("POST", `/api/targets/${grantsTarget}/grants`, f); say("GRANT ADDED."); await openGrants(grantsTarget); }
+          const body = grantLifetime({ subject_type: f.subject_type, subject: f.subject }, f);
+          try { await api("POST", `/api/targets/${grantsTarget}/grants`, body); say("GRANT ADDED."); await openGrants(grantsTarget); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
       },
@@ -3547,8 +3559,8 @@ every target in the safe; a "manages" member may also edit this member list.
 Type options, press Enter.  <span class="cyan">4=Remove</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Subject type</th><th>Subject</th><th>Manages safe</th></tr>
-${safeMembers.map((m) => `<tr><td>${opt(m.id)}</td><td>${esc(m.id)}</td><td>${pad(m.subject_type, 10)}</td><td>${pad(m.subject, 18)}</td><td>${m.can_manage ? '<span class="amber">yes</span>' : "-"}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Subject type</th><th>Subject</th><th>Manages safe</th><th>Expires</th><th>Time frame</th></tr>
+${safeMembers.map((m) => `<tr><td>${opt(m.id)}</td><td>${esc(m.id)}</td><td>${pad(m.subject_type, 10)}</td><td>${pad(m.subject, 18)}</td><td>${m.can_manage ? '<span class="amber">yes</span>' : "-"}</td><td>${cell(m.expires_at ? fmtTs(m.expires_at) : "-", 17)}</td><td>${esc(m.time_frame || "-")}</td></tr>`).join("")}
 </table>${safeMembers.length ? "" : `<div class="cyan indent">(No members — only direct target grants admit access. Press F6 to add.)</div>`}
 <input type="submit" hidden></form>
 ${fkeys("F3=Exit   F5=Refresh   F6=Add member   F12=Cancel")}`;
@@ -3575,13 +3587,15 @@ Grant a subject access to every target in safe <span class="white">${esc(sf ? sf
 <label>Subject type  . . . :  <select name="subject_type"><option>role</option><option>user</option></select>   <span class="cyan">role, user</span></label>
 <label>Subject . . . . . . :  <input name="subject" size="24" required autofocus>   <span class="cyan">a role (admin/user/…) or a username</span></label>
 <label>Manages the safe  . :  <input name="can_manage" type="checkbox">   <span class="cyan">may add/remove members (delegated administration)</span></label>
+<label>Expires . . . . . . :  <input name="expires_at" type="datetime-local" size="20">   <span class="cyan">blank = no end date (local time)</span></label>
+<label>Time frame  . . . . :  <input name="time_frame" size="36" placeholder="Mon-Fri 08:00-18:00 Europe/Madrid">   <span class="cyan">blank = any time</span></label>
 <input type="submit" hidden>
 </form>
 ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-add").onsubmit = async (ev) => {
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
-          const body = { subject_type: f.subject_type, subject: f.subject, can_manage: ev.target.can_manage.checked };
+          const body = grantLifetime({ subject_type: f.subject_type, subject: f.subject, can_manage: ev.target.can_manage.checked }, f);
           try { await api("POST", `/api/safes/${membersSafe}/members`, body); say("MEMBER ADDED."); await openSafeMembers(membersSafe); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };

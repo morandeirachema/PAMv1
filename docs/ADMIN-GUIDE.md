@@ -260,6 +260,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_PROXY_WINRM` | | `false` | Let `ssh <cred>@<winrm-target>@pam` open an interactive **command loop** against a Windows target — each line runs as one WinRM command with a JIT credential, recorded like an SSH session. It is a command loop, not a stateful PowerShell (no working directory or variables across lines). See §5. |
 | `PAM_PROXY_AUTH_RATE_LIMIT` | | `10` | Failed-auth attempts per source IP per minute on the SSH (:2222) and DB (:5433) proxies (0 disables). Throttles guessing of `PAM_API_KEY`. |
 | `PAM_AUTH_RATE_LIMIT` | | `20` | Attempts per client IP per minute on the login endpoints, and — on its own window — **failed** bearer credentials (`X-API-Key`, agent key, application key) on the REST, broker and application-secrets surfaces (0 disables). Each admitted failure is audited `api.auth_failed`; once throttled the caller gets 429 and nothing further is written to the trail. |
+| `PAM_SESSION_MAX_MIN` / `PAM_SESSION_IDLE_MIN` | | `0` (off) | End every brokered session this many minutes after it started / after this many minutes without **operator input** (Phase 240). Every session type; audited `session.killed` with `reason:max-duration` or `idle-timeout`. Output alone (a `tail -f`) counts as idle. |
 | `PAM_MAX_SESSIONS_PER_USER` / `PAM_MAX_SESSIONS_TOTAL` | | `0` (∞) | Cap concurrent live proxied sessions per user and overall, checked before any secret is decrypted — bounds resource use from one (or a compromised) identity. Per-replica in HA. |
 | `PAM_MAX_RECORDING_MB` | | `0` (∞) | Cap a single session recording's output (MB); a session that exceeds it is terminated (`session.record_limit`) rather than run unrecorded, so one runaway session can't fill the recording disk. |
 | `PAM_DB_ADDR` | | `off` | PostgreSQL session-proxy bind (Phase 15), e.g. `:5433`; `off` disables it. |
@@ -1742,6 +1743,52 @@ curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/credentials/
 - API/curl-only in v1, not yet on the **Work with Safes** console screens
   — matching `ssh_ca`/`db_zsp`/DoubleLock's own precedent of not adding
   every new concept to the 5250 UI immediately.
+
+### Grant lifetime: expiry and time frames (Phase 240)
+
+A standing target grant or safe membership can carry an **expiry** and/or a
+**time frame**. Both are optional; a row with neither is what every grant
+before Phase 240 was — unbounded.
+
+```bash
+# a two-week grant, usable on weekdays during Madrid office hours
+curl -X POST -H "X-API-Key: $PAM_API_KEY" localhost:8080/api/targets/7/grants \
+  -d '{"subject_type":"user","subject":"alice",
+       "expires_at":"2026-09-17T18:00:00Z",
+       "time_frame":"Mon-Fri 08:00-18:00 Europe/Madrid"}'
+# the same two fields on a safe membership
+curl -X POST -H "X-API-Key: $PAM_API_KEY" localhost:8080/api/safes/3/members \
+  -d '{"subject_type":"role","subject":"user","time_frame":"Sat,Sun 00:00-24:00"}'
+```
+
+`expires_at` must be in the future (RFC 3339). `time_frame` is
+`<days> <HH:MM-HH:MM> [zone]`: day names or ranges (`Mon-Fri`, `Sat,Sun`,
+`Fri-Mon` wraps the week, `*` is every day), a clock window whose end is
+exclusive (`00:00-24:00` is a whole day), an **overnight** window when the end
+is at or before the start (`Mon-Fri 22:00-06:00` runs each listed evening into
+the next morning), and an IANA zone, UTC by default. Both are refused with
+422 when malformed. The console's *Add grant* and *Add member* screens carry
+the same two fields, and the lists show them.
+
+What they do:
+
+- **Outside its bounds a grant does not admit** — the connect gate, the RDP/VNC
+  viewer, the agent broker and the reachability report all read it the same
+  way. It still *counts* as a grant: a target whose last grant has expired
+  stays closed to everyone but administrators rather than falling open.
+- **A session cannot outlive its grant.** A session admitted under a bounded
+  grant is given the grant's edge — the expiry, or the end of the current
+  time-frame window — as its deadline (visible as `deadline` in *Work with
+  Active Sessions*), and is ended there, audited `session.killed` with
+  `reason:grant-expiry` or `reason:time-frame`. A subject two grants admit
+  keeps access while either still does.
+- **Expired rows are swept** once a minute and audited `grant.expired` /
+  `safe.member.expired`; a time-framed row persists, only its effect is
+  periodic.
+
+Together with `PAM_SESSION_MAX_MIN` / `PAM_SESSION_IDLE_MIN` (§4) this is the
+"session ends when the authorization ends" control CyberArk, WALLIX and
+Teleport each ship under their own names.
 
 ### Dependent accounts: safe service-account rotation (Phase 17)
 
@@ -4355,6 +4402,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-03 | **Phase 240 (session lifetime, grant expiry and time frames).** §4 gains `PAM_SESSION_MAX_MIN` / `PAM_SESSION_IDLE_MIN`; new §7 subsection *Grant lifetime: expiry and time frames* — the `expires_at` / `time_frame` fields on grants and safe memberships, the frame grammar, what a bounded grant does at connect time, the per-session deadline and the expiry sweep. |
 | 2026-09-03 | **Phase 238 (the review of 236/237).** Slack chat-ops section: a Slack decision's audit rows are attributed to the linked PAMv1 user (they carried actor `unknown`), and the Slack ack is complete on the wire before the follow-up (Slack's 3-second budget is now actually met); the section now states which gates a click passes (posture, on-call) and which cannot apply (IP allowlist, enrolled device), and that buttons posted before 0.65.0 must be re-notified. |
 | 2026-09-02 | **Phase 236 (the review of 232–235).** Slack chat-ops section gains the **identity mapping** step: a button click is only honoured from a Slack member whose id is linked to an active PAMv1 user holding `CapApprove` (`slack_user_id` on `POST`/`PUT /api/users`, console Add/Change User), and the decision is made as that PAMv1 identity — so four-eyes and two-person floors hold from Slack exactly as they do from the API. Refusals now reach the clicker as an ephemeral Slack message. |
 | 2026-09-01 | **Phase 234 (Slack chat-ops access-request approval).** New §7 subsection with Slack App setup steps: `PAM_SLACK_WEBHOOK_URL` (Incoming Webhooks) and `PAM_SLACK_SIGNING_SECRET` (verifies the interactivity callback), required together. Console menu Work with Access Requests gains option 8=Notify Slack. |

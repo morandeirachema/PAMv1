@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/store"
+	"github.com/morandeirachema/pamv1/internal/timeframe"
 )
 
 var (
@@ -216,6 +218,56 @@ func (s *Server) deleteTarget(w http.ResponseWriter, r *http.Request) {
 type grantIn struct {
 	SubjectType string `json:"subject_type"`
 	Subject     string `json:"subject"`
+	// ExpiresAt and TimeFrame bound the grant in time (Phase 240); both
+	// optional. ExpiresAt must be in the future; TimeFrame must parse
+	// (timeframe.Parse).
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	TimeFrame string     `json:"time_frame,omitempty"`
+}
+
+// validGrantLifetime checks a grant's or membership's optional bounds (Phase
+// 240), writing the 422 itself. It returns the trimmed frame text.
+func validGrantLifetime(w http.ResponseWriter, expiresAt *time.Time, frame string) (string, bool) {
+	if expiresAt != nil && !expiresAt.After(time.Now()) {
+		writeError(w, http.StatusUnprocessableEntity, "expires_at must be in the future")
+		return "", false
+	}
+	frame = strings.TrimSpace(frame)
+	if _, err := timeframe.Parse(frame); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "time_frame: "+err.Error())
+		return "", false
+	}
+	return frame, true
+}
+
+// lifetimeDetail renders the optional bounds for an audit detail.
+func lifetimeDetail(expiresAt *time.Time, frame string) string {
+	d := ""
+	if expiresAt != nil {
+		d += " expires:" + expiresAt.UTC().Format(time.RFC3339)
+	}
+	if frame != "" {
+		d += " frame:" + auditField(frame, 64)
+	}
+	return d
+}
+
+// grantDeadline is the REST-side twin of the proxies' gate: the instant the
+// caller's authorization on target ends under its live grants (Phase 240),
+// or nil when nothing bounds it. Stamped on a viewer session at registration.
+func (s *Server) grantDeadline(ctx context.Context, target *store.Target) (*time.Time, string) {
+	grants, err := s.store.EffectiveTargetGrants(ctx, target.ID)
+	if err != nil {
+		return nil, ""
+	}
+	personal, err := store.EffectiveSafePersonal(ctx, s.store, target)
+	if err != nil {
+		return nil, ""
+	}
+	if dl, why, ok := auth.GrantDeadline(principalFrom(ctx), grants, personal, time.Now()); ok {
+		return &dl, why
+	}
+	return nil, ""
 }
 
 // createTargetGrant adds a per-target access grant for a user or role (validating
@@ -249,14 +301,18 @@ func (s *Server) createTargetGrant(w http.ResponseWriter, r *http.Request) {
 	if !s.guardPersonalTarget(w, r, id) {
 		return
 	}
+	frame, ok := validGrantLifetime(w, in.ExpiresAt, in.TimeFrame)
+	if !ok {
+		return
+	}
 	// The creator is recorded so a certification review can enforce four-eyes:
 	// the principal who granted access may not be the one certifying it (Phase 46).
-	g := store.TargetGrant{TargetID: id, SubjectType: in.SubjectType, Subject: in.Subject, CreatedBy: actorFrom(r.Context())}
+	g := store.TargetGrant{TargetID: id, SubjectType: in.SubjectType, Subject: in.Subject, CreatedBy: actorFrom(r.Context()), ExpiresAt: in.ExpiresAt, TimeFrame: frame}
 	if err := s.store.CreateTargetGrant(r.Context(), &g); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "grant.create", fmt.Sprintf("target:%d %s:%s", id, in.SubjectType, in.Subject))
+	s.audit(r.Context(), "grant.create", fmt.Sprintf("target:%d %s:%s", id, in.SubjectType, in.Subject)+lifetimeDetail(in.ExpiresAt, frame))
 	writeJSON(w, http.StatusCreated, g)
 }
 
