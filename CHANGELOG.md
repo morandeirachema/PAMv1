@@ -9,6 +9,52 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.65.1] — 2026-09-03
+
+A patch that ships **Phase 238** — the review of Phases 236 and 237, and
+what it found. **No schema, route, env-var, store-surface or audit-action
+change.** Deployments without Slack configured see no behavioural
+difference; a deployment that approves from Slack gets four fixes it will
+notice.
+
+### Fixed
+
+- **The Slack ack is now complete on the wire.** 0.65.0 flushed an empty
+  200 before the `response_url` follow-up but without a `Content-Length`,
+  so the response was chunked and its terminating chunk left only after
+  the follow-up — Slack's client still waited the whole round-trip. Now
+  `Content-Length: 0`, and the handler decides, acks, then follows up; the
+  follow-up is also detached from the request context, so Slack hanging up
+  after the ack no longer cancels it.
+- **A Slack decision is audited as the approver.** The route is
+  unauthenticated (Slack's signature is the authentication) and never
+  installed a principal, so `access.approve`, `access.deny`,
+  `access.approve_partial` and the four-eyes `access.decision_denied` rows
+  for a click carried actor `unknown`. They now carry the linked PAMv1
+  username, exactly as an API decision's do.
+- **A Slack click passes the user-keyed gates an API call passes** —
+  device posture (Phase 133) and on-call attestation (Phase 232), refused
+  and audited `authz.denied` the same way. The origin-bound gates (IP
+  allowlist, enrolled device) cannot apply to a request that arrives from
+  Slack's servers and are documented as such: **an approver protected only
+  by those should not be linked to Slack.**
+- **`PUT /api/users/{id}` no longer half-applies** when the Slack member id
+  is already claimed: the link is written before the role, so a 409 leaves
+  the row untouched (it used to leave the role changed and the user's
+  sessions cut).
+- The PAMv1 username in Slack follow-ups is mrkdwn-escaped (a user named
+  `<!channel>` no longer pages the channel); a store failure on the
+  member-id lookup is no longer reported as "not linked".
+
+### Docs
+
+- v0.65.0's image digest, never recorded by its release phase, is now in
+  the README, ROADMAP and the `[0.65.0]` entry below — which also now says
+  that buttons posted by 0.64.0 stopped verifying at that upgrade.
+
+Helm chart `0.56.0` → `0.56.1`, a patch alongside an app patch. Image digest
+recorded once the publish workflow has run.
+
 ## [0.65.0] — 2026-09-02
 
 A minor that ships **Phase 236** — the review of Phases 232–235, and what it
@@ -2944,6 +2990,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.65.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.65.1
 [0.65.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.65.0
 [0.64.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.64.0
 [0.63.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.63.0

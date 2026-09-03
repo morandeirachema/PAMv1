@@ -9,7 +9,7 @@
 > lives. PAMv1 is educational ("for learning purposes") — this document is part of
 > that: it shows the reasoning, not just the result.
 >
-> Last updated: 2026-09-02 · Reflects: Phases 0–227 and 229–237 + the 2026-07 hardening
+> Last updated: 2026-09-02 · Reflects: Phases 0–227 and 229–239 + the 2026-07 hardening
 > passes, including the **post-beta sweep of 2026-07-27** (thirty findings, all
 > closed), the **sweep of 2026-08-07** over phases 56–61a (nine findings: two
 > closed by Phase 62, six by Phase 63, half of one withdrawn as a false
