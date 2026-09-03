@@ -2428,10 +2428,10 @@ A `/security-review` and `/code-review xhigh` pass over Phases 236–237
 (`96de95c..HEAD`: the Slack identity mapping with its review fixes, and the
 v0.65.0 release), run by the user on 2026-09-03 in the shape 231 and 236
 took. It found that the review phase's own "ack" fix had not fixed the ack,
-that the Slack path audited its decisions as nobody, one half-applied
-update, and one release step that was never done. No new authorization
-finding: the identity mapping holds. All closed here; no release until
-Phase 239.
+that the Slack path audited its decisions as nobody and skipped the
+user-keyed gates every API call passes, one half-applied update, three
+smaller correctness items, and one release step that was never done. The
+identity mapping itself holds. All closed here; no release until Phase 239.
 
 - [x] **The ack was still not an ack (Medium).** Phase 236 flushed an empty
   200 before the `response_url` follow-up — but without a `Content-Length`,
@@ -2458,6 +2458,36 @@ Phase 239.
   where the middleware would (`withPrincipal` + `setActor`) before
   deciding, so the Slack path's rows are attributed like the API path's.
   `TestSlackDecisionAuditActor` asserts the actor of both rows
+- [x] **The click skipped the user-keyed gates (Medium).** An authenticated
+  approve call passes `authzCore`'s `sourceGates`; the click gated only on
+  `Active` + `CapApprove`. Two of those gates are bound to the caller's
+  origin and **cannot** apply to a click — the request arrives from Slack's
+  servers, so the approver's IP allowlist and enrolled device are
+  unknowable there (now stated in the ADMIN-GUIDE) — but two are keyed on
+  the *user* alone and did not bind the Slack door: device posture (Phase
+  133) and on-call attestation (Phase 232). An off-shift approver refused
+  `403 oncall-check-failed` by the API could approve from Slack. `slackDecide`
+  now runs `sourceGates` with the bare principal (no allowlist, no
+  fingerprint, so exactly the user-keyed gates fire), audited `authz.denied`
+  as the middleware does, refused ephemerally. `TestSlackClickSourceGates`
+  proves the same approver is refused off shift and decides on shift
+- [x] **The follow-up rode the request's context.** With the ack now
+  complete, Slack may hang up at once — and net/http cancels the request
+  context when the peer goes, which would have aborted the `response_url`
+  POST precisely because the ack worked, leaving live buttons and no
+  outcome in the channel. Posted on `context.WithoutCancel`; the ack test
+  closes its connection after reading the ack and checks the blocked
+  follow-up is still wanted
+- [x] **Three smaller correctness items.** The PAMv1 username was
+  interpolated raw into the replacement and refusal messages while
+  `validName` allows `<`, `>` and `&` — a user named `<!channel>` approving
+  from Slack would page the channel; now `slack.EscapeText`, as the notify
+  message already did (`TestSlackFollowUpEscapesUsername`). A store
+  *failure* on the member-id lookup was audited as `slack-unlinked` and told
+  a correctly linked approver to ask an administrator; only `ErrNotFound`
+  is "unlinked" now, anything else logs and says "try again". And the
+  lifecycle test had dropped the click it used to name — a still-signed
+  Deny button on an already-approved request — re-added
 - [x] **A half-applied user update.** `PUT /api/users/{id}` wrote the role
   (and cut the user's live sessions on a role change) before the Slack
   link, and the link is the one write that can fail for a caller-caused
@@ -2471,7 +2501,11 @@ Phase 239.
   resolves by anonymous pull to
   `sha256:292045eba8ed55ad54fae14ff2460ee5d5b47d9731ca278cebb12411c078196c`;
   every publishing step of the run concluded `success`, and `cosign verify`
-  passes against the README's identity
+  passes against the README's identity. Also owed by 237's notes and
+  unsaid: the domain-separated button MAC **invalidated every button posted
+  by 0.64.0** still inside its TTL at upgrade — `slack-notify` must be
+  re-run for those; the `[0.65.0]` CHANGELOG paragraph and the ADMIN-GUIDE
+  now say so
 - [x] **What was clean**: the identity mapping — the `role` guard on
   `PUT /api/users` already stops a `manage_users`-only profile from linking
   its own Slack id to an approver row, because keeping the row an approver
@@ -2484,7 +2518,8 @@ Phase 239.
 - [x] The tests now **wait** for the follow-up instead of reading it (the
   ack completing first exposed that they had been reading it early, and one
   read was unsynchronised). No schema, route, store-surface or env-var
-  change
+  change; no new audit action (`authz.denied` is reused with the
+  middleware's own reasons)
 
 ## Phase 237 — v0.65.0 ✅
 

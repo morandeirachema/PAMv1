@@ -38,8 +38,12 @@ token's MAC is domain-separated from Slack's own request signature.
 
 **What an operator must do to keep using Slack approval.** Link each
 approver's Slack member ID to their PAMv1 user — until then, every click is
-refused with an in-channel note. Deployments without Slack configured are
-unaffected.
+refused with an in-channel note. And re-run `slack-notify` for any request
+whose buttons were posted **before** this upgrade: the button token's MAC
+is now domain-separated, so buttons minted by 0.64.0 no longer verify and
+answer every click with "expired" (noted by Phase 238's review — this
+paragraph did not say so at release). Deployments without Slack configured
+are unaffected.
 
 **Security.** `golang.org/x/crypto` 0.55.0 → 0.56.0 for
 [GO-2026-6354](https://pkg.go.dev/vuln/GO-2026-6354) and
