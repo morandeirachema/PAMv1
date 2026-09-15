@@ -73,6 +73,8 @@ const (
 	gateProtocolAllowed             // protocol forbidden by the OT allowlist
 	gateTargetGrants                // effective-grants lookup errored (check-failed)
 	gateTargetPolicy                // per-target grants/safe-membership denied the connect
+	gateSessionMFACheck             // session-MFA policy lookup or ticket spend errored (check-failed)
+	gateSessionMFA                  // per-session MFA refused (reason = auth.ReasonSessionMFA*)
 	gateApprovalPolicy              // approval-policy lookup errored (check-failed)
 	gateApprovalClaim               // the approval claim errored (check-failed)
 	gateApproval                    // no approved access request (reason = approval-required / ticket-not-valid)
@@ -183,6 +185,27 @@ type gates struct {
 	// connect (Phase 232); nil disables on-call checking. Same shape and
 	// same broker exemption as posture above.
 	oncall *oncall.Attestor
+	// sessionMFA is PAM_SESSION_MFA (Phase 244): every session requires a
+	// fresh second factor. Targets and safes can require it on their own;
+	// store.EffectiveSessionMFA folds all three, strictest wins.
+	sessionMFA bool
+}
+
+// sessionMFARefusal is the wire message for a per-session MFA refusal, the
+// same on every proxy. prompt reports whether this transport can ask for the
+// code in-band (the SSH proxy can; the database proxies cannot, so a ticket is
+// their only way to present one).
+func sessionMFARefusal(reason string, prompt bool) string {
+	switch reason {
+	case auth.ReasonSessionMFATicketTarget:
+		return "PAMv1: this session-MFA ticket was issued for a different target"
+	case auth.ReasonSessionMFATicketUsed:
+		return "PAMv1: this session-MFA ticket has already been used"
+	}
+	if prompt {
+		return "PAMv1: this target requires a second factor for every session — enroll a one-time-code factor to be prompted, or mint a ticket (POST /api/session-mfa) and use it as the password"
+	}
+	return "PAMv1: this target requires a second factor for every session — mint a ticket (POST /api/session-mfa) and use it as the password"
 }
 
 // admit runs every authorization gate in the fixed order below and, only if all
@@ -202,12 +225,13 @@ type gates struct {
 //  9. exact-protocol match       — DB proxies only (expectProtocol)
 //  10. protocol allowlist         — OT policy may forbid the protocol
 //  11. per-target authorization  — effective grants ∪ safe membership
-//  12. approval gate             — 4-eyes / OT window; break-glass bypasses; single-use burned here
-//  13. vendor contract gate      — a vendor needs an active, in-window contract
-//  14. protocol proxyable        — SSH proxy only (can this gateway broker it)
-//  15. concurrent-session cap    — before any secret is decrypted
-//  16. fail-closed session-start audit — durable evidence BEFORE decryption
-//  17. just-in-time decryption   — plaintext exists only from here, never for a denied session
+//  12. per-session MFA           — a factor proven for THIS session; a ticket is spent here; break-glass bypasses
+//  13. approval gate             — 4-eyes / OT window; break-glass bypasses; single-use burned here
+//  14. vendor contract gate      — a vendor needs an active, in-window contract
+//  15. protocol proxyable        — SSH proxy only (can this gateway broker it)
+//  16. concurrent-session cap    — before any secret is decrypted
+//  17. fail-closed session-start audit — durable evidence BEFORE decryption
+//  18. just-in-time decryption   — plaintext exists only from here, never for a denied session
 //
 // admit itself emits only the audits that are byte-identical across all three
 // proxies and are intrinsic to a gate rather than to a refusal: the approval
@@ -337,7 +361,32 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 		bounds = sessionBounds{deadline: &dl, reason: why}
 	}
 
-	// 12. Approval gate (4-eyes / OT window). Break-glass bypasses. A single-use
+	// 12. Per-session MFA (Phase 244): a second factor proven for THIS session
+	// — a code answered in-band (the SSH proxy's prompt) or a ticket minted
+	// after one, bound to this target and spent here. After target
+	// authorization, so a caller who may not reach the target burns no ticket;
+	// before the approval gate, so a missing factor never consumes a
+	// single-use approval.
+	mfaRequired, merr := store.EffectiveSessionMFA(ctx, g.store, target, g.sessionMFA)
+	if merr != nil {
+		g.log.Error("session MFA policy lookup failed", "target", target.Name, "err", merr)
+		return admitResult{outcome: admitCheckFailed, gate: gateSessionMFACheck, target: target, cred: cred}
+	}
+	factor, why, merr := auth.CheckSessionMFA(ctx, g.store, principal, target.ID, mfaRequired)
+	if merr != nil {
+		g.log.Error("session MFA ticket spend failed", "target", target.Name, "err", merr)
+		return admitResult{outcome: admitCheckFailed, gate: gateSessionMFACheck, target: target, cred: cred}
+	}
+	if why != "" {
+		return admitResult{outcome: admitDenied, gate: gateSessionMFA, reason: why, target: target, cred: cred}
+	}
+	if factor != "" {
+		// Byte-identical on all three proxies, so admit owns it.
+		appendAudit(ctx, g.store, g.log, actor, "session.mfa_verified",
+			"target:"+target.Name+" factor:"+factor+" path:"+target.Protocol)
+	}
+
+	// 13. Approval gate (4-eyes / OT window). Break-glass bypasses. A single-use
 	// approval is BURNED by the connection it admits (consume-on-connect), even
 	// one that later fails upstream, so it can never authorize a second session.
 	// The policy is the strictest of the global flag, the target's own flag and
@@ -362,7 +411,7 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 		}
 	}
 
-	// 13. Vendor contract gate: a third-party vendor may reach a target only while
+	// 14. Vendor contract gate: a third-party vendor may reach a target only while
 	// an approved, in-window contract grant is active. Non-vendors are unaffected.
 	if isVendor, allowed, verr := g.store.VendorSessionAllowed(ctx, actor, target.Name, cred.Username, time.Now()); verr != nil {
 		g.log.Error("vendor gate check failed", "target", target.Name, "err", verr)
@@ -373,21 +422,21 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 		return admitResult{outcome: admitDenied, gate: gateVendor, target: target, cred: cred}
 	}
 
-	// 14. Refuse a protocol this gateway cannot broker (SSH proxy: ssh always,
+	// 15. Refuse a protocol this gateway cannot broker (SSH proxy: ssh always,
 	// winrm only with a runner configured) — before decrypting, so plaintext
 	// never materializes for a session about to be denied.
 	if req.proxyable != nil && !req.proxyable(target) {
 		return admitResult{outcome: admitDenied, gate: gateProtocolProxyable, target: target, cred: cred}
 	}
 
-	// 15. Concurrent-session cap: refuse a session that would exceed the per-user
+	// 16. Concurrent-session cap: refuse a session that would exceed the per-user
 	// or global limit BEFORE any secret is decrypted, so one (or a compromised)
 	// identity cannot exhaust connections, goroutines or recording disk.
 	if g.sessions != nil && !g.sessions.AllowNew(actor) {
 		return admitResult{outcome: admitSessionLimited, gate: gateSessionLimit, target: target, cred: cred}
 	}
 
-	// 16. Fail closed: durably audit the session start BEFORE any secret is
+	// 17. Fail closed: durably audit the session start BEFORE any secret is
 	// decrypted or a certificate minted. If the audit store is unavailable we
 	// refuse rather than open an unaudited privileged session — the audit
 	// analogue of the fail-closed recording policy.
@@ -396,7 +445,7 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 		return admitResult{outcome: admitAuditUnavailable, gate: gateAudit, target: target, cred: cred}
 	}
 
-	// 17. Just-in-time decryption. A credential the caller declared has no stored
+	// 18. Just-in-time decryption. A credential the caller declared has no stored
 	// secret (SSH Zero Standing Privilege) is left for dial-time certificate
 	// minting; every other secret is decrypted here — plaintext exists only from
 	// this point, never for a session that was denied above.

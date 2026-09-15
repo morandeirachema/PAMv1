@@ -158,7 +158,7 @@ func (s *Server) signOperatorCert(w http.ResponseWriter, r *http.Request) {
 	// Same connect authorization as any other path to this target (grants ∪ safes,
 	// approval — which may consume a one-time request — and the vendor gate for the
 	// requested principal account).
-	if !s.gateCredentialAccess(w, r, target, in.Principal, "ssh.cert_issue") {
+	if !s.gateSecretDelivery(w, r, target, in.Principal, "ssh.cert_issue") {
 		return
 	}
 

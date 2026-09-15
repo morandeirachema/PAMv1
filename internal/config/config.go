@@ -170,6 +170,11 @@ type Config struct {
 	// TOTP or WebAuthn, whichever the user has confirmed.
 	MFARequired bool
 
+	// SessionMFA requires a fresh second factor for every session a human
+	// opens and every secret or operator certificate handed to one (Phase
+	// 244) — not only the one at login. Targets and safes can also require it.
+	SessionMFA bool
+
 	// WebAuthnRPID/WebAuthnRPOrigin configure FIDO2/WebAuthn as an alternate
 	// second factor to TOTP. Presence enables it, the same idiom OIDC uses —
 	// there is no separate boolean flag. RPID is the effective domain (e.g.
@@ -841,6 +846,7 @@ func Load() (*Config, error) {
 		AlertEmailUser:          os.Getenv("PAM_ALERT_EMAIL_USER"),
 		AlertEmailPass:          os.Getenv("PAM_ALERT_EMAIL_PASS"),
 		MFARequired:             boolean("PAM_MFA_REQUIRED", false),
+		SessionMFA:              boolean("PAM_SESSION_MFA", false),
 		WebAuthnRPID:            os.Getenv("PAM_WEBAUTHN_RP_ID"),
 		WebAuthnRPOrigin:        os.Getenv("PAM_WEBAUTHN_RP_ORIGIN"),
 		RotateInterval:          time.Duration(integer("PAM_ROTATE_INTERVAL_MIN", 0)) * time.Minute,

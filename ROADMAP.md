@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–243 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–244 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,91 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 244 — Per-session MFA ✅
+
+The next row of the Tier 8 pass, and the one every vendor lists right after
+session lifetime: a second factor proven **for this session**, not once at
+login. Teleport's `require_session_mfa`, CyberArk's PSM re-authentication and
+WALLIX's per-session MFA answer the same threat — a token or login session that
+is stolen, copied out of a terminal or left on a shared box — and PAMv1 had no
+answer: MFA gated `POST /api/login` and enrollment, and a per-user token, which
+never meets a factor at all, opened every session its role allowed.
+
+- [x] **Policy, three sources, strictest wins.** `PAM_SESSION_MFA` for the
+  deployment; `require_session_mfa` on a target and on a safe (`0055`), folded
+  by `store.EffectiveSessionMFA` exactly as `EffectiveApprovalPolicy` folds
+  approval — a safe can tighten, never loosen, and an unreadable safe fails
+  closed. API fields on both create/update bodies and in their audit details;
+  console checkboxes, and an *MFA* column on *Work with Targets*
+- [x] **One gate, every door.** `auth.CheckSessionMFA` is gate 12 of `admit()`
+  — after target authorization, so a caller the target refuses burns no
+  ticket; before approval, so a missing factor never burns a single-use
+  approval — which puts it on the SSH, PostgreSQL and SQL Server proxies at
+  once. The RDP/VNC viewer tunnel runs the same call in the same position, and
+  so do the REST paths that put access in a caller's hands: reveal, checkout
+  and operator SSH certificates (`gateSecretDelivery`), and the WinRM and
+  kubectl endpoints. Break-glass bypasses. A satisfied gate is audited
+  `session.mfa_verified` (target, factor, path); a refusal is written under
+  each path's own denial action with `reason:session-mfa-required`,
+  `-ticket-target`, `-ticket-used` or, on REST, `-ticket-invalid`
+- [x] **Proven in-band where the protocol can ask.** For a target that
+  requires it, the SSH proxy answers the token with an SSH partial success and
+  a keyboard-interactive `One-time code:` prompt — an OpenSSH client shows it
+  right after the password — and admits only a right, unspent TOTP code (the
+  login's own replay guard, now shared as `auth.VerifySecondFactor`) or a
+  recovery code. Each answer spends the per-host budget a password guess does;
+  a wrong one is `session.mfa_failed`. A user with no one-time-code factor is
+  not prompted for one they could not answer
+- [x] **A ticket where it cannot.** `POST /api/session-mfa` (`{target, otp}`)
+  and `POST /api/session-mfa/webauthn/{begin,finish}` mint a **single-use,
+  two-minute ticket bound to one target** after a fresh TOTP, recovery or
+  WebAuthn factor — a `sessions` row with scope `session_mfa` and `target_id`
+  (`0055`, cascading with the target), audited `session.mfa_ticket`. It is the
+  password for `psql`, `sqlcmd` or a scripted `ssh`, the viewer tunnel's
+  token, or the `X-PAM-Session-MFA` header beside a REST caller's own key. It
+  is **spent the moment a gate reads it** (an atomic delete), burned when shown
+  to the wrong target, and refused as an API key on every route, its own mint
+  included. Three holes closed before they shipped: an enrollment-only session
+  cannot mint one (the ticket resolves to the full role); a WebAuthn
+  ceremony's challenge is keyed by its target, so a begin for one target
+  cannot finish for another; and the SSH share-join path refuses a ticket,
+  since it never runs `admit()` and so could never spend one
+- [x] **Console.** Reveal, checkout, kubectl and the viewer ask for the code
+  when the server answers `session_mfa_required` and retry with a ticket (an
+  empty answer runs the security-key ceremony); *Work with Targets*
+  **10=Session MFA ticket** shows one for a client that cannot be prompted
+- [x] **Proven, not asserted.** `TestEffectiveSessionMFA` (the fold);
+  `TestResolveSessionMFATicket`, `TestCheckSessionMFA`,
+  `TestVerifySecondFactor`; `TestAdmitSessionMFA` (ahead of approval, behind
+  target policy, a ticket spent once, burned at the wrong target, untouched by
+  an earlier refusal); **end to end against the in-process sshd**,
+  `TestSessionMFAProxy` — the prompt admits the right code once, a replay and a
+  wrong code fail authentication, a factor-less user is refused, a ticket opens
+  one session and dies, another target's ticket is refused and burned,
+  break-glass passes and the bootstrap key does not; `TestSessionMFADBProxy`
+  and `TestSessionMFAMSSQLProxy` (a token never reaches the upstream, a ticket
+  logs in); `TestSessionMFATicketMint`, `TestSessionMFAEnrollOnlyCannotMint`,
+  `TestSessionMFARESTAccessPaths`, `TestSessionMFAPolicySources`,
+  `TestSessionMFAViewer` (against the fake guacd) and
+  `TestSessionMFAWebAuthnTicket` (a real signed assertion). With the gate forced
+  off, the admit test and all three proxy tests fail
+- [x] **Limits, stated rather than discovered.** No re-prompt window: every
+  session proves a factor (WALLIX's non-systematic MFA is a later knob, if
+  prompt fatigue shows). A session-share join and an external guest attach to a
+  session that already passed and are not re-gated. The AI-agent broker and the
+  application-secrets API are non-human paths and unaffected. The browser
+  extension cannot carry a ticket, so its reveal is refused on a target that
+  requires one. WebAuthn over plain SSH is not attempted — a security-key user
+  mints a ticket in the portal
+- [x] **The WALLIX research pass (2026-09-15)**, run on the user's ask beside
+  this phase: WALLIX Bastion 12.3.2, Access Manager 5.2.4.0 and WALLIX One
+  IDaaS (formerly Trustelem), every candidate checked against the code before
+  being listed — recorded as **Tier 9** in the README's *Coverage vs.
+  commercial PAM*
+- [x] Schema (`0055`), routes **198 → 201**, one env var, three audit actions
+  and four `reason:` values; store surface unchanged at **225**, no new
+  package. Not yet released
 
 ## Phase 243 — v0.67.0 ✅
 

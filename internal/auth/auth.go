@@ -369,6 +369,15 @@ func IsViewerScope(scope string) bool {
 // on every route except the one the extension actually needs.
 const SessionScopeExtension = "extension"
 
+// SessionScopeSessionMFA marks a session-MFA ticket (Phase 244): a
+// single-use, two-minute token minted only after a FRESH second factor and
+// bound to ONE target (store.Session.TargetID). It exists to open exactly one
+// session — presented as a proxy password, as the viewer tunnel's token, or
+// in the X-PAM-Session-MFA header of a REST access path — and is spent the
+// moment a gate reads it. It is refused as an API key everywhere: a ticket
+// that could call the API could mint itself a successor.
+const SessionScopeSessionMFA = "session_mfa"
+
 // CapSet is a resolved set of capabilities (used for custom profiles).
 type CapSet map[Capability]bool
 
@@ -400,6 +409,17 @@ type Principal struct {
 	// for 24 hours. It is true now only because every such entry point calls
 	// MayOpenSession rather than reading these fields by hand.
 	ExtensionOnly bool
+	// SessionMFATicket marks a principal resolved from a session-MFA ticket
+	// (Phase 244), bound to SessionMFATarget; CheckSessionMFA spends it.
+	SessionMFATicket bool
+	SessionMFATarget int64
+	sessionMFAHash   string
+	// SessionMFAFactor records a second factor proven IN-BAND for the one
+	// session this principal is about to open — the SSH proxy's
+	// keyboard-interactive code prompt sets it to FactorTOTP or
+	// FactorRecovery. Nothing that resolves a key sets it; only a transport
+	// that has itself just verified a factor does.
+	SessionMFAFactor string
 	// IPAllowlist restricts this principal to connecting from a source address
 	// inside one of these comma-separated CIDR blocks (Phase 118), e.g.
 	// "10.0.0.0/8, 192.168.1.0/24". Empty (the default) means unrestricted —
@@ -434,6 +454,7 @@ const (
 	ScopeMFAPending
 	ScopeTunnelOnly
 	ScopeExtensionOnly
+	ScopeSessionMFA
 )
 
 // NarrowScope reports which narrow scope, if any, this principal is confined to.
@@ -463,6 +484,8 @@ func (p *Principal) NarrowScope() SessionScope {
 		return ScopeTunnelOnly
 	case p.ExtensionOnly:
 		return ScopeExtensionOnly
+	case p.SessionMFATicket:
+		return ScopeSessionMFA
 	}
 	return ScopeNone
 }
@@ -473,12 +496,14 @@ func (p *Principal) NarrowScope() SessionScope {
 // legitimately for (the viewer tunnel passes ScopeTunnelOnly, since a tunnel
 // token is the credential it was built to accept); the proxies pass ScopeNone.
 //
-// The rule is deliberately a whitelist of two: a full session, or exactly the
-// scope this door is for. Every other narrow scope is refused, including ones
-// added after this comment was written.
+// The rule is deliberately a whitelist of three: a full session, a session-MFA
+// ticket (Phase 244 — opening one session is the only thing a ticket is FOR,
+// so every session door accepts it and every other door refuses it), or
+// exactly the scope this door is for. Every other narrow scope is refused,
+// including ones added after this comment was written.
 func (p *Principal) MayOpenSession(serving SessionScope) bool {
 	sc := p.NarrowScope()
-	return sc == ScopeNone || (serving != ScopeNone && sc == serving)
+	return sc == ScopeNone || sc == ScopeSessionMFA || (serving != ScopeNone && sc == serving)
 }
 
 // effectiveRoles returns the role set to evaluate capabilities and role-grants
@@ -853,6 +878,15 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (*Principal, error) 
 			p.TunnelOnly = IsViewerScope(s.Scope)
 			p.MFAPending = s.Scope == SessionScopeMFAPending
 			p.ExtensionOnly = s.Scope == SessionScopeExtension
+			if s.Scope == SessionScopeSessionMFA {
+				// A ticket is meaningless without the target it was minted
+				// for; a row without one is refused rather than read as a
+				// ticket for anything.
+				if s.TargetID == nil {
+					return nil, ErrUnauthorized
+				}
+				p.SessionMFATicket, p.SessionMFATarget, p.sessionMFAHash = true, *s.TargetID, hash
+			}
 			// A session is minted from a principal and then lives on its own row,
 			// so nothing above re-reads the user it was minted for. For a LOCAL
 			// user that was a gap the per-user-token path never had (2026-08-27

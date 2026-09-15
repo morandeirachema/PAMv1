@@ -51,6 +51,7 @@ type DBConfig struct {
 	RecordingDir    string            // where session recordings are written
 	Sessions        *session.Registry // live-session registry (optional)
 	RequireApproval bool              // global 4-eyes/OT gate (per-target also applies)
+	SessionMFA      bool              // PAM_SESSION_MFA (Phase 244; per-target/safe flags also apply)
 	// RequireTargetGrant refuses a session to a target with NO grants at all
 	// (PAM_REQUIRE_TARGET_GRANT, Phase 203).
 	RequireTargetGrant bool
@@ -205,6 +206,7 @@ func NewDB(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg DBConfig
 		sessions:     d.sessions,
 		posture:      d.posture,
 		oncall:       d.oncall,
+		sessionMFA:   cfg.SessionMFA,
 	}
 	d.pol = sqlPolicy{
 		guard:       d.guard,
@@ -741,6 +743,12 @@ func (d *DBProxy) refuse(ctx context.Context, backend *pgproto3.Backend, res adm
 		d.fail(backend, "58000", "PAMv1: authorization check failed")
 	case gateTargetPolicy:
 		d.deny(ctx, backend, actor, login, "not authorized for this target")
+	case gateSessionMFACheck:
+		// admit logged the policy-lookup or ticket-spend error; fail closed.
+		d.fail(backend, "58000", "PAMv1: authorization check failed")
+	case gateSessionMFA:
+		d.audit(ctx, actor, "db.session.denied", "target:"+res.target.Name+" reason:"+res.reason)
+		d.fail(backend, "28000", sessionMFARefusal(res.reason, false))
 	case gateApprovalPolicy, gateApprovalClaim:
 		// admit logged the specific approval error; fail closed on the wire.
 		d.fail(backend, "58000", "PAMv1: approval check failed")
@@ -969,6 +977,23 @@ func hmacSHA256(key, msg []byte) []byte {
 
 // --- shared with the SSH proxy (proxy.go) ---
 
+// targetNamed resolves a target by its (unique) name, never decrypting
+// anything — shared by lookupTargetCred and the SSH proxy's per-session MFA
+// prompt (Phase 244), which must know the target's policy before a principal
+// exists to run admit() with.
+func targetNamed(ctx context.Context, st store.Store, name string) (*store.Target, error) {
+	targets, err := st.ListTargets(ctx, 0, 0)
+	if err != nil {
+		return nil, errors.New("target lookup failed")
+	}
+	for i := range targets {
+		if targets[i].Name == name {
+			return &targets[i], nil
+		}
+	}
+	return nil, fmt.Errorf("unknown target %q", name)
+}
+
 // lookupTargetCred resolves a target by name and a matching credential (by
 // username, or the first credential when credUser is empty) WITHOUT decrypting
 // the secret, so every authorization gate can run before any plaintext exists.
@@ -976,19 +1001,9 @@ func lookupTargetCred(ctx context.Context, st store.Store, targetName, credUser 
 	if targetName == "" {
 		return nil, nil, errors.New("no target specified")
 	}
-	targets, err := st.ListTargets(ctx, 0, 0)
+	target, err := targetNamed(ctx, st, targetName)
 	if err != nil {
-		return nil, nil, errors.New("target lookup failed")
-	}
-	var target *store.Target
-	for i := range targets {
-		if targets[i].Name == targetName {
-			target = &targets[i]
-			break
-		}
-	}
-	if target == nil {
-		return nil, nil, fmt.Errorf("unknown target %q", targetName)
+		return nil, nil, err
 	}
 	creds, err := st.ListCredentials(ctx, target.ID, 0, 0)
 	if err != nil {

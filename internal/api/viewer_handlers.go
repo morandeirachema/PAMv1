@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -81,6 +84,38 @@ func (s *Server) viewerToken(w http.ResponseWriter, r *http.Request, proto viewe
 		return
 	}
 	p := principalFrom(r.Context())
+	// Per-session MFA preflight (Phase 244). A caller that names the target it
+	// is about to open learns HERE that the desktop needs a session-MFA ticket
+	// instead of this token — a refusal inside the WebSocket handshake reaches a
+	// browser only as an opaque close. The tunnel enforces the requirement
+	// whether or not anyone asked first; this only makes it answerable.
+	var in struct {
+		TargetID int64 `json:"target_id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if in.TargetID > 0 && !p.BreakGlass {
+		target, err := s.store.GetTarget(r.Context(), in.TargetID)
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		required, err := store.EffectiveSessionMFA(r.Context(), s.store, target, s.sessionMFA)
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		if required {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error":                sessionMFAMessage(auth.ReasonSessionMFARequired, false),
+				"reason":               auth.ReasonSessionMFARequired,
+				"session_mfa_required": true,
+			})
+			return
+		}
+	}
 	// Mint a tunnel-scoped token: it resolves to a TunnelOnly principal the API
 	// middleware refuses, so a copy leaked from the WS URL is useless elsewhere and
 	// cannot re-mint. A break-glass caller keeps the break-glass scope so the tunnel
@@ -211,6 +246,27 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	// Loud, mirroring authorizedForTarget's own audit (Phase 139).
 	if principal.PersonalOverrideUsed(personal) {
 		s.audit(r.Context(), "safe.personal_override_used", "target:"+target.Name)
+	}
+	// Per-session MFA (Phase 244), the decision admit() makes for the three
+	// proxies: on a target that requires it the token here must be a
+	// session-MFA ticket bound to THIS target, spent now. After target
+	// authorization, before the approval gate — the same order.
+	mfaRequired, err := store.EffectiveSessionMFA(r.Context(), s.store, target, s.sessionMFA)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	factor, why, err := auth.CheckSessionMFA(r.Context(), s.store, principal, target.ID, mfaRequired)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	if why != "" {
+		s.refuseSessionMFA(r.Context(), w, target, proto.name+".refused", why, false)
+		return
+	}
+	if factor != "" {
+		s.audit(r.Context(), "session.mfa_verified", "target:"+target.Name+" factor:"+factor+" path:"+proto.name)
 	}
 	needsApproval, aperr := s.requireApprovalFor(r.Context(), target)
 	if aperr != nil {

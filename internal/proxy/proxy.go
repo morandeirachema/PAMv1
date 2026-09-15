@@ -54,6 +54,9 @@ type Config struct {
 	// RequireApproval gates every session behind an approved access request
 	// (global OT policy); per-target Target.RequireApproval also applies.
 	RequireApproval bool
+	// SessionMFA (PAM_SESSION_MFA, Phase 244) requires a fresh second factor
+	// for every session; per-target and per-safe flags also apply.
+	SessionMFA bool
 	// RequireTargetGrant refuses a session to a target with NO grants at all
 	// (PAM_REQUIRE_TARGET_GRANT, Phase 203). False keeps PAMv1's historical
 	// behaviour, where an unrestricted target is reachable by anyone who may
@@ -361,6 +364,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		sessions:     p.sessions,
 		posture:      p.posture,
 		oncall:       p.oncall,
+		sessionMFA:   cfg.SessionMFA,
 	}
 	if p.certTTL <= 0 {
 		p.certTTL = 2 * time.Minute
@@ -492,6 +496,14 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 				"reason:enrollment-incomplete")
 			return nil, fmt.Errorf("PAMv1: authentication failed")
 		}
+		// A session-MFA ticket (Phase 244) opens one session to the target it
+		// was minted for and is spent by admit(). A join never runs admit(), so
+		// accepting one here would leave a "single-use" ticket unspent.
+		if principal.SessionMFATicket {
+			p.audit(context.Background(), principal.Name, "session.share_join_denied",
+				"reason:session-mfa-ticket")
+			return nil, fmt.Errorf("PAMv1: authentication failed")
+		}
 		ext := map[string]string{
 			"login":      c.User(),
 			"principal":  principal.Name,
@@ -539,6 +551,83 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 	if principal.Can(auth.CapConnect) {
 		ext["can_connect"] = "true"
 	}
+	// Per-session MFA (Phase 244): when this session will need a second factor
+	// and the operator can answer one in-band, ask for it now, as a second
+	// authentication step — an OpenSSH client shows it as a prompt right after
+	// the password. The principal is stashed only once the code is right.
+	if p.promptSessionMFA(principal, targetName) {
+		return nil, &ssh.PartialSuccessError{Next: ssh.ServerAuthCallbacks{
+			KeyboardInteractiveCallback: func(c ssh.ConnMetadata, client ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error) {
+				return p.answerSessionMFA(c, client, principal, ext)
+			},
+		}}
+	}
+	return p.stashPrincipal(principal, ext), nil
+}
+
+// promptSessionMFA reports whether authenticate should ask for a session's
+// second factor in-band: the target requires one, and the principal both
+// needs one and can answer. A ticket presented as the password IS the factor;
+// break-glass bypasses; a narrow-scoped token is refused by admit() anyway;
+// and a user with no confirmed one-time-code factor gets no prompt they could
+// not answer — admit() refuses them with the ticket instruction instead. An
+// unknown target is not prompted for either: admit() refuses it by name, and
+// a prompt would only confirm to the caller that the target exists.
+func (p *Proxy) promptSessionMFA(principal *auth.Principal, targetName string) bool {
+	if principal.BreakGlass || principal.NarrowScope() != auth.ScopeNone || targetName == "" {
+		return false
+	}
+	ctx := context.Background()
+	target, err := targetNamed(ctx, p.store, targetName)
+	if err != nil {
+		return false
+	}
+	if required, _ := store.EffectiveSessionMFA(ctx, p.store, target, p.gate.sessionMFA); !required {
+		return false
+	}
+	enr, err := p.store.GetMFAEnrollment(ctx, principal.Name)
+	return err == nil && enr.Confirmed
+}
+
+// answerSessionMFA is the keyboard-interactive step promptSessionMFA asks
+// for: one prompt, one code — a TOTP code (replay-guarded) or a single-use
+// recovery code. Each answer spends the same per-host attempt budget a
+// password does, since each is a guess at a six-digit code. A wrong answer
+// fails this step only; the client may answer again within MaxAuthTries.
+func (p *Proxy) answerSessionMFA(c ssh.ConnMetadata, client ssh.KeyboardInteractiveChallenge, principal *auth.Principal, ext map[string]string) (*ssh.Permissions, error) {
+	ctx := context.Background()
+	remote := c.RemoteAddr().String()
+	if !p.authLimiter.Allow(remoteHost(c.RemoteAddr())) {
+		p.log.Warn("session MFA rate limited", "actor", principal.Name, "remote", remote)
+		return nil, fmt.Errorf("PAMv1: too many attempts; try again shortly")
+	}
+	answers, err := client("", "PAMv1: this session requires a second factor.", []string{"One-time code: "}, []bool{false})
+	if err != nil || len(answers) != 1 {
+		return nil, fmt.Errorf("PAMv1: authentication failed")
+	}
+	factor := ""
+	if enr, eerr := p.store.GetMFAEnrollment(ctx, principal.Name); eerr == nil && enr.Confirmed && p.vault != nil {
+		var verr error
+		factor, verr = auth.VerifySecondFactor(ctx, p.store, p.vault, enr, principal.Name, strings.TrimSpace(answers[0]), time.Now())
+		if verr != nil {
+			p.log.Warn("totp replay check failed; rejecting code", "actor", principal.Name, "err", verr)
+		}
+	}
+	if factor == "" {
+		p.log.Warn("session MFA failed", "actor", principal.Name, "remote", remote)
+		p.audit(ctx, principal.Name, "session.mfa_failed", "login:"+auditField(c.User(), 64)+" remote:"+remote)
+		return nil, fmt.Errorf("PAMv1: authentication failed")
+	}
+	if factor == auth.FactorRecovery {
+		p.audit(ctx, principal.Name, "mfa.recovery_used", "user:"+principal.Name)
+	}
+	principal.SessionMFAFactor = factor
+	return p.stashPrincipal(principal, ext), nil
+}
+
+// stashPrincipal hands an authenticated principal to handleConn through the
+// connection's permissions.
+func (p *Proxy) stashPrincipal(principal *auth.Principal, ext map[string]string) *ssh.Permissions {
 	// Carry the REAL principal to handleConn (which runs the gates) rather than a
 	// reconstruction: the SSH password is available only here, and CanConnectTarget
 	// must see the actual roles/capabilities. The token is a per-connection map key;
@@ -558,7 +647,7 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 	token := strconv.FormatUint(p.princSeq.Add(1), 36)
 	p.pending.Store(token, pendingPrincipal{principal: principal, at: now})
 	ext["princ"] = token
-	return &ssh.Permissions{Extensions: ext}, nil
+	return &ssh.Permissions{Extensions: ext}
 }
 
 // splitLogin parses "creduser@target" (rightmost @ separates the target) or
@@ -982,6 +1071,13 @@ func (p *Proxy) refuse(ctx context.Context, chans <-chan ssh.NewChannel, res adm
 		p.log.Warn("session denied: target policy", "actor", actor, "target", res.target.Name, "remote", remote)
 		p.audit(ctx, actor, "session.denied", "target:"+res.target.Name+" reason:target-policy")
 		rejectAll(chans, ssh.Prohibited, "PAMv1: not authorized for this target")
+	case gateSessionMFACheck:
+		// admit logged the policy-lookup or ticket-spend error; fail closed.
+		rejectAll(chans, ssh.Prohibited, "PAMv1: authorization check failed")
+	case gateSessionMFA:
+		p.log.Warn("session denied: per-session MFA", "actor", actor, "target", res.target.Name, "reason", res.reason, "remote", remote)
+		p.audit(ctx, actor, "session.denied", "target:"+res.target.Name+" reason:"+res.reason)
+		rejectAll(chans, ssh.Prohibited, sessionMFARefusal(res.reason, true))
 	case gateApprovalPolicy, gateApprovalClaim:
 		// admit logged the specific approval error; fail closed on the wire.
 		rejectAll(chans, ssh.Prohibited, "PAMv1: approval check failed")

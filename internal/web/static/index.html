@@ -180,6 +180,7 @@
   let ownerIdentity = null; // the registration whose owner is being reassigned
   let budgetAgent = null; // Phase 167: the agent whose daily call budget option 7 is editing
   let kubeTarget = null, kubeResult = null, kubeErr = ""; // Phase 155: brokered kubectl operations
+  let smfaTicket = null; // Phase 244: a session-MFA ticket shown once
   // Phase 189: the answer to "what can this subject reach?" — the grant model
   // read from the subject's side (menu 31), plus the query that produced it so
   // F5 can re-ask it.
@@ -240,10 +241,10 @@
   const now = () => { const d = new Date(), z = (x) => String(x).padStart(2, "0");
     return `${z(d.getDate())}/${z(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}  ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`; };
 
-  async function api(method, path, body) {
+  async function api(method, path, body, headers) {
     const res = await fetch(path, {
       method,
-      headers: { "X-API-Key": apiKey, ...(body ? { "Content-Type": "application/json" } : {}) },
+      headers: { "X-API-Key": apiKey, ...(body ? { "Content-Type": "application/json" } : {}), ...(headers || {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
     if (res.status === 204) return null;
@@ -257,6 +258,7 @@
     if (!res.ok) {
       const err = new Error((data.error || res.statusText).toUpperCase());
       err.status = res.status;
+      err.data = data;
       throw err;
     }
     return data;
@@ -317,6 +319,32 @@
         userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : undefined,
       },
     };
+  }
+
+  // Per-session MFA (Phase 244). A target can require a fresh second factor for
+  // every session and for every secret handed out; the server answers 403 with
+  // session_mfa_required, and these turn that into one prompt and a single-use
+  // ticket bound to the target — a one-time (or recovery) code if one is typed,
+  // the security-key ceremony if the field is left empty.
+  async function sessionMFATicket(t) {
+    const code = window.prompt(`${String(t.name).toUpperCase()} REQUIRES A SECOND FACTOR FOR THIS SESSION.\nOne-time or recovery code (leave empty to use your security key):`, "");
+    if (code === null) throw new Error("SESSION MFA CANCELLED");
+    if (code.trim()) return (await api("POST", "/api/session-mfa", { target: t.name, otp: code.trim() })).ticket;
+    say("TOUCH YOUR SECURITY KEY TO CONTINUE...");
+    const opts = await api("POST", "/api/session-mfa/webauthn/begin", { target: t.name });
+    const assertion = await webauthnGet(opts);
+    return (await api("POST", `/api/session-mfa/webauthn/finish?target=${encodeURIComponent(t.name)}`, assertion)).ticket;
+  }
+  const needsSessionMFA = (e) => !!(e && e.data && e.data.session_mfa_required && e.data.reason === "session-mfa-required");
+  // withSessionMFA calls path once as it stands and, only if the target turns
+  // out to require a second factor, once more with a ticket in its header.
+  async function withSessionMFA(t, method, path, body) {
+    try { return await api(method, path, body); }
+    catch (e) {
+      if (!t || !needsSessionMFA(e)) throw e;
+      const ticket = await sessionMFATicket(t);
+      return await api(method, path, body, { "X-PAM-Session-MFA": ticket });
+    }
   }
 
   // apiAll drains a cursor-paged list endpoint (Phase 44): the API caps every
@@ -386,6 +414,7 @@
   function safeBody(f, form) {
     return { name: f.name, description: f.description,
              require_approval: form.require_approval.checked,
+             require_session_mfa: form.require_session_mfa.checked,
              min_approvers: Number(f.min_approvers || 0) };
   }
   // Step-ups (Phase 43): a paused statement is waiting on a supervisor and will
@@ -978,7 +1007,10 @@
     let Guac, tok;
     try {
       Guac = await loadGuac();
-      tok = (await api("POST", v.tokenPath)).token;
+      // Naming the target lets the server say, before any WebSocket exists,
+      // that this desktop needs a session-MFA ticket — which then IS the token.
+      try { tok = (await api("POST", v.tokenPath, { target_id: t.id })).token; }
+      catch (e) { if (!needsSessionMFA(e)) throw e; tok = await sessionMFATicket(t); }
     } catch (e) { say("CPF9999: " + String(e.message || (v.label + " VIEWER UNAVAILABLE")).toUpperCase(), true); render(); return; }
     startViewer(Guac, t, tok, v);
   }
@@ -1191,11 +1223,11 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
         const canConnect = can("connect");
         term.innerHTML = `${head("PAMWRKTGT", "Work with Targets")}
 Type options, press Enter.
-  <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "6=Run kubectl (kubernetes)" : "", canConnect ? "7=Open viewer (rdp/vnc targets)" : "", canManage ? "8=Assign to safe" : "", canManage ? "9=Discover accounts (ssh/winrm)" : "", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
+  <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "6=Run kubectl (kubernetes)" : "", canConnect ? "7=Open viewer (rdp/vnc targets)" : "", canManage ? "8=Assign to safe" : "", canManage ? "9=Discover accounts (ssh/winrm)" : "", canConnect ? "10=Session MFA ticket (ssh/db clients)" : "", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Name</th><th>Host</th><th>Port</th><th>OS</th><th>Proto</th><th>Approval</th><th>Clip</th><th>Safe</th></tr>
-${targets.map((t) => `<tr><td>${opt(t.id)}</td><td>${esc(t.id)}</td><td>${pad(t.name, 16)}</td><td>${pad(t.host, 20)}</td><td>${esc(t.port)}</td><td>${pad(t.os_type, 8)}</td><td>${pad(t.protocol, 6)}</td><td>${t.require_approval ? '<span class="amber">required</span>' : "-"}</td><td>${t.rdp_clipboard ? `<span class="amber">${esc(t.rdp_clipboard)}</span>` : "-"}</td><td class="cyan">${esc(safeName(t.safe_id))}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Name</th><th>Host</th><th>Port</th><th>OS</th><th>Proto</th><th>Approval</th><th>MFA</th><th>Clip</th><th>Safe</th></tr>
+${targets.map((t) => `<tr><td>${opt(t.id)}</td><td>${esc(t.id)}</td><td>${pad(t.name, 16)}</td><td>${pad(t.host, 20)}</td><td>${esc(t.port)}</td><td>${pad(t.os_type, 8)}</td><td>${pad(t.protocol, 6)}</td><td>${t.require_approval ? '<span class="amber">required</span>' : "-"}</td><td>${t.require_session_mfa ? '<span class="amber">each</span>' : "-"}</td><td>${t.rdp_clipboard ? `<span class="amber">${esc(t.rdp_clipboard)}</span>` : "-"}</td><td class="cyan">${esc(safeName(t.safe_id))}</td></tr>`).join("")}
 </table>${targets.length ? "" : `<div class="cyan indent">(No targets defined.${canManage ? " Press F6 to add." : ""})</div>`}
 <input type="submit" hidden></form>
 ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add target" : ""}   F12=Cancel`)}`;
@@ -1211,6 +1243,7 @@ ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add target" : ""}   F12=Cancel
               else if (o === "7") { return openViewer(t); }
               else if (o === "8") { return openTargetSafe(t); }
               else if (o === "9") { return discoverAccounts(t); }
+              else if (o === "10") { smfaTicket = { target: t.name, ticket: await sessionMFATicket(t) }; return go("smfaview"); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
             await openTargets();
@@ -1230,6 +1263,7 @@ Type choices, press Enter.
 <label>OS type . . . . . . :  <select name="os_type"><option>linux</option><option>windows</option></select>   <span class="cyan">linux, windows</span></label>
 <label>Protocol  . . . . . :  <select name="protocol"><option>ssh</option><option>winrm</option><option>rdp</option><option>vnc</option><option>postgres</option><option>mssql</option><option>kubernetes</option></select>   <span class="cyan">ssh, winrm, rdp, vnc, postgres, mssql, kubernetes (port defaults to 6443)</span></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox">   <span class="cyan">connections need an approved request (4-eyes)</span></label>
+<label>Session MFA . . . . :  <input name="require_session_mfa" type="checkbox">   <span class="cyan">every session and every secret handed out needs a fresh second factor</span></label>
 <label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value="">(global)</option><option>allow</option><option>readonly</option><option>deny</option></select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
 <label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value="">(global)</option><option>off</option><option>meta</option><option>full</option></select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
 <input type="submit" hidden>
@@ -1239,6 +1273,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
           const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked,
+            require_session_mfa: ev.target.require_session_mfa.checked,
             rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit };
           try { await api("POST", "/api/targets", body); say(`TARGET ${String(f.name).toUpperCase()} ADDED.`); await openTargets(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
@@ -1262,6 +1297,7 @@ Editing target <span class="white">${esc(t.name)}</span> (id ${esc(t.id)}). Type
 <label>OS type . . . . . . :  <select name="os_type">${sel(["linux", "windows"], t.os_type)}</select></label>
 <label>Protocol  . . . . . :  <select name="protocol">${sel(["ssh", "winrm", "rdp", "vnc", "postgres", "mssql", "kubernetes"], t.protocol)}</select></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox"${t.require_approval ? " checked" : ""}>   <span class="cyan">connections need an approved request (4-eyes)</span></label>
+<label>Session MFA . . . . :  <input name="require_session_mfa" type="checkbox"${t.require_session_mfa ? " checked" : ""}>   <span class="cyan">every session and every secret handed out needs a fresh second factor</span></label>
 <label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value=""${t.rdp_clipboard ? "" : " selected"}>(global)</option>${sel(["allow", "readonly", "deny"], t.rdp_clipboard)}</select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
 <label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value=""${t.rdp_clipboard_audit ? "" : " selected"}>(global)</option>${sel(["off", "meta", "full"], t.rdp_clipboard_audit)}</select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
 <div class="cyan">Credentials, grants and safe assignment are kept. Safe: use option 8.</div>
@@ -1272,6 +1308,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
           const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked,
+            require_session_mfa: ev.target.require_session_mfa.checked,
             rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit };
           try { await api("PUT", `/api/targets/${t.id}`, body); say(`TARGET ${String(f.name).toUpperCase()} CHANGED.`); await openTargets(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
@@ -1329,6 +1366,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
       creds() {
         back = "main";
         const tn = Object.fromEntries(targets.map((t) => [t.id, t.name]));
+        const credTarget = (c) => ({ id: c.target_id, name: tn[c.target_id] || String(c.target_id) });
         const canManage = can("manage_credentials"), canReveal = can("reveal_secret");
         const optsHelp = [canReveal && "5=Display secret   6=Check-out", canManage && "7=Rotate   8=Reconcile", canManage && "4=Delete", "9=Dependents",
           canReveal && "10=DoubleLock on/off"].filter(Boolean).join("   ");
@@ -1355,8 +1393,8 @@ ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add credential" : ""}   F12=Ca
             for (const c of creds) {
               const o = optVal(ev.target, c.id);
               if (o === "4") { await api("DELETE", `/api/credentials/${c.id}`); say(`CREDENTIAL ${c.id} DELETED.`); }
-              else if (o === "5") { viewCred = await api("POST", `/api/credentials/${c.id}/reveal`); return go("credview"); }
-              else if (o === "6") { const r = await api("POST", `/api/credentials/${c.id}/checkout`, {}); viewCred = { id: r.credential_id, target_id: r.target, username: r.username, secret_type: "check-out", secret: r.secret, expires_at: r.expires_at }; return go("credview"); }
+              else if (o === "5") { viewCred = await withSessionMFA(credTarget(c), "POST", `/api/credentials/${c.id}/reveal`); return go("credview"); }
+              else if (o === "6") { const r = await withSessionMFA(credTarget(c), "POST", `/api/credentials/${c.id}/checkout`, {}); viewCred = { id: r.credential_id, target_id: r.target, username: r.username, secret_type: "check-out", secret: r.secret, expires_at: r.expires_at }; return go("credview"); }
               else if (o === "7") { await api("POST", `/api/credentials/${c.id}/rotate`, {}); say(`CREDENTIAL ${c.id} ROTATED.`); }
               else if (o === "8") { const r = await api("POST", `/api/credentials/${c.id}/reconcile`, {}); say(`CREDENTIAL ${c.id}: ${String(r.status || "checked").toUpperCase()}${r.detail ? " — " + r.detail : ""}.`); }
               else if (o === "9") { return openDeps(c.id); }
@@ -1394,6 +1432,23 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           try { await api("POST", "/api/credentials", f); say(`CREDENTIAL FOR ${String(f.username).toUpperCase()} VAULTED.`); await openCreds(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
+      },
+
+      // 10=Session MFA ticket on Work with Targets (Phase 244): a single-use,
+      // two-minute ticket for one target, for the clients that cannot answer a
+      // prompt — psql, sqlcmd, a scripted ssh. It is the password, once.
+      smfaview() {
+        back = "targets";
+        const m = smfaTicket || {};
+        term.innerHTML = `${head("PAMDSPMFA", "Session MFA Ticket")}
+<span class="red blink">SINGLE-USE TICKET — ONE SESSION TO THIS TARGET, WITHIN TWO MINUTES.</span>
+
+<div class="indent">
+Target  . . . . . . :  <span class="white">${esc(m.target)}</span>
+Ticket  . . . . . . :  <span class="white">${esc(m.ticket)}</span>
+</div>
+<div class="cyan indent">Use it as the password: ssh -p 2222 &lt;user&gt;@${esc(m.target)}@PAM_HOST, or for psql / sqlcmd through the database proxies.</div>
+${fkeys("F3=Exit   F12=Cancel")}`;
       },
 
       credview() {
@@ -2220,7 +2275,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           f.tail_lines = Number(f.tail_lines) || 0;
           for (const k of Object.keys(f)) { if (f[k] === "") delete f[k]; }
           kubeErr = "";
-          try { kubeResult = await api("POST", `/api/targets/${t.id}/kubectl`, f); }
+          try { kubeResult = await withSessionMFA(t, "POST", `/api/targets/${t.id}/kubectl`, f); }
           catch (e) { kubeResult = null; kubeErr = "CPF9899: " + e.message; }
           render();
         };
@@ -3549,6 +3604,7 @@ Create a container to group targets and delegate who may access them.
 <label>Name  . . . . . . . :  <input name="name" size="20" required autofocus></label>
 <label>Description . . . . :  <input name="description" size="40"></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox">   <span class="cyan">every target in this safe needs an approved request</span></label>
+<label>Session MFA . . . . :  <input name="require_session_mfa" type="checkbox">   <span class="cyan">every session to a target in this safe needs a fresh second factor</span></label>
 <label>Min approvers . . . :  <input name="min_approvers" type="number" min="0" max="10" value="0" size="3">   <span class="cyan">dual control: distinct approvers required (0 = use the global default)</span></label>
 <input type="submit" hidden>
 </form>
@@ -3573,6 +3629,7 @@ Editing safe <span class="white">${esc(s.name)}</span> (id ${esc(s.id)}). Member
 <label>Name  . . . . . . . :  <input name="name" size="20" required autofocus value="${esc(s.name)}"></label>
 <label>Description . . . . :  <input name="description" size="40" value="${esc(s.description || "")}"></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox"${s.require_approval ? " checked" : ""}>   <span class="cyan">every target in this safe needs an approved request</span></label>
+<label>Session MFA . . . . :  <input name="require_session_mfa" type="checkbox"${s.require_session_mfa ? " checked" : ""}>   <span class="cyan">every session to a target in this safe needs a fresh second factor</span></label>
 <label>Min approvers . . . :  <input name="min_approvers" type="number" min="0" max="10" size="3" value="${esc(s.min_approvers || 0)}">   <span class="cyan">dual control: distinct approvers required (0 = use the global default)</span></label>
 <input type="submit" hidden>
 </form>

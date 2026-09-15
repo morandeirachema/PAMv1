@@ -261,6 +261,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_PROXY_AUTH_RATE_LIMIT` | | `10` | Failed-auth attempts per source IP per minute on the SSH (:2222) and DB (:5433) proxies (0 disables). Throttles guessing of `PAM_API_KEY`. |
 | `PAM_AUTH_RATE_LIMIT` | | `20` | Attempts per client IP per minute on the login endpoints, and — on its own window — **failed** bearer credentials (`X-API-Key`, agent key, application key) on the REST, broker and application-secrets surfaces (0 disables). Each admitted failure is audited `api.auth_failed`; once throttled the caller gets 429 and nothing further is written to the trail. |
 | `PAM_SESSION_MAX_MIN` / `PAM_SESSION_IDLE_MIN` | | `0` (off) | End every brokered session this many minutes after it started / after this many minutes without **operator input** (Phase 240). Every session type; audited `session.killed` with `reason:max-duration` or `idle-timeout`. Output alone (a `tail -f`) counts as idle. |
+| `PAM_SESSION_MFA` | | `false` | Require a **fresh second factor for every session** a human opens — through any proxy, the RDP/VNC viewer, the WinRM and kubectl endpoints — and for every reveal, checkout and operator certificate (Phase 244). A target or safe can also require it (`require_session_mfa`), strictest wins. See §7 *Per-session MFA*. |
 | `PAM_MAX_SESSIONS_PER_USER` / `PAM_MAX_SESSIONS_TOTAL` | | `0` (∞) | Cap concurrent live proxied sessions per user and overall, checked before any secret is decrypted — bounds resource use from one (or a compromised) identity. Per-replica in HA. |
 | `PAM_MAX_RECORDING_MB` | | `0` (∞) | Cap a single session recording's output (MB); a session that exceeds it is terminated (`session.record_limit`) rather than run unrecorded, so one runaway session can't fill the recording disk. |
 | `PAM_DB_ADDR` | | `off` | PostgreSQL session-proxy bind (Phase 15), e.g. `:5433`; `off` disables it. |
@@ -2155,6 +2156,60 @@ a user without confirmed MFA returns an **enrollment-only** session — it can *
 call the `/api/mfa/*` **and** `/api/webauthn/register/*` endpoints (everything
 else, including the SSH proxy, is refused) until the user enrolls and
 confirms **either** factor, then logs in again.
+
+### Per-session MFA (Phase 244)
+
+Login MFA proves a factor **once**; after that a token or a login session opens
+every session its role allows until it expires. To demand a **fresh second
+factor for every session** instead, require it for the whole deployment, for one
+target, or for every target in a safe — strictest wins, so neither a target nor a
+safe can switch off what the deployment requires:
+
+```bash
+export PAM_SESSION_MFA=true    # every target; restart to change
+```
+
+Per target or safe it is the **Session MFA** checkbox on *Add/Change Target* and
+*Add/Change Safe* (API: `require_session_mfa` on `POST`/`PUT /api/targets` and
+`/api/safes` — a `PUT` replaces every editable field, so send the whole object).
+
+**What it covers:** sessions through the SSH proxy (WinRM included), the
+PostgreSQL and SQL Server proxies and the RDP/VNC viewer; the WinRM and kubectl
+REST endpoints; and the paths that hand over access itself — reveal, checkout and
+operator SSH certificates. Break-glass bypasses it, as it bypasses every gate. The
+bootstrap `PAM_API_KEY` has no second factor and is refused. AI-agent broker
+tools, the application-secrets API and external share guests are not human
+sessions and are unaffected; a share-join attaches to a session that already
+passed. The browser extension cannot carry a ticket, so its reveal is refused on a
+target that requires one.
+
+**How an operator proves it:**
+
+- **SSH** — the proxy prompts `One-time code:` right after the token (an SSH
+  keyboard-interactive step) and accepts a current TOTP code or a recovery code,
+  each once. Every answer counts against `PAM_PROXY_AUTH_RATE_LIMIT`, exactly
+  like a password guess.
+- **Everything else** — a **session-MFA ticket**: `POST /api/session-mfa` with
+  `{"target","otp"}`, or `POST /api/session-mfa/webauthn/begin` then
+  `/finish?target=` for a security key. A ticket is single-use, lives two
+  minutes and is bound to one target; it is the password for `psql` or `sqlcmd`,
+  the viewer's token, or the `X-PAM-Session-MFA` header beside the caller's own
+  `X-API-Key`. It is spent the moment a gate reads it, burned if shown to another
+  target, and refused as an API key everywhere. The console does all of this
+  itself, and *Work with Targets* option **10** shows a ticket for a client that
+  cannot be prompted.
+
+A user with no confirmed factor cannot open these sessions at all — pair it with
+`PAM_MFA_REQUIRED=true` so everyone enrolls. There is no re-prompt window: every
+session proves a factor.
+
+**Audit:** `session.mfa_ticket` (a ticket minted — target, factor, TTL),
+`session.mfa_verified` (a gate satisfied — target, factor `totp` / `recovery` /
+`ticket`, path), `session.mfa_failed` (a wrong code or ceremony). A refusal is
+written under the path's own action — `session.denied`, `db.session.denied`,
+`rdp.refused`, `credential.reveal_denied`, `winrm.denied`, … — with
+`reason:session-mfa-required`, `session-mfa-ticket-target`,
+`session-mfa-ticket-used` or, on the REST paths, `session-mfa-ticket-invalid`.
 
 ### Multi-factor authentication (WebAuthn, Phase 124)
 
@@ -4433,6 +4488,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-15 | **Phase 244 (per-session MFA).** §4 gains `PAM_SESSION_MFA`; new §7 subsection *Per-session MFA* — the three policy sources, what the gate covers and what it does not, the SSH prompt and the ticket (TOTP / recovery / WebAuthn, single-use, two minutes, one target), the audit actions and refusal reasons. |
 | 2026-09-03 | **Phase 242 (identity lock and token expiry).** §4 gains `PAM_USER_TOKEN_TTL_HOURS`; new §7 subsection *Locking an identity and rotating its token* — the lock and unlock calls, what a lock stops, `until`, rotation and per-user token TTLs, the audit actions, the console options. |
 | 2026-09-03 | **Phase 240 (session lifetime, grant expiry and time frames).** §4 gains `PAM_SESSION_MAX_MIN` / `PAM_SESSION_IDLE_MIN`; new §7 subsection *Grant lifetime: expiry and time frames* — the `expires_at` / `time_frame` fields on grants and safe memberships, the frame grammar, what a bounded grant does at connect time, the per-session deadline and the expiry sweep. |
 | 2026-09-03 | **Phase 238 (the review of 236/237).** Slack chat-ops section: a Slack decision's audit rows are attributed to the linked PAMv1 user (they carried actor `unknown`), and the Slack ack is complete on the wire before the follow-up (Slack's 3-second budget is now actually met); the section now states which gates a click passes (posture, on-call) and which cannot apply (IP allowlist, enrolled device), and that buttons posted before 0.65.0 must be re-notified. |

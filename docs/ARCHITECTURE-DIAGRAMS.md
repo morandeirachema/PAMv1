@@ -143,6 +143,7 @@ flowchart LR
   n_auditfwd --> n_auditfmt
   n_auditfwd --> n_logging
   n_auditfwd --> n_store
+  n_auth --> n_mfa
   n_auth --> n_oidc
   n_auth --> n_store
   n_broker --> n_agentid
@@ -440,6 +441,7 @@ erDiagram
     time_Time CreatedAt
     bool RequireApproval
     int MinApprovers
+    bool RequireSessionMFA
     bool Personal
   }
   SafeMember {
@@ -467,6 +469,7 @@ erDiagram
     string Scope
     time_Time CreatedAt
     time_Time ExpiresAt
+    ptr_int64 TargetID
   }
   SessionShareInvite {
     int64 ID
@@ -508,6 +511,7 @@ erDiagram
     string OSType
     string Protocol
     bool RequireApproval
+    bool RequireSessionMFA
     ptr_int64 SafeID
     string RDPClipboard
     string RDPClipboardAudit
@@ -582,6 +586,7 @@ erDiagram
   Target ||--o{ Checkout : "has"
   Target ||--o{ Credential : "has"
   Target ||--o{ EndpointAgent : "has"
+  Target ||--o{ Session : "has"
   Target ||--o{ SubjectGrant : "has"
   Target ||--o{ TargetGrant : "has"
   Target ||--o{ VendorGrant : "has"
@@ -590,7 +595,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 198 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 201 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -684,6 +689,9 @@ The 198 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/safes/{id}/members` | CapReadInventory |
 | POST | `/api/safes/{id}/members` | CapReadInventory |
 | DELETE | `/api/safes/{id}/members/{mid}` | CapReadInventory |
+| POST | `/api/session-mfa` | authenticated (rate-limited) |
+| POST | `/api/session-mfa/webauthn/begin` | authenticated (rate-limited) |
+| POST | `/api/session-mfa/webauthn/finish` | authenticated (rate-limited) |
 | GET | `/api/sessions` | CapReadAudit |
 | GET | `/api/sessions/stepups` | CapReadAudit |
 | DELETE | `/api/sessions/{id}` | CapManageTargets |

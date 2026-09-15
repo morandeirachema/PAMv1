@@ -49,6 +49,9 @@ type targetIn struct {
 	OSType          string `json:"os_type"`
 	Protocol        string `json:"protocol"`
 	RequireApproval bool   `json:"require_approval"`
+	// RequireSessionMFA demands a fresh second factor for every session to the
+	// target (Phase 244), strictest-wins with PAM_SESSION_MFA and its safe.
+	RequireSessionMFA bool `json:"require_session_mfa"`
 	// Per-target RDP clipboard tightening; "" inherits the global policy and the
 	// effective mode is the stricter of the two.
 	RDPClipboard      string `json:"rdp_clipboard"`
@@ -96,7 +99,8 @@ func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
 // targetFromIn builds the store row both handlers persist.
 func targetFromIn(in targetIn) store.Target {
 	return store.Target{Name: in.Name, Host: in.Host, Port: in.Port, OSType: in.OSType, Protocol: in.Protocol,
-		RequireApproval: in.RequireApproval, RDPClipboard: in.RDPClipboard, RDPClipboardAudit: in.RDPClipboardAudit}
+		RequireApproval: in.RequireApproval, RequireSessionMFA: in.RequireSessionMFA,
+		RDPClipboard: in.RDPClipboard, RDPClipboardAudit: in.RDPClipboardAudit}
 }
 
 // clipDetail renders the per-target clipboard overrides for an audit detail,
@@ -110,7 +114,9 @@ func clipDetail(t store.Target) string {
 		}
 		return v
 	}
-	return fmt.Sprintf("clipboard:%s clip_audit:%s", orDash(t.RDPClipboard), orDash(t.RDPClipboardAudit))
+	// require_session_mfa rides along for the same reason: clearing it lowers
+	// what every session to the target must prove (Phase 244).
+	return fmt.Sprintf("clipboard:%s clip_audit:%s require_session_mfa:%t", orDash(t.RDPClipboard), orDash(t.RDPClipboardAudit), t.RequireSessionMFA)
 }
 
 // createTarget validates and persists a new target (defaulting the port to 22),
@@ -409,12 +415,30 @@ func (s *Server) authorizedForTarget(ctx context.Context, target *store.Target) 
 // (for the vendor contract gate; "" = any). It writes a 403 and returns false when
 // the caller may not reach the target. action names the audited denial.
 func (s *Server) gateCredentialAccess(w http.ResponseWriter, r *http.Request, target *store.Target, account, action string) bool {
+	return s.gateTargetAccess(w, r, target, account, action, false)
+}
+
+// gateSecretDelivery is gateCredentialAccess for the paths that put access
+// itself in the caller's hands — a revealed or checked-out secret, an operator
+// SSH certificate — and so also demand the per-session second factor (Phase
+// 244), between target authorization and the approval gate: after, so a
+// caller who may not reach the target spends no ticket; before, so a missing
+// factor never burns a single-use approval. The same order admit() keeps.
+func (s *Server) gateSecretDelivery(w http.ResponseWriter, r *http.Request, target *store.Target, account, action string) bool {
+	return s.gateTargetAccess(w, r, target, account, action, true)
+}
+
+// gateTargetAccess is the shared body of the two gates above.
+func (s *Server) gateTargetAccess(w http.ResponseWriter, r *http.Request, target *store.Target, account, action string, sessionMFA bool) bool {
 	if ok, err := s.authorizedForTarget(r.Context(), target); err != nil {
 		storeError(w, err)
 		return false
 	} else if !ok {
 		s.audit(r.Context(), action+"_denied", "target:"+target.Name+" reason:target-policy")
 		writeError(w, http.StatusForbidden, "not authorized for this target")
+		return false
+	}
+	if sessionMFA && !s.sessionMFAGate(w, r, target, action+"_denied", action) {
 		return false
 	}
 	if ok, err := s.enforceApproval(r.Context(), target); err != nil {

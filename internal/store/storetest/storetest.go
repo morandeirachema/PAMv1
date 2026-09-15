@@ -150,15 +150,18 @@ func RunStoreContract(t *testing.T, st store.Store) {
 
 	// --- targets ---
 	tgt := &store.Target{Name: "web-01", Host: "10.0.0.5", Port: 22, OSType: "linux", Protocol: "ssh", RequireApproval: true,
-		RDPClipboard: "deny", RDPClipboardAudit: "meta"}
+		RequireSessionMFA: true, RDPClipboard: "deny", RDPClipboardAudit: "meta"}
 	if err := st.CreateTarget(ctx, tgt); err != nil {
 		t.Fatalf("CreateTarget: %v", err)
 	}
 	if tgt.ID == 0 || tgt.CreatedAt.IsZero() {
 		t.Fatal("CreateTarget did not populate ID/CreatedAt")
 	}
-	if got, err := st.GetTarget(ctx, tgt.ID); err != nil || !got.RequireApproval || got.RDPClipboard != "deny" || got.RDPClipboardAudit != "meta" {
-		t.Fatalf("GetTarget require_approval/clipboard override: %+v err %v", got, err)
+	if got, err := st.GetTarget(ctx, tgt.ID); err != nil || !got.RequireApproval || !got.RequireSessionMFA || got.RDPClipboard != "deny" || got.RDPClipboardAudit != "meta" {
+		t.Fatalf("GetTarget require_approval/require_session_mfa/clipboard override: %+v err %v", got, err)
+	}
+	if ts, err := st.ListTargets(ctx, 0, 0); err != nil || len(ts) != 1 || !ts[0].RequireSessionMFA {
+		t.Fatalf("ListTargets must carry require_session_mfa (Phase 244): %+v err %v", ts, err)
 	}
 	if err := st.CreateTarget(ctx, &store.Target{Name: "web-01", Host: "x", Port: 22, OSType: "linux", Protocol: "ssh"}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("duplicate target name: want ErrConflict, got %v", err)
@@ -191,12 +194,12 @@ func RunStoreContract(t *testing.T, st store.Store) {
 
 	// --- UpdateTarget (Phase 44): edits in place — no delete + recreate, so
 	// dependents survive; ErrConflict on a name collision, ErrNotFound when absent. ---
-	tgt.Host, tgt.Port, tgt.RequireApproval = "10.0.0.50", 2222, false
+	tgt.Host, tgt.Port, tgt.RequireApproval, tgt.RequireSessionMFA = "10.0.0.50", 2222, false, false
 	tgt.RDPClipboard, tgt.RDPClipboardAudit = "readonly", ""
 	if err := st.UpdateTarget(ctx, tgt); err != nil {
 		t.Fatalf("UpdateTarget: %v", err)
 	}
-	if got, err := st.GetTarget(ctx, tgt.ID); err != nil || got.Host != "10.0.0.50" || got.Port != 2222 || got.RequireApproval ||
+	if got, err := st.GetTarget(ctx, tgt.ID); err != nil || got.Host != "10.0.0.50" || got.Port != 2222 || got.RequireApproval || got.RequireSessionMFA ||
 		got.RDPClipboard != "readonly" || got.RDPClipboardAudit != "" {
 		t.Fatalf("after UpdateTarget: %+v err %v", got, err)
 	}
@@ -397,12 +400,12 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	// update — a policy field that silently reverts to zero on one of those paths
 	// would read as "no policy" at every enforcement site.
 	sf := &store.Safe{Name: "prod-db", Description: "production databases",
-		RequireApproval: true, MinApprovers: 2}
+		RequireApproval: true, MinApprovers: 2, RequireSessionMFA: true}
 	if err := st.CreateSafe(ctx, sf); err != nil {
 		t.Fatalf("CreateSafe: %v", err)
 	}
-	if got, err := st.GetSafe(ctx, sf.ID); err != nil || !got.RequireApproval || got.MinApprovers != 2 {
-		t.Fatalf("safe policy round-trip = %+v, %v; want require_approval + 2 approvers", got, err)
+	if got, err := st.GetSafe(ctx, sf.ID); err != nil || !got.RequireApproval || got.MinApprovers != 2 || !got.RequireSessionMFA {
+		t.Fatalf("safe policy round-trip = %+v, %v; want require_approval + 2 approvers + require_session_mfa", got, err)
 	}
 	if err := st.CreateSafe(ctx, &store.Safe{Name: "prod-db"}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("duplicate safe: want ErrConflict, got %v", err)
@@ -464,16 +467,17 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	// UpdateSafe renames in place; members and assignment are untouched.
 	sf.Name, sf.Description = "prod-db-renamed", "renamed"
 	sf.MinApprovers = 3 // raising the dual-control floor must persist
+	sf.RequireSessionMFA = false
 	if err := st.UpdateSafe(ctx, sf); err != nil {
 		t.Fatalf("UpdateSafe: %v", err)
 	}
 	if got, err := st.GetSafe(ctx, sf.ID); err != nil || got.Name != "prod-db-renamed" || got.Description != "renamed" {
 		t.Fatalf("after UpdateSafe: %+v err %v", got, err)
 	}
-	if got, err := st.GetSafe(ctx, sf.ID); err != nil || !got.RequireApproval || got.MinApprovers != 3 {
-		t.Fatalf("UpdateSafe dropped the policy: %+v, %v", got, err)
+	if got, err := st.GetSafe(ctx, sf.ID); err != nil || !got.RequireApproval || got.MinApprovers != 3 || got.RequireSessionMFA {
+		t.Fatalf("UpdateSafe dropped the policy (or kept a cleared require_session_mfa): %+v, %v", got, err)
 	}
-	if listed, err := st.ListSafes(ctx, 10, 0); err != nil || len(listed) == 0 || listed[0].MinApprovers != 3 {
+	if listed, err := st.ListSafes(ctx, 10, 0); err != nil || len(listed) == 0 || listed[0].MinApprovers != 3 || listed[0].RequireSessionMFA {
 		t.Fatalf("ListSafes does not carry the policy: %+v, %v", listed, err)
 	}
 	otherSafe := &store.Safe{Name: "dmz"}
@@ -2054,6 +2058,30 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 	if err := st.DeleteSession(ctx, "sesshash"); err != nil {
 		t.Fatalf("DeleteSession: %v", err)
+	}
+	// A spent session is gone: a second delete is ErrNotFound, which is what
+	// makes a session-MFA ticket single-use under concurrent presentation
+	// (Phase 244 — two uses race, exactly one delete finds the row).
+	if err := st.DeleteSession(ctx, "sesshash"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("second DeleteSession = %v, want ErrNotFound", err)
+	}
+	// A session-MFA ticket carries the target it is bound to, and dies with it.
+	ticketTarget := &store.Target{Name: "ticket-bound", Host: "10.9.9.9", Port: 22, OSType: "linux", Protocol: "ssh"}
+	if err := st.CreateTarget(ctx, ticketTarget); err != nil {
+		t.Fatalf("CreateTarget(ticket-bound): %v", err)
+	}
+	if err := st.CreateSession(ctx, &store.Session{Username: "u1", Role: "user", Scope: "session_mfa", TokenHash: "ticket-hash",
+		ExpiresAt: future, TargetID: &ticketTarget.ID}); err != nil {
+		t.Fatalf("CreateSession(ticket): %v", err)
+	}
+	if got, err := st.GetSessionByTokenHash(ctx, "ticket-hash"); err != nil || got.TargetID == nil || *got.TargetID != ticketTarget.ID || got.Scope != "session_mfa" {
+		t.Fatalf("ticket round-trip = %+v, %v; want target_id %d", got, err, ticketTarget.ID)
+	}
+	if err := st.DeleteTarget(ctx, ticketTarget.ID); err != nil {
+		t.Fatalf("DeleteTarget(ticket-bound): %v", err)
+	}
+	if _, err := st.GetSessionByTokenHash(ctx, "ticket-hash"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("a ticket must not outlive its target: %v", err)
 	}
 	// Expiry must be enforced by REMOVING rows, not only by filtering reads. It
 	// used to be filtering alone, so every portal login, break-glass activation

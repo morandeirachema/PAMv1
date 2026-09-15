@@ -341,7 +341,7 @@ func (s *Server) checkoutCredential(w http.ResponseWriter, r *http.Request) {
 	}
 	// Checkout is a credential-access path: enforce the same per-target grants and
 	// approval gate as connecting/reveal.
-	if !s.gateCredentialAccess(w, r, target, cred.Username, "credential.checkout") {
+	if !s.gateSecretDelivery(w, r, target, cred.Username, "credential.checkout") {
 		return
 	}
 	// A Zero Standing Privilege credential has no stored secret to lease. Refuse

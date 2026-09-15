@@ -86,6 +86,11 @@ func (s *Server) runKubectl(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "not authorized for this target")
 		return
 	}
+	// A kubectl operation is a brokered session, so it takes the per-session
+	// second factor too (Phase 244) — before the approval gate, as admit() does.
+	if !s.sessionMFAGate(w, r, target, "k8s.denied", "kubectl") {
+		return
+	}
 	if ok, err := s.enforceApproval(r.Context(), target); err != nil {
 		storeError(w, err)
 		return
