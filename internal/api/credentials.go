@@ -200,7 +200,7 @@ func (s *Server) revealCredential(w http.ResponseWriter, r *http.Request) {
 	// Reveal is a credential-access path: it obeys the same per-target grants and
 	// four-eyes approval gate as connecting, so a reveal_secret holder can't read
 	// a credential for a target it wasn't granted or bypass an approval window.
-	if !s.gateCredentialAccess(w, r, target, c.Username, "credential.reveal") {
+	if !s.gateSecretDelivery(w, r, target, c.Username, "credential.reveal") {
 		return
 	}
 	// A Zero Standing Privilege credential stores no secret — there is nothing to
@@ -298,6 +298,11 @@ func (s *Server) runWinRM(w http.ResponseWriter, r *http.Request) {
 	} else if !ok {
 		s.audit(r.Context(), "winrm.denied", "target:"+target.Name+" reason:target-policy")
 		writeError(w, http.StatusForbidden, "not authorized for this target")
+		return
+	}
+	// A WinRM run is a brokered session (Phase 40), so it takes the per-session
+	// second factor too (Phase 244) — before the approval gate, as admit() does.
+	if !s.sessionMFAGate(w, r, target, "winrm.denied", "winrm") {
 		return
 	}
 	if ok, err := s.enforceApproval(r.Context(), target); err != nil {

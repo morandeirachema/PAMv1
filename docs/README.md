@@ -1,6 +1,6 @@
 # PAMv1 — documentation
 
-> Last updated: 2026-09-03 · Reflects: Phases 0–227 and 229–243, and release v0.67.0 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-09-15 · Reflects: Phases 0–227 and 229–244, and release v0.67.0 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-09-15 | Phase 244 (per-session MFA) documented: ARCHITECTURE-LOW-LEVEL (env row, migration mark `0055`, the `targets` / `safes` / `sessions` columns, the per-session MFA bullet, audit vocabulary `session.mfa_ticket` / `session.mfa_verified` / `session.mfa_failed` and the four `reason:` values, invariant 4b, change log), ARCHITECTURE-HIGH-LEVEL and CODE-GUIDE change logs, ADMIN-GUIDE (env row + new §7 subsection), USER-GUIDE (new §5 subsection), README Tier 8 row, the new Tier 9 (WALLIX) table, and the MFA bullet in both READMEs. |
 | 2026-09-03 | Phase 242 (identity lock and token expiry) documented: ARCHITECTURE-LOW-LEVEL (env row, migration mark `0054`, the `users` columns, audit vocabulary `user.lock`/`user.unlock`/`user.token_rotate` and the new `reason:` values, change log), ARCHITECTURE-HIGH-LEVEL and CODE-GUIDE change logs, ADMIN-GUIDE (env row + new §7 subsection), README Tier 8 rows and the RBAC bullet in both READMEs. |
 | 2026-09-03 | Phase 240 (session lifetime, grant expiry and time frames) documented: ARCHITECTURE-LOW-LEVEL (two env rows, migration mark `0053`, the `target_grants`/`safe_members` columns, audit vocabulary `grant.expired`/`safe.member.expired` and the four `session.killed` reasons, change log), ARCHITECTURE-HIGH-LEVEL and CODE-GUIDE change logs (new leaf `internal/timeframe`), ADMIN-GUIDE (env rows + new §7 subsection with the frame grammar), README Tier 8 table and the safes bullet in both READMEs. |
 | 2026-09-03 | Phase 238 (the review of 236/237) documented: ARCHITECTURE-LOW-LEVEL, ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE and ADMIN-GUIDE change logs (the ack is now complete on the wire, Slack decisions are audited as the linked user, a `PUT /api/users` conflict no longer half-applies); v0.65.0's digest — owed by Phase 237 and never recorded — written into ROADMAP, README and CHANGELOG. No table, vocabulary or env change. |

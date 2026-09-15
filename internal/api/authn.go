@@ -5,11 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
-	"github.com/morandeirachema/pamv1/internal/mfa"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
@@ -160,6 +158,12 @@ func (s *Server) issueSession(ctx context.Context, p *auth.Principal, scope stri
 // issueSessionTTL mints a session token with an explicit lifetime (break-glass
 // sessions use a short TTL).
 func (s *Server) issueSessionTTL(ctx context.Context, p *auth.Principal, scope string, ttl time.Duration) (string, store.Session, error) {
+	return s.issueSessionBound(ctx, p, scope, ttl, nil)
+}
+
+// issueSessionBound is issueSessionTTL for a session bound to one target — a
+// session-MFA ticket (Phase 244) — with targetID nil for every other kind.
+func (s *Server) issueSessionBound(ctx context.Context, p *auth.Principal, scope string, ttl time.Duration, targetID *int64) (string, store.Session, error) {
 	// A locked identity (Phase 242) gets no session at all, whichever door it
 	// came through — an SSO login for a locked local row is refused here,
 	// audited as a failed login, rather than minting a token the resolver
@@ -186,6 +190,7 @@ func (s *Server) issueSessionTTL(ctx context.Context, p *auth.Principal, scope s
 		Scope:     scope,
 		TokenHash: hashHex(token),
 		ExpiresAt: time.Now().Add(ttl).UTC(),
+		TargetID:  targetID,
 	}
 	if err := s.store.CreateSession(ctx, &sess); err != nil {
 		return "", store.Session{}, err
@@ -207,26 +212,20 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkSecondFactor accepts a valid TOTP code or a single-use recovery code.
+// The decision is auth.VerifySecondFactor, shared with the per-session MFA
+// ticket mint and the SSH proxy's in-band prompt (Phase 244), so a code means
+// the same thing — replay guard included — wherever it is typed.
 func (s *Server) checkSecondFactor(ctx context.Context, username string, enr *store.MFAEnrollment, otp string) bool {
-	if secret, err := s.vault.Decrypt(ctx, enr.SecretEnc, store.MFAAAD(username)); err == nil {
-		if step, ok := mfa.ValidateStep(secret, otp, time.Now()); ok {
-			// Anti-replay: accept a valid code only if its time-step has not been
-			// used yet. The replay guard is a security control, so a store error
-			// that prevents recording the step must fail closed (reject), not accept.
-			consumed, cerr := s.store.ConsumeTOTPStep(ctx, username, step)
-			if cerr != nil {
-				s.log.Warn("totp replay check failed; rejecting code", "user", username, "err", cerr)
-				return false
-			}
-			return consumed
-		}
+	factor, err := auth.VerifySecondFactor(ctx, s.store, s.vault, enr, username, otp, time.Now())
+	if err != nil {
+		// The replay guard is a security control: a store error that prevents
+		// recording the step has already failed closed (factor is "").
+		s.log.Warn("totp replay check failed; rejecting code", "user", username, "err", err)
 	}
-	code := strings.ToLower(strings.TrimSpace(otp))
-	if consumed, err := s.store.ConsumeMFARecoveryCode(ctx, username, hashHex(code)); err == nil && consumed {
+	if factor == auth.FactorRecovery {
 		s.audit(ctx, "mfa.recovery_used", "user:"+username)
-		return true
 	}
-	return false
+	return factor != ""
 }
 
 // hashHex returns the hex-encoded SHA-256 of s. Used to derive the lookup hashes

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -193,6 +194,23 @@ func (s *Server) webauthnDeleteCredential(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// webauthnWriteBack writes back the sign counter and clone-warning flag an
+// assertion reported — required after EVERY successful assertion, a login or a
+// session-MFA ticket (Phase 244) alike, not just at registration, so the next
+// assertion is checked against the current value rather than a stale one.
+func (s *Server) webauthnWriteBack(ctx context.Context, username string, cred *webauthn.Credential) {
+	stored, gerr := s.store.GetWebAuthnCredentialByCredentialID(ctx, cred.ID)
+	if gerr != nil || stored.Username != username {
+		return
+	}
+	if uerr := s.store.UpdateWebAuthnSignCount(ctx, stored.ID, cred.Authenticator.SignCount, cred.Authenticator.CloneWarning, time.Now()); uerr != nil {
+		s.log.Warn("webauthn: sign-count write-back failed", "user", username, "credential_id", stored.ID, "err", uerr)
+	}
+	if cred.Authenticator.CloneWarning {
+		s.log.Warn("webauthn: possible cloned authenticator", "user", username, "credential_id", stored.ID)
+	}
+}
+
 // webauthnLoginBegin starts the assertion ceremony for a password-verified,
 // MFA-pending login (see login() in authn.go and the mfaPendingOnly
 // middleware — the caller's identity comes from that narrow session, never
@@ -269,17 +287,7 @@ func (s *Server) webauthnLoginFinish(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "webauthn verification failed")
 		return
 	}
-	// Write back the sign counter and clone-warning flag — required on every
-	// successful login, not just at registration, so the next assertion is
-	// checked against the current value rather than a stale one.
-	if stored, gerr := s.store.GetWebAuthnCredentialByCredentialID(r.Context(), cred.ID); gerr == nil && stored.Username == p.Name {
-		if uerr := s.store.UpdateWebAuthnSignCount(r.Context(), stored.ID, cred.Authenticator.SignCount, cred.Authenticator.CloneWarning, time.Now()); uerr != nil {
-			s.log.Warn("webauthn: sign-count write-back failed", "user", p.Name, "credential_id", stored.ID, "err", uerr)
-		}
-		if cred.Authenticator.CloneWarning {
-			s.log.Warn("webauthn: possible cloned authenticator", "user", p.Name, "credential_id", stored.ID)
-		}
-	}
+	s.webauthnWriteBack(r.Context(), p.Name, cred)
 	token, fullSess, err := s.issueSession(r.Context(), p, "")
 	if err != nil {
 		storeError(w, err)

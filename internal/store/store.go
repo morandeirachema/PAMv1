@@ -97,6 +97,10 @@ type Target struct {
 	// RequireApproval gates connections behind an approved access request
 	// (4-eyes / maintenance-window control, used in OT deployments).
 	RequireApproval bool `json:"require_approval"`
+	// RequireSessionMFA makes every session to this target require a fresh
+	// second factor, not only the one at login (Phase 244). Strictest-wins
+	// with PAM_SESSION_MFA and the safe's own flag — see EffectiveSessionMFA.
+	RequireSessionMFA bool `json:"require_session_mfa"`
 	// SafeID, when set, places the target in a safe (Phase 17): safe members may
 	// connect to every target in the safe. nil means the target is not in a safe.
 	SafeID *int64 `json:"safe_id,omitempty"`
@@ -254,6 +258,9 @@ type Safe struct {
 	// the global/request value stands.
 	RequireApproval bool `json:"require_approval,omitempty"`
 	MinApprovers    int  `json:"min_approvers,omitempty"`
+	// RequireSessionMFA binds every target in the safe to per-session MFA
+	// (Phase 244), strictest-wins exactly like RequireApproval.
+	RequireSessionMFA bool `json:"require_session_mfa,omitempty"`
 	// Personal (Phase 139) marks the safe private: auth.CanConnectTarget's
 	// unconditional admin bypass no longer applies to a target placed here —
 	// only the safe's own members, or a principal holding
@@ -1144,6 +1151,9 @@ type Session struct {
 	TokenHash string    `json:"-"`
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
+	// TargetID binds a session-MFA ticket (scope "session_mfa", Phase 244)
+	// to the one target it was minted for; nil on every other session.
+	TargetID *int64 `json:"target_id,omitempty"`
 }
 
 // MFAEnrollment is a user's TOTP second factor. SecretEnc is the vault-encrypted
@@ -1230,7 +1240,7 @@ type TargetStore interface {
 	// GetTarget returns one target by ID, or ErrNotFound.
 	GetTarget(ctx context.Context, id int64) (*Target, error)
 	// UpdateTarget replaces the editable fields (Name, Host, Port, OSType,
-	// Protocol, RequireApproval, RDPClipboard, RDPClipboardAudit) of the target
+	// Protocol, RequireApproval, RequireSessionMFA, RDPClipboard, RDPClipboardAudit) of the target
 	// with t.ID, refreshing t's SafeID
 	// and CreatedAt from the stored row. It deliberately does NOT touch the safe
 	// assignment (AssignTargetSafe owns that). ErrNotFound if the target is

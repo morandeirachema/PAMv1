@@ -23,6 +23,9 @@ type safeIn struct {
 	// global and per-target settings: a safe can tighten them, never loosen them.
 	RequireApproval bool `json:"require_approval,omitempty"`
 	MinApprovers    int  `json:"min_approvers,omitempty"`
+	// RequireSessionMFA binds every target in the safe to per-session MFA
+	// (Phase 244), strictest-wins exactly like RequireApproval.
+	RequireSessionMFA bool `json:"require_session_mfa,omitempty"`
 	// Personal (Phase 139) marks the safe private — see store.Safe.Personal.
 	// Read only by createSafe; updateSafe never reads it, so it cannot be
 	// changed after creation through this struct even by accident (the store
@@ -78,7 +81,8 @@ func (s *Server) createSafe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sf := store.Safe{Name: in.Name, Description: in.Description,
-		RequireApproval: in.RequireApproval, MinApprovers: in.MinApprovers, Personal: in.Personal}
+		RequireApproval: in.RequireApproval, MinApprovers: in.MinApprovers, Personal: in.Personal,
+		RequireSessionMFA: in.RequireSessionMFA}
 	if err := s.store.CreateSafe(r.Context(), &sf); err != nil {
 		storeError(w, err)
 		return
@@ -94,8 +98,8 @@ func (s *Server) createSafe(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.audit(r.Context(), "safe.create", fmt.Sprintf("safe:%s require_approval:%t min_approvers:%d personal:%t owner:%s",
-		in.Name, sf.RequireApproval, sf.MinApprovers, sf.Personal, in.Owner))
+	s.audit(r.Context(), "safe.create", fmt.Sprintf("safe:%s require_approval:%t min_approvers:%d require_session_mfa:%t personal:%t owner:%s",
+		in.Name, sf.RequireApproval, sf.MinApprovers, sf.RequireSessionMFA, sf.Personal, in.Owner))
 	writeJSON(w, http.StatusCreated, sf)
 }
 
@@ -119,7 +123,7 @@ func (s *Server) updateSafe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sf := store.Safe{ID: id, Name: in.Name, Description: in.Description,
-		RequireApproval: in.RequireApproval, MinApprovers: in.MinApprovers}
+		RequireApproval: in.RequireApproval, MinApprovers: in.MinApprovers, RequireSessionMFA: in.RequireSessionMFA}
 	if err := s.store.UpdateSafe(r.Context(), &sf); err != nil {
 		storeError(w, err)
 		return
@@ -127,8 +131,8 @@ func (s *Server) updateSafe(w http.ResponseWriter, r *http.Request) {
 	// The policy is in the audit detail because raising or LOWERING it changes
 	// who may reach every target in the safe — a change a reviewer must be able
 	// to see without diffing two API reads.
-	s.audit(r.Context(), "safe.update", fmt.Sprintf("safe:%d name:%s require_approval:%t min_approvers:%d",
-		sf.ID, sf.Name, sf.RequireApproval, sf.MinApprovers))
+	s.audit(r.Context(), "safe.update", fmt.Sprintf("safe:%d name:%s require_approval:%t min_approvers:%d require_session_mfa:%t",
+		sf.ID, sf.Name, sf.RequireApproval, sf.MinApprovers, sf.RequireSessionMFA))
 	writeJSON(w, http.StatusOK, sf)
 }
 

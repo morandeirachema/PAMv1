@@ -255,6 +255,13 @@ func (m *Memstore) DeleteTarget(_ context.Context, id int64) error {
 			}
 		}
 	}
+	// sessions.target_id (a session-MFA ticket's binding) cascades in pgstore
+	// (Phase 244) — match it.
+	for sid, sess := range m.sessions {
+		if sess.TargetID != nil && *sess.TargetID == id {
+			delete(m.sessions, sid)
+		}
+	}
 	// endpoint_agents.target_id cascades in pgstore (Phase 153) — match it.
 	for eid, ea := range m.endpointAgents {
 		if ea.TargetID == id {

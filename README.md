@@ -153,7 +153,7 @@ Phases 0–151, grouped by area. Every capability is exercised by tests and depl
 
 - **Role-based access control + custom profiles** — four built-in roles (`admin`, `user`, `auditor`, `approver`) plus **custom permission profiles**: name any capability set (`read_inventory`, `manage_credentials`, `connect`, `reveal_secret`, `read_audit`, `approve`, …) and assign it to a user like a role. A single role/profile→capability matrix is enforced by *both* the REST API and the SSH proxy; admins mint per-user access tokens (stored only as SHA-256); every denial is audited under the real username. An administrator can **lock** an identity (reason, optional `until`) — its token, sessions and new logins stop at once — and **rotate** its token; tokens can carry an expiry (`PAM_USER_TOKEN_TTL_HOURS`, Phase 242).
 - **AD, Entra ID, OIDC & SAML single sign-on** — sign in with an AD username + password over **LDAPS**, with **Microsoft Entra ID**, via **OIDC Authorization Code + PKCE SSO** (the IdP does the login and its MFA; PAMv1 validates the ID token's RS256 signature against the IdP's [JWKS](https://datatracker.ietf.org/doc/html/rfc7517)), or — for IdPs with no OIDC endpoint, on-prem **AD FS** above all — via **SAML 2.0** with PAMv1 as the Service Provider (SP-initiated; the signed assertion's [XML-DSig](https://www.w3.org/TR/xmldsig-core1/) is verified through a well-audited library, Phase 151). Directory groups / app roles map to the roles, and login issues a short-lived session token that works in the portal and the proxy. Sources compose; local tokens and break-glass remain the emergency path.
-- **TOTP multi-factor auth** — self-service enrollment ([RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238), any authenticator app); the secret is stored vault-encrypted and login requires the 6-digit code once enrolled. Single-use **recovery codes** and an optional **require-MFA-for-all** policy (with enrollment-only first sign-in).
+- **TOTP multi-factor auth** — self-service enrollment ([RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238), any authenticator app); the secret is stored vault-encrypted and login requires the 6-digit code once enrolled. Single-use **recovery codes** and an optional **require-MFA-for-all** policy (with enrollment-only first sign-in). A deployment, a target or a safe can also demand a **fresh second factor for every session** — a one-time-code prompt at the SSH proxy, or a single-use ticket bound to one target for the database proxies, the RDP/VNC viewer, reveal and checkout (`PAM_SESSION_MFA`, Phase 244).
 - **Safes (delegated-access containers)** — group targets into a named **safe** with its own members; a member may connect to **every target in the safe** (an authorization path alongside per-target grants), and a `can_manage` member is a **delegated safe administrator**. Placing a target in a safe restricts it to the safe's members. `POST /api/safes`, `/api/safes/{id}/members`, `PUT /api/targets/{id}/safe`. A grant or membership may carry an **expiry** and a **time frame** (`"Mon-Fri 08:00-18:00 Europe/Madrid"`, Phase 240): outside them it does not admit, and a session admitted under one ends at its edge. `PAM_SESSION_MAX_MIN` / `PAM_SESSION_IDLE_MIN` bound every session's length and idleness.
 
 ### Sessions & the JIT proxy
@@ -512,13 +512,49 @@ before being listed. Rows are added as each phase ships.
 | ~~**Time frames on standing grants**~~ **✅ shipped (Phase 240)** | WALLIX authorization time frames, CyberArk safe access hours | `time_frame` — `"Mon-Fri 08:00-18:00 Europe/Madrid"`, overnight windows included — on the same two rows; a session admitted inside a window ends at its edge |
 | ~~**Expiring user tokens, with rotation**~~ **✅ shipped (Phase 242)** | short-lived credentials everywhere (Teleport certificates, CyberArk session time-outs) | `PAM_USER_TOKEN_TTL_HOURS` and per-user `token_ttl_hours` at mint; an expired token is refused like an unknown one; `POST /api/users/{id}/token` rotates without delete + re-mint and cuts what the old token authenticated |
 | ~~**Admin lock of a human identity**~~ **✅ shipped (Phase 242)** | Teleport locks, CyberArk / WALLIX disable | `POST /api/users/{id}/lock` with a reason and optional `until`: token, login sessions, new logins and Slack clicks refused, live sessions cut, audited; lifts on unlock or by itself |
-| **Per-session MFA** | Teleport `require_session_mfa`, CyberArk PSM re-authentication, WALLIX per-session MFA | MFA gates login and enrollment, not each connect |
+| ~~**Per-session MFA**~~ **✅ shipped (Phase 244)** | Teleport `require_session_mfa`, CyberArk PSM re-authentication, WALLIX per-session MFA | `PAM_SESSION_MFA`, or `require_session_mfa` on a target or safe: the SSH proxy prompts for a one-time code after the token; every other path — the database proxies, the RDP/VNC viewer, reveal, checkout, operator certificates, WinRM and kubectl — takes a single-use, two-minute ticket bound to one target (`POST /api/session-mfa`, after a TOTP, recovery or WebAuthn factor); break-glass bypasses |
 | **Safe-scoped permission sets** (reveal-but-not-manage, authorize-requests-only, view-audit-only *in this safe*) | CyberArk's ~25 per-Safe member permissions | capabilities are global; safes carry member / `can_manage` only |
 | **Target labels with label-based grants and deny rules** | Teleport allow/deny over resource labels | grants name a target or a safe; no labels |
 | **Credential-level grants for humans** (object-level access control) | CyberArk OLAC | grants are per target (app secrets are per credential) |
 | **Browser SSH terminal in the portal** | all three | RDP/VNC only; the WebSocket tunnel exists |
 | **Level-tiered and direct-manager approval** | CyberArk multi-level confirmation | an N-of-M count only |
 | **FIPS build mode** · **RADIUS authentication** · **multi-tenancy** | Teleport FIPS binaries · CyberArk/WALLIX RADIUS · WALLIX multi-tenant | none; the last is a scope decision |
+
+### Tier 9 — WALLIX Bastion / Access Manager / One IDaaS research (2026-09-15)
+
+A fourth pass, aimed at one vendor's whole line rather than one product:
+WALLIX Bastion 12.3.2 ([administration guide](https://pam.wallix.one/documentation/admin-doc/bastion_en_administration_guide.pdf),
+[sessions audit guide](https://pam.wallix.one/documentation/user-doc/bastion_en_auditor_guide.pdf),
+[users and approvers guide](https://pam.wallix.one/documentation/user-doc/bastion_en_user_guide.pdf),
+[release notes](https://pam.wallix.one/documentation/release-notes/bastion-rn-en.html)),
+Access Manager 5.2.4.0 ([admin guide](https://pam.wallix.one/documentation/admin-doc/am-admin-guide_en.pdf),
+[user guide](https://pam.wallix.one/documentation/user-doc/am-user-guide_en.pdf),
+[release notes](https://pam.wallix.one/documentation/release-notes/am-rn-en.html)),
+and [WALLIX One IDaaS](https://www.wallix.com/products/idaas/) — formerly
+Trustelem, whose [documentation](https://trustelem-doc.wallix.com/) keeps the
+old name. Every candidate was checked against the routes, env vars, store types
+and console before being listed; what Tier 8 already names (RADIUS,
+multi-tenancy, target labels, a browser SSH terminal) is not repeated, and the
+IdaaS features that make a product an identity provider for other applications
+(SaaS SSO, SCIM out, an app launcher) are out of scope for a PAM. Rows are
+added as each phase ships.
+
+| Gap | Leaders | PAMv1 today |
+|---|---|---|
+| **Live watching and in-portal replay of RDP/VNC sessions** | Bastion sessions audit guide §6–7; Access Manager replay | an RDP/VNC session is listed and killable but never teed to the live hub; guacd's recordings are not shown by the recording list, and the portal player reads asciicast only |
+| **Share a live RDP/VNC session** (view, or view and control) | Access Manager *Session invite* | session sharing (Phase 116) is SSH / text only |
+| **Group-based authorization** — directory groups as grant subjects | Bastion user groups ↔ target groups | a grant names a user or a built-in role; directory groups map onto the four roles only |
+| **Per-grant sub-protocol rights** (shell, exec, SFTP, port forwarding; clipboard, drive, printer) | Bastion authorizations (admin guide §13.2) | deployment-wide switches (`PAM_SSH_SFTP`, `PAM_SSH_PORT_FORWARD`, `PAM_RDP_CLIPBOARD`) plus a per-target clipboard override |
+| **Approval workflow depth** — approver comment and shortened duration, cancel an approved request, notify every approver | Bastion users and approvers guide §7 | approve, deny, stop recurrence; the decision takes no body; approvers are reached by Slack or magic link |
+| **Admin-assisted MFA recovery** — a one-time rescue code after an identity check | IDaaS [loss of a second factor](https://trustelem-doc.wallix.com/books/trustelem-administration/page/loss-of-a-second-factor) | removing a factor needs the factor; an administrator cannot reset one — sharper now that sessions can demand it (Phase 244) |
+| **Search past sessions by metadata** (user, target, protocol, window, outcome) | Access Manager / Bastion audit search | content search over SSH recordings; the live session list; an audit list that takes only a limit |
+| **SSH public-key and FIDO2 (`sk-`) login to the proxy** | Bastion 12.2 release notes (WAB-13752) | the proxy takes a password (the token) only |
+| **X.509 client-certificate login** | Bastion, Access Manager, IDaaS | none — `PAM_DEVICE_HEADER` binds a device, it does not authenticate |
+| **Telnet and rlogin targets** | Bastion connection policies | none |
+| **One credential shared by many targets** (a global domain, rotated once) | Bastion admin guide §11.3 | a credential belongs to one target |
+| **Critical-target flag with notification** · **unused users/targets reports** · **scheduled, directory-sourced discovery** | Bastion admin guide §8.2.2, §14; audit guide §11 | none of the three |
+| **Portal login lifetime and idle timeout** | IDaaS session settings | a login session lasts a fixed 12 h |
+| **An MFA re-prompt window** | IDaaS [non-systematic MFA](https://trustelem-doc.wallix.com/books/trustelem-news/page/new-features) | every session proves a factor (Phase 244) — no caching window |
 
 ### Deliberate non-goal
 

@@ -88,6 +88,10 @@ type Options struct {
 	// MFARequired makes password login require a confirmed second factor: users
 	// without one get an enrollment-only session until they set up MFA.
 	MFARequired bool
+	// SessionMFA (PAM_SESSION_MFA, Phase 244) requires a fresh second factor for
+	// every session a human opens and every secret or certificate handed to one;
+	// per-target and per-safe flags also apply (store.EffectiveSessionMFA).
+	SessionMFA bool
 	// WinRM runs commands on Windows targets; defaults to a real HTTPS client.
 	WinRM winrm.Runner
 	// BuildVersion and BuildCommit identify the running binary. They are exported
@@ -510,6 +514,7 @@ type Server struct {
 	slackWebhookURL    string
 	slackSigningSecret string
 	userTokenTTL       time.Duration
+	sessionMFA         bool
 	shareSMTPAddr      string
 	shareSMTPFrom      string
 	shareSMTPUser      string
@@ -812,6 +817,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		slackWebhookURL:      opts.SlackWebhookURL,
 		slackSigningSecret:   opts.SlackSigningSecret,
 		userTokenTTL:         opts.UserTokenTTL,
+		sessionMFA:           opts.SessionMFA,
 		shareGuestTTL:        opts.ShareGuestSessionTTL,
 		shareSMTPAddr:        opts.ShareSMTPAddr,
 		shareSMTPFrom:        opts.ShareSMTPFrom,
@@ -1029,6 +1035,13 @@ func (s *Server) routes() {
 	s.mux.Handle("DELETE /api/webauthn/credentials/{id}", s.authenticated(s.webauthnDeleteCredential))
 	s.mux.Handle("POST /api/webauthn/login/begin", s.rateLimit(s.mfaPendingOnly(s.webauthnLoginBegin)))
 	s.mux.Handle("POST /api/webauthn/login/finish", s.rateLimit(s.mfaPendingOnly(s.webauthnLoginFinish)))
+
+	// Per-session MFA (Phase 244): a single-use ticket bound to ONE target,
+	// minted only after a fresh second factor — a one-time code, or a WebAuthn
+	// assertion. Rate-limited like login: each code is a guess.
+	s.mux.Handle("POST /api/session-mfa", s.rateLimit(s.authenticated(s.mintSessionMFATicket)))
+	s.mux.Handle("POST /api/session-mfa/webauthn/begin", s.rateLimit(s.authenticated(s.sessionMFAWebAuthnBegin)))
+	s.mux.Handle("POST /api/session-mfa/webauthn/finish", s.rateLimit(s.authenticated(s.sessionMFAWebAuthnFinish)))
 
 	s.mux.Handle("POST /api/targets", s.authz(auth.CapManageTargets, s.createTarget))
 	s.mux.Handle("GET /api/targets", s.authz(auth.CapReadInventory, pagedList(s, s.store.ListTargets)))
@@ -1395,6 +1408,15 @@ func (s *Server) authzCore(cap auth.Capability, allowExtension bool, next http.H
 			writeError(w, http.StatusForbidden, "this token is only valid for the RDP tunnel")
 			return
 		}
+		if p.SessionMFATicket {
+			// A session-MFA ticket (Phase 244) opens one session and nothing
+			// else. As an API key it could mint its own successor, so it is
+			// refused on every route — the REST access paths take it in its
+			// own header, beside the caller's real key.
+			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:session-mfa-ticket")
+			writeError(w, http.StatusForbidden, "a session-MFA ticket opens one session; it is not an API key")
+			return
+		}
 		if p.ExtensionOnly && !allowExtension {
 			// A browser-extension token reaching any route but the one it was
 			// minted for (see authzExtOK) — refused the same way a leaked
@@ -1541,6 +1563,8 @@ func (s *Server) authenticated(next http.HandlerFunc) http.Handler {
 			reason, msg = "mfa-webauthn-pending", "complete WebAuthn sign-in to continue"
 		case auth.ScopeExtensionOnly:
 			reason, msg = "extension-scoped-token", "this token is only valid for the extension reveal endpoint"
+		case auth.ScopeSessionMFA:
+			reason, msg = "session-mfa-ticket", "a session-MFA ticket opens one session; it is not an API key"
 		}
 		if reason != "" {
 			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:"+reason)

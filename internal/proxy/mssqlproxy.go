@@ -64,6 +64,7 @@ type MSSQLConfig struct {
 	RecordingDir    string            // where session recordings are written
 	Sessions        *session.Registry // live-session registry (optional)
 	RequireApproval bool              // global 4-eyes/OT gate (per-target also applies)
+	SessionMFA      bool              // PAM_SESSION_MFA (Phase 244; per-target/safe flags also apply)
 	// RequireTargetGrant refuses a session to a target with NO grants at all
 	// (PAM_REQUIRE_TARGET_GRANT, Phase 203).
 	RequireTargetGrant bool
@@ -213,6 +214,7 @@ func NewMSSQL(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg MSSQL
 		sessions:     m.sessions,
 		posture:      m.posture,
 		oncall:       m.oncall,
+		sessionMFA:   cfg.SessionMFA,
 	}
 	m.pol = sqlPolicy{
 		guard:       m.guard,
@@ -844,6 +846,12 @@ func (m *MSSQLProxy) refuse(ctx context.Context, c *tds.Conn, res admitResult, a
 		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: authorization check failed", tds72)
 	case gateTargetPolicy:
 		m.deny(ctx, c, actor, login, "not authorized for this target", tds72)
+	case gateSessionMFACheck:
+		// admit logged the policy-lookup or ticket-spend error; fail closed.
+		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: authorization check failed", tds72)
+	case gateSessionMFA:
+		m.audit(ctx, actor, "db.session.denied", "target:"+res.target.Name+" reason:"+res.reason)
+		m.fail(c, mssqlErrLoginFailed, 14, sessionMFARefusal(res.reason, false), tds72)
 	case gateApprovalPolicy, gateApprovalClaim:
 		// admit logged the specific approval error; fail closed on the wire.
 		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: approval check failed", tds72)
