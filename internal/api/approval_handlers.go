@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/alert"
+	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
@@ -117,7 +118,78 @@ func (s *Server) createAccessRequest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, ar)
 }
 
-// listAccessRequests lists requests, optionally filtered by ?status=.
+// scopedApprovalTargets returns the targets p may decide access requests for
+// through safe membership alone (Phase 246): every target in a safe where a
+// live membership naming p carries the approve permission. It is one
+// subject-indexed read — the same GrantsForSubjects the reach view uses — so
+// the decision and the console's "am I an approver anywhere" agree.
+func (s *Server) scopedApprovalTargets(ctx context.Context, p *auth.Principal) (map[int64]bool, error) {
+	grants, err := s.store.GrantsForSubjects(ctx, auth.GrantSubjects(p))
+	if err != nil {
+		return nil, err
+	}
+	out := map[int64]bool{}
+	for _, g := range store.LiveSubjectGrants(grants, time.Now()) {
+		if g.Via == store.GrantViaSafe && store.GrantPermits(g.Permissions, store.SafePermApprove) {
+			out[g.TargetID] = true
+		}
+	}
+	return out, nil
+}
+
+// mayDecideRequest reports whether p may decide an access request for
+// targetID: the global approve capability, or a live approve membership of
+// the target's safe. Four-eyes and the dual-control floor are applied by
+// decideAccessRequest either way — a scoped approver is an approver, not an
+// exemption.
+func (s *Server) mayDecideRequest(ctx context.Context, p *auth.Principal, targetID int64) (bool, error) {
+	if p.Can(auth.CapApprove) {
+		return true, nil
+	}
+	scope, err := s.scopedApprovalTargets(ctx, p)
+	if err != nil {
+		return false, err
+	}
+	return scope[targetID], nil
+}
+
+// requireDecider is the approve/deny routes' authorization since Phase 246,
+// which moved them off a CapApprove-only middleware so a scoped approver can
+// reach them. A caller with no approval right anywhere is refused as the
+// middleware refused them — before any request is looked up, so the route
+// discloses nothing about which request ids exist — and one whose right does
+// not cover this request's target is refused with the decision vocabulary.
+func (s *Server) requireDecider(w http.ResponseWriter, r *http.Request, id int64) bool {
+	p := principalFrom(r.Context())
+	if p.Can(auth.CapApprove) {
+		return true
+	}
+	scope, err := s.scopedApprovalTargets(r.Context(), p)
+	if err != nil {
+		storeError(w, err)
+		return false
+	}
+	if len(scope) == 0 {
+		s.audit(r.Context(), "authz.denied", r.Method+" "+r.URL.Path+" role:"+string(p.Role))
+		writeError(w, http.StatusForbidden, "your role does not permit this action")
+		return false
+	}
+	ar, err := s.store.GetAccessRequest(r.Context(), id)
+	if err != nil {
+		storeError(w, err)
+		return false
+	}
+	if !scope[ar.TargetID] {
+		s.audit(r.Context(), "access.decision_denied", fmt.Sprintf("request:%d target:%d reason:not-an-approver", ar.ID, ar.TargetID))
+		writeError(w, http.StatusForbidden, "you may not decide access requests for this target")
+		return false
+	}
+	return true
+}
+
+// listAccessRequests lists requests, optionally filtered by ?status=. A caller
+// holding CapApprove sees every request; a scoped approver (Phase 246) sees
+// only the requests for targets they may decide; anyone else is refused.
 func (s *Server) listAccessRequests(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	switch status {
@@ -126,19 +198,54 @@ func (s *Server) listAccessRequests(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "status must be pending, approved or denied")
 		return
 	}
+	p := principalFrom(r.Context())
 	limit, after := listWindow(r)
-	reqs, err := s.store.ListAccessRequests(r.Context(), status, limit, after)
+	if p.Can(auth.CapApprove) {
+		reqs, err := s.store.ListAccessRequests(r.Context(), status, limit, after)
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, reqs)
+		return
+	}
+	scope, err := s.scopedApprovalTargets(r.Context(), p)
 	if err != nil {
 		storeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, reqs)
+	if len(scope) == 0 {
+		s.audit(r.Context(), "authz.denied", r.Method+" "+r.URL.Path+" role:"+string(p.Role))
+		writeError(w, http.StatusForbidden, "your role does not permit this action")
+		return
+	}
+	// The window is applied AFTER the filter, so a page is never short just
+	// because other safes' requests fell inside it — a short page is how the
+	// console's cursor drain knows it has reached the end.
+	all, err := s.store.ListAccessRequests(r.Context(), status, 0, after)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	out := make([]store.AccessRequest, 0)
+	for _, ar := range all {
+		if scope[ar.TargetID] {
+			out = append(out, ar)
+			if len(out) == limit {
+				break
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // approveAccessRequest approves the access request named in the {id} path value.
 func (s *Server) approveAccessRequest(w http.ResponseWriter, r *http.Request) {
 	id, ok := idParam(w, r)
 	if !ok {
+		return
+	}
+	if !s.requireDecider(w, r, id) {
 		return
 	}
 	s.decideAccessRequest(w, r, id, "approved", actorFrom(r.Context()))
@@ -148,6 +255,9 @@ func (s *Server) approveAccessRequest(w http.ResponseWriter, r *http.Request) {
 func (s *Server) denyAccessRequest(w http.ResponseWriter, r *http.Request) {
 	id, ok := idParam(w, r)
 	if !ok {
+		return
+	}
+	if !s.requireDecider(w, r, id) {
 		return
 	}
 	s.decideAccessRequest(w, r, id, "denied", actorFrom(r.Context()))

@@ -158,6 +158,11 @@ type safeMemberIn struct {
 	SubjectType string `json:"subject_type"`
 	Subject     string `json:"subject"`
 	CanManage   bool   `json:"can_manage"`
+	// Permissions (Phase 246) is what the membership confers on the safe's
+	// targets: "use", "retrieve", "approve". Omitted means use + retrieve —
+	// what a membership always conferred; an explicit [] confers nothing but
+	// the management right, and is refused without one.
+	Permissions []string `json:"permissions"`
 	// ExpiresAt and TimeFrame bound the membership in time (Phase 240), as
 	// on a target grant.
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
@@ -198,13 +203,29 @@ func (s *Server) addSafeMember(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	perms := store.DefaultSafePermissions()
+	if in.Permissions != nil {
+		var perr error
+		if perms, perr = store.NormalizeSafePermissions(in.Permissions); perr != nil {
+			writeError(w, http.StatusUnprocessableEntity, perr.Error())
+			return
+		}
+	}
+	if len(perms) == 0 && !in.CanManage {
+		writeError(w, http.StatusUnprocessableEntity, "a member with no permissions and no management right would grant nothing")
+		return
+	}
+	permsDetail := store.JoinSafePermissions(perms)
+	if permsDetail == "" {
+		permsDetail = "none"
+	}
 	// The creator is recorded for the certification four-eyes check (Phase 46).
-	m := store.SafeMember{SafeID: id, SubjectType: in.SubjectType, Subject: in.Subject, CanManage: in.CanManage, CreatedBy: actorFrom(r.Context()), ExpiresAt: in.ExpiresAt, TimeFrame: frame}
+	m := store.SafeMember{SafeID: id, SubjectType: in.SubjectType, Subject: in.Subject, CanManage: in.CanManage, Permissions: perms, CreatedBy: actorFrom(r.Context()), ExpiresAt: in.ExpiresAt, TimeFrame: frame}
 	if err := s.store.AddSafeMember(r.Context(), &m); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "safe.member.add", fmt.Sprintf("safe:%d %s:%s manage:%t", id, in.SubjectType, in.Subject, in.CanManage)+lifetimeDetail(in.ExpiresAt, frame))
+	s.audit(r.Context(), "safe.member.add", fmt.Sprintf("safe:%d %s:%s manage:%t permissions:%s", id, in.SubjectType, in.Subject, in.CanManage, permsDetail)+lifetimeDetail(in.ExpiresAt, frame))
 	writeJSON(w, http.StatusCreated, m)
 }
 

@@ -430,6 +430,31 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if ms, err := st.ListSafeMembers(ctx, sf.ID); err != nil || len(ms) != 1 || ms[0].CreatedBy != "grantor-gary" {
 		t.Fatalf("ListSafeMembers created_by: %+v err %v", ms, err)
 	}
+	// A member added without naming permissions confers what every membership
+	// conferred before Phase 246; the stored set comes back in canonical order.
+	if ms, _ := st.ListSafeMembers(ctx, sf.ID); len(ms) != 1 || len(ms[0].Permissions) != 2 ||
+		ms[0].Permissions[0] != store.SafePermUse || ms[0].Permissions[1] != store.SafePermRetrieve {
+		t.Fatalf("a member with no named permissions must default to use,retrieve: %+v", ms)
+	}
+	permSafe := &store.Safe{Name: "perm-safe"}
+	if err := st.CreateSafe(ctx, permSafe); err != nil {
+		t.Fatalf("CreateSafe(perm-safe): %v", err)
+	}
+	for _, m := range []*store.SafeMember{
+		{SafeID: permSafe.ID, SubjectType: "user", Subject: "approver-anna", Permissions: []string{store.SafePermApprove}},
+		{SafeID: permSafe.ID, SubjectType: "user", Subject: "manager-max", CanManage: true, Permissions: []string{}},
+	} {
+		if err := st.AddSafeMember(ctx, m); err != nil {
+			t.Fatalf("AddSafeMember(%s): %v", m.Subject, err)
+		}
+	}
+	if ms, err := st.ListSafeMembers(ctx, permSafe.ID); err != nil || len(ms) != 2 ||
+		len(ms[0].Permissions) != 1 || ms[0].Permissions[0] != store.SafePermApprove || ms[1].Permissions == nil || len(ms[1].Permissions) != 0 {
+		t.Fatalf("explicit permission sets must round-trip, an empty one as empty: %+v err %v", ms, err)
+	}
+	if err := st.DeleteSafe(ctx, permSafe.ID); err != nil {
+		t.Fatalf("DeleteSafe(perm-safe): %v", err)
+	}
 	if err := st.AddSafeMember(ctx, &store.SafeMember{SafeID: sf.ID, SubjectType: "role", Subject: "user"}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("duplicate safe member: want ErrConflict, got %v", err)
 	}
@@ -447,6 +472,11 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	eg, err := st.EffectiveTargetGrants(ctx, tgt.ID)
 	if err != nil || len(eg) != 1 || eg[0].SubjectType != "role" || eg[0].Subject != "user" {
 		t.Fatalf("EffectiveTargetGrants(in safe): %+v err %v", eg, err)
+	}
+	// The folded membership carries the member's permissions (Phase 246), so the
+	// decision can tell a use-only member from a retrieve-only one.
+	if eg[0].Permissions == nil || !store.GrantPermits(eg[0].Permissions, store.SafePermUse) || store.GrantPermits(eg[0].Permissions, store.SafePermApprove) {
+		t.Fatalf("EffectiveTargetGrants must carry the member's permissions: %+v", eg[0])
 	}
 	// The target now carries its safe id.
 	if tt, _ := st.GetTarget(ctx, tgt.ID); tt.SafeID == nil || *tt.SafeID != sf.ID {

@@ -392,7 +392,11 @@ func (s *Server) deleteTargetGrant(w http.ResponseWriter, r *http.Request) {
 // specifically via CapUnlimitedVaultAccess rather than ordinary membership,
 // that use is audited loudly — safe.personal_override_used — mirroring how
 // break-glass access always is.
-func (s *Server) authorizedForTarget(ctx context.Context, target *store.Target) (bool, error) {
+//
+// act (Phase 246) names what the caller is about to do: a safe membership
+// admits only the actions its permissions carry, so a use-only member reaches
+// the proxies and not the secret, and a retrieve-only member the reverse.
+func (s *Server) authorizedForTarget(ctx context.Context, target *store.Target, act auth.Action) (bool, error) {
 	grants, err := s.store.EffectiveTargetGrants(ctx, target.ID)
 	if err != nil {
 		return false, err
@@ -402,7 +406,7 @@ func (s *Server) authorizedForTarget(ctx context.Context, target *store.Target) 
 		return false, err
 	}
 	principal := principalFrom(ctx)
-	ok := auth.CanConnectTarget(principal, grants, target.SafeID != nil, personal, s.rt().ungated)
+	ok := auth.CanAccessTargetAt(principal, grants, target.SafeID != nil, personal, s.rt().ungated, time.Now(), act)
 	if ok && principal.PersonalOverrideUsed(personal) {
 		s.audit(ctx, "safe.personal_override_used", "target:"+target.Name)
 	}
@@ -414,8 +418,8 @@ func (s *Server) authorizedForTarget(ctx context.Context, target *store.Target) 
 // equally, reveal and checkout. `account` is the login account the caller will use
 // (for the vendor contract gate; "" = any). It writes a 403 and returns false when
 // the caller may not reach the target. action names the audited denial.
-func (s *Server) gateCredentialAccess(w http.ResponseWriter, r *http.Request, target *store.Target, account, action string) bool {
-	return s.gateTargetAccess(w, r, target, account, action, false)
+func (s *Server) gateCredentialAccess(w http.ResponseWriter, r *http.Request, target *store.Target, account, action string, act auth.Action) bool {
+	return s.gateTargetAccess(w, r, target, account, action, act, false)
 }
 
 // gateSecretDelivery is gateCredentialAccess for the paths that put access
@@ -424,13 +428,13 @@ func (s *Server) gateCredentialAccess(w http.ResponseWriter, r *http.Request, ta
 // 244), between target authorization and the approval gate: after, so a
 // caller who may not reach the target spends no ticket; before, so a missing
 // factor never burns a single-use approval. The same order admit() keeps.
-func (s *Server) gateSecretDelivery(w http.ResponseWriter, r *http.Request, target *store.Target, account, action string) bool {
-	return s.gateTargetAccess(w, r, target, account, action, true)
+func (s *Server) gateSecretDelivery(w http.ResponseWriter, r *http.Request, target *store.Target, account, action string, act auth.Action) bool {
+	return s.gateTargetAccess(w, r, target, account, action, act, true)
 }
 
 // gateTargetAccess is the shared body of the two gates above.
-func (s *Server) gateTargetAccess(w http.ResponseWriter, r *http.Request, target *store.Target, account, action string, sessionMFA bool) bool {
-	if ok, err := s.authorizedForTarget(r.Context(), target); err != nil {
+func (s *Server) gateTargetAccess(w http.ResponseWriter, r *http.Request, target *store.Target, account, action string, act auth.Action, sessionMFA bool) bool {
+	if ok, err := s.authorizedForTarget(r.Context(), target, act); err != nil {
 		storeError(w, err)
 		return false
 	} else if !ok {
