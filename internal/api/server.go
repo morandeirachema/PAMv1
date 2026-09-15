@@ -1115,9 +1115,13 @@ func (s *Server) routes() {
 	// Access-request approval workflow (4-eyes). A connect-capable user files a
 	// request; an approver (a *different* principal) approves or denies it.
 	s.mux.Handle("POST /api/access-requests", s.authz(auth.CapConnect, s.createAccessRequest))
-	s.mux.Handle("GET /api/access-requests", s.authz(auth.CapApprove, s.listAccessRequests))
-	s.mux.Handle("POST /api/access-requests/{id}/approve", s.authz(auth.CapApprove, s.approveAccessRequest))
-	s.mux.Handle("POST /api/access-requests/{id}/deny", s.authz(auth.CapApprove, s.denyAccessRequest))
+	// Listing and deciding are open to inventory readers since Phase 246, so a
+	// member holding a safe's approve permission can reach them; the handlers
+	// admit CapApprove or that scoped right (requireDecider) and refuse
+	// everyone else exactly as the capability middleware did.
+	s.mux.Handle("GET /api/access-requests", s.authz(auth.CapReadInventory, s.listAccessRequests))
+	s.mux.Handle("POST /api/access-requests/{id}/approve", s.authz(auth.CapReadInventory, s.approveAccessRequest))
+	s.mux.Handle("POST /api/access-requests/{id}/deny", s.authz(auth.CapReadInventory, s.denyAccessRequest))
 	s.mux.Handle("POST /api/access-requests/{id}/stop-recurrence", s.authz(auth.CapApprove, s.stopAccessRequestRecurrence))
 
 	// Magic-link approval (Phase 137): a CapApprove holder delegates one

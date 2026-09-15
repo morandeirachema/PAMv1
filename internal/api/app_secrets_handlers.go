@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
 
@@ -257,7 +258,7 @@ func (s *Server) grantAppSecret(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.gateCredentialAccess(w, r, target, cred.Username, "app.grant") {
+	if !s.gateCredentialAccess(w, r, target, cred.Username, "app.grant", auth.ActionRetrieve) {
 		return
 	}
 	g := store.AppSecretGrant{AppID: appID, CredentialID: in.CredentialID}

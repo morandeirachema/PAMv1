@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/rotate"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
@@ -38,7 +39,7 @@ func (s *Server) rotateCredentialHandler(w http.ResponseWriter, r *http.Request)
 	// outside any approval window, and for a vendor account after its contract
 	// closed. The agent-facing rotate_credential tool was gated for exactly this
 	// in Phase 52c (SECURITY-GAPS finding M); the human endpoint was not.
-	if !s.gateCredentialAccess(w, r, target, cred.Username, "credential.rotate") {
+	if !s.gateCredentialAccess(w, r, target, cred.Username, "credential.rotate", auth.ActionReach) {
 		return
 	}
 	rotatedAt, err := s.rotateCredential(r.Context(), cred, target)
@@ -341,7 +342,7 @@ func (s *Server) checkoutCredential(w http.ResponseWriter, r *http.Request) {
 	}
 	// Checkout is a credential-access path: enforce the same per-target grants and
 	// approval gate as connecting/reveal.
-	if !s.gateSecretDelivery(w, r, target, cred.Username, "credential.checkout") {
+	if !s.gateSecretDelivery(w, r, target, cred.Username, "credential.checkout", auth.ActionRetrieve) {
 		return
 	}
 	// A Zero Standing Privilege credential has no stored secret to lease. Refuse
@@ -563,7 +564,7 @@ func (s *Server) reconcileCredentialHandler(w http.ResponseWriter, r *http.Reque
 	// Same gate as rotation: with ?remediate=true this path resets the target's
 	// secret, so it must not be reachable for a target the caller is not
 	// authorized for.
-	if !s.gateCredentialAccess(w, r, target, cred.Username, "credential.reconcile") {
+	if !s.gateCredentialAccess(w, r, target, cred.Username, "credential.reconcile", auth.ActionReach) {
 		return
 	}
 	remediate := r.URL.Query().Get("remediate") == "true"

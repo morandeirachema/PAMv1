@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/k8s"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
@@ -78,7 +79,7 @@ func (s *Server) runKubectl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	command := req.Command()
-	if ok, err := s.authorizedForTarget(r.Context(), target); err != nil {
+	if ok, err := s.authorizedForTarget(r.Context(), target, auth.ActionUse); err != nil {
 		storeError(w, err)
 		return
 	} else if !ok {

@@ -281,7 +281,13 @@ type SafeMember struct {
 	SubjectType string `json:"subject_type"` // user | role
 	Subject     string `json:"subject"`
 	CanManage   bool   `json:"can_manage"`
-	CreatedBy   string `json:"created_by,omitempty"`
+	// Permissions (Phase 246) is what the membership confers on every target
+	// in the safe — SafePermUse, SafePermRetrieve, SafePermApprove; CanManage
+	// stays the right to manage the member list. Nil on a new row means
+	// DefaultSafePermissions (use + retrieve, what every membership conferred
+	// before Phase 246); an explicitly empty set confers nothing but management.
+	Permissions []string `json:"permissions"`
+	CreatedBy   string   `json:"created_by,omitempty"`
 	// ExpiresAt and TimeFrame bound a standing membership in time (Phase
 	// 240), exactly as on TargetGrant — see there.
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
@@ -445,6 +451,10 @@ type TargetGrant struct {
 	// end as its deadline (auth.GrantDeadline), so it cannot outlive the
 	// authorization that admitted it.
 	TimeFrame string `json:"time_frame,omitempty"`
+	// Permissions is set only on a grant EffectiveTargetGrants folded in from
+	// safe membership (Phase 246) — the member's set. Nil on a direct target
+	// grant, which confers use and retrieve and never approve (GrantPermits).
+	Permissions []string `json:"permissions,omitempty"`
 }
 
 // GrantLive reports whether a grant with the given bounds admits at now: not
@@ -541,6 +551,9 @@ type SubjectGrant struct {
 	// itself only ever contains rows live at the time it was taken.
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	TimeFrame string     `json:"time_frame,omitempty"`
+	// Permissions is the safe member's set on a GrantViaSafe row (Phase 246);
+	// nil on a direct grant — see TargetGrant.Permissions.
+	Permissions []string `json:"permissions,omitempty"`
 }
 
 // Checkout is an exclusive, time-boxed lease on a credential. While a checkout

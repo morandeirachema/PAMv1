@@ -30,7 +30,10 @@ func GrantDeadline(p *Principal, grants []store.TargetGrant, personal bool, now 
 	}
 	matched := false
 	for _, g := range grants {
-		if !store.GrantLive(g.ExpiresAt, g.TimeFrame, now) || !SubjectMatches(p, g.SubjectType, g.Subject) {
+		// Only a grant that admits a SESSION bounds one (Phase 246): a
+		// retrieve-only membership admitted nobody to this session.
+		if !store.GrantLive(g.ExpiresAt, g.TimeFrame, now) || !store.GrantPermits(g.Permissions, store.SafePermUse) ||
+			!SubjectMatches(p, g.SubjectType, g.Subject) {
 			continue
 		}
 		matched = true

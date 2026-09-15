@@ -49,6 +49,10 @@ type Reach struct {
 	SubjectType string       `json:"subject_type,omitempty"` // user | role
 	Subject     string       `json:"subject,omitempty"`
 	SafeID      *int64       `json:"safe_id,omitempty"`
+	// Permissions (Phase 246) is the union of what the live grants admitting
+	// this target let the subject do with it — "use", "retrieve" — on a grant
+	// or safe row; empty on the three non-grant reasons, which confer both.
+	Permissions []string `json:"permissions,omitempty"`
 	// SafeName is the name of the SafeID safe, filled in from the same read
 	// that resolves the personal flags. An id is not an answer to a person, and
 	// the safes are already in hand — a caller that had to map ids to names
@@ -144,6 +148,11 @@ func ReachableTargets(ctx context.Context, st ReachStore, p *Principal, ungated 
 	now := time.Now()
 	byTarget := make(map[int64][]store.SubjectGrant, len(grants))
 	for _, g := range store.LiveSubjectGrants(grants, now) {
+		// An approve-only membership confers no target access (Phase 246),
+		// so it is no reach — though it still gates the target (gatedIDs).
+		if !store.GrantPermits(g.Permissions, store.AccessReach) {
+			continue
+		}
 		byTarget[g.TargetID] = append(byTarget[g.TargetID], g)
 	}
 	isAdmin := false
@@ -187,10 +196,29 @@ func ReachableTargets(ctx context.Context, st ReachStore, p *Principal, ungated 
 			if match.SafeID != nil {
 				rc.SafeName = safeName[*match.SafeID]
 			}
+			rc.Permissions = reachPermissions(byTarget[t.ID])
 			out = append(out, rc)
 		}
 	}
 	return out, nil
+}
+
+// reachPermissions is the union of the target actions a set of admitting
+// grants confers, in canonical order.
+func reachPermissions(gs []store.SubjectGrant) []string {
+	var use, retrieve bool
+	for _, g := range gs {
+		use = use || store.GrantPermits(g.Permissions, store.SafePermUse)
+		retrieve = retrieve || store.GrantPermits(g.Permissions, store.SafePermRetrieve)
+	}
+	out := []string{}
+	if use {
+		out = append(out, store.SafePermUse)
+	}
+	if retrieve {
+		out = append(out, store.SafePermRetrieve)
+	}
+	return out
 }
 
 // bestGrant picks the one grant to report when several admit the same target.

@@ -450,6 +450,7 @@ erDiagram
     string SubjectType
     string Subject
     bool CanManage
+    arr_string Permissions
     string CreatedBy
     ptr_time_Time ExpiresAt
     string TimeFrame
@@ -502,6 +503,7 @@ erDiagram
     ptr_int64 SafeID
     ptr_time_Time ExpiresAt
     string TimeFrame
+    arr_string Permissions
   }
   Target {
     int64 ID
@@ -525,6 +527,7 @@ erDiagram
     string CreatedBy
     ptr_time_Time ExpiresAt
     string TimeFrame
+    arr_string Permissions
   }
   User {
     int64 ID
@@ -599,10 +602,10 @@ The 201 routes registered on the API mux, with the capability or guard each enfo
 
 | Method | Path | Guard |
 |---|---|---|
-| GET | `/api/access-requests` | CapApprove |
+| GET | `/api/access-requests` | CapReadInventory |
 | POST | `/api/access-requests` | CapConnect |
-| POST | `/api/access-requests/{id}/approve` | CapApprove |
-| POST | `/api/access-requests/{id}/deny` | CapApprove |
+| POST | `/api/access-requests/{id}/approve` | CapReadInventory |
+| POST | `/api/access-requests/{id}/deny` | CapReadInventory |
 | POST | `/api/access-requests/{id}/invite` | CapApprove |
 | GET | `/api/access-requests/{id}/invites` | CapApprove |
 | POST | `/api/access-requests/{id}/slack-notify` | CapApprove |

@@ -36,8 +36,11 @@ func TestGateDenialNamesAreDocumented(t *testing.T) {
 		t.Fatal("gateCredentialAccess no longer audits action+\"_denied\"; update this guard to match")
 	}
 
-	// Every call site's action argument, read from the sources that call it.
-	call := regexp.MustCompile(`gateCredentialAccess\([^)]*"([a-z][a-z0-9_.]*)"\)`)
+	// Every call site's action argument, read from the sources that call it —
+	// through gateCredentialAccess and its Phase 244 sibling gateSecretDelivery,
+	// which share the helper body, and since Phase 246 followed by the
+	// auth.Action the call site asks for.
+	call := regexp.MustCompile(`(?:gateCredentialAccess|gateSecretDelivery)\([^)]*"([a-z][a-z0-9_.]*)", auth\.Action[A-Za-z]+\)`)
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)

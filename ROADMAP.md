@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–245 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–246 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,76 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 246 — Safe permission sets: use, retrieve, approve ✅
+
+The next row of the Tier 8 pass. CyberArk scopes a safe member's rights one by
+one — *use accounts* (connect without seeing the password), *retrieve
+accounts* (show or copy it), *authorize account requests* — and PAMv1's safes
+carried a membership and a `can_manage` flag: a member reached every target in
+the safe with whatever their global role allowed, and deciding a request needed
+the global approve capability.
+
+- [x] **A membership names what it confers.** `safe_members.permissions`
+  (`0056`): a subset of `use` (sessions through every proxy and the viewer, the
+  WinRM and kubectl endpoints, operator SSH certificates), `retrieve` (reveal,
+  checkout, DoubleLock, application grants, the broker's `reveal_credential`)
+  and `approve`; `can_manage` stays the right to manage the member list. The
+  column defaults to `use,retrieve`, so **every existing membership keeps
+  exactly the access it had**, and a member added without naming permissions
+  gets the same. The set is validated on `POST /api/safes/{id}/members` (an
+  unknown name is 422; an empty set is refused unless the member manages the
+  safe), listed back, and recorded on `safe.member.add` as `permissions:`
+- [x] **Every door names its action.** `auth.CanAccessTargetAt(…, act)` with
+  `ActionUse` / `ActionRetrieve` / `ActionReach`, read through one function,
+  `store.GrantPermits`: a folded membership admits only the actions it names; a
+  direct target grant admits use and retrieve (never approve); a grant that does
+  not admit the action still **gates** the target, as an expired one does, so a
+  target whose members may only approve does not fall open. `CanConnectTargetAt`
+  is the use action — the proxies' `admit()` and the viewer are unchanged in
+  shape — and every REST path passes its own: reveal, checkout, DoubleLock and
+  app grants retrieve; WinRM, kubectl and operator certificates use; rotate,
+  reconcile and dependencies need any target access (`reach`). The broker's exec
+  tools use, `reveal_credential` retrieves, listings and `rotate_credential`
+  reach. A session's deadline is taken only from grants that admit a session,
+  and the reach view reports each target's `permissions` and omits an
+  approve-only membership
+- [x] **Approval scoped to a safe.** A member holding `approve` lists and
+  decides access requests for the safe's targets without the global
+  capability. `GET /api/access-requests` and `POST …/approve|deny` moved from a
+  `CapApprove` middleware to `CapReadInventory` with the decision in the
+  handler (`requireDecider`, `mayDecideRequest` — one subject-indexed read): a
+  caller with no approval right anywhere is refused before any request id is
+  looked up, exactly as the middleware refused; one whose right does not cover
+  the request's target gets `access.decision_denied reason:not-an-approver`; a
+  scoped approver's list is filtered before the page window is applied. The
+  Slack decision path takes the same check. Four-eyes and the dual-control floor
+  bind a scoped approver like any other. `/api/me` reports `scoped_approver`,
+  and the console offers the request screen (approve / deny) to exactly those
+  users; members gain *Permissions* column and use / retrieve / approve
+  checkboxes
+- [x] **Proven, not asserted.** `TestSafePermissionVocabulary`,
+  `TestGrantPermits`; the storetest contract (default and explicit sets
+  round-trip, an empty set stays empty, the fold carries them);
+  `TestCanAccessTargetActions`, `TestGrantDeadlineIgnoresNonUseGrants`,
+  `TestReachReportsPermissions`; `TestAdmitSafePermissions` (only use opens a
+  session, nothing decrypted otherwise); `TestSafePermissionSets` (a use-only
+  member runs WinRM and is refused the secret, a retrieve-only member the
+  reverse, a non-member neither); `TestScopedApprover` (in-safe list and
+  approval, refusal outside, four-eyes, a use-only member is no approver, an
+  approve-only member runs nothing, `/api/me`). With `GrantPermits` forced to
+  always allow, the auth, admit and both API tests fail
+- [x] **What remains of the row, and why.** *View-audit-only in this safe* is
+  not built: audit details reference their target inconsistently — 148 emit
+  sites name it, 29 give only its id, and a target's name may itself be numeric
+  — so a safe-scoped audit read filtered on detail text would silently miss
+  rows. It needs a structural target reference on audit events first, and stays
+  open in the Tier 8 table. Scoped approval covers access requests only: invites,
+  Slack notification, stopping a recurrence, step-up decisions, broker approvals
+  and certification campaigns still take the global capability
+- [x] Schema (`0056`), no new route (three routes' declared capability
+  changed), no env var, one new `reason:` value; store surface unchanged at
+  **225**, no new package. Not yet released
 
 ## Phase 245 — v0.68.0 ✅
 

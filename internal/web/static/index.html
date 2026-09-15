@@ -454,7 +454,9 @@
   }
   async function openRequests() {
     requests = [];
-    if (can("approve")) { try { requests = await apiAll("/api/access-requests"); } catch (e) {} }
+    // Phase 246: a member holding a safe's approve permission decides access
+    // requests for that safe's targets without the global capability.
+    if (can("approve") || !!(me && me.scoped_approver)) { try { requests = await apiAll("/api/access-requests"); } catch (e) {} }
     if (targets.length === 0) { try { targets = await apiAll("/api/targets"); } catch (e) {} }
     go("requests");
   }
@@ -1161,7 +1163,7 @@ ${fkeys("")}
           line(2, can("read_inventory"), "Work with credentials") +
           line(3, can("reveal_secret"), "Credential check-out / check-in") +
           line(4, can("read_audit"), "Work with active sessions") +
-          line(5, can("approve") || can("connect"), "Work with access requests") +
+          line(5, can("approve") || !!(me && me.scoped_approver) || can("connect"), "Work with access requests") +
           line(6, can("manage_credentials"), "Rotation & reconciliation") +
           line(7, can("manage_targets"), "Discovery scan") +
           line(8, can("manage_users"), "Work with users & profiles") +
@@ -2882,11 +2884,11 @@ ${fkeys("F3=Exit   F5=Refresh   F9=Download JSON   F12=Cancel")}`;
 
       requests() {
         back = "main";
-        const isApprover = can("approve");
+        const isApprover = can("approve") || !!(me && me.scoped_approver), isGlobalApprover = can("approve");
         const tn = Object.fromEntries(targets.map((t) => [t.id, t.name]));
         term.innerHTML = `${head("PAMWRKREQ", "Work with Access Requests")}
-${isApprover ? `Pending 4-eyes requests. Type options, press Enter.
-  <span class="cyan">5=Approve   6=Deny   7=Stop recur   8=Notify Slack</span>   <span class="cyan">Apprv = approvals so far / required   Use: 1x = single-use, used = consumed</span>
+${isApprover ? `Pending 4-eyes requests${isGlobalApprover ? "" : " for the targets of the safes you approve for"}. Type options, press Enter.
+  <span class="cyan">${isGlobalApprover ? "5=Approve   6=Deny   7=Stop recur   8=Notify Slack" : "5=Approve   6=Deny"}</span>   <span class="cyan">Apprv = approvals so far / required   Use: 1x = single-use, used = consumed</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Requester</th><th>Target</th><th>Reason</th><th>Ticket</th><th>Status</th><th>Apprv</th><th>Use</th><th>Recur</th><th>Active from</th><th>Expires</th></tr>
@@ -3647,13 +3649,14 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         back = "safes";
         const sf = safes.find((x) => x.id === membersSafe);
         term.innerHTML = `${head("PAMSAFMBR", "Work with Safe Members")}
-Members of safe <span class="white">${esc(sf ? sf.name : membersSafe)}</span> (id ${esc(membersSafe)}) — each may connect to
-every target in the safe; a "manages" member may also edit this member list.
+Members of safe <span class="white">${esc(sf ? sf.name : membersSafe)}</span> (id ${esc(membersSafe)}). Each member's permissions apply to
+every target in the safe: use = connect, retrieve = reveal / check out, approve = decide
+access requests. A "manages" member may also edit this member list.
 Type options, press Enter.  <span class="cyan">4=Remove</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Subject type</th><th>Subject</th><th>Manages safe</th><th>Expires</th><th>Time frame</th></tr>
-${safeMembers.map((m) => `<tr><td>${opt(m.id)}</td><td>${esc(m.id)}</td><td>${pad(m.subject_type, 10)}</td><td>${pad(m.subject, 18)}</td><td>${m.can_manage ? '<span class="amber">yes</span>' : "-"}</td><td>${cell(m.expires_at ? fmtTs(m.expires_at) : "-", 17)}</td><td>${esc(m.time_frame || "-")}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Subject type</th><th>Subject</th><th>Permissions</th><th>Manages safe</th><th>Expires</th><th>Time frame</th></tr>
+${safeMembers.map((m) => `<tr><td>${opt(m.id)}</td><td>${esc(m.id)}</td><td>${pad(m.subject_type, 10)}</td><td>${pad(m.subject, 18)}</td><td class="cyan">${cell((m.permissions || []).join(",") || "-", 21)}</td><td>${m.can_manage ? '<span class="amber">yes</span>' : "-"}</td><td>${cell(m.expires_at ? fmtTs(m.expires_at) : "-", 17)}</td><td>${esc(m.time_frame || "-")}</td></tr>`).join("")}
 </table>${safeMembers.length ? "" : `<div class="cyan indent">(No members — only direct target grants admit access. Press F6 to add.)</div>`}
 <input type="submit" hidden></form>
 ${fkeys("F3=Exit   F5=Refresh   F6=Add member   F12=Cancel")}`;
@@ -3679,6 +3682,9 @@ Grant a subject access to every target in safe <span class="white">${esc(sf ? sf
 <form id="f-add" class="indent">
 <label>Subject type  . . . :  <select name="subject_type"><option>role</option><option>user</option></select>   <span class="cyan">role, user</span></label>
 <label>Subject . . . . . . :  <input name="subject" size="24" required autofocus>   <span class="cyan">a role (admin/user/…) or a username</span></label>
+<label>May use . . . . . . :  <input name="perm_use" type="checkbox" checked>   <span class="cyan">open sessions, run brokered commands, get operator certificates</span></label>
+<label>May retrieve  . . . :  <input name="perm_retrieve" type="checkbox" checked>   <span class="cyan">reveal and check out the secrets themselves</span></label>
+<label>May approve . . . . :  <input name="perm_approve" type="checkbox">   <span class="cyan">decide access requests for this safe's targets</span></label>
 <label>Manages the safe  . :  <input name="can_manage" type="checkbox">   <span class="cyan">may add/remove members (delegated administration)</span></label>
 <label>Expires . . . . . . :  <input name="expires_at" type="datetime-local" size="20">   <span class="cyan">blank = no end date (local time)</span></label>
 <label>Time frame  . . . . :  <input name="time_frame" size="36" placeholder="Mon-Fri 08:00-18:00 Europe/Madrid">   <span class="cyan">blank = any time</span></label>
@@ -3688,7 +3694,9 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-add").onsubmit = async (ev) => {
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
-          const body = grantLifetime({ subject_type: f.subject_type, subject: f.subject, can_manage: ev.target.can_manage.checked }, f);
+          const permissions = [["use", "perm_use"], ["retrieve", "perm_retrieve"], ["approve", "perm_approve"]]
+            .filter(([, field]) => ev.target[field].checked).map(([name]) => name);
+          const body = grantLifetime({ subject_type: f.subject_type, subject: f.subject, can_manage: ev.target.can_manage.checked, permissions }, f);
           try { await api("POST", `/api/safes/${membersSafe}/members`, body); say("MEMBER ADDED."); await openSafeMembers(membersSafe); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };

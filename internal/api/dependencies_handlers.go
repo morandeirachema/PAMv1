@@ -172,7 +172,7 @@ func (s *Server) gateManagementCredential(w http.ResponseWriter, r *http.Request
 		storeError(w, err)
 		return false
 	}
-	if ok, err := s.authorizedForTarget(ctx, mt); err != nil {
+	if ok, err := s.authorizedForTarget(ctx, mt, auth.ActionReach); err != nil {
 		storeError(w, err)
 		return false
 	} else if !ok {
