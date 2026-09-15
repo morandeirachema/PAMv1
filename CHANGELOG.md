@@ -9,6 +9,49 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.69.0] — 2026-09-15
+
+A minor that ships **Phase 246** — safe permission sets, the next row of the
+CyberArk / WALLIX / Teleport research pass. **The schema and three routes'
+authorization moved**; no route, env var or store method was added.
+
+**What an operator can now do.**
+
+- **Give a safe member exactly the right they need** — `use` (connect
+  through the proxies and the viewer, run WinRM / kubectl, get an operator
+  certificate), `retrieve` (reveal or check out the secret) and `approve`
+  (decide the safe's access requests), on `POST /api/safes/{id}/members`
+  and as checkboxes in *Work with Safe Members*. A DBA who may connect but
+  never see the password is now one membership.
+- **Delegate approval to a team without the approver role** — a member
+  holding `approve` lists and decides access requests for that safe's
+  targets only; four-eyes and the safe's dual-control floor still bind, and
+  the approval confers no access to the targets.
+
+**What has not changed.** Every existing membership keeps `use` + `retrieve`
+— exactly the access it had — and a member added without naming permissions
+gets the same. Direct target grants are unchanged. Deciding requests with
+the global approver role works as before; invites, Slack notification,
+step-ups, broker approvals and campaigns still need it.
+
+### Changed
+
+- `GET /api/access-requests` and `POST /api/access-requests/{id}/approve`
+  / `deny` are authorized in the handler (the global approve capability or a
+  scoped approver) instead of by a `CapApprove` middleware; a caller with
+  neither is refused as before.
+
+### Added
+
+- `permissions` on a safe member (migration `0056`); `permissions` on each
+  reach row; `scoped_approver` on `GET /api/me`; audit detail `permissions:`
+  on `safe.member.add` and `reason:not-an-approver` on
+  `access.decision_denied`; console *Permissions* column and use / retrieve
+  / approve checkboxes.
+
+Helm chart `0.59.0` → `0.60.0`, a minor alongside an app minor. Image digest
+recorded once the publish workflow has run.
+
 ## [0.68.0] — 2026-09-15
 
 A minor that ships **Phase 244** — per-session MFA, the next row of the
@@ -3114,6 +3157,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.69.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.69.0
 [0.68.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.68.0
 [0.67.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.67.0
 [0.66.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.66.0

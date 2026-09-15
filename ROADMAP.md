@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–246 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–247 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2422,6 +2422,30 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 247 — v0.69.0 ✅
+
+Releases **246** — safe permission sets. A **minor**: the schema (`0056`) and
+three routes' authorization moved; no route, env var or store method was
+added.
+
+- [x] **v0.69.0** through the test-gated pipeline. `.github/` untouched
+  since v0.58.1 and nothing the workflow *reads* has changed either, so no
+  rehearsal. Published 2026-09-15 as `ghcr.io/morandeirachema/pamv1:0.69.0`
+  (also `latest`), digest recorded once the publish workflow has run,
+  signed and attested, with the `pam-agent` binaries, the SPDX SBOM and
+  `SHA256SUMS` attached
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm
+  chart `version` 0.59.0 -> **0.60.0**, a minor alongside an app minor
+- [x] `store.Store` unchanged at **225**; migration high-water **`0055` ->
+  `0056`**; routes unchanged at **201**
+- [x] Both READMEs restated; every `Reflects:` header, `docs/README.md`,
+  `NIS2-COMPLIANCE.md`'s evidence row and this banner
+- [x] `CHANGELOG.md` leads with **what an operator can now do** — name a
+  member's use / retrieve / approve rights, delegate approval to a safe — and
+  states what has not changed: every existing membership keeps use + retrieve
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
+
 ## Phase 246 — Safe permission sets: use, retrieve, approve ✅
 
 The next row of the Tier 8 pass. CyberArk scopes a safe member's rights one by
@@ -2490,7 +2514,8 @@ the global approve capability.
   and certification campaigns still take the global capability
 - [x] Schema (`0056`), no new route (three routes' declared capability
   changed), no env var, one new `reason:` value; store surface unchanged at
-  **225**, no new package. Not yet released
+  **225**, no new package. **Released by Phase 247 as v0.69.0** — a minor,
+  since the schema moved
 
 ## Phase 245 — v0.68.0 ✅
 
