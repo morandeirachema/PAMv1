@@ -2430,9 +2430,12 @@ routes, one env var and three audit actions moved; the store surface did not.
 - [x] **v0.68.0** through the test-gated pipeline. `.github/` untouched
   since v0.58.1 and nothing the workflow *reads* has changed either, so no
   rehearsal. Published 2026-09-15 as `ghcr.io/morandeirachema/pamv1:0.68.0`
-  (also `latest`), digest recorded once the publish workflow has run,
-  signed and attested, with the `pam-agent` binaries, the SPDX SBOM and
-  `SHA256SUMS` attached
+  (also `latest`), digest
+  `sha256:6df1327b508ca558e4a47a65e9b34693f786a0a0428eb6bbeee0d9645645fb48`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
+  digest), signed and attested — every publishing step's own conclusion
+  `success`, and the README's `cosign verify` run against it — with the
+  `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS` attached
 - [x] All pins via the sweep — exactly one release under `deploy/`. Helm
   chart `version` 0.58.0 -> **0.59.0**, a minor alongside an app minor
 - [x] `store.Store` unchanged at **225**; migration high-water **`0054` ->

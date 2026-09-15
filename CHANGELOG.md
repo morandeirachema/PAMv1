@@ -50,7 +50,7 @@ with no enrolled factor cannot open a session to a target that requires one
   *Session MFA* checkboxes, an *MFA* column and option 10=Session MFA ticket.
 
 Helm chart `0.58.0` → `0.59.0`, a minor alongside an app minor. Image digest
-recorded once the publish workflow has run.
+`sha256:6df1327b…` (the full value is in the README and on the release page).
 
 ## [0.67.0] — 2026-09-03
 
