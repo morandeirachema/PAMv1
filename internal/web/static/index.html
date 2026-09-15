@@ -237,9 +237,6 @@
     return body;
   };
   const can = (c) => !!(me && me.capabilities && me.capabilities.includes(c));
-  // Phase 246: a member holding a safe's approve permission decides access
-  // requests for that safe's targets without the global capability.
-  const canDecideRequests = () => can("approve") || !!(me && me.scoped_approver);
   const fmtTime = (t) => t ? esc(String(t).replace("T", " ").slice(0, 19)) : "-";
   const now = () => { const d = new Date(), z = (x) => String(x).padStart(2, "0");
     return `${z(d.getDate())}/${z(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}  ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`; };
@@ -457,7 +454,9 @@
   }
   async function openRequests() {
     requests = [];
-    if (canDecideRequests()) { try { requests = await apiAll("/api/access-requests"); } catch (e) {} }
+    // Phase 246: a member holding a safe's approve permission decides access
+    // requests for that safe's targets without the global capability.
+    if (can("approve") || !!(me && me.scoped_approver)) { try { requests = await apiAll("/api/access-requests"); } catch (e) {} }
     if (targets.length === 0) { try { targets = await apiAll("/api/targets"); } catch (e) {} }
     go("requests");
   }
@@ -1164,7 +1163,7 @@ ${fkeys("")}
           line(2, can("read_inventory"), "Work with credentials") +
           line(3, can("reveal_secret"), "Credential check-out / check-in") +
           line(4, can("read_audit"), "Work with active sessions") +
-          line(5, canDecideRequests() || can("connect"), "Work with access requests") +
+          line(5, can("approve") || !!(me && me.scoped_approver) || can("connect"), "Work with access requests") +
           line(6, can("manage_credentials"), "Rotation & reconciliation") +
           line(7, can("manage_targets"), "Discovery scan") +
           line(8, can("manage_users"), "Work with users & profiles") +
@@ -2885,7 +2884,7 @@ ${fkeys("F3=Exit   F5=Refresh   F9=Download JSON   F12=Cancel")}`;
 
       requests() {
         back = "main";
-        const isApprover = canDecideRequests(), isGlobalApprover = can("approve");
+        const isApprover = can("approve") || !!(me && me.scoped_approver), isGlobalApprover = can("approve");
         const tn = Object.fromEntries(targets.map((t) => [t.id, t.name]));
         term.innerHTML = `${head("PAMWRKREQ", "Work with Access Requests")}
 ${isApprover ? `Pending 4-eyes requests${isGlobalApprover ? "" : " for the targets of the safes you approve for"}. Type options, press Enter.
