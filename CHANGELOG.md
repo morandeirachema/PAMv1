@@ -50,7 +50,7 @@ step-ups, broker approvals and campaigns still need it.
   / approve checkboxes.
 
 Helm chart `0.59.0` → `0.60.0`, a minor alongside an app minor. Image digest
-recorded once the publish workflow has run.
+`sha256:c1f8d1b7…` (the full value is in the README and on the release page).
 
 ## [0.68.0] — 2026-09-15
 
