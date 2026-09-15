@@ -242,7 +242,19 @@ func (s *Server) slackDecide(r *http.Request, payload slackInteractivityPayload)
 		r = r.WithContext(withPrincipal(r.Context(), p))
 		setActor(r.Context(), u.Username)
 	}
-	if err != nil || !p.Can(auth.CapApprove) {
+	// The global approve capability, or an approve membership of the request's
+	// target's safe (Phase 246) — the same mayDecideRequest the API routes use.
+	// A request that cannot be read leaves only the capability to go on;
+	// decideAccessRequest then reports the missing request itself.
+	mayDecide := false
+	if err == nil {
+		if ar, gerr := s.store.GetAccessRequest(r.Context(), requestID); gerr == nil {
+			mayDecide, _ = s.mayDecideRequest(r.Context(), p, ar.TargetID)
+		} else {
+			mayDecide = p.Can(auth.CapApprove)
+		}
+	}
+	if err != nil || !mayDecide {
 		s.audit(r.Context(), "access.decision_denied", fmt.Sprintf("request:%d reason:slack-not-approver user:%s slack_user:%s", requestID, auditField(u.Username, 64), slackUser))
 		return pamslack.EphemeralMessage(fmt.Sprintf("PAMv1 user %s is not allowed to decide access requests.", pamslack.EscapeText(u.Username)))
 	}

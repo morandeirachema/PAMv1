@@ -422,6 +422,16 @@ file a new request for the next session. Approvers see the ticket, the approval
 progress (e.g. `1/2`), the window, and a `1x`/`used` marker for single-use
 requests on their list.
 
+### Approving for one safe
+
+You do not need the approver role to decide requests for a team's systems: an
+administrator can make you a member of their safe with the **approve**
+permission (Phase 246). You then see *Work with Access Requests* (menu 5) with
+**5=Approve / 6=Deny** for that safe's targets only. The usual rules still
+apply — you cannot approve your own request, and a safe that needs two
+approvers still needs two. Approving gives you no access to the targets
+themselves.
+
 ## 7. Troubleshooting
 
 | What you see | What it means / what to do |
@@ -463,6 +473,7 @@ guard against connections that open and never authenticate, not a fault.
 
 | Date | Change |
 |---|---|
+| 2026-09-15 | Phase 246: a safe membership can now carry **use**, **retrieve** and **approve** — you may be able to connect to a target but not see its password, or decide a safe's access requests without the approver role. New §6 subsection *Approving for one safe*. |
 | 2026-09-15 | Phase 244: some targets may now ask for a **second factor on every session** — a one-time-code prompt after your token on SSH, or a single-use ticket (portal option 10 or `POST /api/session-mfa`) as the password for psql or sqlcmd; the portal asks for the code itself when you reveal, check out, run kubectl or open a desktop. New §5 subsection. |
 | 2026-08-25 | Phase 191: menu **31** now prints a red line above the target list when the subject's own state stops it using what it reaches (no usable capability, deactivated account, revoked or expired agent key, quarantined or unenrolled identity), and the per-reason counts include `unlimited` so the breakdown adds up to the total |
 | 2026-08-15 | **Phase 143 — SFTP transfers may now be scanned by an antivirus/DLP system.** If your site enables it, a file you upload or download is checked after the transfer completes — this never slows down or blocks the transfer itself, it only adds a flagged-file entry to the audit trail if something is found. §7 |

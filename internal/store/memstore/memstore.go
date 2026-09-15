@@ -329,7 +329,8 @@ func (m *Memstore) EffectiveTargetGrants(_ context.Context, targetID int64) ([]s
 	if t, ok := m.targets[targetID]; ok && t.SafeID != nil {
 		for _, sm := range m.safeMembers {
 			if sm.SafeID == *t.SafeID {
-				out = append(out, store.TargetGrant{ID: sm.ID, TargetID: targetID, SubjectType: sm.SubjectType, Subject: sm.Subject, ExpiresAt: sm.ExpiresAt, TimeFrame: sm.TimeFrame})
+				out = append(out, store.TargetGrant{ID: sm.ID, TargetID: targetID, SubjectType: sm.SubjectType, Subject: sm.Subject, ExpiresAt: sm.ExpiresAt, TimeFrame: sm.TimeFrame,
+					Permissions: append([]string{}, sm.Permissions...)})
 			}
 		}
 	}
@@ -411,6 +412,7 @@ func (m *Memstore) grantsForSubjectsLocked(subjects []store.GrantSubject) []stor
 			out = append(out, store.SubjectGrant{
 				TargetID: t.ID, TargetName: t.Name, SubjectType: sm.SubjectType,
 				Subject: sm.Subject, Via: store.GrantViaSafe, SafeID: &safeID, ExpiresAt: sm.ExpiresAt, TimeFrame: sm.TimeFrame,
+				Permissions: append([]string{}, sm.Permissions...),
 			})
 		}
 	}
@@ -562,6 +564,9 @@ func (m *Memstore) AddSafeMember(_ context.Context, mem *store.SafeMember) error
 		if ex.SafeID == mem.SafeID && ex.SubjectType == mem.SubjectType && ex.Subject == mem.Subject {
 			return store.ErrConflict
 		}
+	}
+	if mem.Permissions == nil {
+		mem.Permissions = store.DefaultSafePermissions()
 	}
 	mem.ID = m.id()
 	m.safeMembers[mem.ID] = *mem

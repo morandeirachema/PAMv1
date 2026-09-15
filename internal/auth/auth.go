@@ -219,6 +219,29 @@ func CanConnectTarget(p *Principal, grants []store.TargetGrant, safeScoped, pers
 // expired stays gated (closed to everyone but admins) rather than falling
 // open. Callers that also compute a session deadline pass the same now.
 func CanConnectTargetAt(p *Principal, grants []store.TargetGrant, safeScoped, personal bool, ungated UngatedDefault, now time.Time) bool {
+	return CanAccessTargetAt(p, grants, safeScoped, personal, ungated, now, ActionUse)
+}
+
+// Action is what a caller wants to do with a target (Phase 246): open a
+// session (ActionUse), take its secret (ActionRetrieve), or manage it
+// (ActionReach — any membership conferring target access). A safe membership
+// admits only the actions its permissions name (store.GrantPermits); a direct
+// target grant admits use and retrieve.
+type Action string
+
+const (
+	ActionUse      Action = store.SafePermUse
+	ActionRetrieve Action = store.SafePermRetrieve
+	ActionReach    Action = store.AccessReach
+)
+
+// CanAccessTargetAt is CanConnectTargetAt for a named action. A grant that
+// does not permit the action does not match — and, like an expired one, still
+// COUNTS, so a target whose only members may not use it stays gated rather
+// than falling open. The admin, personal-override and ungated readings are
+// unchanged: they are decisions about a principal or an estate, not about a
+// membership's rights.
+func CanAccessTargetAt(p *Principal, grants []store.TargetGrant, safeScoped, personal bool, ungated UngatedDefault, now time.Time, act Action) bool {
 	if !personal {
 		for _, r := range p.effectiveRoles() {
 			if r == RoleAdmin {
@@ -237,7 +260,8 @@ func CanConnectTargetAt(p *Principal, grants []store.TargetGrant, safeScoped, pe
 		return true
 	}
 	for _, g := range grants {
-		if store.GrantLive(g.ExpiresAt, g.TimeFrame, now) && SubjectMatches(p, g.SubjectType, g.Subject) {
+		if store.GrantLive(g.ExpiresAt, g.TimeFrame, now) && store.GrantPermits(g.Permissions, string(act)) &&
+			SubjectMatches(p, g.SubjectType, g.Subject) {
 			return true
 		}
 	}

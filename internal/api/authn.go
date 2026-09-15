@@ -201,13 +201,24 @@ func (s *Server) issueSessionBound(ctx context.Context, p *auth.Principal, scope
 // me returns the calling identity — name, role, break-glass flag, and the stable
 // names of the capabilities its role holds — so the portal can show only the menu
 // options the identity may use (panels still tolerate a 403 as defense in depth).
+//
+// scoped_approver (Phase 246) reports a principal without the approve
+// capability that may still decide requests for some safe's targets, so the
+// console can offer the approvals screen to exactly the people who can use it.
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	p := principalFrom(r.Context())
+	scoped := false
+	if !p.Can(auth.CapApprove) {
+		if targets, err := s.scopedApprovalTargets(r.Context(), p); err == nil {
+			scoped = len(targets) > 0
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"name":         p.Name,
-		"role":         string(p.Role),
-		"break_glass":  p.BreakGlass,
-		"capabilities": p.CapabilityNames(),
+		"name":            p.Name,
+		"role":            string(p.Role),
+		"break_glass":     p.BreakGlass,
+		"capabilities":    p.CapabilityNames(),
+		"scoped_approver": scoped,
 	})
 }
 

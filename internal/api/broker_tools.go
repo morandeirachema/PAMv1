@@ -49,7 +49,12 @@ func (s *Server) targetByName(ctx context.Context, name string) (*store.Target, 
 // personal-safe override this fetches can structurally never fire; the call
 // exists for correctness (an agent must be default-deny on a personal safe like
 // anyone else), not because an agent is expected to ever use the override.
-func (s *Server) agentCanSeeTarget(ctx context.Context, p *auth.Principal, target *store.Target) (bool, error) {
+//
+// act (Phase 246) is what the tool will do: an exec tool uses the target, a
+// secret-returning tool retrieves from it, and a listing or rotation only needs
+// the target reached — so a safe membership admits an agent exactly as far as
+// its permissions say, the same reading every operator path makes.
+func (s *Server) agentCanSeeTarget(ctx context.Context, p *auth.Principal, target *store.Target, act auth.Action) (bool, error) {
 	grants, err := s.store.EffectiveTargetGrants(ctx, target.ID)
 	if err != nil {
 		return false, err
@@ -58,7 +63,7 @@ func (s *Server) agentCanSeeTarget(ctx context.Context, p *auth.Principal, targe
 	if err != nil {
 		return false, err
 	}
-	return auth.CanConnectTarget(p, grants, target.SafeID != nil, personal, s.rt().ungated), nil
+	return auth.CanAccessTargetAt(p, grants, target.SafeID != nil, personal, s.rt().ungated, time.Now(), act), nil
 }
 
 // agentVisibleTargets returns the subset of the inventory p is authorized to
@@ -106,7 +111,7 @@ func (s *Server) authorizeAgentTarget(ctx context.Context, p *auth.Principal, na
 	if !s.protocolAllowed(target.Protocol) {
 		return nil, fmt.Errorf("%s is not allowed by policy", target.Protocol)
 	}
-	allowed, err := s.agentCanSeeTarget(ctx, p, target)
+	allowed, err := s.agentCanSeeTarget(ctx, p, target, auth.ActionUse)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +153,7 @@ func (s *Server) firstCredential(ctx context.Context, target *store.Target) (*st
 // production password ungated. `reveal_credential` ships default-deny, which
 // limited the blast radius, but the omission was silent the moment an operator
 // enabled it.
-func (s *Server) authorizeAgentCredential(ctx context.Context, p *auth.Principal, credID int64) (*store.Credential, *store.Target, error) {
+func (s *Server) authorizeAgentCredential(ctx context.Context, p *auth.Principal, credID int64, act auth.Action) (*store.Credential, *store.Target, error) {
 	cred, err := s.store.GetCredential(ctx, credID)
 	if err != nil {
 		return nil, nil, err
@@ -157,7 +162,7 @@ func (s *Server) authorizeAgentCredential(ctx context.Context, p *auth.Principal
 	if err != nil {
 		return nil, nil, err
 	}
-	allowed, err := s.agentCanSeeTarget(ctx, p, target)
+	allowed, err := s.agentCanSeeTarget(ctx, p, target, act)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -477,7 +482,7 @@ func (t *listCredentialsTool) Execute(ctx context.Context, p *auth.Principal, ar
 		if err != nil {
 			return broker.Result{}, err
 		}
-		allowed, err := t.s.agentCanSeeTarget(ctx, p, target)
+		allowed, err := t.s.agentCanSeeTarget(ctx, p, target, auth.ActionReach)
 		if err != nil {
 			return broker.Result{}, err
 		}
@@ -538,7 +543,7 @@ func (t *rotateCredentialTool) Execute(ctx context.Context, p *auth.Principal, a
 	if !ok {
 		return broker.Result{}, fmt.Errorf("rotate_credential requires credential_id")
 	}
-	cred, target, err := t.s.authorizeAgentCredential(ctx, p, credID)
+	cred, target, err := t.s.authorizeAgentCredential(ctx, p, credID, auth.ActionReach)
 	if err != nil {
 		return broker.Result{}, err
 	}
@@ -588,7 +593,7 @@ func (t *revealCredentialTool) Execute(ctx context.Context, p *auth.Principal, a
 	if !ok {
 		return broker.Result{}, fmt.Errorf("reveal_credential requires credential_id")
 	}
-	cred, target, err := t.s.authorizeAgentCredential(ctx, p, credID)
+	cred, target, err := t.s.authorizeAgentCredential(ctx, p, credID, auth.ActionRetrieve)
 	if err != nil {
 		return broker.Result{}, err
 	}

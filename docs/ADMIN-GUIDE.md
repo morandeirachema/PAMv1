@@ -1704,6 +1704,44 @@ Both fields are on the console's **Work with Safes** add and change screens, and
 the list shows an **Approval** column. Changing them is audited (`safe.update`
 records the policy), because it changes who may reach everything inside.
 
+### Safe permission sets (Phase 246)
+
+A membership names what it confers on every target in the safe:
+
+| Permission | What it lets the member do |
+|---|---|
+| `use` | open sessions through any proxy and the RDP/VNC viewer, run the WinRM and kubectl endpoints, get an operator SSH certificate |
+| `retrieve` | reveal or check out the secret itself, set or clear its DoubleLock, grant it to an application |
+| `approve` | list, approve and deny access requests for the safe's targets — without the global approver role |
+
+`can_manage` stays separate: the right to add and remove members. Rotate,
+reconcile and dependencies need either `use` or `retrieve` (with the global
+capability they always needed).
+
+```bash
+# a DBA who may connect but never see the password
+curl -X POST -H "X-API-Key: $PAM_API_KEY" localhost:8080/api/safes/3/members \
+  -d '{"subject_type":"user","subject":"dana","permissions":["use"]}'
+# a team lead who approves this safe's requests and touches nothing
+curl -X POST -H "X-API-Key: $PAM_API_KEY" localhost:8080/api/safes/3/members \
+  -d '{"subject_type":"user","subject":"lee","permissions":["approve"]}'
+```
+
+Omit `permissions` and the member gets `use` + `retrieve` — what every
+membership conferred before Phase 246, and what every existing member keeps
+after the upgrade. An empty list is accepted only for a member who manages the
+safe. Membership never widens a global capability: `use` needs `connect`,
+`retrieve` needs `reveal_secret`. A direct target grant still confers use and
+retrieve. A target whose only members may approve stays **gated**, not open.
+
+A scoped approver sees the *Work with Access Requests* screen with approve /
+deny for the safe's targets only; four-eyes and the safe's dual-control floor
+bind them like any approver. Invites, Slack notification, stopping a
+recurrence, step-up decisions, broker approvals and certification campaigns
+still need the global approve capability. A refused decision outside the safe is
+audited `access.decision_denied reason:not-an-approver`; `safe.member.add`
+records `permissions:`. There is no safe-scoped audit reading yet.
+
 ### Personal/private safes (Phase 139)
 
 A safe can be marked **personal** — private even from admins by default,
@@ -4488,6 +4526,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-15 | **Phase 246 (safe permission sets).** New §7 subsection *Safe permission sets* — `use` / `retrieve` / `approve` on a membership, the default and the upgrade, what a scoped approver can and cannot decide, the audit details. |
 | 2026-09-15 | **Phase 244 (per-session MFA).** §4 gains `PAM_SESSION_MFA`; new §7 subsection *Per-session MFA* — the three policy sources, what the gate covers and what it does not, the SSH prompt and the ticket (TOTP / recovery / WebAuthn, single-use, two minutes, one target), the audit actions and refusal reasons. |
 | 2026-09-03 | **Phase 242 (identity lock and token expiry).** §4 gains `PAM_USER_TOKEN_TTL_HOURS`; new §7 subsection *Locking an identity and rotating its token* — the lock and unlock calls, what a lock stops, `until`, rotation and per-user token TTLs, the audit actions, the console options. |
 | 2026-09-03 | **Phase 240 (session lifetime, grant expiry and time frames).** §4 gains `PAM_SESSION_MAX_MIN` / `PAM_SESSION_IDLE_MIN`; new §7 subsection *Grant lifetime: expiry and time frames* — the `expires_at` / `time_frame` fields on grants and safe memberships, the frame grammar, what a bounded grant does at connect time, the per-session deadline and the expiry sweep. |

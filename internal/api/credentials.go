@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -200,7 +201,7 @@ func (s *Server) revealCredential(w http.ResponseWriter, r *http.Request) {
 	// Reveal is a credential-access path: it obeys the same per-target grants and
 	// four-eyes approval gate as connecting, so a reveal_secret holder can't read
 	// a credential for a target it wasn't granted or bypass an approval window.
-	if !s.gateSecretDelivery(w, r, target, c.Username, "credential.reveal") {
+	if !s.gateSecretDelivery(w, r, target, c.Username, "credential.reveal", auth.ActionRetrieve) {
 		return
 	}
 	// A Zero Standing Privilege credential stores no secret — there is nothing to
@@ -292,7 +293,7 @@ func (s *Server) runWinRM(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "winrm is not allowed by policy")
 		return
 	}
-	if ok, err := s.authorizedForTarget(r.Context(), target); err != nil {
+	if ok, err := s.authorizedForTarget(r.Context(), target, auth.ActionUse); err != nil {
 		storeError(w, err)
 		return
 	} else if !ok {
