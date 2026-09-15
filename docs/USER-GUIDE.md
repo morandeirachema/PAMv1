@@ -254,6 +254,34 @@ you.
 > organization is invited by email instead, with a QR code good for a short
 > window and no account of their own needed.
 
+### When a target asks for a second factor every session
+
+Your administrator can require a **fresh second factor for every session** to
+some targets, or to all of them — not only when you sign in (Phase 244):
+
+- **SSH:** after your PAM token, the proxy asks `One-time code:`. Type the
+  current code from your authenticator app, or one of your recovery codes. A
+  code works once — if you have just used it to sign in to the portal, wait for
+  the next one.
+- **psql, sqlcmd, a scripted ssh — or a security key instead of an app:** these
+  cannot answer a prompt, so get a **session-MFA ticket** first and use it **as
+  the password**. In the portal: *Work with Targets*, option **`10`** next to the
+  target (leave the code empty to touch your security key). From a shell:
+
+  ```bash
+  curl -s -H "X-API-Key: $PAM_TOKEN" -X POST https://PAM_HOST/api/session-mfa \
+    -d '{"target":"appdb","otp":"123456"}'        # → {"ticket":"…","expires_at":"…"}
+  psql "host=PAM_HOST port=5433 user=dbuser@appdb dbname=orders"   # Password: <the ticket>
+  ```
+
+  A ticket opens **one** session, to the target it names, within two minutes.
+- **In the portal**, revealing or checking out a secret, running kubectl or
+  opening a remote desktop on such a target asks you for the code (empty = your
+  security key) and then carries on.
+
+With no second factor enrolled you cannot open these sessions — add one first
+(§3).
+
 ### Connecting to a database (PostgreSQL)
 
 If your admin enabled the database proxy, you reach `postgres` targets with
@@ -435,6 +463,7 @@ guard against connections that open and never authenticate, not a fault.
 
 | Date | Change |
 |---|---|
+| 2026-09-15 | Phase 244: some targets may now ask for a **second factor on every session** — a one-time-code prompt after your token on SSH, or a single-use ticket (portal option 10 or `POST /api/session-mfa`) as the password for psql or sqlcmd; the portal asks for the code itself when you reveal, check out, run kubectl or open a desktop. New §5 subsection. |
 | 2026-08-25 | Phase 191: menu **31** now prints a red line above the target list when the subject's own state stops it using what it reaches (no usable capability, deactivated account, revoked or expired agent key, quarantined or unenrolled identity), and the per-reason counts include `unlimited` so the breakdown adds up to the total |
 | 2026-08-15 | **Phase 143 — SFTP transfers may now be scanned by an antivirus/DLP system.** If your site enables it, a file you upload or download is checked after the transfer completes — this never slows down or blocks the transfer itself, it only adds a flagged-file entry to the audit trail if something is found. §7 |
 | 2026-08-14 | **Phase 131 — some sites now restrict you to an approved list of commands.** If your site configures a command allow-list, an SSH/WinRM/database command not on that list is refused the same way a denylisted one is — "command blocked by policy." Ask your admin what's on the list if a command you expect to work doesn't. §9.4 (ADMIN-GUIDE) |

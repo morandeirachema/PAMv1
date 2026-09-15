@@ -160,9 +160,9 @@ func limitArg(limit int) any {
 // CreateTarget inserts a target, populating its ID and CreatedAt; ErrConflict if the name is taken.
 func (s *PGStore) CreateTarget(ctx context.Context, t *store.Target) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO targets (name, host, port, os_type, protocol, require_approval, rdp_clipboard, rdp_clipboard_audit)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at`,
-		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit,
+		`INSERT INTO targets (name, host, port, os_type, protocol, require_approval, rdp_clipboard, rdp_clipboard_audit, require_session_mfa)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at`,
+		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA,
 	).Scan(&t.ID, &t.CreatedAt)
 	if pgCode(err) == pgUniqueViolation {
 		return store.ErrConflict
@@ -173,7 +173,7 @@ func (s *PGStore) CreateTarget(ctx context.Context, t *store.Target) error {
 // ListTargets returns targets in the (limit, afterID) window, ordered by ID.
 func (s *PGStore) ListTargets(ctx context.Context, limit int, afterID int64) ([]store.Target, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at
+		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa
 		 FROM targets WHERE id > $1 ORDER BY id LIMIT $2`, afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
@@ -187,9 +187,9 @@ func (s *PGStore) ListTargets(ctx context.Context, limit int, afterID int64) ([]
 func (s *PGStore) UpdateTarget(ctx context.Context, t *store.Target) error {
 	err := s.pool.QueryRow(ctx,
 		`UPDATE targets SET name = $1, host = $2, port = $3, os_type = $4, protocol = $5, require_approval = $6,
-		        rdp_clipboard = $7, rdp_clipboard_audit = $8
-		 WHERE id = $9 RETURNING safe_id, created_at`,
-		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.ID,
+		        rdp_clipboard = $7, rdp_clipboard_audit = $8, require_session_mfa = $9
+		 WHERE id = $10 RETURNING safe_id, created_at`,
+		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA, t.ID,
 	).Scan(&t.SafeID, &t.CreatedAt)
 	switch {
 	case pgCode(err) == pgUniqueViolation:
@@ -203,7 +203,7 @@ func (s *PGStore) UpdateTarget(ctx context.Context, t *store.Target) error {
 // GetTarget returns the target with the given ID, or ErrNotFound.
 func (s *PGStore) GetTarget(ctx context.Context, id int64) (*store.Target, error) {
 	return getOne(ctx, s.pool, scanTarget,
-		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at
+		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa
 		 FROM targets WHERE id = $1`, id)
 }
 
@@ -486,9 +486,9 @@ func gatedTargetIDs(ctx context.Context, q reachQuerier) ([]int64, error) {
 // set here and only here — see store.Safe.Personal.
 func (s *PGStore) CreateSafe(ctx context.Context, sf *store.Safe) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO safes (name, description, require_approval, min_approvers, personal)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
-		sf.Name, sf.Description, sf.RequireApproval, sf.MinApprovers, sf.Personal,
+		`INSERT INTO safes (name, description, require_approval, min_approvers, personal, require_session_mfa)
+		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
+		sf.Name, sf.Description, sf.RequireApproval, sf.MinApprovers, sf.Personal, sf.RequireSessionMFA,
 	).Scan(&sf.ID, &sf.CreatedAt)
 	if pgCode(err) == pgUniqueViolation {
 		return store.ErrConflict
@@ -500,7 +500,7 @@ func (s *PGStore) CreateSafe(ctx context.Context, sf *store.Safe) error {
 // (creation order — the stable order a cursor needs).
 func (s *PGStore) ListSafes(ctx context.Context, limit int, afterID int64) ([]store.Safe, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, description, created_at, require_approval, min_approvers, personal
+		`SELECT id, name, description, created_at, require_approval, min_approvers, personal, require_session_mfa
 		 FROM safes WHERE id > $1 ORDER BY id LIMIT $2`,
 		afterID, limitArg(limit))
 	if err != nil {
@@ -517,9 +517,9 @@ func (s *PGStore) ListSafes(ctx context.Context, limit int, afterID int64) ([]st
 // of the true stored value the RETURNING clause reads back.
 func (s *PGStore) UpdateSafe(ctx context.Context, sf *store.Safe) error {
 	err := s.pool.QueryRow(ctx,
-		`UPDATE safes SET name = $1, description = $2, require_approval = $3, min_approvers = $4
-		 WHERE id = $5 RETURNING created_at, personal`,
-		sf.Name, sf.Description, sf.RequireApproval, sf.MinApprovers, sf.ID,
+		`UPDATE safes SET name = $1, description = $2, require_approval = $3, min_approvers = $4, require_session_mfa = $5
+		 WHERE id = $6 RETURNING created_at, personal`,
+		sf.Name, sf.Description, sf.RequireApproval, sf.MinApprovers, sf.RequireSessionMFA, sf.ID,
 	).Scan(&sf.CreatedAt, &sf.Personal)
 	switch {
 	case pgCode(err) == pgUniqueViolation:
@@ -533,7 +533,7 @@ func (s *PGStore) UpdateSafe(ctx context.Context, sf *store.Safe) error {
 // GetSafe returns a safe by ID, or ErrNotFound.
 func (s *PGStore) GetSafe(ctx context.Context, id int64) (*store.Safe, error) {
 	return getOne(ctx, s.pool, scanSafe,
-		`SELECT id, name, description, created_at, require_approval, min_approvers, personal FROM safes WHERE id = $1`, id)
+		`SELECT id, name, description, created_at, require_approval, min_approvers, personal, require_session_mfa FROM safes WHERE id = $1`, id)
 }
 
 // DeleteSafe removes a safe by ID (members cascade; targets are unassigned).
@@ -774,7 +774,7 @@ func scanCampaignItem(row pgx.CollectableRow) (store.CampaignItem, error) {
 // scanSafe scans one safe row.
 func scanSafe(row pgx.CollectableRow) (store.Safe, error) {
 	var sf store.Safe
-	err := row.Scan(&sf.ID, &sf.Name, &sf.Description, &sf.CreatedAt, &sf.RequireApproval, &sf.MinApprovers, &sf.Personal)
+	err := row.Scan(&sf.ID, &sf.Name, &sf.Description, &sf.CreatedAt, &sf.RequireApproval, &sf.MinApprovers, &sf.Personal, &sf.RequireSessionMFA)
 	return sf, err
 }
 
@@ -2503,9 +2503,9 @@ func (s *PGStore) GetBrokerAuditHead(ctx context.Context) (*store.BrokerAuditEve
 // CreateSession inserts a session, populating its ID and CreatedAt.
 func (s *PGStore) CreateSession(ctx context.Context, sess *store.Session) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO sessions (username, role, roles, scope, token_hash, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
-		sess.Username, sess.Role, sess.Roles, sess.Scope, sess.TokenHash, sess.ExpiresAt,
+		`INSERT INTO sessions (username, role, roles, scope, token_hash, expires_at, target_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
+		sess.Username, sess.Role, sess.Roles, sess.Scope, sess.TokenHash, sess.ExpiresAt, sess.TargetID,
 	).Scan(&sess.ID, &sess.CreatedAt)
 	if pgCode(err) == pgUniqueViolation {
 		return store.ErrConflict
@@ -2517,7 +2517,7 @@ func (s *PGStore) CreateSession(ctx context.Context, sess *store.Session) error 
 // or ErrNotFound.
 func (s *PGStore) GetSessionByTokenHash(ctx context.Context, tokenHashHex string) (*store.Session, error) {
 	return getOne(ctx, s.pool, scanSession,
-		`SELECT id, username, role, roles, scope, token_hash, created_at, expires_at
+		`SELECT id, username, role, roles, scope, token_hash, created_at, expires_at, target_id
 		 FROM sessions WHERE token_hash = $1 AND expires_at > now()`, tokenHashHex)
 }
 
@@ -2529,7 +2529,7 @@ func (s *PGStore) DeleteSession(ctx context.Context, tokenHashHex string) error 
 // ListSessions returns all non-expired login sessions, newest first.
 func (s *PGStore) ListSessions(ctx context.Context) ([]store.Session, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, username, role, roles, scope, token_hash, created_at, expires_at
+		`SELECT id, username, role, roles, scope, token_hash, created_at, expires_at, target_id
 		 FROM sessions WHERE expires_at > now() ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, err
@@ -3028,7 +3028,7 @@ func (s *PGStore) Close() {
 // scanTarget maps one result row into a store.Target.
 func scanTarget(row pgx.CollectableRow) (store.Target, error) {
 	var t store.Target
-	err := row.Scan(&t.ID, &t.Name, &t.Host, &t.Port, &t.OSType, &t.Protocol, &t.RequireApproval, &t.SafeID, &t.RDPClipboard, &t.RDPClipboardAudit, &t.CreatedAt)
+	err := row.Scan(&t.ID, &t.Name, &t.Host, &t.Port, &t.OSType, &t.Protocol, &t.RequireApproval, &t.SafeID, &t.RDPClipboard, &t.RDPClipboardAudit, &t.CreatedAt, &t.RequireSessionMFA)
 	return t, err
 }
 
@@ -3085,7 +3085,7 @@ func scanEndpointAgent(row pgx.CollectableRow) (store.EndpointAgent, error) {
 // scanSession maps one result row into a store.Session.
 func scanSession(row pgx.CollectableRow) (store.Session, error) {
 	var s store.Session
-	err := row.Scan(&s.ID, &s.Username, &s.Role, &s.Roles, &s.Scope, &s.TokenHash, &s.CreatedAt, &s.ExpiresAt)
+	err := row.Scan(&s.ID, &s.Username, &s.Role, &s.Roles, &s.Scope, &s.TokenHash, &s.CreatedAt, &s.ExpiresAt, &s.TargetID)
 	return s, err
 }
 
