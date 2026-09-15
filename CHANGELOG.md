@@ -9,6 +9,49 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.68.0] — 2026-09-15
+
+A minor that ships **Phase 244** — per-session MFA, the next row of the
+CyberArk / WALLIX / Teleport research pass. **Schema, three routes, one env
+var and three audit actions moved**; the store surface did not.
+
+**What an operator can now do.**
+
+- **Require a fresh second factor for every session** — for the whole
+  deployment (`PAM_SESSION_MFA=true`), for one target, or for every target
+  in a safe (`require_session_mfa`, the *Session MFA* checkbox); strictest
+  wins. It covers sessions through every proxy and the RDP/VNC viewer, the
+  WinRM and kubectl endpoints, and reveal, checkout and operator SSH
+  certificates. Break-glass bypasses it.
+- **Let operators prove it where they are** — at the SSH proxy a
+  `One-time code:` prompt follows the token (a TOTP code or a recovery
+  code, each once); everywhere else a single-use, two-minute ticket bound
+  to one target (`POST /api/session-mfa`, or the WebAuthn ceremony for a
+  security key) is the password, the viewer token or the
+  `X-PAM-Session-MFA` header. The console prompts on its own, and *Work with
+  Targets* option 10 shows a ticket for a client that cannot be prompted.
+
+**What has not changed.** Nothing requires a per-session factor until an
+administrator turns it on, and login MFA works exactly as before. A user
+with no enrolled factor cannot open a session to a target that requires one
+— pair it with `PAM_MFA_REQUIRED`.
+
+### Added
+
+- `PAM_SESSION_MFA`; `require_session_mfa` on targets and safes; migration
+  `0055` (with `sessions.target_id`); `POST /api/session-mfa`,
+  `POST /api/session-mfa/webauthn/begin` and `.../finish`; the
+  `X-PAM-Session-MFA` header on reveal, checkout, `POST /api/ca/ssh/sign`,
+  `/winrm` and `/kubectl`; an optional `target_id` on `POST /api/rdp-token`
+  and `/api/vnc-token`; audit actions `session.mfa_ticket`,
+  `session.mfa_verified` and `session.mfa_failed`, with
+  `reason:session-mfa-required`, `session-mfa-ticket-target`,
+  `session-mfa-ticket-used` and `session-mfa-ticket-invalid`; console
+  *Session MFA* checkboxes, an *MFA* column and option 10=Session MFA ticket.
+
+Helm chart `0.58.0` → `0.59.0`, a minor alongside an app minor. Image digest
+recorded once the publish workflow has run.
+
 ## [0.67.0] — 2026-09-03
 
 A minor that ships **Phase 242** — identity lock and token expiry, two more
@@ -3071,6 +3114,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.68.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.68.0
 [0.67.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.67.0
 [0.66.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.66.0
 [0.65.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.65.1
