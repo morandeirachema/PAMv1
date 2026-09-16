@@ -242,6 +242,18 @@ const (
 // unchanged: they are decisions about a principal or an estate, not about a
 // membership's rights.
 func CanAccessTargetAt(p *Principal, grants []store.TargetGrant, safeScoped, personal bool, ungated UngatedDefault, now time.Time, act Action) bool {
+	// DENY FIRST (Phase 250), ahead of every bypass but break-glass. A deny
+	// label rule is the only authorization row in PAMv1 that says no, and a
+	// "no" an administrator can step around is not one: the estate-wide
+	// statement an operator writes as `env=prod` + deny has to hold for the
+	// people most able to ignore it, which is the whole reason to write it.
+	// Break-glass is exempt because it is the deployment's declared emergency
+	// path, already loudly audited and already exempt from the CIDR allowlist
+	// (Phase 118) for the same reason: a policy nobody can override in an
+	// incident is one that turns an incident into an outage.
+	if DeniedByLabelRule(p, grants, now) {
+		return false
+	}
 	if !personal {
 		for _, r := range p.effectiveRoles() {
 			if r == RoleAdmin {
@@ -251,7 +263,16 @@ func CanAccessTargetAt(p *Principal, grants []store.TargetGrant, safeScoped, per
 	} else if p.Can(CapUnlimitedVaultAccess) {
 		return true
 	}
-	if len(grants) == 0 {
+	// Only ALLOW rows gate. A deny row subtracts one subject's access; it must
+	// never convert an open target into a gated one, which would let "exclude
+	// the contractors from prod" quietly close prod to everybody (Phase 250).
+	gating := 0
+	for _, g := range grants {
+		if !g.IsDeny() {
+			gating++
+		}
+	}
+	if gating == 0 {
 		// Safe-scoped but no members ⇒ closed (containment), always. An UNGATED
 		// target is open or closed depending on what the deployment decided.
 		if safeScoped || ungated == UngatedDeny {
@@ -260,8 +281,24 @@ func CanAccessTargetAt(p *Principal, grants []store.TargetGrant, safeScoped, per
 		return true
 	}
 	for _, g := range grants {
-		if store.GrantLive(g.ExpiresAt, g.TimeFrame, now) && store.GrantPermits(g.Permissions, string(act)) &&
+		if !g.IsDeny() && store.GrantLive(g.ExpiresAt, g.TimeFrame, now) && store.GrantPermits(g.Permissions, string(act)) &&
 			SubjectMatches(p, g.SubjectType, g.Subject) {
+			return true
+		}
+	}
+	return false
+}
+
+// DeniedByLabelRule reports whether a live deny rule among grants names p
+// (Phase 250). Break-glass is never denied. Exported because the reach view
+// and the audit path ask the same question without repeating the reading —
+// the mistake Phase 102 spent a whole phase undoing for the proxies' gates.
+func DeniedByLabelRule(p *Principal, grants []store.TargetGrant, now time.Time) bool {
+	if p == nil || p.BreakGlass {
+		return false
+	}
+	for _, g := range grants {
+		if g.IsDeny() && store.GrantLive(g.ExpiresAt, g.TimeFrame, now) && SubjectMatches(p, g.SubjectType, g.Subject) {
 			return true
 		}
 	}

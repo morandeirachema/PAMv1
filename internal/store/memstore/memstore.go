@@ -26,6 +26,7 @@ type Memstore struct {
 	mfa             map[string]store.MFAEnrollment
 	recovery        map[string]map[string]bool // username -> set of code hashes
 	grants          map[int64]store.TargetGrant
+	labelRules      map[int64]store.LabelRule
 	accessReq       map[int64]store.AccessRequest
 	checkouts       map[int64]store.Checkout
 	oidcStates      map[string]oidcState
@@ -85,6 +86,7 @@ func New() *Memstore {
 		webauthnCreds:    make(map[int64]store.WebAuthnCredential),
 		webauthnChal:     make(map[webauthnChalKey]webauthnChallenge),
 		grants:           make(map[int64]store.TargetGrant),
+		labelRules:       make(map[int64]store.LabelRule),
 		accessReq:        make(map[int64]store.AccessRequest),
 		checkouts:        make(map[int64]store.Checkout),
 		agentKeys:        make(map[int64]store.AgentKey),
@@ -326,7 +328,8 @@ func (m *Memstore) EffectiveTargetGrants(_ context.Context, targetID int64) ([]s
 			out = append(out, g)
 		}
 	}
-	if t, ok := m.targets[targetID]; ok && t.SafeID != nil {
+	t, haveTarget := m.targets[targetID]
+	if haveTarget && t.SafeID != nil {
 		for _, sm := range m.safeMembers {
 			if sm.SafeID == *t.SafeID {
 				out = append(out, store.TargetGrant{ID: sm.ID, TargetID: targetID, SubjectType: sm.SubjectType, Subject: sm.Subject, ExpiresAt: sm.ExpiresAt, TimeFrame: sm.TimeFrame,
@@ -334,8 +337,63 @@ func (m *Memstore) EffectiveTargetGrants(_ context.Context, targetID int64) ([]s
 			}
 		}
 	}
+	// Label rules (Phase 250). Only a labelled target can match one, so an
+	// unlabelled target — every target before this phase — pays one check.
+	if haveTarget && t.Labels != "" {
+		for _, r := range m.labelRules {
+			if !r.Matches(t.Labels) {
+				continue
+			}
+			out = append(out, store.TargetGrant{ID: r.ID, TargetID: targetID, SubjectType: r.SubjectType, Subject: r.Subject,
+				ExpiresAt: r.ExpiresAt, TimeFrame: r.TimeFrame, Permissions: append([]string{}, r.Permissions...), Effect: r.Effect})
+		}
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+// CreateLabelRule adds a label rule (Phase 250).
+func (m *Memstore) CreateLabelRule(_ context.Context, r *store.LabelRule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, ex := range m.labelRules {
+		if ex.Selector == r.Selector && ex.SubjectType == r.SubjectType && ex.Subject == r.Subject && ex.Effect == r.Effect {
+			return store.ErrConflict
+		}
+	}
+	if r.Permissions == nil {
+		r.Permissions = store.DefaultSafePermissions()
+	}
+	r.ID = m.id()
+	if r.CreatedAt.IsZero() {
+		r.CreatedAt = time.Now().UTC()
+	}
+	m.labelRules[r.ID] = *r
+	return nil
+}
+
+// ListLabelRules returns every label rule, ordered by id.
+func (m *Memstore) ListLabelRules(_ context.Context) ([]store.LabelRule, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]store.LabelRule, 0, len(m.labelRules))
+	for _, r := range m.labelRules {
+		r.Permissions = append([]string{}, r.Permissions...)
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// DeleteLabelRule removes a label rule by id.
+func (m *Memstore) DeleteLabelRule(_ context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.labelRules[id]; !ok {
+		return store.ErrNotFound
+	}
+	delete(m.labelRules, id)
+	return nil
 }
 
 // SweepExpiredGrants deletes every expired grant and safe membership (Phase
@@ -416,6 +474,21 @@ func (m *Memstore) grantsForSubjectsLocked(subjects []store.GrantSubject) []stor
 			})
 		}
 	}
+	for _, r := range m.labelRules {
+		if !named(r.SubjectType, r.Subject) {
+			continue
+		}
+		for _, t := range m.targets {
+			if t.Labels == "" || !r.Matches(t.Labels) {
+				continue
+			}
+			out = append(out, store.SubjectGrant{
+				TargetID: t.ID, TargetName: t.Name, SubjectType: r.SubjectType,
+				Subject: r.Subject, Via: store.GrantViaLabel, ExpiresAt: r.ExpiresAt, TimeFrame: r.TimeFrame,
+				Permissions: append([]string{}, r.Permissions...), Effect: r.Effect, Selector: r.Selector,
+			})
+		}
+	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].TargetID != out[j].TargetID {
 			return out[i].TargetID < out[j].TargetID
@@ -450,11 +523,22 @@ func (m *Memstore) gatedTargetIDsLocked() []int64 {
 		withMembers[sm.SafeID] = struct{}{}
 	}
 	for _, t := range m.targets {
-		if t.SafeID == nil {
+		if t.SafeID != nil {
+			if _, ok := withMembers[*t.SafeID]; ok {
+				gated[t.ID] = struct{}{}
+			}
+		}
+		// An ALLOW label rule gates its targets the way a direct grant does.
+		// A DENY rule never gates (Phase 250): subtracting one subject's
+		// access must not close the target to everyone else.
+		if t.Labels == "" {
 			continue
 		}
-		if _, ok := withMembers[*t.SafeID]; ok {
-			gated[t.ID] = struct{}{}
+		for _, r := range m.labelRules {
+			if !r.IsDeny() && r.Matches(t.Labels) {
+				gated[t.ID] = struct{}{}
+				break
+			}
 		}
 	}
 	out := make([]int64, 0, len(gated))
