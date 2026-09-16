@@ -9,6 +9,36 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.72.0] — 2026-09-16
+
+A minor that ships **Phase 254** — the in-portal SSH terminal, the next row
+of the CyberArk / WALLIX / Teleport research pass and the one every vendor
+has. **Three routes are new**; no schema, environment variable or store
+method moved.
+
+**What an operator can now do.**
+
+- **Open an SSH target in the browser** — *Work with Targets* →
+  **11=Open terminal**. It is the same brokered session as `ssh -p 2222
+  creduser@target pam-host`, because it is one: the portal's server dials
+  the session proxy on the operator's behalf, so every gate, the recording,
+  the live-session list, sharing, suspend, kill, command control and the
+  idle clock apply unchanged. If the target asks for a session code, the
+  portal prompts for it. **Ctrl+Alt+Q** disconnects.
+- **Trust the door.** The terminal token (`POST /api/ssh-token`) is minted
+  for one target, lives 60 seconds, is spent by the session it opens, is
+  refused as an API key everywhere, and is accepted by the proxy **only
+  over loopback** — from the portal's own server, which has checked the
+  operator's real address against the IP allowlist, device and posture
+  gates twice. The session is listed and audited under the operator's
+  machine, not `127.0.0.1`.
+
+**What has not changed.** Nothing about who may reach what: the terminal
+decides no access of its own. `PAM_SSH_ADDR` must be reachable on loopback
+for the terminal to be offered (it is, by default); bound to one
+non-loopback address, the terminal is off and the log says so. The image is
+`ghcr.io/morandeirachema/pamv1:0.72.0`.
+
 ## [0.71.0] — 2026-09-16
 
 A minor that ships **Phase 252** — credential-level grants, the next row of
@@ -3279,6 +3309,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.72.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.72.0
 [0.71.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.71.0
 [0.70.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.70.0
 [0.69.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.69.1
