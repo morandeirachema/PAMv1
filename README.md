@@ -754,7 +754,7 @@ curl -s http://pamv1:8080/metrics | grep pam_build_info      # same, for monitor
 
 **Status:** **[v0.70.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.70.0)
 was released on 2026-09-16** and is what every manifest here pins — image digest
-`sha256:14e3ce4a53c6f9346d2dc2dd8cd3a8fd4290d3e68bab28ca26c402341d2e27a5`, public
+`sha256:0d20fd293cde66ce45ab6fd157333b3e326c5666bd084a07b48138cfca9c0313`, public
 (anonymous pull verified). Each tag's own digest is on its release page. (`v0.11.1` is a source tag only: its pipeline failed
 before the push, and it stays where it is because the Go module proxy had already
 cached it.) The first release was
