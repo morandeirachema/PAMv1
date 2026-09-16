@@ -307,6 +307,16 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 	if cfg.DialTimeout == 0 {
 		cfg.DialTimeout = 10 * time.Second
 	}
+	// The input-sharing mux registry is what every interactive session's
+	// keystroke leg reads through (Phase 116). A proxy built without one —
+	// every test-built proxy, until Phase 254 — had that leg silently dead:
+	// Open and Reader on a nil registry do nothing and return EOF, so the
+	// first keystroke half-closed the upstream and ended the session. main
+	// always passes the registry it shares with the API, so production never
+	// saw it; the comment at the call site promised "never nil", and now it is.
+	if cfg.Shares == nil {
+		cfg.Shares = session.NewShareRegistry()
+	}
 	p := &Proxy{
 		listener: listener{
 			log:          logging.Component("proxy"),
@@ -455,7 +465,17 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 	// proxies' admit() gate, checking TunnelOnly and nothing newer. The test now
 	// has one implementation, and this callback only maps its answer to the
 	// audit reason each scope has always used.
-	if !principal.MayOpenSession(auth.ScopeNone) {
+	// A browser-terminal token (Phase 254) is the one narrow scope this proxy
+	// serves — and only over loopback, because the only legitimate presenter
+	// is the API server on this machine, dialing on an operator's behalf
+	// after running the source gates against the browser's real address. A
+	// terminal token arriving from anywhere else is a copy lifted from a URL,
+	// and is refused exactly as a viewer token is.
+	serving := auth.ScopeNone
+	if principal.TerminalOnly && isLoopbackAddr(c.RemoteAddr()) {
+		serving = auth.ScopeTerminal
+	}
+	if !principal.MayOpenSession(serving) {
 		remote := c.RemoteAddr().String()
 		reason := "narrow-scoped-token"
 		switch principal.NarrowScope() {
@@ -463,6 +483,8 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 			reason = "tunnel-only-token"
 		case auth.ScopeExtensionOnly:
 			reason = "extension-scoped-token"
+		case auth.ScopeTerminal:
+			reason = "terminal-token-off-loopback"
 		case auth.ScopeEnrollOnly, auth.ScopeMFAPending:
 			// Reachable here in principle, but these two have always been
 			// admitted to authentication and refused by admit() one step later
@@ -555,6 +577,13 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 	// and the operator can answer one in-band, ask for it now, as a second
 	// authentication step — an OpenSSH client shows it as a prompt right after
 	// the password. The principal is stashed only once the code is right.
+	if principal.TerminalOnly {
+		// The API server put the browser's address in its client-version
+		// string; it becomes this session's remote for the registry and the
+		// audit trail. Only a terminal token reaches here, and only over
+		// loopback (above), so the value is the API server's, not a client's.
+		ext["terminal_remote"] = auth.TerminalRemoteFromVersion(string(c.ClientVersion()))
+	}
 	if p.promptSessionMFA(principal, targetName) {
 		return nil, &ssh.PartialSuccessError{Next: ssh.ServerAuthCallbacks{
 			KeyboardInteractiveCallback: func(c ssh.ConnMetadata, client ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error) {
@@ -748,6 +777,9 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	login := ext["login"]
 	role := auth.Role(ext["role"])
 	remote := sconn.RemoteAddr().String()
+	if tr := ext["terminal_remote"]; tr != "" {
+		remote = tr // the operator's browser, not the API server's loopback dial (Phase 254)
+	}
 	p.log.Info("connection authenticated", "actor", actor, "role", string(role),
 		"login", auditField(login, 64), "remote", remote)
 
@@ -793,11 +825,16 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	// decides how dialUpstream reaches the target (Phase 153).
 	var viaAgent *store.EndpointAgent
 	var agentErr error
+	serving := auth.ScopeNone
+	if principal.TerminalOnly && isLoopbackAddr(sconn.RemoteAddr()) {
+		serving = auth.ScopeTerminal
+	}
 	res := p.gate.admit(ctx, admitRequest{
 		principal:  principal,
 		targetName: ext["target"],
 		credUser:   ext["cred_user"],
 		remoteAddr: remote,
+		serving:    serving,
 		// The SSH gateway brokers ssh always and winrm only with a runner
 		// configured, so it has no single expected protocol; it uses proxyable
 		// rather than expectProtocol (which the DB proxies use). serveWinRM
@@ -1071,6 +1108,10 @@ func (p *Proxy) refuse(ctx context.Context, chans <-chan ssh.NewChannel, res adm
 		p.log.Warn("session denied: target policy", "actor", actor, "target", res.target.Name, "remote", remote)
 		p.audit(ctx, actor, "session.denied", "target:"+res.target.Name+" reason:target-policy")
 		rejectAll(chans, ssh.Prohibited, "PAMv1: not authorized for this target")
+	case gateTerminalTarget:
+		p.log.Warn("session denied: terminal token for another target", "actor", actor, "target", res.target.Name, "remote", remote)
+		p.audit(ctx, actor, "session.denied", "target:"+res.target.Name+" reason:terminal-token-target")
+		rejectAll(chans, ssh.Prohibited, "PAMv1: this terminal token was minted for a different target")
 	case gateSessionMFACheck:
 		// admit logged the policy-lookup or ticket-spend error; fail closed.
 		rejectAll(chans, ssh.Prohibited, "PAMv1: authorization check failed")
@@ -2360,4 +2401,16 @@ func (a activityReader) Read(b []byte) (int, error) {
 		a.touch()
 	}
 	return n, err
+}
+
+// isLoopbackAddr reports whether a connection arrived over the loopback
+// interface — the only source a browser-terminal token is accepted from
+// (Phase 254).
+func isLoopbackAddr(addr net.Addr) bool {
+	if addr == nil {
+		return false
+	}
+	host := remoteHost(addr)
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

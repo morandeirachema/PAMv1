@@ -618,7 +618,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 204 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 207 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -737,6 +737,7 @@ The 204 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/share/redeem/{token}` | token (single-use link) |
 | GET | `/api/share/stream` | token (single-use link) |
 | POST | `/api/slack/interactivity` | Slack request signature (HMAC) |
+| POST | `/api/ssh-token` | CapConnect |
 | GET | `/api/targets` | CapReadInventory |
 | POST | `/api/targets` | CapManageTargets |
 | DELETE | `/api/targets/{id}` | CapManageTargets |
@@ -749,6 +750,7 @@ The 204 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/targets/{id}/kubectl` | CapConnect |
 | GET | `/api/targets/{id}/rdp` | token (query) |
 | PUT | `/api/targets/{id}/safe` | CapManageTargets |
+| GET | `/api/targets/{id}/ssh/terminal` | token (query) |
 | GET | `/api/targets/{id}/vnc` | token (query) |
 | POST | `/api/targets/{id}/winrm` | CapConnect |
 | GET | `/api/users` | CapManageUsers |
@@ -789,6 +791,7 @@ The 204 routes registered on the API mux, with the capability or guard each enfo
 | PUT | `/scim/v2/Users/{id}` | SCIM client key |
 | GET | `/share.html` | public |
 | GET | `/static/guacamole-common.min.js` | public |
+| GET | `/static/xterm.js` | public |
 | GET | `/v1/agents` | CapManageUsers |
 | POST | `/v1/agents` | CapManageUsers |
 | GET | `/v1/agents/identities` | CapManageUsers |

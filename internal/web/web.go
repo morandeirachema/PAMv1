@@ -40,6 +40,25 @@ var approveHTML []byte
 //go:embed static/guacamole-common.min.js
 var guacamoleJS []byte
 
+// xtermJS is the vendored xterm.js terminal renderer (an unmodified UMD build
+// of @xterm/xterm, MIT — see the repo NOTICE). It powers the in-portal SSH
+// terminal (Phase 254): it draws the byte stream of a session the SSH proxy
+// brokers; it decides nothing. Its stylesheet is inlined in index.html,
+// because the page's CSP allows inline styles and no external stylesheet.
+//
+//go:embed static/xterm.js
+var xtermJS []byte
+
+// xtermSrcPlaceholder is the token in index.html that Index rewrites to the
+// content-addressed xterm.js URL, exactly as guacSrcPlaceholder is.
+var xtermSrcPlaceholder = []byte("__XTERM_SRC__")
+
+// xtermSrc is xterm.js's content-addressed URL — see guacSrc.
+var xtermSrc = func() []byte {
+	sum := sha256.Sum256(xtermJS)
+	return []byte("/static/xterm.js?v=" + hex.EncodeToString(sum[:])[:12])
+}()
+
 // noncePlaceholder is the token in index.html's <script> tag that Index rewrites
 // to the per-request CSP nonce.
 var noncePlaceholder = []byte("__CSP_NONCE__")
@@ -89,6 +108,7 @@ func Index(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	page := bytes.Replace(indexHTML, noncePlaceholder, []byte(n), 1)
 	page = bytes.Replace(page, guacSrcPlaceholder, guacSrc, 1)
+	page = bytes.Replace(page, xtermSrcPlaceholder, xtermSrc, 1)
 	_, _ = w.Write(page)
 }
 
@@ -135,4 +155,14 @@ func GuacamoleJS(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	_, _ = w.Write(guacamoleJS)
+}
+
+// XtermJS serves the vendored xterm.js UMD build, on the same terms as
+// GuacamoleJS: immutable behind a content-hashed URL, public like the page,
+// with the terminal's token and WebSocket endpoints enforcing authorization.
+func XtermJS(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	_, _ = w.Write(xtermJS)
 }

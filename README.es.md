@@ -42,7 +42,7 @@ abarca de la 0 a la 227 y de la 229 a la 253, **se han entregado todas las fases
 firmada con cosign vigente es la
 **[v0.71.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.71.0)** (2026-09-16;
 la primera fue la v0.10.0, el 2026-07-28). Lo que eso suma:
-**intermediación de sesiones JIT** para SSH, PostgreSQL, WinRM y RDP en el portal;
+**intermediación de sesiones JIT** para SSH, PostgreSQL, WinRM y RDP y SSH en el portal;
 **RBAC + perfiles a medida** con login AD/Entra/OIDC y MFA TOTP; **break-glass** con quórum
 M de N; **safes** y propagación a cuentas dependientes; **Privilegio Cero Permanente** con
 certificados SSH efímeros; **sesiones supervisadas** (observación en vivo, control de

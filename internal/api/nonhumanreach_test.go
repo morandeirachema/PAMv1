@@ -62,8 +62,9 @@ var nonHumanReach = map[string]map[string]string{
 	// The graphical viewers: a browser cannot set headers on a WebSocket
 	// handshake, so these authenticate a short-lived token from the query string.
 	"token (query)": {
-		"GET /api/targets/{id}/rdp": "the in-portal RDP viewer's tunnel",
-		"GET /api/targets/{id}/vnc": "the in-portal VNC viewer's tunnel",
+		"GET /api/targets/{id}/rdp":          "the in-portal RDP viewer's tunnel",
+		"GET /api/targets/{id}/ssh/terminal": "the in-portal SSH terminal's WebSocket (Phase 254): a terminal-scoped token, minted by POST /api/ssh-token for ONE target and spent by its first session, opens a session THROUGH the SSH proxy, which runs every gate; the API middleware refuses the token everywhere else",
+		"GET /api/targets/{id}/vnc":          "the in-portal VNC viewer's tunnel",
 	},
 }
 

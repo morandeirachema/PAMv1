@@ -465,6 +465,14 @@ const SessionScopeExtension = "extension"
 // that could call the API could mint itself a successor.
 const SessionScopeSessionMFA = "session_mfa"
 
+// SessionScopeTerminal marks a browser-terminal token (Phase 254): minted by
+// POST /api/ssh-token for ONE target, 60 seconds, single use, and accepted by
+// the SSH proxy only over loopback — the API server dials the proxy on the
+// operator's behalf and bridges the session to a WebSocket. The HTTP
+// middleware refuses it everywhere, as it refuses a viewer token: it travels
+// in a WebSocket URL. It resolves to a TerminalOnly principal.
+const SessionScopeTerminal = "terminal"
+
 // CapSet is a resolved set of capabilities (used for custom profiles).
 type CapSet map[Capability]bool
 
@@ -482,7 +490,12 @@ type Principal struct {
 	BreakGlass bool   // authenticated via the emergency key; use is audited loudly
 	EnrollOnly bool   // session may only complete MFA enrollment, nothing else
 	TunnelOnly bool   // token minted for the RDP tunnel only; API middleware refuses it
-	MFAPending bool   // password verified, awaiting a WebAuthn second factor; nothing else
+	// TerminalOnly marks a browser-terminal token (Phase 254): refused by the
+	// API middleware, accepted by the SSH proxy only over loopback, and bound to
+	// TerminalTarget — the one target it may open a session to.
+	TerminalOnly   bool
+	TerminalTarget int64
+	MFAPending     bool // password verified, awaiting a WebAuthn second factor; nothing else
 	// ExtensionOnly marks a token minted for the browser extension (Phase
 	// 147): unlike TunnelOnly, it is not a blanket refusal everywhere — the
 	// reveal route specifically admits it (see the api package's authzExtOK),
@@ -542,6 +555,7 @@ const (
 	ScopeTunnelOnly
 	ScopeExtensionOnly
 	ScopeSessionMFA
+	ScopeTerminal
 )
 
 // NarrowScope reports which narrow scope, if any, this principal is confined to.
@@ -573,6 +587,8 @@ func (p *Principal) NarrowScope() SessionScope {
 		return ScopeExtensionOnly
 	case p.SessionMFATicket:
 		return ScopeSessionMFA
+	case p.TerminalOnly:
+		return ScopeTerminal
 	}
 	return ScopeNone
 }
@@ -974,6 +990,14 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (*Principal, error) 
 				}
 				p.SessionMFATicket, p.SessionMFATarget, p.sessionMFAHash = true, *s.TargetID, hash
 			}
+			if s.Scope == SessionScopeTerminal {
+				// Same rule as a ticket (Phase 254): a terminal token names
+				// the one target it may open, or it opens nothing.
+				if s.TargetID == nil {
+					return nil, ErrUnauthorized
+				}
+				p.TerminalOnly, p.TerminalTarget = true, *s.TargetID
+			}
 			// A session is minted from a principal and then lives on its own row,
 			// so nothing above re-reads the user it was minted for. For a LOCAL
 			// user that was a gap the per-user-token path never had (2026-08-27
@@ -1036,4 +1060,33 @@ func (r *Resolver) principalFor(ctx context.Context, name, roleOrProfile string,
 		}
 	}
 	return nil, ErrUnauthorized
+}
+
+// TerminalClientVersionPrefix is the SSH client-version string the API server
+// dials the session proxy with for an in-portal terminal (Phase 254),
+// followed by the browser's address. The proxy reads it back — only for a
+// terminal-scoped token, only over loopback — as the session's remote, so a
+// supervisor's session list and the audit trail name the operator's machine
+// rather than 127.0.0.1. It lives here because both the API and the proxy
+// read it and neither may import the other.
+const TerminalClientVersionPrefix = "SSH-2.0-pamv1-terminal_"
+
+// TerminalClientVersion builds the version string for a browser at ip.
+func TerminalClientVersion(ip string) string { return TerminalClientVersionPrefix + ip }
+
+// TerminalRemoteFromVersion parses the browser address out of a version
+// string TerminalClientVersion built, or "" for any other version. Only an IP
+// literal is accepted: the value ends up in audit rows and session listings.
+func TerminalRemoteFromVersion(version string) string {
+	if !strings.HasPrefix(version, TerminalClientVersionPrefix) {
+		return ""
+	}
+	host := strings.TrimPrefix(version, TerminalClientVersionPrefix)
+	if host == "" || len(host) > 64 {
+		return ""
+	}
+	if net.ParseIP(host) == nil {
+		return ""
+	}
+	return host
 }

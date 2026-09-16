@@ -84,6 +84,7 @@ const (
 	gateSessionLimit                // concurrent-session cap
 	gateAudit                       // the fail-closed session-start audit could not be written
 	gateDecrypt                     // JIT decryption failed
+	gateTerminalTarget              // a terminal token (Phase 254) presented for a target other than the one it was minted for
 )
 
 // admitResult is what admit() returns. On success outcome is admitOK, gate is
@@ -123,6 +124,12 @@ type admitRequest struct {
 	principal  *auth.Principal
 	targetName string
 	credUser   string
+	// serving is the ONE narrow scope this caller legitimately serves, or
+	// ScopeNone (Phase 254). The SSH proxy sets ScopeTerminal only for a
+	// connection that arrived over loopback, so a browser-terminal token —
+	// which the API server dials the proxy with on the operator's behalf —
+	// passes gates 1-3 there and nowhere else.
+	serving auth.SessionScope
 	// remoteAddr is the already-resolved client address (host:port or bare
 	// host) each proxy computes before calling admit — checked against
 	// principal.IPAllowlist (Phase 118). Every call site already has this
@@ -254,7 +261,7 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 	// lives in ONE place, auth.Principal.MayOpenSession, and this gate only maps
 	// its answer to a per-scope audit reason. A proxy serves no narrow scope
 	// at all, hence ScopeNone.
-	if !principal.MayOpenSession(auth.ScopeNone) {
+	if !principal.MayOpenSession(req.serving) {
 		switch principal.NarrowScope() {
 		case auth.ScopeTunnelOnly:
 			return admitResult{outcome: admitDenied, gate: gateTunnelOnly}
@@ -313,6 +320,12 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 	target, cred, err := lookupTargetCred(ctx, g.store, req.targetName, req.credUser)
 	if err != nil {
 		return admitResult{outcome: admitDenied, gate: gateResolve, reason: err.Error()}
+	}
+
+	// 8b. A terminal token (Phase 254) was minted for ONE target; the login
+	// must name that target, or the token is being replayed against another.
+	if principal.TerminalOnly && principal.TerminalTarget != target.ID {
+		return admitResult{outcome: admitDenied, gate: gateTerminalTarget, target: target, cred: cred}
 	}
 
 	// 9. Exact-protocol gate (DB proxies): a PostgreSQL/SQL Server broker refuses

@@ -151,6 +151,13 @@ type Options struct {
 	SAMLRoleMap map[string]auth.Role
 	// PortalURL is where the OIDC callback redirects (default "/").
 	PortalURL string
+	// SSHProxyAddr is the loopback address the in-portal SSH terminal (Phase
+	// 254) dials the session proxy on; empty disables the terminal. The API
+	// server is an SSH CLIENT of the proxy on the operator's behalf, so every
+	// gate, the recording and the registry apply unchanged. SSHProxyHostKey
+	// pins the proxy's own host key for that dial.
+	SSHProxyAddr    string
+	SSHProxyHostKey ssh.PublicKey
 	// GuacdAddr enables RDP brokering via an Apache Guacamole guacd daemon
 	// (e.g. "127.0.0.1:4822"); empty disables RDP.
 	GuacdAddr string
@@ -488,6 +495,8 @@ type Server struct {
 	requireRecording     bool
 	portalURL            string
 	guacdAddr            string
+	sshProxyAddr         string
+	sshProxyHostKey      ssh.PublicKey
 	guacdRecordingPath   string
 	guacdRDPSecurity     string
 	guacdIgnoreCert      bool
@@ -796,6 +805,8 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		requireRecording:     opts.RequireRecording,
 		portalURL:            portalURL,
 		guacdAddr:            opts.GuacdAddr,
+		sshProxyAddr:         opts.SSHProxyAddr,
+		sshProxyHostKey:      opts.SSHProxyHostKey,
 		doubleLockMin:        opts.DoubleLockMinLength,
 		guacdRecordingPath:   opts.GuacdRecordingPath,
 		guacdRDPSecurity:     opts.GuacdRDPSecurity,
@@ -998,6 +1009,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /metrics", s.metricsHandler) // Prometheus exposition
 	s.mux.HandleFunc("GET /{$}", web.Index)
 	s.mux.HandleFunc("GET /static/guacamole-common.min.js", web.GuacamoleJS) // vendored RDP viewer client
+	s.mux.HandleFunc("GET /static/xterm.js", web.XtermJS)                    // vendored terminal renderer (Phase 254)
 	s.mux.HandleFunc("GET /share.html", web.Share)                           // Phase 116 guest viewer, no PAMv1 login
 	s.mux.HandleFunc("GET /approve.html", web.Approve)                       // Phase 137 magic-link approval, no PAMv1 login
 
@@ -1082,6 +1094,8 @@ func (s *Server) routes() {
 	// (Phase 155) — the same capability the WinRM twin needs, since both are a
 	// privileged action on a machine PAMv1 holds the credential for.
 	s.mux.Handle("POST /api/targets/{id}/kubectl", s.authz(auth.CapConnect, s.runKubectl))
+	s.mux.Handle("POST /api/ssh-token", s.authz(auth.CapConnect, s.sshTerminalToken))          // mint a short-lived, single-use WS token for the in-portal terminal (Phase 254)
+	s.mux.HandleFunc("GET /api/targets/{id}/ssh/terminal", s.sshTerminal)                      // the terminal WebSocket; token in the query (browsers cannot set WS headers)
 	s.mux.Handle("POST /api/rdp-token", s.authz(auth.CapConnect, s.rdpToken))                  // mint a short-lived WS token for the viewer
 	s.mux.Handle("POST /api/vnc-token", s.authz(auth.CapConnect, s.vncToken))                  // same, for the VNC viewer
 	s.mux.Handle("POST /api/extension-token", s.authz(auth.CapRevealSecret, s.extensionToken)) // mint a browser-extension autofill token (Phase 147)
@@ -1419,6 +1433,13 @@ func (s *Server) authzCore(cap auth.Capability, allowExtension bool, next http.H
 			writeError(w, http.StatusForbidden, "this token is only valid for the RDP tunnel")
 			return
 		}
+		if p.TerminalOnly {
+			// A browser-terminal token (Phase 254) travels in a WebSocket URL
+			// the same way, and is refused here for the same reason.
+			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:terminal-only-token")
+			writeError(w, http.StatusForbidden, "this token is only valid for the SSH terminal")
+			return
+		}
 		if p.SessionMFATicket {
 			// A session-MFA ticket (Phase 244) opens one session and nothing
 			// else. As an API key it could mint its own successor, so it is
@@ -1576,6 +1597,8 @@ func (s *Server) authenticated(next http.HandlerFunc) http.Handler {
 			reason, msg = "extension-scoped-token", "this token is only valid for the extension reveal endpoint"
 		case auth.ScopeSessionMFA:
 			reason, msg = "session-mfa-ticket", "a session-MFA ticket opens one session; it is not an API key"
+		case auth.ScopeTerminal:
+			reason, msg = "terminal-only-token", "this token is only valid for the SSH terminal"
 		}
 		if reason != "" {
 			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:"+reason)

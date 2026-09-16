@@ -40,6 +40,7 @@ const (
 // nowhere.
 var findingExact = map[string]bool{
 	"authz.denied": true, "access.denied": true, "session.denied": true,
+	"terminal.refused": true, "terminal.denied": true, // Phase 254: the in-portal terminal's own refusals
 	"session.error": true, "db.session.denied": true, "db.session.error": true,
 	"command.blocked": true, "login.failed": true, "proxy.auth_failed": true,
 	"credential.decrypt_failed": true, "breakglass.unseal_failed": true,
