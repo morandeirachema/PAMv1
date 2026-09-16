@@ -418,6 +418,7 @@ var guardByWrapper = []struct{ needle, label string }{
 	// middleware wrapper for the route table to read off.
 	{"rdpTunnel", "token (query)"},
 	{"vncTunnel", "token (query)"},
+	{"sshTerminal", "token (query)"},
 	// The guest pages (session share, magic-link approval) authenticate a
 	// single-use token inside the handler, for the same reason: the caller has no
 	// PAMv1 login at all — that is the feature.
@@ -444,6 +445,7 @@ var publicRoutes = map[string]string{
 	"GET /metrics":                        "Prometheus exposition; bind it where only your scraper reaches",
 	"GET /{$}":                            "the 5250 portal shell; every call it makes is authenticated",
 	"GET /static/guacamole-common.min.js": "vendored RDP viewer client, a static asset",
+	"GET /static/xterm.js":                "vendored terminal renderer for the in-portal SSH terminal, a static asset",
 	"GET /approve.html":                   "magic-link approval guest page; the decision itself needs the token",
 	"GET /share.html":                     "session-share guest page; the session itself needs the token",
 }

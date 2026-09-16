@@ -1768,6 +1768,50 @@ a global target manager, who is unconstrained:
 So "manages the member list but may not read the passwords" is now a state the
 system enforces, not merely one the API can express.
 
+### In-portal SSH terminal (Phase 254)
+
+*Work with Targets* → **11=Open terminal** opens an SSH session to the
+target in the browser — the third in-portal session type after RDP and VNC.
+It is **the same session an operator gets from `ssh -p 2222
+creduser@target pam-host`**: the API server is an SSH client of the session
+proxy on the operator's behalf, so every gate (grants, safes, labels,
+credential scope, approval, vendor contract, on-call, posture, per-session
+MFA), the recording, the live-session list, sharing, suspend, kill and the
+idle clock all apply unchanged. Nothing about the browser decides access.
+
+What is new is the door, and its three rules:
+
+- **A terminal token is minted for one target and one use.** `POST
+  /api/ssh-token` (`connect`) names the target — and, optionally, the
+  `credential_id` to log in as; the target's first credential otherwise —
+  and refuses here what the proxy would refuse, so the browser gets a
+  reason rather than a closed socket. The token lives **60 seconds**, opens
+  **that target only**, is **spent** by the session it opens, and is refused
+  as an API key on every route (`reason:terminal-only-token`), exactly as a
+  viewer token is: it travels in a WebSocket URL.
+- **The proxy accepts it only over loopback.** The only party that can
+  present a terminal token to the SSH proxy is the API server on the same
+  machine, which has already run the source gates (IP allowlist, device,
+  posture) against the browser's real address — at mint and again when the
+  WebSocket opened. From anywhere else the token is refused
+  (`session.denied reason:terminal-token-off-loopback`). The proxy must be
+  reachable on loopback: with `PAM_SSH_ADDR` bound to one non-loopback
+  address the terminal is disabled and the log says so.
+- **The session is recorded under the operator's address.** The API server
+  puts the browser's address in its SSH client-version string, and the
+  proxy — only for a terminal token, only over loopback — records it as the
+  session's remote, so *Work with active sessions* and the audit trail show
+  the operator's machine, not `127.0.0.1`.
+
+If the target requires per-session MFA (Phase 244), the console asks for
+the code itself and sends the ticket beside the token as the SSH password —
+the proxy spends it at its own gate, as it would from `ssh`. Audited
+`ssh.terminal_token`, `terminal.open`, `terminal.end` and, when the proxy
+refuses the dial, `terminal.refused`, all carrying the browser's address;
+the proxy's own `session.*` rows for the same session carry it too.
+**Ctrl+Alt+Q** disconnects. SSH targets only; the terminal renderer is
+xterm.js, vendored (see `NOTICE`) and served from the portal itself.
+
 ### Credential-level grants (Phase 252)
 
 A target grant may name **one credential** on its target — CyberArk's
@@ -4668,6 +4712,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-16 | **Phase 254 (in-portal SSH terminal).** New §9 subsection *In-portal SSH terminal*: what it is (a proxy session, opened by the API server as an SSH client on the operator's behalf), the terminal token's three rules (one target and one use; loopback only; recorded under the operator's address), MFA, audit, the loopback requirement on `PAM_SSH_ADDR`. |
 | 2026-09-16 | **Phase 252 (credential-level grants).** New §7 subsection *Credential-level grants*: scoping a grant to one credential, the 422/409 rules, that a scoped grant still gates the target, and which doors read it. |
 | 2026-09-16 | **Phase 250 (target labels and label rules).** New §7 subsection *Target labels and label rules*: labels on a target, the selector grammar, allow and deny rules, the three things to know before writing a deny (deny binds administrators — break-glass excepted; deny never gates; relabelling is revocation), routes, audit and the console menu. |
 | 2026-09-16 | **Phase 248 (the review of 240–247).** §7 *Safe permission sets* gains the delegation ceiling (a `can_manage` member grants only what its own live membership carries, and a membership manages only while it is live) and §7 *Identity lock and token expiry* the rotation guard (you cannot rotate the token of an identity whose capabilities you do not hold). The per-session-MFA subsection states the browser-extension limit and its new refusal reason. |

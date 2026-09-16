@@ -120,6 +120,8 @@
   .rdpview { position: relative; flex: 1 1 auto; overflow: auto; display: flex;
     justify-content: center; align-items: flex-start; background: #000; }
   .rdpview canvas { image-rendering: pixelated; }
+  .termview { background: #000; padding: 4px; display: block; }
+  .termview .xterm { height: 100%; }
   /* Session watermark (Phase 137): a static, non-interactive identity overlay
      — who is connected, and when — deterring an unauthorized screenshot of a
      privileged session and identifying one if it leaks anyway. pointer-events
@@ -130,6 +132,229 @@
     justify-content: space-evenly; user-select: none; }
   .rdpwatermark span { transform: rotate(-30deg); white-space: nowrap;
     opacity: .16; color: var(--fg-white); font: 12px ui-monospace, "SF Mono", Consolas, monospace; }
+
+  /* ---- xterm.js 5.5.0 stylesheet, vendored verbatim (MIT — see NOTICE). Inlined
+     because the page's CSP allows inline styles and no external stylesheet;
+     the terminal's JS is served as a static asset like guacamole-common. ---- */
+/**
+ * Copyright (c) 2014 The xterm.js authors. All rights reserved.
+ * Copyright (c) 2012-2013, Christopher Jeffrey (MIT License)
+ * https://github.com/chjj/term.js
+ * @license MIT
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * Originally forked from (with the author's permission):
+ *   Fabrice Bellard's javascript vt100 for jslinux:
+ *   http://bellard.org/jslinux/
+ *   Copyright (c) 2011 Fabrice Bellard
+ *   The original design remains. The terminal itself
+ *   has been extended to include xterm CSI codes, among
+ *   other features.
+ */
+
+/**
+ *  Default styles for xterm.js
+ */
+
+.xterm {
+    cursor: text;
+    position: relative;
+    user-select: none;
+    -ms-user-select: none;
+    -webkit-user-select: none;
+}
+
+.xterm.focus,
+.xterm:focus {
+    outline: none;
+}
+
+.xterm .xterm-helpers {
+    position: absolute;
+    top: 0;
+    /**
+     * The z-index of the helpers must be higher than the canvases in order for
+     * IMEs to appear on top.
+     */
+    z-index: 5;
+}
+
+.xterm .xterm-helper-textarea {
+    padding: 0;
+    border: 0;
+    margin: 0;
+    /* Move textarea out of the screen to the far left, so that the cursor is not visible */
+    position: absolute;
+    opacity: 0;
+    left: -9999em;
+    top: 0;
+    width: 0;
+    height: 0;
+    z-index: -5;
+    /** Prevent wrapping so the IME appears against the textarea at the correct position */
+    white-space: nowrap;
+    overflow: hidden;
+    resize: none;
+}
+
+.xterm .composition-view {
+    /* TODO: Composition position got messed up somewhere */
+    background: #000;
+    color: #FFF;
+    display: none;
+    position: absolute;
+    white-space: nowrap;
+    z-index: 1;
+}
+
+.xterm .composition-view.active {
+    display: block;
+}
+
+.xterm .xterm-viewport {
+    /* On OS X this is required in order for the scroll bar to appear fully opaque */
+    background-color: #000;
+    overflow-y: scroll;
+    cursor: default;
+    position: absolute;
+    right: 0;
+    left: 0;
+    top: 0;
+    bottom: 0;
+}
+
+.xterm .xterm-screen {
+    position: relative;
+}
+
+.xterm .xterm-screen canvas {
+    position: absolute;
+    left: 0;
+    top: 0;
+}
+
+.xterm .xterm-scroll-area {
+    visibility: hidden;
+}
+
+.xterm-char-measure-element {
+    display: inline-block;
+    visibility: hidden;
+    position: absolute;
+    top: 0;
+    left: -9999em;
+    line-height: normal;
+}
+
+.xterm.enable-mouse-events {
+    /* When mouse events are enabled (eg. tmux), revert to the standard pointer cursor */
+    cursor: default;
+}
+
+.xterm.xterm-cursor-pointer,
+.xterm .xterm-cursor-pointer {
+    cursor: pointer;
+}
+
+.xterm.column-select.focus {
+    /* Column selection mode */
+    cursor: crosshair;
+}
+
+.xterm .xterm-accessibility:not(.debug),
+.xterm .xterm-message {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    z-index: 10;
+    color: transparent;
+    pointer-events: none;
+}
+
+.xterm .xterm-accessibility-tree:not(.debug) *::selection {
+  color: transparent;
+}
+
+.xterm .xterm-accessibility-tree {
+  user-select: text;
+  white-space: pre;
+}
+
+.xterm .live-region {
+    position: absolute;
+    left: -9999px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+}
+
+.xterm-dim {
+    /* Dim should not apply to background, so the opacity of the foreground color is applied
+     * explicitly in the generated class and reset to 1 here */
+    opacity: 1 !important;
+}
+
+.xterm-underline-1 { text-decoration: underline; }
+.xterm-underline-2 { text-decoration: double underline; }
+.xterm-underline-3 { text-decoration: wavy underline; }
+.xterm-underline-4 { text-decoration: dotted underline; }
+.xterm-underline-5 { text-decoration: dashed underline; }
+
+.xterm-overline {
+    text-decoration: overline;
+}
+
+.xterm-overline.xterm-underline-1 { text-decoration: overline underline; }
+.xterm-overline.xterm-underline-2 { text-decoration: overline double underline; }
+.xterm-overline.xterm-underline-3 { text-decoration: overline wavy underline; }
+.xterm-overline.xterm-underline-4 { text-decoration: overline dotted underline; }
+.xterm-overline.xterm-underline-5 { text-decoration: overline dashed underline; }
+
+.xterm-strikethrough {
+    text-decoration: line-through;
+}
+
+.xterm-screen .xterm-decoration-container .xterm-decoration {
+	z-index: 6;
+	position: absolute;
+}
+
+.xterm-screen .xterm-decoration-container .xterm-decoration.xterm-decoration-top-layer {
+	z-index: 7;
+}
+
+.xterm-decoration-overview-ruler {
+    z-index: 8;
+    position: absolute;
+    top: 0;
+    right: 0;
+    pointer-events: none;
+}
+
+.xterm-decoration-top {
+    z-index: 2;
+    position: relative;
+}
+
 </style>
 </head>
 <body>
@@ -207,6 +432,7 @@
   // never loads for the sign-on screen, non-RDP roles, or guacd-disabled deploys.
   // GUAC_SRC is a content-addressed path (…?v=<hash>) so an upgrade busts the cache.
   const GUAC_SRC = "__GUAC_SRC__";
+  const XTERM_SRC = "__XTERM_SRC__";
   let rdpActive = false, guacPromise = null; // rdpActive: a graphical viewer (RDP or VNC) owns the keyboard
   function loadGuac() {
     // Memoize the resolved module, but reset on failure so a transient error retries.
@@ -1045,6 +1271,72 @@
     startViewer(Guac, t, tok, v);
   }
 
+  // ---- In-portal SSH terminal (Phase 254) ------------------------------
+  // The browser is an xterm.js surface over a WebSocket; the API server is an
+  // SSH client of the session proxy on the operator's behalf, so the session
+  // it opens is a proxy session in every respect (gates, recording, registry,
+  // sharing, kill). Nothing here decides access.
+  let xtermPromise = null;
+  function loadXterm() {
+    if (window.Terminal) return Promise.resolve(window.Terminal);
+    if (!xtermPromise) xtermPromise = new Promise((res, rej) => {
+      const el = document.createElement("script"); el.src = XTERM_SRC; el.async = true;
+      el.onload = () => res(window.Terminal); el.onerror = () => rej(new Error("terminal library failed to load"));
+      document.head.appendChild(el);
+    });
+    return xtermPromise;
+  }
+  async function openTerminal(t) {
+    if (t.protocol !== "ssh") { say("CPF0002: TARGET " + String(t.name).toUpperCase() + " IS NOT AN SSH TARGET.", true); render(); return; }
+    let Term, mint, ticket = "";
+    try {
+      Term = await loadXterm();
+      // Naming the target lets the server refuse — before any WebSocket exists —
+      // a target the caller may not use, and say whether it needs a session-MFA
+      // ticket, which then rides beside the terminal token as the SSH password.
+      mint = await api("POST", "/api/ssh-token", { target_id: t.id });
+      if (mint.session_mfa_required) ticket = await sessionMFATicket(t);
+    } catch (e) { say("CPF9999: " + String(e.message || "TERMINAL UNAVAILABLE").toUpperCase(), true); render(); return; }
+    startTerminal(Term, t, mint, ticket);
+  }
+  function startTerminal(Term, t, mint, ticket) {
+    const wrap = document.createElement("div"); wrap.className = "rdpwrap"; wrap.tabIndex = -1;
+    const bar = document.createElement("div"); bar.className = "rdpbar";
+    bar.innerHTML = `<span><span class="white">SSH</span> ${esc(mint.cred_user)}@${esc(t.name)} <span class="cyan">${esc(t.host)}:${esc(t.port || 22)}</span></span>` +
+      `<span class="amber">Ctrl+Alt+Q = disconnect</span>`;
+    const view = document.createElement("div"); view.className = "rdpview termview";
+    wrap.appendChild(bar); wrap.appendChild(view); document.body.appendChild(wrap);
+    rdpActive = true;
+    const term = new Term({ cursorBlink: true, fontFamily: "monospace", fontSize: 14, theme: { background: "#000000", foreground: "#33ff33" } });
+    term.open(view);
+    const cols = Math.max(40, Math.min(term.cols || 120, 500)), rows = Math.max(10, Math.min(term.rows || 40, 200));
+    const q = `?token=${encodeURIComponent(mint.token)}&cols=${cols}&rows=${rows}` + (ticket ? `&ticket=${encodeURIComponent(ticket)}` : "");
+    const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/targets/${t.id}/ssh/terminal${q}`);
+    ws.binaryType = "arraybuffer";
+    let closed = false;
+    const teardown = (msg, isErr) => {
+      if (closed) return; closed = true; rdpActive = false;
+      try { ws.close(); } catch (e) {}
+      try { term.dispose(); } catch (e) {}
+      wrap.remove();
+      say(msg || ("SSH SESSION TO " + String(t.name).toUpperCase() + " CLOSED."), !!isErr);
+      render(); focusPrimary();
+    };
+    ws.onmessage = (ev) => { if (ev.data instanceof ArrayBuffer) term.write(new Uint8Array(ev.data)); };
+    ws.onclose = (ev) => teardown(ev.reason ? "SSH SESSION ENDED: " + String(ev.reason).toUpperCase() : "", ev.code !== 1000);
+    ws.onerror = () => teardown("SSH SESSION FAILED.", true);
+    ws.onopen = () => { term.focus(); };
+    term.onData((d) => { if (ws.readyState === 1) ws.send(new TextEncoder().encode(d)); });
+    term.onResize(({ cols, rows }) => { if (ws.readyState === 1) ws.send(JSON.stringify({ resize: { cols, rows } })); });
+    // Ctrl+Alt+Q disconnects and is swallowed so the chord never reaches the
+    // privileged remote session (the same chord as the RDP viewer).
+    term.attachCustomKeyEventHandler((ev) => {
+      if (ev.type === "keydown" && ev.ctrlKey && ev.altKey && (ev.key === "q" || ev.key === "Q")) { teardown(); return false; }
+      return true;
+    });
+    window.addEventListener("resize", () => { try { term.resize(Math.max(40, Math.floor(view.clientWidth / 9)), Math.max(10, Math.floor(view.clientHeight / 18))); } catch (e) {} }, { once: false });
+  }
+
   // buildWatermark returns a non-interactive overlay identifying who is
   // connected and when (Phase 137, BeyondTrust-style session watermarking):
   // a repeating, low-opacity, rotated label, static text (not a moving/
@@ -1255,7 +1547,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
         const canConnect = can("connect");
         term.innerHTML = `${head("PAMWRKTGT", "Work with Targets")}
 Type options, press Enter.
-  <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "6=Run kubectl (kubernetes)" : "", canConnect ? "7=Open viewer (rdp/vnc targets)" : "", canManage ? "8=Assign to safe" : "", canManage ? "9=Discover accounts (ssh/winrm)" : "", canConnect ? "10=Session MFA ticket (ssh/db clients)" : "", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
+  <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "6=Run kubectl (kubernetes)" : "", canConnect ? "7=Open viewer (rdp/vnc targets)" : "", canManage ? "8=Assign to safe" : "", canManage ? "9=Discover accounts (ssh/winrm)" : "", canConnect ? "10=Session MFA ticket (ssh/db clients)" : "", canConnect ? "11=Open terminal (ssh targets)" : "", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Name</th><th>Host</th><th>Port</th><th>OS</th><th>Proto</th><th>Approval</th><th>MFA</th><th>Clip</th><th>Safe</th><th>Labels</th></tr>
@@ -1275,6 +1567,7 @@ ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add target" : ""}   F12=Cancel
               else if (o === "7") { return openViewer(t); }
               else if (o === "8") { return openTargetSafe(t); }
               else if (o === "9") { return discoverAccounts(t); }
+              else if (o === "11") { return openTerminal(t); }
               else if (o === "10") { smfaTicket = { target: t.name, ticket: await sessionMFATicket(t) }; return go("smfaview"); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }

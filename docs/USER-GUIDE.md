@@ -473,6 +473,7 @@ guard against connections that open and never authenticate, not a fault.
 
 | Date | Change |
 |---|---|
+| 2026-09-16 | Phase 254: an SSH target can now be opened **in the browser** — *Work with Targets* → **11=Open terminal**. It is the same brokered, recorded session you would get from `ssh -p 2222`, with the same rules; if the target asks for a session code, the portal prompts for it. **Ctrl+Alt+Q** disconnects. |
 | 2026-09-16 | Phase 252: a grant may now cover **one credential** on a target rather than all of them — you might log in as `deploy@host` but be refused `root@host` on the same target. *What can this subject reach?* lists `credential_ids` when your access is scoped that way. |
 | 2026-09-16 | Phase 250: a target may now admit you — or refuse you — because of its **labels** rather than a grant that names it. *What can this subject reach?* (menu 31) shows such a target as reached `via: label`, and does not list one a deny rule refuses; the refusal reads the same as any other target-policy refusal. |
 | 2026-09-15 | Phase 246: a safe membership can now carry **use**, **retrieve** and **approve** — you may be able to connect to a target but not see its password, or decide a safe's access requests without the approver role. New §6 subsection *Approving for one safe*. |

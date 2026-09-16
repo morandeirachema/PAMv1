@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–253 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–254 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,82 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 254 — In-portal SSH terminal ✅
+
+The next row of the Tier 8 pass, and the one all three vendors have: an SSH
+session opened in the browser. PAMv1 had the in-portal RDP and VNC viewers
+(Phases 45, 54) and the WebSocket tunnel they run over; an SSH target still
+meant a terminal and `ssh -p 2222`.
+
+- [x] **A seam, not a second front door.** The browser draws an xterm.js
+  surface over a WebSocket, and the API server is an **SSH client of the
+  session proxy** on the operator's behalf — it dials the proxy on loopback,
+  logs in as `creduser@target` with a token, requests a PTY and bridges
+  bytes. So the session it opens is a proxy session in every respect: every
+  `admit()` gate (grants, safes, labels, credential scope, approval, vendor,
+  on-call, posture, per-session MFA), just-in-time injection, the recording,
+  the live registry, sharing, suspend, supervision, command control and the
+  idle clock apply unchanged, and **not one line of access decision was
+  written** for the browser. Phase 102 spent a whole phase unifying the
+  proxies' gates into one sequence; a terminal that reimplemented them for
+  a WebSocket would have undone it
+- [x] **The door, and its three rules.** `POST /api/ssh-token` (`connect`)
+  names the target and optionally a credential (Phase 252's scope is
+  honoured — the mint refuses what the proxy would, so the browser gets a
+  reason rather than a closed socket) and mints a `terminal`-scoped session
+  bound to that target, **60 seconds, single use**, spent by the session it
+  opens; `GET /api/targets/{id}/ssh/terminal?token=` is the WebSocket. Rule
+  one: the API middleware refuses the token everywhere
+  (`terminal-only-token`) — it travels in a URL, as a viewer token does.
+  Rule two: **the proxy accepts it only over loopback**
+  (`session.denied reason:terminal-token-off-loopback` elsewhere), because
+  the only legitimate presenter is the API server on the same machine,
+  which has already run the source gates (IP allowlist, device, posture)
+  against the browser's real address — at mint and again at the WebSocket;
+  and it opens only the target it was minted for (`gateTerminalTarget`).
+  Rule three: **the session is recorded under the operator's address** —
+  the API server puts the browser's address in its SSH client-version
+  string, and the proxy, only for a terminal token, only over loopback,
+  reads it back as the session's remote, so the session list and the audit
+  trail name the operator's machine rather than `127.0.0.1`
+- [x] **Session MFA rides the existing ticket.** When the target requires a
+  fresh factor (Phase 244) the mint says so, the console asks for the code
+  as it does for the viewer, and the ticket goes beside the token as the SSH
+  password — the proxy spends it at its own gate 12, exactly as from `ssh`.
+  No new MFA path
+- [x] **The renderer is vendored, like the viewer's.** xterm.js 5.5.0 (MIT,
+  recorded in `NOTICE` with its hash) is embedded and served immutable at a
+  content-hashed `/static/xterm.js`, the same terms as guacamole-common; its
+  stylesheet is inlined in `index.html` because the page's CSP allows inline
+  styles and no external stylesheet. Console: *Work with Targets* option
+  **11**, an overlay in the viewer's shape, Ctrl+Alt+Q to disconnect
+- [x] **Proven, not asserted.** `TestTerminalScope` (the scope resolves,
+  is narrow, and passes `MayOpenSession` only at a door serving it);
+  `TestTerminalTokenOnlyOverLoopback` (refused from the network with its
+  reason, accepted over loopback, the browser address carried from the
+  client version and only from ours); `TestAdmitTerminalTokenBoundToTarget`
+  (refused at its own gate for another target, admitted for its own, refused
+  at the scope gates where the door does not serve it); and **end to end**,
+  `TestBrowserTerminalEndToEnd` — a browser-style WebSocket opened with a
+  minted token reaches an sshd that accepts ONLY the vaulted password (so
+  the banner it shows proves the proxy injected a secret the browser never
+  had), keystrokes echo back, the session is in the live registry as `ssh`
+  under the browser's address, the token is spent, refused as an API key and
+  bound to its target, and `terminal.open` / `terminal.end` are audited;
+  `TestBrowserTerminalTokenIsBoundToItsTarget` covers the mint refusals
+- [x] **Limits, stated rather than discovered.** SSH targets only (a
+  WinRM-over-SSH target still uses `ssh`). The proxy must be reachable on
+  loopback — `PAM_SSH_ADDR` bound to one non-loopback address disables the
+  terminal, with a log line. Within a token's 60-second window a process on
+  the PAM host itself could present it; that host is already the trust
+  boundary. The browser's address in the client-version string is trusted
+  only from loopback, from a terminal-scoped token
+- [x] Routes **204 → 207** (the token, the WebSocket, the vendored
+  renderer); no schema, env var or store method; five audit actions
+  (`ssh.terminal_token`, `terminal.open`, `terminal.end`, `terminal.refused`,
+  `terminal.denied`), one proxy gate. **Released by Phase 255 as v0.72.0** —
+  a minor, since three routes are new
 
 ## Phase 253 — v0.71.0 ✅
 
