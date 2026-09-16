@@ -76,8 +76,11 @@ import (
 // identity mapping, because the review of Phase 234 found a button click
 // became an actor in its own "slack:" namespace that no four-eyes or
 // distinct-approver comparison against a PAMv1 username could ever match.
+// Phase 250 added GrantStore.{CreateLabelRule,ListLabelRules,DeleteLabelRule}
+// (3) — the third authorization path, and the only one that can DENY, so it
+// needed rows of its own rather than a flag on a grant that names one target.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 225
+	const want = 228
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

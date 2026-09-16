@@ -1049,6 +1049,13 @@ func (s *Server) routes() {
 	s.mux.Handle("PUT /api/targets/{id}", s.authz(auth.CapManageTargets, s.updateTarget))
 	s.mux.Handle("DELETE /api/targets/{id}", s.authz(auth.CapManageTargets, s.deleteTarget))
 
+	// Label rules (Phase 250): the third authorization path, and the only one
+	// that can DENY. Writing one is a statement about the estate, so it takes
+	// the capability that labels the targets; reading the policy is inventory,
+	// so an auditor can review what denies whom without being able to change it.
+	s.mux.Handle("POST /api/label-rules", s.authz(auth.CapManageTargets, s.createLabelRule))
+	s.mux.Handle("GET /api/label-rules", s.authz(auth.CapReadInventory, s.listLabelRules))
+	s.mux.Handle("DELETE /api/label-rules/{id}", s.authz(auth.CapManageTargets, s.deleteLabelRule))
 	s.mux.Handle("POST /api/targets/{id}/grants", s.authz(auth.CapManageTargets, s.createTargetGrant))
 	s.mux.Handle("GET /api/targets/{id}/grants", s.authz(auth.CapManageTargets, s.listTargetGrants))
 	s.mux.Handle("DELETE /api/targets/{id}/grants/{gid}", s.authz(auth.CapManageTargets, s.deleteTargetGrant))
