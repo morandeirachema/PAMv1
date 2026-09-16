@@ -2485,10 +2485,12 @@ meant a terminal and `ssh -p 2222`.
   under the browser's address, the token is spent, refused as an API key and
   bound to its target, and `terminal.open` / `terminal.end` are audited;
   `TestBrowserTerminalTokenIsBoundToItsTarget` covers the mint refusals. The
-  end-to-end test failed once under the load of a full `-race` run (eight
-  isolated race runs and CI were green); its deadlines were generous-ized
-  and two further full race runs were clean — recorded here so a recurrence
-  is counted, not discovered
+  end-to-end test failed once locally and once in CI with every assertion
+  passed and `t.TempDir`'s cleanup reporting "directory not empty": the
+  test returned while the proxy was still sealing the session's recording
+  into that directory. It now waits for the proxy's own `session.end` and
+  for the registry to empty before ending — the browser's close is not the
+  session's end, and the test had conflated the two
 - [x] **Limits, stated rather than discovered.** SSH targets only (a
   WinRM-over-SSH target still uses `ssh`). The proxy must be reachable on
   loopback — `PAM_SSH_ADDR` bound to one non-loopback address disables the
