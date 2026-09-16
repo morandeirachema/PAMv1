@@ -441,11 +441,18 @@ func (c Credential) IsZSP() bool {
 // empty on rows that predate the recording. EffectiveTargetGrants (an
 // authorization-only view) does not populate it.
 type TargetGrant struct {
-	ID          int64  `json:"id"`
-	TargetID    int64  `json:"target_id"`
-	SubjectType string `json:"subject_type"` // user | role
-	Subject     string `json:"subject"`
-	CreatedBy   string `json:"created_by,omitempty"`
+	ID       int64 `json:"id"`
+	TargetID int64 `json:"target_id"`
+	// CredentialID, when set, scopes the grant to ONE credential on the
+	// target (Phase 252 — CyberArk's object-level access control): the
+	// subject may use or retrieve that credential and no other. Nil is the
+	// whole target, which is every grant before this phase. A scoped grant
+	// still GATES the target — a subject named on credential A is refused
+	// credential B rather than finding B open — see auth.CanAccessCredentialAt.
+	CredentialID *int64 `json:"credential_id,omitempty"`
+	SubjectType  string `json:"subject_type"` // user | role
+	Subject      string `json:"subject"`
+	CreatedBy    string `json:"created_by,omitempty"`
 	// ExpiresAt, when set, is the instant the grant stops admitting (Phase
 	// 240): EffectiveTargetGrants and the reach view never return an expired
 	// row, and the expiry sweeper deletes it (audited). Nil is a grant with no
@@ -472,6 +479,14 @@ type TargetGrant struct {
 
 // IsDeny reports whether the grant refuses rather than admits.
 func (g TargetGrant) IsDeny() bool { return g.Effect == GrantDeny }
+
+// CoversCredential reports whether the grant applies to a request about
+// credID (Phase 252): an unscoped grant covers every credential on its
+// target, a scoped one only its own. A nil credID is a request about the
+// target as a whole — reach, listing — which any grant covers.
+func (g TargetGrant) CoversCredential(credID *int64) bool {
+	return credID == nil || g.CredentialID == nil || *g.CredentialID == *credID
+}
 
 // GrantLive reports whether a grant with the given bounds admits at now: not
 // expired, and inside its time frame (an unparsable frame is treated as never
@@ -607,6 +622,9 @@ type SubjectGrant struct {
 	// SafeID is the safe the grant came through, set only when Via is
 	// GrantViaSafe (nil for a direct grant).
 	SafeID *int64 `json:"safe_id,omitempty"`
+	// CredentialID is the one credential a GrantViaGrant row is scoped to
+	// (Phase 252); nil is the whole target. Only a direct grant can be scoped.
+	CredentialID *int64 `json:"credential_id,omitempty"`
 	// ExpiresAt and TimeFrame are the underlying row's bounds (Phase 240),
 	// reported so an entitlement review can show WHEN a reach ends; the view
 	// itself only ever contains rows live at the time it was taken.

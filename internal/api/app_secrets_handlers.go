@@ -258,7 +258,7 @@ func (s *Server) grantAppSecret(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.gateCredentialAccess(w, r, target, cred.Username, "app.grant", auth.ActionRetrieve) {
+	if !s.gateCredentialAccess(w, r, target, &cred.ID, cred.Username, "app.grant", auth.ActionRetrieve) {
 		return
 	}
 	g := store.AppSecretGrant{AppID: appID, CredentialID: in.CredentialID}

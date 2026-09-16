@@ -62,6 +62,11 @@ type Reach struct {
 	// itself would read the whole safes table a second time, which is what the
 	// API did before this field existed.
 	SafeName string `json:"safe_name,omitempty"`
+	// CredentialIDs lists the credentials the reach is scoped to (Phase 252)
+	// when EVERY admitting grant is credential-scoped; empty means the whole
+	// target — one unscoped grant, a safe membership, a label rule or a
+	// bypass reaches every credential on it.
+	CredentialIDs []int64 `json:"credential_ids,omitempty"`
 }
 
 // GrantSubjects lists every identifier a grant may name this principal by: its
@@ -214,6 +219,7 @@ func ReachableTargets(ctx context.Context, st ReachStore, p *Principal, ungated 
 				rc.SafeName = safeName[*match.SafeID]
 			}
 			rc.Permissions = reachPermissions(byTarget[t.ID])
+			rc.CredentialIDs = reachCredentials(byTarget[t.ID])
 			out = append(out, rc)
 		}
 	}
@@ -235,6 +241,25 @@ func reachPermissions(gs []store.SubjectGrant) []string {
 	if retrieve {
 		out = append(out, store.SafePermRetrieve)
 	}
+	return out
+}
+
+// reachCredentials is the set of credentials a group of admitting grants is
+// scoped to, ascending — or nil as soon as any one of them covers the whole
+// target, because then the scope of the others no longer narrows anything.
+func reachCredentials(gs []store.SubjectGrant) []int64 {
+	seen := map[int64]struct{}{}
+	for _, g := range gs {
+		if g.CredentialID == nil {
+			return nil
+		}
+		seen[*g.CredentialID] = struct{}{}
+	}
+	out := make([]int64, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }
 

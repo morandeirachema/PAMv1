@@ -295,9 +295,22 @@ func (s *PGStore) ClearCredentialDoubleLock(ctx context.Context, id int64) error
 // CreateTargetGrant adds a grant, populating its ID; ErrConflict if an identical
 // grant exists, ErrNotFound if the target is missing.
 func (s *PGStore) CreateTargetGrant(ctx context.Context, g *store.TargetGrant) error {
+	if g.CredentialID != nil {
+		// A scoped grant names a credential on ITS target (Phase 252): one
+		// pointing at another target's credential would gate this target and
+		// admit nothing. The FK alone cannot say which target the credential
+		// belongs to, so it is checked here, matching memstore.
+		var n int
+		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM credentials WHERE id = $1 AND target_id = $2`, *g.CredentialID, g.TargetID).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return store.ErrNotFound
+		}
+	}
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO target_grants (target_id, subject_type, subject, created_by, expires_at, time_frame) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-		g.TargetID, g.SubjectType, g.Subject, g.CreatedBy, g.ExpiresAt, g.TimeFrame,
+		`INSERT INTO target_grants (target_id, subject_type, subject, created_by, expires_at, time_frame, credential_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+		g.TargetID, g.SubjectType, g.Subject, g.CreatedBy, g.ExpiresAt, g.TimeFrame, g.CredentialID,
 	).Scan(&g.ID)
 	switch pgCode(err) {
 	case pgUniqueViolation:
@@ -311,13 +324,13 @@ func (s *PGStore) CreateTargetGrant(ctx context.Context, g *store.TargetGrant) e
 // ListTargetGrants returns the grants for a target, ordered by ID.
 func (s *PGStore) ListTargetGrants(ctx context.Context, targetID int64) ([]store.TargetGrant, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, target_id, subject_type, subject, created_by, expires_at, time_frame FROM target_grants WHERE target_id = $1 ORDER BY id`, targetID)
+		`SELECT id, target_id, subject_type, subject, created_by, expires_at, time_frame, credential_id FROM target_grants WHERE target_id = $1 ORDER BY id`, targetID)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.TargetGrant, error) {
 		var g store.TargetGrant
-		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject, &g.CreatedBy, &g.ExpiresAt, &g.TimeFrame)
+		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject, &g.CreatedBy, &g.ExpiresAt, &g.TimeFrame, &g.CredentialID)
 		return g, err
 	})
 }
@@ -332,10 +345,10 @@ func (s *PGStore) DeleteTargetGrant(ctx context.Context, id int64) error {
 // members (Phase 17).
 func (s *PGStore) EffectiveTargetGrants(ctx context.Context, targetID int64) ([]store.TargetGrant, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, target_id, subject_type, subject, expires_at, time_frame, NULL::text FROM target_grants
+		`SELECT id, target_id, subject_type, subject, expires_at, time_frame, NULL::text, credential_id FROM target_grants
 		  WHERE target_id = $1
 		 UNION
-		 SELECT sm.id, $1::bigint, sm.subject_type, sm.subject, sm.expires_at, sm.time_frame, sm.permissions
+		 SELECT sm.id, $1::bigint, sm.subject_type, sm.subject, sm.expires_at, sm.time_frame, sm.permissions, NULL::bigint
 		   FROM safe_members sm JOIN targets t ON t.safe_id = sm.safe_id
 		  WHERE t.id = $1
 		 ORDER BY id`, targetID)
@@ -348,7 +361,7 @@ func (s *PGStore) EffectiveTargetGrants(ctx context.Context, targetID int64) ([]
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.TargetGrant, error) {
 		var g store.TargetGrant
 		var perms *string
-		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject, &g.ExpiresAt, &g.TimeFrame, &perms)
+		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject, &g.ExpiresAt, &g.TimeFrame, &perms, &g.CredentialID)
 		if perms != nil {
 			g.Permissions = store.ParseSafePermissions(*perms)
 		}
@@ -445,13 +458,13 @@ func (s *PGStore) SweepExpiredGrants(ctx context.Context, now time.Time) ([]stor
 	defer tx.Rollback(ctx)
 	rows, err := tx.Query(ctx,
 		`DELETE FROM target_grants WHERE expires_at IS NOT NULL AND expires_at <= $1
-		 RETURNING id, target_id, subject_type, subject, created_by, expires_at, time_frame`, now)
+		 RETURNING id, target_id, subject_type, subject, created_by, expires_at, time_frame, credential_id`, now)
 	if err != nil {
 		return nil, nil, err
 	}
 	gs, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.TargetGrant, error) {
 		var g store.TargetGrant
-		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject, &g.CreatedBy, &g.ExpiresAt, &g.TimeFrame)
+		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject, &g.CreatedBy, &g.ExpiresAt, &g.TimeFrame, &g.CredentialID)
 		return g, err
 	})
 	if err != nil {
@@ -530,12 +543,12 @@ func grantsForSubjects(ctx context.Context, q reachQuerier, subjects []store.Gra
 	}
 	rows, err := q.Query(ctx,
 		`WITH subs AS (SELECT * FROM unnest($1::text[], $2::text[]) AS s(subject_type, subject))
-		 SELECT g.target_id, t.name, g.subject_type, g.subject, 'grant'::text, NULL::bigint, g.expires_at, g.time_frame, NULL::text
+		 SELECT g.target_id, t.name, g.subject_type, g.subject, 'grant'::text, NULL::bigint, g.expires_at, g.time_frame, NULL::text, g.credential_id
 		   FROM target_grants g
 		   JOIN targets t ON t.id = g.target_id
 		   JOIN subs ON subs.subject_type = g.subject_type AND subs.subject = g.subject
 		 UNION ALL
-		 SELECT t.id, t.name, sm.subject_type, sm.subject, 'safe'::text, sm.safe_id, sm.expires_at, sm.time_frame, sm.permissions
+		 SELECT t.id, t.name, sm.subject_type, sm.subject, 'safe'::text, sm.safe_id, sm.expires_at, sm.time_frame, sm.permissions, NULL::bigint
 		   FROM safe_members sm
 		   JOIN targets t ON t.safe_id = sm.safe_id
 		   JOIN subs ON subs.subject_type = sm.subject_type AND subs.subject = sm.subject
@@ -546,7 +559,7 @@ func grantsForSubjects(ctx context.Context, q reachQuerier, subjects []store.Gra
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.SubjectGrant, error) {
 		var g store.SubjectGrant
 		var perms *string
-		err := row.Scan(&g.TargetID, &g.TargetName, &g.SubjectType, &g.Subject, &g.Via, &g.SafeID, &g.ExpiresAt, &g.TimeFrame, &perms)
+		err := row.Scan(&g.TargetID, &g.TargetName, &g.SubjectType, &g.Subject, &g.Via, &g.SafeID, &g.ExpiresAt, &g.TimeFrame, &perms, &g.CredentialID)
 		if perms != nil {
 			g.Permissions = store.ParseSafePermissions(*perms)
 		}

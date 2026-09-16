@@ -1768,6 +1768,46 @@ a global target manager, who is unconstrained:
 So "manages the member list but may not read the passwords" is now a state the
 system enforces, not merely one the API can express.
 
+### Credential-level grants (Phase 252)
+
+A target grant may name **one credential** on its target — CyberArk's
+object-level access control. The subject may then use or retrieve that
+credential and no other: the DBA who may log in as `deploy` does not thereby
+get `root`.
+
+```bash
+# alice may use and retrieve ONLY the deploy credential (id 41) on target 12
+curl -X POST -H "X-API-Key: $PAM_API_KEY" localhost:8080/api/targets/12/grants \
+  -d '{"subject_type":"user","subject":"alice","credential_id":41}'
+```
+
+`credential_id` must name a credential on **this** target (422 otherwise).
+Omit it and the grant covers every credential on the target, which is what
+every grant before this phase does. A whole-target grant and a scoped one
+for the same subject are different rows; the same scope twice is a 409.
+`expires_at`, `time_frame` and the rest of a grant's shape are unchanged, and
+a scoped grant's edge is the deadline only of a session on *its* credential.
+
+Two things to know:
+
+- **A scoped grant still gates the target.** Alice, granted `deploy`, finds
+  `root` **refused** — not open, as it would be if her grant were simply
+  ignored for it. And bob, named by nothing, is refused both.
+- **Every door reads it.** The SSH, PostgreSQL and SQL Server proxies decide
+  for the credential the operator names (`deploy@target`); reveal, checkout,
+  DoubleLock and application grants for the credential in the URL; the
+  in-portal RDP/VNC viewer, the WinRM and kubectl endpoints and the AI-agent
+  broker for the credential they pick. A refusal past the target gate is
+  audited `reason:credential-scope`. Rotation and reconciliation take the
+  same scope; operator SSH certificates and dependency management stay
+  target-level.
+
+`grant.create` records `cred:<id> cred_user:<name>` on a scoped grant, and
+*What can this subject reach?* lists `credential_ids` when every grant
+admitting a target is scoped. Deleting the credential deletes the grants
+scoped to it. Console: *Work with Target Grants* → **F6=Add grant** offers
+the target's credentials as the scope, and the list shows it.
+
 ### Target labels and label rules (Phase 250)
 
 A grant names a target, a safe membership names a safe. A **label rule**
@@ -4628,6 +4668,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-16 | **Phase 252 (credential-level grants).** New §7 subsection *Credential-level grants*: scoping a grant to one credential, the 422/409 rules, that a scoped grant still gates the target, and which doors read it. |
 | 2026-09-16 | **Phase 250 (target labels and label rules).** New §7 subsection *Target labels and label rules*: labels on a target, the selector grammar, allow and deny rules, the three things to know before writing a deny (deny binds administrators — break-glass excepted; deny never gates; relabelling is revocation), routes, audit and the console menu. |
 | 2026-09-16 | **Phase 248 (the review of 240–247).** §7 *Safe permission sets* gains the delegation ceiling (a `can_manage` member grants only what its own live membership carries, and a membership manages only while it is live) and §7 *Identity lock and token expiry* the rotation guard (you cannot rotate the token of an identity whose capabilities you do not hold). The per-session-MFA subsection states the browser-extension limit and its new refusal reason. |
 | 2026-09-15 | **Phase 246 (safe permission sets).** New §7 subsection *Safe permission sets* — `use` / `retrieve` / `approve` on a membership, the default and the upgrade, what a scoped approver can and cannot decide, the audit details. |

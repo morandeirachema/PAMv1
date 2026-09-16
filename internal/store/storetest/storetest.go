@@ -394,6 +394,90 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		}
 	}
 
+	// ---- Credential-scoped grants (Phase 252) ----------------------------
+	// A grant may name ONE credential on its target. Both stores must
+	// round-trip the scope, widen uniqueness to it, refuse a credential on
+	// another target, carry it through both authorization views, and drop
+	// the grant when its credential goes.
+	scopeTgt := store.Target{Name: "scope-host", Host: "10.9.0.2", Port: 22, OSType: "linux", Protocol: "ssh"}
+	if err := st.CreateTarget(ctx, &scopeTgt); err != nil {
+		t.Fatalf("CreateTarget(scope): %v", err)
+	}
+	deployCred := store.Credential{TargetID: scopeTgt.ID, Username: "deploy", SecretType: "password"}
+	rootCred := store.Credential{TargetID: scopeTgt.ID, Username: "root", SecretType: "password"}
+	for _, c := range []*store.Credential{&deployCred, &rootCred} {
+		if err := st.CreateCredential(ctx, c); err != nil {
+			t.Fatalf("CreateCredential(%s): %v", c.Username, err)
+		}
+	}
+	onDeploy := store.TargetGrant{TargetID: scopeTgt.ID, SubjectType: "user", Subject: "olac-olga", CredentialID: &deployCred.ID}
+	if err := st.CreateTargetGrant(ctx, &onDeploy); err != nil {
+		t.Fatalf("CreateTargetGrant(scoped): %v", err)
+	}
+	// The same subject, whole target: a different row, not a conflict...
+	whole := store.TargetGrant{TargetID: scopeTgt.ID, SubjectType: "user", Subject: "olac-olga"}
+	if err := st.CreateTargetGrant(ctx, &whole); err != nil {
+		t.Fatalf("a whole-target grant beside a scoped one must be allowed: %v", err)
+	}
+	// ...and the same scope twice IS one.
+	if err := st.CreateTargetGrant(ctx, &store.TargetGrant{TargetID: scopeTgt.ID, SubjectType: "user", Subject: "olac-olga", CredentialID: &deployCred.ID}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("the same scoped grant twice must conflict, got %v", err)
+	}
+	// A credential on ANOTHER target is refused.
+	if err := st.CreateTargetGrant(ctx, &store.TargetGrant{TargetID: tgt.ID, SubjectType: "user", Subject: "olac-olga", CredentialID: &deployCred.ID}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("a scoped grant naming another target's credential must be ErrNotFound, got %v", err)
+	}
+	scopedList, err := st.ListTargetGrants(ctx, scopeTgt.ID)
+	if err != nil || len(scopedList) != 2 {
+		t.Fatalf("ListTargetGrants(scope): %+v err %v", scopedList, err)
+	}
+	var sawScoped bool
+	for _, g := range scopedList {
+		if g.CredentialID != nil && *g.CredentialID == deployCred.ID {
+			sawScoped = true
+		}
+	}
+	if !sawScoped {
+		t.Fatalf("the scope must round-trip: %+v", scopedList)
+	}
+	scopeEff, err := st.EffectiveTargetGrants(ctx, scopeTgt.ID)
+	if err != nil {
+		t.Fatalf("EffectiveTargetGrants(scope): %v", err)
+	}
+	sawScoped = false
+	for _, g := range scopeEff {
+		if g.CredentialID != nil && *g.CredentialID == deployCred.ID {
+			sawScoped = true
+		}
+	}
+	if !sawScoped {
+		t.Fatalf("the effective view must carry the scope: %+v", scopeEff)
+	}
+	ssg, err := st.GrantsForSubjects(ctx, []store.GrantSubject{{Type: "user", Name: "olac-olga"}})
+	if err != nil {
+		t.Fatalf("GrantsForSubjects(olga): %v", err)
+	}
+	sawScoped = false
+	for _, g := range ssg {
+		if g.Via == store.GrantViaGrant && g.CredentialID != nil && *g.CredentialID == deployCred.ID {
+			sawScoped = true
+		}
+	}
+	if !sawScoped {
+		t.Fatalf("the subject view must carry the scope: %+v", ssg)
+	}
+	// Deleting the credential deletes the grant scoped to it - and nothing else.
+	if err := st.DeleteCredential(ctx, deployCred.ID); err != nil {
+		t.Fatalf("DeleteCredential(deploy): %v", err)
+	}
+	scopedList, err = st.ListTargetGrants(ctx, scopeTgt.ID)
+	if err != nil || len(scopedList) != 1 || scopedList[0].CredentialID != nil {
+		t.Fatalf("only the whole-target grant must survive the credential's deletion: %+v err %v", scopedList, err)
+	}
+	if err := st.DeleteTarget(ctx, scopeTgt.ID); err != nil {
+		t.Fatalf("cleanup scope target: %v", err)
+	}
+
 	// ---- Label rules (Phase 250) ----------------------------------------
 	// The third authorization path: a rule names no target, so it reaches one
 	// by matching the labels the target carries. Both implementations must

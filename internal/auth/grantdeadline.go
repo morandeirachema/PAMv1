@@ -19,6 +19,14 @@ import (
 // deadline; nothing re-reads the grants mid-session. A grant DELETED
 // mid-session is already handled by kill-on-revoke.
 func GrantDeadline(p *Principal, grants []store.TargetGrant, personal bool, now time.Time) (deadline time.Time, reason string, ok bool) {
+	return GrantDeadlineFor(p, grants, nil, personal, now)
+}
+
+// GrantDeadlineFor is GrantDeadline for a session on ONE credential (Phase
+// 252): a grant scoped to a different credential admitted nobody to this
+// session, so its edge is not this session's edge. credID nil is the whole
+// target.
+func GrantDeadlineFor(p *Principal, grants []store.TargetGrant, credID *int64, personal bool, now time.Time) (deadline time.Time, reason string, ok bool) {
 	// A denied principal opens no session, so there is no edge to report; the
 	// gate has already refused by the time this is asked (Phase 250).
 	if DeniedByLabelRule(p, grants, now) {
@@ -37,8 +45,8 @@ func GrantDeadline(p *Principal, grants []store.TargetGrant, personal bool, now 
 	for _, g := range grants {
 		// Only a grant that admits a SESSION bounds one (Phase 246): a
 		// retrieve-only membership admitted nobody to this session.
-		if g.IsDeny() || !store.GrantLive(g.ExpiresAt, g.TimeFrame, now) || !store.GrantPermits(g.Permissions, store.SafePermUse) ||
-			!SubjectMatches(p, g.SubjectType, g.Subject) {
+		if g.IsDeny() || !g.CoversCredential(credID) || !store.GrantLive(g.ExpiresAt, g.TimeFrame, now) ||
+			!store.GrantPermits(g.Permissions, store.SafePermUse) || !SubjectMatches(p, g.SubjectType, g.Subject) {
 			continue
 		}
 		matched = true

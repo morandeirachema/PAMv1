@@ -201,7 +201,7 @@ func (s *Server) revealCredential(w http.ResponseWriter, r *http.Request) {
 	// Reveal is a credential-access path: it obeys the same per-target grants and
 	// four-eyes approval gate as connecting, so a reveal_secret holder can't read
 	// a credential for a target it wasn't granted or bypass an approval window.
-	if !s.gateSecretDelivery(w, r, target, c.Username, "credential.reveal", auth.ActionRetrieve) {
+	if !s.gateSecretDelivery(w, r, target, &c.ID, c.Username, "credential.reveal", auth.ActionRetrieve) {
 		return
 	}
 	// A Zero Standing Privilege credential stores no secret — there is nothing to
@@ -324,6 +324,12 @@ func (s *Server) runWinRM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cred := creds[0]
+	// Now that the credential is known, the grant must cover IT (Phase 252):
+	// the target-level check above admitted the caller to the target, a
+	// grant scoped to another of its credentials must not admit this one.
+	if !s.credentialScopeGate(w, r, target, &cred, "winrm.denied") {
+		return
+	}
 	// The vendor gate needs the login account (the credential username) to enforce
 	// the contract's per-account scope, so it runs after the credential is resolved.
 	if !s.vendorGate(w, r, target, cred.Username, "winrm.denied") {

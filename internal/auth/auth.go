@@ -242,6 +242,32 @@ const (
 // unchanged: they are decisions about a principal or an estate, not about a
 // membership's rights.
 func CanAccessTargetAt(p *Principal, grants []store.TargetGrant, safeScoped, personal bool, ungated UngatedDefault, now time.Time, act Action) bool {
+	return canAccess(p, grants, nil, safeScoped, personal, ungated, now, act)
+}
+
+// CanAccessCredentialAt is CanAccessTargetAt for a request about ONE
+// credential on the target (Phase 252 — object-level access control). A
+// grant scoped to a different credential does not match — and, like an
+// expired one, still COUNTS, so a subject named on credential A is refused
+// credential B rather than finding B open. The admin, personal-override and
+// deny readings are unchanged: they are about the principal and the target,
+// not about which credential. Every door that knows its credential calls
+// this; the reach view and the management paths that do not, call
+// CanAccessTargetAt, which any grant on the target satisfies.
+func CanAccessCredentialAt(p *Principal, grants []store.TargetGrant, credID int64, safeScoped, personal bool, ungated UngatedDefault, now time.Time, act Action) bool {
+	return canAccess(p, grants, &credID, safeScoped, personal, ungated, now, act)
+}
+
+// CanConnectCredentialAt is CanAccessCredentialAt for the use action — what
+// the three proxies ask at admission, once they know which credential the
+// operator named.
+func CanConnectCredentialAt(p *Principal, grants []store.TargetGrant, credID int64, safeScoped, personal bool, ungated UngatedDefault, now time.Time) bool {
+	return canAccess(p, grants, &credID, safeScoped, personal, ungated, now, ActionUse)
+}
+
+// canAccess is the one body behind the target- and credential-scoped
+// decisions; credID nil means "the target as a whole".
+func canAccess(p *Principal, grants []store.TargetGrant, credID *int64, safeScoped, personal bool, ungated UngatedDefault, now time.Time, act Action) bool {
 	// DENY FIRST (Phase 250), ahead of every bypass but break-glass. A deny
 	// label rule is the only authorization row in PAMv1 that says no, and a
 	// "no" an administrator can step around is not one: the estate-wide
@@ -281,8 +307,8 @@ func CanAccessTargetAt(p *Principal, grants []store.TargetGrant, safeScoped, per
 		return true
 	}
 	for _, g := range grants {
-		if !g.IsDeny() && store.GrantLive(g.ExpiresAt, g.TimeFrame, now) && store.GrantPermits(g.Permissions, string(act)) &&
-			SubjectMatches(p, g.SubjectType, g.Subject) {
+		if !g.IsDeny() && g.CoversCredential(credID) && store.GrantLive(g.ExpiresAt, g.TimeFrame, now) &&
+			store.GrantPermits(g.Permissions, string(act)) && SubjectMatches(p, g.SubjectType, g.Subject) {
 			return true
 		}
 	}

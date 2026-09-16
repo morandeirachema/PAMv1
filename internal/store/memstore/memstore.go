@@ -288,8 +288,18 @@ func (m *Memstore) CreateTargetGrant(_ context.Context, g *store.TargetGrant) er
 	if _, ok := m.targets[g.TargetID]; !ok {
 		return store.ErrNotFound
 	}
+	if g.CredentialID != nil {
+		c, ok := m.creds[*g.CredentialID]
+		if !ok || c.TargetID != g.TargetID {
+			return store.ErrNotFound // a scoped grant names a credential on ITS target
+		}
+	}
+	// One grant per (target, subject, credential scope): a whole-target grant
+	// and a scoped one for the same subject are different rows, as are two
+	// scoped to different credentials (Phase 252).
+	same := func(a, b *int64) bool { return (a == nil && b == nil) || (a != nil && b != nil && *a == *b) }
 	for _, ex := range m.grants {
-		if ex.TargetID == g.TargetID && ex.SubjectType == g.SubjectType && ex.Subject == g.Subject {
+		if ex.TargetID == g.TargetID && ex.SubjectType == g.SubjectType && ex.Subject == g.Subject && same(ex.CredentialID, g.CredentialID) {
 			return store.ErrConflict
 		}
 	}
@@ -456,6 +466,7 @@ func (m *Memstore) grantsForSubjectsLocked(subjects []store.GrantSubject) []stor
 		out = append(out, store.SubjectGrant{
 			TargetID: g.TargetID, TargetName: t.Name, SubjectType: g.SubjectType,
 			Subject: g.Subject, Via: store.GrantViaGrant, ExpiresAt: g.ExpiresAt, TimeFrame: g.TimeFrame,
+			CredentialID: g.CredentialID,
 		})
 	}
 	for _, sm := range m.safeMembers {
@@ -1466,6 +1477,14 @@ func (m *Memstore) DeleteCredential(_ context.Context, id int64) error {
 	for did, d := range m.credDeps {
 		if d.CredentialID == id {
 			delete(m.credDeps, did)
+		}
+	}
+	// ...and grants scoped to the credential (Phase 252): a grant on a
+	// credential that no longer exists admits nothing and must not linger
+	// as a row that still gates the target.
+	for gid, g := range m.grants {
+		if g.CredentialID != nil && *g.CredentialID == id {
+			delete(m.grants, gid)
 		}
 	}
 	// pgstore FK cascades app_secret_grants on credential delete — match it.

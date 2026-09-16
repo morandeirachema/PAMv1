@@ -304,6 +304,13 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 		return
 	}
 	cred := creds[0]
+	// The grant must cover THIS credential (Phase 252); the target-level
+	// decision above used the same grants, so this is a re-read of nothing.
+	if !auth.CanConnectCredentialAt(principal, grants, cred.ID, target.SafeID != nil, personal, s.rt().ungated, time.Now()) {
+		s.audit(r.Context(), proto.name+".denied", "target:"+target.Name+" cred_user:"+cred.Username+" reason:credential-scope")
+		writeError(w, http.StatusForbidden, "not authorized for this credential")
+		return
+	}
 	// Vendor contract gate (Phase 29): a vendor reaches the target only within an
 	// active contract grant authorizing the login account (the credential username).
 	if isVendor, allowed, verr := s.store.VendorSessionAllowed(r.Context(), principal.Name, target.Name, cred.Username, time.Now()); verr != nil {
@@ -422,7 +429,7 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 		// snapshot, which cannot be more accurate than the one that admitted.
 		var deadline *time.Time
 		var why string
-		if dl, reason, ok := auth.GrantDeadline(principal, grants, personal, time.Now()); ok {
+		if dl, reason, ok := auth.GrantDeadlineFor(principal, grants, &cred.ID, personal, time.Now()); ok {
 			deadline, why = &dl, reason
 		}
 		sid := s.sessions.Register(session.Info{

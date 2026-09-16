@@ -349,7 +349,11 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 		return admitResult{outcome: admitCheckFailed, gate: gateTargetGrants, target: target, cred: cred}
 	}
 	now := time.Now()
-	if !auth.CanConnectTargetAt(principal, grants, target.SafeID != nil, personal, g.ungated, now) {
+	// The decision is about THIS credential (Phase 252): a grant scoped to
+	// another credential on the same target does not admit it — and still
+	// gates the target, so the operator who may use `deploy` finds `root`
+	// refused rather than open.
+	if !auth.CanConnectCredentialAt(principal, grants, cred.ID, target.SafeID != nil, personal, g.ungated, now) {
 		return admitResult{outcome: admitDenied, gate: gateTargetPolicy, target: target, cred: cred}
 	}
 	// A grant with an edge — an expiry, or a time-frame window that closes —
@@ -357,7 +361,7 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 	// ends with the authorization instead of outliving it. Grants without an
 	// edge, or a principal admitted without needing one, leave it unset.
 	var bounds sessionBounds
-	if dl, why, bounded := auth.GrantDeadline(principal, grants, personal, now); bounded {
+	if dl, why, bounded := auth.GrantDeadlineFor(principal, grants, &cred.ID, personal, now); bounded {
 		bounds = sessionBounds{deadline: &dl, reason: why}
 	}
 

@@ -412,7 +412,16 @@
     return out;
   }
   async function openLabelRules() { try { labelRules = await api("GET", "/api/label-rules"); } catch (e) { labelRules = []; } go("labelrules"); }
-  async function openGrants(tid) { grantsTarget = tid; try { grants = await api("GET", `/api/targets/${tid}/grants`); } catch (e) { grants = []; } go("grants"); }
+  let grantCreds = [];
+  // The target's own credentials ride along with its grants (Phase 252), so
+  // Add-grant can offer them as a scope and the list can name a scoped one.
+  async function openGrants(tid) {
+    grantsTarget = tid;
+    try { [grants, grantCreds] = await Promise.all([api("GET", `/api/targets/${tid}/grants`), apiAll("/api/credentials").then((cs) => cs.filter((c) => c.target_id === tid)).catch(() => [])]); }
+    catch (e) { grants = []; grantCreds = []; }
+    go("grants");
+  }
+  const grantCredName = (id) => { if (id == null) return "(all)"; const c = grantCreds.find((x) => x.id === id); return c ? c.username : String(id); };
   // Broker approvals (Phase 43): a parked agent tool call waits for a human. The
   // routes exist only when the broker is enabled, so a 404 shows a hint rather
   // than an error, matching the application-secrets screen.
@@ -1348,8 +1357,8 @@ A target with no grants is open to any connect-capable identity.
   <span class="cyan">4=Delete</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Subject type</th><th>Subject</th><th>Expires</th><th>Time frame</th></tr>
-${grants.map((g) => `<tr><td>${opt(g.id)}</td><td>${esc(g.id)}</td><td>${pad(g.subject_type, 10)}</td><td>${pad(g.subject, 18)}</td><td>${cell(g.expires_at ? fmtTs(g.expires_at) : "-", 17)}</td><td>${esc(g.time_frame || "-")}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Subject type</th><th>Subject</th><th>Credential</th><th>Expires</th><th>Time frame</th></tr>
+${grants.map((g) => `<tr><td>${opt(g.id)}</td><td>${esc(g.id)}</td><td>${pad(g.subject_type, 10)}</td><td>${pad(g.subject, 18)}</td><td>${cell(grantCredName(g.credential_id), 14)}</td><td>${cell(g.expires_at ? fmtTs(g.expires_at) : "-", 17)}</td><td>${esc(g.time_frame || "-")}</td></tr>`).join("")}
 </table>${grants.length ? "" : `<div class="cyan indent">(No grants — target is open to all connect-capable identities. F6 to restrict.)</div>`}
 <input type="submit" hidden></form>
 ${fkeys("F3=Exit   F5=Refresh   F6=Add grant   F12=Cancel")}`;
@@ -1434,6 +1443,7 @@ Grant access to target <span class="white">${esc(targetName(grantsTarget))}</spa
 <form id="f-add" class="indent">
 <label>Subject type  . . . :  <select name="subject_type"><option>role</option><option>user</option></select>   <span class="cyan">role, user</span></label>
 <label>Subject . . . . . . :  <input name="subject" size="24" required autofocus>   <span class="cyan">a role (admin/user/…) or a username</span></label>
+<label>Credential  . . . . :  <select name="credential_id"><option value="">(whole target)</option>${grantCreds.map((c) => `<option value="${esc(c.id)}">${esc(c.username)}</option>`).join("")}</select>   <span class="cyan">scope to ONE credential (Phase 252); other credentials stay refused</span></label>
 <label>Expires . . . . . . :  <input name="expires_at" type="datetime-local" size="20">   <span class="cyan">blank = no end date (local time)</span></label>
 <label>Time frame  . . . . :  <input name="time_frame" size="36" placeholder="Mon-Fri 08:00-18:00 Europe/Madrid">   <span class="cyan">blank = any time</span></label>
 <input type="submit" hidden>
@@ -1443,6 +1453,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
           const body = grantLifetime({ subject_type: f.subject_type, subject: f.subject }, f);
+          if (f.credential_id) body.credential_id = Number(f.credential_id);
           try { await api("POST", `/api/targets/${grantsTarget}/grants`, body); say("GRANT ADDED."); await openGrants(grantsTarget); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };

@@ -473,6 +473,7 @@ guard against connections that open and never authenticate, not a fault.
 
 | Date | Change |
 |---|---|
+| 2026-09-16 | Phase 252: a grant may now cover **one credential** on a target rather than all of them — you might log in as `deploy@host` but be refused `root@host` on the same target. *What can this subject reach?* lists `credential_ids` when your access is scoped that way. |
 | 2026-09-16 | Phase 250: a target may now admit you — or refuse you — because of its **labels** rather than a grant that names it. *What can this subject reach?* (menu 31) shows such a target as reached `via: label`, and does not list one a deny rule refuses; the refusal reads the same as any other target-policy refusal. |
 | 2026-09-15 | Phase 246: a safe membership can now carry **use**, **retrieve** and **approve** — you may be able to connect to a target but not see its password, or decide a safe's access requests without the approver role. New §6 subsection *Approving for one safe*. |
 | 2026-09-15 | Phase 244: some targets may now ask for a **second factor on every session** — a one-time-code prompt after your token on SSH, or a single-use ticket (portal option 10 or `POST /api/session-mfa`) as the password for psql or sqlcmd; the portal asks for the code itself when you reveal, check out, run kubectl or open a desktop. New §5 subsection. |
