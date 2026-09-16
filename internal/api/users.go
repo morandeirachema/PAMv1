@@ -267,6 +267,19 @@ func (s *Server) rotateUserToken(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
+	// The same privilege-escalation guard createUser and updateUser apply
+	// (Phase 248). A rotation hands the caller a WORKING token for this
+	// identity, so without it a delegated user-admin — a custom profile
+	// carrying manage_users and nothing else — could mint itself an
+	// administrator's token and present it as its own key. Checked before
+	// anything is written, so a refused rotation leaves the victim's token
+	// working.
+	grantCaps, err := s.capsForGrant(r.Context(), u.Role)
+	if err != nil || !principalFrom(r.Context()).Covers(grantCaps) {
+		s.audit(r.Context(), "authz.denied", "user:"+u.Username+" reason:rotate-beyond-caps")
+		writeError(w, http.StatusForbidden, "cannot rotate the token of an identity whose capabilities you do not hold")
+		return
+	}
 	token, err := generateToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token generation failed")

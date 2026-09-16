@@ -377,7 +377,7 @@
     `<div class="msg${msgErr ? " err" : ""}">${esc(msg)}</div>`;
 
   // opt renders a subfile option input; optCell reads the typed option for a row.
-  const opt = (id) => `<input class="opt" name="o${esc(id)}" maxlength="1">`;
+  const opt = (id) => `<input class="opt" name="o${esc(id)}" maxlength="2">`;
   const optVal = (form, id) => (form["o" + id]?.value || "").trim();
 
   // --- async openers: fetch the screen's data, then render it. Also used by F5. ---

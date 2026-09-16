@@ -45,6 +45,13 @@ type entry struct {
 	// 240), touched by the proxies' input legs through Activity; the idle
 	// timeout reads it. Register seeds it with Started.
 	last *atomic.Int64
+	// swept marks a session the lifetime monitor has already ended (Phase
+	// 248). kill() only asks the handler to unwind, and the entry leaves the
+	// registry when that handler's own deferred Remove runs — which can be
+	// several ticks later if it is blocked on a remote call. Without this the
+	// monitor re-selects the same session every tick and audits one ending
+	// many times.
+	swept bool
 }
 
 // Registry is a thread-safe set of live sessions.
@@ -346,10 +353,11 @@ func (r *Registry) SweepLifetimes(ctx context.Context, now time.Time, cfg Lifeti
 	}
 	r.mu.Lock()
 	var victims []victim
-	for _, e := range r.m {
-		if e.kill == nil {
+	for id, e := range r.m {
+		if e.kill == nil || e.swept {
 			continue
 		}
+		mark := func() { e.swept = true; r.m[id] = e }
 		switch {
 		case e.info.Deadline != nil && !now.Before(*e.info.Deadline):
 			reason := e.info.DeadlineReason
@@ -357,10 +365,13 @@ func (r *Registry) SweepLifetimes(ctx context.Context, now time.Time, cfg Lifeti
 				reason = "deadline"
 			}
 			victims = append(victims, victim{e, reason})
+			mark()
 		case cfg.MaxDuration > 0 && now.Sub(e.info.Started) >= cfg.MaxDuration:
 			victims = append(victims, victim{e, "max-duration"})
+			mark()
 		case cfg.IdleTimeout > 0 && e.last != nil && now.Sub(time.Unix(0, e.last.Load())) >= cfg.IdleTimeout:
 			victims = append(victims, victim{e, "idle-timeout"})
+			mark()
 		}
 	}
 	r.mu.Unlock()

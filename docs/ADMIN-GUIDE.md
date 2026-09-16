@@ -1359,7 +1359,13 @@ curl -X POST -H "X-API-Key: $PAM_API_KEY" localhost:8080/api/users/7/token \
 minted before Phase 242 has). An expired token is refused like an unknown
 one, and the user row — role, grants, Slack link, history — is untouched:
 rotate it rather than delete and re-create. You cannot lock the identity you
-are calling with. Audited `user.lock` / `user.unlock` / `user.token_rotate`,
+are calling with, and **you cannot rotate the token of an identity whose
+capabilities you do not hold** (Phase 248): rotation returns a working token
+for that identity, so it takes the same escalation guard as creating or
+promoting a user — without it a delegated user-admin, a custom profile
+carrying `manage_users`, could mint itself an administrator's token. Refused
+403, audited `authz.denied reason:rotate-beyond-caps`, and the target
+identity's existing token keeps working. Audited `user.lock` / `user.unlock` / `user.token_rotate`,
 with the `session.revoked` cascade (`reason:locked` / `token-rotated`); a
 locked identity's login attempt is `login.failed reason:locked`. In the
 console: *Work with Users* → **6=Lock**, **7=Unlock**, **8=Rotate token**,
@@ -1741,6 +1747,26 @@ recurrence, step-up decisions, broker approvals and certification campaigns
 still need the global approve capability. A refused decision outside the safe is
 audited `access.decision_denied reason:not-an-approver`; `safe.member.add`
 records `permissions:`. There is no safe-scoped audit reading yet.
+
+**Delegated management is bounded twice (Phase 248).** `can_manage` is the
+right to edit the safe's roster, and the roster is the one thing that can
+rewrite its own limits, so two rules apply to a member who holds it — never to
+a global target manager, who is unconstrained:
+
+- A membership **manages only while it is live**. An expired `expires_at` or a
+  moment outside the membership's `time_frame` stops it managing, exactly as it
+  stops it opening a session. (A `time_frame` row is never deleted — only its
+  effect is periodic — so without this a nine-to-five delegate could rewrite
+  the roster at 03:00 on a Sunday.)
+- A delegate **grants only what it holds**. Adding a member with `retrieve`
+  requires the caller's own live membership to carry `retrieve`; the same for
+  `approve`, and for a `role:` membership, which can cover the caller
+  themselves. Refused 403, audited `authz.denied reason:grant-beyond-own-membership`.
+  This is the safe-level form of the rule that already stops a delegated
+  user-admin minting a user more capable than itself.
+
+So "manages the member list but may not read the passwords" is now a state the
+system enforces, not merely one the API can express.
 
 ### Personal/private safes (Phase 139)
 
@@ -2218,8 +2244,12 @@ operator SSH certificates. Break-glass bypasses it, as it bypasses every gate. T
 bootstrap `PAM_API_KEY` has no second factor and is refused. AI-agent broker
 tools, the application-secrets API and external share guests are not human
 sessions and are unaffected; a share-join attaches to a session that already
-passed. The browser extension cannot carry a ticket, so its reveal is refused on a
-target that requires one.
+passed. The browser extension cannot carry a ticket — its token reaches exactly one
+route, so it can never call `POST /api/session-mfa` — so its reveal is refused
+on a target that requires one, with reason
+`session-mfa-extension-unsupported` and an instruction to reveal in the portal
+instead (Phase 248 corrected a refusal that had told it to call a route that
+refuses that very token).
 
 **How an operator proves it:**
 
@@ -4526,6 +4556,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-16 | **Phase 248 (the review of 240–247).** §7 *Safe permission sets* gains the delegation ceiling (a `can_manage` member grants only what its own live membership carries, and a membership manages only while it is live) and §7 *Identity lock and token expiry* the rotation guard (you cannot rotate the token of an identity whose capabilities you do not hold). The per-session-MFA subsection states the browser-extension limit and its new refusal reason. |
 | 2026-09-15 | **Phase 246 (safe permission sets).** New §7 subsection *Safe permission sets* — `use` / `retrieve` / `approve` on a membership, the default and the upgrade, what a scoped approver can and cannot decide, the audit details. |
 | 2026-09-15 | **Phase 244 (per-session MFA).** §4 gains `PAM_SESSION_MFA`; new §7 subsection *Per-session MFA* — the three policy sources, what the gate covers and what it does not, the SSH prompt and the ticket (TOTP / recovery / WebAuthn, single-use, two minutes, one target), the audit actions and refusal reasons. |
 | 2026-09-03 | **Phase 242 (identity lock and token expiry).** §4 gains `PAM_USER_TOKEN_TTL_HOURS`; new §7 subsection *Locking an identity and rotating its token* — the lock and unlock calls, what a lock stops, `until`, rotation and per-user token TTLs, the audit actions, the console options. |

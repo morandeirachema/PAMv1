@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–247 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–248 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,184 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 248 — The review of 240–247, and what it found ✅
+
+A `/security-review` and `/code-review xhigh` pass over Phases 239–247
+(`ce893ef..HEAD`: session lifetime + grant expiry + time frames, identity lock
+and token expiry, per-session MFA, safe permission sets, their five releases
+and two Dependabot bumps — 97 files, +6,342/−341), run by the user on
+2026-09-16 in the shape 231, 236 and 238 took. The four Tier 8 rows themselves
+hold: the gate order, the ticket's single use and target binding, and the
+deadline's parity with the admission decision were each traced to every entry
+point and were correct. What it found sits in the **seams between** those
+rows — three places where an authorization added in one phase was not read by
+a decision written in another, and a window edge that is right on 363 days a
+year. All closed here; **released by Phase 249 as v0.69.1** — a patch, since
+only behaviour that was wrong moved.
+
+- [x] **A delegated user-admin could mint itself an administrator's token
+  (High).** `POST /api/users/{id}/token` (Phase 242) hands the caller a
+  *working* token for the named identity, and it was the one
+  capability-conferring route with no escalation guard: `createUser` and
+  `updateUser` both run `principalFrom(ctx).Covers(capsForGrant(role))`, and
+  rotation ran nothing between `GetUser` and `writeJSON(…, "token": token)`.
+  `CapManageUsers` is not admin-only — a custom permission profile (Phase 12)
+  carries it, which is exactly the "delegated user-admin" the profile handler
+  documents — so that delegate could rotate the `admin` row's token, read the
+  plaintext out of the 200, and present it as its own key: reveal any
+  secret, connect to every target. The same guard now runs **before** anything
+  is written, so a refused rotation also leaves the victim's token working,
+  and refusal is audited `authz.denied … reason:rotate-beyond-caps`.
+  `TestRotateUserTokenEscalationGuard` proves the escalation is refused, that
+  a rotation inside the delegate's own capabilities still works, and that a
+  built-in admin is unconstrained
+- [x] **A safe's management right outlived its own membership (Medium).**
+  Phase 240 put `expires_at` and `time_frame` on a safe membership and Phase
+  246 made `can_manage` independent of what a membership confers — but
+  `canManageSafe` read neither, so an expired or out-of-window `can_manage`
+  row still managed the roster. That is the one right that can rewrite
+  itself: the holder adds a fresh, unbounded membership and the bound is
+  gone. A `time_frame` row never expires as a row at all (the sweeper deletes
+  only on `expires_at`), so the window was advisory rather than enforced.
+  Now filtered through the same `store.GrantLive` every access decision uses
+  (`TestSafeManagementHonoursMembershipLifetime`: expired and out-of-frame
+  rows neither add nor remove members, a live one still does)
+- [x] **A delegated safe manager could grant what it did not hold (Medium).**
+  Phase 246 split a membership into `use` / `retrieve` / `approve`, and the
+  console offers *Manages the safe* beside those three checkboxes — so "may
+  manage the roster, may not read the passwords" reads like a state the
+  product supports. It was not enforced: a `use`-only manager could add a
+  `role:user` membership carrying `retrieve`, which covers the manager
+  themselves, and read every secret in the safe. `addSafeMember` now applies
+  the repo's own "you cannot grant more than you have" rule
+  (`store.SafePermissionsCover`), the one `createUser` applies to
+  capabilities: a delegate hands out only what its own live membership
+  carries, a global `CapManageTargets` manager stays unconstrained, and the
+  refusal audits `reason:grant-beyond-own-membership`. `safeManagement`
+  replaces `canManageSafe` where the answer matters, returning the caller's
+  own set beside the yes/no (`TestSafeManagerCannotGrantBeyondItsOwn`)
+- [x] **A grant's window edge was an hour wrong on the two DST days
+  (Medium).** `timeframe.End` built the edge by adding `f.end` minutes to
+  local midnight while `Contains` read the wall clock, so on a transition day
+  the two disagreed by the hour the zone gained or lost. That edge is what
+  `store.GrantBound` → `auth.GrantDeadline` stamps on a session: on
+  2026-03-29 a `08:00-18:00 Europe/Madrid` window reported **19:00**, so a
+  session ran a full hour past the authorization that admitted it while the
+  connect gate was already refusing new ones — Phase 240's own "a session
+  cannot outlive its grant" invariant, broken twice a year. On the autumn day
+  the session was cut an hour early. The edge is now built as the wall-clock
+  time it is (`time.Date(y, mo, d, 0, f.end, …)`), which also carries the
+  overnight leg across the transition. `TestEndAcrossDST` covers both days,
+  an ordinary day for contrast, and the overnight leg; found independently by
+  both review passes
+- [x] **The lifetime monitor ended one session many times.**
+  `SweepLifetimes` called `kill()` but never marked the entry, and an entry
+  leaves the registry only when its own handler's deferred `Remove` runs — so
+  a session whose handler is blocked on a remote call (a WinRM command, a
+  slow teardown) was re-selected every 5-second tick: dozens of `Close()`
+  calls and, worse, dozens of `session.killed` audit rows for one ending, in
+  a system whose audit trail is the product. The entry now carries `swept`
+  (`TestSweepEndsASessionOnce`: five ticks against a blocked handler produce
+  one kill and one audit row, and `Remove` still works afterwards)
+- [x] **The viewer's deadline fell open on a store error.** `grantDeadline`
+  re-read `EffectiveTargetGrants` and `EffectiveSafePersonal` — twenty lines
+  after `viewerTunnel` had already read both to authorize the connection —
+  and returned "no deadline" on any error, so a transient failure on the
+  *second* read registered an RDP/VNC session with no bound at all, past its
+  grant's expiry or time-frame edge. The three proxies fail closed on the
+  same bound. The deadline is now computed from the grants the request was
+  actually admitted under, which removes the fail-open and the second
+  snapshot at once; `grantDeadline` is deleted
+- [x] **The grant sweep could delete rows with no audit.**
+  `pgstore.SweepExpiredGrants` ran two `DELETE … RETURNING` statements in
+  autocommit and returned `nil, nil, err` if the second failed — so the first
+  statement's rows were already gone while the caller, which audits what comes
+  back, emitted no `grant.expired` at all. Both deletes now ride one
+  transaction: either both are gone and both are audited, or neither is
+- [x] **The RDP/VNC idle timeout could never fire.** `PAM_SESSION_IDLE_MIN`
+  counts operator input, and the viewer bridge called `touch()` on every
+  browser→guacd frame — including the `sync` replies guacamole-common-js
+  sends automatically and its own `nop` pings. So the one session type where
+  an unattended desktop *is* the risk was the one that never timed out, while
+  the low-level doc listed "browser keyboard/mouse" as the trigger. A frame is
+  now input only if it carries `key`, `mouse`, `touch`, `clipboard`, `size`,
+  `put` or `blob`; a frame that will not parse counts as input, because ending
+  sessions is what the clock does and unreadable must fail towards keeping one
+  alive (`TestOperatorInputIgnoresTunnelKeepalives`)
+- [x] **The extension's refusal gave an instruction it cannot follow.** Phase
+  244 stated the limit — a browser-extension token reaches exactly one route,
+  so it can never mint a session-MFA ticket — but the refusal it got still
+  said "mint a ticket (`POST /api/session-mfa`)", a route that refuses that
+  very token. New reason `session-mfa-extension-unsupported`, separating "did
+  not present a factor" from "could not" in the audit trail, and a message
+  that names the portal (`TestExtensionRevealUnderSessionMFA`)
+- [x] **A store failure looked like a wrong recovery code.**
+  `auth.VerifySecondFactor`'s doc says a store error on a factor check is
+  returned so the caller can log it, and the TOTP branch did; the recovery
+  branch dropped it (`err == nil && consumed`), so an operator locked out by
+  an unreachable database and one who mistyped produced the same
+  `session.mfa_failed` and the same silence in the log
+  (`TestVerifySecondFactorReportsStoreFailure`)
+- [x] **Console option `10` could not be typed.** The option field is
+  rendered by one helper with `maxlength="1"`, and two screens advertise a
+  two-digit option — Phase 244's *10=Session MFA ticket*, the only console
+  route to a ticket for `psql`/`sqlcmd`, and the older *10=DoubleLock on/off*.
+  The browser dropped the second digit and the operator got `CPF0002: OPTION 1
+  NOT VALID`. `TestAdvertisedOptionsAreTypeable` now asserts the invariant
+  rather than the character: every option number any screen advertises fits
+  the field
+- [x] **Doc currency.** Both READMEs' *What works today* still said "Phases
+  0–151" while listing capabilities through Phase 246 — stale since Phase 151
+  (2026-08-16), because it is the one phase-range string no release checklist
+  named. Corrected in both, and it belongs on the release checklist beside the
+  `Reflects:` headers. `ParseSafePermissions`
+  was rewritten as one pass (it called `NormalizeSafePermissions` n+2 times for
+  every membership row every authorization read returns), and
+  `store.LiveTargetGrants`'s comment now says what it is — the contract test's
+  assertion helper, not the connect gate, which filters inline
+- [x] **What was clean.** The release plumbing, which is what 238 found
+  broken: all five releases in the range have their digest PR landed, and
+  every recorded digest matches what GHCR serves anonymously (`v0.65.1`
+  `4274ec4e…` · `v0.66.0` `031b4a73…` · `v0.67.0` `e7f1a5ff…` · `v0.68.0`
+  `6df1327b…` · `v0.69.0` `c1f8d1b7…`, `0.69.0` and `latest` on one digest).
+  Pin sweep returns exactly one release; chart 0.60.0 ↔ app 0.69.0; route
+  count 201, migration high-water `0056` and store surface 225 all match
+  their claims, and all 29 tests the four feature phases claim exist. On the
+  security side: the session-MFA ticket is spent before its target is
+  compared (so a wrong-target ticket is burned, not retried), refused as an
+  API key on every route, and refused at the share-join path that never runs
+  `admit()`; gate order puts MFA after target authorization and before
+  approval on all six doors; `auth.GrantDeadline` mirrors
+  `CanAccessTargetAt` predicate for predicate; both stores carry the new
+  columns on every authorization read; the Phase 246 route move keeps its
+  refusal ahead of any request-id lookup and filters the list before the page
+  window; and every newly rendered console field is escaped
+- [x] **Two negative results, recorded rather than claimed.** The flake §3d
+  waits on (`TestDBProxyZSPProvisionsAndTearsDownRole`) and the one Phase 243
+  named (`TestSFTPCaptureRefusesReusedRequestID`) did **not** reproduce: 60
+  targeted iterations under `-race`, then the whole `internal/proxy` package
+  8× in parallel (167s), all green, both tests confirmed to execute rather
+  than skip. Both stay open. And the double `GetAccessRequest` on the
+  approve/deny path is **not** the race it looks like — `DecideAccessRequest`
+  is already a compare-and-set on `status='pending'` (2026-08-26 audit, M-4)
+  and a request's `target_id` is immutable, so the two reads cannot disagree
+  about anything either check reads
+- [x] **Left open, with reasons.** A scoped approver's `listAccessRequests`
+  still reads with `limit=0` and filters in memory, and `/api/me` still runs a
+  grants read per call to answer one boolean: both want a store-side predicate,
+  which means a new store method, and a review phase is the wrong place to grow
+  the surface. `promptSessionMFA` lists every target on the SSH password path
+  and `admit()` lists them again — worth carrying the resolved target through
+  the pending-principal entry, which is a structural change to the handshake,
+  not a fix. The two session-MFA refusal-message tables (`proxy` and `api`)
+  stay duplicated for now
+- [x] No schema, route, env-var or store-surface change (routes 201,
+  migrations `0056`, surface 225); one new audit reason
+  (`session-mfa-extension-unsupported`) and two new `authz.denied` reasons
+  (`rotate-beyond-caps`, `grant-beyond-own-membership`); two new exported
+  store helpers (`SafePermissionsCover`, `SafePermissionOrder`), neither on
+  the `Store` interface
 
 ## Phase 247 — v0.69.0 ✅
 

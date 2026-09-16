@@ -151,7 +151,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–151, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–227 y 229–248, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 

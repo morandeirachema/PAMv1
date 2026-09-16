@@ -415,7 +415,16 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 
 	var touch = func() {}
 	if s.sessions != nil {
-		deadline, why := s.grantDeadline(ctx, target)
+		// The bound comes from the grants THIS request already read and was
+		// admitted under (Phase 248), not from a second read that silently
+		// returned "unbounded" when the store hiccuped — the three proxies
+		// fail closed on the same bound, and a re-read is also a second
+		// snapshot, which cannot be more accurate than the one that admitted.
+		var deadline *time.Time
+		var why string
+		if dl, reason, ok := auth.GrantDeadline(principal, grants, personal, time.Now()); ok {
+			deadline, why = &dl, reason
+		}
 		sid := s.sessions.Register(session.Info{
 			Actor: principal.Name, Target: target.Name, Protocol: proto.name, Remote: r.RemoteAddr, Started: time.Now(),
 			Deadline: deadline, DeadlineReason: why,
@@ -518,12 +527,36 @@ func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, cli
 			if _, werr := gconn.Write(data); werr != nil {
 				break
 			}
-			touch()          // keyboard/mouse from the browser is operator activity (Phase 240)
+			if operatorInput(data) {
+				touch() // keyboard/mouse from the browser is operator activity (Phase 240)
+			}
 			note("in", data) // pasted INTO the target by the operator
 		}
 		done <- struct{}{}
 	}()
 	<-done
+}
+
+// operatorInput reports whether a browser→guacd frame carries something the
+// OPERATOR did, as opposed to the tunnel keeping itself alive (Phase 248).
+// guacamole-common-js answers every server `sync` with one of its own and
+// sends `nop` pings on its own schedule, so counting every inbound message as
+// activity meant PAM_SESSION_IDLE_MIN could never fire on an RDP or VNC
+// session — the one session type where an unattended desktop is the whole
+// risk. A frame this cannot parse counts as input: the idle timeout ends
+// sessions, so unreadable must fail towards keeping one alive.
+func operatorInput(frame []byte) bool {
+	insts := guacd.DecodeAll(frame)
+	if len(insts) == 0 {
+		return true
+	}
+	for _, inst := range insts {
+		switch inst.Opcode {
+		case "key", "mouse", "touch", "clipboard", "size", "put", "blob":
+			return true
+		}
+	}
+	return false
 }
 
 // atoiOr parses s as a positive int, returning def when s is empty, non-numeric,
