@@ -35,7 +35,8 @@ store method was added, and no existing grant changes meaning.
 **What has not changed.** Every grant that existed before this release
 covers the whole target, exactly as it did; safe memberships and label rules
 confer every credential on their targets. Deleting a credential deletes the
-grants scoped to it. The image is `ghcr.io/morandeirachema/pamv1:0.71.0`.
+grants scoped to it. The image is `ghcr.io/morandeirachema/pamv1:0.71.0`, digest
+`sha256:82b295e…` (the full value is in the README and on the release page).
 
 ## [0.70.0] — 2026-09-16
 
