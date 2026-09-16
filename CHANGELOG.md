@@ -9,6 +9,39 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.70.0] — 2026-09-16
+
+A minor that ships **Phase 250** — target labels with label-based grants and
+deny rules, the next row of the CyberArk / WALLIX / Teleport research pass.
+**The schema, three routes and three store methods are new**; no environment
+variable moved, and no existing grant, membership or target changes meaning.
+
+**What an operator can now do.**
+
+- **Label a target** — `"labels":{"env":"prod","tier":"db"}` on
+  `POST`/`PUT /api/targets`, or the *Labels* field on *Work with Targets*.
+  Labels are stored in canonical form and audited on every change,
+  including a PUT that clears them (`labels:-`), because they decide access.
+- **Write one rule for the whole estate** — `POST /api/label-rules` with a
+  selector (`tier=db`, `env=prod,tier=db`, `env=*`) grants a user or role
+  every target whose labels match, with the same `permissions`,
+  `expires_at` and `time_frame` a grant takes. A target joins or leaves the
+  policy by being labelled; the rule never changes. Console menu **32**.
+- **Say no** — `"effect":"deny"` refuses the subject every matching target.
+  A deny is decided **first**, ahead of the administrator bypass, and
+  **binds administrators**; only break-glass is exempt, as it is from the
+  CIDR allowlist. A deny never gates a target on its own, so excluding one
+  subject cannot close the target to everyone else.
+- **Review who is denied what** — `GET /api/label-rules` needs only
+  `read_inventory`, so an auditor reads the policy without being able to
+  write it; *What can this subject reach?* shows a label-admitted target as
+  `via: label` and omits any a deny rule refuses.
+
+**What has not changed.** Every target that existed before this release is
+unlabelled and matches no selector, so no existing access is widened or
+narrowed by the upgrade; direct grants and safe memberships mean exactly what
+they did. The image is `ghcr.io/morandeirachema/pamv1:0.70.0`.
+
 ## [0.69.1] — 2026-09-16
 
 A patch that ships **Phase 248** — the review of Phases 240–247. Only
@@ -3216,6 +3249,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.70.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.70.0
 [0.69.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.69.1
 [0.69.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.69.0
 [0.68.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.68.0
