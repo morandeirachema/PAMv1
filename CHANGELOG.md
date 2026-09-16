@@ -65,7 +65,8 @@ store method changed, and nothing you configured needs revisiting.
 
 **What has not changed.** Every existing grant, membership, token and safe
 keeps exactly the access it had. The image is
-`ghcr.io/morandeirachema/pamv1:0.69.1`.
+`ghcr.io/morandeirachema/pamv1:0.69.1`, digest
+`sha256:14e3ce4…` (the full value is in the README and on the release page).
 
 ## [0.69.0] — 2026-09-15
 
