@@ -393,6 +393,25 @@
   async function openMfaWebAuthn() { try { const r = await api("GET", "/api/webauthn/credentials"); webauthnCreds = r.credentials || []; } catch (e) { webauthnCreds = []; } go("mfawebauthn"); }
   async function openAudit() { try { audit = await api("GET", "/api/audit?limit=100"); } catch (e) { audit = []; } go("audit"); }
   async function openReconcile() { reconcileReport = null; try { reconcileReport = await api("GET", "/api/reconcile"); } catch (e) {} go("reconcile"); }
+  let labelRules = [];
+  // Label rules (Phase 250): the estate-wide allow/deny policy over target
+  // labels. It is a deployment-level list, not a per-target one, so it gets a
+  // menu entry of its own rather than an option on a target.
+  // parseLabels turns the console's "env=prod,tier=db" text field into the
+  // object POST/PUT /api/targets takes. The server validates and canonicalizes
+  // it — this only has to split, never to decide what a label means.
+  function parseLabels(text) {
+    const out = {};
+    for (const term of String(text || "").split(",")) {
+      const t = term.trim();
+      if (!t) continue;
+      const i = t.indexOf("=");
+      if (i <= 0) { out[t] = ""; continue; } // let the server refuse it, with its own message
+      out[t.slice(0, i).trim()] = t.slice(i + 1).trim();
+    }
+    return out;
+  }
+  async function openLabelRules() { try { labelRules = await api("GET", "/api/label-rules"); } catch (e) { labelRules = []; } go("labelrules"); }
   async function openGrants(tid) { grantsTarget = tid; try { grants = await api("GET", `/api/targets/${tid}/grants`); } catch (e) { grants = []; } go("grants"); }
   // Broker approvals (Phase 43): a parked agent tool call waits for a human. The
   // routes exist only when the broker is enabled, so a 404 shows a hint rather
@@ -1190,6 +1209,7 @@ ${fkeys("")}
           line(29, can("manage_users"), "Work with SCIM client keys (IdP provisioning)") +
           line(30, can("reveal_secret"), "Browser-extension token (autofill)") +
           line(31, can("read_audit"), "What can this subject reach? (access review)") +
+          line(32, can("read_inventory"), "Work with label rules (allow / deny by label)") +
           "90. Sign off\n";
         term.innerHTML = `${head("PAMMAIN", "PAMV1 Main Menu")}
 Select one of the following:
@@ -1212,6 +1232,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
             "25": openLoginSessions, "26": openAgents, "27": openTokenExchange,
             "28": openEndpointAgents, "29": openScimKeys, "30": openExtToken,
             "31": () => openReach(""),
+            "32": openLabelRules,
             "90": signoff,
           };
           if (routes[c]) { try { await routes[c](); } catch (e) { say("CPF9999: " + e.message, true); render(); } }
@@ -1228,8 +1249,8 @@ Type options, press Enter.
   <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "6=Run kubectl (kubernetes)" : "", canConnect ? "7=Open viewer (rdp/vnc targets)" : "", canManage ? "8=Assign to safe" : "", canManage ? "9=Discover accounts (ssh/winrm)" : "", canConnect ? "10=Session MFA ticket (ssh/db clients)" : "", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Name</th><th>Host</th><th>Port</th><th>OS</th><th>Proto</th><th>Approval</th><th>MFA</th><th>Clip</th><th>Safe</th></tr>
-${targets.map((t) => `<tr><td>${opt(t.id)}</td><td>${esc(t.id)}</td><td>${pad(t.name, 16)}</td><td>${pad(t.host, 20)}</td><td>${esc(t.port)}</td><td>${pad(t.os_type, 8)}</td><td>${pad(t.protocol, 6)}</td><td>${t.require_approval ? '<span class="amber">required</span>' : "-"}</td><td>${t.require_session_mfa ? '<span class="amber">each</span>' : "-"}</td><td>${t.rdp_clipboard ? `<span class="amber">${esc(t.rdp_clipboard)}</span>` : "-"}</td><td class="cyan">${esc(safeName(t.safe_id))}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Name</th><th>Host</th><th>Port</th><th>OS</th><th>Proto</th><th>Approval</th><th>MFA</th><th>Clip</th><th>Safe</th><th>Labels</th></tr>
+${targets.map((t) => `<tr><td>${opt(t.id)}</td><td>${esc(t.id)}</td><td>${pad(t.name, 16)}</td><td>${pad(t.host, 20)}</td><td>${esc(t.port)}</td><td>${pad(t.os_type, 8)}</td><td>${pad(t.protocol, 6)}</td><td>${t.require_approval ? '<span class="amber">required</span>' : "-"}</td><td>${t.require_session_mfa ? '<span class="amber">each</span>' : "-"}</td><td>${t.rdp_clipboard ? `<span class="amber">${esc(t.rdp_clipboard)}</span>` : "-"}</td><td class="cyan">${esc(safeName(t.safe_id))}</td><td class="cyan">${cell(t.labels || "-", 22)}</td></tr>`).join("")}
 </table>${targets.length ? "" : `<div class="cyan indent">(No targets defined.${canManage ? " Press F6 to add." : ""})</div>`}
 <input type="submit" hidden></form>
 ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add target" : ""}   F12=Cancel`)}`;
@@ -1268,6 +1289,7 @@ Type choices, press Enter.
 <label>Session MFA . . . . :  <input name="require_session_mfa" type="checkbox">   <span class="cyan">every session and every secret handed out needs a fresh second factor</span></label>
 <label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value="">(global)</option><option>allow</option><option>readonly</option><option>deny</option></select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
 <label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value="">(global)</option><option>off</option><option>meta</option><option>full</option></select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
+<label>Labels  . . . . . . :  <input name="labels" size="36" placeholder="env=prod,tier=db">   <span class="cyan">label rules (menu 32) grant or DENY by these</span></label>
 <input type="submit" hidden>
 </form>
 ${fkeys("F3=Exit   F12=Cancel")}`;
@@ -1276,7 +1298,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           const f = Object.fromEntries(new FormData(ev.target));
           const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked,
             require_session_mfa: ev.target.require_session_mfa.checked,
-            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit };
+            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit, labels: parseLabels(f.labels) };
           try { await api("POST", "/api/targets", body); say(`TARGET ${String(f.name).toUpperCase()} ADDED.`); await openTargets(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
@@ -1302,6 +1324,7 @@ Editing target <span class="white">${esc(t.name)}</span> (id ${esc(t.id)}). Type
 <label>Session MFA . . . . :  <input name="require_session_mfa" type="checkbox"${t.require_session_mfa ? " checked" : ""}>   <span class="cyan">every session and every secret handed out needs a fresh second factor</span></label>
 <label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value=""${t.rdp_clipboard ? "" : " selected"}>(global)</option>${sel(["allow", "readonly", "deny"], t.rdp_clipboard)}</select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
 <label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value=""${t.rdp_clipboard_audit ? "" : " selected"}>(global)</option>${sel(["off", "meta", "full"], t.rdp_clipboard_audit)}</select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
+<label>Labels  . . . . . . :  <input name="labels" size="36" value="${esc(t.labels || "")}" placeholder="env=prod,tier=db">   <span class="cyan">label rules (menu 32) grant or DENY by these</span></label>
 <div class="cyan">Credentials, grants and safe assignment are kept. Safe: use option 8.</div>
 <input type="submit" hidden>
 </form>
@@ -1311,7 +1334,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           const f = Object.fromEntries(new FormData(ev.target));
           const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked,
             require_session_mfa: ev.target.require_session_mfa.checked,
-            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit };
+            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit, labels: parseLabels(f.labels) };
           try { await api("PUT", `/api/targets/${t.id}`, body); say(`TARGET ${String(f.name).toUpperCase()} CHANGED.`); await openTargets(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
@@ -1340,6 +1363,66 @@ ${fkeys("F3=Exit   F5=Refresh   F6=Add grant   F12=Cancel")}`;
             }
             await openGrants(grantsTarget);
           } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      labelrules() {
+        back = "main";
+        const canManage = can("manage_targets");
+        term.innerHTML = `${head("PAMWRKLBL", "Work with Label Rules")}
+A rule names no target: it applies to every target whose labels match its selector.
+<span class="white">DENY wins</span> — a live deny refuses even an administrator (break-glass excepted),
+and a deny never gates a target on its own, so excluding one subject does not close it to the rest.
+  <span class="cyan">${canManage ? "4=Delete" : "(read-only role)"}</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>ID</th><th>Effect</th><th>Selector</th><th>Subject type</th><th>Subject</th><th>Permissions</th><th>Expires</th><th>Time frame</th></tr>
+${labelRules.map((r) => `<tr><td>${opt(r.id)}</td><td>${esc(r.id)}</td><td>${pad(r.effect, 6)}</td><td>${cell(r.selector, 28)}</td><td>${pad(r.subject_type, 10)}</td><td>${pad(r.subject, 18)}</td><td>${cell((r.permissions || []).join(",") || "-", 18)}</td><td>${cell(r.expires_at ? fmtTs(r.expires_at) : "-", 17)}</td><td>${esc(r.time_frame || "-")}</td></tr>`).join("")}
+</table>${labelRules.length ? "" : `<div class="cyan indent">(No label rules — access is decided by direct grants and safe membership alone.)</div>`}
+<input type="submit" hidden></form>
+${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add rule" : ""}   F12=Cancel`)}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const r of labelRules) {
+              const o = optVal(ev.target, r.id);
+              if (o === "4") { await api("DELETE", `/api/label-rules/${r.id}`); say(`RULE ${r.id} DELETED.`); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openLabelRules();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      labelruleadd() {
+        back = "labelrules";
+        term.innerHTML = `${head("PAMADDLBL", "Add Label Rule")}
+Selector terms are ANDed: <span class="white">env=prod,tier=db</span> matches a target carrying both.
+Use <span class="white">key=*</span> for any value. A deny rule takes no permissions — it refuses everything.
+
+<form id="f-add" class="indent">
+<label>Selector  . . . . . :  <input name="selector" size="36" required autofocus placeholder="env=prod,tier=db">   <span class="cyan">key=value, comma-separated</span></label>
+<label>Effect  . . . . . . :  <select name="effect"><option>allow</option><option>deny</option></select>   <span class="cyan">deny wins over every allow</span></label>
+<label>Subject type  . . . :  <select name="subject_type"><option>role</option><option>user</option></select>   <span class="cyan">role, user</span></label>
+<label>Subject . . . . . . :  <input name="subject" size="24" required>   <span class="cyan">a role (admin/user/…) or a username</span></label>
+<label>Permissions . . . . :  <input type="checkbox" name="use" checked> use   <input type="checkbox" name="retrieve" checked> retrieve   <span class="cyan">allow rules only</span></label>
+<label>Expires . . . . . . :  <input name="expires_at" type="datetime-local" size="20">   <span class="cyan">blank = no end date (local time)</span></label>
+<label>Time frame  . . . . :  <input name="time_frame" size="36" placeholder="Mon-Fri 08:00-18:00 Europe/Madrid">   <span class="cyan">blank = any time</span></label>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-add").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          const body = grantLifetime({ selector: f.selector, effect: f.effect, subject_type: f.subject_type, subject: f.subject }, f);
+          if (f.effect !== "deny") {
+            const perms = [];
+            if (f.use) perms.push("use");
+            if (f.retrieve) perms.push("retrieve");
+            body.permissions = perms;
+          }
+          try { await api("POST", "/api/label-rules", body); say("LABEL RULE ADDED."); await openLabelRules(); }
+          catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
       },
 
@@ -4024,7 +4107,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   }
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
-  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, identities: openIdentities, scimkeys: openScimKeys, endpointagents: openEndpointAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid), reach: () => openReach(reachSubject, reachKind) };
+  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, identities: openIdentities, scimkeys: openScimKeys, endpointagents: openEndpointAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid), reach: () => openReach(reachSubject, reachKind), labelrules: openLabelRules };
   // cycleTheme rotates green → amber → slate → green, persists the choice, and
   // re-renders so the F-key hint's confirmation message shows immediately.
   function cycleTheme() {
@@ -4037,7 +4120,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
     render();
   }
 
-  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), quarantine: () => go("quarantineadd"), identities: () => go("identityadd"), scimkeys: () => go("scimkeyadd"), exttoken: mintExtToken, endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, mfawebauthn: () => go("mfawebauthnadd") };
+  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), quarantine: () => go("quarantineadd"), identities: () => go("identityadd"), scimkeys: () => go("scimkeyadd"), exttoken: mintExtToken, endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, mfawebauthn: () => go("mfawebauthnadd"), labelrules: () => { if (can("manage_targets")) go("labelruleadd"); } };
 
   window.addEventListener("keydown", async (ev) => {
     // While the RDP viewer is open it owns the keyboard (its own capture-phase

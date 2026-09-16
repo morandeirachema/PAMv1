@@ -29,6 +29,9 @@ const (
 	ReachViaGrant = store.GrantViaGrant
 	// ReachViaSafe is membership of the safe the target sits in.
 	ReachViaSafe = store.GrantViaSafe
+	// ReachViaLabel is a label rule whose selector matches the target's labels
+	// (Phase 250) — a grant that never names the target.
+	ReachViaLabel = store.GrantViaLabel
 )
 
 // ReachStore is the slice of the store ReachableTargets needs: the inventory,
@@ -147,7 +150,18 @@ func ReachableTargets(ctx context.Context, st ReachStore, p *Principal, ungated 
 	// the same reading CanConnectTargetAt makes.
 	now := time.Now()
 	byTarget := make(map[int64][]store.SubjectGrant, len(grants))
+	// A live deny rule removes its targets from the view entirely (Phase 250),
+	// ahead of the admin bypass below — the same order CanAccessTargetAt
+	// reads, because an entitlement report that lists what the gate refuses is
+	// worse than no report.
+	denied := make(map[int64]struct{})
 	for _, g := range store.LiveSubjectGrants(grants, now) {
+		if g.Effect == store.GrantDeny {
+			if p != nil && !p.BreakGlass {
+				denied[g.TargetID] = struct{}{}
+			}
+			continue
+		}
 		// An approve-only membership confers no target access (Phase 246),
 		// so it is no reach — though it still gates the target (gatedIDs).
 		if !store.GrantPermits(g.Permissions, store.AccessReach) {
@@ -165,6 +179,9 @@ func ReachableTargets(ctx context.Context, st ReachStore, p *Principal, ungated 
 	out := make([]Reach, 0, len(targets))
 	for i := range targets {
 		t := targets[i]
+		if _, no := denied[t.ID]; no {
+			continue
+		}
 		inPersonalSafe := false
 		if t.SafeID != nil {
 			sfPersonal, known := personal[*t.SafeID]

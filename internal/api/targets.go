@@ -56,6 +56,15 @@ type targetIn struct {
 	// effective mode is the stricter of the two.
 	RDPClipboard      string `json:"rdp_clipboard"`
 	RDPClipboardAudit string `json:"rdp_clipboard_audit"`
+	// Labels are the target's label set (Phase 250). They are an
+	// authorization input — a label rule grants or denies every target whose
+	// labels match its selector — so they are validated here and stored in
+	// canonical form, never as the caller typed them. Omitting the field on a
+	// PUT clears the set, like the clipboard overrides, and that reset is
+	// audited for the same reason: it can widen access.
+	Labels map[string]string `json:"labels"`
+	// labels is the validated canonical form, filled in by validateTargetIn.
+	labels string
 }
 
 // validateTargetIn applies the create/update validation rules to in — one
@@ -91,6 +100,12 @@ func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
 	case !validOverride(clipAuditRank, in.RDPClipboardAudit):
 		writeError(w, http.StatusUnprocessableEntity, `rdp_clipboard_audit must be "" (inherit), "off", "meta" or "full"`)
 	default:
+		labels, err := store.NormalizeLabels(in.Labels)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return false
+		}
+		in.labels = labels
 		return true
 	}
 	return false
@@ -100,7 +115,19 @@ func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
 func targetFromIn(in targetIn) store.Target {
 	return store.Target{Name: in.Name, Host: in.Host, Port: in.Port, OSType: in.OSType, Protocol: in.Protocol,
 		RequireApproval: in.RequireApproval, RequireSessionMFA: in.RequireSessionMFA,
-		RDPClipboard: in.RDPClipboard, RDPClipboardAudit: in.RDPClipboardAudit}
+		RDPClipboard: in.RDPClipboard, RDPClipboardAudit: in.RDPClipboardAudit, Labels: in.labels}
+}
+
+// labelDetail renders a target's labels for an audit detail (Phase 250).
+// Labels decide who reaches the target, so both setting and CLEARING them has
+// to leave a trace — a PUT that omits the field clears the set, and silently
+// dropping every label a deny rule matched on is exactly the edit that must
+// not be invisible.
+func labelDetail(t store.Target) string {
+	if t.Labels == "" {
+		return " labels:-"
+	}
+	return " labels:" + auditField(t.Labels, 255)
 }
 
 // clipDetail renders the per-target clipboard overrides for an audit detail,
@@ -134,7 +161,7 @@ func (s *Server) createTarget(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "target.create", t.Name+" "+clipDetail(t))
+	s.audit(r.Context(), "target.create", t.Name+" "+clipDetail(t)+labelDetail(t))
 	writeJSON(w, http.StatusCreated, t)
 }
 
@@ -178,7 +205,7 @@ func (s *Server) updateTarget(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "target.update", fmt.Sprintf("target:%d name:%s host:%s:%d %s", t.ID, t.Name, auditField(t.Host, 255), t.Port, clipDetail(t)))
+	s.audit(r.Context(), "target.update", fmt.Sprintf("target:%d name:%s host:%s:%d %s%s", t.ID, t.Name, auditField(t.Host, 255), t.Port, clipDetail(t), labelDetail(t)))
 	writeJSON(w, http.StatusOK, t)
 }
 

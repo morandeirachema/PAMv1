@@ -473,6 +473,7 @@ guard against connections that open and never authenticate, not a fault.
 
 | Date | Change |
 |---|---|
+| 2026-09-16 | Phase 250: a target may now admit you — or refuse you — because of its **labels** rather than a grant that names it. *What can this subject reach?* (menu 31) shows such a target as reached `via: label`, and does not list one a deny rule refuses; the refusal reads the same as any other target-policy refusal. |
 | 2026-09-15 | Phase 246: a safe membership can now carry **use**, **retrieve** and **approve** — you may be able to connect to a target but not see its password, or decide a safe's access requests without the approver role. New §6 subsection *Approving for one safe*. |
 | 2026-09-15 | Phase 244: some targets may now ask for a **second factor on every session** — a one-time-code prompt after your token on SSH, or a single-use ticket (portal option 10 or `POST /api/session-mfa`) as the password for psql or sqlcmd; the portal asks for the code itself when you reveal, check out, run kubectl or open a desktop. New §5 subsection. |
 | 2026-08-25 | Phase 191: menu **31** now prints a red line above the target list when the subject's own state stops it using what it reaches (no usable capability, deactivated account, revoked or expired agent key, quarantined or unenrolled identity), and the per-reason counts include `unlimited` so the breakdown adds up to the total |

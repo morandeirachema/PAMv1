@@ -19,6 +19,11 @@ import (
 // deadline; nothing re-reads the grants mid-session. A grant DELETED
 // mid-session is already handled by kill-on-revoke.
 func GrantDeadline(p *Principal, grants []store.TargetGrant, personal bool, now time.Time) (deadline time.Time, reason string, ok bool) {
+	// A denied principal opens no session, so there is no edge to report; the
+	// gate has already refused by the time this is asked (Phase 250).
+	if DeniedByLabelRule(p, grants, now) {
+		return time.Time{}, "", false
+	}
 	if !personal {
 		for _, r := range p.effectiveRoles() {
 			if r == RoleAdmin {
@@ -32,7 +37,7 @@ func GrantDeadline(p *Principal, grants []store.TargetGrant, personal bool, now 
 	for _, g := range grants {
 		// Only a grant that admits a SESSION bounds one (Phase 246): a
 		// retrieve-only membership admitted nobody to this session.
-		if !store.GrantLive(g.ExpiresAt, g.TimeFrame, now) || !store.GrantPermits(g.Permissions, store.SafePermUse) ||
+		if g.IsDeny() || !store.GrantLive(g.ExpiresAt, g.TimeFrame, now) || !store.GrantPermits(g.Permissions, store.SafePermUse) ||
 			!SubjectMatches(p, g.SubjectType, g.Subject) {
 			continue
 		}

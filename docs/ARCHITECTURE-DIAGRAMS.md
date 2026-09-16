@@ -412,6 +412,18 @@ erDiagram
   KeyMaterial {
     string Name
   }
+  LabelRule {
+    int64 ID
+    string Selector
+    string SubjectType
+    string Subject
+    string Effect
+    arr_string Permissions
+    ptr_time_Time ExpiresAt
+    string TimeFrame
+    string CreatedBy
+    time_Time CreatedAt
+  }
   MFAEnrollment {
     string Username
     bool Confirmed
@@ -504,6 +516,8 @@ erDiagram
     ptr_time_Time ExpiresAt
     string TimeFrame
     arr_string Permissions
+    string Effect
+    string Selector
   }
   Target {
     int64 ID
@@ -517,6 +531,7 @@ erDiagram
     ptr_int64 SafeID
     string RDPClipboard
     string RDPClipboardAudit
+    string Labels
     time_Time CreatedAt
   }
   TargetGrant {
@@ -528,6 +543,7 @@ erDiagram
     ptr_time_Time ExpiresAt
     string TimeFrame
     arr_string Permissions
+    string Effect
   }
   User {
     int64 ID
@@ -598,7 +614,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 201 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 204 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -667,6 +683,9 @@ The 201 routes registered on the API mux, with the capability or guard each enfo
 | DELETE | `/api/endpoint-agents/{id}` | CapManageTargets |
 | POST | `/api/extension-token` | CapRevealSecret |
 | POST | `/api/identity/reconcile` | CapManageUsers |
+| GET | `/api/label-rules` | CapReadInventory |
+| POST | `/api/label-rules` | CapManageTargets |
+| DELETE | `/api/label-rules/{id}` | CapManageTargets |
 | POST | `/api/login` | public (rate-limited) |
 | GET | `/api/login-sessions` | CapManageUsers |
 | POST | `/api/login-sessions/revoke` | CapManageUsers |

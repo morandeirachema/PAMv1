@@ -1,6 +1,6 @@
 # PAMv1 — documentation
 
-> Last updated: 2026-09-16 · Reflects: Phases 0–227 and 229–249, and release v0.69.0 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-09-16 · Reflects: Phases 0–227 and 229–250, and release v0.69.0 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-09-16 | Phase 250 (target labels and label rules) documented: ARCHITECTURE-LOW-LEVEL (table list gains `label_rules` + `targets.labels`, migration mark `0057`, the label-rules bullet in the authorization section, audit vocabulary `labelrule.create` / `labelrule.delete` and the `labels:` detail, change log), ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE (§3.3 mark) and USER-GUIDE change logs, ADMIN-GUIDE (new §7 subsection), README Tier 8 row. |
 | 2026-09-16 | Phase 248 (the review of 240–247) documented: ARCHITECTURE-LOW-LEVEL (the safe-permission bullet gains the delegation ceiling and membership liveness, the `PAM_SESSION_IDLE_MIN` row says what counts as input on a graphical session, change log), ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE and ADMIN-GUIDE change logs, and both READMEs' *What works today* phase range, which had said 0–151 since Phase 151 while listing capabilities through 246 — the one phase-range string no release checklist named. |
 | 2026-09-15 | Phase 246 (safe permission sets) documented: ARCHITECTURE-LOW-LEVEL (migration mark `0056`, the `safe_members` column, the safe-permission bullet, audit vocabulary `permissions:` on `safe.member.add` and `access.decision_denied reason:not-an-approver`, invariant 2b, change log), ARCHITECTURE-HIGH-LEVEL and CODE-GUIDE change logs, ADMIN-GUIDE (new §7 subsection), USER-GUIDE (§6 scoped approvers), README Tier 8 row and the safes bullet in both READMEs. |
 | 2026-09-15 | Phase 244 (per-session MFA) documented: ARCHITECTURE-LOW-LEVEL (env row, migration mark `0055`, the `targets` / `safes` / `sessions` columns, the per-session MFA bullet, audit vocabulary `session.mfa_ticket` / `session.mfa_verified` / `session.mfa_failed` and the four `reason:` values, invariant 4b, change log), ARCHITECTURE-HIGH-LEVEL and CODE-GUIDE change logs, ADMIN-GUIDE (env row + new §7 subsection), USER-GUIDE (new §5 subsection), README Tier 8 row, the new Tier 9 (WALLIX) table, and the MFA bullet in both READMEs. |

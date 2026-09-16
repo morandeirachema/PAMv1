@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–249 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–250 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,106 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 250 — Target labels with label-based grants and deny rules ✅
+
+The next row of the Tier 8 pass — Teleport's allow/deny over resource labels,
+the one authorization shape every one of the three vendors has that PAMv1 had
+none of. Until now a grant named a target and a membership named a safe; a
+statement about the *estate* — "the DBAs reach anything that is a database",
+"contractors reach nothing in production" — had to be written as one grant per
+target and re-written every time a target was added. And nothing in PAMv1
+could say **no**: every authorization row admitted, and a target was open,
+gated, or closed by containment, never refused to a named subject.
+
+- [x] **A target carries labels; a rule matches them.** `targets.labels`
+  (`0057`) holds a canonical `env=prod,tier=db` set — sorted, one value per
+  key, keys and values validated so a stored label always reads back as
+  written. A `label_rules` row grants or denies a user or role every target
+  whose labels satisfy its **selector**: a conjunction of `key=value` terms,
+  or `key=*` for "carries the key". No OR, no negation, no empty selector —
+  a rule that matches everything by accident is the failure that matters
+  when rules can deny, so "everything" has to be spelled `env=*` on a key the
+  operator chose. The whole vocabulary is one leaf file
+  (`internal/store/labels.go`), matched by one function everywhere, so a
+  selector cannot mean one thing at the connect gate and another in a review
+- [x] **The third path, through the same doors.** Both stores fold matching
+  rules into `EffectiveTargetGrants` and `GrantsForSubjects` as grant rows
+  carrying `Effect` and `Via = label` — the selector is matched in Go, not
+  SQL, because a conjunction over a parsed set expressed as a LIKE chain
+  would be a second reading of the same text. So every door that already
+  reads grants — the three proxies' `admit()`, the viewer, reveal, checkout,
+  WinRM, kubectl, operator certificates, the broker, the reach view — reads
+  label rules without a line of its own. An unlabelled target (every target
+  before this phase) matches no selector and pays one cheap read. Store
+  surface **225 → 228** (`CreateLabelRule`, `ListLabelRules`,
+  `DeleteLabelRule`); the method-set pin caught it, as it should
+- [x] **Deny is decided first, and binds administrators.** The decision this
+  phase turns on. `auth.DeniedByLabelRule` runs at the top of
+  `CanAccessTargetAt`, ahead of the admin bypass: a deny an administrator can
+  step around is not a deny, because the estate-wide statement an operator
+  writes has to hold for the people most able to ignore it. Break-glass is
+  the one exemption — the deployment's declared emergency path, already
+  loudly audited and already exempt from the CIDR allowlist (Phase 118) for
+  the same reason: a policy nobody can override in an incident turns the
+  incident into an outage. A deny refuses every action, not a permission
+  set; it respects its own `expires_at` / `time_frame` like every other row
+- [x] **Deny never gates.** A deny row subtracts one subject's access; it
+  must never convert an open target into a gated one. Only allow rows count
+  toward "is this target gated" — in the decision, in `GatedTargetIDs` and
+  in the reach view — so "exclude the contractors from prod" leaves prod
+  exactly as reachable as before for everyone else, instead of quietly
+  closing it to the whole estate. An allow rule gates as a direct grant
+  does, and its bound becomes the session deadline (`GrantDeadline` skips
+  deny rows). The reach view drops a denied target ahead of the admin
+  bypass — the same order the gate reads — and reports an allow as
+  `via: label` with the selector it matched, so the entitlement review and
+  the connect gate cannot disagree
+- [x] **Relabelling is revocation.** The rule follows the label, not the
+  target: remove `tier=db` from a target and the deny stops applying to it,
+  with the rule untouched. Which is why labels are an audited authorization
+  input, not a display field — `target.create` / `target.update` carry
+  `labels:`, and a PUT that omits the field clears the set and audits
+  `labels:-`, because dropping the label a deny matched on is the one edit
+  that must not be invisible
+- [x] **Routes and console.** `POST` / `DELETE /api/label-rules`
+  (`manage_targets` — a rule is a statement about the estate, so the person
+  who labels the targets says what a label means) and `GET /api/label-rules`
+  (`read_inventory`, so an auditor reads who is denied what without being
+  able to change it); routes **201 → 204**. The selector is parsed on write:
+  an unparsable one matches nothing, which would leave a deny rule in the
+  list that denies nobody — the one failure where silence is
+  indistinguishable from enforcement. A deny takes no permissions, an allow
+  must confer something, the same rule twice is 409. Audited
+  `labelrule.create` / `labelrule.delete` with the quoted selector, the
+  subject and the effect, because deleting a deny is what widens access.
+  `labels` on target create/update; console menu **32** *Work with Label
+  Rules* (the route-parity guard demanded it) and a *Labels* field and
+  column on *Work with Targets*
+- [x] **Proven, not asserted.** `internal/store` vocabulary tests (canonical
+  form, dropped unreadable terms, every rejected selector shape, the zero
+  selector matches nothing); the storetest contract (round-trip, conflict,
+  fold into both views with effect and selector, allow gates and deny does
+  not, `ErrNotFound`); `TestDenyBeatsEveryBypassButBreakGlass`,
+  `TestDenyDoesNotGate`, `TestDenyRespectsItsOwnLifetime`,
+  `TestGrantDeadlineIgnoresDenyRows`, `TestReachHonoursLabelRules`;
+  `TestAdmitLabelRules` (seven gate cases, including a deny beating a direct
+  grant on the same target); `TestLabelRuleRoutes` (ten 422 shapes, 409,
+  auditor reads but cannot write) and `TestTargetLabelsRoundTripAndAudit`;
+  and **end to end against the in-process sshd**, `TestLabelRulesProxy` — an
+  allow rule opens a real session for a user no grant names and refuses one
+  it does not name, a deny rule refuses a real admin session, a deny naming
+  another subject leaves alice untouched, and relabelling lifts it. With the
+  deny gate forced off, the decision, admit and proxy tests fail in nine
+  places
+- [x] **Limits, stated rather than discovered.** Selectors are conjunctions
+  only; an OR is two rules. A deny rule names a user or a role, not a safe.
+  A label rule is deployment-wide — there is no safe-scoped rule list. Labels
+  are set by hand or by API; nothing discovers them from the host, and the
+  discovery scan (Phase 128) does not propose them
+- [x] Schema (`0057`), routes **201 → 204**, store surface **225 → 228**,
+  two audit actions, one new leaf file, no env var. **Released by Phase 251
+  as v0.70.0** — a minor, since the schema, the routes and the surface moved
 
 ## Phase 249 — v0.69.1 ✅
 

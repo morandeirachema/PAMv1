@@ -1768,6 +1768,78 @@ a global target manager, who is unconstrained:
 So "manages the member list but may not read the passwords" is now a state the
 system enforces, not merely one the API can express.
 
+### Target labels and label rules (Phase 250)
+
+A grant names a target, a safe membership names a safe. A **label rule**
+names neither: it applies to every target whose labels match its selector,
+so "the DBAs may reach anything labelled `tier=db`" and "contractors may
+reach nothing labelled `env=prod`" are one row each, and a target joins or
+leaves the policy by being labelled — Teleport's allow/deny over resource
+labels.
+
+**Labels** are `key=value` pairs on a target (`POST`/`PUT /api/targets`,
+or the *Labels* field on *Work with Targets*). They are stored in canonical
+form — sorted by key, one value per key — and they are an **authorization
+input**, so a PUT that omits `labels` clears the set and is audited
+`labels:-`: dropping the label a deny rule matched on widens access, and
+that must never be invisible.
+
+```bash
+curl -X PUT -H "X-API-Key: $PAM_API_KEY" localhost:8080/api/targets/12 \
+  -d '{"name":"db-01","host":"10.0.0.9","port":22,"os_type":"linux","protocol":"ssh",
+       "labels":{"env":"prod","tier":"db"}}'
+```
+
+**A selector** is a comma-separated conjunction — every term must match —
+of `key=value`, or `key=*` for "carries the key, any value". There is no OR,
+no negation and no empty selector: a rule that matches everything by
+accident is the failure that matters here, because these rules can deny.
+
+```bash
+# the DBAs (a role) may use and retrieve anything labelled tier=db
+curl -X POST -H "X-API-Key: $PAM_API_KEY" localhost:8080/api/label-rules \
+  -d '{"selector":"tier=db","subject_type":"role","subject":"dba","effect":"allow"}'
+# nobody holding the contractor profile reaches prod, whatever else grants it
+curl -X POST -H "X-API-Key: $PAM_API_KEY" localhost:8080/api/label-rules \
+  -d '{"selector":"env=prod","subject_type":"role","subject":"contractor","effect":"deny"}'
+# review the policy (auditors can read it; only target managers write it)
+curl -H "X-API-Key: $PAM_API_KEY" localhost:8080/api/label-rules
+```
+
+An allow rule takes `permissions` (`use`, `retrieve` — default both, as a
+direct grant), `expires_at` and `time_frame`, exactly as a grant does, and
+its bound becomes the session deadline. A deny rule takes the lifetime but
+no permissions: it refuses every action.
+
+**Three rules to know before writing a deny.**
+
+1. **Deny wins, and binds administrators.** A live deny rule naming the
+   caller — by username or by any role they hold — refuses the target ahead
+   of every other reading, including the built-in admin bypass. A "no" an
+   administrator can step around is not one. The single exemption is
+   **break-glass**, the deployment's declared emergency path, which is
+   already loudly audited and already exempt from the CIDR allowlist for the
+   same reason: a policy nobody can override in an incident turns the
+   incident into an outage.
+2. **Deny never gates.** A deny rule subtracts one subject's access; it does
+   not turn an open target into a gated one. So "exclude the contractors
+   from prod" leaves prod exactly as reachable as before for everyone else —
+   it cannot quietly close prod to the whole estate. An **allow** rule does
+   gate, as a direct grant does.
+3. **Relabelling is revocation.** The rule follows the label, not the
+   target: remove `tier=db` from a target and the deny stops applying to it,
+   with the rule itself untouched. Watch `target.update … labels:` in the
+   trail for exactly that.
+
+Routes are `POST /api/label-rules` and `DELETE /api/label-rules/{id}`
+(`manage_targets`) and `GET /api/label-rules` (`read_inventory`). Audited
+`labelrule.create` / `labelrule.delete` with the selector, subject and effect
+— deleting a deny rule is what widens access, so the detail says what it
+matched. Console: menu **32**, *Work with Label Rules*. The reach view
+(menu 31) reports a target admitted this way as `via: label` and omits any a
+deny rule refuses, so the entitlement review and the connect gate cannot
+disagree.
+
 ### Personal/private safes (Phase 139)
 
 A safe can be marked **personal** — private even from admins by default,
@@ -4556,6 +4628,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-16 | **Phase 250 (target labels and label rules).** New §7 subsection *Target labels and label rules*: labels on a target, the selector grammar, allow and deny rules, the three things to know before writing a deny (deny binds administrators — break-glass excepted; deny never gates; relabelling is revocation), routes, audit and the console menu. |
 | 2026-09-16 | **Phase 248 (the review of 240–247).** §7 *Safe permission sets* gains the delegation ceiling (a `can_manage` member grants only what its own live membership carries, and a membership manages only while it is live) and §7 *Identity lock and token expiry* the rotation guard (you cannot rotate the token of an identity whose capabilities you do not hold). The per-session-MFA subsection states the browser-extension limit and its new refusal reason. |
 | 2026-09-15 | **Phase 246 (safe permission sets).** New §7 subsection *Safe permission sets* — `use` / `retrieve` / `approve` on a membership, the default and the upgrade, what a scoped approver can and cannot decide, the audit details. |
 | 2026-09-15 | **Phase 244 (per-session MFA).** §4 gains `PAM_SESSION_MFA`; new §7 subsection *Per-session MFA* — the three policy sources, what the gate covers and what it does not, the SSH prompt and the ticket (TOTP / recovery / WebAuthn, single-use, two minutes, one target), the audit actions and refusal reasons. |

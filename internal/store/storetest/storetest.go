@@ -394,6 +394,109 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		}
 	}
 
+	// ---- Label rules (Phase 250) ----------------------------------------
+	// The third authorization path: a rule names no target, so it reaches one
+	// by matching the labels the target carries. Both implementations must
+	// fold rules into the same two views the other two paths go through, and
+	// must agree on the one thing only this path can say — deny.
+	labelled := store.Target{Name: "labelled-host", Host: "10.9.0.1", Port: 22, OSType: "linux", Protocol: "ssh",
+		Labels: "env=prod,tier=db"}
+	if err := st.CreateTarget(ctx, &labelled); err != nil {
+		t.Fatalf("CreateTarget(labelled): %v", err)
+	}
+	if got, err := st.GetTarget(ctx, labelled.ID); err != nil || got.Labels != "env=prod,tier=db" {
+		t.Fatalf("labels must round-trip: %+v err %v", got, err)
+	}
+	allowRule := store.LabelRule{Selector: "env=prod", SubjectType: "role", Subject: "user", Effect: store.GrantAllow, CreatedBy: "admin"}
+	if err := st.CreateLabelRule(ctx, &allowRule); err != nil || allowRule.ID == 0 {
+		t.Fatalf("CreateLabelRule(allow): %+v err %v", allowRule, err)
+	}
+	if allowRule.Permissions == nil {
+		t.Fatal("an allow rule with no permissions named must default to use+retrieve, as a direct grant does")
+	}
+	denyRule := store.LabelRule{Selector: "tier=db", SubjectType: "user", Subject: "mallory", Effect: store.GrantDeny, CreatedBy: "admin"}
+	if err := st.CreateLabelRule(ctx, &denyRule); err != nil {
+		t.Fatalf("CreateLabelRule(deny): %v", err)
+	}
+	dupRule := store.LabelRule{Selector: "env=prod", SubjectType: "role", Subject: "user", Effect: store.GrantAllow}
+	if err := st.CreateLabelRule(ctx, &dupRule); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("the same selector/subject/effect twice must conflict, got %v", err)
+	}
+	if rules, err := st.ListLabelRules(ctx); err != nil || len(rules) != 2 {
+		t.Fatalf("ListLabelRules: %+v err %v", rules, err)
+	}
+	// Both rules match this target's labels, and both come back through the
+	// same view a direct grant does, carrying their effect.
+	lEff, err := st.EffectiveTargetGrants(ctx, labelled.ID)
+	if err != nil {
+		t.Fatalf("EffectiveTargetGrants(labelled): %v", err)
+	}
+	var sawAllow, sawDeny bool
+	for _, g := range lEff {
+		switch {
+		case g.Subject == "user" && !g.IsDeny():
+			sawAllow = true
+		case g.Subject == "mallory" && g.IsDeny():
+			sawDeny = true
+		}
+	}
+	if !sawAllow || !sawDeny {
+		t.Fatalf("both label rules must fold into the effective grants: %+v", lEff)
+	}
+	// A target the selector does not match is untouched — tgt carries no labels.
+	plainEff, err := st.EffectiveTargetGrants(ctx, tgt.ID)
+	if err != nil {
+		t.Fatalf("EffectiveTargetGrants(unlabelled): %v", err)
+	}
+	for _, g := range plainEff {
+		if g.IsDeny() || g.Subject == "mallory" {
+			t.Fatalf("an unlabelled target must match no label rule: %+v", plainEff)
+		}
+	}
+	// The subject view reports the rule, its effect and the selector it matched.
+	lsg, err := st.GrantsForSubjects(ctx, []store.GrantSubject{{Type: "user", Name: "mallory"}})
+	if err != nil || len(lsg) != 1 {
+		t.Fatalf("GrantsForSubjects(mallory): %+v err %v", lsg, err)
+	}
+	if lsg[0].Via != store.GrantViaLabel || lsg[0].Effect != store.GrantDeny || lsg[0].Selector != "tier=db" || lsg[0].TargetID != labelled.ID {
+		t.Fatalf("the label row must name its path, effect and selector: %+v", lsg[0])
+	}
+	// An ALLOW rule gates its targets; a DENY rule never does.
+	gated, err := st.GatedTargetIDs(ctx)
+	if err != nil {
+		t.Fatalf("GatedTargetIDs: %v", err)
+	}
+	inGated := false
+	for _, id := range gated {
+		if id == labelled.ID {
+			inGated = true
+		}
+	}
+	if !inGated {
+		t.Fatal("an allow label rule must gate its matching target")
+	}
+	if err := st.DeleteLabelRule(ctx, allowRule.ID); err != nil {
+		t.Fatalf("DeleteLabelRule: %v", err)
+	}
+	gated, err = st.GatedTargetIDs(ctx)
+	if err != nil {
+		t.Fatalf("GatedTargetIDs after allow removed: %v", err)
+	}
+	for _, id := range gated {
+		if id == labelled.ID {
+			t.Fatal("with only a DENY rule left the target must not be gated — deny subtracts, it never closes")
+		}
+	}
+	if err := st.DeleteLabelRule(ctx, denyRule.ID); err != nil {
+		t.Fatalf("DeleteLabelRule(deny): %v", err)
+	}
+	if err := st.DeleteLabelRule(ctx, denyRule.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleting a gone rule must be ErrNotFound, got %v", err)
+	}
+	if err := st.DeleteTarget(ctx, labelled.ID); err != nil {
+		t.Fatalf("cleanup labelled target: %v", err)
+	}
+
 	// --- safes (Phase 17): container membership as an effective grant ---
 	// The safe carries its own access policy since Phase 58 (require_approval +
 	// a dual-control floor), so it must round-trip through create, get, list and

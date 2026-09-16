@@ -160,9 +160,9 @@ func limitArg(limit int) any {
 // CreateTarget inserts a target, populating its ID and CreatedAt; ErrConflict if the name is taken.
 func (s *PGStore) CreateTarget(ctx context.Context, t *store.Target) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO targets (name, host, port, os_type, protocol, require_approval, rdp_clipboard, rdp_clipboard_audit, require_session_mfa)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at`,
-		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA,
+		`INSERT INTO targets (name, host, port, os_type, protocol, require_approval, rdp_clipboard, rdp_clipboard_audit, require_session_mfa, labels)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, created_at`,
+		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA, t.Labels,
 	).Scan(&t.ID, &t.CreatedAt)
 	if pgCode(err) == pgUniqueViolation {
 		return store.ErrConflict
@@ -173,7 +173,7 @@ func (s *PGStore) CreateTarget(ctx context.Context, t *store.Target) error {
 // ListTargets returns targets in the (limit, afterID) window, ordered by ID.
 func (s *PGStore) ListTargets(ctx context.Context, limit int, afterID int64) ([]store.Target, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa
+		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa, labels
 		 FROM targets WHERE id > $1 ORDER BY id LIMIT $2`, afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
@@ -187,9 +187,9 @@ func (s *PGStore) ListTargets(ctx context.Context, limit int, afterID int64) ([]
 func (s *PGStore) UpdateTarget(ctx context.Context, t *store.Target) error {
 	err := s.pool.QueryRow(ctx,
 		`UPDATE targets SET name = $1, host = $2, port = $3, os_type = $4, protocol = $5, require_approval = $6,
-		        rdp_clipboard = $7, rdp_clipboard_audit = $8, require_session_mfa = $9
-		 WHERE id = $10 RETURNING safe_id, created_at`,
-		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA, t.ID,
+		        rdp_clipboard = $7, rdp_clipboard_audit = $8, require_session_mfa = $9, labels = $10
+		 WHERE id = $11 RETURNING safe_id, created_at`,
+		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA, t.Labels, t.ID,
 	).Scan(&t.SafeID, &t.CreatedAt)
 	switch {
 	case pgCode(err) == pgUniqueViolation:
@@ -203,7 +203,7 @@ func (s *PGStore) UpdateTarget(ctx context.Context, t *store.Target) error {
 // GetTarget returns the target with the given ID, or ErrNotFound.
 func (s *PGStore) GetTarget(ctx context.Context, id int64) (*store.Target, error) {
 	return getOne(ctx, s.pool, scanTarget,
-		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa
+		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa, labels
 		 FROM targets WHERE id = $1`, id)
 }
 
@@ -345,7 +345,7 @@ func (s *PGStore) EffectiveTargetGrants(ctx context.Context, targetID int64) ([]
 	// Every row, bounds included (Phase 240): the DECISION filters expired and
 	// out-of-frame rows (auth.CanConnectTargetAt), because whether a target
 	// is gated at all must still count them.
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.TargetGrant, error) {
+	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.TargetGrant, error) {
 		var g store.TargetGrant
 		var perms *string
 		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject, &g.ExpiresAt, &g.TimeFrame, &perms)
@@ -354,6 +354,81 @@ func (s *PGStore) EffectiveTargetGrants(ctx context.Context, targetID int64) ([]
 		}
 		return g, err
 	})
+	if err != nil {
+		return nil, err
+	}
+	// Label rules (Phase 250). The selector is matched in Go, not SQL: it is a
+	// conjunction over a parsed set, which SQL would have to express as a LIKE
+	// chain that reads nothing like the one function every other caller uses —
+	// and a selector that means two different things in two places is exactly
+	// the failure this vocabulary exists to prevent. Only a LABELLED target can
+	// match, so an unlabelled one (every target before this phase) costs one
+	// cheap read and no rule scan.
+	var labels string
+	if err := s.pool.QueryRow(ctx, `SELECT labels FROM targets WHERE id = $1`, targetID).Scan(&labels); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return out, nil // no target, so no labels to match
+		}
+		return nil, err
+	}
+	if labels == "" {
+		return out, nil
+	}
+	rules, err := s.ListLabelRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rules {
+		if !r.Matches(labels) {
+			continue
+		}
+		out = append(out, store.TargetGrant{ID: r.ID, TargetID: targetID, SubjectType: r.SubjectType,
+			Subject: r.Subject, ExpiresAt: r.ExpiresAt, TimeFrame: r.TimeFrame,
+			Permissions: append([]string{}, r.Permissions...), Effect: r.Effect})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// CreateLabelRule adds a label rule (Phase 250).
+func (s *PGStore) CreateLabelRule(ctx context.Context, r *store.LabelRule) error {
+	if r.Permissions == nil {
+		r.Permissions = store.DefaultSafePermissions()
+	}
+	if r.Effect == "" {
+		r.Effect = store.GrantAllow
+	}
+	err := s.pool.QueryRow(ctx,
+		`INSERT INTO label_rules (selector, subject_type, subject, effect, permissions, expires_at, time_frame, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at`,
+		r.Selector, r.SubjectType, r.Subject, r.Effect, store.JoinSafePermissions(r.Permissions), r.ExpiresAt, r.TimeFrame, r.CreatedBy,
+	).Scan(&r.ID, &r.CreatedAt)
+	if pgCode(err) == pgUniqueViolation {
+		return store.ErrConflict
+	}
+	return err
+}
+
+// ListLabelRules returns every label rule, ordered by id.
+func (s *PGStore) ListLabelRules(ctx context.Context) ([]store.LabelRule, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, selector, subject_type, subject, effect, permissions, expires_at, time_frame, created_by, created_at
+		   FROM label_rules ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.LabelRule, error) {
+		var r store.LabelRule
+		var perms string
+		err := row.Scan(&r.ID, &r.Selector, &r.SubjectType, &r.Subject, &r.Effect, &perms, &r.ExpiresAt, &r.TimeFrame, &r.CreatedBy, &r.CreatedAt)
+		r.Permissions = store.ParseSafePermissions(perms)
+		return r, err
+	})
+}
+
+// DeleteLabelRule removes a label rule by id.
+func (s *PGStore) DeleteLabelRule(ctx context.Context, id int64) error {
+	return execExpectingRow(ctx, s.pool, `DELETE FROM label_rules WHERE id = $1`, id)
 }
 
 // SweepExpiredGrants deletes every expired grant and safe membership (Phase
@@ -468,7 +543,7 @@ func grantsForSubjects(ctx context.Context, q reachQuerier, subjects []store.Gra
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.SubjectGrant, error) {
+	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.SubjectGrant, error) {
 		var g store.SubjectGrant
 		var perms *string
 		err := row.Scan(&g.TargetID, &g.TargetName, &g.SubjectType, &g.Subject, &g.Via, &g.SafeID, &g.ExpiresAt, &g.TimeFrame, &perms)
@@ -476,6 +551,96 @@ func grantsForSubjects(ctx context.Context, q reachQuerier, subjects []store.Gra
 			g.Permissions = store.ParseSafePermissions(*perms)
 		}
 		return g, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	// The label path (Phase 250), matched in Go against the same selector
+	// function every other caller uses — see EffectiveTargetGrants for why it
+	// is not expressed in SQL. Both reads go through the SAME querier, so
+	// inside ReachGrantSnapshot's transaction they are part of the one
+	// snapshot the reach view depends on.
+	rules, err := labelRulesFor(ctx, q, types, names)
+	if err != nil {
+		return nil, err
+	}
+	if len(rules) > 0 {
+		labelled, lerr := labelledTargets(ctx, q)
+		if lerr != nil {
+			return nil, lerr
+		}
+		for _, r := range rules {
+			for _, t := range labelled {
+				if !r.Matches(t.Labels) {
+					continue
+				}
+				out = append(out, store.SubjectGrant{
+					TargetID: t.ID, TargetName: t.Name, SubjectType: r.SubjectType, Subject: r.Subject,
+					Via: store.GrantViaLabel, ExpiresAt: r.ExpiresAt, TimeFrame: r.TimeFrame,
+					Permissions: append([]string{}, r.Permissions...), Effect: r.Effect, Selector: r.Selector,
+				})
+			}
+		}
+		sort.Slice(out, func(i, j int) bool {
+			if out[i].TargetID != out[j].TargetID {
+				return out[i].TargetID < out[j].TargetID
+			}
+			if out[i].Via != out[j].Via {
+				return out[i].Via < out[j].Via
+			}
+			return out[i].Subject < out[j].Subject
+		})
+	}
+	return out, nil
+}
+
+// labelledTarget is the sliver of a target the selector matcher needs.
+type labelledTarget struct {
+	ID     int64
+	Name   string
+	Labels string
+}
+
+// labelledTargets returns every target carrying at least one label. Unlabelled
+// targets cannot match any selector, so they are excluded in SQL rather than
+// walked in Go.
+func labelledTargets(ctx context.Context, q reachQuerier) ([]labelledTarget, error) {
+	rows, err := q.Query(ctx, `SELECT id, name, labels FROM targets WHERE labels <> '' ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (labelledTarget, error) {
+		var t labelledTarget
+		err := row.Scan(&t.ID, &t.Name, &t.Labels)
+		return t, err
+	})
+}
+
+// labelRulesFor returns the label rules naming any of the given subjects. With
+// nil subject arrays it returns every rule, which is what the gated-set read
+// needs (that question is about the target, not a subject).
+func labelRulesFor(ctx context.Context, q reachQuerier, types, names []string) ([]store.LabelRule, error) {
+	sql := `SELECT id, selector, subject_type, subject, effect, permissions, expires_at, time_frame, created_by, created_at
+	          FROM label_rules ORDER BY id`
+	args := []any{}
+	if types != nil {
+		sql = `WITH subs AS (SELECT * FROM unnest($1::text[], $2::text[]) AS s(subject_type, subject))
+		       SELECT r.id, r.selector, r.subject_type, r.subject, r.effect, r.permissions, r.expires_at, r.time_frame, r.created_by, r.created_at
+		         FROM label_rules r
+		         JOIN subs ON subs.subject_type = r.subject_type AND subs.subject = r.subject
+		        ORDER BY r.id`
+		args = []any{types, names}
+	}
+	rows, err := q.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.LabelRule, error) {
+		var r store.LabelRule
+		var perms string
+		err := row.Scan(&r.ID, &r.Selector, &r.SubjectType, &r.Subject, &r.Effect, &perms, &r.ExpiresAt, &r.TimeFrame, &r.CreatedBy, &r.CreatedAt)
+		r.Permissions = store.ParseSafePermissions(perms)
+		return r, err
 	})
 }
 
@@ -497,11 +662,54 @@ func gatedTargetIDs(ctx context.Context, q reachQuerier) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (int64, error) {
+	ids, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (int64, error) {
 		var id int64
 		err := row.Scan(&id)
 		return id, err
 	})
+	if err != nil {
+		return nil, err
+	}
+	// An ALLOW label rule gates its matching targets the way a direct grant
+	// does. A DENY rule never gates (Phase 250): subtracting one subject's
+	// access must not close the target to everyone else, which is the
+	// difference between "the DBAs are excluded from prod" and "nobody can
+	// reach prod any more".
+	rules, err := labelRulesFor(ctx, q, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var allow []store.LabelRule
+	for _, r := range rules {
+		if !r.IsDeny() {
+			allow = append(allow, r)
+		}
+	}
+	if len(allow) == 0 {
+		return ids, nil
+	}
+	labelled, err := labelledTargets(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	have := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		have[id] = struct{}{}
+	}
+	for _, t := range labelled {
+		if _, seen := have[t.ID]; seen {
+			continue
+		}
+		for _, r := range allow {
+			if r.Matches(t.Labels) {
+				ids = append(ids, t.ID)
+				have[t.ID] = struct{}{}
+				break
+			}
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids, nil
 }
 
 // CreateSafe inserts a safe, populating its ID and CreatedAt. Personal is
@@ -3055,7 +3263,7 @@ func (s *PGStore) Close() {
 // scanTarget maps one result row into a store.Target.
 func scanTarget(row pgx.CollectableRow) (store.Target, error) {
 	var t store.Target
-	err := row.Scan(&t.ID, &t.Name, &t.Host, &t.Port, &t.OSType, &t.Protocol, &t.RequireApproval, &t.SafeID, &t.RDPClipboard, &t.RDPClipboardAudit, &t.CreatedAt, &t.RequireSessionMFA)
+	err := row.Scan(&t.ID, &t.Name, &t.Host, &t.Port, &t.OSType, &t.Protocol, &t.RequireApproval, &t.SafeID, &t.RDPClipboard, &t.RDPClipboardAudit, &t.CreatedAt, &t.RequireSessionMFA, &t.Labels)
 	return t, err
 }
 

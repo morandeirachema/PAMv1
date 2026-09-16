@@ -109,9 +109,16 @@ type Target struct {
 	// inherits the global. The effective policy is the STRICTER of the two
 	// (allow < readonly < deny; off < meta < full) — a high-sensitivity target
 	// may deny what the fleet allows, but no target can loosen a global deny.
-	RDPClipboard      string    `json:"rdp_clipboard,omitempty"`
-	RDPClipboardAudit string    `json:"rdp_clipboard_audit,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
+	RDPClipboard      string `json:"rdp_clipboard,omitempty"`
+	RDPClipboardAudit string `json:"rdp_clipboard_audit,omitempty"`
+	// Labels is the target's label set in canonical stored form
+	// ("env=prod,tier=db", Phase 250) — see labels.go. A label rule whose
+	// selector matches this set grants or denies access to the target without
+	// naming it, so labels are an authorization input, not a display field.
+	// Empty is an unlabelled target, which is every target before Phase 250
+	// and which no selector matches.
+	Labels    string    `json:"labels,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Campaign is an access-certification (attestation) campaign: a point-in-time
@@ -455,7 +462,16 @@ type TargetGrant struct {
 	// safe membership (Phase 246) — the member's set. Nil on a direct target
 	// grant, which confers use and retrieve and never approve (GrantPermits).
 	Permissions []string `json:"permissions,omitempty"`
+	// Effect is GrantAllow or GrantDeny (Phase 250). Empty means allow, which
+	// is what every direct grant and safe membership is and what every row
+	// that predates label rules is; only a label rule can carry GrantDeny.
+	// A live deny row matching the caller refuses the target outright, ahead
+	// of the admin bypass — see auth.CanAccessTargetAt.
+	Effect string `json:"effect,omitempty"`
 }
+
+// IsDeny reports whether the grant refuses rather than admits.
+func (g TargetGrant) IsDeny() bool { return g.Effect == GrantDeny }
 
 // GrantLive reports whether a grant with the given bounds admits at now: not
 // expired, and inside its time frame (an unparsable frame is treated as never
@@ -526,7 +542,48 @@ const (
 	// GrantViaSafe is membership of the safe the target sits in (Phase 17),
 	// which grants every target placed in that safe.
 	GrantViaSafe = "safe"
+	// GrantViaLabel is a label rule whose selector matches the target's labels
+	// (Phase 250) — a grant that never names the target, so a target acquires
+	// or loses it by being labelled.
+	GrantViaLabel = "label"
 )
+
+// What a grant does when it matches. Only a label rule can deny; a direct
+// target grant and a safe membership are always allow, and store the empty
+// string, which reads as allow everywhere.
+const (
+	GrantAllow = "allow"
+	GrantDeny  = "deny"
+)
+
+// LabelRule grants or denies access to every target whose labels match a
+// selector (Phase 250 — Teleport's allow/deny over resource labels). It is the
+// third authorization path, beside a direct target grant and safe membership,
+// and the only one that can say NO: a live deny rule matching the caller
+// refuses the target ahead of every bypass but break-glass, so "nobody but the
+// DBAs touches anything labelled tier=db" is one row rather than an audit of
+// every grant in the estate.
+type LabelRule struct {
+	ID          int64  `json:"id"`
+	Selector    string `json:"selector"`
+	SubjectType string `json:"subject_type"` // user | role
+	Subject     string `json:"subject"`
+	Effect      string `json:"effect"` // allow | deny
+	// Permissions is what an allow rule confers, as on a safe membership
+	// (Phase 246); nil is the direct-grant default of use + retrieve. It is
+	// meaningless on a deny rule, which refuses every action.
+	Permissions []string   `json:"permissions,omitempty"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	TimeFrame   string     `json:"time_frame,omitempty"`
+	CreatedBy   string     `json:"created_by,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+// IsDeny reports whether the rule refuses rather than admits.
+func (r LabelRule) IsDeny() bool { return r.Effect == GrantDeny }
+
+// Matches reports whether the rule's selector covers a target's label set.
+func (r LabelRule) Matches(labels string) bool { return LabelSelectorMatches(r.Selector, labels) }
 
 // GrantSubject is one identifier a grant can name: a username ("user") or a
 // role ("role"). A principal presents several — its own name plus every role it
@@ -558,6 +615,13 @@ type SubjectGrant struct {
 	// Permissions is the safe member's set on a GrantViaSafe row (Phase 246);
 	// nil on a direct grant — see TargetGrant.Permissions.
 	Permissions []string `json:"permissions,omitempty"`
+	// Effect is GrantAllow or GrantDeny (Phase 250); empty reads as allow.
+	// Only a GrantViaLabel row can deny.
+	Effect string `json:"effect,omitempty"`
+	// Selector is the label selector a GrantViaLabel row matched on, so an
+	// entitlement review can say WHY a target is in the list without
+	// re-deriving it.
+	Selector string `json:"selector,omitempty"`
 }
 
 // Checkout is an exclusive, time-boxed lease on a credential. While a checkout
@@ -1337,6 +1401,17 @@ type CredentialStore interface {
 type GrantStore interface {
 	// CreateTargetGrant adds an authorization grant to a target.
 	CreateTargetGrant(ctx context.Context, g *TargetGrant) error
+	// CreateLabelRule adds a label rule (Phase 250), ErrConflict on a rule with
+	// the same selector, subject and effect. The caller validates the selector
+	// first: an unparsable one matches nothing, which would silently disarm a
+	// deny rule.
+	CreateLabelRule(ctx context.Context, r *LabelRule) error
+	// ListLabelRules returns every label rule, ordered by id. Label rules are a
+	// deployment-wide policy list, not a per-target one — there is no target to
+	// scope the read by, since a rule names none.
+	ListLabelRules(ctx context.Context) ([]LabelRule, error)
+	// DeleteLabelRule removes a label rule by ID, or ErrNotFound.
+	DeleteLabelRule(ctx context.Context, id int64) error
 	// ListTargetGrants returns the grants for a target.
 	ListTargetGrants(ctx context.Context, targetID int64) ([]TargetGrant, error)
 	// DeleteTargetGrant removes a grant by ID, or ErrNotFound.
@@ -1346,9 +1421,13 @@ type GrantStore interface {
 	// the caller can audit each one. Rows with no expiry are never touched.
 	SweepExpiredGrants(ctx context.Context, now time.Time) ([]TargetGrant, []SafeMember, error)
 	// EffectiveTargetGrants returns a target's direct grants unioned with the
-	// grants derived from its safe's membership (Phase 17). The connect-time
+	// grants derived from its safe's membership (Phase 17) and with every label
+	// rule whose selector matches the target's labels (Phase 250, Via
+	// GrantViaLabel, carrying the rule's Effect). The connect-time
 	// authorization decision uses this, so a target in a safe is reachable by the
-	// safe's members. An empty result means the target is unrestricted (open).
+	// safe's members. An empty result means the target is unrestricted (open) —
+	// and note that a DENY row is not emptiness: see auth.CanAccessTargetAt for
+	// why a deny row refuses without gating.
 	EffectiveTargetGrants(ctx context.Context, targetID int64) ([]TargetGrant, error)
 	// GrantsForSubjects is EffectiveTargetGrants read from the other side
 	// (Phase 189): instead of "who may reach this target", it answers "which
@@ -1356,8 +1435,9 @@ type GrantStore interface {
 	// The subjects are the identifiers one principal presents — its username and
 	// every role it holds — so a caller asks once rather than per target.
 	//
-	// The same two paths are folded as EffectiveTargetGrants folds them, and each
-	// row records which one it came from in Via (GrantViaGrant / GrantViaSafe)
+	// The same three paths are folded as EffectiveTargetGrants folds them, and each
+	// row records which one it came from in Via (GrantViaGrant / GrantViaSafe /
+	// GrantViaLabel)
 	// so a review can say WHY, not just that. Rows are ordered by target id, then
 	// by path (GrantViaGrant before GrantViaSafe), then by subject — a
 	// SubjectGrant carries no grant id of its own, so there is nothing finer to
@@ -1367,7 +1447,8 @@ type GrantStore interface {
 	// about the target, not about the subject — see GatedTargetIDs.
 	GrantsForSubjects(ctx context.Context, subjects []GrantSubject) ([]SubjectGrant, error)
 	// GatedTargetIDs returns the ids of every target that has at least one
-	// effective grant (a direct grant, or a member of the safe it sits in),
+	// effective ALLOW grant (a direct grant, a member of the safe it sits in,
+	// or a matching allow label rule — a deny rule never gates, Phase 250),
 	// ascending. It is the missing half of the subject-indexed view: a target
 	// absent from this set has no grants, and an ungated target that is not in a
 	// safe is open. Exactly equivalent to len(EffectiveTargetGrants(id)) > 0 for
