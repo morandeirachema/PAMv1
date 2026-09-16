@@ -37,7 +37,8 @@ method moved.
 decides no access of its own. `PAM_SSH_ADDR` must be reachable on loopback
 for the terminal to be offered (it is, by default); bound to one
 non-loopback address, the terminal is off and the log says so. The image is
-`ghcr.io/morandeirachema/pamv1:0.72.0`.
+`ghcr.io/morandeirachema/pamv1:0.72.0`, digest
+`sha256:776d197…` (the full value is in the README and on the release page).
 
 ## [0.71.0] — 2026-09-16
 
