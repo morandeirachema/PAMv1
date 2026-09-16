@@ -68,14 +68,28 @@ func NormalizeSafePermissions(in []string) ([]string, error) {
 // are dropped rather than trusted — a permission this build does not know
 // confers nothing. Never nil.
 func ParseSafePermissions(s string) []string {
-	out, _ := NormalizeSafePermissions(nil)
-	for _, p := range strings.Split(s, ",") {
-		if n, err := NormalizeSafePermissions([]string{p}); err == nil && len(n) == 1 {
-			out = append(out, n[0])
+	// One pass (Phase 248). This runs for every safe-membership row every
+	// authorization read returns — EffectiveTargetGrants, the reach view, the
+	// sweeper — and it used to call NormalizeSafePermissions once per comma
+	// token plus twice more, building a map each time, to reach an answer the
+	// canonical-order emit below gives directly.
+	held := make([]bool, len(safePermOrder))
+	for _, tok := range strings.Split(s, ",") {
+		tok = strings.TrimSpace(tok)
+		for i, known := range safePermOrder {
+			if tok == known {
+				held[i] = true
+				break
+			}
 		}
 	}
-	norm, _ := NormalizeSafePermissions(out)
-	return norm
+	out := []string{}
+	for i, p := range safePermOrder {
+		if held[i] {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // JoinSafePermissions is the stored form of a set.
@@ -102,3 +116,28 @@ func GrantPermits(perms []string, action string) bool {
 	}
 	return has(action)
 }
+
+// SafePermissionsCover reports whether have carries every permission in want —
+// the "you cannot grant more than you have" rule applied to a safe's roster
+// (Phase 248), so a delegated can_manage member cannot hand out — to another
+// subject, to a role that covers itself, or to itself — a right its own live
+// membership does not carry. A nil have is the unconstrained global manager.
+func SafePermissionsCover(have, want []string) bool {
+	if have == nil {
+		return true
+	}
+	held := make(map[string]bool, len(have))
+	for _, p := range have {
+		held[p] = true
+	}
+	for _, p := range want {
+		if !held[p] {
+			return false
+		}
+	}
+	return true
+}
+
+// SafePermissionOrder returns the canonical permission vocabulary, in the
+// order permissions are stored and returned in.
+func SafePermissionOrder() []string { return append([]string(nil), safePermOrder...) }

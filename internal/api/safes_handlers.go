@@ -177,7 +177,8 @@ func (s *Server) addSafeMember(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.canManageSafe(r.Context(), id) {
+	canManage, own := s.safeManagement(r.Context(), id)
+	if !canManage {
 		writeError(w, http.StatusForbidden, "not authorized to manage this safe")
 		return
 	}
@@ -213,6 +214,17 @@ func (s *Server) addSafeMember(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(perms) == 0 && !in.CanManage {
 		writeError(w, http.StatusUnprocessableEntity, "a member with no permissions and no management right would grant nothing")
+		return
+	}
+	// A delegate hands out only what it holds itself (Phase 248) — the same
+	// rule createUser and updateUser apply to capabilities. Without it,
+	// Phase 246's use-only / retrieve-only split was advisory for anyone who
+	// also managed the safe: a use-only manager could add a role membership
+	// covering itself, or simply another member, carrying retrieve or
+	// approve. A global manager is unconstrained (own is nil).
+	if !store.SafePermissionsCover(own, perms) {
+		s.audit(r.Context(), "authz.denied", fmt.Sprintf("safe:%d reason:grant-beyond-own-membership", id))
+		writeError(w, http.StatusForbidden, "cannot grant a permission your own membership does not carry")
 		return
 	}
 	permsDetail := store.JoinSafePermissions(perms)
@@ -386,27 +398,62 @@ func (s *Server) guardPersonalTargetWrite(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) canManageSafe(ctx context.Context, safeID int64) bool {
+	ok, _ := s.safeManagement(ctx, safeID)
+	return ok
+}
+
+// safeManagement is canManageSafe with the answer to the second question a
+// grant needs (Phase 248): when the right comes from the caller's OWN
+// membership rather than a global capability, what that membership confers.
+// own is nil for a global manager, which is unconstrained the way a built-in
+// admin is in Principal.Covers, and non-nil (possibly empty) for a delegate,
+// which may hand out only what it holds itself.
+func (s *Server) safeManagement(ctx context.Context, safeID int64) (canManage bool, own []string) {
 	p := principalFrom(ctx)
 	sf, err := s.store.GetSafe(ctx, safeID)
 	if err != nil {
-		return false
+		return false, nil
 	}
 	switch {
 	case !sf.Personal && p.Can(auth.CapManageTargets):
-		return true
+		return true, nil
 	case sf.Personal && p.Can(auth.CapUnlimitedVaultAccess):
-		return true
+		return true, nil
 	}
 	members, err := s.store.ListSafeMembers(ctx, safeID)
 	if err != nil {
-		return false
+		return false, nil
 	}
+	now := time.Now()
+	held := map[string]bool{}
 	for _, m := range members {
-		if m.CanManage && auth.SubjectMatches(p, m.SubjectType, m.Subject) {
-			return true
+		// A membership manages, and confers, only while it is LIVE (Phase
+		// 248): the same expiry and time frame every access decision reads
+		// through store.GrantLive. Managing the roster is the one right that
+		// can rewrite itself, so it is the last place a stale row should
+		// still count. A principal several memberships match holds the union
+		// of what they confer, as it holds the union of its roles'
+		// capabilities.
+		if !store.GrantLive(m.ExpiresAt, m.TimeFrame, now) || !auth.SubjectMatches(p, m.SubjectType, m.Subject) {
+			continue
+		}
+		for _, perm := range m.Permissions {
+			held[perm] = true
+		}
+		if m.CanManage {
+			canManage = true
 		}
 	}
-	return false
+	if !canManage {
+		return false, nil
+	}
+	own = []string{}
+	for _, perm := range store.SafePermissionOrder() {
+		if held[perm] {
+			own = append(own, perm)
+		}
+	}
+	return true, own
 }
 
 type targetSafeIn struct {

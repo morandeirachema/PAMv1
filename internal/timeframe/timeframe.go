@@ -175,16 +175,20 @@ func (f Frame) End(t time.Time) (end time.Time, ok bool) {
 	}
 	lt := t.In(f.loc)
 	y, mo, d := lt.Date()
-	midnight := time.Date(y, mo, d, 0, 0, 0, 0, f.loc)
 	m := lt.Hour()*60 + lt.Minute()
+	// The edge is a WALL-CLOCK time in f.loc, so it is built as one rather
+	// than by adding f.end minutes to local midnight (Phase 248): on a DST
+	// transition day the two differ by the hour the zone gained or lost, and
+	// this edge is stamped on a session as its deadline. time.Date resolves
+	// the offset for the resulting wall clock — and normalizes 24:00 to the
+	// next day's 00:00, and the day+1 below across a month end.
+	edge := func(addDays int) time.Time { return time.Date(y, mo, d+addDays, 0, f.end, 0, 0, f.loc) }
 	switch {
 	case !f.overnight():
-		return midnight.Add(time.Duration(f.end) * time.Minute), true
+		return edge(0), true
 	case m >= f.start:
-		// Evening leg: the window ends tomorrow at f.end.
-		return midnight.AddDate(0, 0, 1).Add(time.Duration(f.end) * time.Minute), true
+		return edge(1), true // evening leg: the window ends tomorrow at f.end
 	default:
-		// Morning leg: the window ends today at f.end.
-		return midnight.Add(time.Duration(f.end) * time.Minute), true
+		return edge(0), true // morning leg: the window ends today at f.end
 	}
 }
