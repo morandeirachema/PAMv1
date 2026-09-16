@@ -283,6 +283,20 @@ func TestBrowserTerminalEndToEnd(t *testing.T) {
 	if !waitAudit(env.st, "terminal.end", "target:web-01 cred_user:root remote:127.0.0.1", 30*time.Second) {
 		t.Fatal("terminal.end must be audited when the browser closes")
 	}
+	// The PROXY's own end, not just the API's: the session goroutine seals its
+	// recording into the test's temp dir and the registry entry leaves as the
+	// connection unwinds. Returning before that races t.TempDir's cleanup
+	// ("directory not empty") — which is exactly what CI saw once.
+	if !waitAudit(env.st, "session.end", "target:web-01", 30*time.Second) {
+		t.Fatal("the proxy must audit session.end when the terminal closes")
+	}
+	deadline = time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) && len(env.reg.List()) > 0 {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if n := len(env.reg.List()); n != 0 {
+		t.Fatalf("%d session(s) still registered after the terminal closed", n)
+	}
 }
 
 // TestBrowserTerminalTokenIsBoundToItsTarget proves a token minted for one
