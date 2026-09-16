@@ -231,19 +231,19 @@ func TestBrowserTerminalEndToEnd(t *testing.T) {
 	}
 
 	// Open the terminal.
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	ws, _, err := websocket.Dial(ctx, env.wsURL(env.tgt.ID, "token="+tok+"&cols=80&rows=24"), &websocket.DialOptions{Subprotocols: []string{"pamv1-terminal"}})
 	if err != nil {
 		t.Fatalf("open terminal: %v", err)
 	}
 	defer ws.Close(websocket.StatusNormalClosure, "")
-	readUntil(t, ws, strings.TrimSpace(termBanner), 10*time.Second)
+	readUntil(t, ws, strings.TrimSpace(termBanner), 30*time.Second)
 
 	// While it is open: registered by the PROXY as an ssh session, under the
 	// browser's address.
 	var seen bool
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) && !seen {
 		for _, s := range env.reg.List() {
 			if s.Protocol == "ssh" && s.Actor == "alice" && s.Target == "web-01" {
@@ -264,14 +264,14 @@ func TestBrowserTerminalEndToEnd(t *testing.T) {
 	if err := ws.Write(ctx, websocket.MessageBinary, []byte("echo pamv1-roundtrip\n")); err != nil {
 		t.Fatal(err)
 	}
-	readUntil(t, ws, "echo pamv1-roundtrip", 10*time.Second)
+	readUntil(t, ws, "echo pamv1-roundtrip", 30*time.Second)
 	// A resize is a text frame and must not be typed into the shell.
 	if err := ws.Write(ctx, websocket.MessageText, []byte(`{"resize":{"cols":100,"rows":30}}`)); err != nil {
 		t.Fatal(err)
 	}
 
 	// The token was spent by this session: a second WebSocket is refused.
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel2()
 	if ws2, resp, err := websocket.Dial(ctx2, env.wsURL(env.tgt.ID, "token="+tok), nil); err == nil {
 		ws2.Close(websocket.StatusNormalClosure, "")
@@ -280,7 +280,7 @@ func TestBrowserTerminalEndToEnd(t *testing.T) {
 		t.Fatalf("spent token: want 401 on the handshake, got %v (%v)", resp, err)
 	}
 	ws.Close(websocket.StatusNormalClosure, "done")
-	if !waitAudit(env.st, "terminal.end", "target:web-01 cred_user:root remote:127.0.0.1", 5*time.Second) {
+	if !waitAudit(env.st, "terminal.end", "target:web-01 cred_user:root remote:127.0.0.1", 30*time.Second) {
 		t.Fatal("terminal.end must be audited when the browser closes")
 	}
 }
@@ -298,7 +298,7 @@ func TestBrowserTerminalTokenIsBoundToItsTarget(t *testing.T) {
 		t.Fatalf("mint: %d %s", code, d)
 	}
 	tok := jsonMap(t, d)["token"].(string)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if ws, resp, err := websocket.Dial(ctx, env.wsURL(other, "token="+tok), nil); err == nil {
 		ws.Close(websocket.StatusNormalClosure, "")

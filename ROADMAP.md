@@ -2484,7 +2484,11 @@ meant a terminal and `ssh -p 2222`.
   had), keystrokes echo back, the session is in the live registry as `ssh`
   under the browser's address, the token is spent, refused as an API key and
   bound to its target, and `terminal.open` / `terminal.end` are audited;
-  `TestBrowserTerminalTokenIsBoundToItsTarget` covers the mint refusals
+  `TestBrowserTerminalTokenIsBoundToItsTarget` covers the mint refusals. The
+  end-to-end test failed once under the load of a full `-race` run (eight
+  isolated race runs and CI were green); its deadlines were generous-ized
+  and two further full race runs were clean — recorded here so a recurrence
+  is counted, not discovered
 - [x] **Limits, stated rather than discovered.** SSH targets only (a
   WinRM-over-SSH target still uses `ssh`). The proxy must be reachable on
   loopback — `PAM_SSH_ADDR` bound to one non-loopback address disables the
