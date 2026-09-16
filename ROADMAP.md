@@ -2431,7 +2431,9 @@ changed.
 - [x] **v0.69.1** through the test-gated pipeline. `.github/` untouched
   since v0.58.1 and nothing the workflow *reads* has changed either, so no
   rehearsal. Published 2026-09-16 as `ghcr.io/morandeirachema/pamv1:0.69.1`
-  (also `latest`), digest `TBD`, **public** (anonymous pull 200 on both tags,
+  (also `latest`), digest
+  `sha256:14e3ce4a53c6f9346d2dc2dd8cd3a8fd4290d3e68bab28ca26c402341d2e27a5`,
+  **public** (anonymous pull 200 on both tags,
   both resolving to the same digest), signed and attested — every publishing
   step's own conclusion `success`, and the README's `cosign verify` run
   against it — with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS`
