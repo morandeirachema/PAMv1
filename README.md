@@ -147,7 +147,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–151, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–227 and 229–248, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 

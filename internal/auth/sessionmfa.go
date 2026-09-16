@@ -38,6 +38,12 @@ const (
 	// that does not resolve to a live ticket of the caller's own identity; a
 	// proxy password that does not resolve fails authentication instead.
 	ReasonSessionMFATicketInvalid = "session-mfa-ticket-invalid"
+	// ReasonSessionMFAExtension is the refusal for a browser-extension token
+	// on a target that requires a factor (Phase 248). Its scope reaches one
+	// route, so it can never mint a ticket: the operator reveals in the
+	// portal. Distinct from ReasonSessionMFARequired so the audit trail
+	// separates "did not present one" from "could not".
+	ReasonSessionMFAExtension = "session-mfa-extension-unsupported"
 )
 
 // Decrypter opens a vault-sealed value (vault.Vault satisfies it).
@@ -72,7 +78,17 @@ func VerifySecondFactor(ctx context.Context, st SecondFactorStore, dec Decrypter
 		}
 	}
 	c := strings.ToLower(strings.TrimSpace(code))
-	if consumed, err := st.ConsumeMFARecoveryCode(ctx, username, TokenHash(c)); err == nil && consumed {
+	// The store error is RETURNED, not swallowed (Phase 248): this function's
+	// contract says a store failure on a factor check is reported so the
+	// caller can log it, and the recovery branch was the one place that
+	// dropped it — an operator locked out by an unreachable database saw the
+	// same "invalid code" as one who mistyped, with nothing in the log to
+	// tell the two apart. The refusal itself is unchanged: no factor, no pass.
+	consumed, err := st.ConsumeMFARecoveryCode(ctx, username, TokenHash(c))
+	if err != nil {
+		return "", err
+	}
+	if consumed {
 		return FactorRecovery, nil
 	}
 	return "", nil

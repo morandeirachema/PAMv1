@@ -66,3 +66,36 @@ func TestSweepLifetimes(t *testing.T) {
 		t.Fatal("Activity must return a usable no-op for an unknown session")
 	}
 }
+
+// TestSweepEndsASessionOnce proves the lifetime monitor ends a session once,
+// however long its handler takes to unwind (Phase 248). kill() only asks the
+// handler to stop; the entry leaves the registry when that handler's own
+// deferred Remove runs, which for a brokered command can be minutes. Before
+// the fix every 5-second tick re-selected the same session, so one ending was
+// killed and audited dozens of times.
+func TestSweepEndsASessionOnce(t *testing.T) {
+	r := NewRegistry()
+	var kills, audits int
+	cfg := LifetimeConfig{
+		MaxDuration: time.Minute,
+		Audit:       func(context.Context, string, string) { audits++ },
+	}
+	started := time.Now().Add(-time.Hour)
+	sid := r.Register(Info{Actor: "alice", Target: "db", Started: started}, func() { kills++ })
+	// The handler is blocked, so the entry stays registered across ticks.
+	for i := 0; i < 5; i++ {
+		r.SweepLifetimes(t.Context(), time.Now(), cfg)
+	}
+	if kills != 1 || audits != 1 {
+		t.Fatalf("a blocked handler must be ended once: kills=%d audits=%d", kills, audits)
+	}
+	// It is still listed while it unwinds, and ending it is still the
+	// handler's own job.
+	if len(r.List()) != 1 {
+		t.Fatalf("a swept session stays listed until its handler removes it")
+	}
+	r.Remove(sid)
+	if len(r.List()) != 0 {
+		t.Fatal("Remove must still work on a swept session")
+	}
+}

@@ -77,3 +77,54 @@ func TestZeroFrame(t *testing.T) {
 		t.Fatalf("blank parses to zero: %v %v", p, err)
 	}
 }
+
+// TestEndAcrossDST proves the window edge is a WALL-CLOCK time in the frame's
+// own zone, not an offset added to local midnight (Phase 248). On a DST
+// transition day the two differ by an hour, and the edge is what a grant
+// stamps on a session as its deadline — so the session would have outlived the
+// window that admitted it (spring forward) or been cut an hour early (autumn).
+// Contains and End must agree at the edge, whatever the day.
+func TestEndAcrossDST(t *testing.T) {
+	madrid, err := time.LoadLocation("Europe/Madrid")
+	if err != nil {
+		t.Skip("tzdata unavailable")
+	}
+	f, err := Parse("* 08:00-18:00 Europe/Madrid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 2026-03-29 springs forward at 02:00, 2026-10-25 falls back at 03:00.
+	for _, day := range []time.Time{
+		time.Date(2026, 3, 29, 10, 0, 0, 0, madrid),
+		time.Date(2026, 10, 25, 10, 0, 0, 0, madrid),
+		time.Date(2026, 9, 7, 10, 0, 0, 0, madrid), // an ordinary day, for contrast
+	} {
+		end, ok := f.End(day)
+		if !ok {
+			t.Fatalf("%s: inside the window, want an edge", day)
+		}
+		if got := end.In(madrid).Format("15:04"); got != "18:00" {
+			t.Errorf("%s: window edge = %s local, want 18:00", day.Format("2006-01-02"), got)
+		}
+		if !f.Contains(end.Add(-time.Minute)) {
+			t.Errorf("%s: the minute before the edge must still be inside the frame", day.Format("2006-01-02"))
+		}
+		if f.Contains(end) {
+			t.Errorf("%s: the edge itself is exclusive", day.Format("2006-01-02"))
+		}
+	}
+	// The overnight leg crosses the transition itself: a window opening at
+	// 22:00 the evening before the spring-forward closes at 06:00 local, an
+	// hour of wall clock having vanished in between.
+	night, err := Parse("* 22:00-06:00 Europe/Madrid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	end, ok := night.End(time.Date(2026, 3, 28, 23, 0, 0, 0, madrid))
+	if !ok {
+		t.Fatal("inside the evening leg, want an edge")
+	}
+	if got := end.In(madrid).Format("2006-01-02 15:04"); got != "2026-03-29 06:00" {
+		t.Errorf("overnight edge across the transition = %s, want 2026-03-29 06:00", got)
+	}
+}

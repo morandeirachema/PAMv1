@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -148,5 +149,34 @@ func TestConsoleThemeTokensAreConsistent(t *testing.T) {
 				t.Errorf("theme %q defines --%s, which is not one of the base :root tokens (typo?)", name, m[1])
 			}
 		}
+	}
+}
+
+// TestAdvertisedOptionsAreTypeable proves every option number a screen
+// advertises can actually be entered (Phase 248). The option input is rendered
+// by one helper with a maxlength, and two screens grew an option "10" — the
+// DoubleLock toggle and Phase 244's session-MFA ticket — while the field still
+// accepted a single character, so the browser silently dropped the second
+// digit and the only console route to a ticket for psql or sqlcmd was dead.
+func TestAdvertisedOptionsAreTypeable(t *testing.T) {
+	html := string(indexHTML)
+	m := regexp.MustCompile(`class="opt"[^>]*maxlength="(\d+)"`).FindStringSubmatch(html)
+	if m == nil {
+		t.Fatal("could not find the option input's maxlength")
+	}
+	max, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every "N=Label" an fkeys/legend line advertises.
+	seen := map[string]bool{}
+	for _, adv := range regexp.MustCompile(`"(\d+)=[^"]+"`).FindAllStringSubmatch(html, -1) {
+		seen[adv[1]] = true
+		if len(adv[1]) > max {
+			t.Errorf("option %q is advertised but the option field takes only %d character(s)", adv[1], max)
+		}
+	}
+	if !seen["10"] {
+		t.Fatal("expected a two-digit option to be advertised; the guard would not have caught the bug it was written for")
 	}
 }

@@ -257,6 +257,13 @@ func (s *Server) sessionMFAGate(w http.ResponseWriter, r *http.Request, target *
 		return false
 	}
 	if why != "" {
+		// A browser-extension token reaches exactly one route (authzExtOK) and
+		// so can never mint a ticket — Phase 244 stated that limit, but the
+		// refusal still told the caller to call a route its token is refused
+		// at. Say what is actually true instead (Phase 248).
+		if why == auth.ReasonSessionMFARequired && subject.NarrowScope() == auth.ScopeExtensionOnly {
+			return s.refuseSessionMFA(ctx, w, target, deniedAction, auth.ReasonSessionMFAExtension, true)
+		}
 		return s.refuseSessionMFA(ctx, w, target, deniedAction, why, true)
 	}
 	if factor != "" {
@@ -289,6 +296,8 @@ func sessionMFAMessage(reason string, viaHeader bool) string {
 		return "this session-MFA ticket has already been used"
 	case auth.ReasonSessionMFATicketInvalid:
 		return "the session-MFA ticket is invalid, expired, or not yours"
+	case auth.ReasonSessionMFAExtension:
+		return "this target requires a second factor for every session, which the browser extension cannot present — reveal it in the portal instead"
 	}
 	if viaHeader {
 		return "this target requires a second factor for every session — mint a ticket (POST /api/session-mfa) and send it in the " + sessionMFAHeader + " header"

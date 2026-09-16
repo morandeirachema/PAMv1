@@ -493,7 +493,11 @@ func GrantBound(expiresAt *time.Time, frame string, now time.Time) (bound time.T
 	return bound, ok
 }
 
-// LiveTargetGrants filters gs to the rows admitting at now (GrantLive).
+// LiveTargetGrants filters gs to the rows admitting at now (GrantLive). It is
+// the store contract test's assertion helper, NOT the connect gate: the gate
+// reads each grant's bounds inline through GrantLive inside
+// auth.CanAccessTargetAt, because whether a target is gated at all must count
+// the rows this drops. Its subject-side sibling below IS on the live path.
 func LiveTargetGrants(gs []TargetGrant, now time.Time) []TargetGrant {
 	out := make([]TargetGrant, 0, len(gs))
 	for _, g := range gs {

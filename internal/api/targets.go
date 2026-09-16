@@ -258,24 +258,6 @@ func lifetimeDetail(expiresAt *time.Time, frame string) string {
 	return d
 }
 
-// grantDeadline is the REST-side twin of the proxies' gate: the instant the
-// caller's authorization on target ends under its live grants (Phase 240),
-// or nil when nothing bounds it. Stamped on a viewer session at registration.
-func (s *Server) grantDeadline(ctx context.Context, target *store.Target) (*time.Time, string) {
-	grants, err := s.store.EffectiveTargetGrants(ctx, target.ID)
-	if err != nil {
-		return nil, ""
-	}
-	personal, err := store.EffectiveSafePersonal(ctx, s.store, target)
-	if err != nil {
-		return nil, ""
-	}
-	if dl, why, ok := auth.GrantDeadline(principalFrom(ctx), grants, personal, time.Now()); ok {
-		return &dl, why
-	}
-	return nil, ""
-}
-
 // createTargetGrant adds a per-target access grant for a user or role (validating
 // the subject, and that a role subject is a known role) and audits it.
 func (s *Server) createTargetGrant(w http.ResponseWriter, r *http.Request) {

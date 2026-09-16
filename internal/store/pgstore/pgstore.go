@@ -359,7 +359,16 @@ func (s *PGStore) EffectiveTargetGrants(ctx context.Context, targetID int64) ([]
 // SweepExpiredGrants deletes every expired grant and safe membership (Phase
 // 240), returning the deleted rows.
 func (s *PGStore) SweepExpiredGrants(ctx context.Context, now time.Time) ([]store.TargetGrant, []store.SafeMember, error) {
-	rows, err := s.pool.Query(ctx,
+	// Both deletes ride ONE transaction (Phase 248): the caller audits what
+	// comes back, so a second statement that fails after the first committed
+	// would leave authorization rows deleted with no `grant.expired` event
+	// behind them. Either both are gone and both are audited, or neither is.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx,
 		`DELETE FROM target_grants WHERE expires_at IS NOT NULL AND expires_at <= $1
 		 RETURNING id, target_id, subject_type, subject, created_by, expires_at, time_frame`, now)
 	if err != nil {
@@ -373,7 +382,7 @@ func (s *PGStore) SweepExpiredGrants(ctx context.Context, now time.Time) ([]stor
 	if err != nil {
 		return nil, nil, err
 	}
-	rows, err = s.pool.Query(ctx,
+	rows, err = tx.Query(ctx,
 		`DELETE FROM safe_members WHERE expires_at IS NOT NULL AND expires_at <= $1
 		 RETURNING id, safe_id, subject_type, subject, can_manage, created_by, expires_at, time_frame, permissions`, now)
 	if err != nil {
@@ -387,6 +396,9 @@ func (s *PGStore) SweepExpiredGrants(ctx context.Context, now time.Time) ([]stor
 		return m, err
 	})
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, nil, err
 	}
 	sort.Slice(gs, func(i, j int) bool { return gs[i].ID < gs[j].ID })
