@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–250 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–251 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,33 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 251 — v0.70.0 ✅
+
+Releases **250** — target labels with label-based grants and deny rules. A
+**minor**: the schema (`0057`), three routes and three store methods are new.
+
+- [x] **v0.70.0** through the test-gated pipeline. `.github/` untouched
+  since v0.58.1 and nothing the workflow *reads* has changed either, so no
+  rehearsal. Published 2026-09-16 as `ghcr.io/morandeirachema/pamv1:0.70.0`
+  (also `latest`), digest `TBD`, **public** (anonymous pull 200 on both tags,
+  both resolving to the same digest), signed and attested — every publishing
+  step's own conclusion `success`, and the README's `cosign verify` run
+  against it — with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS`
+  attached
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm
+  chart `version` 0.60.1 -> **0.61.0**, a minor alongside an app minor
+- [x] `store.Store` **225 -> 228**; migration high-water **`0056` ->
+  `0057`**; routes **201 -> 204**
+- [x] Both READMEs restated; every `Reflects:` header, both READMEs' *What
+  works today* range, `docs/README.md`, `NIS2-COMPLIANCE.md`'s evidence row
+  and this banner
+- [x] `CHANGELOG.md` leads with **what an operator can now do** — label a
+  target, write one rule for the estate, say no — and states what has not
+  changed: every pre-existing target is unlabelled and matches nothing, so
+  the upgrade widens or narrows no access
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
 
 ## Phase 250 — Target labels with label-based grants and deny rules ✅
 
