@@ -40,7 +40,8 @@ variable moved, and no existing grant, membership or target changes meaning.
 **What has not changed.** Every target that existed before this release is
 unlabelled and matches no selector, so no existing access is widened or
 narrowed by the upgrade; direct grants and safe memberships mean exactly what
-they did. The image is `ghcr.io/morandeirachema/pamv1:0.70.0`.
+they did. The image is `ghcr.io/morandeirachema/pamv1:0.70.0`, digest
+`sha256:0d20fd2…` (the full value is in the README and on the release page).
 
 ## [0.69.1] — 2026-09-16
 
