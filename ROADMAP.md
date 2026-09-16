@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–251 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–252 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,77 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 252 — Credential-level grants (object-level access control) ✅
+
+The next row of the Tier 8 pass — CyberArk's OLAC. A target often carries
+more than one credential (`root` and `deploy`; a DBA account and the
+service one), and until now a grant named the target, so whoever reached it
+could pick any of them. The distinction CyberArk draws per account — *this*
+person, *this* login — had no row to live in.
+
+- [x] **A grant may name one credential.** `target_grants.credential_id`
+  (`0058`, nullable, `ON DELETE CASCADE`): the subject may use or retrieve
+  that credential and no other. Nil is the whole target — every grant before
+  this phase — so no existing access moves. Uniqueness widens to the scope
+  through an expression index over `COALESCE(credential_id, 0)`: a
+  whole-target grant and a scoped one for the same subject are different
+  rows, two scopes for different credentials likewise, and the same scope
+  twice is a conflict — where a plain `UNIQUE` over a nullable column would
+  have let the same subject be granted the whole target twice. Both stores
+  refuse a `credential_id` that names another target's credential
+  (`ErrNotFound`), because such a grant would gate this target and admit
+  nothing, and both drop a grant when its credential is deleted
+- [x] **One reading, at every door.** `TargetGrant.CoversCredential(credID)`
+  — an unscoped grant covers every credential, a scoped one only its own, a
+  request about the target as a whole is covered by any — and
+  `auth.CanAccessCredentialAt` over the same body as `CanAccessTargetAt`. A
+  grant that does not cover the credential does not match **and still
+  gates**, so alice, granted `deploy`, finds `root` refused rather than open,
+  and bob, named by nothing, is refused both. The proxies' `admit()` decides
+  for the credential the operator named, once `lookupTargetCred` has
+  resolved it; `api.authorizedForCredential` sits behind
+  `gateCredentialAccess` / `gateSecretDelivery`, and all nine callers pass
+  their credential (reveal, checkout, DoubleLock, app grants, rotate,
+  reconcile) or nil (operator certificates); WinRM and kubectl, which choose
+  their credential *after* the target-level gate, take a second,
+  credential-scoped check once they have; the viewer re-checks inline
+  against the grants it already holds; the broker's
+  `authorizeAgentCredential` goes through `agentCanUseCredential`.
+  `GrantDeadlineFor` bounds a session by the grants that admitted *that*
+  credential, so a grant on `deploy` expiring soon does not end a session on
+  `root`
+- [x] **Reported, not just enforced.** `POST /api/targets/{id}/grants` takes
+  `credential_id` (422 unless it is on that target), the list returns it,
+  `grant.create` records `cred:<id> cred_user:<name>`, a refusal past the
+  target gate audits `reason:credential-scope`, and the reach view lists
+  `credential_ids` when every grant admitting a target is scoped — nil the
+  moment any one of them covers the whole target. Console *Add grant* offers
+  the target's own credentials as the scope, and the list names it
+- [x] **Proven, not asserted.** `TestCredentialScopedGrant` (admits its own,
+  refuses another, gates the target, whole-target covers all, two scopes are
+  a union, admins unaffected), `TestGrantDeadlineForCredential`,
+  `TestReachCredentials`; the storetest contract (round-trip, widened
+  uniqueness, another target's credential refused, both views carry the
+  scope, cascade on credential delete); `TestAdmitCredentialScopedGrant`
+  (alice on her credential admitted, on the other refused at the target
+  policy, bob refused both, a whole-target grant not refused by the policy
+  gate); `TestCredentialScopedGrantRoutes` (422, 409, deploy revealed and
+  root refused, list and reach carry the scope, a whole-target grant beside
+  the scoped one widens); and **end to end against the in-process sshd**,
+  `TestCredentialScopedGrantProxy` — alice's grant on `root` opens a real
+  session with the injected password, alice on `deploy` is refused, and bob,
+  granted `deploy` on the same target, is refused `root`. With
+  `CoversCredential` forced to always cover, nine assertions fail across the
+  decision, admit and proxy tests
+- [x] **Limits, stated rather than discovered.** Only a direct target grant
+  can be scoped; a safe membership and a label rule confer every credential
+  on their targets. Operator SSH certificates (a Zero Standing Privilege path
+  with no stored credential) and dependency management stay target-level.
+  The scope names a credential id, not a username pattern
+- [x] Schema (`0058`); routes unchanged at **204**, store surface unchanged
+  at **228**, no env var, no new audit action (one detail and one reason).
+  **Released by Phase 253 as v0.71.0** — a minor, since the schema moved
 
 ## Phase 251 — v0.70.0 ✅
 

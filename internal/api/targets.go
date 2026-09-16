@@ -251,6 +251,11 @@ func (s *Server) deleteTarget(w http.ResponseWriter, r *http.Request) {
 type grantIn struct {
 	SubjectType string `json:"subject_type"`
 	Subject     string `json:"subject"`
+	// CredentialID scopes the grant to one credential on the target (Phase
+	// 252); omitted is the whole target. It must name a credential that
+	// belongs to THIS target — a grant that pointed at another target's
+	// credential would gate this target and admit nothing.
+	CredentialID *int64 `json:"credential_id,omitempty"`
 	// ExpiresAt and TimeFrame bound the grant in time (Phase 240); both
 	// optional. ExpiresAt must be in the future; TimeFrame must parse
 	// (timeframe.Parse).
@@ -320,14 +325,23 @@ func (s *Server) createTargetGrant(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	credDetail := ""
+	if in.CredentialID != nil {
+		c, err := s.store.GetCredential(r.Context(), *in.CredentialID)
+		if err != nil || c.TargetID != id {
+			writeError(w, http.StatusUnprocessableEntity, "credential_id must name a credential on this target")
+			return
+		}
+		credDetail = fmt.Sprintf(" cred:%d cred_user:%s", c.ID, c.Username)
+	}
 	// The creator is recorded so a certification review can enforce four-eyes:
 	// the principal who granted access may not be the one certifying it (Phase 46).
-	g := store.TargetGrant{TargetID: id, SubjectType: in.SubjectType, Subject: in.Subject, CreatedBy: actorFrom(r.Context()), ExpiresAt: in.ExpiresAt, TimeFrame: frame}
+	g := store.TargetGrant{TargetID: id, CredentialID: in.CredentialID, SubjectType: in.SubjectType, Subject: in.Subject, CreatedBy: actorFrom(r.Context()), ExpiresAt: in.ExpiresAt, TimeFrame: frame}
 	if err := s.store.CreateTargetGrant(r.Context(), &g); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "grant.create", fmt.Sprintf("target:%d %s:%s", id, in.SubjectType, in.Subject)+lifetimeDetail(in.ExpiresAt, frame))
+	s.audit(r.Context(), "grant.create", fmt.Sprintf("target:%d %s:%s", id, in.SubjectType, in.Subject)+credDetail+lifetimeDetail(in.ExpiresAt, frame))
 	writeJSON(w, http.StatusCreated, g)
 }
 
@@ -406,6 +420,13 @@ func (s *Server) deleteTargetGrant(w http.ResponseWriter, r *http.Request) {
 // admits only the actions its permissions carry, so a use-only member reaches
 // the proxies and not the secret, and a retrieve-only member the reverse.
 func (s *Server) authorizedForTarget(ctx context.Context, target *store.Target, act auth.Action) (bool, error) {
+	return s.authorizedForCredential(ctx, target, nil, act)
+}
+
+// authorizedForCredential is authorizedForTarget for a request about ONE
+// credential (Phase 252): a grant scoped to another credential on the target
+// does not admit it. credID nil is the whole target.
+func (s *Server) authorizedForCredential(ctx context.Context, target *store.Target, credID *int64, act auth.Action) (bool, error) {
 	grants, err := s.store.EffectiveTargetGrants(ctx, target.ID)
 	if err != nil {
 		return false, err
@@ -415,20 +436,46 @@ func (s *Server) authorizedForTarget(ctx context.Context, target *store.Target, 
 		return false, err
 	}
 	principal := principalFrom(ctx)
-	ok := auth.CanAccessTargetAt(principal, grants, target.SafeID != nil, personal, s.rt().ungated, time.Now(), act)
+	var ok bool
+	if credID != nil {
+		ok = auth.CanAccessCredentialAt(principal, grants, *credID, target.SafeID != nil, personal, s.rt().ungated, time.Now(), act)
+	} else {
+		ok = auth.CanAccessTargetAt(principal, grants, target.SafeID != nil, personal, s.rt().ungated, time.Now(), act)
+	}
 	if ok && principal.PersonalOverrideUsed(personal) {
 		s.audit(ctx, "safe.personal_override_used", "target:"+target.Name)
 	}
 	return ok, nil
 }
 
+// credentialScopeGate re-runs the target decision for the credential a path
+// picked AFTER its target-level gate (WinRM, kubectl — they choose the
+// credential themselves rather than take it from the caller), so a grant
+// scoped to another credential on the target does not admit this one (Phase
+// 252). Writes the 403 and audits deniedAction on refusal.
+func (s *Server) credentialScopeGate(w http.ResponseWriter, r *http.Request, target *store.Target, cred *store.Credential, deniedAction string) bool {
+	ok, err := s.authorizedForCredential(r.Context(), target, &cred.ID, auth.ActionUse)
+	if err != nil {
+		storeError(w, err)
+		return false
+	}
+	if !ok {
+		s.audit(r.Context(), deniedAction, fmt.Sprintf("target:%s cred_user:%s reason:credential-scope", target.Name, cred.Username))
+		writeError(w, http.StatusForbidden, "not authorized for this credential")
+		return false
+	}
+	return true
+}
+
 // gateCredentialAccess enforces the per-target grant and four-eyes approval gates
 // that guard EVERY credential-access path — the SSH/WinRM/RDP connect paths and,
-// equally, reveal and checkout. `account` is the login account the caller will use
-// (for the vendor contract gate; "" = any). It writes a 403 and returns false when
-// the caller may not reach the target. action names the audited denial.
-func (s *Server) gateCredentialAccess(w http.ResponseWriter, r *http.Request, target *store.Target, account, action string, act auth.Action) bool {
-	return s.gateTargetAccess(w, r, target, account, action, act, false)
+// equally, reveal and checkout. credID is the credential the request is about
+// (nil for a target-level request), so a grant scoped to another credential
+// does not admit it (Phase 252). `account` is the login account the caller will
+// use (for the vendor contract gate; "" = any). It writes a 403 and returns
+// false when the caller may not reach the target. action names the audited denial.
+func (s *Server) gateCredentialAccess(w http.ResponseWriter, r *http.Request, target *store.Target, credID *int64, account, action string, act auth.Action) bool {
+	return s.gateTargetAccess(w, r, target, credID, account, action, act, false)
 }
 
 // gateSecretDelivery is gateCredentialAccess for the paths that put access
@@ -437,13 +484,13 @@ func (s *Server) gateCredentialAccess(w http.ResponseWriter, r *http.Request, ta
 // 244), between target authorization and the approval gate: after, so a
 // caller who may not reach the target spends no ticket; before, so a missing
 // factor never burns a single-use approval. The same order admit() keeps.
-func (s *Server) gateSecretDelivery(w http.ResponseWriter, r *http.Request, target *store.Target, account, action string, act auth.Action) bool {
-	return s.gateTargetAccess(w, r, target, account, action, act, true)
+func (s *Server) gateSecretDelivery(w http.ResponseWriter, r *http.Request, target *store.Target, credID *int64, account, action string, act auth.Action) bool {
+	return s.gateTargetAccess(w, r, target, credID, account, action, act, true)
 }
 
 // gateTargetAccess is the shared body of the two gates above.
-func (s *Server) gateTargetAccess(w http.ResponseWriter, r *http.Request, target *store.Target, account, action string, act auth.Action, sessionMFA bool) bool {
-	if ok, err := s.authorizedForTarget(r.Context(), target, act); err != nil {
+func (s *Server) gateTargetAccess(w http.ResponseWriter, r *http.Request, target *store.Target, credID *int64, account, action string, act auth.Action, sessionMFA bool) bool {
+	if ok, err := s.authorizedForCredential(r.Context(), target, credID, act); err != nil {
 		storeError(w, err)
 		return false
 	} else if !ok {

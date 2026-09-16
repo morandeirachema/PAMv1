@@ -55,6 +55,12 @@ func (s *Server) targetByName(ctx context.Context, name string) (*store.Target, 
 // the target reached — so a safe membership admits an agent exactly as far as
 // its permissions say, the same reading every operator path makes.
 func (s *Server) agentCanSeeTarget(ctx context.Context, p *auth.Principal, target *store.Target, act auth.Action) (bool, error) {
+	return s.agentCanUseCredential(ctx, p, target, nil, act)
+}
+
+// agentCanUseCredential is agentCanSeeTarget for ONE credential (Phase 252):
+// a grant scoped to another credential on the target does not admit it.
+func (s *Server) agentCanUseCredential(ctx context.Context, p *auth.Principal, target *store.Target, credID *int64, act auth.Action) (bool, error) {
 	grants, err := s.store.EffectiveTargetGrants(ctx, target.ID)
 	if err != nil {
 		return false, err
@@ -62,6 +68,9 @@ func (s *Server) agentCanSeeTarget(ctx context.Context, p *auth.Principal, targe
 	personal, err := store.EffectiveSafePersonal(ctx, s.store, target)
 	if err != nil {
 		return false, err
+	}
+	if credID != nil {
+		return auth.CanAccessCredentialAt(p, grants, *credID, target.SafeID != nil, personal, s.rt().ungated, time.Now(), act), nil
 	}
 	return auth.CanAccessTargetAt(p, grants, target.SafeID != nil, personal, s.rt().ungated, time.Now(), act), nil
 }
@@ -162,12 +171,12 @@ func (s *Server) authorizeAgentCredential(ctx context.Context, p *auth.Principal
 	if err != nil {
 		return nil, nil, err
 	}
-	allowed, err := s.agentCanSeeTarget(ctx, p, target, act)
+	allowed, err := s.agentCanUseCredential(ctx, p, target, &cred.ID, act)
 	if err != nil {
 		return nil, nil, err
 	}
 	if !allowed {
-		return nil, nil, fmt.Errorf("agent not authorized for target %q", target.Name)
+		return nil, nil, fmt.Errorf("agent not authorized for credential %q on target %q", cred.Username, target.Name)
 	}
 	if !broker.Approved(ctx) {
 		if ok, err := s.enforceApproval(ctx, target); err != nil {
