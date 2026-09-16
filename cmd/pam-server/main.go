@@ -1567,6 +1567,16 @@ func run() error {
 		if err != nil {
 			return err
 		}
+		// The in-portal terminal (Phase 254) is an SSH client of this proxy on
+		// the operator's behalf: it needs the proxy's loopback address and host
+		// key, which exist only now. A proxy bound to one non-loopback address
+		// is not reachable as "the proxy on this machine", so the terminal stays
+		// off and says so.
+		if dial := api.LoopbackDialAddr(cfg.SSHAddr); dial != "" {
+			handler.SetSSHProxy(dial, hostKey.PublicKey())
+		} else {
+			log.Warn("in-portal terminal disabled: PAM_SSH_ADDR is not reachable on loopback", "addr", cfg.SSHAddr)
+		}
 		go func() {
 			defer close(proxyDone)
 			if err := px.ListenAndServe(ctx, cfg.SSHAddr); err != nil && ctx.Err() == nil {

@@ -1,6 +1,6 @@
 # PAMv1 — documentation
 
-> Last updated: 2026-09-16 · Reflects: Phases 0–227 and 229–253, and release v0.69.0 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-09-16 · Reflects: Phases 0–227 and 229–254, and release v0.69.0 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-09-16 | Phase 254 (in-portal SSH terminal) documented: ARCHITECTURE-LOW-LEVEL (the terminal bullet in the session section, the five audit actions and the proxy/middleware reasons, change log), ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE and USER-GUIDE change logs, ADMIN-GUIDE (new §9 subsection), README Tier 8 row and the brokering sentence in both READMEs, NOTICE (xterm.js 5.5.0). |
 | 2026-09-16 | Phase 252 (credential-level grants) documented: ARCHITECTURE-LOW-LEVEL (table list gains `target_grants.credential_id`, migration mark `0058`, the credential-level-grants bullet in the authorization section, the `grant.create` detail and `reason:credential-scope` in the audit vocabulary, change log), ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE (§3.3 mark) and USER-GUIDE change logs, ADMIN-GUIDE (new §7 subsection), README Tier 8 row. |
 | 2026-09-16 | Phase 250 (target labels and label rules) documented: ARCHITECTURE-LOW-LEVEL (table list gains `label_rules` + `targets.labels`, migration mark `0057`, the label-rules bullet in the authorization section, audit vocabulary `labelrule.create` / `labelrule.delete` and the `labels:` detail, change log), ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE (§3.3 mark) and USER-GUIDE change logs, ADMIN-GUIDE (new §7 subsection), README Tier 8 row. |
 | 2026-09-16 | Phase 248 (the review of 240–247) documented: ARCHITECTURE-LOW-LEVEL (the safe-permission bullet gains the delegation ceiling and membership liveness, the `PAM_SESSION_IDLE_MIN` row says what counts as input on a graphical session, change log), ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE and ADMIN-GUIDE change logs, and both READMEs' *What works today* phase range, which had said 0–151 since Phase 151 while listing capabilities through 246 — the one phase-range string no release checklist named. |

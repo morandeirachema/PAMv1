@@ -7,6 +7,43 @@ This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 Third-party components bundled in this repository
 --------------------------------------------------------------------------------
 
+xterm.js (@xterm/xterm), version 5.5.0
+  - Vendored, unmodified, as: internal/web/static/xterm.js (the UMD build from
+    the npm package's lib/xterm.js) and its stylesheet, inlined into
+    internal/web/static/index.html (css/xterm.css).
+  - Powers the in-portal SSH terminal (Phase 254): it renders the byte stream
+    of a session brokered by the SSH proxy over a WebSocket. Nothing in it
+    decides access; every gate runs in the proxy.
+  - License: MIT. Copyright (c) 2017-2019, The xterm.js authors;
+    (c) 2014-2016, SourceLair Private Company; (c) 2012-2013, Christopher
+    Jeffrey. https://github.com/xtermjs/xterm.js
+  - sha256 of the vendored file: css=open('/tmp/claude-1000/-home-chema-code-PAMv1/d5d47070-5e36-49f9-9de6-5d54c3e9508e/scratchpad/xterm-xterm.css').read()
+p='internal/web/static/index.html'
+s=open(p).read()
+i=s.index('</style>')
+block="\n  /* ---- xterm.js 5.5.0 stylesheet, vendored verbatim (MIT — see NOTICE). Inlined\n     because the page's CSP allows inline styles and no external stylesheet;\n     the terminal's JS is served as a static asset like guacamole-common. ---- */\n"+css+"\n"
+s=s[:i]+block+s[i:]
+open(p,'w').write(s)
+n='NOTICE'
+t=open(n).read()
+anchor='Apache Guacamole JavaScript client (guacamole-common-js), version 1.5.0'
+assert anchor in t
+entry='''xterm.js (@xterm/xterm), version 5.5.0
+  - Vendored, unmodified, as: internal/web/static/xterm.js (the UMD build from
+    the npm package's lib/xterm.js) and its stylesheet, inlined into
+    internal/web/static/index.html (css/xterm.css).
+  - Powers the in-portal SSH terminal (Phase 254): it renders the byte stream
+    of a session brokered by the SSH proxy over a WebSocket. Nothing in it
+    decides access; every gate runs in the proxy.
+  - License: MIT. Copyright (c) 2017-2019, The xterm.js authors;
+    (c) 2014-2016, SourceLair Private Company; (c) 2012-2013, Christopher
+    Jeffrey. https://github.com/xtermjs/xterm.js
+  - sha256 of the vendored file: '''+open('/dev/stdin').read().strip()+'''
+
+'''
+t=t.replace(anchor, entry+anchor,1)
+open(n,'w').write(t); print("xterm vendored, css inlined, NOTICE updated")
+
 Apache Guacamole JavaScript client (guacamole-common-js), version 1.5.0
   - Vendored, unmodified, as: internal/web/static/guacamole-common.min.js
     (the ESM build from the npm package's dist/esm/guacamole-common.min.js).

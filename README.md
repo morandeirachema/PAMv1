@@ -41,7 +41,7 @@ runs 0–227 and 229–253, and **every phase has shipped**, and the current
 tagged, cosign-signed release is
 **[v0.71.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.71.0)** (2026-09-16;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
-brokering** for SSH, PostgreSQL, WinRM and in-portal RDP; **RBAC + custom profiles** with
+brokering** for SSH, PostgreSQL, WinRM and in-portal RDP and SSH; **RBAC + custom profiles** with
 AD/Entra/OIDC login and TOTP MFA; **break-glass** with M-of-N quorum unseal; **safes** and
 dependent-account propagation; **Zero Standing Privilege** via ephemeral SSH certificates;
 **supervised sessions** (live watch, command control, in-session step-up, a cluster-wide
@@ -516,7 +516,7 @@ before being listed. Rows are added as each phase ships.
 | ~~**Safe-scoped permission sets**~~ **✅ use / retrieve / approve shipped (Phase 246)** — *view-audit-only in this safe still open* | CyberArk's ~25 per-Safe member permissions | a membership names what it confers on the safe's targets: `use` (sessions, brokered commands, operator certificates), `retrieve` (reveal, checkout), `approve` (decide the safe's access requests without the global capability); `can_manage` manages members; existing members keep use + retrieve. **Still open:** a safe-scoped audit read — audit details name their target inconsistently (by name or by id), so it needs a structural target reference first |
 | ~~**Target labels with label-based grants and deny rules**~~ **✅ shipped (Phase 250)** | Teleport allow/deny over resource labels | a target carries `key=value` labels; a **label rule** grants or **denies** a user or role every target whose labels match a selector (`env=prod,tier=db`, `key=*`), with the same permissions and lifetime a grant takes. Deny is decided first and binds administrators (break-glass excepted); a deny never gates a target on its own; relabelling is revocation |
 | ~~**Credential-level grants for humans** (object-level access control)~~ **✅ shipped (Phase 252)** | CyberArk OLAC | a target grant may name **one credential** on its target (`credential_id` on `POST /api/targets/{id}/grants`): the subject uses or retrieves that credential and no other, on every door — the three proxies, reveal/checkout, the viewer, WinRM, kubectl, the broker. A scoped grant still gates the target, so the other credentials are refused, not open |
-| **Browser SSH terminal in the portal** | all three | RDP/VNC only; the WebSocket tunnel exists |
+| ~~**Browser SSH terminal in the portal**~~ **✅ shipped (Phase 254)** | all three | *Work with Targets* → **11=Open terminal**: an xterm.js surface over a WebSocket, behind which the API server is an SSH client of the session proxy on the operator's behalf — so it is a proxy session in every respect (every gate, recording, registry, sharing, kill, session MFA). A 60-second, single-use, target-bound token the proxy accepts only over loopback; the session is recorded under the browser's address |
 | **Level-tiered and direct-manager approval** | CyberArk multi-level confirmation | an N-of-M count only |
 | **FIPS build mode** · **RADIUS authentication** · **multi-tenancy** | Teleport FIPS binaries · CyberArk/WALLIX RADIUS · WALLIX multi-tenant | none; the last is a scope decision |
 
