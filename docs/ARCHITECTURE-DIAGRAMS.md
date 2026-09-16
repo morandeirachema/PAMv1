@@ -513,6 +513,7 @@ erDiagram
     string Subject
     string Via
     ptr_int64 SafeID
+    ptr_int64 CredentialID
     ptr_time_Time ExpiresAt
     string TimeFrame
     arr_string Permissions
@@ -537,6 +538,7 @@ erDiagram
   TargetGrant {
     int64 ID
     int64 TargetID
+    ptr_int64 CredentialID
     string SubjectType
     string Subject
     string CreatedBy
@@ -597,6 +599,8 @@ erDiagram
   Credential ||--o{ AppSecretGrant : "has"
   Credential ||--o{ Checkout : "has"
   Credential ||--o{ CredentialDependency : "has"
+  Credential ||--o{ SubjectGrant : "has"
+  Credential ||--o{ TargetGrant : "has"
   Safe ||--o{ SafeMember : "has"
   Safe ||--o{ SubjectGrant : "has"
   Safe ||--o{ Target : "has"

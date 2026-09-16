@@ -110,6 +110,9 @@ func (s *Server) runKubectl(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "target has no k8s_token credential")
 		return
 	}
+	if !s.credentialScopeGate(w, r, target, cred, "k8s.denied") {
+		return
+	}
 	// The vendor gate needs the login account (here: the service account the
 	// token belongs to) to enforce the contract's per-account scope.
 	if !s.vendorGate(w, r, target, cred.Username, "k8s.denied") {

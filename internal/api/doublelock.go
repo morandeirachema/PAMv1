@@ -278,7 +278,7 @@ func (s *Server) setDoubleLock(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "this credential has no stored secret (zero standing privilege) to double-lock")
 		return
 	}
-	if !s.gateCredentialAccess(w, r, target, c.Username, "credential.doublelock_enable", auth.ActionRetrieve) {
+	if !s.gateCredentialAccess(w, r, target, &c.ID, c.Username, "credential.doublelock_enable", auth.ActionRetrieve) {
 		return
 	}
 	secret, err := s.vault.Decrypt(r.Context(), c.SecretEnc, store.CredentialAAD(c.TargetID, c.ID))
@@ -323,7 +323,7 @@ func (s *Server) clearDoubleLock(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "this credential is not double-locked")
 		return
 	}
-	if !s.gateCredentialAccess(w, r, target, c.Username, "credential.doublelock_disable", auth.ActionRetrieve) {
+	if !s.gateCredentialAccess(w, r, target, &c.ID, c.Username, "credential.doublelock_disable", auth.ActionRetrieve) {
 		return
 	}
 	if !verifyDoubleLockPassword(c.DoubleLockVerifier, in.Password) {

@@ -29,6 +29,9 @@ type reachTarget struct {
 	SubjectType string `json:"subject_type,omitempty"`
 	Subject     string `json:"subject,omitempty"`
 	Safe        string `json:"safe,omitempty"`
+	// CredentialIDs lists the credentials the reach is scoped to (Phase 252)
+	// when every admitting grant names one; absent means the whole target.
+	CredentialIDs []int64 `json:"credential_ids,omitempty"`
 }
 
 // reachResponse is the answer to "what can this subject reach?".
@@ -223,7 +226,8 @@ func (s *Server) subjectReach(w http.ResponseWriter, r *http.Request) {
 		resp.Targets = append(resp.Targets, reachTarget{
 			TargetID: rc.Target.ID, Target: rc.Target.Name, Host: rc.Target.Host,
 			Protocol: rc.Target.Protocol, Via: rc.Via,
-			SubjectType: rc.SubjectType, Subject: rc.Subject, Safe: rc.SafeName,
+			CredentialIDs: rc.CredentialIDs,
+			SubjectType:   rc.SubjectType, Subject: rc.Subject, Safe: rc.SafeName,
 		})
 	}
 	resp.RequireTargetGrant = s.rt().ungated == auth.UngatedDeny
