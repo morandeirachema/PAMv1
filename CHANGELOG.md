@@ -9,6 +9,34 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.71.0] — 2026-09-16
+
+A minor that ships **Phase 252** — credential-level grants, the next row of
+the CyberArk / WALLIX / Teleport research pass (CyberArk's object-level
+access control). **The schema moved**; no route, environment variable or
+store method was added, and no existing grant changes meaning.
+
+**What an operator can now do.**
+
+- **Grant one credential, not the whole target** — `"credential_id": 41` on
+  `POST /api/targets/{id}/grants`, or the *Credential* scope on *Add Target
+  Grant*: the subject may use or retrieve that credential and no other. The
+  DBA who may log in as `deploy` does not thereby get `root`.
+- **Trust that the other credentials stay closed** — a scoped grant still
+  gates the target, on every door: the SSH, PostgreSQL and SQL Server
+  proxies, reveal and checkout, DoubleLock, application grants, the
+  in-portal RDP/VNC viewer, WinRM, kubectl and the AI-agent broker. A refusal
+  past the target gate is audited `reason:credential-scope`.
+- **See the scope where access is reviewed** — `grant.create` records
+  `cred:` / `cred_user:`, the grant list carries `credential_id`, and *What
+  can this subject reach?* lists `credential_ids` when every grant admitting
+  a target is scoped.
+
+**What has not changed.** Every grant that existed before this release
+covers the whole target, exactly as it did; safe memberships and label rules
+confer every credential on their targets. Deleting a credential deletes the
+grants scoped to it. The image is `ghcr.io/morandeirachema/pamv1:0.71.0`.
+
 ## [0.70.0] — 2026-09-16
 
 A minor that ships **Phase 250** — target labels with label-based grants and
@@ -3250,6 +3278,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.71.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.71.0
 [0.70.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.70.0
 [0.69.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.69.1
 [0.69.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.69.0
