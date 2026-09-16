@@ -9,6 +9,64 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.69.1] — 2026-09-16
+
+A patch that ships **Phase 248** — the review of Phases 240–247. Only
+behaviour that was wrong moved: no schema, route, environment variable or
+store method changed, and nothing you configured needs revisiting.
+
+**What is fixed.**
+
+- **Rotating a user's token now takes the same guard as creating one.** A
+  delegated user-admin — a custom permission profile carrying `manage_users`
+  rather than the `admin` role — could call `POST /api/users/{id}/token` on an
+  administrator and receive a working token for it. You cannot rotate the
+  token of an identity whose capabilities you do not hold; a refused rotation
+  leaves the target's own token working, and is audited
+  `authz.denied reason:rotate-beyond-caps`.
+- **A safe membership manages the roster only while it is live.** An expired
+  `expires_at`, or a moment outside the membership's `time_frame`, stopped a
+  member opening sessions but not editing the member list — the one right
+  that can rewrite its own limits.
+- **A delegated safe manager grants only what it holds.** A `use`-only member
+  who also managed the safe could add a membership carrying `retrieve` — to
+  another user, or to a role covering itself — and read every secret in the
+  safe. So "manages the member list but may not read the passwords" is now a
+  state the system enforces, not just one the API can express.
+- **A grant's time frame is right across a daylight-saving change.** The end
+  of a window was computed as an offset from local midnight, so on the two
+  transition days a session could run an hour past the window that admitted
+  it (spring) or be cut an hour early (autumn).
+- **A session is ended, and audited, once.** A session whose handler took
+  more than one monitor tick to unwind was re-terminated and re-audited every
+  five seconds, so a single ending could leave dozens of `session.killed`
+  rows.
+- **An RDP or VNC session can now go idle.** `PAM_SESSION_IDLE_MIN` counted
+  the viewer tunnel's own keepalives as operator activity, so the one session
+  type where an unattended desktop is the risk never timed out. Keyboard,
+  mouse, clipboard, resize and file transfer count; the tunnel's `sync` and
+  `nop` do not.
+- **An expired grant is never deleted without its audit record.** The expiry
+  sweep ran its two deletes separately, so a failure part-way could remove
+  rows with no `grant.expired` behind them. Both now ride one transaction.
+- **A desktop session always carries its grant's deadline.** A transient
+  database error while registering an RDP/VNC session dropped the bound
+  entirely; the deadline now comes from the grants the connection was
+  admitted under.
+- **Clearer refusals.** A browser-extension reveal on a target requiring
+  per-session MFA is refused with `session-mfa-extension-unsupported` and told
+  to use the portal, instead of being sent to a route that refuses its token;
+  and a database failure while checking a recovery code no longer looks like a
+  wrong code.
+- **Console option `10` can be typed.** The option field accepted a single
+  character while two screens offer a two-digit option, which made Phase 244's
+  *Session MFA ticket* screen — the only console route to a ticket for `psql`
+  or `sqlcmd` — unreachable.
+
+**What has not changed.** Every existing grant, membership, token and safe
+keeps exactly the access it had. The image is
+`ghcr.io/morandeirachema/pamv1:0.69.1`.
+
 ## [0.69.0] — 2026-09-15
 
 A minor that ships **Phase 246** — safe permission sets, the next row of the
@@ -3157,6 +3215,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.69.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.69.1
 [0.69.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.69.0
 [0.68.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.68.0
 [0.67.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.67.0
