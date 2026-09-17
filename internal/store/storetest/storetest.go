@@ -1255,7 +1255,7 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.DecideAccessRequest(ctx, casAR.ID, "approved", "grace", now); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("re-deciding a denied request returned %v, want ErrConflict", err)
 	}
-	if err := st.SetApprovalState(ctx, casAR.ID, "grace", "approved", "grace", &now); !errors.Is(err, store.ErrConflict) {
+	if err := st.SetApprovalState(ctx, casAR.ID, "grace", "", "approved", "grace", &now); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("SetApprovalState on a denied request returned %v, want ErrConflict", err)
 	}
 	if a, _ := st.GetAccessRequest(ctx, casAR.ID); a.Status != "denied" || a.Approver != "frank" {
@@ -1351,7 +1351,7 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("chain request not round-tripped: %+v", m)
 	}
 	// One approval — still pending (2 required).
-	if err := st.SetApprovalState(ctx, mreq.ID, "eve", "pending", "", nil); err != nil {
+	if err := st.SetApprovalState(ctx, mreq.ID, "eve", "approver", "pending", "", nil); err != nil {
 		t.Fatalf("SetApprovalState(partial): %v", err)
 	}
 	if m, _ := st.GetAccessRequest(ctx, mreq.ID); m.Status != "pending" || m.ApprovedBy != "eve" {
@@ -1359,8 +1359,12 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 	// Second approval — now approved.
 	dec := now
-	if err := st.SetApprovalState(ctx, mreq.ID, "eve,frank", "approved", "frank", &dec); err != nil {
+	if err := st.SetApprovalState(ctx, mreq.ID, "eve,frank", "approver,admin|auditor", "approved", "frank", &dec); err != nil {
 		t.Fatalf("SetApprovalState(complete): %v", err)
+	}
+	// The role snapshot is parallel to the approver list and round-trips (Phase 264).
+	if got, err := st.GetAccessRequest(ctx, mreq.ID); err != nil || got.ApprovedBy != "eve,frank" || got.ApprovedAs != "approver,admin|auditor" {
+		t.Fatalf("approval snapshot = %+v, %v; want approved_by eve,frank and approved_as approver,admin|auditor", got, err)
 	}
 	// Approved, but the maintenance window hasn't opened yet → not active now,
 	// active once not_before passes.

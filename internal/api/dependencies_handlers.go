@@ -172,7 +172,11 @@ func (s *Server) gateManagementCredential(w http.ResponseWriter, r *http.Request
 		storeError(w, err)
 		return false
 	}
-	if ok, err := s.authorizedForTarget(ctx, mt, auth.ActionReach); err != nil {
+	// Asked about THIS credential, as a retrieval (the review of 250–262): the
+	// bar is the reveal bar, and reveal has been credential-scoped since Phase
+	// 252. The target-level question let a caller granted only `deploy` name
+	// root's credential here and receive its password at the next propagation.
+	if ok, err := s.authorizedForCredential(ctx, mt, &mc.ID, auth.ActionRetrieve); err != nil {
 		storeError(w, err)
 		return false
 	} else if !ok {

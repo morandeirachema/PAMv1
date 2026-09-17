@@ -18,7 +18,17 @@ import (
 
 // recordingExts are the file extensions PruneRecordings will delete. Anything
 // else in the directory (dotfiles like `.chain`, stray files) is left untouched.
-var recordingExts = []string{".cast", ".winrm.log", ".sftp"}
+//
+// The list must name EVERY kind the recording directory holds — the API's
+// recordingNameRe is the other copy, and TestRetentionCoversEveryRecordingKind
+// holds the two together. It had stopped at the first three, so exec
+// transcripts (.ssh.log, .k8s.log), forensic reconstructions and RDP/VNC
+// recordings (.guac, Phase 258) were never pruned: PAM_RECORDING_RETENTION_DAYS
+// silently did not apply to them.
+var recordingExts = []string{".cast", ".winrm.log", ".ssh.log", ".k8s.log", ".forensics.log", ".sftp", ".guac"}
+
+// IsRecording reports whether retention treats name as a recording.
+func IsRecording(name string) bool { return isRecording(name) }
 
 // isRecording reports whether name is a prunable recording file: a non-dotfile
 // whose name ends in a known recording extension.

@@ -330,9 +330,13 @@ type AccessRequest struct {
 	// request is granted (Phase 21 multi-tier chains; default 1). ApprovedBy is
 	// the comma-joined set of approvers so far. NotBefore, when set, delays when
 	// an approved request becomes active (a scheduled maintenance window).
-	RequiredApprovals int        `json:"required_approvals,omitempty"`
-	ApprovedBy        string     `json:"approved_by,omitempty"`
-	NotBefore         *time.Time `json:"not_before,omitempty"`
+	RequiredApprovals int    `json:"required_approvals,omitempty"`
+	ApprovedBy        string `json:"approved_by,omitempty"`
+	// ApprovedAs is parallel to ApprovedBy: each approver's roles AT APPROVAL
+	// TIME, '|'-joined (Phase 264). A role tier reads it for an approver who
+	// has no local user row to re-read; empty elements are legacy approvals.
+	ApprovedAs string     `json:"approved_as,omitempty"`
+	NotBefore  *time.Time `json:"not_before,omitempty"`
 	// OneTime marks a single-use approval (Phase 26): the first privileged use
 	// it admits (a proxy/RDP connect, a WinRM run, a reveal or checkout, a
 	// broker tool call) consumes it — ConsumedAt is stamped and the approval
@@ -1596,7 +1600,8 @@ type ApprovalStore interface {
 	// distinct-approver set, the resulting status ("pending" while partial,
 	// "approved" once the required count is met), the final approver, and the
 	// decided-at time (nil while still partial).
-	SetApprovalState(ctx context.Context, id int64, approvedBy, status, approver string, decidedAt *time.Time) error
+	// approvedAs is the parallel role snapshot (AccessRequest.ApprovedAs).
+	SetApprovalState(ctx context.Context, id int64, approvedBy, approvedAs, status, approver string, decidedAt *time.Time) error
 	// HasActiveApproval reports whether requester has an approved, unexpired
 	// request for targetID as of now. A consumed single-use approval is not
 	// active.

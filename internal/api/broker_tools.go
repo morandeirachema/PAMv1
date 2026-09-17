@@ -137,8 +137,13 @@ func (s *Server) authorizeAgentTarget(ctx context.Context, p *auth.Principal, na
 	return target, nil
 }
 
-// firstCredential returns a target's first credential, or an error if it has none.
-func (s *Server) firstCredential(ctx context.Context, target *store.Target) (*store.Credential, error) {
+// firstUsableCredential returns the first of a target's credentials that p's
+// grants COVER (Phase 252), or an error naming why there is none. The exec
+// tools used to take the target's first credential after a target-level
+// check — which any grant on the target satisfies, including one scoped to a
+// different credential — so an agent granted only `deploy` executed as
+// whichever account happened to be listed first (the review of 250–262).
+func (s *Server) firstUsableCredential(ctx context.Context, p *auth.Principal, target *store.Target) (*store.Credential, error) {
 	creds, err := s.store.ListCredentials(ctx, target.ID, 0, 0)
 	if err != nil {
 		return nil, err
@@ -146,7 +151,16 @@ func (s *Server) firstCredential(ctx context.Context, target *store.Target) (*st
 	if len(creds) == 0 {
 		return nil, fmt.Errorf("target %q has no credential", target.Name)
 	}
-	return &creds[0], nil
+	for i := range creds {
+		ok, err := s.agentCanUseCredential(ctx, p, target, &creds[i].ID, auth.ActionUse)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			return &creds[i], nil
+		}
+	}
+	return nil, fmt.Errorf("agent not authorized for any credential on target %q", target.Name)
 }
 
 // authorizeAgentCredential resolves a credential by id and applies the SAME
@@ -257,7 +271,7 @@ func (t *winrmExecTool) Execute(ctx context.Context, p *auth.Principal, args bro
 	if err != nil {
 		return broker.Result{}, err
 	}
-	cred, err := t.s.firstCredential(ctx, target)
+	cred, err := t.s.firstUsableCredential(ctx, p, target)
 	if err != nil {
 		return broker.Result{}, err
 	}
@@ -324,7 +338,7 @@ func (t *sshExecTool) Execute(ctx context.Context, p *auth.Principal, args broke
 	if err := t.s.guardCommand(ctx, p.Name, target.Name, "ssh_exec", command); err != nil {
 		return broker.Result{}, err
 	}
-	cred, err := t.s.firstCredential(ctx, target)
+	cred, err := t.s.firstUsableCredential(ctx, p, target)
 	if err != nil {
 		return broker.Result{}, err
 	}

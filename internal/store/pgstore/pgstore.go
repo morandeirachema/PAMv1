@@ -1034,7 +1034,7 @@ func (s *PGStore) DeleteCredential(ctx context.Context, id int64) error {
 // accessRequestCols is the one column list every access-request read uses, so
 // a field cannot reach some reads and quietly miss others.
 const accessRequestCols = `id, requester, target_id, reason, status, approver, created_at, decided_at,
-	expires_at, ticket, required_approvals, approved_by, not_before, one_time, consumed_at, recur_days, next_run_at`
+	expires_at, ticket, required_approvals, approved_by, not_before, one_time, consumed_at, recur_days, next_run_at, approved_as`
 
 // CreateAccessRequest inserts a request (defaulting status to pending),
 // populating its ID and CreatedAt; ErrNotFound if the target is missing.
@@ -1251,16 +1251,16 @@ func (s *PGStore) ConsumeApprovalByID(ctx context.Context, id int64, requester s
 }
 
 // SetApprovalState records a multi-approver decision (Phase 21).
-func (s *PGStore) SetApprovalState(ctx context.Context, id int64, approvedBy, status, approver string, decidedAt *time.Time) error {
+func (s *PGStore) SetApprovalState(ctx context.Context, id int64, approvedBy, approvedAs, status, approver string, decidedAt *time.Time) error {
 	// Compare-and-set on pending (2026-08-26 audit, M-4). Both transitions this
 	// serves — accumulating another approver (pending->pending) and the final
 	// grant (pending->approved) — start from pending, so a request a concurrent
 	// deny already moved to "denied" affects no row and reports a conflict
 	// rather than silently reviving an approve over the deny.
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE access_requests SET approved_by = $2, status = $3, approver = $4, decided_at = $5
+		`UPDATE access_requests SET approved_by = $2, status = $3, approver = $4, decided_at = $5, approved_as = $6
 		 WHERE id = $1 AND status = 'pending'`,
-		id, approvedBy, status, approver, decidedAt)
+		id, approvedBy, status, approver, decidedAt, approvedAs)
 	if err != nil {
 		return err
 	}
@@ -3291,7 +3291,7 @@ func scanAccessRequest(row pgx.CollectableRow) (store.AccessRequest, error) {
 	err := row.Scan(&ar.ID, &ar.Requester, &ar.TargetID, &ar.Reason, &ar.Status,
 		&ar.Approver, &ar.CreatedAt, &ar.DecidedAt, &ar.ExpiresAt, &ar.Ticket,
 		&ar.RequiredApprovals, &ar.ApprovedBy, &ar.NotBefore, &ar.OneTime, &ar.ConsumedAt,
-		&ar.RecurDays, &ar.NextRunAt)
+		&ar.RecurDays, &ar.NextRunAt, &ar.ApprovedAs)
 	return ar, err
 }
 

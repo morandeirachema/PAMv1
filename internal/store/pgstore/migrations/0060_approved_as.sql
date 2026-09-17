@@ -1,0 +1,11 @@
+-- Phase 264 (the review of 250-262): what each approver HELD when they approved.
+--
+-- approved_as is parallel to approved_by: one element per approver, that
+-- approver's roles at approval time joined by '|' ("admin", "approver|auditor").
+-- A role tier (Phase 256) re-derived every past approver's role from the users
+-- table at each decision, so an approver with no local row — a directory
+-- identity, the bootstrap admin — satisfied a tier in the response to their own
+-- approval and then stopped counting, and the chain could never complete.
+-- Empty for every row before this migration: such approvers keep being read
+-- from the users table, exactly as before.
+ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS approved_as TEXT NOT NULL DEFAULT '';

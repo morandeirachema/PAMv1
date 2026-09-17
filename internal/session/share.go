@@ -57,9 +57,16 @@ type JoinedParty struct {
 // joinedEntry is the roster's internal bookkeeping for one attached join:
 // the public-facing JoinedParty plus the channel Kick closes to force it to
 // disconnect.
+//
+// One entry may stand for SEVERAL connections (the review of 250–262): a web
+// guest's key is presented once per connection, and a second connection used
+// to REPLACE the first's entry — so a kick closed only the newest channel
+// while the older connection stayed attached, off the roster and unkickable.
+// Connections sharing a joinID now share one kicked channel, counted by refs.
 type joinedEntry struct {
 	party  JoinedParty
 	kicked chan struct{}
+	refs   int
 }
 
 // ShareRegistry multiplexes a live SSH session's operator input across
@@ -92,6 +99,10 @@ type guestBinding struct {
 	actor     string
 	mode      string
 	expires   time.Time
+	// member marks a key issued to a PAMv1 identity (an internal invitee
+	// redeeming in the portal, Phase 260) rather than an emailed guest, so the
+	// door that takes it can re-check that identity's standing.
+	member bool
 }
 
 // NewShareRegistry returns an empty, ready-to-use registry.
@@ -129,6 +140,27 @@ func GuestJoinID(key string) string { return guestKeyHash(key) }
 // same-replica-only scope for view-control joins. A nil *ShareRegistry
 // mints nothing (matching every other method's nil-safety).
 func (r *ShareRegistry) IssueGuestKey(sid, actor, mode string, ttl time.Duration) (string, error) {
+	return r.issueKey(sid, actor, mode, ttl, false)
+}
+
+// IssueMemberKey is IssueGuestKey for a PAMv1 identity: actor is a real
+// username, and GuestKeyIsMember reports it so every use of the key can be
+// checked against that user as they are NOW, not as they were at redemption.
+func (r *ShareRegistry) IssueMemberKey(sid, actor, mode string, ttl time.Duration) (string, error) {
+	return r.issueKey(sid, actor, mode, ttl, true)
+}
+
+// GuestKeyIsMember reports whether key was issued by IssueMemberKey.
+func (r *ShareRegistry) GuestKeyIsMember(key string) bool {
+	if r == nil {
+		return false
+	}
+	r.guestMu.Lock()
+	defer r.guestMu.Unlock()
+	return r.guests[guestKeyHash(key)].member
+}
+
+func (r *ShareRegistry) issueKey(sid, actor, mode string, ttl time.Duration, member bool) (string, error) {
 	if r == nil {
 		return "", errUnavailable
 	}
@@ -146,7 +178,7 @@ func (r *ShareRegistry) IssueGuestKey(sid, actor, mode string, ttl time.Duration
 	// and this was the one that kept the raw secret as the lookup key. Hashing
 	// makes resolve O(1) AND removes the only bespoke handling of a raw bearer
 	// value from the hot path.
-	r.guests[guestKeyHash(key)] = guestBinding{sessionID: sid, actor: actor, mode: mode, expires: time.Now().Add(ttl)}
+	r.guests[guestKeyHash(key)] = guestBinding{sessionID: sid, actor: actor, mode: mode, expires: time.Now().Add(ttl), member: member}
 	r.guestMu.Unlock()
 	return key, nil
 }
@@ -271,10 +303,15 @@ func (r *ShareRegistry) Track(sid, joinID, actor, mode string) <-chan struct{} {
 	if ss == nil {
 		return nil
 	}
-	kicked := make(chan struct{})
 	ss.mu.Lock()
-	ss.joined[joinID] = joinedEntry{party: JoinedParty{JoinID: joinID, Actor: actor, Mode: mode}, kicked: kicked}
-	ss.mu.Unlock()
+	defer ss.mu.Unlock()
+	if e, ok := ss.joined[joinID]; ok {
+		e.refs++
+		ss.joined[joinID] = e
+		return e.kicked
+	}
+	kicked := make(chan struct{})
+	ss.joined[joinID] = joinedEntry{party: JoinedParty{JoinID: joinID, Actor: actor, Mode: mode}, kicked: kicked, refs: 1}
 	return kicked
 }
 
@@ -289,8 +326,16 @@ func (r *ShareRegistry) Untrack(sid, joinID string) {
 		return
 	}
 	ss.mu.Lock()
-	delete(ss.joined, joinID)
-	ss.mu.Unlock()
+	defer ss.mu.Unlock()
+	// The roster entry goes with the LAST connection holding it, not the first
+	// to leave.
+	if e, ok := ss.joined[joinID]; ok {
+		if e.refs--; e.refs > 0 {
+			ss.joined[joinID] = e
+			return
+		}
+		delete(ss.joined, joinID)
+	}
 }
 
 // Kick force-disconnects an attached join: closes the channel Track returned

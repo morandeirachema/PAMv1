@@ -152,14 +152,21 @@ func (s *Server) signOperatorCert(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	if !credentialUsernameExists(creds, in.Principal) {
+	certCred := credentialByUsername(creds, in.Principal)
+	if certCred == nil {
 		writeError(w, http.StatusUnprocessableEntity, "principal is not a managed account on this target")
 		return
 	}
 	// Same connect authorization as any other path to this target (grants ∪ safes,
 	// approval — which may consume a one-time request — and the vendor gate for the
 	// requested principal account).
-	if !s.gateSecretDelivery(w, r, target, nil, in.Principal, "ssh.cert_issue", auth.ActionUse) {
+	//
+	// The gate is asked about THE credential the principal names (the review of
+	// 250–262). It was handed nil — "the whole target" — which any grant on the
+	// target satisfies, so a user granted only `deploy` (Phase 252) could have
+	// the CA sign a certificate for `root`: the one artifact that works
+	// off-proxy and unrecorded.
+	if !s.gateSecretDelivery(w, r, target, &certCred.ID, in.Principal, "ssh.cert_issue", auth.ActionUse) {
 		return
 	}
 
@@ -273,12 +280,12 @@ func decodeSSHSignature(b64 string) (*ssh.Signature, error) {
 	return &sig, nil
 }
 
-// credentialUsernameExists reports whether creds includes one with the username.
-func credentialUsernameExists(creds []store.Credential, username string) bool {
+// credentialByUsername returns the credential in creds with the username, or nil.
+func credentialByUsername(creds []store.Credential, username string) *store.Credential {
 	for i := range creds {
 		if creds[i].Username == username {
-			return true
+			return &creds[i]
 		}
 	}
-	return false
+	return nil
 }

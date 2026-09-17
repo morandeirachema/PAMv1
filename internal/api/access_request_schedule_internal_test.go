@@ -39,7 +39,7 @@ func TestRecurringAccessRequestsSpawnAndStop(t *testing.T) {
 	if n := srv.spawnDueAccessRequests(ctx, now); n != 0 {
 		t.Fatalf("spawned %d requests from a still-PENDING anchor, want 0", n)
 	}
-	if err := st.SetApprovalState(ctx, anchor.ID, "bob", "approved", "bob", &now); err != nil {
+	if err := st.SetApprovalState(ctx, anchor.ID, "bob", "", "approved", "bob", &now); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SetAccessRequestNextRun(ctx, anchor.ID, past); err != nil {

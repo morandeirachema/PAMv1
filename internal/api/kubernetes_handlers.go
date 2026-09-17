@@ -87,6 +87,21 @@ func (s *Server) runKubectl(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "not authorized for this target")
 		return
 	}
+	creds, err := s.store.ListCredentials(r.Context(), target.ID, 0, 0)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	cred := kubeCredential(creds)
+	if cred == nil {
+		writeError(w, http.StatusUnprocessableEntity, "target has no k8s_token credential")
+		return
+	}
+	// Before the ticket and approval gates below (the review of 250–262), so a
+	// credential-scope refusal spends neither.
+	if !s.credentialScopeGate(w, r, target, cred, "k8s.denied") {
+		return
+	}
 	// A kubectl operation is a brokered session, so it takes the per-session
 	// second factor too (Phase 244) — before the approval gate, as admit() does.
 	if !s.sessionMFAGate(w, r, target, "k8s.denied", "kubectl") {
@@ -98,19 +113,6 @@ func (s *Server) runKubectl(w http.ResponseWriter, r *http.Request) {
 	} else if !ok {
 		s.audit(r.Context(), "access.denied", "target:"+target.Name+" reason:approval-required")
 		writeError(w, http.StatusForbidden, "connection requires an approved access request")
-		return
-	}
-	creds, err := s.store.ListCredentials(r.Context(), target.ID, 0, 0)
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	cred := kubeCredential(creds)
-	if cred == nil {
-		writeError(w, http.StatusUnprocessableEntity, "target has no k8s_token credential")
-		return
-	}
-	if !s.credentialScopeGate(w, r, target, cred, "k8s.denied") {
 		return
 	}
 	// The vendor gate needs the login account (here: the service account the

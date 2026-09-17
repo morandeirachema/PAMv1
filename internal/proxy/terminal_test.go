@@ -161,3 +161,53 @@ func TestAdmitTerminalTokenBoundToTarget(t *testing.T) {
 		t.Fatalf("outcome %d gate %d, want refused at the scope gates", res.outcome, res.gate)
 	}
 }
+
+// TestTerminalTokenWithTicket proves the token+ticket pair the API server
+// presents for an MFA-required target (Phase 264) authenticates as the
+// TERMINAL — browser address and all — only over loopback, only under the
+// terminal's client version, and only when both halves are one identity.
+func TestTerminalTokenWithTicket(t *testing.T) {
+	ctx := context.Background()
+	env := newTestEnv(t)
+	px := termProxy(t, env)
+	future := time.Now().Add(time.Hour)
+	mk := func(user, scope, tok string) {
+		t.Helper()
+		if err := env.st.CreateSession(ctx, &store.Session{Username: user, Role: "user", Scope: scope,
+			TokenHash: auth.TokenHash(tok), ExpiresAt: future, TargetID: &env.target.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, u := range []string{"alice", "mallory"} {
+		if err := env.st.CreateUser(ctx, &store.User{Username: u, Role: "user", Active: true, TokenHash: auth.TokenHash(u + "-key")}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("alice", auth.SessionScopeTerminal, "aaaa")
+	mk("alice", auth.SessionScopeSessionMFA, "bbbb")
+	mk("mallory", auth.SessionScopeSessionMFA, "cccc")
+	login := gatesTestUser + "@" + env.target.Name
+	loop := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 40001}
+	version := auth.TerminalClientVersion("198.51.100.7")
+
+	perms, err := px.authenticate(fakeConnMeta{user: login, version: version, remote: loop}, []byte(auth.TerminalPassword("aaaa", "bbbb")))
+	if err != nil {
+		t.Fatalf("token+ticket over loopback: %v", err)
+	}
+	if got := perms.Extensions["terminal_remote"]; got != "198.51.100.7" {
+		t.Errorf("terminal_remote = %q, want the browser address", got)
+	}
+	for name, c := range map[string]struct {
+		meta fakeConnMeta
+		pw   string
+	}{
+		"off loopback":            {fakeConnMeta{user: login, version: version, remote: &net.TCPAddr{IP: net.ParseIP("203.0.113.9"), Port: 4}}, auth.TerminalPassword("aaaa", "bbbb")},
+		"not the terminal client": {fakeConnMeta{user: login, version: "SSH-2.0-OpenSSH_9.6", remote: loop}, auth.TerminalPassword("aaaa", "bbbb")},
+		"someone else's ticket":   {fakeConnMeta{user: login, version: version, remote: loop}, auth.TerminalPassword("aaaa", "cccc")},
+		"two tickets":             {fakeConnMeta{user: login, version: version, remote: loop}, auth.TerminalPassword("bbbb", "bbbb")},
+	} {
+		if _, err := px.authenticate(c.meta, []byte(c.pw)); err == nil {
+			t.Errorf("%s: the pair must not authenticate", name)
+		}
+	}
+}
