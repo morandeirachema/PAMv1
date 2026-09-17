@@ -26,6 +26,9 @@ type safeIn struct {
 	// RequireSessionMFA binds every target in the safe to per-session MFA
 	// (Phase 244), strictest-wins exactly like RequireApproval.
 	RequireSessionMFA bool `json:"require_session_mfa,omitempty"`
+	// ApprovalTiers is the safe's ordered approval chain (Phase 256), binding
+	// every target in it that sets none of its own; validated on write.
+	ApprovalTiers string `json:"approval_tiers,omitempty"`
 	// Personal (Phase 139) marks the safe private — see store.Safe.Personal.
 	// Read only by createSafe; updateSafe never reads it, so it cannot be
 	// changed after creation through this struct even by accident (the store
@@ -80,9 +83,14 @@ func (s *Server) createSafe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "owner is only meaningful for a personal safe")
 		return
 	}
+	tiers, terr := store.NormalizeApprovalTiers(in.ApprovalTiers)
+	if terr != nil {
+		writeError(w, http.StatusUnprocessableEntity, terr.Error())
+		return
+	}
 	sf := store.Safe{Name: in.Name, Description: in.Description,
 		RequireApproval: in.RequireApproval, MinApprovers: in.MinApprovers, Personal: in.Personal,
-		RequireSessionMFA: in.RequireSessionMFA}
+		RequireSessionMFA: in.RequireSessionMFA, ApprovalTiers: tiers}
 	if err := s.store.CreateSafe(r.Context(), &sf); err != nil {
 		storeError(w, err)
 		return
@@ -122,8 +130,13 @@ func (s *Server) updateSafe(w http.ResponseWriter, r *http.Request) {
 	if !validSafePolicy(w, in) {
 		return
 	}
+	tiers, terr := store.NormalizeApprovalTiers(in.ApprovalTiers)
+	if terr != nil {
+		writeError(w, http.StatusUnprocessableEntity, terr.Error())
+		return
+	}
 	sf := store.Safe{ID: id, Name: in.Name, Description: in.Description,
-		RequireApproval: in.RequireApproval, MinApprovers: in.MinApprovers, RequireSessionMFA: in.RequireSessionMFA}
+		RequireApproval: in.RequireApproval, MinApprovers: in.MinApprovers, RequireSessionMFA: in.RequireSessionMFA, ApprovalTiers: tiers}
 	if err := s.store.UpdateSafe(r.Context(), &sf); err != nil {
 		storeError(w, err)
 		return

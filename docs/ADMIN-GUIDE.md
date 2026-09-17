@@ -1768,6 +1768,54 @@ a global target manager, who is unconstrained:
 So "manages the member list but may not read the passwords" is now a state the
 system enforces, not merely one the API can express.
 
+### Level-tiered and direct-manager approval (Phase 256)
+
+Until now an access request needed *N distinct approvers* — any N. A target
+or a safe can now carry an **ordered approval chain** that says *who* must
+approve, and in what order — CyberArk's multi-level confirmation:
+
+```bash
+# level 1: the requester's direct manager; level 2: any two approvers; level 3: an admin
+curl -X PUT -H "X-API-Key: $PAM_API_KEY" localhost:8080/api/targets/12 \
+  -d '{"name":"prod-db","host":"10.0.0.7","port":22,"os_type":"linux","protocol":"ssh",
+       "approval_tiers":"manager; approver:2; admin"}'
+# the same on a safe binds every target in it that sets no chain of its own
+curl -X PUT -H "X-API-Key: $PAM_API_KEY" localhost:8080/api/safes/3 \
+  -d '{"name":"prod","approval_tiers":"manager; approver"}'
+# the direct manager an identity's "manager" tier accepts
+curl -X PUT -H "X-API-Key: $PAM_API_KEY" localhost:8080/api/users/7 \
+  -d '{"role":"user","manager":"mia"}'
+```
+
+A chain is tiers separated by `;`, each `subject[:count]`: `manager` (the
+requester's direct manager — `users.manager`, set on `POST`/`PUT
+/api/users` or by SCIM's enterprise `manager` attribute), `user=<name>`
+(one named identity), or a role / custom-profile name (anyone holding it),
+with a count of distinct approvers (default 1). A bad chain is refused on
+write with the parser's reason. A target's own chain wins over its safe's;
+a chain implies `require_approval`. The `min_approvers` floor and the
+request's own ask still apply on top, as a total.
+
+**How it decides.** Each approval counts only toward the **first
+unsatisfied tier** the approver qualifies for. An approver who does not
+satisfy the current tier is refused (`access.decision_denied
+reason:not-in-current-tier tier:N`) and nothing is recorded — a level-2
+approver cannot pre-approve past level 1. The request is granted only when
+every tier is satisfied, in order, and the distinct-approver count is met.
+The chain is re-read from the policy in force at every decision, exactly
+as the dual-control floor is (Phase 58), so raising it binds requests
+already waiting. A request against a chain with a `manager` tier is refused
+at creation, answerably, when the requester has no manager — rather than
+left waiting for an approval nobody can give. Four-eyes and scoped
+approvers (Phase 246) are unchanged: a scoped approver must still hold the
+safe's `approve`, *and* satisfy the tier.
+
+The request list and every decision response carry `tiers` — each level's
+kind, count, who has approved it, whether it is satisfied and which one is
+current — and *Work with Access Requests* shows the chain (✓ satisfied, ◀
+current). The target and safe forms gain *Approval tiers*; the user forms
+gain *Manager*. No new route or env var.
+
 ### In-portal SSH terminal (Phase 254)
 
 *Work with Targets* → **11=Open terminal** opens an SSH session to the
@@ -4712,6 +4760,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-17 | **Phase 256 (level-tiered and direct-manager approval).** New §9 subsection: ordered approval chains on a target or safe, the tier grammar, the direct manager on a user (API and SCIM), how a decision walks the chain, the manager-tier refusal at creation, and what the console shows. |
 | 2026-09-16 | **Phase 254 (in-portal SSH terminal).** New §9 subsection *In-portal SSH terminal*: what it is (a proxy session, opened by the API server as an SSH client on the operator's behalf), the terminal token's three rules (one target and one use; loopback only; recorded under the operator's address), MFA, audit, the loopback requirement on `PAM_SSH_ADDR`. |
 | 2026-09-16 | **Phase 252 (credential-level grants).** New §7 subsection *Credential-level grants*: scoping a grant to one credential, the 422/409 rules, that a scoped grant still gates the target, and which doors read it. |
 | 2026-09-16 | **Phase 250 (target labels and label rules).** New §7 subsection *Target labels and label rules*: labels on a target, the selector grammar, allow and deny rules, the three things to know before writing a deny (deny binds administrators — break-glass excepted; deny never gates; relabelling is revocation), routes, audit and the console menu. |

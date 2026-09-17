@@ -1877,6 +1877,19 @@ func (m *Memstore) GetUserBySlackUserID(_ context.Context, slackUserID string) (
 // UpdateUserSlackUserID sets a user's linked Slack member ID (Phase 236);
 // ErrNotFound if absent, ErrConflict if another user already claims the same
 // non-empty value.
+// UpdateUserManager sets or clears a user's direct manager (Phase 256).
+func (m *Memstore) UpdateUserManager(_ context.Context, id int64, manager string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	u.Manager = manager
+	m.users[id] = u
+	return nil
+}
+
 func (m *Memstore) UpdateUserSlackUserID(_ context.Context, id int64, slackUserID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

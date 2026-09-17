@@ -249,6 +249,7 @@ erDiagram
     bool OneTime
     ptr_time_Time ConsumedAt
     int RecurDays
+    arr_TierState Tiers
     ptr_time_Time NextRunAt
   }
   AgentCallReservation {
@@ -453,6 +454,7 @@ erDiagram
     time_Time CreatedAt
     bool RequireApproval
     int MinApprovers
+    string ApprovalTiers
     bool RequireSessionMFA
     bool Personal
   }
@@ -533,6 +535,7 @@ erDiagram
     string RDPClipboard
     string RDPClipboardAudit
     string Labels
+    string ApprovalTiers
     time_Time CreatedAt
   }
   TargetGrant {
@@ -555,6 +558,7 @@ erDiagram
     string DeviceFingerprint
     string ExternalID
     string SlackUserID
+    string Manager
     string LockedReason
     ptr_time_Time LockedUntil
     ptr_time_Time TokenExpiresAt

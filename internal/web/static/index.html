@@ -669,7 +669,7 @@
     return { name: f.name, description: f.description,
              require_approval: form.require_approval.checked,
              require_session_mfa: form.require_session_mfa.checked,
-             min_approvers: Number(f.min_approvers || 0) };
+             min_approvers: Number(f.min_approvers || 0), approval_tiers: f.approval_tiers || "" };
   }
   // Step-ups (Phase 43): a paused statement is waiting on a supervisor and will
   // be refused when its TTL expires, so this screen is time-critical.
@@ -1589,6 +1589,7 @@ Type choices, press Enter.
 <label>Protocol  . . . . . :  <select name="protocol"><option>ssh</option><option>winrm</option><option>rdp</option><option>vnc</option><option>postgres</option><option>mssql</option><option>kubernetes</option></select>   <span class="cyan">ssh, winrm, rdp, vnc, postgres, mssql, kubernetes (port defaults to 6443)</span></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox">   <span class="cyan">connections need an approved request (4-eyes)</span></label>
 <label>Session MFA . . . . :  <input name="require_session_mfa" type="checkbox">   <span class="cyan">every session and every secret handed out needs a fresh second factor</span></label>
+<label>Approval tiers  . . :  <input name="approval_tiers" size="36" placeholder="manager; approver:2; admin">   <span class="cyan">ordered chain (Phase 256); blank = the safe's, else N-of-M</span></label>
 <label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value="">(global)</option><option>allow</option><option>readonly</option><option>deny</option></select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
 <label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value="">(global)</option><option>off</option><option>meta</option><option>full</option></select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
 <label>Labels  . . . . . . :  <input name="labels" size="36" placeholder="env=prod,tier=db">   <span class="cyan">label rules (menu 32) grant or DENY by these</span></label>
@@ -1600,7 +1601,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           const f = Object.fromEntries(new FormData(ev.target));
           const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked,
             require_session_mfa: ev.target.require_session_mfa.checked,
-            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit, labels: parseLabels(f.labels) };
+            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit, labels: parseLabels(f.labels), approval_tiers: f.approval_tiers || "" };
           try { await api("POST", "/api/targets", body); say(`TARGET ${String(f.name).toUpperCase()} ADDED.`); await openTargets(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
@@ -1624,6 +1625,7 @@ Editing target <span class="white">${esc(t.name)}</span> (id ${esc(t.id)}). Type
 <label>Protocol  . . . . . :  <select name="protocol">${sel(["ssh", "winrm", "rdp", "vnc", "postgres", "mssql", "kubernetes"], t.protocol)}</select></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox"${t.require_approval ? " checked" : ""}>   <span class="cyan">connections need an approved request (4-eyes)</span></label>
 <label>Session MFA . . . . :  <input name="require_session_mfa" type="checkbox"${t.require_session_mfa ? " checked" : ""}>   <span class="cyan">every session and every secret handed out needs a fresh second factor</span></label>
+<label>Approval tiers  . . :  <input name="approval_tiers" size="36" value="${esc(t.approval_tiers || "")}" placeholder="manager; approver:2; admin">   <span class="cyan">ordered chain (Phase 256); blank = the safe's, else N-of-M</span></label>
 <label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value=""${t.rdp_clipboard ? "" : " selected"}>(global)</option>${sel(["allow", "readonly", "deny"], t.rdp_clipboard)}</select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
 <label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value=""${t.rdp_clipboard_audit ? "" : " selected"}>(global)</option>${sel(["off", "meta", "full"], t.rdp_clipboard_audit)}</select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
 <label>Labels  . . . . . . :  <input name="labels" size="36" value="${esc(t.labels || "")}" placeholder="env=prod,tier=db">   <span class="cyan">label rules (menu 32) grant or DENY by these</span></label>
@@ -1636,7 +1638,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           const f = Object.fromEntries(new FormData(ev.target));
           const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked,
             require_session_mfa: ev.target.require_session_mfa.checked,
-            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit, labels: parseLabels(f.labels) };
+            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit, labels: parseLabels(f.labels), approval_tiers: f.approval_tiers || "" };
           try { await api("PUT", `/api/targets/${t.id}`, body); say(`TARGET ${String(f.name).toUpperCase()} CHANGED.`); await openTargets(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
@@ -3278,11 +3280,11 @@ ${isApprover ? `Pending 4-eyes requests${isGlobalApprover ? "" : " for the targe
   <span class="cyan">${isGlobalApprover ? "5=Approve   6=Deny   7=Stop recur   8=Notify Slack" : "5=Approve   6=Deny"}</span>   <span class="cyan">Apprv = approvals so far / required   Use: 1x = single-use, used = consumed</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Requester</th><th>Target</th><th>Reason</th><th>Ticket</th><th>Status</th><th>Apprv</th><th>Use</th><th>Recur</th><th>Active from</th><th>Expires</th></tr>
+<tr><th>Opt</th><th>ID</th><th>Requester</th><th>Target</th><th>Reason</th><th>Ticket</th><th>Status</th><th>Apprv</th><th>Tiers</th><th>Use</th><th>Recur</th><th>Active from</th><th>Expires</th></tr>
 ${requests.map((r) => { const n = r.approved_by ? r.approved_by.split(",").filter(Boolean).length : 0;
   const use = r.one_time ? (r.consumed_at ? `<span class="cyan">used</span>` : `<span class="amber">1x</span>`) : "-";
   const recur = r.recur_days ? `<span class="cyan">${esc(r.recur_days)}d</span>` : "-";
-  return `<tr><td>${opt(r.id)}</td><td>${esc(r.id)}</td><td>${cell(r.requester, 10)}</td><td>${cell(tn[r.target_id] || r.target_id, 12)}</td><td>${cell(r.reason || "-", 12)}</td><td>${cell(r.ticket || "-", 10)}</td><td class="${r.status === "pending" ? "amber" : ""}">${esc(r.status)}</td><td>${n}/${esc(r.required_approvals || 1)}</td><td>${use}</td><td>${recur}</td><td class="cyan">${fmtTime(r.not_before)}</td><td class="cyan">${fmtTime(r.expires_at)}</td></tr>`; }).join("")}
+  return `<tr><td>${opt(r.id)}</td><td>${esc(r.id)}</td><td>${cell(r.requester, 10)}</td><td>${cell(tn[r.target_id] || r.target_id, 12)}</td><td>${cell(r.reason || "-", 12)}</td><td>${cell(r.ticket || "-", 10)}</td><td class="${r.status === "pending" ? "amber" : ""}">${esc(r.status)}</td><td>${n}/${esc(r.required_approvals || 1)}</td><td>${cell((r.tiers || []).map((t) => (t.kind === "manager" ? "manager" : t.kind === "user" ? "user=" + t.name : t.name) + (t.count > 1 ? ":" + t.count : "") + (t.satisfied ? "✓" : t.current ? "◀" : "")).join(" › ") || "-", 24)}</td><td>${use}</td><td>${recur}</td><td class="cyan">${fmtTime(r.not_before)}</td><td class="cyan">${fmtTime(r.expires_at)}</td></tr>`; }).join("")}
 </table>${requests.length ? "" : `<div class="cyan indent">(No pending requests.)</div>`}
 <input type="submit" hidden></form>` : `<div class="cyan">You can file an access request for a target that requires approval.</div>`}
 ${fkeys(`F3=Exit   F5=Refresh   F6=File request   F12=Cancel`)}`;
@@ -3412,6 +3414,7 @@ A one-time access token is generated and shown once. Only its hash is stored.
 <label>Role / profile  . . :  <select name="role">${["user", "auditor", "approver", "admin"].map((r) => `<option>${r}</option>`).join("")}${profiles.map((p) => `<option value="${esc(p.name)}">${esc(p.name)} (profile)</option>`).join("")}</select></label>
 <label>IP allowlist  . . . :  <input name="ip_allowlist" size="40" placeholder="blank = unrestricted"></label>
 <label>Slack member ID . . :  <input name="slack_user_id" size="20" placeholder="blank = no Slack approvals"></label>
+<label>Manager . . . . . . :  <input name="manager" size="20" placeholder="blank = none">   <span class="cyan">direct manager (a local user) for a "manager" approval tier (Phase 256)</span></label>
 <input type="submit" hidden>
 </form>
 <div class="cyan indent">IP allowlist: comma-separated CIDR blocks (e.g. 10.0.0.0/8, 192.168.1.0/24) this user may connect from — blank means no restriction.</div>
@@ -3438,6 +3441,7 @@ Editing user <span class="white">${esc(u.username)}</span> (id ${esc(u.id)}). Th
 <label>Role / profile  . . :  <select name="role" autofocus>${roles.map((r) => `<option${r === u.role ? " selected" : ""}>${r}</option>`).join("")}${profiles.map((p) => `<option value="${esc(p.name)}"${p.name === u.role ? " selected" : ""}>${esc(p.name)} (profile)</option>`).join("")}</select></label>
 <label>IP allowlist  . . . :  <input name="ip_allowlist" size="40" value="${esc(u.ip_allowlist || "")}" placeholder="blank = unrestricted"></label>
 <label>Slack member ID . . :  <input name="slack_user_id" size="20" value="${esc(u.slack_user_id || "")}" placeholder="blank = no Slack approvals"></label>
+<label>Manager . . . . . . :  <input name="manager" size="20" value="${esc(u.manager || "")}" placeholder="blank = none">   <span class="cyan">direct manager (a local user) for a "manager" approval tier (Phase 256)</span></label>
 <div class="cyan">You cannot assign capabilities you do not hold. Clearing IP allowlist removes the restriction; clearing Slack member ID stops this user deciding from Slack.</div>
 <input type="submit" hidden>
 </form>
@@ -3446,7 +3450,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
           try {
-            await api("PUT", `/api/users/${u.id}`, { role: f.role, ip_allowlist: f.ip_allowlist || "", slack_user_id: f.slack_user_id || "" });
+            await api("PUT", `/api/users/${u.id}`, { role: f.role, ip_allowlist: f.ip_allowlist || "", slack_user_id: f.slack_user_id || "", manager: f.manager || "" });
             say(`USER ${String(u.username).toUpperCase()} IS NOW ${String(f.role).toUpperCase()}.`);
             await openUsers();
           } catch (e) { say("CPF9898: " + e.message, true); render(); }
@@ -3995,6 +3999,7 @@ Create a container to group targets and delegate who may access them.
 <label>Require approval  . :  <input name="require_approval" type="checkbox">   <span class="cyan">every target in this safe needs an approved request</span></label>
 <label>Session MFA . . . . :  <input name="require_session_mfa" type="checkbox">   <span class="cyan">every session to a target in this safe needs a fresh second factor</span></label>
 <label>Min approvers . . . :  <input name="min_approvers" type="number" min="0" max="10" value="0" size="3">   <span class="cyan">dual control: distinct approvers required (0 = use the global default)</span></label>
+<label>Approval tiers  . . :  <input name="approval_tiers" size="36" placeholder="manager; approver:2; admin">   <span class="cyan">ordered chain for every target in the safe (Phase 256)</span></label>
 <input type="submit" hidden>
 </form>
 ${fkeys("F3=Exit   F12=Cancel")}`;
@@ -4020,6 +4025,7 @@ Editing safe <span class="white">${esc(s.name)}</span> (id ${esc(s.id)}). Member
 <label>Require approval  . :  <input name="require_approval" type="checkbox"${s.require_approval ? " checked" : ""}>   <span class="cyan">every target in this safe needs an approved request</span></label>
 <label>Session MFA . . . . :  <input name="require_session_mfa" type="checkbox"${s.require_session_mfa ? " checked" : ""}>   <span class="cyan">every session to a target in this safe needs a fresh second factor</span></label>
 <label>Min approvers . . . :  <input name="min_approvers" type="number" min="0" max="10" size="3" value="${esc(s.min_approvers || 0)}">   <span class="cyan">dual control: distinct approvers required (0 = use the global default)</span></label>
+<label>Approval tiers  . . :  <input name="approval_tiers" size="36" value="${esc(s.approval_tiers || "")}" placeholder="manager; approver:2; admin">   <span class="cyan">ordered chain for every target in the safe (Phase 256)</span></label>
 <input type="submit" hidden>
 </form>
 <span class="cyan">Raising the floor binds requests that are ALREADY waiting: it is re-read when each approval is cast, not fixed when the request was filed.</span>

@@ -79,8 +79,10 @@ import (
 // Phase 250 added GrantStore.{CreateLabelRule,ListLabelRules,DeleteLabelRule}
 // (3) — the third authorization path, and the only one that can DENY, so it
 // needed rows of its own rather than a flag on a grant that names one target.
+// Phase 256 added UserStore.UpdateUserManager (1) — a user's direct manager,
+// the one approver a "manager" tier of an approval chain accepts.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 228
+	const want = 229
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)
