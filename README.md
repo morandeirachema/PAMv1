@@ -757,7 +757,7 @@ curl -s http://pamv1:8080/metrics | grep pam_build_info      # same, for monitor
 **Status:** **[v0.76.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.76.0)
 was released on 2026-09-17**, and every manifest here pins its tag, `0.76.0` — image
 digest
-`sha256:7ebf37457c558705ade29d2c8abed6fa7c52a020c0cdb8c1853b01d40ba07731`, public
+`sha256:c0dd33432d1953d347fd6ce17638f6f04c69bc3455fdec384aa9d115dcd2bac5`, public
 (anonymous pull verified). A tag can be pushed again; a digest cannot, so for
 production pin the digest instead: `image.digest` in the Helm chart, or
 `ghcr.io/morandeirachema/pamv1@sha256:…` in a manifest. Every release's digest is

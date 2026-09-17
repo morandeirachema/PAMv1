@@ -49,7 +49,10 @@ if you use credential-scoped grants with the AI-agent broker.
 
 **What has not changed.** Requests approved before the upgrade keep their
 approvals. Grants that name no credential behave exactly as before.
-The image is `ghcr.io/morandeirachema/pamv1:0.76.0`.
+The image is
+`ghcr.io/morandeirachema/pamv1:0.76.0`, digest
+`sha256:c0dd33432d1953d347fd6ce17638f6f04c69bc3455fdec384aa9d115dcd2bac5`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.76.0)).
 
 ## [0.75.1] — 2026-09-17
 
