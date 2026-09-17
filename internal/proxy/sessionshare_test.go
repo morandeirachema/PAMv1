@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -576,4 +577,49 @@ func TestSessionShareJoinRefusesExternalKind(t *testing.T) {
 	if _, err := joiner.NewSession(); err == nil {
 		t.Fatal("expected an external-kind invite to be refused on the SSH join path")
 	}
+}
+
+// TestSessionShareJoinRefusesDesktop proves an SSH `join:` redemption of an
+// invite to an RDP/VNC session is refused with its own reason (Phase 260): a
+// desktop has no terminal to attach to, so the join would read a silent
+// stream and type into a mux nothing reads. It is redeemed in the portal.
+func TestSessionShareJoinRefusesDesktop(t *testing.T) {
+	st := memstore.New()
+	v := mustVault(t)
+	seedUserToken(t, st, "bob", "bobs-own-token")
+	resolver, err := auth.NewResolver(st, proxyAPIKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, hub, shares := session.NewRegistry(), session.NewHub(), session.NewShareRegistry()
+	px, err := proxy.New(st, v, resolver, proxy.Config{
+		HostKey: mustSigner(t), RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second,
+		Sessions: reg, Live: hub, Shares: shares,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := serveProxy(t, px)
+	sid := reg.Register(session.Info{Actor: "alice", Target: "win-rdp", Protocol: "rdp", Started: time.Now()}, func() {})
+	const rawToken = "desktop-share-token"
+	approvedInvite(t, st, sid, "view_only", "internal", "bob", rawToken, time.Minute)
+
+	joiner, err := dialProxy(t, addr, "join:"+rawToken, "bobs-own-token")
+	if err != nil {
+		t.Fatalf("dial should succeed (refusal is per-channel): %v", err)
+	}
+	defer joiner.Close()
+	if _, err := joiner.NewSession(); err == nil || !strings.Contains(err.Error(), "desktop session") {
+		t.Fatalf("an SSH join to a desktop must be refused with a pointer to the portal, got %v", err)
+	}
+	events, err := st.ListAudit(context.Background(), 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range events {
+		if e.Action == "session.share_join_denied" && strings.Contains(e.Detail, "session:"+sid+" reason:graphical-session") {
+			return
+		}
+	}
+	t.Fatal("the refusal was not audited with reason:graphical-session")
 }

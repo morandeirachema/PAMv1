@@ -1464,6 +1464,48 @@
     client.connect("token=" + encodeURIComponent(tok) + "&width=" + w + "&height=" + h);
   }
 
+  // joinSharedDesktop opens a desktop shared with this user (Phase 260). A
+  // view_control share wires Mouse and Keyboard to the client; the server
+  // forwards only input and keep-alive either way. Ctrl+Alt+Q leaves.
+  async function joinSharedDesktop(r) {
+    let Guac;
+    try { Guac = await loadGuac(); }
+    catch (e) { say("CPF9999: " + String(e.message || "VIEWER UNAVAILABLE").toUpperCase(), true); render(); return; }
+    const control = r.mode === "view_control";
+    let client = null;
+    const ov = viewerOverlay(
+      `<span><span class="white">SHARED ${esc(String(r.protocol || "").toUpperCase())}</span> session ${esc(String(r.session_id).slice(0, 8))} <span class="cyan">${control ? "view + control" : "view only"} · audited</span></span>` +
+      `<span class="amber">Ctrl+Alt+Q = leave</span>`,
+      () => { if (client) client.disconnect(); });
+    const tunnel = new Guac.WebSocketTunnel("/api/share/desktop");
+    client = new Guac.Client(tunnel);
+    ov.view.appendChild(client.getDisplay().getElement());
+    ov.view.appendChild(buildWatermark("shared session"));
+    const leave = () => ov.close("LEFT THE SHARED SESSION.");
+    if (control) {
+      const mouse = new Guac.Mouse(ov.view);
+      mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = (state) => client.sendMouseState(state);
+      const keyboard = new Guac.Keyboard(ov.wrap);
+      keyboard.onkeydown = (sym) => {
+        if (keyboard.modifiers.ctrl && keyboard.modifiers.alt && (sym === 0x071 || sym === 0x051)) { leave(); return true; }
+        client.sendKeyEvent(1, sym);
+      };
+      keyboard.onkeyup = (sym) => client.sendKeyEvent(0, sym);
+    } else {
+      ov.wrap.addEventListener("keydown", (ev) => {
+        if (ev.key === "Escape" || (ev.ctrlKey && ev.altKey && (ev.key === "q" || ev.key === "Q"))) { ev.preventDefault(); leave(); }
+      });
+    }
+    const errMsg = (st) => "CPF9999: SHARED SESSION — " + String((st && st.message) || "error").toUpperCase();
+    client.onerror = (st) => ov.close(errMsg(st), true);
+    tunnel.onerror = (st) => ov.close(errMsg(st), true);
+    client.onstatechange = (state) => { if (state === 5) ov.close("THE SHARED SESSION ENDED."); };
+    tunnel.onstatechange = (state) => { if (state === 2) ov.close("THE SHARED SESSION ENDED."); };
+    const w = Math.max(640, Math.min(ov.view.clientWidth || 1024, 4096));
+    const h = Math.max(480, Math.min((window.innerHeight - 30) || 768, 4096));
+    client.connect("key=" + encodeURIComponent(r.key) + "&width=" + w + "&height=" + h);
+  }
+
   // openDesktopReplay plays a portal recording of an RDP/VNC session — the
   // Guacamole instruction stream, which Guacamole.SessionRecording renders
   // with its own timing. The fetch is the same audited, hash-checked playback
@@ -1607,6 +1649,7 @@ ${fkeys("")}
           line(30, can("reveal_secret"), "Browser-extension token (autofill)") +
           line(31, can("read_audit"), "What can this subject reach? (access review)") +
           line(32, can("read_inventory"), "Work with label rules (allow / deny by label)") +
+          line(33, true, "Join a shared desktop (session invite)") +
           "90. Sign off\n";
         term.innerHTML = `${head("PAMMAIN", "PAMV1 Main Menu")}
 Select one of the following:
@@ -1630,6 +1673,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
             "28": openEndpointAgents, "29": openScimKeys, "30": openExtToken,
             "31": () => openReach(""),
             "32": openLabelRules,
+            "33": () => go("sharejoin"),
             "90": signoff,
           };
           if (routes[c]) { try { await routes[c](); } catch (e) { say("CPF9999: " + e.message, true); render(); } }
@@ -1993,7 +2037,7 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         const canKill = can("manage_targets");
         term.innerHTML = `${head("PAMWRKSSN", "Work with Active Sessions")}
 Live proxied sessions (auto-refresh 5s). Type options, press Enter.
-  <span class="cyan">${[canKill ? "4=End session (kill)" : "", "5=Watch (live monitor; RDP/VNC opens the desktop view-only)"].filter(Boolean).join("   ")}</span>
+  <span class="cyan">${[canKill ? "4=End session (kill)" : "", "5=Watch (live monitor; RDP/VNC opens the desktop view-only)", "6=Share invites"].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Actor</th><th>Target</th><th>Proto</th><th>Remote</th><th>Replica</th><th>Started</th></tr>
@@ -2017,6 +2061,7 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
                 else say(`SESSION ${String(s.id).slice(0, 8)} ENDED.`);
               }
               else if (o === "5") { return VIEWERS[s.protocol] ? watchDesktop(s) : watchSession(s); }
+              else if (o === "6") { watchSess = null; return openShareInvites(s.id); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
             await openSessions();
@@ -2076,7 +2121,7 @@ ${fkeys(`F3=Exit   F5=Refresh   F6=Invite someone   F7=Session invites${canAppro
       // note — so this is deliberately just a form post, not a numbered-option
       // list screen.
       shareinvitenew() {
-        back = "sesswatch";
+        back = "shareinvites";
         term.innerHTML = `${head("PAMSHRNEW", "Invite to Session")}
 Session <span class="white">${esc(String(shareInviteSid).slice(0, 8))}</span>. Filing a request sends nothing yet — a DIFFERENT principal holding the approve capability must decide it first.
 
@@ -2092,7 +2137,7 @@ Session <span class="white">${esc(String(shareInviteSid).slice(0, 8))}</span>. F
 <label>Invitee / email . . :  <input name="who" size="30"></label>
 <input type="submit" hidden>
 </form>
-<div class="cyan indent">Internal: the invitee redeems it over SSH as their own login. External: PAMv1 emails a one-time link + QR code, valid 15 minutes.</div>
+<div class="cyan indent">Internal: the invitee redeems it with their own login — over SSH for a terminal, or main menu 33 for an RDP/VNC desktop. External: PAMv1 emails a one-time link + QR code, valid 15 minutes. A desktop share never carries the clipboard or files, in either direction.</div>
 ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-shrnew").onsubmit = async (ev) => {
           ev.preventDefault();
@@ -2113,7 +2158,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
       // dedicated shareinvitetoken screen (the usercreated pattern) rather
       // than folded into the one-line message bar.
       shareinvites() {
-        back = "sesswatch";
+        back = watchSess ? "sesswatch" : "sessions";
         const canDecide = can("approve"), canRevoke = can("manage_targets");
         term.innerHTML = `${head("PAMSHRINV", "Session Share Invites")}
 Session <span class="white">${esc(String(shareInviteSid).slice(0, 8))}</span>. ${(canDecide || canRevoke) ? `Type options, press Enter.
@@ -2122,9 +2167,9 @@ Session <span class="white">${esc(String(shareInviteSid).slice(0, 8))}</span>. $
 <form id="f-list"><table>
 <tr><th>Opt</th><th>Mode</th><th>Kind</th><th>Invitee/Email</th><th>Status</th><th>Requester</th></tr>
 ${shareInvites.map((v) => `<tr><td>${(canDecide || canRevoke) ? opt(v.id) : ""}</td><td>${pad(v.mode, 12)}</td><td>${pad(v.kind, 9)}</td><td class="detail white">${esc(v.invitee || v.email)}</td><td class="${v.status === "approved" ? "white" : (v.status === "denied" || v.status === "revoked") ? "red" : "amber"}">${esc(v.status)}</td><td class="detail">${esc(v.requester)}</td></tr>`).join("")}
-</table>${shareInvites.length ? "" : `<div class="cyan indent">(No invites for this session yet — F6 on the watch screen files one.)</div>`}
+</table>${shareInvites.length ? "" : `<div class="cyan indent">(No invites for this session yet — F6 files one.)</div>`}
 <input type="submit" hidden></form>
-${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
+${fkeys("F3=Exit   F5=Refresh   F6=Invite someone   F12=Cancel")}`;
         document.getElementById("f-list").onsubmit = async (ev) => {
           ev.preventDefault();
           try {
@@ -2144,6 +2189,34 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         };
       },
 
+      // sharejoin (Phase 260): an internal invitee redeems the one-time token
+      // they were given for an RDP/VNC desktop. A terminal invite is redeemed
+      // over SSH instead; the server says so.
+      sharejoin() {
+        back = "main";
+        term.innerHTML = `${head("PAMSHRJOIN", "Join a Shared Desktop")}
+Type the one-time token you were given, press Enter.
+
+<form id="f-shrjoin" class="indent">
+<label>Token . . . . . . . :  <input name="token" size="68" autocomplete="off" autofocus></label>
+<input type="submit" hidden>
+</form>
+<div class="cyan indent">The token works once, for you only, and burns if anyone else tries it. A view-only share
+shows the desktop; a view + control share also sends your keyboard and mouse. Neither
+carries the clipboard or files. The operator's session stays theirs: it ends, you leave.</div>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-shrjoin").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const token = ev.target.token.value.trim();
+          if (!token) { say("CPF0002: TOKEN IS REQUIRED.", true); return render(); }
+          try {
+            const r = await api("POST", "/api/share/desktop/redeem", { token });
+            go("main");
+            await joinSharedDesktop(r);
+          } catch (e) { say("CPF9999: " + String(e.message).toUpperCase(), true); render(); }
+        };
+      },
+
       shareinvitetoken() {
         back = "shareinvites";
         const t = newShareToken || {};
@@ -2156,7 +2229,7 @@ Invitee . . . . . . :  <span class="white">${esc(t.invitee)}</span>
 
 Token . . . . . . . :  <span class="white">${esc(t.token)}</span>
 </div>
-<div class="cyan indent">Give it to ${esc(t.invitee || "the invitee")}; they redeem it over SSH as "join:&lt;token&gt;" using their OWN PAMv1 password. It expires in 15 minutes and works once.</div>
+<div class="cyan indent">Give it to ${esc(t.invitee || "the invitee")}. A terminal session: they redeem it over SSH as "join:&lt;token&gt;" using their OWN PAMv1 password. An RDP/VNC desktop: main menu 33, Join a shared desktop. It expires in 15 minutes and works once.</div>
 ${fkeys("F3=Exit   F12=Cancel")}`;
       },
 
@@ -4527,7 +4600,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
     render();
   }
 
-  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), quarantine: () => go("quarantineadd"), identities: () => go("identityadd"), scimkeys: () => go("scimkeyadd"), exttoken: mintExtToken, endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, mfawebauthn: () => go("mfawebauthnadd"), labelrules: () => { if (can("manage_targets")) go("labelruleadd"); } };
+  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), quarantine: () => go("quarantineadd"), identities: () => go("identityadd"), scimkeys: () => go("scimkeyadd"), exttoken: mintExtToken, endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, shareinvites: () => go("shareinvitenew"), mfawebauthn: () => go("mfawebauthnadd"), labelrules: () => { if (can("manage_targets")) go("labelruleadd"); } };
 
   window.addEventListener("keydown", async (ev) => {
     // While the RDP viewer is open it owns the keyboard (its own capture-phase

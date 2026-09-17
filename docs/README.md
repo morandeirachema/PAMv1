@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-09-17 | Phase 260 (desktop share) documented: ARCHITECTURE-LOW-LEVEL (the sharing bullet, the share audit reasons, change log), ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE and USER-GUIDE change logs, ADMIN-GUIDE (§9.4c desktop subsection), README Tier 9 row, ARCHITECTURE-DIAGRAMS (routes 211). |
 | 2026-09-17 | Phase 258 (RDP/VNC watch + replay) documented: ARCHITECTURE-LOW-LEVEL (the bullet in the session section, three env-var rows, the audit actions, change log), ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE and USER-GUIDE change logs, ADMIN-GUIDE (new §9.3c), README Tier 9 row, ARCHITECTURE-DIAGRAMS (routes 209). |
 | 2026-09-17 | Phase 256 (tiered approval) documented: ARCHITECTURE-LOW-LEVEL (the tier bullet in the authorization section, migration mark `0059`, the new refusal reason, change log), ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE (§3.3 mark) and USER-GUIDE change logs, ADMIN-GUIDE (new §9 subsection), README Tier 8 row. |
 | 2026-09-16 | Phase 254 (in-portal SSH terminal) documented: ARCHITECTURE-LOW-LEVEL (the terminal bullet in the session section, the five audit actions and the proxy/middleware reasons, change log), ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE and USER-GUIDE change logs, ADMIN-GUIDE (new §9 subsection), README Tier 8 row and the brokering sentence in both READMEs, NOTICE (xterm.js 5.5.0). |

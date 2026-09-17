@@ -161,6 +161,7 @@ const screens = [
       // invitee/email (whichever is set) and requester are the genuinely
       // free-text fields, both class="detail" and excluded from measurement.
       shareInviteSid: "abc12345",
+      watchSess: null, // opened from Work with Active Sessions (Phase 260), not the watch screen
       shareInvites: [{
         id: 1, mode: "view_control", kind: "external", invitee: "",
         email: long ? LONG : "vendor@example.com",

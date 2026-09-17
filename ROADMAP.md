@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–259 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–260 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,74 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 260 — Share a live RDP/VNC session ✅
+
+The second Tier 9 row — Access Manager's *session invite*. Phase 116 let an
+operator share a live SSH session, view only or with the keyboard, through
+a four-eyes invite; a desktop could only be watched by a supervisor (Phase
+258), never shared with the colleague or vendor who needed to see it.
+
+- [x] **The same invite, a different door.** Nothing about Phase 116's
+  workflow changes: `POST /api/sessions/{id}/share` files the request, a
+  DIFFERENT principal approves it, the token is single-use and short-lived,
+  an external invite is emailed with a QR code. What changes is where the
+  token is spent. A desktop has no terminal to attach to, so the SSH
+  proxy's `join:<token>` now refuses one
+  (`session.share_join_denied reason:graphical-session`, with a pointer to
+  the portal; `session.Registry.Get` tells a desktop from a terminal), and so
+  do the text guest routes (`/api/share/stream`, `/api/share/input` → 409)
+  rather than hang on a silent stream and a mux nothing reads
+- [x] **An internal invitee redeems in the portal.** `POST
+  /api/share/desktop/redeem` (their own key) makes the proxy's checks in
+  the proxy's order: the token is consumed FIRST, then it must be internal,
+  issued to this caller, carry `connect` for `view_control`, and name a
+  desktop live on this replica (`not-live` / `not-a-desktop`). It audits
+  `session.share_joined … via:portal` fail-closed and returns a guest key.
+  An external guest's `POST /api/share/redeem/{token}` is unchanged but now
+  reports the session's `protocol`, so `/share.html` knows to open a desktop
+- [x] **Both join over one WebSocket.** `GET /api/share/desktop?key=`
+  joins the owner's guacd connection exactly as Phase 258's watch does —
+  the current screen first — `read-only` for `view_only` (refused unless
+  guacd advertises it), with input for `view_control`. The bridge forwards
+  a `view_only` sharer nothing but keep-alive, and a `view_control` sharer
+  only `key`, `mouse`, `touch` and keep-alive — **never** a clipboard, file
+  or pipe stream, in either direction: the owner's clipboard is withheld
+  from every sharer, so sharing a desktop is never a way to move data into
+  or out of it. A controller's keyboard and mouse reset the session's idle
+  clock. The join is tracked on the session's share roster under
+  `GuestJoinID`, a kick closes it and revokes its key, and the session
+  ending closes it and purges every key issued for it
+  (`ShareRegistry.Open`/`Close` now bracket a desktop session too). Audited
+  `session.monitor … via:share mode:` and `session.share_ended`
+- [x] **Console and guest page.** *Work with Active Sessions* option **6**
+  opens a session's invites for any protocol (F6 files one); main menu
+  **33**, *Join a shared desktop*, takes the token and opens the desktop —
+  keyboard and mouse wired only for `view_control`, Ctrl+Alt+Q leaves.
+  `/share.html` renders a desktop with the same vendored Guacamole client,
+  its CSP gaining the viewer's `data:`/`blob:` image and media sources
+- [x] **Proven, not asserted.** `TestDesktopShare` end to end against the
+  two-connection fake guacd: a wrong invitee burns the token (audited
+  `invitee-mismatch`, the real invitee then refused); the redeemed key
+  reports `rdp`; the text guest routes answer 409; the control join selects
+  the owner's connection with no credential and no `read-only`; a batched
+  `key;clipboard;blob;mouse;sync` reaches guacd as `key`, `mouse`, `sync`
+  and nothing else; the join is on the roster, a kick closes the WebSocket
+  and the key stops resolving; an external `view_only` guest redeems its
+  emailed token, joins `read-only` and its key never reaches guacd; the
+  session ending closes the share and purges the guest key.
+  `TestSessionShareJoinRefusesDesktop` (the SSH join refused with its reason
+  and a pointer to the portal); `TestShareServesDesktopViewer` (the guest
+  page's substituted client, nonce and CSP)
+- [x] **Limits, stated rather than discovered.** A share, like a watch, is
+  replica-local. The clipboard and file transfer are not shareable, by
+  design, even when the owner's own policy allows them. A `view_control`
+  sharer and the owner drive one keyboard and mouse; guacd does not arbitrate
+- [x] Routes **209 → 211**; no schema, no store method (surface stays
+  **229**), no env var. Audit: `session.share_join_denied` gains
+  `graphical-session`, `not-a-desktop`, `break-glass`,
+  `guacd-join-failed`, `read-only-unenforceable`; `session.share_joined`
+  gains `via:portal`
 
 ## Phase 259 — v0.74.0 ✅
 

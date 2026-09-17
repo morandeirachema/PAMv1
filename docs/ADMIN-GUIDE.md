@@ -4103,6 +4103,28 @@ curl -sX POST https://pam.example/api/sessions/<id>/share/kick -H "X-API-Key: $A
 In the console: **F6** on a live watch pane opens *Create share invite*; **F7**
 opens the invite-decision list for an approver.
 
+**Sharing a desktop (Phase 260).** The same invite shares a live RDP or VNC
+session. File it from *Work with Active Sessions* → **6** (F6 on the invite
+list); approval and the token are unchanged. Where it is spent differs:
+
+- **Internal invitee:** main menu **33 — Join a shared desktop**, with their
+  own login, or `POST /api/share/desktop/redeem {"token": "…"}`. The checks are
+  the SSH join's: the token burns on first use, even a wrong one; it must be
+  theirs; `view_control` needs `connect`. `join:<token>` over SSH is refused
+  for a desktop (`reason:graphical-session`).
+- **External guest:** the emailed link, as before — `/share.html` now opens
+  the desktop in the browser.
+
+Both join the owner's guacd connection over `GET /api/share/desktop`. A
+`view_only` sharer is joined read-only (PAMv1 refuses a guacd that cannot do
+that). A `view_control` sharer's keyboard and mouse reach the desktop; the
+owner and the sharer drive the same pointer, and nobody arbitrates. **The
+clipboard and file transfer are never shared** — in either direction, whatever
+the target's own clipboard policy — so a share cannot be used to carry data
+into or out of the desktop. The join shows on the roster (`GET
+/api/sessions/{id}/share/roster`), a kick ends it at once, and it ends with
+the session. Like every share, it is replica-local.
+
 Three things worth knowing before you rely on this:
 
 - **`/share.html` is deliberately unauthenticated** — no `X-API-Key`, the same
@@ -4800,6 +4822,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-17 | **Phase 260 (share a live RDP/VNC session).** §9.4c gains the desktop case: where an internal invitee and an external guest redeem, read-only vs keyboard-and-mouse, the clipboard and files never shared, roster and kick. |
 | 2026-09-17 | **Phase 258 (live watching and in-portal replay of RDP/VNC sessions).** New §9.3c: the portal's own `.guac` recording (sealed, hashed, capped, audited), the desktop player, the read-only watch and its token. |
 | 2026-09-17 | **Phase 256 (level-tiered and direct-manager approval).** New §9 subsection: ordered approval chains on a target or safe, the tier grammar, the direct manager on a user (API and SCIM), how a decision walks the chain, the manager-tier refusal at creation, and what the console shows. |
 | 2026-09-16 | **Phase 254 (in-portal SSH terminal).** New §9 subsection *In-portal SSH terminal*: what it is (a proxy session, opened by the API server as an SSH client on the operator's behalf), the terminal token's three rules (one target and one use; loopback only; recorded under the operator's address), MFA, audit, the loopback requirement on `PAM_SSH_ADDR`. |

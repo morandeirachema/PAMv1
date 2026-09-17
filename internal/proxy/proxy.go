@@ -1709,6 +1709,15 @@ func (p *Proxy) handleJoinConn(ctx context.Context, chans <-chan ssh.NewChannel,
 		rejectAll(chans, ssh.Prohibited, "PAMv1: this session is no longer live")
 		return
 	}
+	// A desktop (Phase 260) has no terminal to attach to: an SSH join would
+	// subscribe to a stream that never speaks and type into a mux nothing
+	// reads. It is joined in the portal instead.
+	if info, ok := p.sessions.Get(inv.SessionID); ok && (info.Protocol == "rdp" || info.Protocol == "vnc") {
+		p.audit(ctx, principal.Name, "session.share_join_denied",
+			fmt.Sprintf("invite:%d session:%s reason:graphical-session", inv.ID, inv.SessionID))
+		rejectAll(chans, ssh.Prohibited, "PAMv1: this is a desktop session; join it in the portal (Join a shared desktop)")
+		return
+	}
 
 	joinID := strconv.FormatInt(inv.ID, 10)
 	var wg sync.WaitGroup

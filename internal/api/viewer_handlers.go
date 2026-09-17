@@ -469,8 +469,12 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 		// Watchers join through guacd's id for this connection (Phase 258);
 		// the entry lives exactly as long as the session, and closing done
 		// releases every watcher still attached.
-		s.viewerJoins.Store(sid, viewerJoin{conn: gconn.ID, protocol: proto.name, target: target.Name, actor: principal.Name, done: ctx.Done()})
+		s.viewerJoins.Store(sid, viewerJoin{conn: gconn.ID, protocol: proto.name, target: target.Name, actor: principal.Name, done: ctx.Done(), touch: touch})
 		defer s.viewerJoins.Delete(sid)
+		// The share roster and guest keys (Phase 260): opened for the
+		// session's lifetime, and Close purges every guest key issued for it.
+		s.shares.Open(sid)
+		defer s.shares.Close(sid)
 	}
 
 	// guacamole-common-js's tunnel needs an internal UUID instruction to consider
