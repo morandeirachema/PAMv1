@@ -2430,7 +2430,7 @@ Releases **258** — live watching and in-portal replay of RDP/VNC sessions. A
 - [x] **v0.74.0** through the test-gated pipeline. `.github/` untouched
   since v0.58.1 and nothing the workflow *reads* has changed either, so no
   rehearsal. Published 2026-09-17 as `ghcr.io/morandeirachema/pamv1:0.74.0`
-  (also `latest`), digest `TBD`, **public** (anonymous pull 200 on both tags,
+  (also `latest`), digest `sha256:afef404f87155e2aa3eaa35bc98526d160cebb4fbe89738a4fa91ec5120e102b`, **public** (anonymous pull 200 on both tags,
   both resolving to the same digest), signed and attested — every publishing
   step's own conclusion `success`, and the README's `cosign verify` run
   against it — with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS`

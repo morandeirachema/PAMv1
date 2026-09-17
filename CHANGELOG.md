@@ -39,7 +39,9 @@ is untouched, and either recorder satisfies `PAM_REQUIRE_RECORDING`. The
 text watch of SSH and database sessions, content search (SSH only) and
 every existing recording replay as before. Watching a desktop is
 replica-local: the request must reach the replica hosting the session.
-The image is `ghcr.io/morandeirachema/pamv1:0.74.0`.
+The image is
+`ghcr.io/morandeirachema/pamv1:0.74.0`, digest
+`sha256:afef404…` (the full value is in the README and on the release page).
 
 ## [0.73.0] — 2026-09-17
 
