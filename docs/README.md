@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-09-17 | Phase 264 (the review of 250–262) documented: ARCHITECTURE-LOW-LEVEL (credential-scope paragraph, migration mark `0060`, change log), ARCHITECTURE-HIGH-LEVEL and CODE-GUIDE (§3.3 mark, change log), ADMIN-GUIDE (credential-level grants paragraph, change log), USER-GUIDE change log. |
 | 2026-09-17 | Phase 262 (image digests) documented: ARCHITECTURE-LOW-LEVEL (package tree, change log), ADMIN-GUIDE (Helm digest pinning), ARCHITECTURE-HIGH-LEVEL and CODE-GUIDE change logs; README status paragraph and Helm example; CHANGELOG digest records. |
 | 2026-09-17 | Phase 260 (desktop share) documented: ARCHITECTURE-LOW-LEVEL (the sharing bullet, the share audit reasons, change log), ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE and USER-GUIDE change logs, ADMIN-GUIDE (§9.4c desktop subsection), README Tier 9 row, ARCHITECTURE-DIAGRAMS (routes 211). |
 | 2026-09-17 | Phase 258 (RDP/VNC watch + replay) documented: ARCHITECTURE-LOW-LEVEL (the bullet in the session section, three env-var rows, the audit actions, change log), ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE and USER-GUIDE change logs, ADMIN-GUIDE (new §9.3c), README Tier 9 row, ARCHITECTURE-DIAGRAMS (routes 209). |

@@ -186,7 +186,7 @@ func (s *Server) qualifiesForCurrentTier(ctx context.Context, p *auth.Principal,
 			return true, nil
 		}
 	}
-	q := s.tierQualifier(ctx, ar.Requester)
+	q := s.tierQualifier(ctx, ar)
 	_, cur, complete := store.TierProgress(tiers, splitApprovers(ar.ApprovedBy), q)
 	if complete {
 		return false, nil
@@ -408,7 +408,7 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, id 
 		storeError(w, terr)
 		return false
 	}
-	qualifies := s.tierQualifier(r.Context(), ar.Requester)
+	qualifies := s.tierQualifier(r.Context(), ar)
 	if len(tiers) > 0 {
 		if _, cur, _ := store.TierProgress(tiers, approvers, qualifies); cur < len(tiers) && !qualifies(approver, tiers[cur]) {
 			s.audit(r.Context(), "access.decision_denied", fmt.Sprintf("request:%d approver:%s reason:not-in-current-tier tier:%d", ar.ID, approver, cur+1))
@@ -416,6 +416,7 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, id 
 			return false
 		}
 	}
+	approvedAs := appendApprovedAs(ar, len(approvers), principalFrom(r.Context()))
 	approvers = append(approvers, approver)
 	required := ar.RequiredApprovals
 	if required < 1 {
@@ -440,7 +441,7 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, id 
 	joined := strings.Join(approvers, ",")
 	if chainComplete && len(approvers) >= required {
 		now := time.Now()
-		if err := s.store.SetApprovalState(r.Context(), ar.ID, joined, "approved", approver, &now); err != nil {
+		if err := s.store.SetApprovalState(r.Context(), ar.ID, joined, approvedAs, "approved", approver, &now); err != nil {
 			storeError(w, err)
 			return false
 		}
@@ -460,13 +461,13 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, id 
 			ar.NextRunAt = &next
 		}
 	} else {
-		if err := s.store.SetApprovalState(r.Context(), ar.ID, joined, "pending", "", nil); err != nil {
+		if err := s.store.SetApprovalState(r.Context(), ar.ID, joined, approvedAs, "pending", "", nil); err != nil {
 			storeError(w, err)
 			return false
 		}
 		s.audit(r.Context(), "access.approve_partial", fmt.Sprintf("request:%d target:%d approver:%s approvals:%d/%d", ar.ID, ar.TargetID, approver, len(approvers), required))
 	}
-	ar.ApprovedBy = joined
+	ar.ApprovedBy, ar.ApprovedAs = joined, approvedAs
 	writeJSON(w, http.StatusOK, ar)
 	return true
 }
@@ -525,9 +526,14 @@ func (s *Server) approvalTiersForTarget(ctx context.Context, targetID int64) ([]
 // named identity for a user tier, and — for a role tier — an identity
 // holding that built-in role or custom profile, read from the user row or,
 // for a directory identity with no row that is the caller itself, from the
-// principal in hand.
-func (s *Server) tierQualifier(ctx context.Context, requester string) func(approver string, tier store.ApprovalTier) bool {
+// principal in hand. A PAST approver with no row is read from what the
+// request recorded when they approved (AccessRequest.ApprovedAs, Phase 264):
+// without it such an approver satisfied a tier in the response to their own
+// approval and never again, and the chain could not complete.
+func (s *Server) tierQualifier(ctx context.Context, ar *store.AccessRequest) func(approver string, tier store.ApprovalTier) bool {
 	p := principalFrom(ctx)
+	requester := ar.Requester
+	heldAt := approvedAsByApprover(ar)
 	return func(approver string, tier store.ApprovalTier) bool {
 		switch tier.Kind {
 		case store.TierManager:
@@ -542,9 +548,49 @@ func (s *Server) tierQualifier(ctx context.Context, requester string) func(appro
 			if p != nil && strings.EqualFold(p.Name, approver) {
 				return auth.SubjectMatches(p, "role", tier.Name)
 			}
+			for _, role := range heldAt[strings.ToLower(approver)] {
+				if role == tier.Name {
+					return true
+				}
+			}
 		}
 		return false
 	}
+}
+
+// approvedAsByApprover reads a request's role snapshots: approver (lower-cased)
+// → the roles recorded when they approved. Approvals from before Phase 264
+// have none and are simply absent.
+func approvedAsByApprover(ar *store.AccessRequest) map[string][]string {
+	names, held := splitApprovers(ar.ApprovedBy), strings.Split(ar.ApprovedAs, ",")
+	out := map[string][]string{}
+	for i, n := range names {
+		if i < len(held) && held[i] != "" {
+			out[strings.ToLower(n)] = strings.Split(held[i], "|")
+		}
+	}
+	return out
+}
+
+// appendApprovedAs extends a request's role snapshots for one more approver,
+// keeping the list parallel to approvers (legacy approvals pad as empty).
+func appendApprovedAs(ar *store.AccessRequest, priorApprovers int, p *auth.Principal) string {
+	held := strings.Split(ar.ApprovedAs, ",")
+	if ar.ApprovedAs == "" {
+		held = nil
+	}
+	for len(held) < priorApprovers {
+		held = append(held, "")
+	}
+	var roles []string
+	if p != nil {
+		for _, r := range p.RoleNames() {
+			if r != "" && !strings.ContainsAny(r, ",|") {
+				roles = append(roles, r)
+			}
+		}
+	}
+	return strings.Join(append(held[:priorApprovers], strings.Join(roles, "|")), ",")
 }
 
 // decorateTiers fills in each request's chain progress when its target has
@@ -556,7 +602,7 @@ func (s *Server) decorateTiers(ctx context.Context, reqs []store.AccessRequest) 
 		if err != nil || len(tiers) == 0 {
 			continue
 		}
-		reqs[i].Tiers, _, _ = store.TierProgress(tiers, splitApprovers(reqs[i].ApprovedBy), s.tierQualifier(ctx, reqs[i].Requester))
+		reqs[i].Tiers, _, _ = store.TierProgress(tiers, splitApprovers(reqs[i].ApprovedBy), s.tierQualifier(ctx, &reqs[i]))
 	}
 }
 

@@ -246,6 +246,7 @@ erDiagram
     string Ticket
     int RequiredApprovals
     string ApprovedBy
+    string ApprovedAs
     ptr_time_Time NotBefore
     bool OneTime
     ptr_time_Time ConsumedAt

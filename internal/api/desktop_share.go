@@ -16,6 +16,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/guacd"
 	"github.com/morandeirachema/pamv1/internal/session"
+	"github.com/morandeirachema/pamv1/internal/store"
 )
 
 // shareControlForwardable is what a view_control sharer's browser may send
@@ -51,6 +53,34 @@ func shareControlInput(data []byte) (out []byte, active bool) {
 		}
 	}
 	return out, active
+}
+
+// memberStanding re-checks the PAMv1 user a member key was issued to, as
+// they are now: active and unlocked, still holding connect for a control
+// share, and inside the source gates (IP allowlist, device, posture) from
+// THIS connection's address. It returns a refusal reason and message, or "".
+// A directory identity has no local row to re-read; its key is bounded by
+// PAM_SESSION_SHARE_GUEST_TTL_MIN, a kick, and the session's end.
+func (s *Server) memberStanding(r *http.Request, username string, control bool) (reason, msg string) {
+	u, err := s.store.GetUserByUsername(r.Context(), username)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", ""
+	}
+	if err != nil {
+		return "identity-lookup-failed", "could not verify your account"
+	}
+	if !u.Active || u.LockedAt(time.Now()) {
+		return "identity-inactive-or-locked", "your account is inactive or locked"
+	}
+	p, err := s.resolver.PrincipalForRole(r.Context(), u.Username, u.Role)
+	if err != nil {
+		return "identity-lookup-failed", "could not verify your account"
+	}
+	p.IPAllowlist, p.DeviceFingerprint = u.IPAllowlist, u.DeviceFingerprint
+	if control && !p.Can(auth.CapConnect) {
+		return "no-connect-capability", "view-control requires connect capability"
+	}
+	return s.sourceGates(r.Context(), p, r)
 }
 
 // isDesktopSession reports whether sid is a live RDP/VNC session on this
@@ -132,7 +162,7 @@ func (s *Server) redeemDesktopInvite(w http.ResponseWriter, r *http.Request) {
 		inv.ID, inv.SessionID, inv.Mode, auditField(s.clientIP(r), 64))) {
 		return
 	}
-	key, err := s.shares.IssueGuestKey(inv.SessionID, p.Name, inv.Mode, s.shareGuestTTL)
+	key, err := s.shares.IssueMemberKey(inv.SessionID, p.Name, inv.Mode, s.shareGuestTTL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "issuing a join key failed")
 		return
@@ -157,13 +187,25 @@ func (s *Server) shareDesktop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setActor(r.Context(), actor)
+	control := mode == "view_control"
+	// An internal invitee's key is only as good as the user behind it (the
+	// review of 250–262). The SSH join re-authenticates on every connection;
+	// this key was checked at redemption and then trusted for its whole TTL, so
+	// a user locked, deactivated, stripped of connect or outside their IP
+	// allowlist kept the keyboard of a privileged desktop.
+	if s.shares.GuestKeyIsMember(key) {
+		if reason, msg := s.memberStanding(r, actor, control); reason != "" {
+			_ = s.auditAs(r.Context(), actor, "session.share_join_denied", "session:"+sid+" reason:"+reason)
+			writeError(w, http.StatusForbidden, msg)
+			return
+		}
+	}
 	v, ok := s.viewerJoins.Load(sid)
 	if !ok {
 		writeError(w, http.StatusConflict, "this is not a desktop session live on this replica")
 		return
 	}
 	j := v.(viewerJoin)
-	control := mode == "view_control"
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	gconn, err := guacd.Connect(ctx, s.guacdAddr, guacd.Params{
@@ -244,7 +286,7 @@ func (s *Server) shareDesktop(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 			var out []byte
-			if control {
+			if control && !s.shares.Suspended(sid) { // a suspended session takes nobody's input
 				var active bool
 				if out, active = shareControlInput(data); active && j.touch != nil {
 					j.touch()

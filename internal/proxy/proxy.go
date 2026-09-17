@@ -437,6 +437,21 @@ func (p *Proxy) authenticate(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 		return p.authenticateEndpointAgent(c, name, password)
 	}
 	principal, err := p.resolver.Resolve(context.Background(), string(password))
+	// The portal terminal to a target that demands a session-MFA ticket
+	// presents BOTH secrets (auth.TerminalPassword): the terminal token, which
+	// makes this a terminal session — the browser's address, the target
+	// binding — and the ticket the admission gate will spend. Read that way
+	// only from the API server: over loopback, under the terminal's client
+	// version. Anywhere else the pair is one unknown password.
+	if err != nil && isLoopbackAddr(c.RemoteAddr()) && strings.HasPrefix(string(c.ClientVersion()), auth.TerminalClientVersionPrefix) {
+		if tok, ticket, ok := auth.SplitTerminalPassword(string(password)); ok {
+			tp, terr := p.resolver.Resolve(context.Background(), tok)
+			kp, kerr := p.resolver.Resolve(context.Background(), ticket)
+			if terr == nil && kerr == nil && tp.CarryTicket(kp) {
+				principal, err = tp, nil
+			}
+		}
+	}
 	if err != nil {
 		remote := c.RemoteAddr().String()
 		p.log.Warn("authentication failed", "login", c.User(), "remote", remote)

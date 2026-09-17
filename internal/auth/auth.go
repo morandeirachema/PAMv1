@@ -481,6 +481,42 @@ const SessionScopeTerminal = "terminal"
 // session at any proxy or tunnel. It resolves to a WatchOnly principal.
 const SessionScopeWatch = "watch"
 
+// terminalTicketSep joins the two secrets the portal terminal presents to the
+// SSH proxy when a target demands a session-MFA ticket. Neither a token nor a
+// ticket can contain it (both are hex).
+const terminalTicketSep = "+"
+
+// TerminalPassword is the SSH password the API server presents on an
+// operator's behalf: the terminal token, and — when the target demands a
+// fresh factor — the ticket beside it (the review of 250–262). Sending the
+// ticket ALONE made the proxy see a ticket principal, not the terminal: the
+// session was recorded under 127.0.0.1 and the user's IP allowlist was judged
+// against loopback.
+func TerminalPassword(token, ticket string) string {
+	if ticket == "" {
+		return token
+	}
+	return token + terminalTicketSep + ticket
+}
+
+// SplitTerminalPassword undoes TerminalPassword; ok is false for a password
+// that is not a token+ticket pair.
+func SplitTerminalPassword(password string) (token, ticket string, ok bool) {
+	token, ticket, ok = strings.Cut(password, terminalTicketSep)
+	return token, ticket, ok && token != "" && ticket != ""
+}
+
+// CarryTicket attaches ticket's single-use session-MFA ticket to p, a
+// terminal principal, so the admission gate spends it for this session. Both
+// must be the same identity; anything else reports false and changes nothing.
+func (p *Principal) CarryTicket(ticket *Principal) bool {
+	if p == nil || ticket == nil || !p.TerminalOnly || !ticket.SessionMFATicket || p.Name != ticket.Name {
+		return false
+	}
+	p.SessionMFATicket, p.SessionMFATarget, p.sessionMFAHash = true, ticket.SessionMFATarget, ticket.sessionMFAHash
+	return true
+}
+
 // CapSet is a resolved set of capabilities (used for custom profiles).
 type CapSet map[Capability]bool
 
@@ -598,10 +634,12 @@ func (p *Principal) NarrowScope() SessionScope {
 		return ScopeTunnelOnly
 	case p.ExtensionOnly:
 		return ScopeExtensionOnly
+	case p.TerminalOnly:
+		// Ahead of the ticket: a terminal principal CARRYING a ticket
+		// (CarryTicket, Phase 264) is still confined to the terminal's door.
+		return ScopeTerminal
 	case p.SessionMFATicket:
 		return ScopeSessionMFA
-	case p.TerminalOnly:
-		return ScopeTerminal
 	case p.WatchOnly:
 		return ScopeWatch
 	}
@@ -626,6 +664,18 @@ func (p *Principal) MayOpenSession(serving SessionScope) bool {
 
 // effectiveRoles returns the role set to evaluate capabilities and role-grants
 // against: the multi-group set when present, otherwise just the primary role.
+// RoleNames is every role (or custom-profile name) the principal holds, as
+// strings — what an approval records about its approver (Phase 264), so a
+// role tier can still read it when there is no user row to ask later.
+func (p *Principal) RoleNames() []string {
+	roles := p.effectiveRoles()
+	out := make([]string, 0, len(roles))
+	for _, r := range roles {
+		out = append(out, string(r))
+	}
+	return out
+}
+
 func (p *Principal) effectiveRoles() []Role {
 	if len(p.Roles) > 0 {
 		return p.Roles

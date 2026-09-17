@@ -961,7 +961,7 @@ func (m *Memstore) CreateAccessRequest(_ context.Context, ar *store.AccessReques
 }
 
 // SetApprovalState records a multi-approver decision (Phase 21).
-func (m *Memstore) SetApprovalState(_ context.Context, id int64, approvedBy, status, approver string, decidedAt *time.Time) error {
+func (m *Memstore) SetApprovalState(_ context.Context, id int64, approvedBy, approvedAs, status, approver string, decidedAt *time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ar, ok := m.accessReq[id]
@@ -973,6 +973,7 @@ func (m *Memstore) SetApprovalState(_ context.Context, id int64, approvedBy, sta
 		return store.ErrConflict
 	}
 	ar.ApprovedBy = approvedBy
+	ar.ApprovedAs = approvedAs
 	ar.Status = status
 	ar.Approver = approver
 	if decidedAt != nil {
