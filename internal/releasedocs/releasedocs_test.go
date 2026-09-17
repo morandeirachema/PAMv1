@@ -132,8 +132,17 @@ func TestReleaseDigestsAgree(t *testing.T) {
 		t.Fatal("README.md: no **Status:** release line with a digest found — has the format changed?")
 	}
 	v, digest := m[1], m[2]
-	if order[0] != v && !strings.Contains(releases[order[0]], "digest `TBD`") {
-		t.Errorf("README.md's status names v%s, but the newest ROADMAP release entry is v%s and its digest is recorded", v, order[0])
+	if order[0] != v {
+		t.Errorf("README.md's status names v%s, but the newest ROADMAP release entry is v%s", v, order[0])
+	}
+	if strings.Contains(releases[v], "digest `TBD`") {
+		// Between a release PR and its digest PR the README already names the
+		// new release while still showing the previous digest: that digest
+		// must be the previous release's, not a typo.
+		if len(order) < 2 || !has(releases[order[1]], digest) {
+			t.Errorf("README.md shows %s for v%s, whose digest is not recorded yet — it must be the previous release's digest", digest, v)
+		}
+		return
 	}
 	if !has(releases[v], digest) {
 		t.Errorf("README.md gives v%s the digest %s, which ROADMAP.md's v%s entry does not record", v, digest, v)
