@@ -9,6 +9,34 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.75.0] — 2026-09-17
+
+A minor that ships **Phase 260** — sharing a live RDP/VNC session, the
+second row of the WALLIX research pass. **Two routes are new**; no schema,
+store method or environment variable moved.
+
+**What an operator can now do.**
+
+- **Share a desktop** — the session-share invite that has shared SSH
+  sessions since 0.22.0 now shares an RDP or VNC session too, through the
+  same workflow. *Work with Active Sessions* → **6** files it, and a
+  different approver decides it. The token works once and expires quickly;
+  an outsider receives it as an email and QR code.
+- **Join one** — an internal invitee redeems the token at main menu **33,
+  Join a shared desktop** (or `POST /api/share/desktop/redeem`); an external
+  guest opens the emailed link. A view-only share shows the desktop; a view
+  + control share also sends the sharer's keyboard and mouse.
+- **Keep it a view, not a channel** — the clipboard and file transfer are
+  never shared, in either direction, whatever the target's clipboard policy.
+  Every join appears on the session's roster, a kick ends it at once, and it
+  ends with the session.
+
+**What has not changed.** SSH session sharing, the invite approval, email
+and token rules, and the Phase 258 watch and replay. An SSH `join:` of a
+desktop invite is now refused with a pointer to the portal, rather than
+attaching to a stream that never speaks. Sharing remains replica-local.
+The image is `ghcr.io/morandeirachema/pamv1:0.75.0`.
+
 ## [0.74.0] — 2026-09-17
 
 A minor that ships **Phase 258** — live watching and in-portal replay of
@@ -3376,6 +3404,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.75.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.75.0
 [0.74.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.74.0
 [0.73.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.73.0
 [0.72.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.72.0
