@@ -311,6 +311,40 @@ type scimUserIn struct {
 	UserName   string `json:"userName"`
 	ExternalID string `json:"externalId"`
 	Active     *bool  `json:"active"`
+	// Enterprise is the SCIM enterprise-user extension, of which PAMv1 reads
+	// one attribute: manager.value, the SCIM id of this user's direct manager
+	// (Phase 256). Absent leaves the manager untouched; present and empty
+	// clears it.
+	Enterprise *scimEnterprise `json:"urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"`
+}
+
+type scimEnterprise struct {
+	Manager *struct {
+		Value string `json:"value"`
+	} `json:"manager"`
+}
+
+// scimManager resolves the enterprise extension's manager reference to a
+// local username: ("", false) when the extension names no manager, ("",
+// true) to clear, or the username and true. An id that names no user is a
+// 400 the IdP can act on.
+func (s *Server) scimManager(ctx context.Context, in scimUserIn) (username string, set bool, err error) {
+	if in.Enterprise == nil || in.Enterprise.Manager == nil {
+		return "", false, nil
+	}
+	v := strings.TrimSpace(in.Enterprise.Manager.Value)
+	if v == "" {
+		return "", true, nil
+	}
+	id, perr := strconv.ParseInt(v, 10, 64)
+	if perr != nil {
+		return "", false, fmt.Errorf("manager.value must be the manager's SCIM id")
+	}
+	u, gerr := s.store.GetUser(ctx, id)
+	if gerr != nil {
+		return "", false, fmt.Errorf("manager.value names no user")
+	}
+	return u.Username, true, nil
 }
 
 // createScimUser implements POST /scim/v2/Users. Every SCIM-provisioned
@@ -342,7 +376,12 @@ func (s *Server) createScimUser(w http.ResponseWriter, r *http.Request, key *sto
 		scimWriteError(w, http.StatusInternalServerError, "token generation failed")
 		return
 	}
-	u := store.User{Username: in.UserName, Role: string(auth.RoleUser), ExternalID: in.ExternalID, TokenHash: hashHex(token)}
+	mgr, _, merr := s.scimManager(r.Context(), in)
+	if merr != nil {
+		scimWriteError(w, http.StatusBadRequest, merr.Error())
+		return
+	}
+	u := store.User{Username: in.UserName, Role: string(auth.RoleUser), ExternalID: in.ExternalID, TokenHash: hashHex(token), Manager: mgr}
 	if err := s.store.CreateUser(r.Context(), &u); err != nil {
 		scimStoreError(w, err)
 		return
@@ -423,6 +462,16 @@ func (s *Server) replaceScimUser(w http.ResponseWriter, r *http.Request, key *st
 			return
 		}
 		u.ExternalID = in.ExternalID
+	}
+	if mgr, set, merr := s.scimManager(r.Context(), in); merr != nil {
+		scimWriteError(w, http.StatusBadRequest, merr.Error())
+		return
+	} else if set && mgr != u.Manager {
+		if err := s.store.UpdateUserManager(r.Context(), id, mgr); err != nil {
+			storeError(w, err)
+			return
+		}
+		u.Manager = mgr
 	}
 	if err := s.applyScimActiveChange(r.Context(), key, u, in.Active); err != nil {
 		scimStoreError(w, err)

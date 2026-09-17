@@ -249,7 +249,7 @@ func (s *Server) slackDecide(r *http.Request, payload slackInteractivityPayload)
 	mayDecide := false
 	if err == nil {
 		if ar, gerr := s.store.GetAccessRequest(r.Context(), requestID); gerr == nil {
-			mayDecide, _ = s.mayDecideRequest(r.Context(), p, ar.TargetID)
+			mayDecide, _ = s.mayDecideRequestFor(r.Context(), p, ar) // the tier path too (Phase 256)
 		} else {
 			mayDecide = p.Can(auth.CapApprove)
 		}

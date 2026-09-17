@@ -65,6 +65,10 @@ type targetIn struct {
 	Labels map[string]string `json:"labels"`
 	// labels is the validated canonical form, filled in by validateTargetIn.
 	labels string
+	// ApprovalTiers is the target's ordered approval chain (Phase 256),
+	// validated and canonicalized by validateTargetIn into approvalTiers.
+	ApprovalTiers string `json:"approval_tiers"`
+	approvalTiers string
 }
 
 // validateTargetIn applies the create/update validation rules to in — one
@@ -106,6 +110,12 @@ func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
 			return false
 		}
 		in.labels = labels
+		tiers, err := store.NormalizeApprovalTiers(in.ApprovalTiers)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return false
+		}
+		in.approvalTiers = tiers
 		return true
 	}
 	return false
@@ -115,7 +125,7 @@ func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
 func targetFromIn(in targetIn) store.Target {
 	return store.Target{Name: in.Name, Host: in.Host, Port: in.Port, OSType: in.OSType, Protocol: in.Protocol,
 		RequireApproval: in.RequireApproval, RequireSessionMFA: in.RequireSessionMFA,
-		RDPClipboard: in.RDPClipboard, RDPClipboardAudit: in.RDPClipboardAudit, Labels: in.labels}
+		RDPClipboard: in.RDPClipboard, RDPClipboardAudit: in.RDPClipboardAudit, Labels: in.labels, ApprovalTiers: in.approvalTiers}
 }
 
 // labelDetail renders a target's labels for an audit detail (Phase 250).

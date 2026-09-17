@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,6 +77,18 @@ func (s *Server) createAccessRequest(w http.ResponseWriter, r *http.Request) {
 	required := s.approvalsRequired
 	if in.Approvals > required {
 		required = in.Approvals
+	}
+	// An ordered chain with a "manager" tier (Phase 256) needs the requester
+	// to HAVE one; refusing here, with the reason, beats a request that waits
+	// forever for an approval nobody can give.
+	if tiers, terr := s.approvalTiersForTarget(r.Context(), in.TargetID); terr != nil {
+		storeError(w, terr)
+		return
+	} else if store.HasManagerTier(tiers) {
+		if u, uerr := s.store.GetUserByUsername(r.Context(), actorFrom(r.Context())); uerr != nil || u.Manager == "" {
+			writeError(w, http.StatusUnprocessableEntity, "this target's approval chain requires your direct manager's approval, and your identity has no manager set")
+			return
+		}
 	}
 	// The safe's dual-control floor (Phase 58) raises the bar for every target
 	// in it, so a requester cannot ask for fewer approvers than the safe demands.
@@ -153,6 +166,43 @@ func (s *Server) mayDecideRequest(ctx context.Context, p *auth.Principal, target
 	return scope[targetID], nil
 }
 
+// qualifiesForCurrentTier reports whether p satisfies the tier this request
+// is waiting on (Phase 256). A chain naming "manager" or "user=<name>" IS
+// the grant of that one decision right: the requester's manager, or the named
+// identity, decides the request at their tier without holding the general
+// approve capability — CyberArk's confirmer is not an approver. A request
+// with no chain, or a complete one, qualifies nobody this way.
+func (s *Server) qualifiesForCurrentTier(ctx context.Context, p *auth.Principal, ar *store.AccessRequest) (bool, error) {
+	tiers, err := s.approvalTiersForTarget(ctx, ar.TargetID)
+	if err != nil || len(tiers) == 0 {
+		return false, err
+	}
+	// Someone who already approved reached a tier once and keeps the standing
+	// to reach the handler — which answers "already approved" (409), the
+	// contract every earlier approval path has — rather than a refusal that
+	// reads as if they never could.
+	for _, a := range splitApprovers(ar.ApprovedBy) {
+		if strings.EqualFold(a, p.Name) {
+			return true, nil
+		}
+	}
+	q := s.tierQualifier(ctx, ar.Requester)
+	_, cur, complete := store.TierProgress(tiers, splitApprovers(ar.ApprovedBy), q)
+	if complete {
+		return false, nil
+	}
+	return q(p.Name, tiers[cur]), nil
+}
+
+// mayDecideRequestFor is mayDecideRequest with the request in hand, so the
+// tier path (Phase 256) can be read too.
+func (s *Server) mayDecideRequestFor(ctx context.Context, p *auth.Principal, ar *store.AccessRequest) (bool, error) {
+	if ok, err := s.mayDecideRequest(ctx, p, ar.TargetID); err != nil || ok {
+		return ok, err
+	}
+	return s.qualifiesForCurrentTier(ctx, p, ar)
+}
+
 // requireDecider is the approve/deny routes' authorization since Phase 246,
 // which moved them off a CapApprove-only middleware so a scoped approver can
 // reach them. A caller with no approval right anywhere is refused as the
@@ -169,22 +219,40 @@ func (s *Server) requireDecider(w http.ResponseWriter, r *http.Request, id int64
 		storeError(w, err)
 		return false
 	}
-	if len(scope) == 0 {
+	refuseGeneric := func() bool {
 		s.audit(r.Context(), "authz.denied", r.Method+" "+r.URL.Path+" role:"+string(p.Role))
 		writeError(w, http.StatusForbidden, "your role does not permit this action")
 		return false
 	}
 	ar, err := s.store.GetAccessRequest(r.Context(), id)
 	if err != nil {
+		// A caller with no approval right anywhere learns nothing about which
+		// ids exist: the refusal is the same one they get for a real id they
+		// may not decide.
+		if len(scope) == 0 {
+			return refuseGeneric()
+		}
 		storeError(w, err)
 		return false
 	}
-	if !scope[ar.TargetID] {
-		s.audit(r.Context(), "access.decision_denied", fmt.Sprintf("request:%d target:%d reason:not-an-approver", ar.ID, ar.TargetID))
-		writeError(w, http.StatusForbidden, "you may not decide access requests for this target")
-		return false
+	if scope[ar.TargetID] {
+		return true
 	}
-	return true
+	// The tier path (Phase 256): the request's current tier may name this
+	// caller — the requester's manager, a named identity — who then decides
+	// it without the general capability.
+	if ok, qerr := s.qualifiesForCurrentTier(r.Context(), p, ar); qerr != nil {
+		storeError(w, qerr)
+		return false
+	} else if ok {
+		return true
+	}
+	if len(scope) == 0 {
+		return refuseGeneric()
+	}
+	s.audit(r.Context(), "access.decision_denied", fmt.Sprintf("request:%d target:%d reason:not-an-approver", ar.ID, ar.TargetID))
+	writeError(w, http.StatusForbidden, "you may not decide access requests for this target")
+	return false
 }
 
 // listAccessRequests lists requests, optionally filtered by ?status=. A caller
@@ -206,6 +274,7 @@ func (s *Server) listAccessRequests(w http.ResponseWriter, r *http.Request) {
 			storeError(w, err)
 			return
 		}
+		s.decorateTiers(r.Context(), reqs)
 		writeJSON(w, http.StatusOK, reqs)
 		return
 	}
@@ -214,11 +283,9 @@ func (s *Server) listAccessRequests(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	if len(scope) == 0 {
-		s.audit(r.Context(), "authz.denied", r.Method+" "+r.URL.Path+" role:"+string(p.Role))
-		writeError(w, http.StatusForbidden, "your role does not permit this action")
-		return
-	}
+	// A caller with no scope may still be the one a request's current tier
+	// names (Phase 256); the refusal for a caller with no right at all comes
+	// after the filter, once that is known.
 	// The window is applied AFTER the filter, so a page is never short just
 	// because other safes' requests fell inside it — a short page is how the
 	// console's cursor drain knows it has reached the end.
@@ -229,12 +296,27 @@ func (s *Server) listAccessRequests(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]store.AccessRequest, 0)
 	for _, ar := range all {
-		if scope[ar.TargetID] {
+		visible := scope[ar.TargetID]
+		if !visible {
+			if ok, qerr := s.qualifiesForCurrentTier(r.Context(), p, &ar); qerr != nil {
+				storeError(w, qerr)
+				return
+			} else if ok {
+				visible = true
+			}
+		}
+		if visible {
 			out = append(out, ar)
+			s.decorateTiers(r.Context(), out[len(out)-1:])
 			if len(out) == limit {
 				break
 			}
 		}
+	}
+	if len(scope) == 0 && len(out) == 0 {
+		s.audit(r.Context(), "authz.denied", r.Method+" "+r.URL.Path+" role:"+string(p.Role))
+		writeError(w, http.StatusForbidden, "your role does not permit this action")
+		return
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -315,10 +397,33 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, id 
 			return false
 		}
 	}
+	// An ordered chain (Phase 256): this approval counts only if the approver
+	// qualifies for the CURRENT tier — the first unsatisfied level. Refused
+	// otherwise, and not recorded, so a level-2 approver cannot pre-approve
+	// past level 1. The chain is re-read from the policy in force, as the
+	// dual-control floor is below, so a chain raised while a request waits
+	// binds it at the next approval.
+	tiers, terr := s.approvalTiersForTarget(r.Context(), ar.TargetID)
+	if terr != nil {
+		storeError(w, terr)
+		return false
+	}
+	qualifies := s.tierQualifier(r.Context(), ar.Requester)
+	if len(tiers) > 0 {
+		if _, cur, _ := store.TierProgress(tiers, approvers, qualifies); cur < len(tiers) && !qualifies(approver, tiers[cur]) {
+			s.audit(r.Context(), "access.decision_denied", fmt.Sprintf("request:%d approver:%s reason:not-in-current-tier tier:%d", ar.ID, approver, cur+1))
+			writeError(w, http.StatusForbidden, "this request is waiting on tier "+strconv.Itoa(cur+1)+" ("+tiers[cur].String()+"), which you do not satisfy")
+			return false
+		}
+	}
 	approvers = append(approvers, approver)
 	required := ar.RequiredApprovals
 	if required < 1 {
 		required = 1
+	}
+	chainComplete := true
+	if len(tiers) > 0 {
+		ar.Tiers, _, chainComplete = store.TierProgress(tiers, approvers, qualifies)
 	}
 	// The safe's dual-control floor is re-read HERE, not just trusted from the
 	// number stamped on the request at creation (Phase 58). A floor that only
@@ -333,7 +438,7 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, id 
 		required = floor
 	}
 	joined := strings.Join(approvers, ",")
-	if len(approvers) >= required {
+	if chainComplete && len(approvers) >= required {
 		now := time.Now()
 		if err := s.store.SetApprovalState(r.Context(), ar.ID, joined, "approved", approver, &now); err != nil {
 			storeError(w, err)
@@ -391,6 +496,68 @@ func (s *Server) stopAccessRequestRecurrence(w http.ResponseWriter, r *http.Requ
 	s.audit(r.Context(), "access.recurrence_stopped", fmt.Sprintf("request:%d target:%d", ar.ID, ar.TargetID))
 	ar.RecurDays, ar.NextRunAt = 0, nil
 	writeJSON(w, http.StatusOK, ar)
+}
+
+// approvalTiersForTarget is the ordered approval chain in force for a target
+// (Phase 256): its own, else its safe's, else none — parsed, and fail-closed
+// on an unparsable stored chain (impossible through the API).
+func (s *Server) approvalTiersForTarget(ctx context.Context, targetID int64) ([]store.ApprovalTier, error) {
+	t, err := s.store.GetTarget(ctx, targetID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	p, err := s.approvalPolicyFor(ctx, t)
+	if err != nil {
+		return nil, err
+	}
+	tiers, perr := store.ParseApprovalTiers(p.Tiers)
+	if perr != nil {
+		return nil, fmt.Errorf("target %d carries an unreadable approval chain: %w", targetID, perr)
+	}
+	return tiers, nil
+}
+
+// tierQualifier answers whether an approver satisfies a tier for a request
+// filed by requester: the requester's own manager for a manager tier, the
+// named identity for a user tier, and — for a role tier — an identity
+// holding that built-in role or custom profile, read from the user row or,
+// for a directory identity with no row that is the caller itself, from the
+// principal in hand.
+func (s *Server) tierQualifier(ctx context.Context, requester string) func(approver string, tier store.ApprovalTier) bool {
+	p := principalFrom(ctx)
+	return func(approver string, tier store.ApprovalTier) bool {
+		switch tier.Kind {
+		case store.TierManager:
+			u, err := s.store.GetUserByUsername(ctx, requester)
+			return err == nil && u.Manager != "" && strings.EqualFold(u.Manager, approver)
+		case store.TierUser:
+			return strings.EqualFold(tier.Name, approver)
+		case store.TierRole:
+			if u, err := s.store.GetUserByUsername(ctx, approver); err == nil {
+				return u.Role == tier.Name
+			}
+			if p != nil && strings.EqualFold(p.Name, approver) {
+				return auth.SubjectMatches(p, "role", tier.Name)
+			}
+		}
+		return false
+	}
+}
+
+// decorateTiers fills in each request's chain progress when its target has
+// one, for approvers and the console; a target with no chain leaves the
+// field absent.
+func (s *Server) decorateTiers(ctx context.Context, reqs []store.AccessRequest) {
+	for i := range reqs {
+		tiers, err := s.approvalTiersForTarget(ctx, reqs[i].TargetID)
+		if err != nil || len(tiers) == 0 {
+			continue
+		}
+		reqs[i].Tiers, _, _ = store.TierProgress(tiers, splitApprovers(reqs[i].ApprovedBy), s.tierQualifier(ctx, reqs[i].Requester))
+	}
 }
 
 // splitApprovers parses a comma-joined approver set into a trimmed, non-empty

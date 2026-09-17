@@ -160,9 +160,9 @@ func limitArg(limit int) any {
 // CreateTarget inserts a target, populating its ID and CreatedAt; ErrConflict if the name is taken.
 func (s *PGStore) CreateTarget(ctx context.Context, t *store.Target) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO targets (name, host, port, os_type, protocol, require_approval, rdp_clipboard, rdp_clipboard_audit, require_session_mfa, labels)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, created_at`,
-		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA, t.Labels,
+		`INSERT INTO targets (name, host, port, os_type, protocol, require_approval, rdp_clipboard, rdp_clipboard_audit, require_session_mfa, labels, approval_tiers)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, created_at`,
+		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA, t.Labels, t.ApprovalTiers,
 	).Scan(&t.ID, &t.CreatedAt)
 	if pgCode(err) == pgUniqueViolation {
 		return store.ErrConflict
@@ -173,7 +173,7 @@ func (s *PGStore) CreateTarget(ctx context.Context, t *store.Target) error {
 // ListTargets returns targets in the (limit, afterID) window, ordered by ID.
 func (s *PGStore) ListTargets(ctx context.Context, limit int, afterID int64) ([]store.Target, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa, labels
+		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa, labels, approval_tiers
 		 FROM targets WHERE id > $1 ORDER BY id LIMIT $2`, afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
@@ -187,9 +187,9 @@ func (s *PGStore) ListTargets(ctx context.Context, limit int, afterID int64) ([]
 func (s *PGStore) UpdateTarget(ctx context.Context, t *store.Target) error {
 	err := s.pool.QueryRow(ctx,
 		`UPDATE targets SET name = $1, host = $2, port = $3, os_type = $4, protocol = $5, require_approval = $6,
-		        rdp_clipboard = $7, rdp_clipboard_audit = $8, require_session_mfa = $9, labels = $10
-		 WHERE id = $11 RETURNING safe_id, created_at`,
-		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA, t.Labels, t.ID,
+		        rdp_clipboard = $7, rdp_clipboard_audit = $8, require_session_mfa = $9, labels = $10, approval_tiers = $11
+		 WHERE id = $12 RETURNING safe_id, created_at`,
+		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA, t.Labels, t.ApprovalTiers, t.ID,
 	).Scan(&t.SafeID, &t.CreatedAt)
 	switch {
 	case pgCode(err) == pgUniqueViolation:
@@ -203,7 +203,7 @@ func (s *PGStore) UpdateTarget(ctx context.Context, t *store.Target) error {
 // GetTarget returns the target with the given ID, or ErrNotFound.
 func (s *PGStore) GetTarget(ctx context.Context, id int64) (*store.Target, error) {
 	return getOne(ctx, s.pool, scanTarget,
-		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa, labels
+		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa, labels, approval_tiers
 		 FROM targets WHERE id = $1`, id)
 }
 
@@ -729,9 +729,9 @@ func gatedTargetIDs(ctx context.Context, q reachQuerier) ([]int64, error) {
 // set here and only here — see store.Safe.Personal.
 func (s *PGStore) CreateSafe(ctx context.Context, sf *store.Safe) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO safes (name, description, require_approval, min_approvers, personal, require_session_mfa)
-		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
-		sf.Name, sf.Description, sf.RequireApproval, sf.MinApprovers, sf.Personal, sf.RequireSessionMFA,
+		`INSERT INTO safes (name, description, require_approval, min_approvers, personal, require_session_mfa, approval_tiers)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
+		sf.Name, sf.Description, sf.RequireApproval, sf.MinApprovers, sf.Personal, sf.RequireSessionMFA, sf.ApprovalTiers,
 	).Scan(&sf.ID, &sf.CreatedAt)
 	if pgCode(err) == pgUniqueViolation {
 		return store.ErrConflict
@@ -743,7 +743,7 @@ func (s *PGStore) CreateSafe(ctx context.Context, sf *store.Safe) error {
 // (creation order — the stable order a cursor needs).
 func (s *PGStore) ListSafes(ctx context.Context, limit int, afterID int64) ([]store.Safe, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, description, created_at, require_approval, min_approvers, personal, require_session_mfa
+		`SELECT id, name, description, created_at, require_approval, min_approvers, personal, require_session_mfa, approval_tiers
 		 FROM safes WHERE id > $1 ORDER BY id LIMIT $2`,
 		afterID, limitArg(limit))
 	if err != nil {
@@ -760,9 +760,9 @@ func (s *PGStore) ListSafes(ctx context.Context, limit int, afterID int64) ([]st
 // of the true stored value the RETURNING clause reads back.
 func (s *PGStore) UpdateSafe(ctx context.Context, sf *store.Safe) error {
 	err := s.pool.QueryRow(ctx,
-		`UPDATE safes SET name = $1, description = $2, require_approval = $3, min_approvers = $4, require_session_mfa = $5
-		 WHERE id = $6 RETURNING created_at, personal`,
-		sf.Name, sf.Description, sf.RequireApproval, sf.MinApprovers, sf.RequireSessionMFA, sf.ID,
+		`UPDATE safes SET name = $1, description = $2, require_approval = $3, min_approvers = $4, require_session_mfa = $5, approval_tiers = $6
+		 WHERE id = $7 RETURNING created_at, personal`,
+		sf.Name, sf.Description, sf.RequireApproval, sf.MinApprovers, sf.RequireSessionMFA, sf.ApprovalTiers, sf.ID,
 	).Scan(&sf.CreatedAt, &sf.Personal)
 	switch {
 	case pgCode(err) == pgUniqueViolation:
@@ -776,7 +776,7 @@ func (s *PGStore) UpdateSafe(ctx context.Context, sf *store.Safe) error {
 // GetSafe returns a safe by ID, or ErrNotFound.
 func (s *PGStore) GetSafe(ctx context.Context, id int64) (*store.Safe, error) {
 	return getOne(ctx, s.pool, scanSafe,
-		`SELECT id, name, description, created_at, require_approval, min_approvers, personal, require_session_mfa FROM safes WHERE id = $1`, id)
+		`SELECT id, name, description, created_at, require_approval, min_approvers, personal, require_session_mfa, approval_tiers FROM safes WHERE id = $1`, id)
 }
 
 // DeleteSafe removes a safe by ID (members cascade; targets are unassigned).
@@ -1022,7 +1022,7 @@ func scanCampaignItem(row pgx.CollectableRow) (store.CampaignItem, error) {
 // scanSafe scans one safe row.
 func scanSafe(row pgx.CollectableRow) (store.Safe, error) {
 	var sf store.Safe
-	err := row.Scan(&sf.ID, &sf.Name, &sf.Description, &sf.CreatedAt, &sf.RequireApproval, &sf.MinApprovers, &sf.Personal, &sf.RequireSessionMFA)
+	err := row.Scan(&sf.ID, &sf.Name, &sf.Description, &sf.CreatedAt, &sf.RequireApproval, &sf.MinApprovers, &sf.Personal, &sf.RequireSessionMFA, &sf.ApprovalTiers)
 	return sf, err
 }
 
@@ -1606,9 +1606,9 @@ func nullableTime(t time.Time) *time.Time {
 // says active:false) makes a separate UpdateUserActive call right after.
 func (s *PGStore) CreateUser(ctx context.Context, u *store.User) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO users (username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, token_expires_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7, $8) RETURNING id, created_at`,
-		u.Username, u.Role, u.IPAllowlist, u.DeviceFingerprint, u.ExternalID, u.SlackUserID, u.TokenHash, u.TokenExpiresAt,
+		`INSERT INTO users (username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, token_expires_at, manager)
+		 VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7, $8, $9) RETURNING id, created_at`,
+		u.Username, u.Role, u.IPAllowlist, u.DeviceFingerprint, u.ExternalID, u.SlackUserID, u.TokenHash, u.TokenExpiresAt, u.Manager,
 	).Scan(&u.ID, &u.CreatedAt)
 	if err != nil {
 		if pgCode(err) == pgUniqueViolation {
@@ -1623,7 +1623,7 @@ func (s *PGStore) CreateUser(ctx context.Context, u *store.User) error {
 // ListUsers returns users in the (limit, afterID) window, ordered by ID.
 func (s *PGStore) ListUsers(ctx context.Context, limit int, afterID int64) ([]store.User, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at FROM users WHERE id > $1 ORDER BY id LIMIT $2`,
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at, manager FROM users WHERE id > $1 ORDER BY id LIMIT $2`,
 		afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
@@ -1634,13 +1634,13 @@ func (s *PGStore) ListUsers(ctx context.Context, limit int, afterID int64) ([]st
 // GetUser returns the user with the given ID, or ErrNotFound.
 func (s *PGStore) GetUser(ctx context.Context, id int64) (*store.User, error) {
 	return getOne(ctx, s.pool, scanUser,
-		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at FROM users WHERE id = $1`, id)
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at, manager FROM users WHERE id = $1`, id)
 }
 
 // GetUserByUsername returns the user with the given username, or ErrNotFound.
 func (s *PGStore) GetUserByUsername(ctx context.Context, username string) (*store.User, error) {
 	return getOne(ctx, s.pool, scanUser,
-		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at FROM users WHERE username = $1`, username)
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at, manager FROM users WHERE username = $1`, username)
 }
 
 // GetUserByExternalID returns the user with the given SCIM externalId, or
@@ -1652,7 +1652,7 @@ func (s *PGStore) GetUserByExternalID(ctx context.Context, externalID string) (*
 		return nil, store.ErrNotFound
 	}
 	return getOne(ctx, s.pool, scanUser,
-		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at FROM users WHERE external_id = $1`, externalID)
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at, manager FROM users WHERE external_id = $1`, externalID)
 }
 
 // UpdateUserActive sets a user's SCIM active flag (Phase 149); ErrNotFound if absent.
@@ -1697,7 +1697,7 @@ func (s *PGStore) GetUserBySlackUserID(ctx context.Context, slackUserID string) 
 		return nil, store.ErrNotFound
 	}
 	return getOne(ctx, s.pool, scanUser,
-		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at FROM users WHERE slack_user_id = $1`, slackUserID)
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at, manager FROM users WHERE slack_user_id = $1`, slackUserID)
 }
 
 // UpdateUserSlackUserID sets a user's linked Slack member ID (Phase 236);
@@ -1709,6 +1709,11 @@ func (s *PGStore) UpdateUserSlackUserID(ctx context.Context, id int64, slackUser
 		return store.ErrConflict
 	}
 	return err
+}
+
+// UpdateUserManager sets or clears a user's direct manager (Phase 256).
+func (s *PGStore) UpdateUserManager(ctx context.Context, id int64, manager string) error {
+	return execExpectingRow(ctx, s.pool, `UPDATE users SET manager = $1 WHERE id = $2`, manager, id)
 }
 
 // UpdateUserRole changes a user's role, leaving username and token untouched;
@@ -1732,7 +1737,7 @@ func (s *PGStore) UpdateUserDeviceFingerprint(ctx context.Context, id int64, fin
 // GetUserByTokenHash returns the user whose token hash matches, or ErrNotFound.
 func (s *PGStore) GetUserByTokenHash(ctx context.Context, tokenHashHex string) (*store.User, error) {
 	return getOne(ctx, s.pool, scanUser,
-		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at FROM users WHERE token_hash = $1`,
+		`SELECT id, username, role, ip_allowlist, device_fingerprint, external_id, slack_user_id, active, token_hash, created_at, locked_reason, locked_until, token_expires_at, manager FROM users WHERE token_hash = $1`,
 		tokenHashHex)
 }
 
@@ -3276,7 +3281,7 @@ func (s *PGStore) Close() {
 // scanTarget maps one result row into a store.Target.
 func scanTarget(row pgx.CollectableRow) (store.Target, error) {
 	var t store.Target
-	err := row.Scan(&t.ID, &t.Name, &t.Host, &t.Port, &t.OSType, &t.Protocol, &t.RequireApproval, &t.SafeID, &t.RDPClipboard, &t.RDPClipboardAudit, &t.CreatedAt, &t.RequireSessionMFA, &t.Labels)
+	err := row.Scan(&t.ID, &t.Name, &t.Host, &t.Port, &t.OSType, &t.Protocol, &t.RequireApproval, &t.SafeID, &t.RDPClipboard, &t.RDPClipboardAudit, &t.CreatedAt, &t.RequireSessionMFA, &t.Labels, &t.ApprovalTiers)
 	return t, err
 }
 
@@ -3312,7 +3317,7 @@ func scanCredentialMeta(row pgx.CollectableRow) (store.Credential, error) {
 // scanUser maps one result row into a store.User.
 func scanUser(row pgx.CollectableRow) (store.User, error) {
 	var u store.User
-	err := row.Scan(&u.ID, &u.Username, &u.Role, &u.IPAllowlist, &u.DeviceFingerprint, &u.ExternalID, &u.SlackUserID, &u.Active, &u.TokenHash, &u.CreatedAt, &u.LockedReason, &u.LockedUntil, &u.TokenExpiresAt)
+	err := row.Scan(&u.ID, &u.Username, &u.Role, &u.IPAllowlist, &u.DeviceFingerprint, &u.ExternalID, &u.SlackUserID, &u.Active, &u.TokenHash, &u.CreatedAt, &u.LockedReason, &u.LockedUntil, &u.TokenExpiresAt, &u.Manager)
 	return u, err
 }
 

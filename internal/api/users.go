@@ -31,6 +31,10 @@ type userIn struct {
 	// an access request as this user. Empty (the default) means the user
 	// cannot decide from Slack.
 	SlackUserID string `json:"slack_user_id,omitempty"`
+	// Manager optionally names this user's direct manager, a local username
+	// (Phase 256) — the one approver a "manager" tier of an approval chain
+	// accepts. Empty means none.
+	Manager string `json:"manager,omitempty"`
 	// TokenTTLHours, when > 0, bounds the minted token's life (Phase 242);
 	// 0 (the default) uses the deployment's PAM_USER_TOKEN_TTL_HOURS, which
 	// itself defaults to "never expires".
@@ -114,6 +118,9 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	if !validSlackUserID(w, in.SlackUserID) {
 		return
 	}
+	if !s.validManager(w, r, in.Manager, in.Username) {
+		return
+	}
 	if in.TokenTTLHours < 0 {
 		writeError(w, http.StatusUnprocessableEntity, "token_ttl_hours must be >= 0")
 		return
@@ -123,7 +130,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "token generation failed")
 		return
 	}
-	u := store.User{Username: in.Username, Role: in.Role, IPAllowlist: in.IPAllowlist, DeviceFingerprint: in.DeviceFingerprint, SlackUserID: in.SlackUserID, TokenHash: hashHex(token), TokenExpiresAt: s.tokenExpiry(in.TokenTTLHours)}
+	u := store.User{Username: in.Username, Role: in.Role, IPAllowlist: in.IPAllowlist, DeviceFingerprint: in.DeviceFingerprint, SlackUserID: in.SlackUserID, Manager: in.Manager, TokenHash: hashHex(token), TokenExpiresAt: s.tokenExpiry(in.TokenTTLHours)}
 	if err := s.store.CreateUser(r.Context(), &u); err != nil {
 		storeError(w, err)
 		return
@@ -327,6 +334,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		IPAllowlist       *string `json:"ip_allowlist"`
 		DeviceFingerprint *string `json:"device_fingerprint"`
 		SlackUserID       *string `json:"slack_user_id"`
+		Manager           *string `json:"manager"`
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -395,6 +403,17 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		auditDetail += fmt.Sprintf(" device_fingerprint:%s->%s", auditField(u.DeviceFingerprint, 128), auditField(*in.DeviceFingerprint, 128))
 		u.DeviceFingerprint = *in.DeviceFingerprint
+	}
+	if in.Manager != nil {
+		if !s.validManager(w, r, *in.Manager, u.Username) {
+			return
+		}
+		if err := s.store.UpdateUserManager(r.Context(), id, *in.Manager); err != nil {
+			storeError(w, err)
+			return
+		}
+		auditDetail += fmt.Sprintf(" manager:%s->%s", auditField(u.Manager, 64), auditField(*in.Manager, 64))
+		u.Manager = *in.Manager
 	}
 	if in.SlackUserID != nil {
 		auditDetail += fmt.Sprintf(" slack_user_id:%s->%s", auditField(u.SlackUserID, 64), auditField(*in.SlackUserID, 64))
@@ -563,6 +582,23 @@ func (s *Server) capsForGrant(ctx context.Context, name string) (auth.CapSet, er
 		return nil, err
 	}
 	return auth.ParseCapabilities(prof.Capabilities)
+}
+
+// validManager accepts an empty manager, or an existing local user other
+// than the identity itself (Phase 256). It writes the 422 itself.
+func (s *Server) validManager(w http.ResponseWriter, r *http.Request, manager, self string) bool {
+	if manager == "" {
+		return true
+	}
+	if strings.EqualFold(manager, self) {
+		writeError(w, http.StatusUnprocessableEntity, "an identity cannot be its own manager")
+		return false
+	}
+	if _, err := s.store.GetUserByUsername(r.Context(), manager); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "manager must name an existing local user")
+		return false
+	}
+	return true
 }
 
 // generateToken returns a new random access token with the "pamt_" prefix.
