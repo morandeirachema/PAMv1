@@ -37,7 +37,8 @@ desktop invite is now refused with a pointer to the portal, rather than
 attaching to a stream that never speaks. Sharing remains replica-local.
 The image is
 `ghcr.io/morandeirachema/pamv1:0.75.0`, digest
-`sha256:4b76d86…` (the full value is in the README and on the release page).
+`sha256:4b76d86fda9094f6e876f39834515a4ece120edffe26676872c51cf2810d5981`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.75.0)).
 
 ## [0.74.0] — 2026-09-17
 
@@ -71,7 +72,8 @@ every existing recording replay as before. Watching a desktop is
 replica-local: the request must reach the replica hosting the session.
 The image is
 `ghcr.io/morandeirachema/pamv1:0.74.0`, digest
-`sha256:afef404…` (the full value is in the README and on the release page).
+`sha256:afef404f87155e2aa3eaa35bc98526d160cebb4fbe89738a4fa91ec5120e102b`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.74.0)).
 
 ## [0.73.0] — 2026-09-17
 
@@ -103,7 +105,8 @@ N-of-M count it had; the dual-control floor and a request's own ask still
 apply on top of a chain; four-eyes and safe-scoped approval are unchanged.
 The image is
 `ghcr.io/morandeirachema/pamv1:0.73.0`, digest
-`sha256:fe68d96…` (the full value is in the README and on the release page).
+`sha256:fe68d96632dbbd7b9f2192d2294fec776aa7fc0e50689e0f321c5cacc9d7ac56`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.73.0)).
 
 ## [0.72.0] — 2026-09-16
 
@@ -134,7 +137,8 @@ decides no access of its own. `PAM_SSH_ADDR` must be reachable on loopback
 for the terminal to be offered (it is, by default); bound to one
 non-loopback address, the terminal is off and the log says so. The image is
 `ghcr.io/morandeirachema/pamv1:0.72.0`, digest
-`sha256:776d197…` (the full value is in the README and on the release page).
+`sha256:776d197f5644cad1be6fd54e9bd917eb76aa94475be339bc89879242f307beb2`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.72.0)).
 
 ## [0.71.0] — 2026-09-16
 
@@ -163,7 +167,8 @@ store method was added, and no existing grant changes meaning.
 covers the whole target, exactly as it did; safe memberships and label rules
 confer every credential on their targets. Deleting a credential deletes the
 grants scoped to it. The image is `ghcr.io/morandeirachema/pamv1:0.71.0`, digest
-`sha256:82b295e…` (the full value is in the README and on the release page).
+`sha256:82b295ea55de8f0f3825fda5a6be89aa865c32907240d945654c97f68858c8b9`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.71.0)).
 
 ## [0.70.0] — 2026-09-16
 
@@ -197,7 +202,8 @@ variable moved, and no existing grant, membership or target changes meaning.
 unlabelled and matches no selector, so no existing access is widened or
 narrowed by the upgrade; direct grants and safe memberships mean exactly what
 they did. The image is `ghcr.io/morandeirachema/pamv1:0.70.0`, digest
-`sha256:0d20fd2…` (the full value is in the README and on the release page).
+`sha256:0d20fd293cde66ce45ab6fd157333b3e326c5666bd084a07b48138cfca9c0313`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.70.0)).
 
 ## [0.69.1] — 2026-09-16
 
@@ -256,7 +262,8 @@ store method changed, and nothing you configured needs revisiting.
 **What has not changed.** Every existing grant, membership, token and safe
 keeps exactly the access it had. The image is
 `ghcr.io/morandeirachema/pamv1:0.69.1`, digest
-`sha256:14e3ce4…` (the full value is in the README and on the release page).
+`sha256:14e3ce4a53c6f9346d2dc2dd8cd3a8fd4290d3e68bab28ca26c402341d2e27a5`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.69.1)).
 
 ## [0.69.0] — 2026-09-15
 
@@ -299,7 +306,8 @@ step-ups, broker approvals and campaigns still need it.
   / approve checkboxes.
 
 Helm chart `0.59.0` → `0.60.0`, a minor alongside an app minor. Image digest
-`sha256:c1f8d1b7…` (the full value is in the README and on the release page).
+`sha256:c1f8d1b746db9bcedba408509ee7778d2e025dbebe1c516a8e63eb8044907ab1`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.69.0)).
 
 ## [0.68.0] — 2026-09-15
 
@@ -342,7 +350,8 @@ with no enrolled factor cannot open a session to a target that requires one
   *Session MFA* checkboxes, an *MFA* column and option 10=Session MFA ticket.
 
 Helm chart `0.58.0` → `0.59.0`, a minor alongside an app minor. Image digest
-`sha256:6df1327b…` (the full value is in the README and on the release page).
+`sha256:6df1327b508ca558e4a47a65e9b34693f786a0a0428eb6bbeee0d9645645fb48`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.68.0)).
 
 ## [0.67.0] — 2026-09-03
 
@@ -379,7 +388,8 @@ never) and nothing is locked until an administrator says so.
   options 6=Lock, 7=Unlock, 8=Rotate token.
 
 Helm chart `0.57.0` → `0.58.0`, a minor alongside an app minor. Image digest
-`sha256:e7f1a5ff…` (the full value is in the README and on the release page).
+`sha256:e7f1a5ffd28e5a4c8b0f9e2fb296b8e0b3356210a3f61fc49b15ca572e0a81bb`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.67.0)).
 
 ## [0.66.0] — 2026-09-03
 
@@ -423,7 +433,8 @@ today changes until one of them is set.
   package `internal/timeframe`.
 
 Helm chart `0.56.1` → `0.57.0`, a minor alongside an app minor. Image digest
-`sha256:031b4a73…` (the full value is in the README and on the release page).
+`sha256:031b4a732b213d672f899ff3c0dd9a6a13d8d10c85b5fee522326795986bd845`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.66.0)).
 
 ## [0.65.1] — 2026-09-03
 
@@ -469,7 +480,8 @@ notice.
   that buttons posted by 0.64.0 stopped verifying at that upgrade.
 
 Helm chart `0.56.0` → `0.56.1`, a patch alongside an app patch. Image digest
-`sha256:4274ec4e…` (the full value is in the README and on the release page).
+`sha256:4274ec4e28ec8ab5f9a89c2bd1d1389bf642c50c01a04b28f7189b67effcc52e`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.65.1)).
 
 ## [0.65.0] — 2026-09-02
 
@@ -530,7 +542,8 @@ agent).
   "expired" reply.
 
 Helm chart `0.55.0` → `0.56.0`, a minor alongside an app minor. Image digest
-`sha256:292045eb…` (the full value is in the README and on the release page).
+`sha256:292045eba8ed55ad54fae14ff2460ee5d5b47d9731ca278cebb12411c078196c`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.65.0)).
 
 ## [0.64.0] — 2026-09-01
 
@@ -562,7 +575,8 @@ invites) is untouched — Slack is one more way to reach the same decision.
   `PAM_OT_AIRGAP` conflict list).
 
 Helm chart `0.54.0` → `0.55.0`, a minor alongside an app minor. Image digest
-`sha256:76701645…` (the full value is in the README and on the release page).
+`sha256:767016459749bb845e72a9af7b25f19b4bd4e02fdec5a769c267f26bb8ccd46d`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.64.0)).
 
 ## [0.63.0] — 2026-08-31
 
@@ -590,7 +604,8 @@ nothing about an existing deployment's behaviour is different.
 - `PAM_ONCALL_ATTEST_URL` (joins the `PAM_OT_AIRGAP` conflict list).
 
 Helm chart `0.53.1` → `0.54.0`, a minor alongside an app minor. Image digest
-`sha256:5ecdd799…` (the full value is in the README and on the release page).
+`sha256:5ecdd79921ae4fc577d3b8924d0201113f28d0f18c91174cec28fdff395287a6`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.63.0)).
 
 ## [0.62.1] — 2026-08-31
 
@@ -622,7 +637,8 @@ is that a differing binary does not bank on `main`.
   a code-free flake investigation was "shipped."
 
 Helm chart `0.53.0` → `0.53.1`, a patch alongside an app patch. Image digest
-`sha256:38ad4e2b…` (the full value is in the README and on the release page).
+`sha256:38ad4e2b6e7014c5558c3cf678f82c3b33775ce881ccf677d626468cf9cd4783`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.62.1)).
 
 ## [0.62.0] — 2026-08-27
 
@@ -652,7 +668,8 @@ compatibility. The Streamable HTTP transport is not offered.
 - `POST /mcp` accepts JSON-RPC batches and validates `MCP-Protocol-Version`.
 
 Helm chart `0.52.0` → `0.53.0`, a minor alongside an app minor. Image digest
-`sha256:8145ca1b…` (the full value is in the README and on the release page).
+`sha256:8145ca1b345330deab466ad6ce370a977d424a70d69f6213f229f8ee061608b3`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.62.0)).
 
 ## [0.61.0] — 2026-08-27
 
@@ -679,7 +696,8 @@ reload, and a bundle that tries to shadow its key id is refused whole.
   `SetBundleRecheck`, `WithLogger` — Go API only). Nothing to configure.
 
 Helm chart `0.51.0` → `0.52.0`, a minor alongside an app minor. Image digest
-`sha256:50be5f7c…` (the full value is in the README and on the release page).
+`sha256:50be5f7cc29258ce9a8faa1e1c90d6d8b0a088ded9929a1d97b531a9dc4112a2`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.61.0)).
 
 ## [0.60.0] — 2026-08-27
 
@@ -716,7 +734,8 @@ finding of the 2026-08-26 security audit is closed.**
   documentation only.
 
 Helm chart `0.50.0` → `0.51.0`, a minor alongside an app minor. Image digest
-`sha256:55f70935…` (the full value is in the README and on the release page).
+`sha256:55f70935cc5395b3f20a61cf7ab23a2e7f69237b07c1254f4191f93eca1b69f7`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.60.0)).
 
 ## [0.59.0] — 2026-08-27
 
@@ -768,7 +787,8 @@ approval expires — a refused or failed call never consumes budget, as before.
   day, never over-served.
 
 Helm chart `0.49.3` → `0.50.0`, a minor alongside an app minor. Image digest
-`sha256:cc5ae871…` (the full value is in the README and on the release page).
+`sha256:cc5ae871f82666c3c8682d1e30889877f07054821819389d1a2d807fb2ddee89`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.59.0)).
 
 ## [0.58.3] — 2026-08-27
 
@@ -807,7 +827,8 @@ binary does not bank on `main`.
   against live PostgreSQL runs it.
 
 Helm chart `0.49.2` → `0.49.3`, a patch alongside an app patch. Image digest
-`sha256:7367417a…` (the full value is in the README and on the release page).
+`sha256:7367417aa1253fb1e47f108b967491ac8caed04a5556d6d62132e473cf9ec07f`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.58.3)).
 
 ## [0.58.2] — 2026-08-27
 
@@ -881,7 +902,8 @@ at that moment rather than at its expiry; and a session-share supervisor's
 console reads the same roster — only the value of `join_id` changed.
 
 Helm chart `0.49.1` → `0.49.2`, a patch alongside an app patch. Image digest
-`sha256:89cfc84e…` (the full value is in the README and on the release page).
+`sha256:89cfc84e630e5ad93a814cc00da9d33090263b8b7ecab49ebe92e2c928d54e09`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.58.2)).
 
 ## [0.58.1] — 2026-08-26
 
@@ -917,8 +939,11 @@ manifest pins. Everything the `[0.58.0]` entry below describes ships here.
 Helm chart `0.49.0` → `0.49.1`, a patch alongside an app patch. No Go source,
 schema, route or env var changed between `v0.58.0` and this tag.
 
-**Digests.** 0.58.1 is `sha256:67e9ee72…` (the full value is in the README and on the
-release page); the unsigned image under 0.58.0 is `sha256:77c8dba0…`. They differ,
+**Digests.** 0.58.1 is
+`sha256:67e9ee722b35904e55f96828bc5338f09a66e7f3c1b2cf25bd1568232818bb7b`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.58.1));
+the unsigned image under 0.58.0 is
+`sha256:77c8dba0633738545af269508dd37188bfafb8aee0a1c1608efa5975916b252b`. They differ,
 as the v0.57.1 note explains any two builds here will, and the second one is how
 to recognise the image not to run: `docker inspect --format '{{index .RepoDigests 0}}'`
 on what you have deployed.
@@ -1065,7 +1090,9 @@ with a patch of its own (`0.48.0` → `0.48.1`) rather than a minor, matching ho
 v0.54.1 was handled.
 
 **Note for anyone comparing digests — and this happened.** v0.57.1 published
-`sha256:279a5d8b…` where v0.57.0 published `sha256:75a2a43d…`. The image here
+`sha256:279a5d8b82d698a4215d7076bc548a93f1cddd954e709c17af9c8c433a51b875`
+where v0.57.0 published
+`sha256:75a2a43d58dc01247d4af1a56ac56ae3bd2fe535bcec0aedc93791375f995ad0`. The image here
 does NOT have the same digest as v0.57.0 despite being built from equivalent sources — this build
 is not bit-reproducible across runs, which v0.55.0 demonstrated when a pipeline
 re-run produced a different digest from the same commit. A differing digest
@@ -3405,7 +3432,11 @@ Everything from phases 0–52g is in this release. The short version:
   Helm chart / raw K8s / Terraform / docker-compose deployments, SOPS and
   Conjur secret sourcing, threat analytics with automated response.
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+The image is `ghcr.io/morandeirachema/pamv1:0.10.0`, digest
+`sha256:ab2a5fa5db27fae805f9096dfdf526497ddff4cc3774b33469ab108b98637b39`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.10.0)).
+
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.75.0...HEAD
 [0.75.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.75.0
 [0.74.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.74.0
 [0.73.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.73.0

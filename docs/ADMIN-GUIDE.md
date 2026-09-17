@@ -198,6 +198,7 @@ Prometheus `ServiceMonitor`, and the same hardened pod security context:
 
 ```bash
 helm install pamv1 deploy/helm/pamv1 \
+  --set secret.create=true \
   --set secret.data.PAM_MASTER_KEY=... \
   --set secret.data.PAM_API_KEY=... \
   --set secret.data.PAM_DATABASE_URL='postgres://pam:...@postgres:5432/pam?sslmode=verify-full' \
@@ -206,6 +207,20 @@ helm install pamv1 deploy/helm/pamv1 \
 
 For production, set `secret.existingSecret` and manage PAM_* with an external
 secret manager (Vault / External Secrets Operator) rather than chart values.
+
+**Pin the image by digest (Phase 262).** The chart defaults to the tag
+`.Chart.AppVersion`, and a tag can be pushed again. Set `image.digest` to the
+bare digest and the pod runs `ghcr.io/morandeirachema/pamv1@sha256:…`, which
+nothing can move (anything but `sha256:…` is refused at render time):
+
+```bash
+helm upgrade pamv1 deploy/helm/pamv1 --reuse-values \
+  --set image.digest=sha256:4b76d86fda9094f6e876f39834515a4ece120edffe26676872c51cf2810d5981
+```
+
+Each release's digest is recorded in [CHANGELOG.md](../CHANGELOG.md) against
+its release page, and — from the release after v0.75.0 — in the release notes
+themselves, with the exact `cosign verify` command for that image.
 
 **Highly-available PostgreSQL.** For an in-cluster HA database, install the
 [CloudNativePG](https://cloudnative-pg.io/) operator and apply
@@ -4822,6 +4837,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-17 | **Phase 262 (image digests).** §3 Helm: pin by `image.digest` and where each release's digest is recorded; the `helm install` example passes `secret.create=true`, which the chart requires. |
 | 2026-09-17 | **Phase 260 (share a live RDP/VNC session).** §9.4c gains the desktop case: where an internal invitee and an external guest redeem, read-only vs keyboard-and-mouse, the clipboard and files never shared, roster and kick. |
 | 2026-09-17 | **Phase 258 (live watching and in-portal replay of RDP/VNC sessions).** New §9.3c: the portal's own `.guac` recording (sealed, hashed, capped, audited), the desktop player, the read-only watch and its token. |
 | 2026-09-17 | **Phase 256 (level-tiered and direct-manager approval).** New §9 subsection: ordered approval chains on a target or safe, the tier grammar, the direct manager on a user (API and SCIM), how a decision walks the chain, the manager-tier refusal at creation, and what the console shows. |
