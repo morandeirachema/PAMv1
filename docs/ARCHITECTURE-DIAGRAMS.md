@@ -622,7 +622,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 209 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 211 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -739,6 +739,8 @@ The 209 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/share-invites/{id}/approve` | CapApprove |
 | POST | `/api/share-invites/{id}/deny` | CapApprove |
 | POST | `/api/share-invites/{id}/revoke` | CapManageTargets |
+| GET | `/api/share/desktop` | token (single-use link) |
+| POST | `/api/share/desktop/redeem` | authenticated |
 | POST | `/api/share/input` | token (single-use link) |
 | POST | `/api/share/redeem/{token}` | token (single-use link) |
 | GET | `/api/share/stream` | token (single-use link) |

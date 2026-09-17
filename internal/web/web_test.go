@@ -95,3 +95,23 @@ func TestIndexExposesConsole(t *testing.T) {
 		}
 	}
 }
+
+// TestShareServesDesktopViewer proves the guest page (Phase 260) can open a
+// shared desktop: the Guacamole client's content-hashed URL is substituted,
+// the script carries the nonce, and the CSP admits the data:/blob: images
+// guacd paints with — while still refusing inline script without the nonce.
+func TestShareServesDesktopViewer(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Share(rec, httptest.NewRequest("GET", "/share.html", nil))
+	body, csp := rec.Body.String(), rec.Header().Get("Content-Security-Policy")
+	if strings.Contains(body, "__GUAC_SRC__") || !regexp.MustCompile(`/static/guacamole-common\.min\.js\?v=[0-9a-f]{12}`).MatchString(body) {
+		t.Fatal("the guest page must import the content-hashed Guacamole client")
+	}
+	m := regexp.MustCompile(`script-src 'nonce-([A-Za-z0-9+/=]+)' 'self'`).FindStringSubmatch(csp)
+	if m == nil || !strings.Contains(body, `<script nonce="`+m[1]+`">`) {
+		t.Fatalf("nonce missing from CSP or page: %q", csp)
+	}
+	if !strings.Contains(csp, "img-src 'self' data: blob:") || strings.Contains(csp, "script-src 'unsafe-inline'") {
+		t.Fatalf("CSP = %q", csp)
+	}
+}

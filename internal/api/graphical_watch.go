@@ -59,6 +59,7 @@ type viewerJoin struct {
 	target   string
 	actor    string
 	done     <-chan struct{}
+	touch    func() // the session's idle clock: a view-control sharer's input is operator activity
 }
 
 // viewerRecording writes one graphical session's instruction stream to disk,

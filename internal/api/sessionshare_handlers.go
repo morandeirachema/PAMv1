@@ -313,6 +313,10 @@ type shareRedeemOut struct {
 	Key       string `json:"key"`
 	SessionID string `json:"session_id"`
 	Mode      string `json:"mode"`
+	// Protocol tells the guest page which viewer to open (Phase 260): a
+	// desktop ("rdp"/"vnc") joins over GET /api/share/desktop, anything else
+	// reads the text stream.
+	Protocol string `json:"protocol,omitempty"`
 }
 
 // redeemShareInvite is POST /api/share/redeem/{token}: the guest page's very
@@ -357,7 +361,7 @@ func (s *Server) redeemShareInvite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "issuing a guest session failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, shareRedeemOut{Key: key, SessionID: inv.SessionID, Mode: inv.Mode})
+	writeJSON(w, http.StatusOK, shareRedeemOut{Key: key, SessionID: inv.SessionID, Mode: inv.Mode, Protocol: s.sessionProtocol(inv.SessionID)})
 }
 
 // streamShareGuest is GET /api/share/stream?key=... — the guest page's
@@ -373,6 +377,10 @@ func (s *Server) streamShareGuest(w http.ResponseWriter, r *http.Request) {
 	sid, actor, mode, ok := s.shares.ResolveGuestKey(key)
 	if !ok {
 		s.authFailed(w, r, "share-guest", "invalid or expired guest key")
+		return
+	}
+	if s.isDesktopSession(sid) {
+		writeError(w, http.StatusConflict, "this is a desktop session; join it over GET /api/share/desktop")
 		return
 	}
 	frames, cancel := s.live.Subscribe(sid)
@@ -444,6 +452,12 @@ func (s *Server) inputShareGuest(w http.ResponseWriter, r *http.Request) {
 	}
 	if mode != "view_control" {
 		writeError(w, http.StatusForbidden, "this invite is view-only")
+		return
+	}
+	// A desktop's mux has no reader: input here would block until the session
+	// ended. A desktop sharer's input rides its own WebSocket (Phase 260).
+	if s.isDesktopSession(sid) {
+		writeError(w, http.StatusConflict, "this is a desktop session; its input rides GET /api/share/desktop")
 		return
 	}
 	// One keystroke (or a small paste) at a time — bounded well above any

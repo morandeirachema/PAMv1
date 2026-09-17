@@ -428,6 +428,7 @@ var guardByWrapper = []struct{ needle, label string }{
 	{"redeemShareInvite", "token (single-use link)"},
 	{"streamShareGuest", "token (single-use link)"},
 	{"inputShareGuest", "token (single-use link)"},
+	{"shareDesktop", "token (single-use link)"},
 	// Slack's own request signature (v0 HMAC-SHA256) is the authentication
 	// for its interactivity callback — the caller (Slack's servers) has no
 	// PAMv1 credential at all, verified inside the handler before anything

@@ -171,6 +171,19 @@ func (r *Registry) Exists(id string) bool {
 	return ok
 }
 
+// Get returns a live session's Info from this replica's own registry. The
+// session-share joins use it to tell a desktop from a terminal (Phase 260):
+// the two are joined through entirely different paths.
+func (r *Registry) Get(id string) (Info, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.m[id]
+	if !ok {
+		return Info{}, false
+	}
+	return e.info, true
+}
+
 // Remove drops a session (call when it ends) and, when a hub is attached,
 // closes the session's live watch streams so supervisors see the end rather
 // than an indefinitely silent pane. With a cluster attached it also deletes

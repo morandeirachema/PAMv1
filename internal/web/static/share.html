@@ -17,11 +17,13 @@
     flex: 1; margin: 0; padding: 10px 14px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
   }
   #hint { padding: 6px 14px; color: #2f7d4a; font-size: 0.9em; border-top: 1px solid #123; }
+  #desk { flex: 1; overflow: auto; background: #000; display: none; outline: none; }
 </style>
 </head>
 <body>
 <div id="status">Connecting&hellip;</div>
 <pre id="out" tabindex="0"></pre>
+<div id="desk" tabindex="0"></div>
 <div id="hint"></div>
 <script nonce="__CSP_NONCE__">
 (function () {
@@ -57,6 +59,10 @@
       return r.json();
     })
     .then(function (redeemed) {
+      if (redeemed.protocol === "rdp" || redeemed.protocol === "vnc") {
+        openDesktop(redeemed);
+        return;
+      }
       statusEl.textContent = "Connected — " + (redeemed.mode === "view_control" ? "you may type into this session." : "view only.");
       var es = new EventSource("/api/share/stream?key=" + encodeURIComponent(redeemed.key));
       es.onmessage = function (ev) { append(ev.data); };
@@ -78,6 +84,43 @@
       }
     })
     .catch(function (err) { fail("Could not join: " + err.message); });
+
+  // openDesktop renders a shared RDP/VNC desktop (Phase 260) with the same
+  // vendored Guacamole client the portal uses, over GET /api/share/desktop.
+  // A view_control share sends keyboard and mouse; the server forwards
+  // nothing else — no clipboard, no files — and a view_only share nothing
+  // but keep-alive.
+  function openDesktop(redeemed) {
+    var control = redeemed.mode === "view_control";
+    var desk = document.getElementById("desk");
+    outEl.style.display = "none";
+    desk.style.display = "block";
+    import("__GUAC_SRC__").then(function (m) {
+      var Guac = m.default;
+      var tunnel = new Guac.WebSocketTunnel("/api/share/desktop");
+      var client = new Guac.Client(tunnel);
+      desk.appendChild(client.getDisplay().getElement());
+      var ended = function (msg) { statusEl.textContent = msg; try { client.disconnect(); } catch (e) {} };
+      client.onerror = function (st) { fail("Session error: " + ((st && st.message) || "unknown")); };
+      tunnel.onerror = function (st) { fail("Connection error: " + ((st && st.message) || "unknown")); };
+      client.onstatechange = function (state) { if (state === 5) { ended("Session ended, or you were removed from it."); } };
+      if (control) {
+        var mouse = new Guac.Mouse(desk);
+        mouse.onmousedown = mouse.onmouseup = mouse.onmousemove = function (s) { client.sendMouseState(s); };
+        var keyboard = new Guac.Keyboard(desk);
+        keyboard.onkeydown = function (sym) { client.sendKeyEvent(1, sym); };
+        keyboard.onkeyup = function (sym) { client.sendKeyEvent(0, sym); };
+        desk.focus();
+        hintEl.textContent = "Your keyboard and mouse reach this desktop while this window has focus. The clipboard and files are not shared.";
+      } else {
+        hintEl.textContent = "View only — your keyboard and mouse are not sent.";
+      }
+      statusEl.textContent = "Connected to a shared desktop — " + (control ? "view and control." : "view only.");
+      var w = Math.max(640, Math.min(desk.clientWidth || 1024, 4096));
+      var h = Math.max(480, Math.min(desk.clientHeight || 768, 4096));
+      client.connect("key=" + encodeURIComponent(redeemed.key) + "&width=" + w + "&height=" + h);
+    }).catch(function (err) { fail("Could not load the desktop viewer: " + err.message); });
+  }
 
   // keyToBytes translates a keydown event into the byte sequence a real
   // terminal would send. This is a deliberately small, v1-scoped mapping
