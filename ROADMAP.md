@@ -2430,7 +2430,7 @@ are new; no schema, store method or env var moved.
 - [x] **v0.75.0** through the test-gated pipeline. `.github/` untouched
   since v0.58.1 and nothing the workflow *reads* has changed either, so no
   rehearsal. Published 2026-09-17 as `ghcr.io/morandeirachema/pamv1:0.75.0`
-  (also `latest`), digest `TBD`, **public** (anonymous pull 200 on both tags,
+  (also `latest`), digest `sha256:4b76d86fda9094f6e876f39834515a4ece120edffe26676872c51cf2810d5981`, **public** (anonymous pull 200 on both tags,
   both resolving to the same digest), signed and attested — every publishing
   step's own conclusion `success`, and the README's `cosign verify` run
   against it — with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS`
