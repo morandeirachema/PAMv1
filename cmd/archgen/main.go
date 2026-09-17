@@ -419,6 +419,7 @@ var guardByWrapper = []struct{ needle, label string }{
 	{"rdpTunnel", "token (query)"},
 	{"vncTunnel", "token (query)"},
 	{"sshTerminal", "token (query)"},
+	{"sessionView", "token (query)"},
 	// The guest pages (session share, magic-link approval) authenticate a
 	// single-use token inside the handler, for the same reason: the caller has no
 	// PAMv1 login at all — that is the feature.

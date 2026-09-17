@@ -140,6 +140,17 @@ type Params struct {
 	RecordingName string
 	// Extra holds any additional guacd parameters (e.g. "security", "ignore-cert").
 	Extra map[string]string
+	// Join, when set, is the id of a connection guacd is ALREADY serving
+	// (Conn.ID — "$…"): the handshake selects it instead of a protocol, and
+	// guacd adds this client to that connection as another user, sending it
+	// the current display first (Phase 258 — live watching). A joining user
+	// carries no target or credential: guacd reuses the owner's.
+	Join string
+	// ReadOnly asks guacd to ignore this user's keyboard, mouse and clipboard
+	// ("read-only" — honoured per user, so a watcher cannot drive the owner's
+	// desktop). A caller relying on it must check Supports("read-only"): an
+	// unadvertised parameter is dropped, not refused.
+	ReadOnly bool
 }
 
 // Conn is a live guacd connection after a completed handshake. Read/Write carry
@@ -249,8 +260,12 @@ func (c *Conn) send(opcode string, args ...string) error {
 // injecting the credential value guacd requests for each advertised arg, and
 // returns the connection id from the ready reply.
 func (c *Conn) handshake(p Params) (string, error) {
-	// 1. select the protocol.
-	if err := c.send("select", p.Protocol); err != nil {
+	// 1. select the protocol — or, to join a live connection, its id.
+	sel := p.Protocol
+	if p.Join != "" {
+		sel = p.Join
+	}
+	if err := c.send("select", sel); err != nil {
 		return "", err
 	}
 	// 2. guacd replies with the list of parameter names it expects.
@@ -327,6 +342,11 @@ func (p Params) value(name string) string {
 		return p.RecordingPath
 	case "recording-name":
 		return p.RecordingName
+	case "read-only":
+		if p.ReadOnly {
+			return "true"
+		}
+		return ""
 	case "create-recording-path":
 		if p.RecordingPath != "" {
 			return "true"

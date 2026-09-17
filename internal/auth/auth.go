@@ -473,6 +473,14 @@ const SessionScopeSessionMFA = "session_mfa"
 // in a WebSocket URL. It resolves to a TerminalOnly principal.
 const SessionScopeTerminal = "terminal"
 
+// SessionScopeWatch marks a watch token (Phase 258): minted by
+// POST /api/sessions/{id}/view-token for a supervisor who may already watch
+// sessions, 60 seconds, single use, and accepted ONLY by the graphical watch
+// WebSocket, which joins a live RDP/VNC desktop read-only. It travels in a
+// WebSocket URL, so the HTTP middleware refuses it everywhere and it opens no
+// session at any proxy or tunnel. It resolves to a WatchOnly principal.
+const SessionScopeWatch = "watch"
+
 // CapSet is a resolved set of capabilities (used for custom profiles).
 type CapSet map[Capability]bool
 
@@ -495,7 +503,11 @@ type Principal struct {
 	// TerminalTarget — the one target it may open a session to.
 	TerminalOnly   bool
 	TerminalTarget int64
-	MFAPending     bool // password verified, awaiting a WebAuthn second factor; nothing else
+	// WatchOnly marks a watch token (Phase 258): refused by the API
+	// middleware and by every session door; accepted only by the graphical
+	// watch WebSocket.
+	WatchOnly  bool
+	MFAPending bool // password verified, awaiting a WebAuthn second factor; nothing else
 	// ExtensionOnly marks a token minted for the browser extension (Phase
 	// 147): unlike TunnelOnly, it is not a blanket refusal everywhere — the
 	// reveal route specifically admits it (see the api package's authzExtOK),
@@ -556,6 +568,7 @@ const (
 	ScopeExtensionOnly
 	ScopeSessionMFA
 	ScopeTerminal
+	ScopeWatch
 )
 
 // NarrowScope reports which narrow scope, if any, this principal is confined to.
@@ -589,6 +602,8 @@ func (p *Principal) NarrowScope() SessionScope {
 		return ScopeSessionMFA
 	case p.TerminalOnly:
 		return ScopeTerminal
+	case p.WatchOnly:
+		return ScopeWatch
 	}
 	return ScopeNone
 }
@@ -981,6 +996,7 @@ func (r *Resolver) Resolve(ctx context.Context, key string) (*Principal, error) 
 			p.TunnelOnly = IsViewerScope(s.Scope)
 			p.MFAPending = s.Scope == SessionScopeMFAPending
 			p.ExtensionOnly = s.Scope == SessionScopeExtension
+			p.WatchOnly = s.Scope == SessionScopeWatch
 			if s.Scope == SessionScopeSessionMFA {
 				// A ticket is meaningless without the target it was minted
 				// for; a row without one is refused rather than read as a
