@@ -35,6 +35,11 @@ type SafeReader interface {
 type ApprovalPolicy struct {
 	Required     bool
 	MinApprovers int
+	// Tiers is the ordered approval chain in force (Phase 256): the target's
+	// own if it sets one, else its safe's, else none. Kept as the stored text;
+	// callers parse it, so an unparsable chain (impossible through the API,
+	// which validates on write) fails closed at ParseApprovalTiers.
+	Tiers string
 }
 
 // EffectiveApprovalPolicy folds the deployment-wide flag, the target's own
@@ -54,6 +59,12 @@ func EffectiveApprovalPolicy(ctx context.Context, st SafeReader, t *Target, glob
 	if t.RequireApproval {
 		p.Required = true
 	}
+	// The more specific chain wins: a target that names its own levels is a
+	// deliberate statement about that system; a safe's chain covers the rest.
+	p.Tiers = t.ApprovalTiers
+	if p.Tiers != "" {
+		p.Required = true
+	}
 	if t.SafeID == nil || st == nil {
 		return p, nil
 	}
@@ -66,6 +77,13 @@ func EffectiveApprovalPolicy(ctx context.Context, st SafeReader, t *Target, glob
 	}
 	if sf.MinApprovers > p.MinApprovers {
 		p.MinApprovers = sf.MinApprovers
+	}
+	if p.Tiers == "" {
+		p.Tiers = sf.ApprovalTiers
+	}
+	// A chain is a demand for approvals, as a floor is.
+	if p.Tiers != "" {
+		p.Required = true
 	}
 	// A safe that sets a dual-control floor is asking for approvals; requiring
 	// two approvers on a target nothing gates would otherwise be a setting with

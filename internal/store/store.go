@@ -117,8 +117,12 @@ type Target struct {
 	// naming it, so labels are an authorization input, not a display field.
 	// Empty is an unlabelled target, which is every target before Phase 250
 	// and which no selector matches.
-	Labels    string    `json:"labels,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	Labels string `json:"labels,omitempty"`
+	// ApprovalTiers is an ordered approval chain for this target (Phase 256,
+	// "manager; approver:2; admin" — see approvaltiers.go); empty inherits the
+	// safe's chain, and an empty chain everywhere is the untiered N-of-M count.
+	ApprovalTiers string    `json:"approval_tiers,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // Campaign is an access-certification (attestation) campaign: a point-in-time
@@ -265,6 +269,9 @@ type Safe struct {
 	// the global/request value stands.
 	RequireApproval bool `json:"require_approval,omitempty"`
 	MinApprovers    int  `json:"min_approvers,omitempty"`
+	// ApprovalTiers is the safe's ordered approval chain (Phase 256), binding
+	// every target in it that sets none of its own.
+	ApprovalTiers string `json:"approval_tiers,omitempty"`
 	// RequireSessionMFA binds every target in the safe to per-session MFA
 	// (Phase 244), strictest-wins exactly like RequireApproval.
 	RequireSessionMFA bool `json:"require_session_mfa,omitempty"`
@@ -343,6 +350,10 @@ type AccessRequest struct {
 	// what every request was before. StopAccessRequestRecurrence (RecurDays
 	// -> 0) is the anchor's stop button, campaign-style.
 	RecurDays int `json:"recur_days,omitempty"`
+	// Tiers is the approval chain's progress for THIS request (Phase 256),
+	// computed from ApprovedBy against the policy in force when it is read —
+	// never persisted, and absent when the target has no chain.
+	Tiers []TierState `json:"tiers,omitempty"`
 	// NextRunAt is when the anchor next spawns a child. Set when the anchor
 	// is approved (not at creation, so an approval that takes days to arrive
 	// doesn't make the first recurrence fire immediately on approval). Nil on
@@ -804,6 +815,11 @@ type User struct {
 	// (the default) means this user cannot decide from Slack at all; unique
 	// among non-empty values, since one member must not map to two humans.
 	SlackUserID string `json:"slack_user_id,omitempty"`
+	// Manager is this identity's direct manager, a local username (Phase
+	// 256): the one approver a "manager" tier of an approval chain accepts.
+	// Empty means none — a request against a chain with a manager tier is
+	// refused at creation rather than left waiting for nobody.
+	Manager string `json:"manager,omitempty"`
 	// LockedReason, when non-empty, is an administrator's lock on this
 	// identity (Phase 242): its token does not resolve, a login session
 	// minted for it does not resolve, no new session is issued, a Slack
@@ -1811,6 +1827,8 @@ type UserStore interface {
 	// see User.SlackUserID), or ErrNotFound. ErrConflict if another user
 	// already claims the same non-empty value.
 	UpdateUserSlackUserID(ctx context.Context, id int64, slackUserID string) error
+	// UpdateUserManager sets or clears a user's direct manager (Phase 256).
+	UpdateUserManager(ctx context.Context, id int64, manager string) error
 
 	// CreateProfile inserts a custom permission profile; ErrConflict on a
 	// duplicate name.

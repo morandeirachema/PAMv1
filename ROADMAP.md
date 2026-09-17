@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–255 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–256 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,74 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 256 — Level-tiered and direct-manager approval ✅
+
+The last buildable row of the Tier 8 pass — CyberArk's multi-level
+confirmation. Since Phase 21 an access request has needed *N distinct
+approvers*, any N; the thing every mature approval process actually says —
+*your manager first, then two from the team, then security* — had no way to
+be written down, and no way to be enforced.
+
+- [x] **A chain, written on the thing it governs.** `targets.approval_tiers`
+  and `safes.approval_tiers` (`0059`) hold an ordered chain in one leaf
+  vocabulary (`internal/store/approvaltiers.go`): tiers separated by `;`,
+  each `subject[:count]` — `manager` (the requester's direct manager),
+  `user=<name>`, or a role / custom-profile name — parsed and canonicalized
+  on write, refused with the parser's reason otherwise. The target's own
+  chain wins over its safe's (the more specific statement governs); a chain
+  implies `require_approval`; `min_approvers` and the request's own ask
+  still apply on top, as a total. Empty everywhere — every row before this
+  phase — is the untiered count every request had, so no request's
+  requirements change on upgrade
+- [x] **A direct manager, on the identity.** `users.manager` (`0059`,
+  `UserStore.UpdateUserManager`, surface **228 → 229**): an existing local
+  user, not oneself, on `POST`/`PUT /api/users`, and from SCIM's enterprise
+  extension (`manager.value`, the manager's SCIM id) on create and replace.
+  A request against a chain with a manager tier is refused **at creation**,
+  with the reason, when the requester has none — a request that would wait
+  forever for an approval nobody can give is a worse outcome than a 422
+- [x] **The decision walks the chain, and only forward.** `TierProgress`
+  replays `ApprovedBy` in approval order, crediting each approver to the
+  FIRST unsatisfied tier they qualify for — so no new column on the request,
+  and an early level-2 approval is held, not counted and not lost, until
+  level 1 completes. `decideAccessRequest` refuses an approver who does not
+  satisfy the current tier (`access.decision_denied
+  reason:not-in-current-tier tier:N`, nothing recorded) and grants only when
+  the chain is complete AND the distinct-approver count is met. The chain is
+  re-read from the policy in force at every decision, exactly as Phase 58's
+  floor is, so a chain raised while a request waits binds it at the next
+  approval. Four-eyes and Phase 246's scoped approvers are unchanged and
+  compose: a scoped approver must hold the safe's `approve` *and* satisfy
+  the tier. Who qualifies is read from the row (the requester's manager, the
+  named user, the approver's role or profile) or, for a directory identity
+  that is the caller, from the principal in hand
+- [x] **Reported where approvers look.** `AccessRequest.Tiers` — computed,
+  never persisted — carries each level's kind, count, approvers, satisfied
+  and current flags on the list and on every decision response; *Work with
+  Access Requests* shows the chain (✓ satisfied, ◀ current); the target and
+  safe forms gain *Approval tiers*, the user forms *Manager*
+- [x] **Proven, not asserted.** `TestParseApprovalTiers` (canonical form,
+  every rejected shape), `TestTierProgress` (the held early approval, the
+  unqualified admin never credited, an empty chain complete);
+  `TestTieredApproval` end to end over the API — a bad chain 422 on write,
+  a requester with no manager 422 on file, self and unknown managers 422,
+  the approver acting before the manager refused for the wrong tier and
+  audited, the manager (holding no approve capability at all) satisfying
+  level 1 with the request still pending and the response reporting
+  progress, a repeat 409, the approver completing the chain, the pending
+  list carrying the chain; `TestTieredApprovalFromSafe` (a safe's `admin:2`
+  binds an inheriting target — an approver refused, one admin of two still
+  pending — and a target's own chain wins over the safe's)
+- [x] **Limits, stated rather than discovered.** A tier is a subject and a
+  count, not a condition; there is no "any two of these three tiers".
+  Magic-link approvals (Phase 137) satisfy no tier — a tier needs an
+  identity — so a tiered target's requests are decided in the portal or via
+  Slack. Slack decisions go through the same gate. The manager is a local
+  username; a directory identity's manager is not read from the directory
+- [x] Schema (`0059`), store surface **228 → 229**; routes unchanged at
+  **207**, no env var, one new refusal reason. **Released by Phase 257 as
+  v0.73.0** — a minor, since the schema and the surface moved
 
 ## Phase 255 — v0.72.0 ✅
 
