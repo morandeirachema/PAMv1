@@ -2431,7 +2431,9 @@ one of them is an authorization bypass in the agent broker.
 - [x] **v0.76.0** through the test-gated pipeline. `.github/` untouched
   since v0.75.1 and nothing the workflow *reads* has changed, so no
   rehearsal. Published 2026-09-17 as `ghcr.io/morandeirachema/pamv1:0.76.0`
-  (also `latest`), digest `TBD`, **public** (anonymous pull 200 on both tags,
+  (also `latest`), digest
+  `sha256:c0dd33432d1953d347fd6ce17638f6f04c69bc3455fdec384aa9d115dcd2bac5`,
+  **public** (anonymous pull 200 on both tags,
   both resolving to the same digest), signed and attested — every publishing
   step's own conclusion `success`, the release notes carrying that digest,
   and the notes' own `cosign verify` run against it — with the `pam-agent`
