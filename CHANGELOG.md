@@ -9,6 +9,48 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.76.0] — 2026-09-17
+
+A minor that ships **Phase 264** — the review of Phases 250–262. **One
+migration is new** (`0060`); no route or environment variable moved. Upgrade
+if you use credential-scoped grants with the AI-agent broker.
+
+**Security fixes.**
+
+- **The AI-agent broker honoured credential-scoped grants only on paper.**
+  `ssh_exec` and `winrm_exec` logged in as a target's FIRST credential
+  whatever credential the agent's grant named. They now use the first
+  credential the grant covers, or refuse.
+- **Credential scope now binds operator SSH certificates and dependency
+  management credentials** — a user granted one account on a target could
+  obtain a CA-signed certificate for another, or have another account's
+  password presented to a host they chose.
+- **A kick now ends every connection of a shared session**, not only the
+  newest one opened with the same key; an internal invitee's desktop key is
+  re-checked against the user (active, unlocked, `connect`, IP allowlist) on
+  every connection.
+- **Suspending an RDP/VNC session now freezes it.** Since 0.75.0 the call
+  answered 200, audited `session.suspended`, and changed nothing. *Work with
+  Active Sessions* gains **7=Suspend / resume input**.
+
+**Fixes.**
+
+- A tiered approval chain can progress past an approver with no local user
+  row (a directory identity, the bootstrap admin): each approver's roles are
+  recorded when they approve (`access_requests.approved_as`).
+- The in-portal terminal works on a target that demands a session code when
+  the user has an IP allowlist, and such sessions are recorded under the
+  browser's address rather than `127.0.0.1`.
+- A session refused because of the credential no longer uses up the caller's
+  one-time approval or session-MFA ticket.
+- `PAM_RECORDING_RETENTION_DAYS` now prunes every recording kind; exec
+  transcripts, forensic reconstructions and desktop recordings were kept
+  forever.
+
+**What has not changed.** Requests approved before the upgrade keep their
+approvals. Grants that name no credential behave exactly as before.
+The image is `ghcr.io/morandeirachema/pamv1:0.76.0`.
+
 ## [0.75.1] — 2026-09-17
 
 A patch that ships **Phase 262** — image digests recorded where the docs
@@ -3463,7 +3505,8 @@ The image is `ghcr.io/morandeirachema/pamv1:0.10.0`, digest
 `sha256:ab2a5fa5db27fae805f9096dfdf526497ddff4cc3774b33469ab108b98637b39`
 ([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.10.0)).
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.75.1...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.76.0...HEAD
+[0.76.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.76.0
 [0.75.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.75.1
 [0.75.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.75.0
 [0.74.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.74.0
