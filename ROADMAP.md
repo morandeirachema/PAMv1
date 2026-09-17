@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–256 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–257 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,34 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 257 — v0.73.0 ✅
+
+Releases **256** — level-tiered and direct-manager approval. A **minor**:
+the schema (`0059`) and the store surface moved; no route or env var was
+added.
+
+- [x] **v0.73.0** through the test-gated pipeline. `.github/` untouched
+  since v0.58.1 and nothing the workflow *reads* has changed either, so no
+  rehearsal. Published 2026-09-17 as `ghcr.io/morandeirachema/pamv1:0.73.0`
+  (also `latest`), digest `TBD`, **public** (anonymous pull 200 on both tags,
+  both resolving to the same digest), signed and attested — every publishing
+  step's own conclusion `success`, and the README's `cosign verify` run
+  against it — with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS`
+  attached
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm
+  chart `version` 0.63.0 -> **0.64.0**, a minor alongside an app minor
+- [x] `store.Store` **228 -> 229**; migration high-water **`0058` ->
+  `0059`**; routes unchanged at **207**
+- [x] Both READMEs restated; every `Reflects:` header, both READMEs' *What
+  works today* range, `docs/README.md`, `NIS2-COMPLIANCE.md`'s evidence row
+  and this banner
+- [x] `CHANGELOG.md` leads with **what an operator can now do** — say who
+  must approve and in what order, name a direct manager, see the chain
+  where approvals happen — and states what has not changed: every target
+  and safe without a chain keeps the N-of-M count it had
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
 
 ## Phase 256 — Level-tiered and direct-manager approval ✅
 
