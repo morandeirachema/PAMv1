@@ -247,6 +247,27 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	if principal.PersonalOverrideUsed(personal) {
 		s.audit(r.Context(), "safe.personal_override_used", "target:"+target.Name)
 	}
+	creds, err := s.store.ListCredentials(r.Context(), target.ID, 0, 0)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	if len(creds) == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "target has no credential")
+		return
+	}
+	cred := creds[0]
+	// The grant must cover THIS credential (Phase 252); the target-level
+	// decision above used the same grants, so this is a re-read of nothing.
+	// Decided BEFORE the two gates below that spend something (the review of
+	// 250–262): a caller who may not use the credential used to lose their
+	// single-use ticket and one-time approval to a session that was never
+	// going to open.
+	if !auth.CanConnectCredentialAt(principal, grants, cred.ID, target.SafeID != nil, personal, s.rt().ungated, time.Now()) {
+		s.audit(r.Context(), proto.name+".denied", "target:"+target.Name+" cred_user:"+cred.Username+" reason:credential-scope")
+		writeError(w, http.StatusForbidden, "not authorized for this credential")
+		return
+	}
 	// Per-session MFA (Phase 244), the decision admit() makes for the three
 	// proxies: on a target that requires it the token here must be a
 	// session-MFA ticket bound to THIS target, spent now. After target
@@ -293,23 +314,6 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 			writeError(w, http.StatusForbidden, "connection requires an approved access request")
 			return
 		}
-	}
-	creds, err := s.store.ListCredentials(r.Context(), target.ID, 0, 0)
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	if len(creds) == 0 {
-		writeError(w, http.StatusUnprocessableEntity, "target has no credential")
-		return
-	}
-	cred := creds[0]
-	// The grant must cover THIS credential (Phase 252); the target-level
-	// decision above used the same grants, so this is a re-read of nothing.
-	if !auth.CanConnectCredentialAt(principal, grants, cred.ID, target.SafeID != nil, personal, s.rt().ungated, time.Now()) {
-		s.audit(r.Context(), proto.name+".denied", "target:"+target.Name+" cred_user:"+cred.Username+" reason:credential-scope")
-		writeError(w, http.StatusForbidden, "not authorized for this credential")
-		return
 	}
 	// Vendor contract gate (Phase 29): a vendor reaches the target only within an
 	// active contract grant authorizing the login account (the credential username).
@@ -449,6 +453,7 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	}
 
 	var touch = func() {}
+	var sid string // the registry id; "" with no registry wired
 	if s.sessions != nil {
 		// The bound comes from the grants THIS request already read and was
 		// admitted under (Phase 248), not from a second read that silently
@@ -460,7 +465,7 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 		if dl, reason, ok := auth.GrantDeadlineFor(principal, grants, &cred.ID, personal, time.Now()); ok {
 			deadline, why = &dl, reason
 		}
-		sid := s.sessions.Register(session.Info{
+		sid = s.sessions.Register(session.Info{
 			Actor: principal.Name, Target: target.Name, Protocol: proto.name, Remote: r.RemoteAddr, Started: time.Now(),
 			Deadline: deadline, DeadlineReason: why,
 		}, func() { cancel(); gconn.Close() })
@@ -507,7 +512,11 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 			return err
 		}
 	}
-	bridgeGuacd(ctx, ws, gconn, clip, touch, record, func(t guacd.ClipTransfer) {
+	var suspended func() bool
+	if sid != "" {
+		suspended = func() bool { return s.shares.Suspended(sid) }
+	}
+	bridgeGuacd(ctx, ws, gconn, clip, touch, record, suspended, func(t guacd.ClipTransfer) {
 		s.audit(auditCtx, proto.name+".clipboard", "target:"+target.Name+" "+t.Detail())
 	})
 }
@@ -544,7 +553,12 @@ func guacamolePrelude(uuid, connID string) [][]byte {
 // record, when non-nil, receives every guacd instruction BEFORE it is
 // forwarded (Phase 258), so nothing reaches the operator unrecorded; an error
 // from it — the size cap, a full disk — ends the session.
-func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, clip *guacd.ClipWatcher, touch func(), record func([]byte) error, onClip func(guacd.ClipTransfer)) {
+//
+// suspended, when non-nil and true, freezes the operator's input (Phase 122,
+// honoured here since the review of 250–262): only the protocol's own
+// keep-alive and flow control reach guacd, so the display keeps updating and
+// nothing the operator does reaches the desktop.
+func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, clip *guacd.ClipWatcher, touch func(), record func([]byte) error, suspended func() bool, onClip func(guacd.ClipTransfer)) {
 	done := make(chan struct{}, 2)
 	note := func(direction string, frame []byte) {
 		if onClip == nil {
@@ -586,6 +600,11 @@ func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, cli
 			_, data, err := ws.Read(ctx)
 			if err != nil {
 				break
+			}
+			if suspended != nil && suspended() {
+				if data = suspendedInput(data); data == nil {
+					continue
+				}
 			}
 			if _, werr := gconn.Write(data); werr != nil {
 				break

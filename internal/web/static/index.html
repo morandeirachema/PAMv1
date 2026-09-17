@@ -2037,7 +2037,7 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         const canKill = can("manage_targets");
         term.innerHTML = `${head("PAMWRKSSN", "Work with Active Sessions")}
 Live proxied sessions (auto-refresh 5s). Type options, press Enter.
-  <span class="cyan">${[canKill ? "4=End session (kill)" : "", "5=Watch (live monitor; RDP/VNC opens the desktop view-only)", "6=Share invites"].filter(Boolean).join("   ")}</span>
+  <span class="cyan">${[canKill ? "4=End session (kill)" : "", "5=Watch (live monitor; RDP/VNC opens the desktop view-only)", "6=Share invites", can("approve") ? "7=Suspend / resume input" : ""].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Actor</th><th>Target</th><th>Proto</th><th>Remote</th><th>Replica</th><th>Started</th></tr>
@@ -2062,6 +2062,14 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
               }
               else if (o === "5") { return VIEWERS[s.protocol] ? watchDesktop(s) : watchSession(s); }
               else if (o === "6") { watchSess = null; return openShareInvites(s.id); }
+              else if (o === "7" && can("approve")) {
+                // The one suspend switch a desktop has (Phase 264): its watch is
+                // a full-screen overlay with no function keys. Read the state,
+                // then flip it — the server is the only place it lives.
+                const st = await api("GET", `/api/sessions/${encodeURIComponent(s.id)}/suspend`);
+                await api("POST", `/api/sessions/${encodeURIComponent(s.id)}/${st && st.suspended ? "resume" : "suspend"}`, {});
+                say(st && st.suspended ? `SESSION ${String(s.id).slice(0, 8)} RESUMED.` : `SESSION ${String(s.id).slice(0, 8)} SUSPENDED — operator input is now frozen.`);
+              }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
             await openSessions();

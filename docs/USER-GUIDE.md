@@ -473,6 +473,7 @@ guard against connections that open and never authenticate, not a fault.
 
 | Date | Change |
 |---|---|
+| 2026-09-17 | Phase 264: if your access to a target is limited to one account, that limit now also applies to SSH certificates you request for it. If a session is refused because of the account, your one-time approval and session code are no longer used up. The in-portal terminal now works on targets that ask for a session code when your account has an IP allowlist. |
 | 2026-09-17 | Phase 260: an RDP or VNC desktop can now be **shared** through a session invite, like an SSH session. If you are given a token for one, redeem it at main menu **33 — Join a shared desktop**. A view-only share shows you the desktop; a view + control share also sends your keyboard and mouse. The clipboard and files are never shared. |
 | 2026-09-17 | Phase 258: an RDP or VNC session you open in the portal is now **recorded by PAMv1 itself**, like an SSH session, and an auditor can replay it or **watch it live** (view-only — they cannot type, click or see your clipboard). |
 | 2026-09-17 | Phase 256: some targets now need approvals **in a set order** — your direct manager first, then a team of approvers, for instance. *Work with Access Requests* shows the chain (✓ done, ◀ waiting), and an approver acting out of turn is told which tier the request is waiting on. If a target needs your manager's approval and no manager is set on your identity, the request is refused when you file it, with that reason — ask an administrator to set one. |

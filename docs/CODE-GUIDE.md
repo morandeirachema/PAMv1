@@ -327,7 +327,7 @@ Sentinel errors `ErrNotFound` / `ErrConflict` map to HTTP/SSH errors upstream.
   `migrations/*.sql` files, each run once inside its own transaction, tracked in a
   `schema_migrations` table, under a session-level `pg_advisory_lock` so concurrent
   replicas booting together don't race. `0001_init.sql` is the idempotent baseline;
-  every later change is a new numbered file (through `0059_approval_tiers.sql` at time of writing).
+  every later change is a new numbered file (through `0060_approved_as.sql` at time of writing).
 
   Two implementation details are load-bearing:
   - **Error mapping is the contract.** A pgx `PgError` SQLSTATE is translated to
@@ -1203,6 +1203,7 @@ phase-by-phase status.
 | Date | Change |
 |---|---|
 | 2026-09-16 | Phase 248 (the review of 240–247): `store.SafePermissionsCover` + `SafePermissionOrder` beside `GrantPermits`, and a single-pass `ParseSafePermissions`; `api.safeManagement` replacing `canManageSafe` where the caller's own permission set matters (`canManageSafe` stays as its boolean wrapper), the `Covers` guard in `api.rotateUserToken`, `api.operatorInput` in the viewer bridge, `api.grantDeadline` deleted (the tunnel uses the grants it was admitted under); `auth.ReasonSessionMFAExtension`; `session.entry.swept`; `pgstore.SweepExpiredGrants` on one transaction; `timeframe.Frame.End` building wall-clock edges. |
+| 2026-09-17 | Phase 264 (review of 250–262): `firstUsableCredential`, `credentialByUsername`, `memberStanding`, `suspendedInput`, `approvedAsByApprover`/`appendApprovedAs`, `tierQualifier(ctx, *AccessRequest)`; `session.ShareRegistry.IssueMemberKey`/`GuestKeyIsMember`, ref-counted `joinedEntry`; `auth.TerminalPassword`/`SplitTerminalPassword`/`Principal.CarryTicket`/`RoleNames`; `maint.IsRecording`; migration `0060`; tests in `internal/api/review264*_test.go`. |
 | 2026-09-17 | Phase 262 (release digests): `internal/releasedocs` (`TestReleaseDigestsAgree` — the digest records in README, CHANGELOG and ROADMAP agree); `release.yml`'s release-notes step; the chart's `image.digest`. |
 | 2026-09-17 | Phase 260 (desktop share): `internal/api/desktop_share.go` (`redeemDesktopInvite`, `shareDesktop`, `shareControlInput`, `isDesktopSession`, `sessionProtocol`), `shareRedeemOut.Protocol`, `viewerJoin.touch`; `session.Registry.Get`; the proxy's `reason:graphical-session`; `web.Share` substitutes the Guacamole client; console `sharejoin`, `joinSharedDesktop`, sessions option 6. |
 | 2026-09-17 | Phase 258 (RDP/VNC watch + replay): `internal/api/graphical_watch.go` (`viewerRecording`, `openViewerRecording`, `viewerJoin`, `watchOutput`, `watchInput`, `sessionViewToken`, `sessionView`), `bridgeGuacd`'s `record` hook, `Server.viewerJoins`, `Options.MaxRecordingBytes`, `recordingAuditActionList`; `guacd.Params.{Join,ReadOnly}`; `auth.SessionScopeWatch`, `Principal.WatchOnly`, `ScopeWatch`; console `viewerOverlay`, `watchDesktop`, `openDesktopReplay`. |

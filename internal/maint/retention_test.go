@@ -33,6 +33,13 @@ func TestPruneRecordings(t *testing.T) {
 	oldCast := write(t, dir, "111_web-01_alice.cast", old)
 	oldWinRM := write(t, dir, "222_win_bob.winrm.log", old)
 	oldSFTP := write(t, dir, "111_web-01_alice_f0.sftp", old) // captured SFTP content (Phase 59)
+	// Every kind the recordings directory holds ages out (Phase 264): the list
+	// here had stopped at the three above, so exec transcripts, forensic
+	// reconstructions and desktop recordings were kept forever.
+	var oldRest []string
+	for _, n := range []string{"444_win-rdp_dave.guac", "555_lin_erin.ssh.log", "666_k8s_fay.k8s.log", "777_web-01_gil.forensics.log"} {
+		oldRest = append(oldRest, write(t, dir, n, old))
+	}
 	newCast := write(t, dir, "333_web-01_carol.cast", recent)
 	newSFTP := write(t, dir, "333_web-01_carol_f0.sftp", recent)
 	chain := write(t, dir, ".chain", old)        // the hash-chain head — a dotfile
@@ -43,10 +50,10 @@ func TestPruneRecordings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if removed != 3 {
-		t.Fatalf("removed %d, want 3 (the three old recordings)", removed)
+	if removed != 7 {
+		t.Fatalf("removed %d, want 7 (every old recording, of every kind)", removed)
 	}
-	for _, p := range []string{oldCast, oldWinRM, oldSFTP} {
+	for _, p := range append([]string{oldCast, oldWinRM, oldSFTP}, oldRest...) {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Fatalf("expected %s to be pruned", filepath.Base(p))
 		}

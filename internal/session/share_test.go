@@ -533,3 +533,36 @@ func TestShareRegistryGuestJoinIDIsNotTheKey(t *testing.T) {
 		t.Fatalf("roster after kick = %+v, want empty", got)
 	}
 }
+
+// TestTrackIsSharedAcrossConnections proves one joinID stands for every
+// connection that presents it (Phase 264): a second Track does not replace
+// the first's kick channel, the roster entry outlives whichever connection
+// leaves first, and a Kick reaches them all.
+func TestTrackIsSharedAcrossConnections(t *testing.T) {
+	r := NewShareRegistry()
+	r.Open("s1")
+	defer r.Close("s1")
+	first := r.Track("s1", "guest-1", "guest:v@example.com", "view_control")
+	second := r.Track("s1", "guest-1", "guest:v@example.com", "view_control")
+	if len(r.Roster("s1")) != 1 {
+		t.Fatalf("roster = %v, want one entry for one joinID", r.Roster("s1"))
+	}
+	r.Untrack("s1", "guest-1") // the second connection leaves
+	if len(r.Roster("s1")) != 1 {
+		t.Fatal("the roster entry left with the first connection to close; one is still attached")
+	}
+	if !r.Kick("s1", "guest-1") {
+		t.Fatal("Kick found no join")
+	}
+	for name, ch := range map[string]<-chan struct{}{"first": first, "second": second} {
+		select {
+		case <-ch:
+		default:
+			t.Errorf("the %s connection was not woken by the kick", name)
+		}
+	}
+	r.Untrack("s1", "guest-1") // a kicked connection's deferred Untrack: a no-op
+	if len(r.Roster("s1")) != 0 {
+		t.Fatalf("roster after kick = %v", r.Roster("s1"))
+	}
+}

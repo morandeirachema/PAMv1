@@ -1906,8 +1906,10 @@ Two things to know:
   in-portal RDP/VNC viewer, the WinRM and kubectl endpoints and the AI-agent
   broker for the credential they pick. A refusal past the target gate is
   audited `reason:credential-scope`. Rotation and reconciliation take the
-  same scope; operator SSH certificates and dependency management stay
-  target-level.
+  same scope, and so — since the review of 250–262 (Phase 264) — do operator
+  SSH certificates (for the credential the requested principal names) and a
+  dependency's management credential. A refusal for the credential is
+  decided before a session-MFA ticket or a one-time approval is spent.
 
 `grant.create` records `cred:<id> cred_user:<name>` on a scoped grant, and
 *What can this subject reach?* lists `credential_ids` when every grant
@@ -4837,6 +4839,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-17 | **Phase 264 (the review of 250–262).** §Credential-level grants: operator certificates and management credentials are now credential-scoped too, and a scope refusal spends nothing. §9.4c: a kick reaches every connection of a share, an internal invitee's desktop key follows the user's standing, and suspend (§9.4d) now freezes a desktop — *Work with Active Sessions* → **7**. Retention prunes every recording kind. |
 | 2026-09-17 | **Phase 262 (image digests).** §3 Helm: pin by `image.digest` and where each release's digest is recorded; the `helm install` example passes `secret.create=true`, which the chart requires. |
 | 2026-09-17 | **Phase 260 (share a live RDP/VNC session).** §9.4c gains the desktop case: where an internal invitee and an external guest redeem, read-only vs keyboard-and-mouse, the clipboard and files never shared, roster and kick. |
 | 2026-09-17 | **Phase 258 (live watching and in-portal replay of RDP/VNC sessions).** New §9.3c: the portal's own `.guac` recording (sealed, hashed, capped, audited), the desktop player, the read-only watch and its token. |

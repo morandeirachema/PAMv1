@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–263 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–264 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,122 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 264 — The review of 250–262, and what it found ✅
+
+The fourth review in the shape of 231, 236, 238 and 248: a security review
+and a code review of `3c91b78..HEAD` — labels and deny rules (250),
+credential-level grants (252), the portal terminal (254), tiered approval
+(256), desktop recording and watching (258), desktop sharing (260) and the
+release plumbing (262) — run as ONE read-only agent at the user's request,
+with every finding reproduced by a real-behaviour test that failed before
+its fix. Eight findings and one gap; nothing critical, one authorization
+bypass. The release plumbing was audited too: every release since 248 has
+both its release commit and its digest commit on `main`.
+
+- [x] **HIGH — the agent broker ignored credential-scoped grants.**
+  `ssh_exec` and `winrm_exec` authorized at target level — which any grant
+  on the target satisfies, including one scoped to another credential — and
+  then logged in as the target's FIRST credential, so an agent granted only
+  `deploy` executed as `svc`/root. `firstUsableCredential` now takes the
+  first credential the agent's grants cover, or refuses.
+  `TestBrokerExecHonoursCredentialScopedGrant`
+- [x] **MEDIUM — operator certificates and dependency management
+  credentials sidestepped the scope.** Phase 252 declared both
+  "target-level"; the review disagreed. A cert's principal IS a credential
+  on the target, and the gate was still handed nil, so a user granted
+  `deploy` got a CA-signed certificate for `root` — the one artifact that
+  works off-proxy and unrecorded. A dependency's management credential is
+  held to "the reveal bar", and reveal is credential-scoped, so the same
+  user could name root's credential and have its password presented to a
+  host they chose. Both gates now ask about THAT credential
+  (`credentialByUsername` → `gateSecretDelivery(&cred.ID)`;
+  `authorizedForCredential(…, ActionRetrieve)`).
+  `TestOperatorCertHonoursCredentialScopedGrant`,
+  `TestManagementCredentialHonoursCredentialScopedGrant`
+- [x] **MEDIUM — a kick did not cut every connection of a desktop share.**
+  The share roster held one entry per join id and a web key is presented per
+  connection, so a second WebSocket REPLACED the first's kick channel: the
+  supervisor saw `{"kicked":true}` and an empty roster while the first
+  socket kept the keyboard of a privileged desktop — and if the second
+  merely closed, the first became invisible and unkickable. Entries are now
+  shared and reference-counted (`joinedEntry.refs`): one roster entry, one
+  kick channel, every connection woken; the entry leaves with the LAST
+  connection. This also repairs the same defect on the text-share SSE path
+  and for several channels of one SSH join.
+  `TestDesktopShareKickCutsEveryConnection`,
+  `TestTrackIsSharedAcrossConnections`
+- [x] **MEDIUM — suspending a desktop reported success and froze nothing**
+  (a Phase 260 regression). Opening the share registry for desktops made
+  `POST /api/sessions/{id}/suspend` answer 200 and audit `session.suspended`
+  for an RDP session whose input never passed through that registry. The
+  bridges now honour it: while suspended, the owner's browser reaches guacd
+  with nothing but `sync`/`nop`/`disconnect`/`ack` (`suspendedInput`) and a
+  `view_control` sharer with keep-alive only; the display keeps flowing.
+  *Work with Active Sessions* gains **7=Suspend / resume input**, since a
+  desktop watch is an overlay with no function keys.
+  `TestDesktopSuspendFreezesInput`
+- [x] **MEDIUM — a tiered chain could not progress past an approver with
+  no local user row** (a directory identity, the bootstrap admin). A role
+  tier re-derived every PAST approver's role from the users table at each
+  decision, so such an approver satisfied a tier in the response to their
+  own approval and then stopped counting: the next tier was refused "waiting
+  on tier 1" forever. It failed closed, but chains were unusable with
+  directory approvers. `access_requests.approved_as` (`0060`) records, beside
+  each approver, the roles they held WHEN they approved
+  (`Principal.RoleNames`, `appendApprovedAs`), and `tierQualifier` reads it
+  for an approver it cannot look up; `SetApprovalState` carries it.
+  Approvals from before the migration keep being read from the users table.
+  `TestTieredApprovalWithARowlessApprover`, plus a round-trip in `storetest`
+- [x] **MEDIUM-LOW — the portal terminal lost the browser's address on an
+  MFA-required target.** With a session-MFA ticket the API sent the ticket
+  ALONE as the SSH password, so the proxy resolved a ticket principal, never
+  knew it was the terminal, recorded `127.0.0.1` — and judged the user's IP
+  allowlist against loopback, refusing an allowlisted user on every such
+  target. The API now presents both (`auth.TerminalPassword`); the proxy
+  reads the pair only over loopback under the terminal's client version,
+  requires both halves to be one identity (`Principal.CarryTicket`), and
+  `NarrowScope` ranks the terminal ahead of the ticket so the pair is still
+  confined to the terminal's door.
+  `TestBrowserTerminalWithSessionMFAKeepsTheBrowserAddress` (end to end,
+  behind a trusted proxy hop), `TestTerminalTokenWithTicket` (off loopback,
+  wrong client, someone else's ticket, two tickets — all refused)
+- [x] **LOW-MEDIUM — an internal invitee's desktop key outlived the user's
+  standing.** The SSH join re-authenticates per connection; the desktop key
+  was checked at redemption and trusted for `PAM_SESSION_SHARE_GUEST_TTL_MIN`.
+  A key issued to a PAMv1 identity is now marked (`IssueMemberKey`), and
+  every `GET /api/share/desktop` re-reads that user: active, unlocked, still
+  holding `connect` for a control share, inside the source gates from THIS
+  address (`memberStanding`; `session.share_join_denied` reasons
+  `identity-inactive-or-locked`, `no-connect-capability`, or the gate's
+  own). A directory identity has no row and stays bounded by TTL, kick and
+  session end. `TestDesktopShareKeyFollowsTheUsersStanding`
+- [x] **LOW — a credential-scope refusal came after the ticket and the
+  one-time approval were spent.** The viewer tunnel, `POST …/winrm` and
+  `POST …/kubectl` chose the credential after both gates; they now resolve
+  it and decide the scope first, as `gateSecretDelivery` always promised.
+  `TestCredentialScopeRefusalSpendsNothing`
+- [x] **Gap — retention never pruned four recording kinds.** `maint`'s
+  extension list had stopped at `.cast`/`.winrm.log`/`.sftp`, so `.ssh.log`,
+  `.k8s.log`, `.forensics.log` and Phase 258's `.guac` were kept forever
+  under `PAM_RECORDING_RETENTION_DAYS` (the WORM archiver, which uses the
+  playback allowlist, did move them). The list is complete, and
+  `TestRetentionCoversEveryRecordingKind` holds it to `recordingNameRe`
+- [x] **Checked and found sound**: the Guacamole input filters (only parsed,
+  allow-listed instructions are re-encoded — raw bytes never pass, so neither
+  the 256-instruction cap nor a malformed tail smuggles anything); the
+  WebSocket bridges' teardown; `.guac` hashing over sealed bytes, `O_EXCL`
+  names and cap accounting; the terminal, watch and tunnel scopes at every
+  door; label deny rules at every decision site, ahead of the admin bypass;
+  tier crediting, four-eyes against `user=<self>` and manager cycles, the
+  Slack path; invite redemption order; the console's escaping; `release.yml`'s
+  notes step and the chart's digest guard
+- [x] **One flake, counted.** The local race suite failed once in §3d's
+  `TestDBProxyZSPProvisionsAndTearsDownRole` — code this phase does not
+  touch — and passed 15 of 15 reruns. Still open, still named
+- [x] Schema (`0060`); `SetApprovalState` gains a parameter, surface
+  unchanged at **229**; routes unchanged at **211**; no env var.
+  **Released by Phase 265** — a minor, since the schema moved
 
 ## Phase 263 — v0.75.1 ✅
 

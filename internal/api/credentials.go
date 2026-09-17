@@ -301,19 +301,6 @@ func (s *Server) runWinRM(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "not authorized for this target")
 		return
 	}
-	// A WinRM run is a brokered session (Phase 40), so it takes the per-session
-	// second factor too (Phase 244) — before the approval gate, as admit() does.
-	if !s.sessionMFAGate(w, r, target, "winrm.denied", "winrm") {
-		return
-	}
-	if ok, err := s.enforceApproval(r.Context(), target); err != nil {
-		storeError(w, err)
-		return
-	} else if !ok {
-		s.audit(r.Context(), "access.denied", "target:"+target.Name+" reason:approval-required")
-		writeError(w, http.StatusForbidden, "connection requires an approved access request")
-		return
-	}
 	creds, err := s.store.ListCredentials(r.Context(), target.ID, 0, 0)
 	if err != nil {
 		storeError(w, err)
@@ -327,7 +314,22 @@ func (s *Server) runWinRM(w http.ResponseWriter, r *http.Request) {
 	// Now that the credential is known, the grant must cover IT (Phase 252):
 	// the target-level check above admitted the caller to the target, a
 	// grant scoped to another of its credentials must not admit this one.
+	// Decided BEFORE the ticket and approval gates below (the review of
+	// 250–262), so a refusal here spends neither.
 	if !s.credentialScopeGate(w, r, target, &cred, "winrm.denied") {
+		return
+	}
+	// A WinRM run is a brokered session (Phase 40), so it takes the per-session
+	// second factor too (Phase 244) — before the approval gate, as admit() does.
+	if !s.sessionMFAGate(w, r, target, "winrm.denied", "winrm") {
+		return
+	}
+	if ok, err := s.enforceApproval(r.Context(), target); err != nil {
+		storeError(w, err)
+		return
+	} else if !ok {
+		s.audit(r.Context(), "access.denied", "target:"+target.Name+" reason:approval-required")
+		writeError(w, http.StatusForbidden, "connection requires an approved access request")
 		return
 	}
 	// The vendor gate needs the login account (the credential username) to enforce

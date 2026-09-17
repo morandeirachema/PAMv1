@@ -217,10 +217,7 @@ func (s *Server) sshTerminal(w http.ResponseWriter, r *http.Request) {
 	// The SSH password: a session-MFA ticket when the target demands a fresh
 	// factor (the proxy spends it at its gate 12, as it would from ssh), else
 	// the terminal token itself, which the proxy accepts only over loopback.
-	password := token
-	if ticket := r.URL.Query().Get("ticket"); ticket != "" {
-		password = ticket
-	}
+	password := auth.TerminalPassword(token, r.URL.Query().Get("ticket"))
 	clientIP := s.clientIP(r)
 
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"pamv1-terminal"}})

@@ -154,6 +154,23 @@ func (r *viewerRecording) finish() (string, string, int64) {
 // dropped here, whatever guacd would have done with it.
 var watchForwardable = map[string]bool{"sync": true, "nop": true, "disconnect": true}
 
+// suspendedForwardable is what a SUSPENDED desktop's operator may still send:
+// keep-alive, and the acknowledgements that keep guacd's own streams (the
+// display) flowing. No key, mouse, touch, clipboard, size or stream opens.
+var suspendedForwardable = map[string]bool{"sync": true, "nop": true, "disconnect": true, "ack": true}
+
+// suspendedInput filters one message from a suspended operator; nil when
+// nothing survives.
+func suspendedInput(data []byte) []byte {
+	var out []byte
+	for _, inst := range guacd.DecodeAll(data) {
+		if suspendedForwardable[inst.Opcode] {
+			out = append(out, inst.Encode()...)
+		}
+	}
+	return out
+}
+
 // watchInput filters one browser message down to the instructions a watcher
 // may send, re-encoded; nil when nothing survives.
 func watchInput(data []byte) []byte {
