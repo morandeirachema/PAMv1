@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–258 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–259 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2422,6 +2422,32 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 259 — v0.74.0 ✅
+
+Releases **258** — live watching and in-portal replay of RDP/VNC sessions. A
+**minor**: two routes are new; no schema, store method or env var moved.
+
+- [x] **v0.74.0** through the test-gated pipeline. `.github/` untouched
+  since v0.58.1 and nothing the workflow *reads* has changed either, so no
+  rehearsal. Published 2026-09-17 as `ghcr.io/morandeirachema/pamv1:0.74.0`
+  (also `latest`), digest `TBD`, **public** (anonymous pull 200 on both tags,
+  both resolving to the same digest), signed and attested — every publishing
+  step's own conclusion `success`, and the README's `cosign verify` run
+  against it — with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS`
+  attached
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm
+  chart `version` 0.64.0 -> **0.65.0**, a minor alongside an app minor
+- [x] Routes **207 -> 209**; `store.Store` unchanged at **229**; migration
+  high-water unchanged at **`0059`**
+- [x] Both READMEs restated; every `Reflects:` header, both READMEs' *What
+  works today* range, `docs/README.md`, `NIS2-COMPLIANCE.md`'s evidence row
+  and this banner
+- [x] `CHANGELOG.md` leads with **what an operator can now do** — replay a
+  desktop, watch one live and view-only — and states what has not changed:
+  guacd's own recording, the text watch, content search
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
+
 ## Phase 258 — Live watching and in-portal replay of RDP/VNC sessions ✅
 
 The first row of the Tier 9 pass (WALLIX Bastion's sessions audit guide
@@ -2507,7 +2533,8 @@ asciicast only.
 - [x] Routes **207 → 209**; no schema, no store method (surface stays
   **229**), no env var. Audit vocabulary: `rdp.record`, `vnc.record`,
   `session.view_token`; `session.record_limit` and `session.monitor` gain
-  the graphical case
+  the graphical case. **Released by Phase 259 as v0.74.0** — a minor, since
+  routes moved
 
 ## Phase 257 — v0.73.0 ✅
 

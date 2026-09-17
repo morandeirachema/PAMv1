@@ -9,6 +9,38 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.74.0] — 2026-09-17
+
+A minor that ships **Phase 258** — live watching and in-portal replay of
+RDP/VNC sessions, the first row of the WALLIX research pass. **Two routes
+are new**; no schema, store method or environment variable moved.
+
+**What an operator can now do.**
+
+- **Replay a desktop** — every RDP or VNC session opened in the portal is
+  now recorded by PAMv1 itself, next to the SSH recordings in
+  `PAM_RECORDING_DIR`: the Guacamole stream the operator saw, sealed when
+  `PAM_RECORDING_ENCRYPT` is on, hashed and audited (`rdp.record` /
+  `vnc.record`). *Session Recordings* lists it as `guacamole` and option 5
+  plays it back in the portal, showing whether its hash is in the audit
+  trail. `PAM_MAX_RECORDING_MB` now caps a desktop too: at the cap the
+  session is disconnected rather than left running unrecorded.
+- **Watch a desktop live** — *Work with Active Sessions* option 5 on an RDP
+  or VNC session opens it **view-only**. The screen as it is right now
+  appears at once. The watcher cannot type, click or paste into it, and does
+  not receive the operator's clipboard. The watch is audited
+  (`session.monitor … mode:read-only`) and ends with the session. From the
+  API: `POST /api/sessions/{id}/view-token` (`read_audit`) returns a
+  60-second, single-use token for the `GET /api/sessions/{id}/view`
+  WebSocket.
+
+**What has not changed.** guacd's own recording (`PAM_GUACD_RECORDING_PATH`)
+is untouched, and either recorder satisfies `PAM_REQUIRE_RECORDING`. The
+text watch of SSH and database sessions, content search (SSH only) and
+every existing recording replay as before. Watching a desktop is
+replica-local: the request must reach the replica hosting the session.
+The image is `ghcr.io/morandeirachema/pamv1:0.74.0`.
+
 ## [0.73.0] — 2026-09-17
 
 A minor that ships **Phase 256** — level-tiered and direct-manager
@@ -3342,6 +3374,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.74.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.74.0
 [0.73.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.73.0
 [0.72.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.72.0
 [0.71.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.71.0
