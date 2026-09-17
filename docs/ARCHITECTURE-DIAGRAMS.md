@@ -82,6 +82,7 @@ flowchart LR
     n_posture[posture]
     n_ratelimit[ratelimit]
     n_recording[recording]
+    n_releasedocs[releasedocs]
     n_saml[saml]
     n_samltest[samltest]
     n_sessionforensics[sessionforensics]

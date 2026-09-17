@@ -243,6 +243,17 @@ jobs:
             --set ingress.enabled=true --set guacd.enabled=true \
             --set networkPolicy.enabled=true --set persistence.enabled=true \
             --set metrics.serviceMonitor.enabled=true > /tmp/rendered-all.yaml
+          # Pinned by digest (Phase 262): the image reference must be
+          # repository@digest, and anything but a bare sha256: digest is refused.
+          d=sha256:0000000000000000000000000000000000000000000000000000000000000000
+          helm template pamv1 deploy/helm/pamv1 --set secret.existingSecret=pam-secrets \
+            --set image.digest=$d > /tmp/rendered-digest.yaml
+          grep -q "image: \"ghcr.io/morandeirachema/pamv1@$d\"" /tmp/rendered-digest.yaml || {
+            echo "FAIL: image.digest did not render repository@digest"; exit 1; }
+          if helm template pamv1 deploy/helm/pamv1 --set secret.existingSecret=pam-secrets \
+               --set image.digest=@$d >/dev/null 2>&1; then
+            echo "FAIL: a malformed image.digest rendered"; exit 1
+          fi
       - name: kubeconform
         # conjur/policy.yaml is a Conjur policy document, not a K8s manifest,
         # and sops/ holds encrypted material — both stay out of scope. eso/ holds
@@ -254,7 +265,7 @@ jobs:
           "$(go env GOPATH)/bin/kubeconform" -summary -ignore-missing-schemas \
             deploy/k8s/*.yaml deploy/k8s/conjur/deployment.yaml deploy/k8s/flux/*.yaml \
             deploy/k8s/eso/*.yaml \
-            /tmp/rendered-default.yaml /tmp/rendered-all.yaml
+            /tmp/rendered-default.yaml /tmp/rendered-all.yaml /tmp/rendered-digest.yaml
       - name: kustomize bases build
         # The two bases are what `kubectl apply -k` and the Flux example both
         # resolve, so a broken resource list should fail here rather than at

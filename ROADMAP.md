@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–261 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–262 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2422,6 +2422,46 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 262 — Image digests recorded where the docs point ✅
+
+A `/code-review` of v0.75.0's digest PR found the digest itself right and
+every pointer to it wrong. The changelog said *"the full value is in the
+README and on the release page"*: the README keeps only the newest digest, so
+each digest PR orphaned the previous entry's pointer (22 of 23 led nowhere),
+and no release page had ever carried a digest — the workflow published
+auto-generated notes only. The README said every manifest *pins* the digest;
+they pin a tag, which can be pushed again, and the Helm chart could not take a
+digest at all (following its own "pin to a digest" advice rendered
+`pamv1:@sha256:…`).
+
+- [x] **The release page carries the digest.** `release.yml` writes
+  `release-notes.md` from `steps.build.outputs.digest` — the image, the digest,
+  a `docker pull` and a `cosign verify` for that exact image (the certificate
+  identity pinned to the tag, verified by hand against v0.75.0), and the Helm
+  flag — and passes it as `body_path`; GitHub prepends it to the generated
+  notes. A build with no digest fails the step. It applies from the next tag;
+  the existing release pages are left as published
+- [x] **Every changelog digest is whole.** All 23 pointers, and the three
+  truncated digests in 0.57.1/0.58.1's prose, now carry the full value with a
+  link to the release page, each checked against GHCR before it was written
+  (27 tags, all matching ROADMAP's records). `[0.10.0]` gains its digest; the
+  `[Unreleased]` comparison, stuck at `v0.58.2` for seventeen releases, starts
+  at `v0.75.0`
+- [x] **The README says what is true.** Manifests pin the tag; production
+  should pin the digest, and where to find it. The chart gains `image.digest`
+  (`repository@digest`, refused unless `sha256:`), and CI renders it and the
+  refusal. The documented `helm install` commands, which the chart has refused
+  since secret creation became opt-in (62fcb75), now pass `secret.create=true`
+- [x] **The copies are checked.** `internal/releasedocs`'s
+  `TestReleaseDigestsAgree`: every changelog digest linked to a release page
+  is the one ROADMAP records for that release; the README's current release
+  and digest match both; no "full value is in the README" pointer survives;
+  `TBD` is allowed only in the newest release entry; `[Unreleased]` compares
+  from the newest version. Each rule was proven by breaking the documents and
+  watching it fail
+- [x] ROADMAP's three unwrapped digest lines rewrapped. No route, schema,
+  store method or env var; the chart gains one value. **Released by Phase 263**
+
 ## Phase 261 — v0.75.0 ✅
 
 Releases **260** — sharing a live RDP/VNC session. A **minor**: two routes
@@ -2430,7 +2470,9 @@ are new; no schema, store method or env var moved.
 - [x] **v0.75.0** through the test-gated pipeline. `.github/` untouched
   since v0.58.1 and nothing the workflow *reads* has changed either, so no
   rehearsal. Published 2026-09-17 as `ghcr.io/morandeirachema/pamv1:0.75.0`
-  (also `latest`), digest `sha256:4b76d86fda9094f6e876f39834515a4ece120edffe26676872c51cf2810d5981`, **public** (anonymous pull 200 on both tags,
+  (also `latest`), digest
+  `sha256:4b76d86fda9094f6e876f39834515a4ece120edffe26676872c51cf2810d5981`,
+  **public** (anonymous pull 200 on both tags,
   both resolving to the same digest), signed and attested — every publishing
   step's own conclusion `success`, and the README's `cosign verify` run
   against it — with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS`
@@ -2525,7 +2567,9 @@ Releases **258** — live watching and in-portal replay of RDP/VNC sessions. A
 - [x] **v0.74.0** through the test-gated pipeline. `.github/` untouched
   since v0.58.1 and nothing the workflow *reads* has changed either, so no
   rehearsal. Published 2026-09-17 as `ghcr.io/morandeirachema/pamv1:0.74.0`
-  (also `latest`), digest `sha256:afef404f87155e2aa3eaa35bc98526d160cebb4fbe89738a4fa91ec5120e102b`, **public** (anonymous pull 200 on both tags,
+  (also `latest`), digest
+  `sha256:afef404f87155e2aa3eaa35bc98526d160cebb4fbe89738a4fa91ec5120e102b`,
+  **public** (anonymous pull 200 on both tags,
   both resolving to the same digest), signed and attested — every publishing
   step's own conclusion `success`, and the README's `cosign verify` run
   against it — with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS`
@@ -2640,7 +2684,9 @@ added.
 - [x] **v0.73.0** through the test-gated pipeline. `.github/` untouched
   since v0.58.1 and nothing the workflow *reads* has changed either, so no
   rehearsal. Published 2026-09-17 as `ghcr.io/morandeirachema/pamv1:0.73.0`
-  (also `latest`), digest `sha256:fe68d96632dbbd7b9f2192d2294fec776aa7fc0e50689e0f321c5cacc9d7ac56`, **public** (anonymous pull 200 on both tags,
+  (also `latest`), digest
+  `sha256:fe68d96632dbbd7b9f2192d2294fec776aa7fc0e50689e0f321c5cacc9d7ac56`,
+  **public** (anonymous pull 200 on both tags,
   both resolving to the same digest), signed and attested — every publishing
   step's own conclusion `success`, and the README's `cosign verify` run
   against it — with the `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS`

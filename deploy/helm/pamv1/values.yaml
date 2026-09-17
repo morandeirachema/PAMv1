@@ -4,8 +4,11 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/morandeirachema/pamv1
-  # Pin to a digest in production (e.g. @sha256:...); "latest" is for demos.
   tag: ""            # defaults to .Chart.AppVersion
+  # Pin to a digest in production: a tag can be pushed again, a digest cannot.
+  # Set the bare digest, e.g. digest: sha256:4b76d86f… — each release's is in
+  # its release notes and CHANGELOG.md. When set it replaces the tag.
+  digest: ""
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []

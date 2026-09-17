@@ -32,7 +32,14 @@ spec:
           type: RuntimeDefault
       containers:
         - name: pam-server
+          {{- if .Values.image.digest }}
+          {{- if not (hasPrefix "sha256:" .Values.image.digest) }}
+          {{- fail "image.digest must be a bare digest, e.g. sha256:4b76d86f..." }}
+          {{- end }}
+          image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"
+          {{- else }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          {{- end }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http

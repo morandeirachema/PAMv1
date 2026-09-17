@@ -174,10 +174,50 @@ jobs:
           (cd dist && sha256sum pam-agent_linux_* > SHA256SUMS)
           ls -l dist
 
+      # The release page is where a digest is looked up, so it is written there
+      # by the job that knows it (Phase 262). Until then the digest reached the
+      # docs only through a hand-copied follow-up PR, and every "the full value
+      # is on the release page" pointer led to auto-generated notes with no
+      # digest in them. GitHub prepends this body to the generated notes.
+      - name: Release notes (image digest and how to verify it)
+        if: env.REAL
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          case "$DIGEST" in
+            sha256:*) ;;
+            *) echo "::error::build produced no digest: '$DIGEST'"; exit 1 ;;
+          esac
+          version="${GITHUB_REF_NAME#v}"
+          {
+            echo "## Image"
+            echo
+            echo "\`$IMAGE:$version\` (also \`latest\`), digest"
+            echo
+            echo "\`\`\`"
+            echo "$DIGEST"
+            echo "\`\`\`"
+            echo
+            echo "Pull or deploy by digest, which no later push can move:"
+            echo
+            echo "\`\`\`bash"
+            echo "docker pull $IMAGE@$DIGEST"
+            echo "cosign verify \\"
+            echo "  --certificate-identity https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/tags/$GITHUB_REF_NAME \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
+            echo "  $IMAGE@$DIGEST"
+            echo "\`\`\`"
+            echo
+            echo "Helm: \`--set image.digest=$DIGEST\`."
+          } > release-notes.md
+          cat release-notes.md
+
       - name: Create GitHub Release
         if: env.REAL
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
+          body_path: release-notes.md
           generate_release_notes: true
           files: |
             sbom.spdx.json
