@@ -665,9 +665,11 @@ Or with Helm (readiness/metrics wired, configurable replicas, optional ServiceMo
 
 ```bash
 helm install pamv1 deploy/helm/pamv1 \
+  --set secret.create=true \
   --set secret.data.PAM_MASTER_KEY=... \
   --set secret.data.PAM_API_KEY=... \
-  --set secret.data.PAM_DATABASE_URL=postgres://...
+  --set secret.data.PAM_DATABASE_URL=postgres://... \
+  --set image.digest=sha256:...   # pin the image: this release's digest, from CHANGELOG.md or its release notes
 ```
 
 ### Terraform (IaC)
@@ -753,9 +755,14 @@ curl -s http://pamv1:8080/metrics | grep pam_build_info      # same, for monitor
 ```
 
 **Status:** **[v0.75.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.75.0)
-was released on 2026-09-17** and is what every manifest here pins — image digest
+was released on 2026-09-17**, and every manifest here pins its tag, `0.75.0` — image
+digest
 `sha256:4b76d86fda9094f6e876f39834515a4ece120edffe26676872c51cf2810d5981`, public
-(anonymous pull verified). Each tag's own digest is on its release page. (`v0.11.1` is a source tag only: its pipeline failed
+(anonymous pull verified). A tag can be pushed again; a digest cannot, so for
+production pin the digest instead: `image.digest` in the Helm chart, or
+`ghcr.io/morandeirachema/pamv1@sha256:…` in a manifest. Every release's digest is
+in [CHANGELOG.md](CHANGELOG.md), and from the release after v0.75.0 its release notes carry it
+too, with the `cosign verify` line for that exact image. (`v0.11.1` is a source tag only: its pipeline failed
 before the push, and it stays where it is because the Go module proxy had already
 cached it.) The first release was
 **[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** on
