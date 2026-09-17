@@ -1410,6 +1410,102 @@
     client.connect("token=" + encodeURIComponent(tok) + "&width=" + w + "&height=" + h);
   }
 
+  // ---- Graphical watch and replay (Phase 258) ---------------------------
+  // viewerOverlay builds the fullscreen overlay both screens below share: a
+  // bar, a display pane, and one teardown. Keyboard handling is bound to the
+  // overlay, so removing it drops every listener.
+  function viewerOverlay(barHTML, onClose) {
+    const wrap = document.createElement("div"); wrap.className = "rdpwrap"; wrap.tabIndex = -1;
+    const bar = document.createElement("div"); bar.className = "rdpbar"; bar.innerHTML = barHTML;
+    const view = document.createElement("div"); view.className = "rdpview";
+    wrap.appendChild(bar); wrap.appendChild(view); document.body.appendChild(wrap);
+    wrap.focus();
+    rdpActive = true;
+    let closed = false;
+    const close = (msg, isErr) => {
+      if (closed) return; closed = true; rdpActive = false;
+      try { onClose(); } catch (e) {}
+      wrap.remove();
+      if (msg) say(msg, !!isErr);
+      render(); focusPrimary();
+    };
+    return { wrap, bar, view, close };
+  }
+
+  // watchDesktop joins a live RDP/VNC session read-only. The server joins the
+  // operator's guacd connection as a read-only user and forwards nothing from
+  // this browser but keep-alive; no Mouse or Keyboard is wired to the client
+  // here either, so there is nothing to forward. Esc or Ctrl+Alt+Q closes.
+  async function watchDesktop(s) {
+    let Guac, tok;
+    try {
+      Guac = await loadGuac();
+      tok = (await api("POST", `/api/sessions/${encodeURIComponent(s.id)}/view-token`, {})).token;
+    } catch (e) { say("CPF9999: " + String(e.message || "WATCH UNAVAILABLE").toUpperCase(), true); render(); return; }
+    let client = null;
+    const ov = viewerOverlay(
+      `<span><span class="white">WATCH ${esc(String(s.protocol).toUpperCase())}</span> ${esc(s.actor)} @ ${esc(s.target)} <span class="cyan">view-only · audited (session.monitor)</span></span>` +
+      `<span class="amber">Esc = close</span>`,
+      () => { if (client) client.disconnect(); });
+    const tunnel = new Guac.WebSocketTunnel(`/api/sessions/${encodeURIComponent(s.id)}/view`);
+    client = new Guac.Client(tunnel);
+    ov.view.appendChild(client.getDisplay().getElement());
+    ov.view.appendChild(buildWatermark(s.target));
+    ov.wrap.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" || (ev.ctrlKey && ev.altKey && (ev.key === "q" || ev.key === "Q"))) { ev.preventDefault(); ov.close("WATCH OF SESSION " + String(s.id).slice(0, 8) + " CLOSED."); }
+    });
+    const errMsg = (st) => "CPF9999: WATCH — " + String((st && st.message) || "error").toUpperCase();
+    client.onerror = (st) => ov.close(errMsg(st), true);
+    tunnel.onerror = (st) => ov.close(errMsg(st), true);
+    client.onstatechange = (state) => { if (state === 5) ov.close("SESSION " + String(s.id).slice(0, 8) + " ENDED — WATCH CLOSED."); };
+    tunnel.onstatechange = (state) => { if (state === 2) ov.close("SESSION " + String(s.id).slice(0, 8) + " ENDED — WATCH CLOSED."); };
+    const w = Math.max(640, Math.min(ov.view.clientWidth || 1024, 4096));
+    const h = Math.max(480, Math.min((window.innerHeight - 30) || 768, 4096));
+    client.connect("token=" + encodeURIComponent(tok) + "&width=" + w + "&height=" + h);
+  }
+
+  // openDesktopReplay plays a portal recording of an RDP/VNC session — the
+  // Guacamole instruction stream, which Guacamole.SessionRecording renders
+  // with its own timing. The fetch is the same audited, hash-checked playback
+  // every recording takes; the verdict is shown in the bar.
+  async function openDesktopReplay(rec) {
+    let Guac, res, blob;
+    try {
+      Guac = await loadGuac();
+      res = await fetch(`/api/recordings/${encodeURIComponent(rec.name)}`, { headers: { "X-API-Key": apiKey } });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || res.statusText); }
+      blob = await res.blob();
+    } catch (e) { say("CPF9999: " + String(e.message || "REPLAY UNAVAILABLE").toUpperCase(), true); render(); return; }
+    const audited = res.headers.get("X-PAM-Recording-Audited") === "true";
+    const sha = res.headers.get("X-PAM-Recording-SHA256") || "";
+    const recording = new Guac.SessionRecording(blob);
+    const verdict = audited ? `<span class="green">HASH IN AUDIT TRAIL</span>` : `<span class="red">HASH NOT IN AUDIT TRAIL</span>`;
+    const ov = viewerOverlay(
+      `<span><span class="white">REPLAY</span> ${esc(rec.name)} ${verdict} <span class="cyan" id="guac-pos">loading…</span></span>` +
+      `<span class="amber">Space = play/pause · ←/→ = 10s · Esc = close</span>`,
+      () => { try { recording.pause(); } catch (e) {} try { recording.disconnect(); } catch (e) {} });
+    ov.bar.title = "sha256:" + sha;
+    ov.view.appendChild(recording.getDisplay().getElement());
+    const fmt = (ms) => { const t = Math.floor(ms / 1000); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; };
+    const pos = () => { const el = document.getElementById("guac-pos"); if (el) el.textContent = `${fmt(recording.getPosition())} / ${fmt(recording.getDuration())}${recording.isPlaying() ? "" : " (paused)"}`; };
+    const ticker = setInterval(pos, 500);
+    const close = ov.close;
+    ov.close = (m, e) => { clearInterval(ticker); close(m, e); };
+    recording.onload = () => { pos(); recording.play(); };
+    recording.onerror = (msg) => ov.close("CPF9999: REPLAY — " + String(msg || "unreadable recording").toUpperCase(), true);
+    recording.onplay = recording.onpause = recording.onseek = pos;
+    ov.wrap.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") { ev.preventDefault(); ov.close("REPLAY OF " + rec.name + " CLOSED."); }
+      else if (ev.key === " ") { ev.preventDefault(); if (recording.isPlaying()) recording.pause(); else recording.play(); }
+      else if (ev.key === "ArrowRight" || ev.key === "ArrowLeft") {
+        ev.preventDefault();
+        const to = Math.max(0, Math.min(recording.getDuration(), recording.getPosition() + (ev.key === "ArrowRight" ? 10000 : -10000)));
+        recording.seek(to, pos);
+      }
+    });
+    if (typeof recording.connect === "function") recording.connect();
+  }
+
   function render() {
     ({
       signon() {
@@ -1897,7 +1993,7 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         const canKill = can("manage_targets");
         term.innerHTML = `${head("PAMWRKSSN", "Work with Active Sessions")}
 Live proxied sessions (auto-refresh 5s). Type options, press Enter.
-  <span class="cyan">${[canKill ? "4=End session (kill)" : "", "5=Watch (live monitor)"].filter(Boolean).join("   ")}</span>
+  <span class="cyan">${[canKill ? "4=End session (kill)" : "", "5=Watch (live monitor; RDP/VNC opens the desktop view-only)"].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Actor</th><th>Target</th><th>Proto</th><th>Remote</th><th>Replica</th><th>Started</th></tr>
@@ -1920,7 +2016,7 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
                 if (res && res.__accepted) say(`KILL DISPATCHED FOR ${String(s.id).slice(0, 8)} (HOSTED ON ${(s.replica || "ANOTHER REPLICA").toUpperCase()}); VERIFY WITH F5.`);
                 else say(`SESSION ${String(s.id).slice(0, 8)} ENDED.`);
               }
-              else if (o === "5") { return watchSession(s); }
+              else if (o === "5") { return VIEWERS[s.protocol] ? watchDesktop(s) : watchSession(s); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
             await openSessions();
@@ -4319,7 +4415,8 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         const kb = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + "M" : n >= 1024 ? Math.round(n / 1024) + "K" : n + "B";
         term.innerHTML = `${head("PAMWRKREC", "Session Recordings (replay)")}
 Stored recordings, newest first. Type options, press Enter.
-  <span class="cyan">5=Replay (a "file" entry is captured SFTP content: 5 downloads the transferred bytes)</span>
+  <span class="cyan">5=Replay (a "file" entry is captured SFTP content: 5 downloads the transferred bytes;</span>
+  <span class="cyan">          a "guacamole" entry is an RDP/VNC desktop: 5 opens the desktop player)</span>
   <span class="cyan">Every replay is audited (session.playback) and hash-checked against the audit trail.</span>
   <span class="cyan">Target and actor come from the audit trail, so they show even when file names are opaque.</span>
   <span class="cyan">F4=Search recording content (SSH only — finds a match even split across several writes)</span>
@@ -4335,7 +4432,7 @@ ${fkeys("F3=Exit   F4=Search   F5=Refresh   F12=Cancel")}`;
           try {
             for (const c of recordings) {
               const o = optVal(ev.target, c.name);
-              if (o === "5") { return openReplay(c); }
+              if (o === "5") { return c.kind === "guacamole" ? openDesktopReplay(c) : openReplay(c); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
             render();

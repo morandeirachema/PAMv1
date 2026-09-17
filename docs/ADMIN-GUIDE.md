@@ -3645,6 +3645,46 @@ Audit: `session.forensics` (events, window, artifact + hash),
 (PAMv1 could not ask: dial/exec/decrypt failure, or a deny pattern that matched
 its own literal — also audited as `command.blocked … path:forensics`).
 
+### 9.3c Recording and watching RDP/VNC desktops (Phase 258)
+
+A desktop opened in the portal (*Work with Targets* → RDP or VNC) is recorded
+**by PAMv1 itself** whenever `PAM_RECORDING_DIR` is set — the same directory,
+the same encryption (`PAM_RECORDING_ENCRYPT`), the same opaque names and the
+same tamper evidence as an SSH recording. The file is the
+[Guacamole protocol](https://guacamole.apache.org/doc/gug/guacamole-protocol.html)
+stream guacd drew on the operator's screen, saved as `<name>.guac`, and its
+SHA-256 is audited as `rdp.record` / `vnc.record`. `PAM_MAX_RECORDING_MB`
+applies: a desktop that reaches the cap is disconnected
+(`session.record_limit … protocol:rdp`) rather than continuing unrecorded.
+guacd's own recording (`PAM_GUACD_RECORDING_PATH`) is unaffected and either one
+satisfies `PAM_REQUIRE_RECORDING`.
+
+**Replay.** *Session Recordings* (menu 19) lists `.guac` files as kind
+`guacamole`; option **5** opens a full-screen desktop player (Space
+play/pause, ←/→ 10 s, Esc closes) that shows whether the file's hash is in
+the audit trail. The download is the same audited `GET /api/recordings/{name}`
+as any recording.
+
+**Watching live.** *Work with Active Sessions* → **5** on an RDP/VNC session
+opens the desktop **view-only**. PAMv1 joins the operator's guacd connection
+as a second, read-only user, so you see the current screen at once. You
+cannot type, click or paste into it — guacd is told the user is read-only
+(PAMv1 refuses to join through a guacd that cannot do that), and PAMv1 itself
+forwards nothing from your browser but keep-alive. The operator's clipboard
+is not sent to you. The watch ends when the session does, and it is audited
+`session.monitor … mode:read-only`. From the API:
+
+```bash
+tok=$(curl -s -X POST https://pam.example/api/sessions/<id>/view-token \
+  -H "X-API-Key: $PAM_API_KEY" | jq -r .token)
+# then open a WebSocket (subprotocol "guacamole") to
+#   wss://pam.example/api/sessions/<id>/view?token=$tok
+```
+
+The token needs `read_audit`, lives 60 seconds, opens one watch and nothing
+else — every other endpoint refuses it. Watching is **replica-local**: the
+request must reach the replica hosting the session (a 404 says so).
+
 ### 9.4 Supervising live sessions & command control (Phase 16)
 
 Beyond after-the-fact recordings, a supervisor can **watch a session as it
@@ -4760,6 +4800,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-17 | **Phase 258 (live watching and in-portal replay of RDP/VNC sessions).** New §9.3c: the portal's own `.guac` recording (sealed, hashed, capped, audited), the desktop player, the read-only watch and its token. |
 | 2026-09-17 | **Phase 256 (level-tiered and direct-manager approval).** New §9 subsection: ordered approval chains on a target or safe, the tier grammar, the direct manager on a user (API and SCIM), how a decision walks the chain, the manager-tier refusal at creation, and what the console shows. |
 | 2026-09-16 | **Phase 254 (in-portal SSH terminal).** New §9 subsection *In-portal SSH terminal*: what it is (a proxy session, opened by the API server as an SSH client on the operator's behalf), the terminal token's three rules (one target and one use; loopback only; recorded under the operator's address), MFA, audit, the loopback requirement on `PAM_SSH_ADDR`. |
 | 2026-09-16 | **Phase 252 (credential-level grants).** New §7 subsection *Credential-level grants*: scoping a grant to one credential, the 422/409 rules, that a scoped grant still gates the target, and which doors read it. |

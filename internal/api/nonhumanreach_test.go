@@ -65,6 +65,7 @@ var nonHumanReach = map[string]map[string]string{
 		"GET /api/targets/{id}/rdp":          "the in-portal RDP viewer's tunnel",
 		"GET /api/targets/{id}/ssh/terminal": "the in-portal SSH terminal's WebSocket (Phase 254): a terminal-scoped token, minted by POST /api/ssh-token for ONE target and spent by its first session, opens a session THROUGH the SSH proxy, which runs every gate; the API middleware refuses the token everywhere else",
 		"GET /api/targets/{id}/vnc":          "the in-portal VNC viewer's tunnel",
+		"GET /api/sessions/{id}/view":        "the read-only watch of a live RDP/VNC session (Phase 258): a watch-scoped token, minted by POST /api/sessions/{id}/view-token under CapReadAudit and spent by its first join, joins guacd read-only and forwards nothing but keep-alive; the API middleware and every session door refuse the token",
 	},
 }
 

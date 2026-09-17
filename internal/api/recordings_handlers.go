@@ -43,7 +43,20 @@ const recordingMaxList = 500
 // / .sftp suffixes). Anything else — a
 // path separator, a dotfile like the .chain head — is refused, which also
 // forecloses traversal: no accepted name can leave the recording directory.
-var recordingNameRe = regexp.MustCompile(`^[A-Za-z0-9_@-][A-Za-z0-9._@-]*\.(cast|winrm\.log|ssh\.log|k8s\.log|forensics\.log|sftp)$`)
+var recordingNameRe = regexp.MustCompile(`^[A-Za-z0-9_@-][A-Za-z0-9._@-]*\.(cast|winrm\.log|ssh\.log|k8s\.log|forensics\.log|sftp|guac)$`)
+
+// recordingAuditActionList names every audit action that stamps a recording's
+// file and SHA-256: proxied sessions, WinRM runs, SFTP content capture, and
+// the portal's recordings of RDP/VNC desktops (Phase 258).
+var recordingAuditActionList = []string{"session.record", "winrm.run", "sftp.file_recorded", "rdp.record", "vnc.record"}
+
+var recordingAuditActions = func() map[string]bool {
+	m := map[string]bool{}
+	for _, a := range recordingAuditActionList {
+		m[a] = true
+	}
+	return m
+}()
 
 // recordingInfo is one stored session recording in the playback listing.
 // Target and Actor are resolved from the audit trail rather than parsed out of
@@ -105,7 +118,7 @@ func (s *Server) recordingOwners(r *http.Request, want map[string]bool) map[stri
 		if len(want) > 0 && len(out) == len(want) {
 			break // every listed recording is accounted for
 		}
-		if e.Action != "session.record" && e.Action != "winrm.run" && e.Action != "sftp.file_recorded" {
+		if !recordingAuditActions[e.Action] {
 			continue
 		}
 		var file, target string
@@ -144,6 +157,8 @@ func recordingKind(name string) string {
 		return "forensics"
 	case strings.HasSuffix(name, ".sftp"):
 		return "file"
+	case strings.HasSuffix(name, ".guac"):
+		return "guacamole" // an RDP/VNC instruction stream (Phase 258)
 	}
 	return "asciicast"
 }
@@ -229,7 +244,7 @@ func (s *Server) playRecording(w http.ResponseWriter, r *http.Request) {
 	// sessions audit session.record; WinRM run transcripts audit winrm.run; SFTP
 	// content capture audits sftp.file_recorded.
 	audited := false
-	for _, action := range []string{"session.record", "winrm.run", "sftp.file_recorded"} {
+	for _, action := range recordingAuditActionList {
 		if ok, ferr := s.store.FindAuditDetail(r.Context(), action, "sha256:"+sum); ferr == nil && ok {
 			audited = true
 			break
@@ -256,6 +271,8 @@ func (s *Server) playRecording(w http.ResponseWriter, r *http.Request) {
 		contentType = "text/plain; charset=utf-8"
 	case "file":
 		contentType = "application/x-ndjson; charset=utf-8" // the raw chunk log (?raw=1)
+	case "guacamole":
+		contentType = "application/octet-stream" // Guacamole protocol text, replayed by Guacamole.SessionRecording
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-PAM-Recording-SHA256", sum)

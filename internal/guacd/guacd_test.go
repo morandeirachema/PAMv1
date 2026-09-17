@@ -220,3 +220,56 @@ func TestConnectUnknownArgsAreEmpty(t *testing.T) {
 		t.Fatalf("unexpected connect args: %v", got)
 	}
 }
+
+// TestConnectJoinReadOnly proves a join selects the live connection's id
+// rather than a protocol, and that ReadOnly lands on guacd's read-only arg
+// (Phase 258) — the parameter that stops a watcher driving the desktop.
+func TestConnectJoinReadOnly(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	selectCh, connectCh := make(chan string, 1), make(chan []string, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		r := bufio.NewReader(conn)
+		sel, err := readInstruction(r)
+		if err != nil || len(sel.Args) == 0 {
+			return
+		}
+		selectCh <- sel.Args[0]
+		conn.Write([]byte(Instruction{Opcode: "args", Args: []string{"VERSION_1_5_0", "read-only", "hostname"}}.Encode()))
+		for {
+			inst, err := readInstruction(r)
+			if err != nil {
+				return
+			}
+			if inst.Opcode == "connect" {
+				connectCh <- inst.Args
+				conn.Write([]byte(Instruction{Opcode: "ready", Args: []string{"$watcher"}}.Encode()))
+				return
+			}
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := Connect(ctx, ln.Addr().String(), Params{Protocol: "rdp", Join: "$owner-conn", ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if got := <-selectCh; got != "$owner-conn" {
+		t.Fatalf("select = %q, want the joined connection id", got)
+	}
+	if got := <-connectCh; got[1] != "true" || got[2] != "" {
+		t.Fatalf("connect args = %v, want read-only=true and no hostname", got)
+	}
+	if !c.Supports("read-only") {
+		t.Error("Supports(read-only) must report the advertised arg")
+	}
+}

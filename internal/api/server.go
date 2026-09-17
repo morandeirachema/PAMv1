@@ -191,6 +191,10 @@ type Options struct {
 	// Playback detects the format per file, so recordings written before it was
 	// turned on keep replaying.
 	EncryptRecordings bool
+	// MaxRecordingBytes caps the recording the portal writes of one graphical
+	// session (Phase 258; PAM_MAX_RECORDING_MB, 0 = unlimited) — the session
+	// ends at the cap, as an SSH session does.
+	MaxRecordingBytes int64
 	// RDPClipboardAudit records what crosses the RDP clipboard bridge (Phase 50):
 	// "off" (default), "meta" (direction, mimetype, size, SHA-256) or "full"
 	// (also the content — see the warning in clipboard.go).
@@ -507,11 +511,16 @@ type Server struct {
 	// authLimiter — which throttles every call to the login endpoints — because
 	// a legitimate API client makes many successful calls a minute and only its
 	// failures may be counted. Same budget (PAM_AUTH_RATE_LIMIT), own window.
-	keyFailLimiter     *ratelimit.Limiter
-	cmdGuard           *cmdguard.Guard
-	cmdAllowGuard      *cmdguard.Guard
-	recKey             recording.KeyWrapper
-	opaqueRecNames     bool
+	keyFailLimiter    *ratelimit.Limiter
+	cmdGuard          *cmdguard.Guard
+	cmdAllowGuard     *cmdguard.Guard
+	recKey            recording.KeyWrapper
+	opaqueRecNames    bool
+	maxRecordingBytes int64
+	// viewerJoins maps a live graphical session's registry id to what a
+	// watcher needs to join it read-only (Phase 258). Replica-local, like the
+	// guacd connection it names.
+	viewerJoins        sync.Map
 	rdpClipAudit       string
 	trustedProxyHops   int
 	sessions           *session.Registry
@@ -818,6 +827,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		cmdAllowGuard:        opts.CommandAllowGuard,
 		recKey:               apiRecKey(opts.EncryptRecordings, v),
 		opaqueRecNames:       opts.OpaqueRecordingNames,
+		maxRecordingBytes:    opts.MaxRecordingBytes,
 		rdpClipAudit:         guacd.NormalizeClipAudit(opts.RDPClipboardAudit),
 		trustedProxyHops:     opts.TrustedProxyHops,
 		sessions:             opts.Sessions,
@@ -1094,13 +1104,15 @@ func (s *Server) routes() {
 	// (Phase 155) — the same capability the WinRM twin needs, since both are a
 	// privileged action on a machine PAMv1 holds the credential for.
 	s.mux.Handle("POST /api/targets/{id}/kubectl", s.authz(auth.CapConnect, s.runKubectl))
-	s.mux.Handle("POST /api/ssh-token", s.authz(auth.CapConnect, s.sshTerminalToken))          // mint a short-lived, single-use WS token for the in-portal terminal (Phase 254)
-	s.mux.HandleFunc("GET /api/targets/{id}/ssh/terminal", s.sshTerminal)                      // the terminal WebSocket; token in the query (browsers cannot set WS headers)
-	s.mux.Handle("POST /api/rdp-token", s.authz(auth.CapConnect, s.rdpToken))                  // mint a short-lived WS token for the viewer
-	s.mux.Handle("POST /api/vnc-token", s.authz(auth.CapConnect, s.vncToken))                  // same, for the VNC viewer
-	s.mux.Handle("POST /api/extension-token", s.authz(auth.CapRevealSecret, s.extensionToken)) // mint a browser-extension autofill token (Phase 147)
-	s.mux.HandleFunc("GET /api/targets/{id}/rdp", s.rdpTunnel)                                 // WebSocket; auths via query token
-	s.mux.HandleFunc("GET /api/targets/{id}/vnc", s.vncTunnel)                                 // WebSocket; auths via query token
+	s.mux.Handle("POST /api/ssh-token", s.authz(auth.CapConnect, s.sshTerminalToken))                  // mint a short-lived, single-use WS token for the in-portal terminal (Phase 254)
+	s.mux.HandleFunc("GET /api/targets/{id}/ssh/terminal", s.sshTerminal)                              // the terminal WebSocket; token in the query (browsers cannot set WS headers)
+	s.mux.Handle("POST /api/rdp-token", s.authz(auth.CapConnect, s.rdpToken))                          // mint a short-lived WS token for the viewer
+	s.mux.Handle("POST /api/vnc-token", s.authz(auth.CapConnect, s.vncToken))                          // same, for the VNC viewer
+	s.mux.Handle("POST /api/extension-token", s.authz(auth.CapRevealSecret, s.extensionToken))         // mint a browser-extension autofill token (Phase 147)
+	s.mux.HandleFunc("GET /api/targets/{id}/rdp", s.rdpTunnel)                                         // WebSocket; auths via query token
+	s.mux.HandleFunc("GET /api/targets/{id}/vnc", s.vncTunnel)                                         // WebSocket; auths via query token
+	s.mux.Handle("POST /api/sessions/{id}/view-token", s.authz(auth.CapReadAudit, s.sessionViewToken)) // mint a single-use watch token for a live RDP/VNC session (Phase 258)
+	s.mux.HandleFunc("GET /api/sessions/{id}/view", s.sessionView)                                     // WebSocket: join a live RDP/VNC session read-only; token in the query
 
 	// Zero Standing Privilege (Phase 22): publish the SSH CA public key so an
 	// operator can install it in a target's TrustedUserCAKeys. 404 when ZSP is off.
@@ -1440,6 +1452,12 @@ func (s *Server) authzCore(cap auth.Capability, allowExtension bool, next http.H
 			writeError(w, http.StatusForbidden, "this token is only valid for the SSH terminal")
 			return
 		}
+		if p.WatchOnly {
+			// A watch token (Phase 258) travels in a WebSocket URL too.
+			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:watch-only-token")
+			writeError(w, http.StatusForbidden, "this token is only valid for watching a session")
+			return
+		}
 		if p.SessionMFATicket {
 			// A session-MFA ticket (Phase 244) opens one session and nothing
 			// else. As an API key it could mint its own successor, so it is
@@ -1599,6 +1617,8 @@ func (s *Server) authenticated(next http.HandlerFunc) http.Handler {
 			reason, msg = "session-mfa-ticket", "a session-MFA ticket opens one session; it is not an API key"
 		case auth.ScopeTerminal:
 			reason, msg = "terminal-only-token", "this token is only valid for the SSH terminal"
+		case auth.ScopeWatch:
+			reason, msg = "watch-only-token", "this token is only valid for watching a session"
 		}
 		if reason != "" {
 			s.audit(ctx, "authz.denied", r.Method+" "+r.URL.Path+" reason:"+reason)

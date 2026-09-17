@@ -358,6 +358,29 @@ endpoints arrive with the OT/approval phase).
   against a chain with a manager tier is refused at creation (422) when the
   requester has no manager. `AccessRequest.Tiers` (never persisted) reports
   per-tier progress on list and decision responses. No new route.
+- **RDP/VNC recording and live watching** (Phase 258,
+  `internal/api/graphical_watch.go`): `viewerTunnel` records the guacd →
+  browser instruction stream itself (`openViewerRecording` →
+  `<title>.guac` in `PAM_RECORDING_DIR`, `recording.NewSealer` when sealing
+  is on, SHA-256 over the stored bytes; `bridgeGuacd`'s new `record` hook is
+  called before each forward, and its error — `errViewerRecordingLimit` at
+  `Options.MaxRecordingBytes`, audited `session.record_limit … protocol:` —
+  ends the session) and audits `rdp.record` / `vnc.record` at the end;
+  `recordingNameRe` accepts `.guac`, `recordingKind` reports `guacamole`,
+  and `recordingAuditActionList` (owners + playback verification) includes
+  both actions. Watching joins the operator's guacd connection:
+  `viewerTunnel` stores `viewerJoin{conn: gconn.ID, …, done: ctx.Done()}` in
+  `Server.viewerJoins` under the registry id; `POST
+  /api/sessions/{id}/view-token` (`CapReadAudit`) mints a `watch`-scoped
+  session (`auth.SessionScopeWatch` → `Principal.WatchOnly`, `ScopeWatch`;
+  refused by both middlewares as `reason:watch-only-token` and served by no
+  session door); `GET /api/sessions/{id}/view?token=` resolves only that
+  scope, runs `sourceGates`, `guacd.Connect` with `Params{Join, ReadOnly}`
+  (refused unless guacd advertises `read-only`), spends the token, audits
+  `session.monitor … mode:read-only` fail-closed, and bridges: guacd →
+  watcher through `watchOutput` (drops the owner's `clipboard` stream and
+  its `blob`/`end`), watcher → guacd through `watchInput` (only
+  `sync`/`nop`/`disconnect`, per instruction). Replica-local.
 - **In-portal SSH terminal** (Phase 254): the browser draws an xterm.js
   surface over a WebSocket, and the API server is an **SSH client of the
   session proxy** on the operator's behalf — so the session is a proxy
@@ -928,13 +951,13 @@ cancelled shutdown context so they are not dropped mid-drain.
 | `PAM_ROTATE_AFTER_SESSION` | `false` | rotate a credential as soon as a proxied session using it ends |
 | `PAM_ALLOWED_PROTOCOLS` | — (all) | OT: comma-separated protocol allowlist (e.g. `ssh,winrm`) enforced at create + connect |
 | `PAM_REQUIRE_APPROVAL` | `false` | OT: gate every target behind an approved access request (4-eyes) |
-| `PAM_REQUIRE_RECORDING` | `false` | refuse a session if its recording cannot be created (fail-closed). Covers **every** path to a target since Phase 52c — SSH, WinRM and PostgreSQL proxies, the in-portal RDP viewer (needs `PAM_GUACD_RECORDING_PATH`) and the REST WinRM endpoint (needs `PAM_RECORDING_DIR`); checked before anything reaches the target, refusals audited as `rdp.refused`/`winrm.refused` |
+| `PAM_REQUIRE_RECORDING` | `false` | refuse a session if its recording cannot be created (fail-closed). Covers **every** path to a target since Phase 52c — SSH, WinRM and PostgreSQL proxies, the in-portal RDP/VNC viewer (needs `PAM_RECORDING_DIR` — the portal's own recording, Phase 258 — or `PAM_GUACD_RECORDING_PATH`) and the REST WinRM endpoint (needs `PAM_RECORDING_DIR`); checked before anything reaches the target, refusals audited as `rdp.refused`/`winrm.refused` |
 | `PAM_REQUIRE_LIVE_SUPERVISION` | `false` | (SSH only, Phase 112) hold an interactive channel — before the upstream channel opens — until a supervisor is watching (`session.Hub.HasSubscribers`, polled) or `PAM_LIVE_SUPERVISION_TIMEOUT_SEC` (default `120`) elapses; timeout refuses, audited `session.unsupervised`. Observer (`+observe`) sessions and break-glass are exempt |
 | `PAM_MAX_SESSIONS_PER_USER` | `0` (∞) | cap concurrent live proxied sessions per actor (checked before decrypt; per-replica) |
 | `PAM_MAX_SESSIONS_TOTAL` | `0` (∞) | cap concurrent live proxied sessions across all actors (per-replica) |
 | `PAM_SESSION_MAX_MIN` | `0` (∞) | (Phase 240) end any brokered session — SSH, WinRM, RDP/VNC, PostgreSQL, SQL Server — this many minutes after it started; enforced by `session.Registry`'s lifetime monitor (replica-local), audited `session.killed reason:max-duration` |
 | `PAM_SESSION_IDLE_MIN` | `0` (never) | (Phase 240) end a session with no **operator input** for this many minutes (keystrokes, typed commands, client DB messages, and on RDP/VNC the browser's `key`/`mouse`/`touch`/`clipboard`/`size`/`put`/`blob` instructions but NOT the tunnel's own `sync`/`nop` keepalives — Phase 248; output alone does not count); audited `session.killed reason:idle-timeout` |
-| `PAM_MAX_RECORDING_MB` | `0` (∞) | cap a single session recording's output (MB); a session that exceeds it is terminated (`session.record_limit`) rather than run unrecorded |
+| `PAM_MAX_RECORDING_MB` | `0` (∞) | cap a single session recording's output (MB); a session that exceeds it is terminated (`session.record_limit`) rather than run unrecorded — including, since Phase 258, the portal's recording of an RDP/VNC desktop |
 | `PAM_RECORDING_ENCRYPT` | `false` | seal session recordings at rest: a per-recording data key wrapped by the KEK (Phase 41). The audited SHA-256 is taken over the bytes on disk, so the tamper-evidence still describes the stored artifact |
 | `PAM_SECRETS_PROVIDER` | "" (env/SOPS) | selects the bootstrap-secret source explicitly; `conjur` makes `PAM_CONJUR_URL` required so a misconfigured deploy fails loudly instead of silently falling back to env vars |
 | `PAM_RECORDING_OPAQUE_NAMES` | `false` | name recording files `<unixnano>_<random hex>` instead of `<unixnano>_<target>_<actor>` (Phase 48), so the volume/backup leaks no access metadata; the mapping lives in the audited `session.record`/`winrm.run` event and `GET /api/recordings` resolves it back (read_audit) |
@@ -966,7 +989,7 @@ cancelled shutdown context so they are not dropped mid-drain.
 | `PAM_WINRM_INSECURE_SKIP_VERIFY` | `false` | skip WinRM TLS verify (dev only) |
 | `PAM_WINRM_AUTH` | `basic` | `basic` or `ntlm` |
 | `PAM_GUACD_ADDR` | — (RDP off) | Guacamole guacd address, e.g. `127.0.0.1:4822` |
-| `PAM_GUACD_RECORDING_PATH` | — | server-side path for guacd to record RDP sessions |
+| `PAM_GUACD_RECORDING_PATH` | — | server-side path for guacd to record RDP sessions (on guacd's filesystem; independent of the portal's own `.guac` recording in `PAM_RECORDING_DIR`, Phase 258) |
 | `PAM_PROXY_WINRM` | `false` | broker an interactive WinRM command loop through the SSH proxy |
 | `PAM_GUACD_RDP_SECURITY` / `PAM_GUACD_IGNORE_CERT` | negotiate / `false` (verify) | RDP security mode; cert verification (opt-out for dev) |
 | `PAM_SSH_SFTP_DENY_FILE` | — (no path policy) | regex denylist file (same format as `PAM_COMMAND_DENY_FILE`) matched against every SFTP path; a match is refused in EVERY mode including reads, and on both sides of a rename (Phase 51) |
@@ -1037,7 +1060,7 @@ secrets. Format `json` (SIEM) or `text` (humans); collect from stdout.
 `analytics.risk_flagged` · `analytics.auto_response` ·
 `db.session.start` · `db.session.end` · `db.session.denied` · `db.session.error` · `db.query` ·
 `db.zsp_provisioned` · `db.zsp_provision_failed` · `db.zsp_teardown` · `db.zsp_teardown_failed` ·
-`command.blocked` · `session.monitor` · `session.playback` · `session.search` · `session.unsupervised` · `db.stepup_required` · `db.stepup_approved` · `db.stepup_denied` · `session.stepup_decided` · `session.stepup_decision_voided` · `blast.analyze` · `access.reach_query` · `app.grant_alias_set` · `app.grant_alias_cleared` ·
+`command.blocked` · `session.monitor` (Phase 258: also a read-only desktop join, `mode:read-only`, and its `refused:` reasons) · `session.view_token` · `rdp.record` · `vnc.record` · `session.playback` · `session.search` · `session.unsupervised` · `db.stepup_required` · `db.stepup_approved` · `db.stepup_denied` · `session.stepup_decided` · `session.stepup_decision_voided` · `blast.analyze` · `access.reach_query` · `app.grant_alias_set` · `app.grant_alias_cleared` ·
 `sftp.session` · `sftp.open` · `sftp.modify` · `sftp.blocked` · `sftp.denied` · `sftp.parse_error` · `sftp.file_recorded` · `sftp.capture_failed` · `sftp.extension` · `session.subsystem` ·
 `sftp.icap_flagged` · `sftp.icap_scan_failed` · `sftp.icap_skipped` ·
 `forward.start` · `forward.end` · `forward.refused` ·
@@ -1157,6 +1180,7 @@ written to the separate tamper-evident `broker_audit_events` chain.
 
 | Date | Change |
 | --- | --- |
+| 2026-09-17 | **Phase 258 — live watching and in-portal replay of RDP/VNC sessions.** The first Tier 9 row. (1) The portal records the guacd → browser instruction stream as a sealed, hashed `.guac` recording (`openViewerRecording`, `bridgeGuacd`'s `record` hook before each forward, `rdp.record`/`vnc.record`, `PAM_MAX_RECORDING_MB` enforced with `session.record_limit`), listed as kind `guacamole` and verified on playback. (2) Watching joins the owner's guacd connection read-only (`guacd.Params.Join`/`ReadOnly`, refused unless guacd advertises `read-only`), behind a 60 s single-use `watch` token (`auth.SessionScopeWatch`, `Principal.WatchOnly`, `ScopeWatch`; `POST /api/sessions/{id}/view-token`, `GET /api/sessions/{id}/view`); the bridge forwards only `sync`/`nop`/`disconnect` from the watcher and drops the owner's clipboard stream. Routes 207 → 209; no schema or store change. |
 | 2026-09-17 | **Phase 256 — level-tiered and direct-manager approval.** The last buildable Tier 8 row. (1) `targets.approval_tiers`, `safes.approval_tiers`, `users.manager` (`0059`); `store.ApprovalTier` / `TierState`, `ParseApprovalTiers`, `NormalizeApprovalTiers`, `JoinApprovalTiers`, `HasManagerTier`, `TierProgress` (`internal/store/approvaltiers.go`); `ApprovalPolicy.Tiers` in the fold; `User.Manager` + `UserStore.UpdateUserManager` (surface **228 → 229**); `AccessRequest.Tiers` (computed, unpersisted). (2) `api.approvalTiersForTarget`, `tierQualifier`, `decorateTiers`; the tier gate in `decideAccessRequest` ahead of the distinct-approver count and the floor re-read, `chainComplete` on the grant; the manager check in `createAccessRequest`; `approval_tiers` on `targetIn`/`safeIn` (validated on write), `manager` on user create/update (`validManager`), SCIM `scimEnterprise` / `scimManager` on create and replace. (3) Console: *Approval tiers* on the target and safe forms, *Manager* on the user forms, a *Tiers* column on *Work with Access Requests* (✓ satisfied, ◀ current). Routes unchanged at 207; no env var; one new refusal reason |
 | 2026-09-16 | **Phase 254 — in-portal SSH terminal.** The next Tier 8 row. The design is a seam, not a second front door: the API server is an SSH client of the session proxy on the operator's behalf, so every gate, the recording and the registry apply unchanged. (1) `auth.SessionScopeTerminal` / `Principal.{TerminalOnly,TerminalTarget}` / `ScopeTerminal`, `TerminalClientVersion` + `TerminalRemoteFromVersion`; `authzCore` and `authenticated` refuse the scope (`terminal-only-token`). (2) Proxy: `authenticate` serves `ScopeTerminal` only when `isLoopbackAddr(remote)` (else `session.denied reason:terminal-token-off-loopback`) and stashes `ext["terminal_remote"]` from the client version; `handleConn` uses it as the session remote and passes `admitRequest.serving`; gate 8b `gateTerminalTarget` (`reason:terminal-token-target`). (3) `internal/api/terminal_handlers.go`: `sshTerminalToken` (`POST /api/ssh-token`), `sshTerminal` (the WebSocket), `terminalCredential`, `SetSSHProxy`, `LoopbackDialAddr`; `Options.{SSHProxyAddr,SSHProxyHostKey}`; `main` wires them after the proxy's host key exists. (4) `web.XtermJS` + `__XTERM_SRC__` (content-hashed, immutable), xterm.js 5.5.0 vendored (NOTICE), stylesheet inlined; console option 11 + `startTerminal`. Routes **204 → 207** (`GET /static/xterm.js` included); store surface unchanged at 228; no schema, no env var. Proven end to end (`TestBrowserTerminalEndToEnd`): a browser-style WebSocket reaches an sshd that accepts only the vaulted password, the session is registered under the browser's address, the token is spent, refused as an API key and bound to its target |
 | 2026-09-16 | **Phase 252 — credential-level grants (object-level access control).** The next Tier 8 row. (1) `target_grants.credential_id` (`0058`, nullable FK `ON DELETE CASCADE`; the inline unique constraint replaced by an expression index over `COALESCE(credential_id, 0)` so a whole-target grant and a scoped one for the same subject are distinct rows and the same scope twice is one); `store.TargetGrant.CredentialID` + `CoversCredential`, `SubjectGrant.CredentialID`; both stores persist and fold it, refuse a credential on another target (`ErrNotFound`), and cascade the grant on credential delete (memstore by hand, pgstore by FK). (2) `auth.CanAccessCredentialAt` / `CanConnectCredentialAt` over the shared `canAccess` body, `GrantDeadlineFor`, `Reach.CredentialIDs` via `reachCredentials`. (3) `admit()` decides for `cred.ID`; `api.authorizedForCredential` behind the two gates (all nine callers pass their credential or nil), `credentialScopeGate` for WinRM/kubectl, the viewer's inline re-check and `GrantDeadlineFor`, the broker's `agentCanUseCredential`. (4) `grantIn.CredentialID` validated against the target; console Add-grant offers the target's credentials as a scope and the list names it. Routes unchanged at 204; store surface unchanged at 228. Proven end to end (`TestCredentialScopedGrantProxy`): a grant on `root` opens a real session and a grant on `deploy` leaves `root` refused |

@@ -345,10 +345,16 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	if port == 0 {
 		port = proto.defaultPort
 	}
-	// PAM_REQUIRE_RECORDING covers this path too now. guacd writes the recording,
-	// so "can we record?" here means "is a recording path configured?" — checked
-	// before the credential is used and before a desktop exists to watch.
-	if s.recordingRequired(s.guacdRecordingPath) {
+	// PAM_REQUIRE_RECORDING covers this path too. Two things can record a
+	// desktop: guacd, into its own recording path, and — since Phase 258 — this
+	// server, into the recording directory every other recording uses. Either
+	// satisfies the requirement; checked before the credential is used and
+	// before a desktop exists to watch.
+	recordable := s.recordingDir
+	if recordable == "" {
+		recordable = s.guacdRecordingPath
+	}
+	if s.recordingRequired(recordable) {
 		s.audit(ctx, proto.name+".refused", "target:"+target.Name+" reason:recording-required")
 		writeError(w, http.StatusServiceUnavailable, "recording is required but not configured for "+proto.label)
 		return
@@ -419,6 +425,28 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	}
 	defer s.audit(ctx, proto.name+".end", "target:"+target.Name)
 	s.log.Info("viewer session", "protocol", proto.name, "actor", principal.Name, "target", target.Name)
+	auditCtx := context.WithoutCancel(ctx)
+
+	// The portal's own recording of what the operator sees (Phase 258). A
+	// recording that cannot be opened ends the session only when recording is
+	// required — the same rule the WinRM transcript follows — and the
+	// rdp.record / vnc.record event carries the hash playback re-checks.
+	rec, rerr := s.openViewerRecording(ctx, target.Name, principal.Name)
+	if rerr != nil {
+		s.log.Error("viewer recording", "protocol", proto.name, "target", target.Name, "err", rerr)
+		if s.requireRecording {
+			s.audit(ctx, proto.name+".refused", "target:"+target.Name+" reason:recording-failed")
+			ws.Close(websocket.StatusInternalError, "recording unavailable")
+			return
+		}
+	}
+	if rec != nil {
+		defer func() {
+			path, sum, n := rec.finish()
+			s.audit(auditCtx, proto.name+".record", fmt.Sprintf("target:%s cred_user:%s file:%s bytes:%d sha256:%s",
+				target.Name, cred.Username, path, n, sum))
+		}()
+	}
 
 	var touch = func() {}
 	if s.sessions != nil {
@@ -438,6 +466,11 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 		}, func() { cancel(); gconn.Close() })
 		defer s.sessions.Remove(sid)
 		touch = s.sessions.Activity(sid)
+		// Watchers join through guacd's id for this connection (Phase 258);
+		// the entry lives exactly as long as the session, and closing done
+		// releases every watcher still attached.
+		s.viewerJoins.Store(sid, viewerJoin{conn: gconn.ID, protocol: proto.name, target: target.Name, actor: principal.Name, done: ctx.Done()})
+		defer s.viewerJoins.Delete(sid)
 	}
 
 	// guacamole-common-js's tunnel needs an internal UUID instruction to consider
@@ -459,8 +492,18 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	// gates. The audit is written on a cancel-detached context so a transfer
 	// completed as the session tears down is still recorded.
 	clip := guacd.NewClipWatcher(clipAudit)
-	auditCtx := context.WithoutCancel(ctx)
-	bridgeGuacd(ctx, ws, gconn, clip, touch, func(t guacd.ClipTransfer) {
+	var record func([]byte) error
+	if rec != nil {
+		record = func(inst []byte) error {
+			err := rec.Write(inst)
+			if errors.Is(err, errViewerRecordingLimit) {
+				// The same event, and the same reason, as the SSH proxy's cap.
+				s.audit(auditCtx, "session.record_limit", "target:"+target.Name+" cred_user:"+cred.Username+" reason:recording-size-cap protocol:"+proto.name)
+			}
+			return err
+		}
+	}
+	bridgeGuacd(ctx, ws, gconn, clip, touch, record, func(t guacd.ClipTransfer) {
 		s.audit(auditCtx, proto.name+".clipboard", "target:"+target.Name+" "+t.Detail())
 	})
 }
@@ -493,7 +536,11 @@ func guacamolePrelude(uuid, connID string) [][]byte {
 // observes clipboard transfers in both directions (Phase 50) — observation
 // only: every frame is forwarded byte-for-byte regardless, because dropping one
 // would corrupt the display, and blocking the clipboard is Phase 33's gate.
-func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, clip *guacd.ClipWatcher, touch func(), onClip func(guacd.ClipTransfer)) {
+//
+// record, when non-nil, receives every guacd instruction BEFORE it is
+// forwarded (Phase 258), so nothing reaches the operator unrecorded; an error
+// from it — the size cap, a full disk — ends the session.
+func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, clip *guacd.ClipWatcher, touch func(), record func([]byte) error, onClip func(guacd.ClipTransfer)) {
 	done := make(chan struct{}, 2)
 	note := func(direction string, frame []byte) {
 		if onClip == nil {
@@ -514,6 +561,11 @@ func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, cli
 		for {
 			inst, err := gconn.NextInstruction()
 			if len(inst) > 0 {
+				if record != nil {
+					if rerr := record(inst); rerr != nil {
+						break
+					}
+				}
 				if werr := ws.Write(ctx, websocket.MessageText, inst); werr != nil {
 					break
 				}

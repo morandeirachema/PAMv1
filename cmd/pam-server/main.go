@@ -1301,6 +1301,7 @@ func run() error {
 		RequireRecording:          cfg.RequireRecording,
 		EncryptRecordings:         cfg.EncryptRecordings,
 		OpaqueRecordingNames:      cfg.OpaqueRecordingNames,
+		MaxRecordingBytes:         maxRecBytes,
 		RDPClipboardAudit:         cfg.RDPClipboardAudit,
 		WinRM:                     winrmClient,
 		OIDC:                      oidcProvider,
