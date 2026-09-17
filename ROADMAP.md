@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–262 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–263 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2422,6 +2422,42 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 263 — v0.75.1 ✅
+
+Releases **262** — image digests recorded where the docs point. A **patch**:
+no route, schema, store method or env var moved, and the server binary is
+unchanged in behaviour; the release pipeline, the Helm chart (one new value)
+and the documents are what changed.
+
+- [x] **v0.75.1** through the test-gated pipeline — the first tag whose
+  `release.yml` writes the digest into the release notes. `.github/` changed
+  (a new step reading only `steps.build.outputs.digest`, already consumed by
+  four existing steps), and its script was run locally against v0.75.0's
+  real digest. Published 2026-09-17 as `ghcr.io/morandeirachema/pamv1:0.75.1`
+  (also `latest`), digest `TBD`, **public** (anonymous pull 200 on both tags,
+  both resolving to the same digest), signed and attested — every publishing
+  step's own conclusion `success`, the release notes checked to carry that
+  digest, and the notes' own `cosign verify` run against it — with the
+  `pam-agent` binaries, the SPDX SBOM and `SHA256SUMS` attached
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm
+  chart `version` 0.66.0 -> **0.66.1**, a patch alongside an app patch
+- [x] **Every earlier release page backfilled.** All 78 published releases
+  (v0.10.0 – v0.75.0) now open with the same block the pipeline writes: the
+  image digest, a pull by digest, and a `cosign verify` for that exact image,
+  marked as added after publication. Before anything was written, every
+  digest was read from GHCR (26 cross-checked against the changelog's
+  verified set) and every image passed `cosign verify` under its own
+  certificate identity (23 `PAMv1`, 55 `pamv1` before the rename); the
+  original notes were backed up, kept verbatim below the block, and
+  re-checked on all 78 pages after the edit
+- [x] Routes unchanged at **211**; `store.Store` unchanged at **229**;
+  migration high-water unchanged at **`0059`**
+- [x] Both READMEs restated; every `Reflects:` header, both READMEs' *What
+  works today* range, `docs/README.md`, `NIS2-COMPLIANCE.md`'s evidence row,
+  this banner and CHANGELOG's `[Unreleased]` link
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
+
 ## Phase 262 — Image digests recorded where the docs point ✅
 
 A `/code-review` of v0.75.0's digest PR found the digest itself right and
@@ -2440,7 +2476,7 @@ digest at all (following its own "pin to a digest" advice rendered
   identity pinned to the tag, verified by hand against v0.75.0), and the Helm
   flag — and passes it as `body_path`; GitHub prepends it to the generated
   notes. A build with no digest fails the step. It applies from the next tag;
-  the existing release pages are left as published
+  the 78 existing release pages were backfilled by hand (Phase 263)
 - [x] **Every changelog digest is whole.** All 23 pointers, and the three
   truncated digests in 0.57.1/0.58.1's prose, now carry the full value with a
   link to the release page, each checked against GHCR before it was written
@@ -2460,7 +2496,8 @@ digest at all (following its own "pin to a digest" advice rendered
   from the newest version. Each rule was proven by breaking the documents and
   watching it fail
 - [x] ROADMAP's three unwrapped digest lines rewrapped. No route, schema,
-  store method or env var; the chart gains one value. **Released by Phase 263**
+  store method or env var; the chart gains one value. **Released by Phase 263 as
+  v0.75.1** — a patch, since nothing a client or schema sees moved
 
 ## Phase 261 — v0.75.0 ✅
 
