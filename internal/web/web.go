@@ -113,9 +113,10 @@ func Index(w http.ResponseWriter, _ *http.Request) {
 }
 
 // Share serves the guest-viewer page (Phase 116) under the same per-request
-// nonce-based CSP convention as Index, minus the RDP-viewer-only allowances
-// (no data:/blob: image or media sources — this page only ever renders text
-// and has no canvas). noindex/nofollow is set in the page itself, not here,
+// nonce-based CSP convention as Index. Since Phase 260 a guest may be invited
+// to a desktop, which the page renders with the same vendored Guacamole
+// client the portal imports — so it carries the viewer's allowances too
+// (data:/blob: images and media for guacd's PNG and audio instructions). noindex/nofollow is set in the page itself, not here,
 // since a share invite's own 15-minute token TTL is the real defense; the
 // header just avoids it turning up in a crawl during that window.
 func Share(w http.ResponseWriter, _ *http.Request) {
@@ -123,10 +124,11 @@ func Share(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy",
 		"default-src 'self'; style-src 'unsafe-inline'; script-src 'nonce-"+n+"' 'self'; "+
-			"img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; "+
+			"img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; base-uri 'none'; form-action 'self'; "+
 			"frame-ancestors 'none'; object-src 'none'")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	page := bytes.Replace(shareHTML, noncePlaceholder, []byte(n), 1)
+	page = bytes.Replace(page, guacSrcPlaceholder, guacSrc, 1)
 	_, _ = w.Write(page)
 }
 

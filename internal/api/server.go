@@ -1235,6 +1235,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/share/redeem/{token}", s.redeemShareInvite)
 	s.mux.HandleFunc("GET /api/share/stream", s.streamShareGuest)
 	s.mux.HandleFunc("POST /api/share/input", s.inputShareGuest)
+	// Sharing a live desktop (Phase 260): an internal invitee redeems in the
+	// portal with their own key, and both kinds of sharer then join over one
+	// WebSocket that authenticates with the guest key in its query.
+	s.mux.Handle("POST /api/share/desktop/redeem", s.authenticated(s.redeemDesktopInvite))
+	s.mux.HandleFunc("GET /api/share/desktop", s.shareDesktop)
 
 	// Session-recording playback (Phase 26): list stored recordings and serve one
 	// for replay, hash-verified against the audit trail. Content search over

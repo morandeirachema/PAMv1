@@ -58,6 +58,7 @@ var nonHumanReach = map[string]map[string]string{
 		"POST /api/share/redeem/{token}":    "join the shared session the invite names",
 		"GET /api/share/stream":             "the guest's view of that session",
 		"POST /api/share/input":             "the guest's keystrokes into that session",
+		"GET /api/share/desktop":            "a shared RDP/VNC desktop (Phase 260): the guest key from a redeemed invite joins guacd read-only, or with keyboard and mouse only for view_control — never clipboard or file streams",
 	},
 	// The graphical viewers: a browser cannot set headers on a WebSocket
 	// handshake, so these authenticate a short-lived token from the query string.
