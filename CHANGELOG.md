@@ -9,6 +9,30 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.75.1] — 2026-09-17
+
+A patch that ships **Phase 262** — image digests recorded where the docs
+point. No route, schema, store method or environment variable moved; the
+server binary behaves exactly as 0.75.0.
+
+**What an operator can now do.**
+
+- **Find a release's digest on its release page** — from this release on,
+  the GitHub release notes open with the image digest, a `docker pull` by
+  digest and the `cosign verify` command for that exact image.
+- **Pin the Helm chart by digest** — `--set image.digest=sha256:…` renders
+  `ghcr.io/morandeirachema/pamv1@sha256:…`, which no later push can move;
+  anything but a bare `sha256:` digest is refused at render time.
+- **Trust the changelog's digests** — every past entry that pointed at "the
+  README and the release page" for its digest now records the full value
+  itself, each checked against the registry.
+
+**What has not changed.** Manifests still pin the version tag by default.
+Every earlier release page keeps its notes, now under the same digest block,
+added after the fact and marked as such. The README's `helm install` example now passes `secret.create=true`,
+which the chart has long required.
+The image is `ghcr.io/morandeirachema/pamv1:0.75.1`.
+
 ## [0.75.0] — 2026-09-17
 
 A minor that ships **Phase 260** — sharing a live RDP/VNC session, the
@@ -3436,7 +3460,8 @@ The image is `ghcr.io/morandeirachema/pamv1:0.10.0`, digest
 `sha256:ab2a5fa5db27fae805f9096dfdf526497ddff4cc3774b33469ab108b98637b39`
 ([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.10.0)).
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.75.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.75.1...HEAD
+[0.75.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.75.1
 [0.75.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.75.0
 [0.74.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.74.0
 [0.73.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.73.0
