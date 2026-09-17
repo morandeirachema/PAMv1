@@ -37,7 +37,9 @@ environment variable moved, and no existing request's requirements change.
 **What has not changed.** Every target and safe without a chain keeps the
 N-of-M count it had; the dual-control floor and a request's own ask still
 apply on top of a chain; four-eyes and safe-scoped approval are unchanged.
-The image is `ghcr.io/morandeirachema/pamv1:0.73.0`.
+The image is
+`ghcr.io/morandeirachema/pamv1:0.73.0`, digest
+`sha256:fe68d96…` (the full value is in the README and on the release page).
 
 ## [0.72.0] — 2026-09-16
 
