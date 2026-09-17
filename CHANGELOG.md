@@ -35,7 +35,9 @@ store method or environment variable moved.
 and token rules, and the Phase 258 watch and replay. An SSH `join:` of a
 desktop invite is now refused with a pointer to the portal, rather than
 attaching to a stream that never speaks. Sharing remains replica-local.
-The image is `ghcr.io/morandeirachema/pamv1:0.75.0`.
+The image is
+`ghcr.io/morandeirachema/pamv1:0.75.0`, digest
+`sha256:4b76d86…` (the full value is in the README and on the release page).
 
 ## [0.74.0] — 2026-09-17
 
