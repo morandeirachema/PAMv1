@@ -9,6 +9,36 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.73.0] — 2026-09-17
+
+A minor that ships **Phase 256** — level-tiered and direct-manager
+approval, the last buildable row of the CyberArk / WALLIX / Teleport
+research pass. **The schema and one store method are new**; no route or
+environment variable moved, and no existing request's requirements change.
+
+**What an operator can now do.**
+
+- **Say who must approve, and in what order** — `approval_tiers` on a
+  target or a safe: `"manager; approver:2; admin"` reads *the requester's
+  direct manager, then any two approvers, then an administrator*. A target's
+  own chain wins over its safe's. An approver acting out of turn is refused
+  with the tier the request is waiting on, and the request is granted only
+  once every tier is satisfied in order.
+- **Name an identity's direct manager** — `manager` on `POST`/`PUT
+  /api/users` (or SCIM's enterprise `manager` attribute). The manager
+  decides the request at their tier without needing the general approve
+  role, as does an identity a `user=<name>` tier names. A request against a
+  chain with a manager tier is refused when you file it, with the reason,
+  if your identity has no manager set.
+- **See the chain where approvals happen** — every request lists its
+  tiers (kind, count, who has approved, which is current); *Work with
+  Access Requests* shows ✓ for satisfied tiers and ◀ for the one waiting.
+
+**What has not changed.** Every target and safe without a chain keeps the
+N-of-M count it had; the dual-control floor and a request's own ask still
+apply on top of a chain; four-eyes and safe-scoped approval are unchanged.
+The image is `ghcr.io/morandeirachema/pamv1:0.73.0`.
+
 ## [0.72.0] — 2026-09-16
 
 A minor that ships **Phase 254** — the in-portal SSH terminal, the next row
@@ -3310,6 +3340,7 @@ Everything from phases 0–52g is in this release. The short version:
   Conjur secret sourcing, threat analytics with automated response.
 
 [Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.58.2...HEAD
+[0.73.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.73.0
 [0.72.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.72.0
 [0.71.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.71.0
 [0.70.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.70.0
