@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–257 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–258 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,93 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 258 — Live watching and in-portal replay of RDP/VNC sessions ✅
+
+The first row of the Tier 9 pass (WALLIX Bastion's sessions audit guide
+§6–7, Access Manager's replay). A text session has been watchable since
+Phase 16 and replayable since Phase 26; a desktop was neither. An RDP or VNC
+session was listed and killable, but it was never teed to anything a
+supervisor could see, and guacd's own recordings sat on guacd's filesystem,
+unhashed, unsealed and invisible to the recording list, whose player read
+asciicast only.
+
+- [x] **The portal records the desktop itself.** `viewerTunnel` writes the
+  Guacamole instruction stream guacd sends the operator — the format guacd's
+  own recordings use, and the one [`Guacamole.SessionRecording`](https://guacamole.apache.org/doc/guacamole-common-js/Guacamole.SessionRecording.html)
+  replays — to `<title>.guac` in `PAM_RECORDING_DIR`
+  (`internal/api/graphical_watch.go`, `openViewerRecording`). Each
+  instruction is recorded **before** it is forwarded, so nothing reaches the
+  operator unrecorded. Sealed at rest under `PAM_RECORDING_ENCRYPT`, named
+  opaquely under `PAM_RECORDING_OPAQUE_NAMES`, hashed over the STORED bytes
+  and audited at the end as `rdp.record` / `vnc.record` (`target cred_user
+  file bytes sha256`) — so it lists with its target and actor, replays, and
+  hash-checks exactly like an asciicast. `PAM_MAX_RECORDING_MB` now binds a
+  desktop as it binds an SSH session: at the cap the session ends
+  (`session.record_limit … protocol:rdp`). `PAM_REQUIRE_RECORDING` is
+  satisfied by either recorder (the portal's directory or guacd's path); a
+  portal recording that cannot be opened ends the session only when
+  recording is required. guacd's own recording is unchanged
+- [x] **Watching is a read-only join, not a tee.** A tee of the instruction
+  stream would show a supervisor who arrives mid-session a black screen that
+  fills in region by region. guacd already solves this: a second user
+  [joins a connection](https://guacamole.apache.org/doc/gug/guacamole-protocol.html#joining-an-existing-connection)
+  by selecting its id, and receives the current display first.
+  `guacd.Params.Join` + `ReadOnly` do that; the viewer tunnel publishes each
+  live session's guacd id in a replica-local `Server.viewerJoins` for exactly
+  the session's lifetime. Read-only is enforced twice: guacd's per-user
+  `read-only` argument — a guacd that does not advertise it is refused
+  (`session.monitor … refused:read-only-unenforceable`), since an
+  unadvertised parameter is silently dropped — and the bridge, which
+  forwards nothing from the watcher's browser but `sync`, `nop` and
+  `disconnect`, instruction by instruction (a batched `key;sync` loses the
+  key). The owner's **clipboard** stream is not forwarded to a watcher:
+  guacd hands it to every user of a connection, and what an operator copies
+  inside a privileged desktop is often a secret. The watch ends when the
+  watched session does, whatever guacd does
+- [x] **The door is a watch token.** `POST /api/sessions/{id}/view-token`
+  (`CapReadAudit`, the text stream's capability; 404 for an id with no
+  graphical session on this replica; break-glass refused) mints a
+  `watch`-scoped session (`auth.SessionScopeWatch` → `Principal.WatchOnly`,
+  `ScopeWatch`), 60 s, spent by the join it opens. `GET
+  /api/sessions/{id}/view?token=` accepts only that scope, runs
+  `sourceGates`, re-checks the capability and audits `session.monitor …
+  mode:read-only` fail-closed before the WebSocket opens. The API middleware
+  refuses the token everywhere (`reason:watch-only-token`); no proxy,
+  tunnel or terminal serves `ScopeWatch`, so a copy lifted from a URL can
+  look and never act; an RDP token is refused at the watch door
+- [x] **Console.** *Work with Active Sessions* option **5** on an RDP/VNC
+  session opens the desktop full-screen, view-only, watermarked (Esc
+  closes); *Session Recordings* lists `.guac` files as kind `guacamole`, and
+  option **5** opens a desktop player (Space play/pause, ←/→ 10 s) that
+  shows the audit-trail verdict
+- [x] **Proven, not asserted.** `TestConnectJoinReadOnly` (the join selects
+  the connection id and sends `read-only=true` and no credential);
+  `TestWatchScope` (the token resolves `WatchOnly` and no session door
+  admits it); `TestWatchOutputDropsClipboard` (a clipboard stream dropped
+  whole, a later stream on the same index not; keys and the tunnel's
+  internal instructions filtered); `TestGraphicalSessionWatchAndReplay` end
+  to end against a two-connection fake guacd — a plain user refused the
+  token, an unknown id 404, the token refused as an API key and at the RDP
+  tunnel, an RDP token refused at the watch door, the join read-only with no
+  credential, the token spent, a batched `key;mouse;clipboard;sync` reaching
+  guacd as `sync` alone, the watch ending with the session, and the
+  recording on disk from its first display instruction, listed with target
+  and actor, replayed byte-identical with its audited hash;
+  `TestGraphicalRecordingSealed` (ciphertext on disk, audited hash of the
+  stored bytes, decrypted playback); `TestGraphicalRecordingCapEndsSession`
+  (the session ends at the cap, nothing past it reaches the operator, the
+  limit and the recording both audited)
+- [x] **Limits, stated rather than discovered.** Watching is
+  replica-local: a watcher must reach the replica hosting the session (the
+  guacd connection lives there); the text stream's cross-replica relay
+  (Phase 55) does not carry a desktop. Content search still covers SSH only
+  — a desktop has no text layer. Sharing a desktop with control (Tier 9
+  row 2) is not this phase
+- [x] Routes **207 → 209**; no schema, no store method (surface stays
+  **229**), no env var. Audit vocabulary: `rdp.record`, `vnc.record`,
+  `session.view_token`; `session.record_limit` and `session.monitor` gain
+  the graphical case
 
 ## Phase 257 — v0.73.0 ✅
 

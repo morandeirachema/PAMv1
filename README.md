@@ -541,7 +541,7 @@ added as each phase ships.
 
 | Gap | Leaders | PAMv1 today |
 |---|---|---|
-| **Live watching and in-portal replay of RDP/VNC sessions** | Bastion sessions audit guide §6–7; Access Manager replay | an RDP/VNC session is listed and killable but never teed to the live hub; guacd's recordings are not shown by the recording list, and the portal player reads asciicast only |
+| ~~**Live watching and in-portal replay of RDP/VNC sessions**~~ **✅ shipped (Phase 258)** | Bastion sessions audit guide §6–7; Access Manager replay | the portal records every desktop itself — the Guacamole instruction stream, sealed, hashed and audited (`rdp.record`/`vnc.record`) — and *Session Recordings* replays it in a desktop player; *Work with Active Sessions* → **5** joins a live desktop through guacd as a **read-only** user (current screen first, no input but keep-alive, no clipboard), behind a 60-second single-use watch token |
 | **Share a live RDP/VNC session** (view, or view and control) | Access Manager *Session invite* | session sharing (Phase 116) is SSH / text only |
 | **Group-based authorization** — directory groups as grant subjects | Bastion user groups ↔ target groups | a grant names a user or a built-in role; directory groups map onto the four roles only |
 | **Per-grant sub-protocol rights** (shell, exec, SFTP, port forwarding; clipboard, drive, printer) | Bastion authorizations (admin guide §13.2) | deployment-wide switches (`PAM_SSH_SFTP`, `PAM_SSH_PORT_FORWARD`, `PAM_RDP_CLIPBOARD`) plus a per-target clipboard override |
