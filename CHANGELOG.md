@@ -31,7 +31,10 @@ server binary behaves exactly as 0.75.0.
 Every earlier release page keeps its notes, now under the same digest block,
 added after the fact and marked as such. The README's `helm install` example now passes `secret.create=true`,
 which the chart has long required.
-The image is `ghcr.io/morandeirachema/pamv1:0.75.1`.
+The image is
+`ghcr.io/morandeirachema/pamv1:0.75.1`, digest
+`sha256:7ebf37457c558705ade29d2c8abed6fa7c52a020c0cdb8c1853b01d40ba07731`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.75.1)).
 
 ## [0.75.0] — 2026-09-17
 

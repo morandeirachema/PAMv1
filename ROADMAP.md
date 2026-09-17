@@ -2434,7 +2434,9 @@ and the documents are what changed.
   (a new step reading only `steps.build.outputs.digest`, already consumed by
   four existing steps), and its script was run locally against v0.75.0's
   real digest. Published 2026-09-17 as `ghcr.io/morandeirachema/pamv1:0.75.1`
-  (also `latest`), digest `TBD`, **public** (anonymous pull 200 on both tags,
+  (also `latest`), digest
+  `sha256:7ebf37457c558705ade29d2c8abed6fa7c52a020c0cdb8c1853b01d40ba07731`,
+  **public** (anonymous pull 200 on both tags,
   both resolving to the same digest), signed and attested — every publishing
   step's own conclusion `success`, the release notes checked to carry that
   digest, and the notes' own `cosign verify` run against it — with the
