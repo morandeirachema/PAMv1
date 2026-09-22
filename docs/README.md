@@ -1,6 +1,6 @@
 # PAMv1 — documentation
 
-> Last updated: 2026-09-22 · Reflects: Phases 0–227 and 229–272, and release v0.0.77 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-09-22 · Reflects: Phases 0–227 and 229–273, and release v0.0.78 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-09-22 | Phase 273 (v0.0.78): every `Reflects:` header, both READMEs' ranges and the banner through 273; the release token above. |
 | 2026-09-22 | Phase 272 (host-key pins) documented: ARCHITECTURE-LOW-LEVEL (§2.5 dial bullet, env rows, audit vocabulary, tests, change log), ARCHITECTURE-HIGH-LEVEL (table row, change log), ADMIN-GUIDE (§6 subsection + env rows), USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE (mark `0064`), SECURITY-GAPS row 4, README Tier 10 row 4, ARCHITECTURE-DIAGRAMS (routes 220). |
 | 2026-09-22 | Phase 271 (probe metadata) documented: ARCHITECTURE-LOW-LEVEL (§2.5 probe bullet, audit vocabulary, tests, change log), ARCHITECTURE-HIGH-LEVEL (table row, change log), ADMIN-GUIDE (§6 rule actions + the metadata artifact), USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE (mark `0063`), README Tier 10 row 3 closed. |
 | 2026-09-22 | Phase 270 (sub-protocol rights) documented: ARCHITECTURE-LOW-LEVEL (§2.2 bullet, env rows, audit action, tests, change log), ARCHITECTURE-HIGH-LEVEL (table row, change log), ADMIN-GUIDE (§6 subsection + env rows), USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE (mark `0062`), README Tier 10 row 2 closed, ARCHITECTURE-DIAGRAMS regenerated. |
