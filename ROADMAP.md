@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–273 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–274 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,42 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 274 — Approval depth (Tier 10, row 5) ✅
+
+*"fix all": the remaining Tier 10 rows, in order. Row 5 is Tier 9's
+approval-depth row sharpened by the course material — what a WALLIX
+approver can say and do beyond yes/no.*
+
+- [x] **A comment, noted and audited.** `POST …/approve` and `/deny` take an
+  optional `{comment}`; absent is the pre-274 call, so nothing that called
+  them breaks. The comment goes on the request (`notes`, one line per
+  approver, migration `0065`) and on the audit row, quoted. Mandatory
+  everywhere under `PAM_APPROVAL_COMMENT_REQUIRED`.
+- [x] **A granted duration, capped at the request.** `{duration_min}` on the
+  approval that completes the chain sets the window from now — and
+  `ShortenAccessRequest` is `LEAST(expires_at, …)`: an approver can shorten
+  what was asked, never extend it. `granted_until:` on the audit row.
+- [x] **Cancel an approved request.** A new route, `approve` capability,
+  reason required, four-eyes (the requester cannot cancel their own — they
+  can stop using it), approved only (CAS on the status). The request becomes
+  `cancelled`, admits nothing further, and `KillByActorTarget` ends every
+  live session the requester holds on that target; `access.cancel` says how
+  many, and the alerter is told.
+- [x] **A timeout.** `PAM_APPROVAL_TIMEOUT_MIN` moves a request still pending
+  that long after filing to `expired` (`access.expired`, actor `system`,
+  alerted) on the scheduler's tick — an unanswered request stops being a
+  standing invitation. Neither new status is `approved`, so the active-
+  approval predicate every door already uses needed no change.
+- [x] **Proven** end to end through the API with a registered session that
+  the cancel cuts, the sweep run at a future instant (exactly the pending
+  rows, nothing twice), and the store contract for every new method.
+- [x] **Living docs**: low-level §4/§5/§7/§8, high-level, ADMIN-GUIDE §9,
+  USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE (`0065`), README Tier 10 row.
+
+Left open, on purpose, and named in the Tier 10 row: "outside the time
+frame: require approval instead of blocking" is a grant semantic, not an
+approval one — it belongs with the authorization layer, as its own phase.
 
 ## Phase 273 — v0.0.78 ✅
 

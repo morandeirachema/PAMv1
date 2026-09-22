@@ -83,9 +83,11 @@ import (
 // the one approver a "manager" tier of an approval chain accepts. Phase 266
 // added ProbeRuleStore (3) — the block rules a session probe enforces inside
 // an operator's logon session on a target. Phase 272 added
-// TargetHostKeyStore (3) — the per-target SSH host-key pins.
+// TargetHostKeyStore (3) — the per-target SSH host-key pins. Phase 274 added
+// NoteAccessRequest, ShortenAccessRequest, CancelAccessRequest and
+// ExpirePendingAccessRequests (4) — approval depth.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 235
+	const want = 239
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

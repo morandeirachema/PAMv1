@@ -295,6 +295,11 @@ type Options struct {
 	// ApprovalWindow is how long an approved access request stays valid
 	// (default 60m).
 	ApprovalWindow time.Duration
+	// ApprovalTimeout (Phase 274) expires a pending request nobody decided
+	// within it (0 = never); the scheduler sweeps. ApprovalCommentRequired
+	// makes every approve/deny/cancel carry the approver's comment.
+	ApprovalTimeout         time.Duration
+	ApprovalCommentRequired bool
 	// TicketValidator validates an ITSM change/incident ticket on access
 	// requests (Phase 20); nil disables validation. RequireTicket makes a ticket
 	// mandatory on every access request.
@@ -517,6 +522,8 @@ type Server struct {
 	guacdRecordingPath                         string
 	guacdRDPSecurity                           string
 	guacdIgnoreCert                            bool
+	approvalTimeout                            time.Duration
+	approvalCommentRequired                    bool
 	rdpDrive, rdpPrinter, rdpAudio, rdpAudioIn bool
 	rdpClipboard                               string
 	authLimiter                                *ratelimit.Limiter
@@ -846,7 +853,8 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		guacdRecordingPath:   opts.GuacdRecordingPath,
 		guacdRDPSecurity:     opts.GuacdRDPSecurity,
 		guacdIgnoreCert:      opts.GuacdIgnoreCert,
-		rdpDrive:             opts.RDPDrive, rdpPrinter: opts.RDPPrinter, rdpAudio: opts.RDPAudio, rdpAudioIn: opts.RDPAudioIn,
+		approvalTimeout:      opts.ApprovalTimeout, approvalCommentRequired: opts.ApprovalCommentRequired,
+		rdpDrive: opts.RDPDrive, rdpPrinter: opts.RDPPrinter, rdpAudio: opts.RDPAudio, rdpAudioIn: opts.RDPAudioIn,
 		rdpClipboard:        rdpClipboardMode(opts.RDPClipboard),
 		authLimiter:         ratelimit.New(opts.AuthRatePerMin),
 		keyFailLimiter:      ratelimit.New(opts.AuthRatePerMin),
@@ -1186,6 +1194,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/access-requests/{id}/approve", s.authz(auth.CapReadInventory, s.approveAccessRequest))
 	s.mux.Handle("POST /api/access-requests/{id}/deny", s.authz(auth.CapReadInventory, s.denyAccessRequest))
 	s.mux.Handle("POST /api/access-requests/{id}/stop-recurrence", s.authz(auth.CapApprove, s.stopAccessRequestRecurrence))
+	s.mux.Handle("POST /api/access-requests/{id}/cancel", s.authz(auth.CapApprove, s.cancelAccessRequest)) // Phase 274: end an approved request, cutting its sessions
 
 	// Magic-link approval (Phase 137): a CapApprove holder delegates one
 	// decision to a named person via an emailed link, instead of that person

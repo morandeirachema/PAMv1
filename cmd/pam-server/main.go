@@ -1368,6 +1368,8 @@ func run() error {
 		Alerter:                   alerter,
 		RequireApproval:           cfg.RequireApproval,
 		ApprovalWindow:            cfg.ApprovalWindow,
+		ApprovalTimeout:           cfg.ApprovalTimeout,
+		ApprovalCommentRequired:   cfg.ApprovalCommentRequired,
 		TicketValidator:           ticketValidator,
 		RequireTicket:             cfg.RequireTicket,
 		RevalidateTicket:          cfg.RevalidateTicket,

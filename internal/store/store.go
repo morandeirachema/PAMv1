@@ -363,6 +363,9 @@ type AccessRequest struct {
 	// computed from ApprovedBy against the policy in force when it is read —
 	// never persisted, and absent when the target has no chain.
 	Tiers []TierState `json:"tiers,omitempty"`
+	// Notes holds the approvers' comments (Phase 274), one "<approver>: <text>"
+	// line per decision or cancel, newest last. Empty before this phase.
+	Notes string `json:"notes,omitempty"`
 	// NextRunAt is when the anchor next spawns a child. Set when the anchor
 	// is approved (not at creation, so an approval that takes days to arrive
 	// doesn't make the first recurrence fire immediately on approval). Nil on
@@ -1672,6 +1675,21 @@ type ApprovalStore interface {
 	// decided-at time (nil while still partial).
 	// approvedAs is the parallel role snapshot (AccessRequest.ApprovedAs).
 	SetApprovalState(ctx context.Context, id int64, approvedBy, approvedAs, status, approver string, decidedAt *time.Time) error
+	// NoteAccessRequest appends "<approver>: <note>" to the request's Notes
+	// (Phase 274), or ErrNotFound.
+	NoteAccessRequest(ctx context.Context, id int64, approver, note string) error
+	// ShortenAccessRequest moves the request's ExpiresAt EARLIER to expiresAt
+	// (Phase 274: the approver's granted duration); a later instant is
+	// ignored — an approver can shorten what was asked, never extend it.
+	ShortenAccessRequest(ctx context.Context, id int64, expiresAt time.Time) error
+	// CancelAccessRequest moves an APPROVED request to "cancelled" (Phase 274)
+	// — compare-and-set on approved; ErrConflict if it is not approved,
+	// ErrNotFound if absent.
+	CancelAccessRequest(ctx context.Context, id int64, approver string, at time.Time) error
+	// ExpirePendingAccessRequests moves every PENDING request created before
+	// olderThan to "expired" (Phase 274, the approval timeout) and returns
+	// the rows it changed.
+	ExpirePendingAccessRequests(ctx context.Context, olderThan time.Time) ([]AccessRequest, error)
 	// HasActiveApproval reports whether requester has an approved, unexpired
 	// request for targetID as of now. A consumed single-use approval is not
 	// active.
