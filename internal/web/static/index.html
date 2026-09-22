@@ -1610,11 +1610,23 @@ ${fkeys("")}
           const tok = document.getElementById("in-key").value.trim();
           try {
             if (pass) {
-              const res = await fetch("/api/login", {
+              let res = await fetch("/api/login", {
                 method: "POST", headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ username: user, password: pass, otp }),
               });
-              const d = await res.json().catch(() => ({}));
+              let d = await res.json().catch(() => ({}));
+              if (d.mfa_required && d.radius_state) {
+                // The RADIUS server accepted the password and wants a code
+                // (Phase 269): ask for it here and answer the challenge with
+                // its state — the password is not sent again.
+                const code = window.prompt((d.message || "ONE-TIME CODE REQUIRED").toUpperCase(), "");
+                if (code === null || !code.trim()) throw new Error("ONE-TIME CODE REQUIRED");
+                res = await fetch("/api/login", {
+                  method: "POST", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ username: user, otp: code.trim(), radius_state: d.radius_state }),
+                });
+                d = await res.json().catch(() => ({}));
+              }
               if (d.mfa_required) throw new Error("MFA CODE REQUIRED — ENTER YOUR 6-DIGIT CODE");
               if (!res.ok) throw new Error((d.error || res.statusText).toUpperCase());
               if (d.webauthn_required) {

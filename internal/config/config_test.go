@@ -17,6 +17,25 @@ func setRequired(t *testing.T) {
 // TestLoadValidation covers the fail-loud guards for negative rate limits and a
 // partial email-alert config (which would otherwise silently disable controls).
 func TestLoadValidation(t *testing.T) {
+	t.Run("radius needs a secret, a host:port and a known mode", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_RADIUS_ADDR", "radius.example")
+		t.Setenv("PAM_RADIUS_MODE", "both")
+		_, err := Load()
+		for _, want := range []string{"PAM_RADIUS_SECRET", "PAM_RADIUS_ADDR", "PAM_RADIUS_MODE"} {
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("Load() = %v, want %s error", err, want)
+			}
+		}
+		t.Setenv("PAM_RADIUS_ADDR", "radius.example:1812")
+		t.Setenv("PAM_RADIUS_SECRET", "s")
+		t.Setenv("PAM_RADIUS_MODE", "Second_Factor")
+		t.Setenv("PAM_RADIUS_ROLE", "")
+		cfg, err := Load()
+		if err != nil || cfg.RADIUSMode != "second_factor" || cfg.RADIUSRole != "user" || cfg.RADIUSNASIdentifier != "pamv1" {
+			t.Fatalf("Load() = %+v err %v", cfg, err)
+		}
+	})
 	t.Run("negative auth rate limit", func(t *testing.T) {
 		setRequired(t)
 		t.Setenv("PAM_AUTH_RATE_LIMIT", "-1")

@@ -661,9 +661,10 @@ func getenvInt(key string, def int) (int, error) {
 // LDAP and/or Microsoft Entra ID) into a single Authenticator (nil if none), and
 // returns the LDAP directory source (for identity reconciliation) when LDAP is
 // configured.
-func buildAuthenticator(cfg *config.Config, log *slog.Logger) (auth.Authenticator, auth.DirectorySource, error) {
+func buildAuthenticator(cfg *config.Config, log *slog.Logger) (auth.Authenticator, auth.DirectorySource, *auth.RADIUSAuthenticator, error) {
 	var sources []auth.Authenticator
 	var directory auth.DirectorySource
+	var radiusAuth *auth.RADIUSAuthenticator
 
 	if cfg.LDAPURL != "" {
 		ldapAuth, err := auth.NewLDAPAuthenticator(auth.LDAPConfig{
@@ -676,7 +677,7 @@ func buildAuthenticator(cfg *config.Config, log *slog.Logger) (auth.Authenticato
 			GroupRoleMap:       roleMap(cfg.LDAPGroupAdmin, cfg.LDAPGroupUser, cfg.LDAPGroupAuditor, cfg.LDAPGroupApprover),
 		})
 		if err != nil {
-			return nil, nil, fmt.Errorf("ldap: %w", err)
+			return nil, nil, nil, fmt.Errorf("ldap: %w", err)
 		}
 		sources = append(sources, ldapAuth)
 		directory = ldapAuth
@@ -693,13 +694,33 @@ func buildAuthenticator(cfg *config.Config, log *slog.Logger) (auth.Authenticato
 			RoleMap:       roleMap(cfg.EntraRoleAdmin, cfg.EntraRoleUser, cfg.EntraRoleAuditor, cfg.EntraRoleApprover),
 		})
 		if err != nil {
-			return nil, nil, fmt.Errorf("entra: %w", err)
+			return nil, nil, nil, fmt.Errorf("entra: %w", err)
 		}
 		sources = append(sources, entraAuth)
 		log.Info("entra id login enabled", "tenant", cfg.EntraTenantID)
 	}
 
-	return auth.NewChain(sources...), directory, nil
+	// RADIUS (Phase 269): in login mode it is the LAST source in the chain —
+	// a directory refusal falls through to it, and its Access-Challenge
+	// propagates (it is not ErrUnauthorized). In second-factor mode it stays
+	// out of the chain; the login handler consults it after the password.
+	if cfg.RADIUSAddr != "" {
+		var err error
+		radiusAuth, err = auth.NewRADIUSAuthenticator(auth.RADIUSConfig{
+			Addr: cfg.RADIUSAddr, Secret: cfg.RADIUSSecret, NASIdentifier: cfg.RADIUSNASIdentifier,
+			DefaultRole:  auth.Role(cfg.RADIUSRole),
+			ClassRoleMap: roleMap(cfg.RADIUSClassAdmin, cfg.RADIUSClassUser, cfg.RADIUSClassAuditor, cfg.RADIUSClassApprover),
+		})
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("radius: %w", err)
+		}
+		if cfg.RADIUSMode == "login" {
+			sources = append(sources, radiusAuth)
+		}
+		log.Info("radius enabled", "addr", cfg.RADIUSAddr, "mode", cfg.RADIUSMode)
+	}
+
+	return auth.NewChain(sources...), directory, radiusAuth, nil
 }
 
 // buildOIDC constructs the OIDC provider when PAM_OIDC_ISSUER is set, filling in
@@ -885,7 +906,7 @@ func run() error {
 	}
 	resolver.WithProfiles(st) // Phase 12: resolve custom permission profiles
 
-	authn, directory, err := buildAuthenticator(cfg, log)
+	authn, directory, radiusAuth, err := buildAuthenticator(cfg, log)
 	if err != nil {
 		return err
 	}
@@ -1168,7 +1189,7 @@ func run() error {
 		if err := applyStoredConfig(ctx, st, v, &c, log); err != nil {
 			return nil, err
 		}
-		an, dir, err := buildAuthenticator(&c, log)
+		an, dir, ra, err := buildAuthenticator(&c, log)
 		if err != nil {
 			return nil, err
 		}
@@ -1183,6 +1204,8 @@ func run() error {
 		return &api.RuntimeConfig{
 			Authn:              an,
 			Directory:          dir,
+			RADIUS:             ra,
+			RADIUSSecondFactor: c.RADIUSMode == "second_factor",
 			OIDC:               op,
 			OIDCRoleMap:        roleMap(c.OIDCRoleAdmin, c.OIDCRoleUser, c.OIDCRoleAuditor, c.OIDCRoleApprover),
 			SAML:               sp,
@@ -1357,6 +1380,8 @@ func run() error {
 		CheckoutMaxExtend:         cfg.CheckoutMaxExtend,
 		AllowedProtocols:          splitAndTrim(cfg.AllowedProtocols),
 		Directory:                 directory,
+		RADIUS:                    radiusAuth,
+		RADIUSSecondFactor:        cfg.RADIUSMode == "second_factor",
 		Reconfigure:               reconfigure,
 		AuditSignKey:              auditSignKey,
 		BrokerPolicy:              brokerPolicy,

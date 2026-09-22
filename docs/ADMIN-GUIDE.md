@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-09-22 · Reflects: Phases 0–227 and 229–268 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-09-22 · Reflects: Phases 0–227 and 229–269 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** PAMv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -2287,6 +2287,48 @@ a per-vendor SOC 2 / DORA record. Audit vocabulary: `vendor.create` ·
 
 *(The API is complete; a dedicated 5250 console screen is a documented
 follow-on — drive it from the REST API for now.)*
+
+### RADIUS login or second factor (optional, Phase 269)
+
+A **RADIUS** server (RFC 2865: FreeRADIUS, Microsoft NPS, a token vendor's
+gateway) can be an identity source in one of two ways, chosen by
+`PAM_RADIUS_MODE`:
+
+- **`login`** — RADIUS authenticates a username and password itself, behind
+  the directory: if LDAP/Entra refuse (or are not configured), the request
+  goes to RADIUS. An *Access-Accept* signs the user in with the roles its
+  `Class` attributes map to (`PAM_RADIUS_CLASS_ADMIN=…` etc.; several matched
+  values grant the union), or `PAM_RADIUS_ROLE` (default `user`) when none
+  matches. If the server answers *Access-Challenge* (it wants a one-time
+  code), the Sign On screen prompts for it and answers the challenge with the
+  server's own state; the password is not sent twice.
+- **`second_factor`** — the directory vouches for the password, RADIUS
+  vouches for the code: the login needs a one-time code, verified by the
+  server. This is how a hardware-token or push-MFA gateway becomes PAMv1's
+  second factor. In this mode RADIUS is the one second-factor authority for
+  password logins (a local TOTP or security-key enrolment is not consulted
+  for them), and a server that cannot be reached **fails closed** — the login
+  is refused with 503, never admitted without the factor.
+
+```bash
+PAM_RADIUS_ADDR=radius.example.com:1812
+PAM_RADIUS_SECRET=<shared secret>
+PAM_RADIUS_MODE=login                 # or second_factor
+PAM_RADIUS_ROLE=user                  # login mode: role when no Class matches
+PAM_RADIUS_CLASS_ADMIN=pam-admins     # login mode: Class attribute value → role
+PAM_RADIUS_NAS_ID=pamv1               # NAS-Identifier sent to the server
+```
+
+Every reply is verified under the shared secret (a datagram that fails the
+Response Authenticator is ignored, as if it never arrived), one request is
+retransmitted a bounded number of times under the same identifier, and the
+client speaks PAP only — the server (or the policy in front of it) must accept
+PAP. The SSH proxy is unaffected: it takes tokens, so a RADIUS user obtains one
+by logging in first, as with the directory. Audit: `login.challenge` when the
+server asks for a code; `login.failed reason:mfa source:radius` for a refused
+code; `login.failed reason:radius-unavailable` when the server is down in
+second-factor mode. Interop with a real RADIUS server is not verified in this
+repository's CI — the client is proven against an in-process server.
 
 ### Active Directory login (optional)
 
@@ -4909,6 +4951,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-22 | **Phase 269 (RADIUS).** §6 new subsection *RADIUS login or second factor*: the two modes, role mapping from `Class`, the challenge prompt, fail-closed on a down server, the env block. |
 | 2026-09-22 | **Phase 266 (Windows session probes).** §6 new subsection: `pam-agent` in probe mode inside an operator's RDP session — telemetry (menu 34; *Work with Active Sessions* → **8**), block rules (F10), End process (option 4), the same-permissions-as-the-user posture, setup as a logon-triggered task. `PAM_ENDPOINT_AGENTS_ENABLED` row: also enables probes. |
 | 2026-09-17 | **Phase 264 (the review of 250–262).** §Credential-level grants: operator certificates and management credentials are now credential-scoped too, and a scope refusal spends nothing. §9.4c: a kick reaches every connection of a share, an internal invitee's desktop key follows the user's standing, and suspend (§9.4d) now freezes a desktop — *Work with Active Sessions* → **7**. Retention prunes every recording kind. |
 | 2026-09-17 | **Phase 262 (image digests).** §3 Helm: pin by `image.digest` and where each release's digest is recorded; the `helm install` example passes `secret.create=true`, which the chart requires. |

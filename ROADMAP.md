@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–268 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–269 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,61 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 269 — RADIUS authentication (Tier 10, row 1) ✅
+
+*The WALLIX training-material pass (README Tier 10) opens here: "check
+against this Wallix repo to see if something can be included", then "yes,
+please, and go on" on the ranked list. Row 1: RADIUS as a first or second
+factor — an open Tier 8 row that the course material finally gave a contract
+for (PAP over RFC 2865, `State` for the challenge, `NAS-Identifier`).*
+
+- [x] **A sixth hand-rolled protocol client.** `internal/radius`: an
+  Access-Request with a random Request Authenticator and the RFC's own
+  password hiding, User-Name, NAS-Identifier and — when answering a
+  challenge — State; the reply's Response Authenticator recomputed under the
+  shared secret and compared in constant time, a datagram that fails it
+  ignored as if it never arrived (that is the whole defence against a party
+  on the path answering "accept"); one identifier retransmitted a bounded
+  number of times, so a de-duplicating server sees one request; Accept,
+  Reject and Challenge decoded with `Class`, `State` and `Reply-Message`.
+  PAP only, no accounting, no EAP — the parts an authenticator needs.
+- [x] **Two modes, one deployment choice.** `PAM_RADIUS_MODE=login` puts the
+  server LAST in the identity chain: a directory refusal falls through, an
+  Accept signs the user in with the union of the roles its `Class` values map
+  to (or `PAM_RADIUS_ROLE`), and a Challenge is not a refusal but
+  `*auth.ChallengeError` — `POST /api/login` answers `mfa_required` with
+  `radius_state`, the sign-on screen prompts for the code, and the second
+  post carries the code and the state, never the password again.
+  `second_factor` keeps the server out of the chain: the directory vouches
+  for the password, the server for the code, only an Accept is a yes, and a
+  server that cannot be reached is a `503` and `login.failed
+  reason:radius-unavailable` — a second factor fails closed. In that mode
+  RADIUS is the one second-factor authority for password logins, ahead of a
+  local TOTP or security-key enrolment, and the docs say so.
+- [x] **Hot-swappable like the directories.** `buildAuthenticator` builds it
+  and `api.RuntimeConfig` carries it, so `PUT /api/config` can turn it on or
+  change the mode without a restart, as for LDAP and Entra.
+- [x] **Proven against the protocol, not a mock of itself.**
+  `internal/radius/radiustest` is a real in-process RADIUS server: it recovers
+  the PAP password under the shared secret (so the test policy sees plaintext
+  only if the client hid it correctly) and signs its answers. The client is
+  proven for accept, reject, the challenge round trip, a forged state, a
+  reply signed with the wrong secret (ignored, then `ErrTimeout` after the
+  retransmission) and a dropped request; the adapter for role union, default
+  role, `Continue`, `SecondFactor` (a challenge is not a yes), the chain and
+  a down server; the API for both modes end to end with their audit rows.
+  **Not proven here**: interop with a real FreeRADIUS/NPS/token gateway —
+  recorded in EXTERNAL-INFRA-GAPS §1, the same posture as LDAP.
+- [x] **Living docs**: low-level §1/§2.3/§4/§5/§7/§8, high-level, ADMIN-GUIDE
+  §6, USER-GUIDE §3, CODE-GUIDE, PORTS-AND-FLOWS (E17, the table's first UDP
+  egress), README Tier 8 row closed and **Tier 10** opened with the full
+  ranked list from the pass.
+
+Deliberately not done: TACACS+ (a different protocol with its own body
+obfuscation; the Tier 10 row keeps it open), RADIUS accounting, EAP, and the
+SSH proxy taking RADIUS directly — it takes tokens, so a RADIUS user logs in
+first, exactly as a directory user does.
 
 ## Phase 268 — v0.0.77 ✅
 

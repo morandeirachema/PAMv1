@@ -556,20 +556,33 @@ func TestBuildAlerter(t *testing.T) {
 // fail-loud, and LDAP doubles as the directory source for reconciliation.
 func TestBuildAuthenticator(t *testing.T) {
 	log := discardLogger()
+	t.Run("radius login mode joins the chain; second-factor mode does not", func(t *testing.T) {
+		authn, _, ra, err := buildAuthenticator(&config.Config{RADIUSAddr: "127.0.0.1:1812", RADIUSSecret: "s", RADIUSMode: "login", RADIUSRole: "user"}, log)
+		if err != nil || ra == nil || authn == nil {
+			t.Fatalf("login mode: authn=%v ra=%v err=%v", authn, ra, err)
+		}
+		authn, _, ra, err = buildAuthenticator(&config.Config{RADIUSAddr: "127.0.0.1:1812", RADIUSSecret: "s", RADIUSMode: "second_factor", RADIUSRole: "user"}, log)
+		if err != nil || ra == nil || authn != nil {
+			t.Fatalf("second-factor mode must not be a login source: authn=%v ra=%v err=%v", authn, ra, err)
+		}
+		if _, _, _, err := buildAuthenticator(&config.Config{RADIUSAddr: "127.0.0.1:1812", RADIUSMode: "login", RADIUSRole: "user"}, log); err == nil {
+			t.Fatal("missing secret accepted")
+		}
+	})
 	t.Run("none", func(t *testing.T) {
-		authn, dir, err := buildAuthenticator(&config.Config{}, log)
-		if authn != nil || dir != nil || err != nil {
+		authn, dir, ra, err := buildAuthenticator(&config.Config{}, log)
+		if authn != nil || dir != nil || ra != nil || err != nil {
 			t.Fatalf("want all nil, got %v %v %v", authn, dir, err)
 		}
 	})
 	t.Run("ldap requires ldaps", func(t *testing.T) {
-		_, _, err := buildAuthenticator(&config.Config{LDAPURL: "ldap://dc.example"}, log)
+		_, _, _, err := buildAuthenticator(&config.Config{LDAPURL: "ldap://dc.example"}, log)
 		if err == nil || !strings.Contains(err.Error(), "ldap") {
 			t.Fatalf("plaintext LDAP accepted: %v", err)
 		}
 	})
 	t.Run("entra incomplete", func(t *testing.T) {
-		_, _, err := buildAuthenticator(&config.Config{EntraTenantID: "tenant"}, log)
+		_, _, _, err := buildAuthenticator(&config.Config{EntraTenantID: "tenant"}, log)
 		if err == nil || !strings.Contains(err.Error(), "entra") {
 			t.Fatalf("tenant without client id accepted: %v", err)
 		}
@@ -579,7 +592,7 @@ func TestBuildAuthenticator(t *testing.T) {
 			LDAPURL: "ldaps://dc.example", LDAPBaseDN: "dc=example,dc=org", LDAPGroupAdmin: "cn=admins",
 			EntraTenantID: "tenant", EntraClientID: "client", EntraClientSecret: "secret", EntraRoleAdmin: "pam-admins",
 		}
-		authn, dir, err := buildAuthenticator(cfg, log)
+		authn, dir, _, err := buildAuthenticator(cfg, log)
 		if err != nil {
 			t.Fatalf("valid config rejected: %v", err)
 		}
