@@ -560,6 +560,7 @@ erDiagram
     string RDPClipboardAudit
     string Labels
     string ApprovalTiers
+    string Rights
     time_Time CreatedAt
   }
   TargetGrant {
@@ -573,6 +574,7 @@ erDiagram
     string TimeFrame
     arr_string Permissions
     string Effect
+    string Rights
   }
   User {
     int64 ID

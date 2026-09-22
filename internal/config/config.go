@@ -630,6 +630,16 @@ type Config struct {
 	// privileged desktop's clipboard routinely carries a password an operator
 	// just copied, and the audit trail is readable by every auditor.
 	RDPClipboardAudit string
+	// RDPDrive / RDPPrinter / RDPAudio / RDPAudioIn are the deployment
+	// ceilings for the RDP redirections (Phase 270): a target or grant may
+	// list the matching right, but a redirection disabled here stays
+	// disabled everywhere. Drive and printer default off (a file leaving
+	// through a redirected drive leaves no record; SFTP is the audited
+	// path), audio output on, audio input off.
+	RDPDrive   bool
+	RDPPrinter bool
+	RDPAudio   bool
+	RDPAudioIn bool
 
 	// KEKProvider selects the vault Key Encryption Key backend:
 	// "local" (default, dev/test — uses MasterKey) or "vault-transit".
@@ -879,6 +889,10 @@ func Load() (*Config, error) {
 		SessionIdleTimeout:      time.Duration(integer("PAM_SESSION_IDLE_MIN", 0)) * time.Minute,
 		EncryptRecordings:       boolean("PAM_RECORDING_ENCRYPT", false),
 		OpaqueRecordingNames:    boolean("PAM_RECORDING_OPAQUE_NAMES", false),
+		RDPDrive:                boolean("PAM_RDP_DRIVE", false),
+		RDPPrinter:              boolean("PAM_RDP_PRINTER", false),
+		RDPAudio:                boolean("PAM_RDP_AUDIO", true),
+		RDPAudioIn:              boolean("PAM_RDP_AUDIO_IN", false),
 		RDPClipboardAudit:       strings.ToLower(getenv("PAM_RDP_CLIPBOARD_AUDIT", "off")),
 		MaxRecordingMB:          integer("PAM_MAX_RECORDING_MB", 0),
 		RecordingRetentionDays:  integer("PAM_RECORDING_RETENTION_DAYS", 0),

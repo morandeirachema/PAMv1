@@ -121,8 +121,13 @@ type Target struct {
 	// ApprovalTiers is an ordered approval chain for this target (Phase 256,
 	// "manager; approver:2; admin" — see approvaltiers.go); empty inherits the
 	// safe's chain, and an empty chain everywhere is the untiered N-of-M count.
-	ApprovalTiers string    `json:"approval_tiers,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
+	ApprovalTiers string `json:"approval_tiers,omitempty"`
+	// Rights is the target's sub-protocol allow-set in canonical form (Phase
+	// 270, see rights.go): which of shell/exec/sftp/forward/X11 (SSH) and
+	// drive/printer/audio (RDP) a session here may use. Empty is no narrowing
+	// — the deployment's switches apply as before.
+	Rights    string    `json:"rights,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Campaign is an access-certification (attestation) campaign: a point-in-time
@@ -490,6 +495,12 @@ type TargetGrant struct {
 	// A live deny row matching the caller refuses the target outright, ahead
 	// of the admin bypass — see auth.CanAccessTargetAt.
 	Effect string `json:"effect,omitempty"`
+	// Rights narrows the target's sub-protocol set for this grant's subject
+	// (Phase 270): a session admitted by this grant may use only these, and
+	// the sets of several admitting grants add up. Empty is the target's own
+	// set. Only a direct target grant carries one; a folded safe membership
+	// or label rule has none.
+	Rights string `json:"rights,omitempty"`
 }
 
 // IsDeny reports whether the grant refuses rather than admits.

@@ -1018,7 +1018,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 				defer wg.Done()
 				defer live.Add(-1)
 				defer recoverPanicLog(p.log, "session")
-				p.handleSession(ctx, nc, upstream, target, cred, actor, observe, principal.BreakGlass, sid)
+				p.handleSession(ctx, nc, upstream, target, cred, actor, observe, principal.BreakGlass, sid, res.rights)
 			}(nc)
 		case "direct-tcpip":
 			if live.Load() >= maxChannelsPerConn {
@@ -1032,6 +1032,11 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 			switch {
 			case !p.portForward:
 				nc.Reject(ssh.Prohibited, "PAMv1: port forwarding is disabled by policy")
+			case !store.RightsAllow(res.rights, store.RightSSHForward):
+				// Phase 270: the target or the admitting grant left this
+				// session without the forwarding right.
+				p.audit(ctx, actor, "session.right_denied", fmt.Sprintf("target:%s cred_user:%s right:%s", target.Name, cred.Username, store.RightSSHForward))
+				nc.Reject(ssh.Prohibited, "PAMv1: port forwarding is not granted for this target")
 			case observe:
 				nc.Reject(ssh.Prohibited, "PAMv1: port forwarding is not available in an observer session")
 			case p.requireSup:
@@ -1316,7 +1321,7 @@ func (j *jumpConn) Close() error {
 // channel, forwarding channel requests and stdin/stdout/stderr both directions
 // and tee'ing the target's output into an asciicast recording. On close the
 // recording's SHA-256 and its position in the tamper-evident chain are audited.
-func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *ssh.Client, target *store.Target, cred *store.Credential, actor string, observe, breakGlass bool, sid string) {
+func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *ssh.Client, target *store.Target, cred *store.Credential, actor string, observe, breakGlass bool, sid string, rights string) {
 	clientChan, clientReqs, err := nc.Accept()
 	if err != nil {
 		return
@@ -1377,7 +1382,31 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	// Capture a non-interactive `ssh <target> "<cmd>"` into the recording + audit:
 	// the command rides the exec request payload, not the tee'd channel data, so
 	// without this it would appear in neither the .cast nor the audit trail.
+	// denyRight refuses a request the session's sub-protocol set (Phase 270)
+	// does not include, audited with the right's name; the operator sees why.
+	denyRight := func(right string) bool {
+		if store.RightsAllow(rights, right) {
+			return false
+		}
+		if rec != nil {
+			_, _ = io.WriteString(rec, "pamv1: "+right+" is not granted for this target\r\n")
+		}
+		p.audit(ctx, actor, "session.right_denied", fmt.Sprintf("target:%s cred_user:%s right:%s", target.Name, cred.Username, right))
+		return true
+	}
+	onRequest := func(reqType string) bool {
+		switch reqType {
+		case "shell":
+			return !denyRight(store.RightSSHShell)
+		case "x11-req":
+			return !denyRight(store.RightSSHX11)
+		}
+		return true
+	}
 	onExec := func(payload []byte) bool {
+		if denyRight(store.RightSSHExec) {
+			return false
+		}
 		var m struct{ Command string }
 		_ = ssh.Unmarshal(payload, &m)
 		pat, blocked := p.guard.Blocked(m.Command)
@@ -1424,6 +1453,14 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	onSubsystem := func(payload []byte) bool {
 		var m struct{ Name string }
 		_ = ssh.Unmarshal(payload, &m)
+		if right := store.RightSSHSFTP; m.Name != "sftp" {
+			right = store.RightSSHExec
+			if denyRight(right) {
+				return false
+			}
+		} else if denyRight(right) {
+			return false
+		}
 		if m.Name != "sftp" {
 			if p.sftpMode == SFTPDeny {
 				p.audit(ctx, actor, "sftp.denied", fmt.Sprintf("target:%s cred_user:%s subsystem:%s", target.Name, cred.Username, auditValue(m.Name, 64)))
@@ -1451,7 +1488,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		if observe {
 			pumpRequestsObserver(clientReqs, upChan, clientReqDone)
 		} else {
-			pumpRequests(clientReqs, upChan, clientReqDone, reqHooks{onExec: onExec, onSubsystem: onSubsystem})
+			pumpRequests(clientReqs, upChan, clientReqDone, reqHooks{onExec: onExec, onSubsystem: onSubsystem, onRequest: onRequest})
 		}
 	}()
 	var upReqDone sync.WaitGroup
@@ -2234,6 +2271,9 @@ func crlf(s string) string {
 type reqHooks struct {
 	onExec      func(payload []byte) bool // "exec" (a discrete `ssh target "cmd"`)
 	onSubsystem func(payload []byte) bool // "subsystem" (notably sftp)
+	// onRequest sees every request type before the specific hooks (Phase
+	// 270): the sub-protocol rights gate for "shell" and "x11-req".
+	onRequest func(reqType string) bool
 }
 
 // pumpRequests forwards SSH channel requests from in to dst, relaying replies,
@@ -2259,6 +2299,12 @@ func pumpRequests(in <-chan *ssh.Request, dst ssh.Channel, done <-chan struct{},
 			}
 			// A hook captures the request and reports whether to forward it; one
 			// refused by policy is not sent upstream (reply false).
+			if h.onRequest != nil && !h.onRequest(req.Type) {
+				if req.WantReply {
+					req.Reply(false, nil)
+				}
+				continue
+			}
 			if h.onExec != nil && req.Type == "exec" && !h.onExec(req.Payload) {
 				if req.WantReply {
 					req.Reply(false, nil)

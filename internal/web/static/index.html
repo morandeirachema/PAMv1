@@ -1783,7 +1783,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           const f = Object.fromEntries(new FormData(ev.target));
           const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked,
             require_session_mfa: ev.target.require_session_mfa.checked,
-            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit, labels: parseLabels(f.labels), approval_tiers: f.approval_tiers || "" };
+            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit, labels: parseLabels(f.labels), approval_tiers: f.approval_tiers || "", rights: (f.rights || "").trim() };
           try { await api("POST", "/api/targets", body); say(`TARGET ${String(f.name).toUpperCase()} ADDED.`); await openTargets(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
@@ -1820,7 +1820,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           const f = Object.fromEntries(new FormData(ev.target));
           const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked,
             require_session_mfa: ev.target.require_session_mfa.checked,
-            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit, labels: parseLabels(f.labels), approval_tiers: f.approval_tiers || "" };
+            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit, labels: parseLabels(f.labels), approval_tiers: f.approval_tiers || "", rights: (f.rights || "").trim() };
           try { await api("PUT", `/api/targets/${t.id}`, body); say(`TARGET ${String(f.name).toUpperCase()} CHANGED.`); await openTargets(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
@@ -1923,6 +1923,7 @@ Grant access to target <span class="white">${esc(targetName(grantsTarget))}</spa
 <label>Credential  . . . . :  <select name="credential_id"><option value="">(whole target)</option>${grantCreds.map((c) => `<option value="${esc(c.id)}">${esc(c.username)}</option>`).join("")}</select>   <span class="cyan">scope to ONE credential (Phase 252); other credentials stay refused</span></label>
 <label>Expires . . . . . . :  <input name="expires_at" type="datetime-local" size="20">   <span class="cyan">blank = no end date (local time)</span></label>
 <label>Time frame  . . . . :  <input name="time_frame" size="36" placeholder="Mon-Fri 08:00-18:00 Europe/Madrid">   <span class="cyan">blank = any time</span></label>
+<label>Rights  . . . . . . :  <input name="rights" size="36" placeholder="ssh_shell,ssh_sftp">   <span class="cyan">narrow the target's sub-protocols for this subject; blank = the target's set</span></label>
 <input type="submit" hidden>
 </form>
 ${fkeys("F3=Exit   F12=Cancel")}`;
@@ -1931,6 +1932,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           const f = Object.fromEntries(new FormData(ev.target));
           const body = grantLifetime({ subject_type: f.subject_type, subject: f.subject }, f);
           if (f.credential_id) body.credential_id = Number(f.credential_id);
+          if (f.rights && f.rights.trim()) body.rights = f.rights.trim();
           try { await api("POST", `/api/targets/${grantsTarget}/grants`, body); say("GRANT ADDED."); await openGrants(grantsTarget); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
