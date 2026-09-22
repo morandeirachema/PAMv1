@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -116,6 +117,27 @@ func (w *windowsPlatform) Connections(ctx context.Context) ([]Connection, error)
 		out = append(out, c)
 	}
 	return out, nil
+}
+
+var (
+	user32          = windows.NewLazySystemDLL("user32.dll")
+	procGetWindowTW = user32.NewProc("GetWindowTextW")
+)
+
+// Foreground names the session's foreground window: its owning PID (via
+// GetWindowThreadProcessId) and title (GetWindowTextW). A desktop with no
+// foreground window, or a title that cannot be read, reports false.
+func (w *windowsPlatform) Foreground() (Window, bool) {
+	h := windows.GetForegroundWindow()
+	if h == 0 {
+		return Window{}, false
+	}
+	var pid uint32
+	windows.GetWindowThreadProcessId(h, &pid)
+	buf := make([]uint16, 512)
+	n, _, _ := procGetWindowTW.Call(uintptr(h), uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+	title := windows.UTF16ToString(buf[:n])
+	return Window{PID: pid, Title: Clean(title, 256)}, true
 }
 
 // Kill ends pid with the probe's own token.

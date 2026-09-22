@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-09-22 · Reflects: Phases 0–227 and 229–270 + the 2026-07 hardening passes.
+> Last updated: 2026-09-22 · Reflects: Phases 0–227 and 229–271 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -1227,6 +1227,7 @@ phase-by-phase status.
 | Date | Change |
 |---|---|
 | 2026-09-16 | Phase 248 (the review of 240–247): `store.SafePermissionsCover` + `SafePermissionOrder` beside `GrantPermits`, and a single-pass `ParseSafePermissions`; `api.safeManagement` replacing `canManageSafe` where the caller's own permission set matters (`canManageSafe` stays as its boolean wrapper), the `Covers` guard in `api.rotateUserToken`, `api.operatorInput` in the viewer bridge, `api.grantDeadline` deleted (the tunnel uses the grants it was admitted under); `auth.ReasonSessionMFAExtension`; `session.entry.swept`; `pgstore.SweepExpiredGrants` on one transaction; `timeframe.Frame.End` building wall-clock edges. |
+| 2026-09-22 | Phase 271 (probe metadata): `probe.Artifact`/`Artifacts`/`Hub.Artifacts`, `Event.IsMetadata`, `ForegroundReporter`, `Window`, `Rule.Action`, `EventRuleNotified`/`EventProcessStarted`/`EventProcessEnded`/`EventForegroundWindow`; `proxy/probeartifact.go` (`probeArtifacts`, `probeArtifact`); `recording.SearchLines`; `store.ProbeActionKill`/`ProbeActionNotify`. |
 | 2026-09-22 | Phase 270 (sub-protocol rights): `store/rights.go` (`NormalizeRights`, `ParseRights`, `RightsAllow`, `AllRights`), `auth/rights.go` (`EffectiveRights`), `admitResult.rights`, `reqHooks.onRequest`, `handleSession(…, rights)`, `rdpRedirections`/`rdpRedirectionParams`, `rightsDetail`; `api.Options.RDPDrive/RDPPrinter/RDPAudio/RDPAudioIn`. |
 | 2026-09-22 | Phase 269 (RADIUS): `internal/radius` (`Client.Authenticate`, `hidePassword`, `decodeResponse`; `radiustest.Server`/`Unhide`), `auth.RADIUSAuthenticator` (`Authenticate`/`Continue`/`SecondFactor`, `ChallengeError`, `highestRole`), `buildAuthenticator` now returns the RADIUS authenticator too, `api.RuntimeConfig.RADIUS`/`RADIUSSecondFactor`, `loginIn.RADIUSState`. |
 | 2026-09-22 | Phase 267 (documentation currency pass): no code; §3.3 package map and §5.3 gain Phase 266's probe; `internal/releasedocs` gains `TestDocHeadersAgree` (every `Reflects:` header, both READMEs' ranges and `docs/README.md`'s release token must agree with ROADMAP and CHANGELOG). |

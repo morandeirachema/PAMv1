@@ -79,12 +79,25 @@ const (
 	TypeCommand  = "command"
 )
 
-// Event kinds.
+// Event kinds. The first four are enforcement outcomes and become audit
+// rows; the last four (Phase 271) are session METADATA — what happened in
+// the session — written to the probe artifact beside the recording, and
+// audited only for a rule match.
 const (
 	EventProcessKilled     = "process_killed"     // a process rule matched and the process was ended
 	EventConnectionBlocked = "connection_blocked" // a connection rule matched and the owning process was ended
 	EventKillFailed        = "kill_failed"        // a rule or command matched but the process could not be ended
 	EventCommandKilled     = "command_killed"     // a server command ended the process
+	EventRuleNotified      = "rule_notified"      // a notify rule matched; the process was left running (Phase 271)
+	EventProcessStarted    = "process_started"    // a process appeared in the session since the last scan (Phase 271)
+	EventProcessEnded      = "process_ended"      // a process left the session since the last scan (Phase 271)
+	EventForegroundWindow  = "foreground_window"  // the foreground window changed (Phase 271)
+)
+
+// Rule actions (Phase 271). A rule with no action kills.
+const (
+	ActionKill   = "kill"
+	ActionNotify = "notify"
 )
 
 // Command operations.
@@ -139,6 +152,7 @@ type Snapshot struct {
 	Taken       time.Time    `json:"taken"`
 	Processes   []Process    `json:"processes"`
 	Connections []Connection `json:"connections"`
+	Foreground  *Window      `json:"foreground,omitempty"`
 	Truncated   bool         `json:"truncated,omitempty"`
 	Errors      []string     `json:"errors,omitempty"`
 }
@@ -151,6 +165,14 @@ type Rule struct {
 	Match string `json:"match,omitempty"`
 	Port  int    `json:"port,omitempty"`
 	Proto string `json:"proto,omitempty"`
+	// Action is ActionKill (default) or ActionNotify (Phase 271).
+	Action string `json:"action,omitempty"`
+}
+
+// Window is the foreground window of the session at scan time (Phase 271).
+type Window struct {
+	PID   uint32 `json:"pid"`
+	Title string `json:"title"`
 }
 
 // Policy is the full rule set for one probe; each push replaces the last.
@@ -174,14 +196,28 @@ type Result struct {
 
 // Event is one enforcement outcome, reported as it happens.
 type Event struct {
-	Kind      string `json:"kind"`
-	PID       uint32 `json:"pid"`
-	Name      string `json:"name,omitempty"`
-	Path      string `json:"path,omitempty"`
-	Remote    string `json:"remote,omitempty"` // "addr:port/proto" for a connection event
-	RuleID    int64  `json:"rule_id,omitempty"`
-	CommandID int64  `json:"command_id,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Kind        string    `json:"kind"`
+	At          time.Time `json:"at,omitempty"`
+	PID         uint32    `json:"pid"`
+	PPID        uint32    `json:"ppid,omitempty"`
+	Name        string    `json:"name,omitempty"`
+	Path        string    `json:"path,omitempty"`
+	CommandLine string    `json:"command_line,omitempty"` // process_started only
+	Title       string    `json:"title,omitempty"`        // foreground_window only
+	Remote      string    `json:"remote,omitempty"`       // "addr:port/proto" for a connection event
+	RuleID      int64     `json:"rule_id,omitempty"`
+	CommandID   int64     `json:"command_id,omitempty"`
+	Error       string    `json:"error,omitempty"`
+}
+
+// IsMetadata reports whether the event is session metadata (written to the
+// artifact, not audited) rather than an enforcement outcome.
+func (e Event) IsMetadata() bool {
+	switch e.Kind {
+	case EventProcessStarted, EventProcessEnded, EventForegroundWindow:
+		return true
+	}
+	return false
 }
 
 // Message is one JSON line in either direction; Type says which field is set.
@@ -199,6 +235,11 @@ type Message struct {
 // address (IP or CIDR) or a port — a protocol alone would block the whole
 // session's traffic, which is a kill switch, not a rule.
 func (r Rule) Validate() error {
+	switch r.Action {
+	case "", ActionKill, ActionNotify:
+	default:
+		return fmt.Errorf(`action must be %q or %q`, ActionKill, ActionNotify)
+	}
 	switch r.Kind {
 	case RuleProcess:
 		if strings.TrimSpace(r.Match) == "" {

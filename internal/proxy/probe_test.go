@@ -77,7 +77,7 @@ func policyFromStore(st store.Store) probe.PolicySource {
 		var rules []probe.Rule
 		for _, r := range all {
 			if r.TargetID == 0 || r.TargetID == targetID {
-				rules = append(rules, probe.Rule{ID: r.ID, Kind: r.Kind, Match: r.Match, Port: r.Port, Proto: r.Proto})
+				rules = append(rules, probe.Rule{ID: r.ID, Kind: r.Kind, Match: r.Match, Port: r.Port, Proto: r.Proto, Action: r.Action})
 			}
 		}
 		return rules, nil

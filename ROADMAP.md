@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–270 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–271 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,59 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 271 — Probe metadata as a session artifact, and notify rules (Tier 10, row 3) ✅
+
+*Tier 10's third row, the natural follow-on to 266. WALLIX's Session Probe
+does not only block: it emits process start/stop, the foreground window's
+title and (masked) keystrokes as metadata beside the video, searchable, and
+its rules can `notify` as well as `kill`. PAMv1's probe sent snapshots and
+enforcement events, and its rules could only end a process.*
+
+- [x] **What changed, not what is.** Between scans the agent now diffs its
+  process table and reports `process_started` (with the command line, the
+  one field a snapshot of a process that lived for two seconds never
+  showed) and `process_ended`, and reports the foreground window — title
+  and owning PID — whenever it changes, through an optional
+  `ForegroundReporter` the Windows platform implements with
+  `GetForegroundWindow`, `GetWindowThreadProcessId` and `user32!GetWindowTextW`.
+  The first scan is a baseline and reports nothing: a session already
+  running a hundred processes did not just start them.
+- [x] **Metadata is an artifact, not an audit row.** A busy desktop starts
+  hundreds of processes; the audit trail is for decisions. The hub writes
+  EVERY event — metadata and enforcement alike — as one JSON line to a
+  `probe.Artifact` the proxy opens per probe session: a `.probe.log` beside
+  the recordings, sealed under the recording key when recordings are,
+  hashed over the bytes on disk, appended to the recording hash chain and
+  audited `probe.record file: bytes: sha256: chain:` at disconnect — the
+  same standing as the `.cast` or `.guac` it accompanies. A probe whose
+  artifact cannot be opened is refused, for the same reason a session that
+  cannot be recorded is when recording is required. The file lists as kind
+  `probe`, plays back as text, and the content search covers it
+  (`recording.SearchLines`, honest about its bound), so "which session ran
+  psexec" is one query across terminals and desktops.
+- [x] **Notify.** `probe_rules.action` (migration `0063`): `kill` is every
+  rule before this phase; `notify` reports the match — `probe.rule_notified`,
+  an OCSF finding, and an artifact line — and leaves the process running.
+  Once per process per scan, so a long-running match is one row per scan,
+  not one per rule.
+- [x] **Deliberately not captured: keystrokes.** WALLIX's probe logs
+  `KBD_INPUT` with password masking classified by the probe. A PAMv1 probe
+  runs as the operator, in the operator's session, readable by the operator:
+  a keystroke log there is a keylogger the subject can open, and its
+  masking would rest on the probe's own guess of which field is a password.
+  The desktop recording already shows what was typed where it mattered;
+  the Tier 10 row says so.
+- [x] **Proven** with the real agent loop against the real hub and an
+  in-memory artifact (notify audits and writes but kills nothing; a start,
+  a foreground change and an end reach the artifact and never the audit
+  trail; the snapshot names the window; disconnect closes and audits;
+  every line is JSON; an unopenable artifact refuses the probe), the line
+  search, and the API (actions, `.probe.log` listed as `probe`, played and
+  searched). The Windows foreground calls compile and vet under
+  `GOOS=windows`; as with 266, no Windows host runs them here.
+- [x] **Living docs**: low-level §2.5/§5/§7/§8, high-level, ADMIN-GUIDE §6,
+  USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE (`0063`), README Tier 10 row.
 
 ## Phase 270 — Per-target and per-grant sub-protocol rights (Tier 10, row 2) ✅
 

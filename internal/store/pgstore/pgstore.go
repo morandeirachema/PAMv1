@@ -2452,10 +2452,13 @@ func (s *PGStore) CreateProbeRule(ctx context.Context, r *store.ProbeRule) error
 	if r.TargetID != 0 {
 		target = &r.TargetID
 	}
+	if r.Action == "" {
+		r.Action = store.ProbeActionKill
+	}
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO probe_rules (target_id, kind, match, port, proto, note, created_by)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
-		target, r.Kind, r.Match, r.Port, r.Proto, r.Note, r.CreatedBy,
+		`INSERT INTO probe_rules (target_id, kind, match, port, proto, action, note, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at`,
+		target, r.Kind, r.Match, r.Port, r.Proto, r.Action, r.Note, r.CreatedBy,
 	).Scan(&r.ID, &r.CreatedAt)
 	if pgCode(err) == pgForeignKeyViolation {
 		return store.ErrNotFound
@@ -2466,7 +2469,7 @@ func (s *PGStore) CreateProbeRule(ctx context.Context, r *store.ProbeRule) error
 // ListProbeRules returns every probe block rule ordered by ID.
 func (s *PGStore) ListProbeRules(ctx context.Context) ([]store.ProbeRule, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, target_id, kind, match, port, proto, note, created_by, created_at
+		`SELECT id, target_id, kind, match, port, proto, action, note, created_by, created_at
 		 FROM probe_rules ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -3378,7 +3381,7 @@ func scanEndpointAgent(row pgx.CollectableRow) (store.EndpointAgent, error) {
 func scanProbeRule(row pgx.CollectableRow) (store.ProbeRule, error) {
 	var r store.ProbeRule
 	var target *int64
-	err := row.Scan(&r.ID, &target, &r.Kind, &r.Match, &r.Port, &r.Proto, &r.Note, &r.CreatedBy, &r.CreatedAt)
+	err := row.Scan(&r.ID, &target, &r.Kind, &r.Match, &r.Port, &r.Proto, &r.Action, &r.Note, &r.CreatedBy, &r.CreatedAt)
 	if target != nil {
 		r.TargetID = *target
 	}

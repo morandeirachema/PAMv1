@@ -66,7 +66,7 @@ func TestProbesAPI(t *testing.T) {
 		var rules []probe.Rule
 		for _, r := range all {
 			if r.TargetID == 0 || r.TargetID == targetID {
-				rules = append(rules, probe.Rule{ID: r.ID, Kind: r.Kind, Match: r.Match, Port: r.Port, Proto: r.Proto})
+				rules = append(rules, probe.Rule{ID: r.ID, Kind: r.Kind, Match: r.Match, Port: r.Port, Proto: r.Proto, Action: r.Action})
 			}
 		}
 		return rules, nil
@@ -227,7 +227,7 @@ func TestProbesAPI(t *testing.T) {
 			seen[e.Action+"|"+e.Detail] = true
 		}
 	}
-	want := []string{"probe.rule_create|rule:" + itoa64(procRule.ID) + ` target:win-01 kind:process match:"PSEXEC*" port:0 proto:`, "probe.kill|probe:" + itoa64(key) + " agent:" + itoa64(created.ID) + ` target:win-01 user:"CORP\\alice" session:5 pid:100`}
+	want := []string{"probe.rule_create|rule:" + itoa64(procRule.ID) + ` target:win-01 kind:process match:"PSEXEC*" port:0 proto: action:kill`, "probe.kill|probe:" + itoa64(key) + " agent:" + itoa64(created.ID) + ` target:win-01 user:"CORP\\alice" session:5 pid:100`}
 	for _, w := range want {
 		if !seen[w] {
 			t.Fatalf("missing audit %q in %v", w, seen)

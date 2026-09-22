@@ -450,6 +450,7 @@ erDiagram
     string Match
     int Port
     string Proto
+    string Action
     string Note
     string CreatedBy
     time_Time CreatedAt

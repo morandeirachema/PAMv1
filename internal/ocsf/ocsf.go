@@ -108,6 +108,7 @@ var findingExact = map[string]bool{
 	"probe.command_killed":     true,
 	"probe.kill_failed":        true,
 	"probe.kill_refused":       true,
+	"probe.rule_notified":      true, // Phase 271: a notify rule matched — the row a detection rule wants
 }
 
 // isFinding reports whether an action maps to a Detection Finding.

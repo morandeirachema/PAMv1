@@ -3044,6 +3044,9 @@ func (m *Memstore) CreateProbeRule(_ context.Context, r *store.ProbeRule) error 
 			return store.ErrNotFound
 		}
 	}
+	if r.Action == "" {
+		r.Action = store.ProbeActionKill
+	}
 	r.ID = m.id()
 	r.CreatedAt = time.Now().UTC()
 	m.probeRules[r.ID] = *r

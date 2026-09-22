@@ -942,6 +942,12 @@ const (
 	ProbeRuleConnection = "connection"
 )
 
+// The two ProbeRule actions (Phase 271).
+const (
+	ProbeActionKill   = "kill"
+	ProbeActionNotify = "notify"
+)
+
 // ProbeRule is one block rule a session probe (Phase 266) enforces inside an
 // operator's logon session on a target — the Windows-desktop counterpart of
 // the command denylist, and like it NOT a containment boundary: the probe
@@ -957,12 +963,16 @@ const (
 // matching connection is terminated. TargetID scopes the rule to one target;
 // 0 applies it to every probed target.
 type ProbeRule struct {
-	ID        int64     `json:"id"`
-	TargetID  int64     `json:"target_id"`
-	Kind      string    `json:"kind"`
-	Match     string    `json:"match"`
-	Port      int       `json:"port,omitempty"`
-	Proto     string    `json:"proto,omitempty"`
+	ID       int64  `json:"id"`
+	TargetID int64  `json:"target_id"`
+	Kind     string `json:"kind"`
+	Match    string `json:"match"`
+	Port     int    `json:"port,omitempty"`
+	Proto    string `json:"proto,omitempty"`
+	// Action is ProbeActionKill (end the matching process — every rule
+	// before Phase 271) or ProbeActionNotify (report the match as an audited
+	// event and leave the process running).
+	Action    string    `json:"action"`
 	Note      string    `json:"note,omitempty"`
 	CreatedBy string    `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
