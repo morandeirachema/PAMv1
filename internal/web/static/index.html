@@ -399,6 +399,7 @@
   let probes = [], probeView = null, probeRules = []; // Phase 266: session probes (Windows telemetry & blocking)
   let hostKeyTarget = null, hostKey = null; // Phase 272: a target's pinned SSH host key (null = none pinned)
   let restrictions = []; // Phase 275: per-subject restriction rules (command patterns, transfer sizes)
+  let banners = { login: "", session: "" }; // Phase 276: the login banner (sign-on) and the session notice (desktop consent)
   let quarantine = []; // Phase 159: quarantined agent identities (agent-key name, or a full SPIFFE ID)
   let dlockCred = null;  // Phase 187: the credential DoubleLock is being set on
   let scimKeys = [];     // Phase 187: SCIM client keys (menu 29)
@@ -1309,8 +1310,19 @@
       Guac = await loadGuac();
       // Naming the target lets the server say, before any WebSocket exists,
       // that this desktop needs a session-MFA ticket — which then IS the token.
-      try { tok = (await api("POST", v.tokenPath, { target_id: t.id })).token; }
-      catch (e) { if (!needsSessionMFA(e)) throw e; tok = await sessionMFATicket(t); }
+      // A session notice (Phase 276) must be acknowledged first: the server
+      // answers 428 with the text, and only an explicit OK mints anything.
+      const mint = async (consent) => (await api("POST", v.tokenPath, { target_id: t.id, consent, lang: navigator.language || "" })).token;
+      try { tok = await mint(false); }
+      catch (e) {
+        if (e.status === 428 && e.data && e.data.consent_required) {
+          if (!window.confirm(String(e.data.banner) + "\n\nOK = I acknowledge and continue.   Cancel = do not open the session.")) { say("SESSION NOT OPENED: THE NOTICE WAS NOT ACKNOWLEDGED."); render(); return; }
+          try { tok = await mint(true); }
+          catch (e2) { if (!needsSessionMFA(e2)) throw e2; tok = await sessionMFATicket(t); }
+        }
+        else if (!needsSessionMFA(e)) throw e;
+        else tok = await sessionMFATicket(t);
+      }
     } catch (e) { say("CPF9999: " + String(e.message || (v.label + " VIEWER UNAVAILABLE")).toUpperCase(), true); render(); return; }
     startViewer(Guac, t, tok, v);
   }
@@ -1597,7 +1609,8 @@
       signon() {
         term.innerHTML = `
 <div style="text-align:center" class="white">Sign On</div>
-<div class="indent">
+${banners.login ? `<div class="amber indent">${esc(banners.login)}</div>
+` : ""}<div class="indent">
                                     System  . . . . . :   <span class="white">PAMV1</span>
                                     Subsystem . . . . :   <span class="white">QPAM</span>
                                     Display . . . . . :   <span class="white">QPADEV0001</span>
@@ -4956,6 +4969,10 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   });
 
   setInterval(() => { const el = term.querySelector(".row .cyan"); if (el && screen !== "audit") el.textContent = now(); }, 1000);
+  // The login banner (Phase 276) is public and read before sign-on; a fetch
+  // failure simply shows no banner rather than blocking the screen.
+  fetch("/api/banner?lang=" + encodeURIComponent(navigator.language || "")).then((r) => r.ok ? r.json() : null)
+    .then((b) => { if (b) { banners = { login: b.login || "", session: b.session || "" }; if (screen === "signon") render(); } }).catch(() => {});
   if (apiKey) { loadMe().then(render).catch(() => { apiKey = ""; me = null; screen = "signon"; render(); }); } else render();
 })();
 </script>

@@ -20,6 +20,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/analytics"
 	"github.com/morandeirachema/pamv1/internal/auditchain"
 	"github.com/morandeirachema/pamv1/internal/auth"
+	"github.com/morandeirachema/pamv1/internal/banner"
 	"github.com/morandeirachema/pamv1/internal/broker"
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/guacd"
@@ -86,6 +87,10 @@ func setActor(ctx context.Context, actor string) {
 
 // Options tunes server policy.
 type Options struct {
+	// Banners (Phase 276): the login banner (served publicly by GET /api/banner
+	// for the sign-on screen) and the session notice a desktop must
+	// acknowledge before its token is minted.
+	Banners *banner.Banners
 	// RDPDrive / RDPPrinter / RDPAudio / RDPAudioIn (Phase 270) are the
 	// deployment ceilings for the desktop redirections a target's or grant's
 	// rights may enable; a redirection off here stays off everywhere.
@@ -522,6 +527,7 @@ type Server struct {
 	guacdRecordingPath                         string
 	guacdRDPSecurity                           string
 	guacdIgnoreCert                            bool
+	banners                                    *banner.Banners
 	approvalTimeout                            time.Duration
 	approvalCommentRequired                    bool
 	rdpDrive, rdpPrinter, rdpAudio, rdpAudioIn bool
@@ -853,6 +859,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		guacdRecordingPath:   opts.GuacdRecordingPath,
 		guacdRDPSecurity:     opts.GuacdRDPSecurity,
 		guacdIgnoreCert:      opts.GuacdIgnoreCert,
+		banners:              opts.Banners,
 		approvalTimeout:      opts.ApprovalTimeout, approvalCommentRequired: opts.ApprovalCommentRequired,
 		rdpDrive: opts.RDPDrive, rdpPrinter: opts.RDPPrinter, rdpAudio: opts.RDPAudio, rdpAudioIn: opts.RDPAudioIn,
 		rdpClipboard:        rdpClipboardMode(opts.RDPClipboard),
@@ -1062,7 +1069,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /approve.html", web.Approve)                       // Phase 137 magic-link approval, no PAMv1 login
 
 	// Authentication endpoints are rate-limited per client IP.
-	s.mux.Handle("POST /api/login", s.rateLimit(http.HandlerFunc(s.login))) // public: this IS authentication
+	s.mux.Handle("POST /api/login", s.rateLimit(http.HandlerFunc(s.login)))     // public: this IS authentication
+	s.mux.Handle("GET /api/banner", s.rateLimit(http.HandlerFunc(s.getBanner))) // public: the login banner is shown BEFORE authentication (Phase 276)
 	s.mux.Handle("POST /api/logout", s.authenticated(s.logout))
 	s.mux.Handle("GET /api/auth/oidc/start", s.rateLimit(http.HandlerFunc(s.oidcStart)))
 	s.mux.Handle("GET /api/auth/oidc/callback", s.rateLimit(http.HandlerFunc(s.oidcCallback)))

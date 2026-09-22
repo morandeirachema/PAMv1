@@ -1,6 +1,6 @@
 # PAMv1 — documentation
 
-> Last updated: 2026-09-22 · Reflects: Phases 0–227 and 229–275, and release v0.0.78 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-09-22 · Reflects: Phases 0–227 and 229–276, and release v0.0.78 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-09-22 | Phase 276 (banners) documented: ARCHITECTURE-LOW-LEVEL (package tree, env row, audit vocabulary, tests, change log), ARCHITECTURE-HIGH-LEVEL (table row, change log), ADMIN-GUIDE (§9.1a + env row), USER-GUIDE, CODE-GUIDE, README Tier 10 row 7, ARCHITECTURE-DIAGRAMS (routes 225). |
 | 2026-09-22 | Phase 275 (restriction rules) documented: ARCHITECTURE-LOW-LEVEL (package tree, audit vocabulary, tests, change log), ARCHITECTURE-HIGH-LEVEL (table row, change log), ADMIN-GUIDE (§9.4a), USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE (mark `0066`), README Tier 10 row 6, ARCHITECTURE-DIAGRAMS (routes 224). |
 | 2026-09-22 | Phase 274 (approval depth) documented: ARCHITECTURE-LOW-LEVEL (env rows, audit vocabulary, tests, change log), ARCHITECTURE-HIGH-LEVEL (change log), ADMIN-GUIDE (§9 subsection + env rows), USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE (mark `0065`), README Tier 10 row 5, ARCHITECTURE-DIAGRAMS (routes 221). |
 | 2026-09-22 | Phase 273 (v0.0.78): every `Reflects:` header, both READMEs' ranges and the banner through 273; the release token above. |

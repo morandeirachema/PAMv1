@@ -641,6 +641,11 @@ type Config struct {
 	// privileged desktop's clipboard routinely carries a password an operator
 	// just copied, and the audit trail is readable by every auditor.
 	RDPClipboardAudit string
+	// Banners (Phase 276) are the login banner and the session (recording
+	// consent) notice, keyed "login"/"session" with per-language variants
+	// "login_es"/"session_fr" — from PAM_BANNER_LOGIN, PAM_BANNER_SESSION and
+	// PAM_BANNER_LOGIN_<XX> / PAM_BANNER_SESSION_<XX>. Empty = none shown.
+	Banners map[string]string
 	// RDPDrive / RDPPrinter / RDPAudio / RDPAudioIn are the deployment
 	// ceilings for the RDP redirections (Phase 270): a target or grant may
 	// list the matching right, but a redirection disabled here stays
@@ -900,6 +905,7 @@ func Load() (*Config, error) {
 		SessionIdleTimeout:      time.Duration(integer("PAM_SESSION_IDLE_MIN", 0)) * time.Minute,
 		EncryptRecordings:       boolean("PAM_RECORDING_ENCRYPT", false),
 		OpaqueRecordingNames:    boolean("PAM_RECORDING_OPAQUE_NAMES", false),
+		Banners:                 bannersFromEnv(),
 		RDPDrive:                boolean("PAM_RDP_DRIVE", false),
 		RDPPrinter:              boolean("PAM_RDP_PRINTER", false),
 		RDPAudio:                boolean("PAM_RDP_AUDIO", true),
@@ -1523,6 +1529,35 @@ func airGapConflicts(cfg *Config) []string {
 		errs = append(errs, "PAM_OT_AIRGAP is set but PAM_ENTRA_TENANT_ID requires reaching Microsoft Entra; use LDAP against an in-enclave directory instead")
 	}
 	return errs
+}
+
+// bannersFromEnv collects PAM_BANNER_LOGIN / PAM_BANNER_SESSION and their
+// per-language variants (PAM_BANNER_LOGIN_ES …) into banner.New's key form
+// ("login", "login_es"). A literal "\n" in a value is a line break, so a
+// multi-line notice fits in one environment variable.
+func bannersFromEnv() map[string]string {
+	out := map[string]string{}
+	for _, kv := range os.Environ() {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok || v == "" {
+			continue
+		}
+		var key string
+		switch {
+		case k == "PAM_BANNER_LOGIN":
+			key = "login"
+		case k == "PAM_BANNER_SESSION":
+			key = "session"
+		case strings.HasPrefix(k, "PAM_BANNER_LOGIN_"):
+			key = "login_" + strings.ToLower(strings.TrimPrefix(k, "PAM_BANNER_LOGIN_"))
+		case strings.HasPrefix(k, "PAM_BANNER_SESSION_"):
+			key = "session_" + strings.ToLower(strings.TrimPrefix(k, "PAM_BANNER_SESSION_"))
+		default:
+			continue
+		}
+		out[key] = strings.ReplaceAll(v, "\\n", "\n")
+	}
+	return out
 }
 
 // getenv returns the environment variable key, or def when it is unset or empty.
