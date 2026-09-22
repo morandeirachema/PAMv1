@@ -109,6 +109,11 @@ var findingExact = map[string]bool{
 	"probe.kill_failed":        true,
 	"probe.kill_refused":       true,
 	"probe.rule_notified":      true, // Phase 271: a notify rule matched — the row a detection rule wants
+	// Phase 272: a target presenting a host key other than the one pinned is
+	// the man-in-the-middle signal itself; a strict-mode refusal of an
+	// unpinned target is a refusal of an authenticated operator's session.
+	"target.hostkey_mismatch": true,
+	"target.hostkey_unknown":  true,
 }
 
 // isFinding reports whether an action maps to a Detection Finding.

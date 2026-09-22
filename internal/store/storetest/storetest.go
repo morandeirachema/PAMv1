@@ -2192,6 +2192,42 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("disabled scim key must resolve as not found, got %v", err)
 	}
 
+	// --- host-key pins (Phase 272) ---
+	hk := &store.TargetHostKey{TargetID: tgt.ID, KeyType: "ssh-ed25519", Fingerprint: "SHA256:aaa", PublicKey: "ssh-ed25519 AAAA1"}
+	if err := st.PutTargetHostKey(ctx, hk); err != nil || hk.FirstSeen.IsZero() || hk.LastSeen.IsZero() {
+		t.Fatalf("PutTargetHostKey: %+v err %v", hk, err)
+	}
+	pinFirst := hk.FirstSeen
+	if got, err := st.GetTargetHostKey(ctx, tgt.ID); err != nil || got.Fingerprint != "SHA256:aaa" || got.KeyType != "ssh-ed25519" {
+		t.Fatalf("GetTargetHostKey: %+v err %v", got, err)
+	}
+	// Same key again: first_seen kept. A different key: first_seen restarts.
+	if err := st.PutTargetHostKey(ctx, &store.TargetHostKey{TargetID: tgt.ID, KeyType: "ssh-ed25519", Fingerprint: "SHA256:aaa", PublicKey: "ssh-ed25519 AAAA1"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.GetTargetHostKey(ctx, tgt.ID); !got.FirstSeen.Equal(pinFirst) {
+		t.Fatalf("first_seen moved on an unchanged key: %v vs %v", got.FirstSeen, pinFirst)
+	}
+	time.Sleep(5 * time.Millisecond)
+	if err := st.PutTargetHostKey(ctx, &store.TargetHostKey{TargetID: tgt.ID, KeyType: "ssh-rsa", Fingerprint: "SHA256:bbb", PublicKey: "ssh-rsa AAAA2"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.GetTargetHostKey(ctx, tgt.ID); got.Fingerprint != "SHA256:bbb" || !got.FirstSeen.After(pinFirst) {
+		t.Fatalf("replaced key: %+v (first was %v)", got, pinFirst)
+	}
+	if err := st.PutTargetHostKey(ctx, &store.TargetHostKey{TargetID: 999999, KeyType: "x", Fingerprint: "y", PublicKey: "z"}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("pin for a missing target: want ErrNotFound, got %v", err)
+	}
+	if err := st.DeleteTargetHostKey(ctx, tgt.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteTargetHostKey(ctx, tgt.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("delete twice: %v", err)
+	}
+	if _, err := st.GetTargetHostKey(ctx, tgt.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("get after delete: %v", err)
+	}
+
 	// --- sub-protocol rights (Phase 270) ---
 	rt := &store.Target{Name: "rights-box", Host: "10.9.9.9", Port: 22, OSType: "linux", Protocol: "ssh", Rights: "ssh_sftp,ssh_shell"}
 	if err := st.CreateTarget(ctx, rt); err != nil {

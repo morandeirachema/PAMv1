@@ -46,6 +46,7 @@ type Memstore struct {
 	scimKeys         map[int64]store.ScimKey
 	endpointAgents   map[int64]store.EndpointAgent
 	probeRules       map[int64]store.ProbeRule
+	hostKeys         map[int64]store.TargetHostKey
 	brokerLog        []store.BrokerAuditEvent
 	brokerTok        map[string]store.BrokerToken
 	settings         map[string]store.Setting
@@ -102,6 +103,7 @@ func New() *Memstore {
 		scimKeys:         make(map[int64]store.ScimKey),
 		endpointAgents:   make(map[int64]store.EndpointAgent),
 		probeRules:       make(map[int64]store.ProbeRule),
+		hostKeys:         make(map[int64]store.TargetHostKey),
 		brokerTok:        make(map[string]store.BrokerToken),
 		settings:         make(map[string]store.Setting),
 		keyMaterial:      make(map[string]string),
@@ -272,6 +274,7 @@ func (m *Memstore) DeleteTarget(_ context.Context, id int64) error {
 			delete(m.endpointAgents, eid)
 		}
 	}
+	delete(m.hostKeys, id) // target_host_keys cascades (Phase 272)
 	// probe_rules.target_id cascades too (Phase 266); a global rule (0) stays.
 	for rid, pr := range m.probeRules {
 		if pr.TargetID == id {
@@ -3073,6 +3076,47 @@ func (m *Memstore) DeleteProbeRule(_ context.Context, id int64) error {
 		return store.ErrNotFound
 	}
 	delete(m.probeRules, id)
+	return nil
+}
+
+// GetTargetHostKey returns the target's host-key pin, or ErrNotFound.
+func (m *Memstore) GetTargetHostKey(_ context.Context, targetID int64) (*store.TargetHostKey, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k, ok := m.hostKeys[targetID]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	out := k
+	return &out, nil
+}
+
+// PutTargetHostKey stores or replaces the pin; ErrNotFound if the target is gone.
+func (m *Memstore) PutTargetHostKey(_ context.Context, k *store.TargetHostKey) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.targets[k.TargetID]; !ok {
+		return store.ErrNotFound
+	}
+	now := time.Now().UTC()
+	if cur, ok := m.hostKeys[k.TargetID]; ok && cur.PublicKey == k.PublicKey {
+		k.FirstSeen = cur.FirstSeen
+	} else {
+		k.FirstSeen = now
+	}
+	k.LastSeen = now
+	m.hostKeys[k.TargetID] = *k
+	return nil
+}
+
+// DeleteTargetHostKey removes the pin, or ErrNotFound.
+func (m *Memstore) DeleteTargetHostKey(_ context.Context, targetID int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.hostKeys[targetID]; !ok {
+		return store.ErrNotFound
+	}
+	delete(m.hostKeys, targetID)
 	return nil
 }
 

@@ -517,6 +517,18 @@ const screens = [
     }),
   },
   {
+    // Phase 272: a target's pinned host key — a detail form, no table; the
+    // public-key line is class="detail" (free-flowing by design).
+    name: "hostkey",
+    noRows: true,
+    src: /\n {6}hostkey\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      hostKeyTarget: { id: 7, name: long ? LONGNAME : "web-01", host: long ? LONG : "10.0.0.5", port: long ? BIG : 22 },
+      hostKey: { key_type: long ? LONGNAME : "ssh-ed25519", fingerprint: long ? LONG : "SHA256:abc", public_key: long ? LONG + LONG : "ssh-ed25519 AAAA",
+        first_seen: "2026-09-22T09:00:00Z", last_seen: "2026-09-22T09:05:00Z" },
+    }),
+  },
+  {
     // Phase 266: session probes. Every column is cell()-bounded, including
     // the counters (BIG in the long variant) and the Windows session id.
     name: "probes",

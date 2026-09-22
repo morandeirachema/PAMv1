@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/morandeirachema/pamv1/internal/alert"
 	"github.com/morandeirachema/pamv1/internal/auditfmt"
 	"io"
 	"log/slog"
@@ -66,6 +67,14 @@ type Config struct {
 	// UpstreamHostKey verifies the target's SSH host key (e.g. a known_hosts
 	// callback). nil trusts any upstream key — insecure, and logged loudly.
 	UpstreamHostKey ssh.HostKeyCallback
+	// HostKeyCheck (Phase 272) applies when UpstreamHostKey is nil: "tofu"
+	// (default) pins each target's key in the store on first contact and
+	// refuses a later mismatch; "strict" refuses a target with no pin;
+	// "off" is trust-any. See hostkey.go.
+	HostKeyCheck string
+	// Alerter (optional) receives the host-key events (a pin saved, a
+	// mismatch refused) so a SIEM or an inbox learns of them at once.
+	Alerter alert.Notifier
 	// OnBreakGlass, if set, is called when a session is opened with the emergency
 	// key. The proxies resolve their own principal outside the HTTP authz
 	// middleware, so — like every such entry point — they must raise the
@@ -237,6 +246,8 @@ type Proxy struct {
 	requireApprv bool
 	ungated      auth.UngatedDefault
 	upstreamHKCB ssh.HostKeyCallback
+	hostKeyCheck string
+	alerter      alert.Notifier
 	onBreakGlass func(ctx context.Context, actor, detail string)
 	allowedProto map[string]bool
 	winrm        winrm.Runner
@@ -344,6 +355,8 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		requireApprv:   cfg.RequireApproval,
 		ungated:        ungatedDefault(cfg.RequireTargetGrant),
 		upstreamHKCB:   cfg.UpstreamHostKey,
+		hostKeyCheck:   cfg.HostKeyCheck,
+		alerter:        cfg.Alerter,
 		onBreakGlass:   cfg.OnBreakGlass,
 		allowedProto:   protocolSet(cfg.AllowedProtocols),
 		winrm:          cfg.WinRMRunner,
@@ -400,9 +413,22 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 	if p.sftpCapture == "" {
 		p.sftpCapture = SFTPCaptureOff
 	}
+	// Upstream host keys (Phase 272): a known_hosts callback is authoritative
+	// when configured; otherwise the per-target store decides, trust-on-first-
+	// use by default, and only "off" is the historical trust-any.
 	if p.upstreamHKCB == nil {
-		p.log.Warn("upstream SSH host keys are NOT verified (set PAM_SSH_KNOWN_HOSTS to pin them)")
-		p.upstreamHKCB = ssh.InsecureIgnoreHostKey() // #nosec G106 -- documented trust-any default; pin with PAM_SSH_KNOWN_HOSTS
+		switch p.hostKeyCheck {
+		case "", HostKeyTOFU:
+			p.hostKeyCheck = HostKeyTOFU
+			p.log.Info("upstream SSH host keys: trust-on-first-use per target (PAM_SSH_HOST_KEY_CHECK=tofu); a mismatch refuses the session — set PAM_SSH_KNOWN_HOSTS to pin from a file instead")
+		case HostKeyStrict:
+			p.log.Info("upstream SSH host keys: strict per-target pins (PAM_SSH_HOST_KEY_CHECK=strict); a target without a pin is refused")
+		case HostKeyOff:
+			p.log.Warn("upstream SSH host keys are NOT verified (PAM_SSH_HOST_KEY_CHECK=off); set PAM_SSH_KNOWN_HOSTS or leave the default tofu")
+			p.upstreamHKCB = ssh.InsecureIgnoreHostKey() // #nosec G106 -- explicit opt-out, logged loudly
+		default:
+			return nil, fmt.Errorf("proxy: HostKeyCheck %q must be tofu, strict or off", p.hostKeyCheck)
+		}
 	}
 	if cfg.Jump != nil {
 		dial, err := jumpDial(*cfg.Jump, cfg.DialTimeout)
@@ -1230,7 +1256,7 @@ func (p *Proxy) dialUpstream(ctx context.Context, target *store.Target, cred *st
 	cfg := &ssh.ClientConfig{
 		User:            cred.Username,
 		Auth:            []ssh.AuthMethod{authMethod},
-		HostKeyCallback: p.upstreamHKCB,
+		HostKeyCallback: p.hostKeyCallbackFor(ctx, target, actor),
 		Timeout:         p.dialTimeout,
 	}
 	addr := fmt.Sprintf("%s:%d", target.Host, target.Port)

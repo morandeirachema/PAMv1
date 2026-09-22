@@ -1318,6 +1318,11 @@ func (s *Server) routes() {
 		s.mux.Handle("GET /api/endpoint-agents", s.authz(auth.CapReadInventory, s.listEndpointAgents))
 		s.mux.Handle("DELETE /api/endpoint-agents/{id}", s.authz(auth.CapManageTargets, s.revokeEndpointAgent))
 	}
+	// Per-target SSH host-key pins (Phase 272): reading one is inventory,
+	// resetting one — telling the proxy to trust the next key it sees — is
+	// target management and is audited.
+	s.mux.Handle("GET /api/targets/{id}/host-key", s.authz(auth.CapReadInventory, s.getTargetHostKey))
+	s.mux.Handle("DELETE /api/targets/{id}/host-key", s.authz(auth.CapManageTargets, s.resetTargetHostKey))
 	// Session probes (Phase 266): telemetry from inside an operator's logon
 	// session is audit-grade data, so reading it takes the audit capability;
 	// the block rules and a kill are target infrastructure, like the agents.
