@@ -198,6 +198,12 @@ type Config struct {
 	// RequireRecording refuses a proxied session when its recording cannot be
 	// created, rather than proceeding unrecorded (fail-closed session auditing).
 	RequireRecording bool
+	// SSHHostKeyCheck is the upstream host-key policy when PAM_SSH_KNOWN_HOSTS
+	// is not set (Phase 272): "tofu" (default) pins each target's key on
+	// first contact and refuses a later mismatch; "strict" refuses a target
+	// with no pin yet (an administrator seeds it); "off" is the historical
+	// trust-any. A known_hosts file, when set, remains authoritative.
+	SSHHostKeyCheck string
 	// SSHPortForward enables client-initiated direct-tcpip channels (ssh -L
 	// style forwarding) on the SSH proxy, scoped to the connected target's
 	// own host only (Phase 141). Default true, matching SSHSFTPMode's
@@ -1029,6 +1035,7 @@ func Load() (*Config, error) {
 		LDAPGroupAuditor:       os.Getenv("PAM_LDAP_GROUP_AUDITOR"),
 		LDAPGroupApprover:      os.Getenv("PAM_LDAP_GROUP_APPROVER"),
 
+		SSHHostKeyCheck:     strings.ToLower(getenv("PAM_SSH_HOST_KEY_CHECK", "tofu")),
 		RADIUSAddr:          os.Getenv("PAM_RADIUS_ADDR"),
 		RADIUSSecret:        os.Getenv("PAM_RADIUS_SECRET"),
 		RADIUSNASIdentifier: getenv("PAM_RADIUS_NAS_ID", "pamv1"),
@@ -1410,6 +1417,11 @@ func Load() (*Config, error) {
 		errs = append(errs, "PAM_ALERT_EMAIL_SMTP, PAM_ALERT_EMAIL_FROM and PAM_ALERT_EMAIL_TO must all be set together (or all empty)")
 	}
 	errs = append(errs, airGapConflicts(cfg)...)
+	switch cfg.SSHHostKeyCheck {
+	case "tofu", "strict", "off":
+	default:
+		errs = append(errs, fmt.Sprintf("PAM_SSH_HOST_KEY_CHECK: %q must be tofu, strict or off", cfg.SSHHostKeyCheck))
+	}
 	if cfg.RADIUSAddr != "" {
 		if cfg.RADIUSSecret == "" {
 			errs = append(errs, "PAM_RADIUS_SECRET is required when PAM_RADIUS_ADDR is set")

@@ -397,6 +397,7 @@
   let sshCerts = [], caInfo = null, loginSessions = [], agents = [], newAgent = null;
   let endpointAgents = [], newEndpointAgent = null; // Phase 153: outbound-only endpoint agents
   let probes = [], probeView = null, probeRules = []; // Phase 266: session probes (Windows telemetry & blocking)
+  let hostKeyTarget = null, hostKey = null; // Phase 272: a target's pinned SSH host key (null = none pinned)
   let quarantine = []; // Phase 159: quarantined agent identities (agent-key name, or a full SPIFFE ID)
   let dlockCred = null;  // Phase 187: the credential DoubleLock is being set on
   let scimKeys = [];     // Phase 187: SCIM client keys (menu 29)
@@ -948,6 +949,14 @@
     try { [endpointAgents, targets] = await Promise.all([api("GET", "/api/endpoint-agents"), apiAll("/api/targets").catch(() => targets)]); }
     catch (e) { if (e.status === 404) say("ENDPOINT AGENTS ARE DISABLED (set PAM_ENDPOINT_AGENTS_ENABLED=true)."); }
     go("endpointagents");
+  }
+  // Phase 272: a target's SSH host-key pin, trusted on first contact.
+  async function openHostKey(t) {
+    hostKeyTarget = t;
+    hostKey = null;
+    try { hostKey = await api("GET", `/api/targets/${t.id}/host-key`); }
+    catch (e) { if (e.status !== 404) throw e; }
+    go("hostkey");
   }
   // Phase 266: session probes (menu 34). The list is this replica's live view
   // of pam-agent probes running inside operators' logon sessions.
@@ -1729,7 +1738,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
         const canConnect = can("connect");
         term.innerHTML = `${head("PAMWRKTGT", "Work with Targets")}
 Type options, press Enter.
-  <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "6=Run kubectl (kubernetes)" : "", canConnect ? "7=Open viewer (rdp/vnc targets)" : "", canManage ? "8=Assign to safe" : "", canManage ? "9=Discover accounts (ssh/winrm)" : "", canConnect ? "10=Session MFA ticket (ssh/db clients)" : "", canConnect ? "11=Open terminal (ssh targets)" : "", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
+  <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "6=Run kubectl (kubernetes)" : "", canConnect ? "7=Open viewer (rdp/vnc targets)" : "", canManage ? "8=Assign to safe" : "", canManage ? "9=Discover accounts (ssh/winrm)" : "", canConnect ? "10=Session MFA ticket (ssh/db clients)" : "", canConnect ? "11=Open terminal (ssh targets)" : "", "12=Host key (pinned on first contact)", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Name</th><th>Host</th><th>Port</th><th>OS</th><th>Proto</th><th>Approval</th><th>MFA</th><th>Clip</th><th>Safe</th><th>Labels</th></tr>
@@ -1750,6 +1759,7 @@ ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add target" : ""}   F12=Cancel
               else if (o === "8") { return openTargetSafe(t); }
               else if (o === "9") { return discoverAccounts(t); }
               else if (o === "11") { return openTerminal(t); }
+              else if (o === "12") { return openHostKey(t); }
               else if (o === "10") { smfaTicket = { target: t.name, ticket: await sessionMFATicket(t) }; return go("smfaview"); }
               else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
             }
@@ -2976,6 +2986,29 @@ It reports and enforces within that session only, with that user's permissions. 
   PAM_AGENT_LOCAL_ADDR=127.0.0.1:22       PAM_AGENT_SERVER_HOST_KEY="$(ssh-keyscan -p 2222 &lt;pam-host&gt; | cut -d' ' -f2-)"
 Only the key's hash is stored here.</div>`}
 ${fkeys("F3=Exit   F12=Cancel")}`;
+      },
+
+      // Targets → 12 — the SSH host key pinned for a target (Phase 272):
+      // trusted on first contact, checked on every later one. F6 resets it,
+      // which is the one sanctioned answer to a re-keyed host.
+      hostkey() {
+        back = "targets";
+        const t = hostKeyTarget || {};
+        const k = hostKey;
+        const canManage = can("manage_targets");
+        term.innerHTML = `${head("PAMDSPHKY", "Display Target Host Key")}
+Target  . . . . . . :  <span class="white">${esc(t.name)}</span>  (${esc(t.host)}:${esc(t.port)})
+${k ? `Key type  . . . . . :  <span class="white">${esc(k.key_type)}</span>
+Fingerprint . . . . :  <span class="white">${esc(k.fingerprint)}</span>
+First seen  . . . . :  <span class="cyan">${fmtTime(k.first_seen)}</span>
+Last seen . . . . . :  <span class="cyan">${fmtTime(k.last_seen)}</span>
+Public key  . . . . :  <span class="detail">${esc(k.public_key)}</span>
+
+<div class="cyan indent">Every connection is checked against this key. A different key is refused and audited
+(target.hostkey_mismatch). If the host was re-keyed on purpose, press F6 to reset the pin: the
+NEXT key seen will be trusted. Compare the fingerprint with:  ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</div>` : `<div class="cyan indent">(No host key pinned yet. The first connection through the proxy pins the key it sees —
+PAM_SSH_HOST_KEY_CHECK=tofu — unless PAM_SSH_KNOWN_HOSTS pins it from a file.)</div>`}
+${fkeys("F3=Exit   F5=Refresh" + (k && canManage ? "   F6=Reset pin" : "") + "   F12=Cancel")}`;
       },
 
       // Menu 34 — session probes (Phase 266): pam-agent in probe mode running
@@ -4774,7 +4807,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   }
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
-  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, identities: openIdentities, scimkeys: openScimKeys, endpointagents: openEndpointAgents, probes: openProbes, probeview: () => probeView && openProbe(probeView.key), proberules: openProbeRules, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid), reach: () => openReach(reachSubject, reachKind), labelrules: openLabelRules };
+  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, identities: openIdentities, scimkeys: openScimKeys, endpointagents: openEndpointAgents, hostkey: () => hostKeyTarget && openHostKey(hostKeyTarget), probes: openProbes, probeview: () => probeView && openProbe(probeView.key), proberules: openProbeRules, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid), reach: () => openReach(reachSubject, reachKind), labelrules: openLabelRules };
   // cycleTheme rotates green → amber → slate → green, persists the choice, and
   // re-renders so the F-key hint's confirmation message shows immediately.
   function cycleTheme() {
@@ -4787,7 +4820,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
     render();
   }
 
-  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), quarantine: () => go("quarantineadd"), identities: () => go("identityadd"), scimkeys: () => go("scimkeyadd"), exttoken: mintExtToken, endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, shareinvites: () => go("shareinvitenew"), mfawebauthn: () => go("mfawebauthnadd"), labelrules: () => { if (can("manage_targets")) go("labelruleadd"); }, proberules: () => { if (can("manage_targets")) go("proberuleadd"); } };
+  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), quarantine: () => go("quarantineadd"), identities: () => go("identityadd"), scimkeys: () => go("scimkeyadd"), exttoken: mintExtToken, endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, shareinvites: () => go("shareinvitenew"), mfawebauthn: () => go("mfawebauthnadd"), labelrules: () => { if (can("manage_targets")) go("labelruleadd"); }, proberules: () => { if (can("manage_targets")) go("proberuleadd"); }, hostkey: async () => { if (!hostKey || !can("manage_targets") || !window.confirm(`RESET THE PINNED HOST KEY FOR ${String((hostKeyTarget || {}).name).toUpperCase()}? The next key seen will be trusted.`)) return; await api("DELETE", `/api/targets/${hostKeyTarget.id}/host-key`); say("HOST KEY PIN RESET; THE NEXT CONNECTION PINS THE KEY IT SEES."); await openHostKey(hostKeyTarget); } };
 
   window.addEventListener("keydown", async (ev) => {
     // While the RDP viewer is open it owns the keyboard (its own capture-phase

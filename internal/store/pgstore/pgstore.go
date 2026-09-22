@@ -2482,6 +2482,39 @@ func (s *PGStore) DeleteProbeRule(ctx context.Context, id int64) error {
 	return execExpectingRow(ctx, s.pool, `DELETE FROM probe_rules WHERE id = $1`, id)
 }
 
+// GetTargetHostKey returns the target's host-key pin, or ErrNotFound.
+func (s *PGStore) GetTargetHostKey(ctx context.Context, targetID int64) (*store.TargetHostKey, error) {
+	return getOne(ctx, s.pool, func(row pgx.CollectableRow) (store.TargetHostKey, error) {
+		var k store.TargetHostKey
+		err := row.Scan(&k.TargetID, &k.KeyType, &k.Fingerprint, &k.PublicKey, &k.FirstSeen, &k.LastSeen)
+		return k, err
+	}, `SELECT target_id, key_type, fingerprint, public_key, first_seen, last_seen FROM target_host_keys WHERE target_id = $1`, targetID)
+}
+
+// PutTargetHostKey stores or replaces the pin: an unchanged key keeps its
+// first_seen, a different key starts over; ErrNotFound if the target is gone.
+func (s *PGStore) PutTargetHostKey(ctx context.Context, k *store.TargetHostKey) error {
+	err := s.pool.QueryRow(ctx,
+		`INSERT INTO target_host_keys (target_id, key_type, fingerprint, public_key, first_seen, last_seen)
+		 VALUES ($1, $2, $3, $4, now(), now())
+		 ON CONFLICT (target_id) DO UPDATE SET
+		   key_type = EXCLUDED.key_type, fingerprint = EXCLUDED.fingerprint, public_key = EXCLUDED.public_key,
+		   first_seen = CASE WHEN target_host_keys.public_key = EXCLUDED.public_key THEN target_host_keys.first_seen ELSE now() END,
+		   last_seen = now()
+		 RETURNING first_seen, last_seen`,
+		k.TargetID, k.KeyType, k.Fingerprint, k.PublicKey,
+	).Scan(&k.FirstSeen, &k.LastSeen)
+	if pgCode(err) == pgForeignKeyViolation {
+		return store.ErrNotFound
+	}
+	return err
+}
+
+// DeleteTargetHostKey removes the pin, or ErrNotFound.
+func (s *PGStore) DeleteTargetHostKey(ctx context.Context, targetID int64) error {
+	return execExpectingRow(ctx, s.pool, `DELETE FROM target_host_keys WHERE target_id = $1`, targetID)
+}
+
 // GrantAppSecret authorizes an app to retrieve a credential's secret.
 func (s *PGStore) GrantAppSecret(ctx context.Context, g *store.AppSecretGrant) error {
 	err := s.pool.QueryRow(ctx,

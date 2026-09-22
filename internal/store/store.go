@@ -2293,6 +2293,33 @@ type EndpointAgentStore interface {
 	TouchEndpointAgent(ctx context.Context, id int64, at time.Time) error
 }
 
+// TargetHostKey is the SSH host key a target presented the first time the
+// proxy reached it (Phase 272, trust-on-first-use): every later connection is
+// checked against it, a mismatch refuses the session and is audited, and an
+// administrator resets the pin explicitly when a host is re-keyed. One per
+// target. PublicKey is the authorized_keys-format line; Fingerprint is the
+// OpenSSH "SHA256:…" form an operator can compare with `ssh-keygen -lf`.
+type TargetHostKey struct {
+	TargetID    int64     `json:"target_id"`
+	KeyType     string    `json:"key_type"`
+	Fingerprint string    `json:"fingerprint"`
+	PublicKey   string    `json:"public_key"`
+	FirstSeen   time.Time `json:"first_seen"`
+	LastSeen    time.Time `json:"last_seen"`
+}
+
+// TargetHostKeyStore keeps the per-target host-key pins (Phase 272).
+type TargetHostKeyStore interface {
+	// GetTargetHostKey returns the target's pin, or ErrNotFound.
+	GetTargetHostKey(ctx context.Context, targetID int64) (*TargetHostKey, error)
+	// PutTargetHostKey stores or replaces the target's pin (FirstSeen is kept
+	// on a replace only if the key is unchanged; LastSeen is set to now); a
+	// missing target is ErrNotFound.
+	PutTargetHostKey(ctx context.Context, k *TargetHostKey) error
+	// DeleteTargetHostKey removes the pin, or ErrNotFound.
+	DeleteTargetHostKey(ctx context.Context, targetID int64) error
+}
+
 // ProbeRuleStore holds the block rules session probes enforce (Phase 266).
 // The rules are durable; which probes are connected right now is in-process
 // state in probe.Hub, which re-pushes the rule set to every probe of a target
@@ -2545,6 +2572,7 @@ type Store interface {
 	ScimStore
 	EndpointAgentStore
 	ProbeRuleStore
+	TargetHostKeyStore
 	VendorStore
 	ShareInviteStore
 	ApprovalInviteStore

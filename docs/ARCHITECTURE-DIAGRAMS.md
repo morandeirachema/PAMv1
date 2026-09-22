@@ -211,6 +211,7 @@ flowchart LR
   n_pgstore --> n_session
   n_pgstore --> n_store
   n_probe --> n_auditfmt
+  n_proxy --> n_alert
   n_proxy --> n_auditfmt
   n_proxy --> n_auth
   n_proxy --> n_cmdguard
@@ -577,6 +578,14 @@ erDiagram
     string Effect
     string Rights
   }
+  TargetHostKey {
+    int64 TargetID
+    string KeyType
+    string Fingerprint
+    string PublicKey
+    time_Time FirstSeen
+    time_Time LastSeen
+  }
   User {
     int64 ID
     string Username
@@ -644,13 +653,14 @@ erDiagram
   Target ||--o{ Session : "has"
   Target ||--o{ SubjectGrant : "has"
   Target ||--o{ TargetGrant : "has"
+  Target ||--o{ TargetHostKey : "has"
   Target ||--o{ VendorGrant : "has"
   Vendor ||--o{ VendorGrant : "has"
 ```
 
 ## 3. REST API surface
 
-The 218 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 220 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -790,6 +800,8 @@ The 218 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/targets/{id}/grants` | CapManageTargets |
 | POST | `/api/targets/{id}/grants` | CapManageTargets |
 | DELETE | `/api/targets/{id}/grants/{gid}` | CapManageTargets |
+| DELETE | `/api/targets/{id}/host-key` | CapManageTargets |
+| GET | `/api/targets/{id}/host-key` | CapReadInventory |
 | POST | `/api/targets/{id}/kubectl` | CapConnect |
 | GET | `/api/targets/{id}/rdp` | token (query) |
 | PUT | `/api/targets/{id}/safe` | CapManageTargets |
