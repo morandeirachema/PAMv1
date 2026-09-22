@@ -517,6 +517,54 @@ const screens = [
     }),
   },
   {
+    // Phase 266: session probes. Every column is cell()-bounded, including
+    // the counters (BIG in the long variant) and the Windows session id.
+    name: "probes",
+    src: /\n {6}probes\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      probes: [
+        { key: long ? BIG : 3, target_name: long ? LONGNAME : "win-01", connected: "2026-09-22T09:00:00Z",
+          processes: long ? BIG : 41, connections: long ? BIG : 7, rules: long ? BIG : 2, events: long ? BIG : 1,
+          hello: { hostname: long ? LONGNAME : "WIN-01", user: long ? LONG : "CORP\\alice", session_id: long ? BIG : 3 } },
+      ],
+    }),
+  },
+  {
+    // The detail screen has two tables (processes, then connections). The
+    // command line is class="detail" (free-flowing by design, it can be
+    // anything); every other cell is bounded.
+    name: "probeview",
+    src: /\n {6}probeview\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      probeView: { key: 3, target_name: long ? LONGNAME : "win-01", hello: { hostname: long ? LONGNAME : "WIN-01", user: long ? LONG : "CORP\\alice", session_id: 3 },
+        snapshot: { taken: "2026-09-22T09:00:05Z", truncated: long, errors: long ? [LONG] : [],
+          processes: [
+            { pid: long ? BIG : 4242, ppid: long ? BIG : 812, name: long ? LONGNAME : "powershell.exe", path: long ? LONG : "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+              started: "2026-09-22T08:59:00Z", command_line: long ? LONG + LONG : "powershell.exe -NoProfile" },
+          ],
+          connections: [
+            { pid: long ? BIG : 4242, proto: long ? LONGNAME : "tcp", local_addr: long ? LONG : "10.1.1.9", local_port: long ? BIG : 51000,
+              remote_addr: long ? LONG : "10.99.0.5", remote_port: long ? BIG : 445, state: long ? LONGNAME : "Established" },
+          ] } },
+    }),
+  },
+  {
+    name: "proberules",
+    src: /\n {6}proberules\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      probeRules: [
+        { id: long ? BIG : 1, target_id: 0, kind: "process", match: long ? LONG : "psexec*", note: long ? LONG : "lateral movement", created_by: long ? LONGNAME : "admin", created_at: "2026-09-22T09:00:00Z" },
+        { id: long ? BIG : 2, target_id: 7, target_name: long ? LONGNAME : "win-01", kind: "connection", match: long ? LONG : "10.0.0.0/8", port: long ? BIG : 445, proto: "tcp", created_by: "admin", created_at: "2026-09-22T09:00:00Z" },
+      ],
+    }),
+  },
+  {
+    name: "proberuleadd",
+    noRows: true,
+    src: /\n {6}proberuleadd\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({ targets: [{ id: 7, name: long ? LONGNAME : "win-01", protocol: "rdp" }] }),
+  },
+  {
     name: "endpointagents",
     src: /\n {6}endpointagents\(\) \{\n[\s\S]*?\n {6}\},\n/,
     state: (long) => ({
@@ -526,6 +574,8 @@ const screens = [
       endpointAgents: [
         { id: 1, name: long ? LONGNAME : "branch-agent", target_name: long ? LONGNAME : "branch-box",
           connected: true, connected_since: "2026-08-16T12:00:00Z", remote: long ? LONG : "203.0.113.7:51234" },
+        { id: 3, name: long ? LONGNAME : "win-probe", kind: "probe", probes: long ? BIG : 2, target_name: long ? LONGNAME : "win-01",
+          connected: true, connected_since: "2026-09-22T09:00:00Z", remote: long ? LONG : "203.0.113.9:5000" },
         { id: 2, name: long ? LONGNAME : "old-agent", target_name: long ? LONGNAME : "old-box",
           connected: false, last_seen: "2026-08-15T12:00:00Z", revoked_at: "2026-08-16T12:00:00Z" },
       ],

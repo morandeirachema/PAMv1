@@ -56,6 +56,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/oncall"
 	"github.com/morandeirachema/pamv1/internal/policy"
 	"github.com/morandeirachema/pamv1/internal/posture"
+	"github.com/morandeirachema/pamv1/internal/probe"
 	"github.com/morandeirachema/pamv1/internal/proxy"
 	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/rotate"
@@ -928,9 +929,26 @@ func run() error {
 	// nil keeps the feature off end to end: the agent login is refused and
 	// the routes are not registered.
 	var endpointAgents *session.EndpointAgents
+	// Session probes (Phase 266) are the second kind of endpoint agent and
+	// share the switch: the hub reads each probe's rule set (its target's
+	// plus the global ones) from the store.
+	var probeHub *probe.Hub
 	if cfg.EndpointAgentsEnabled {
 		endpointAgents = session.NewEndpointAgents()
-		log.Info("outbound-only endpoint agents enabled (PAM_ENDPOINT_AGENTS_ENABLED)")
+		probeHub = probe.NewHub(func(ctx context.Context, targetID int64) ([]probe.Rule, error) {
+			all, err := st.ListProbeRules(ctx)
+			if err != nil {
+				return nil, err
+			}
+			rules := make([]probe.Rule, 0, len(all))
+			for _, r := range all {
+				if r.TargetID == 0 || r.TargetID == targetID {
+					rules = append(rules, probe.Rule{ID: r.ID, Kind: r.Kind, Match: r.Match, Port: r.Port, Proto: r.Proto})
+				}
+			}
+			return rules, nil
+		}, logging.Component("probe"))
+		log.Info("outbound-only endpoint agents and session probes enabled (PAM_ENDPOINT_AGENTS_ENABLED)")
 	}
 	replicaName, _ := os.Hostname()
 	// The step-up coordinator exists before the buses because the decision bus
@@ -1384,6 +1402,7 @@ func run() error {
 		AppSecretsEnabled:         cfg.AppSecretsEnabled,
 		ScimEnabled:               cfg.ScimEnabled,
 		EndpointAgents:            endpointAgents,
+		ProbeHub:                  probeHub,
 		K8s:                       k8sCfg,
 		SessionForensics:          cfg.SessionForensics,
 		SessionForensicsMaxEvents: cfg.SessionForensicsMaxEvents,
@@ -1549,6 +1568,7 @@ func run() error {
 			Live:                 liveHub,
 			Shares:               shares,
 			EndpointAgents:       endpointAgents,
+			ProbeHub:             probeHub,
 			CA:                   sshCA,
 			CertTTL:              cfg.SSHCertTTL,
 			AuthRatePerMin:       cfg.ProxyAuthRatePerMin,

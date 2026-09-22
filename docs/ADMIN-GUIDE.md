@@ -312,7 +312,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_K8S_CA_FILE` | | (system roots) | (Phase 155) PEM CA bundle verifying a Kubernetes API server's certificate. Most on-prem clusters use a private CA, so most deployments set this; several clusters' CAs may be concatenated into one file. |
 | `PAM_K8S_INSECURE_SKIP_VERIFY` | | `false` | Disable that verification entirely (kind/minikube demos only). The vaulted bearer token would then be handed to whoever answers for the API server; the server logs a warning at startup when it is on. |
 | `PAM_K8S_TIMEOUT_SEC` / `PAM_K8S_MAX_RESPONSE_KB` | | `30` / `1024` | Bounds on one brokered Kubernetes operation: how long it may take, and how large a response may be before it fails closed (a truncated object or log is worse than none). |
-| `PAM_ENDPOINT_AGENTS_ENABLED` | | `false` | (Phase 153) Accept **outbound-only endpoint agents** on the SSH listener (`endpoint-agent:<name>` login with the agent's own bearer key) and register the `/api/endpoint-agents` routes; a target bound to an agent is then reached only through its reverse tunnel, never dialed. Off = the login is refused and the routes are absent. See "Outbound-only endpoint agents" under §6. |
+| `PAM_ENDPOINT_AGENTS_ENABLED` | | `false` | (Phase 153) Accept **outbound-only endpoint agents** on the SSH listener (`endpoint-agent:<name>` login with the agent's own bearer key) and register the `/api/endpoint-agents` routes; a target bound to an agent is then reached only through its reverse tunnel, never dialed. Off = the login is refused and the routes are absent. See "Outbound-only endpoint agents" under §6. Also enables **session probes** (Phase 266, `PAM_AGENT_MODE=probe` on the agent): the `/api/probes*` and `/api/probe-rules*` routes. |
 | `PAM_SSH_JUMP_HOST` / `_USER` / `_KEY` | | (direct) | Reach SSH targets only routable through a **bastion** (Phase 8): the proxy opens a `direct-tcpip` channel through the jump host, authenticating to it with the private key at `_KEY` (public-key only). Set all three; leave unset for a direct dial. |
 | `PAM_GUACD_ADDR` | | (RDP off) | `host:port` of the `guacd` daemon that brokers RDP (the Docker/K8s/Helm deploys ship one). See §5 → *RDP*. |
 | `PAM_GUACD_RECORDING_PATH` | | (off) | Directory where **guacd** writes its own server-side RDP session recordings; the recording's name lands in the `rdp.connect` audit event. Separate from `PAM_RECORDING_DIR`, which holds the SSH/WinRM/PostgreSQL asciicasts. |
@@ -1058,6 +1058,76 @@ Audit: `endpoint_agent.create` / `endpoint_agent.revoke` (admin actions),
 `endpoint-agent:<name>`, with `reason:` unknown-key / name-mismatch / revoked /
 disabled on a refusal), and the operator's `session.start` row gains
 `via:endpoint-agent:<name>` when the session rode a tunnel.
+
+### Windows session probes — telemetry and blocking inside an RDP session (Phase 266)
+
+A brokered RDP desktop is recorded and watchable, but nothing on the PAMv1
+side knows which programs the operator started on the server or where those
+programs connected. The **session probe** closes that from the only vantage
+point that can see it — the server itself — using the same `pam-agent`
+binary as above in a second mode. It is launched **inside the operator's
+logon session, as that user**, and from there it:
+
+- reports the session's **processes** (PID, image, path, command line) and
+  **network connections** (per owning process) to pam-server every few
+  seconds — menu **34** (*Work with session probes*), or from *Work with
+  Active Sessions* option **8** on the RDP session itself;
+- **ends what the block rules match**: a *process* rule is an image name or
+  path glob (`psexec*`, `*\mimikatz.exe`); a *connection* rule is a remote
+  IP/CIDR and/or port (and optionally `tcp`/`udp`) — the session process
+  holding such a connection is ended. Rules are global or per target, take
+  effect on every connected probe's next scan, and every termination is
+  audited (`probe.process_killed`, `probe.connection_blocked`) against the
+  agent, target, account and Windows session;
+- accepts an administrator's **End process** (option 4 on the probe's detail
+  screen, `POST /api/probes/{key}/kill`), audited as `probe.kill`.
+
+**Same permissions as the user, deliberately.** The probe runs with the
+session user's token and nothing more: it can end only what that user could
+end (Windows refuses the rest, and the refusal is what the audit row says),
+it installs no firewall rules (those need an administrator, which a brokered
+operator is not), and the operator can end the probe. It is the desktop twin
+of the command denylist — visibility and a tripwire — and, like it, **not a
+containment boundary**. pam-server, for its part, can tell a probe nothing
+but the rule set and a PID: the command vocabulary is closed, so a
+compromised pam-server cannot run anything on the server through it.
+
+Setup:
+
+1. Register a **probe**-kind agent for the RDP target — menu 28, F6, kind
+   `probe` (or `POST /api/endpoint-agents` with `"kind":"probe"`). The key is
+   shown once. A target may carry a tunnel agent and a probe agent at once
+   (one live agent per kind); a probe never changes how the target is
+   reached.
+2. Install `pam-agent_windows_amd64.exe` (a Release asset, or
+   `GOOS=windows go build ./cmd/pam-agent`) on the server and launch it **at
+   log on of any user, running as the logged-on user** — a scheduled task
+   with the "At log on" trigger and "Run only when user is logged on", or a
+   `Run` key — with:
+
+   ```
+   PAM_AGENT_MODE=probe
+   PAM_AGENT_SERVERS=pam.example.com:2222     # HA: list every replica
+   PAM_AGENT_NAME=win-probe
+   PAM_AGENT_KEY=<the key shown once>
+   PAM_AGENT_SERVER_HOST_KEY=<pam-server's host key line>   # required, as for a tunnel
+   PAM_AGENT_PROBE_INTERVAL=5                 # seconds between scans (optional)
+   ```
+
+   Every operator session on the server then runs its own probe under its
+   own account; menu 28 shows the agent as connected with the number of
+   sessions probing.
+3. Add block rules — menu 34, F10, F6 (`POST /api/probe-rules`).
+
+The probe matches a brokered session by target and by the account the
+session was opened as (`cred_user`), ignoring a `DOMAIN\` prefix; two
+simultaneous sessions of one account on one server share the answer. The
+enumeration uses PowerShell (`Get-CimInstance Win32_Process`,
+`Get-NetTCPConnection`/`Get-NetUDPEndpoint`), present on every supported
+Windows Server; telemetry is held in memory on the replica the probe is
+connected to and is not persisted — the audit trail carries the
+enforcements. Reading telemetry takes `read_audit`; rules and kills take
+`manage_targets`.
 
 ### Windows targets (WinRM)
 
@@ -4839,6 +4909,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-09-22 | **Phase 266 (Windows session probes).** §6 new subsection: `pam-agent` in probe mode inside an operator's RDP session — telemetry (menu 34; *Work with Active Sessions* → **8**), block rules (F10), End process (option 4), the same-permissions-as-the-user posture, setup as a logon-triggered task. `PAM_ENDPOINT_AGENTS_ENABLED` row: also enables probes. |
 | 2026-09-17 | **Phase 264 (the review of 250–262).** §Credential-level grants: operator certificates and management credentials are now credential-scoped too, and a scope refusal spends nothing. §9.4c: a kick reaches every connection of a share, an internal invitee's desktop key follows the user's standing, and suspend (§9.4d) now freezes a desktop — *Work with Active Sessions* → **7**. Retention prunes every recording kind. |
 | 2026-09-17 | **Phase 262 (image digests).** §3 Helm: pin by `image.digest` and where each release's digest is recorded; the `helm install` example passes `secret.create=true`, which the chart requires. |
 | 2026-09-17 | **Phase 260 (share a live RDP/VNC session).** §9.4c gains the desktop case: where an internal invitee and an external guest redeem, read-only vs keyboard-and-mouse, the clipboard and files never shared, roster and kick. |

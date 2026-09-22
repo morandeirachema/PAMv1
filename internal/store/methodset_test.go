@@ -80,9 +80,11 @@ import (
 // (3) — the third authorization path, and the only one that can DENY, so it
 // needed rows of its own rather than a flag on a grant that names one target.
 // Phase 256 added UserStore.UpdateUserManager (1) — a user's direct manager,
-// the one approver a "manager" tier of an approval chain accepts.
+// the one approver a "manager" tier of an approval chain accepts. Phase 266
+// added ProbeRuleStore (3) — the block rules a session probe enforces inside
+// an operator's logon session on a target.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 229
+	const want = 232
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)
