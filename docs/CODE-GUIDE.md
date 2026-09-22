@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-09-02 · Reflects: Phases 0–227 and 229–265 + the 2026-07 hardening passes.
+> Last updated: 2026-09-22 · Reflects: Phases 0–227 and 229–267 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -133,7 +133,11 @@ Everything under `internal/` is a focused package the binary wires together.
 Since Phase 153 there is a second, much smaller deployable — `cmd/pam-agent`,
 the outbound-only endpoint agent that runs ON a target PAMv1 cannot dial into
 and holds a reverse tunnel to the SSH proxy (`internal/endpointagent`); it is
-a client of pam-server, not a server of anything.
+a client of pam-server, not a server of anything. Since Phase 266 the same
+binary has a second mode: `PAM_AGENT_MODE=probe` makes it the **Windows
+session probe** (`internal/probe`), launched inside an operator's RDP logon
+session with that user's token to report the session's processes and
+connections and end what the block rules match.
 
 ### Package map
 
@@ -180,6 +184,7 @@ flowchart TB
   subgraph support["Supporting"]
     session["session — registry + live hub + endpoint-agent registry"]
     endpointagent["endpointagent — outbound-only agent client (cmd/pam-agent)"]
+    probe["probe — session probe: protocol, rules, agent loop, hub (cmd/pam-agent, Phase 266)"]
     winrm["winrm"]
     guacd["guacd (RDP)"]
     alert["alert"]
@@ -609,6 +614,24 @@ makes a session that can't be recorded fail closed.
   direct dial. The agent side (`endpointagent.Run`) is `(*ssh.Client).Listen`
   + `Accept` + pipe to ONE local address, host key pinned, reconnect with
   backoff.
+- **Session probes** (Phase 266, `internal/probe` + the `probe@pamv1` branch
+  of `serveEndpointAgent`) — the second KIND of endpoint agent
+  (`EndpointAgent.Kind`). Same login, same key-hash lookup, but instead of a
+  `tcpip-forward` the agent sends one `probe@pamv1` global request with a JSON
+  `Hello` (host, account, Windows session id), and `serveProbe` opens the one
+  `pam-probe@pamv1` channel toward it and hands it to `probe.Hub.Serve`. In
+  Python terms: a JSON-lines RPC over an SSH channel, where the *server*
+  pushes rules and kill commands and the *agent* pushes snapshots and events.
+  The agent-side loop (`probe.Serve`) scans every interval, sends the
+  `Snapshot` first, then ends what `Rule.MatchesProcess` /
+  `MatchesConnection` match through `Platform.Kill` — `platform_windows.go`
+  (`TerminateProcess` under the probe's own token, PowerShell for enumeration)
+  is the only OS-specific file; `NewPlatform` is `ErrUnsupported` elsewhere,
+  and the tests drive a fake. The hub keeps the latest snapshot per probe in
+  memory, matches a brokered session by target + `session.Info.CredUser`
+  (`ForSession`), and turns each `Event` into an audit row via `eventAction`
+  (literals, so the OCSF coverage test can see them). Rules live in
+  `probe_rules` (`ProbeRuleStore`); `RefreshPolicy` re-pushes on every change.
 
 ### 5.4 The PostgreSQL proxy (`dbproxy.go`, Phase 15)
 
@@ -1203,6 +1226,8 @@ phase-by-phase status.
 | Date | Change |
 |---|---|
 | 2026-09-16 | Phase 248 (the review of 240–247): `store.SafePermissionsCover` + `SafePermissionOrder` beside `GrantPermits`, and a single-pass `ParseSafePermissions`; `api.safeManagement` replacing `canManageSafe` where the caller's own permission set matters (`canManageSafe` stays as its boolean wrapper), the `Covers` guard in `api.rotateUserToken`, `api.operatorInput` in the viewer bridge, `api.grantDeadline` deleted (the tunnel uses the grants it was admitted under); `auth.ReasonSessionMFAExtension`; `session.entry.swept`; `pgstore.SweepExpiredGrants` on one transaction; `timeframe.Frame.End` building wall-clock edges. |
+| 2026-09-22 | Phase 267 (documentation currency pass): no code; §3.3 package map and §5.3 gain Phase 266's probe; `internal/releasedocs` gains `TestDocHeadersAgree` (every `Reflects:` header, both READMEs' ranges and `docs/README.md`'s release token must agree with ROADMAP and CHANGELOG). |
+| 2026-09-22 | Phase 266 (Windows session probe): `internal/probe` (`probe.go` types + `Rule.Validate`/`MatchesProcess`/`MatchesConnection`/`glob`, `agent.go` `Serve`, `hub.go` `Hub`/`Link`/`Status`/`ForSession`/`SameUser`/`Kill`/`RefreshPolicy`/`Kick`/`eventAction`/`Clean`, `platform.go` `Platform`/`ErrUnsupported`, `platform_windows.go`); `endpointagent.Config.Mode`/`ProbePlatform` + `serveProbe`/`keepalive`; `proxy/endpointagent.go` `serveProbe`/`sanitizeHello` and the `endpoint_agent_kind` permission; `api/probe_handlers.go`; `store.ProbeRule`/`ProbeRuleStore`, `EndpointAgent.Kind`; `session.Info.CredUser`; `ocsf.findingExact` gains `probe.*`. |
 | 2026-09-17 | Phase 264 (review of 250–262): `firstUsableCredential`, `credentialByUsername`, `memberStanding`, `suspendedInput`, `approvedAsByApprover`/`appendApprovedAs`, `tierQualifier(ctx, *AccessRequest)`; `session.ShareRegistry.IssueMemberKey`/`GuestKeyIsMember`, ref-counted `joinedEntry`; `auth.TerminalPassword`/`SplitTerminalPassword`/`Principal.CarryTicket`/`RoleNames`; `maint.IsRecording`; migration `0060`; tests in `internal/api/review264*_test.go`. |
 | 2026-09-17 | Phase 262 (release digests): `internal/releasedocs` (`TestReleaseDigestsAgree` — the digest records in README, CHANGELOG and ROADMAP agree); `release.yml`'s release-notes step; the chart's `image.digest`. |
 | 2026-09-17 | Phase 260 (desktop share): `internal/api/desktop_share.go` (`redeemDesktopInvite`, `shareDesktop`, `shareControlInput`, `isDesktopSession`, `sessionProtocol`), `shareRedeemOut.Protocol`, `viewerJoin.touch`; `session.Registry.Get`; the proxy's `reason:graphical-session`; `web.Share` substitutes the Guacamole client; console `sharejoin`, `joinSharedDesktop`, sessions option 6. |
