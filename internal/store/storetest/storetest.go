@@ -2192,6 +2192,28 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("disabled scim key must resolve as not found, got %v", err)
 	}
 
+	// --- restriction rules (Phase 275) ---
+	rr := &store.RestrictionRule{SubjectType: "role", Subject: "user", Subprotocol: "ssh_exec", Pattern: `rm\s+-rf`, Action: "kill", Note: "no wipes", CreatedBy: "admin"}
+	if err := st.CreateRestrictionRule(ctx, rr); err != nil || rr.ID == 0 || rr.CreatedAt.IsZero() {
+		t.Fatalf("CreateRestrictionRule: %+v err %v", rr, err)
+	}
+	rr2 := &store.RestrictionRule{SubjectType: "user", Subject: "alice", Subprotocol: "sftp", Pattern: "$filesize:>10m", Action: "notify"}
+	if err := st.CreateRestrictionRule(ctx, rr2); err != nil {
+		t.Fatal(err)
+	}
+	if list, err := st.ListRestrictionRules(ctx); err != nil || len(list) != 2 || list[0].ID != rr.ID || list[0].Pattern != `rm\s+-rf` || list[1].Action != "notify" {
+		t.Fatalf("ListRestrictionRules: %+v err %v", list, err)
+	}
+	if err := st.DeleteRestrictionRule(ctx, rr.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteRestrictionRule(ctx, rr.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("delete twice: %v", err)
+	}
+	if err := st.DeleteRestrictionRule(ctx, rr2.ID); err != nil {
+		t.Fatal(err)
+	}
+
 	// --- approval depth (Phase 274) ---
 	adr := &store.AccessRequest{Requester: "depth-alice", TargetID: tgt.ID, Reason: "depth", Status: "pending", ExpiresAt: time.Now().Add(2 * time.Hour).UTC()}
 	if err := st.CreateAccessRequest(ctx, adr); err != nil {

@@ -86,6 +86,7 @@ flowchart LR
     n_ratelimit[ratelimit]
     n_recording[recording]
     n_releasedocs[releasedocs]
+    n_restrict[restrict]
     n_saml[saml]
     n_samltest[samltest]
     n_sessionforensics[sessionforensics]
@@ -130,6 +131,7 @@ flowchart LR
   n_api --> n_probe
   n_api --> n_ratelimit
   n_api --> n_recording
+  n_api --> n_restrict
   n_api --> n_rotate
   n_api --> n_saml
   n_api --> n_session
@@ -222,12 +224,14 @@ flowchart LR
   n_proxy --> n_probe
   n_proxy --> n_ratelimit
   n_proxy --> n_recording
+  n_proxy --> n_restrict
   n_proxy --> n_session
   n_proxy --> n_sshca
   n_proxy --> n_store
   n_proxy --> n_tds
   n_proxy --> n_vault
   n_proxy --> n_winrm
+  n_restrict --> n_store
   n_rotate --> n_store
   n_rotate --> n_winrm
   n_session --> n_logging
@@ -463,6 +467,17 @@ erDiagram
     arr_string Capabilities
     time_Time CreatedAt
   }
+  RestrictionRule {
+    int64 ID
+    string SubjectType
+    string Subject
+    string Subprotocol
+    string Pattern
+    string Action
+    string Note
+    string CreatedBy
+    time_Time CreatedAt
+  }
   SSHCert {
     int64 ID
     int64 Serial
@@ -661,7 +676,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 221 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 224 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -758,6 +773,9 @@ The 221 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/recordings` | CapReadAudit |
 | GET | `/api/recordings/search` | CapReadAudit |
 | GET | `/api/recordings/{name}` | CapReadAudit |
+| GET | `/api/restriction-rules` | CapReadInventory |
+| POST | `/api/restriction-rules` | CapManageUsers |
+| DELETE | `/api/restriction-rules/{id}` | CapManageUsers |
 | GET | `/api/safes` | CapReadInventory |
 | POST | `/api/safes` | CapManageTargets |
 | DELETE | `/api/safes/{id}` | CapManageTargets |
