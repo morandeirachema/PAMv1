@@ -2433,8 +2433,11 @@ not bank on `main`, and neither do features.
 - [x] **v0.0.78** through the test-gated pipeline. `release.yml` unchanged
   since v0.0.77, so no rehearsal. Published 2026-09-22 as
   `ghcr.io/morandeirachema/pamv1:0.0.78`
-  (also `latest`), digest `TBD`, **public** (anonymous pull), signed and
-  attested — with the `pam-agent` binaries (Linux and Windows), the SPDX SBOM
+  (also `latest`), digest
+  `sha256:c0b896120a4df8faf0499a367883cb76af3d302140995aea9f300c2f8cfd1142`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
+  digest), signed and attested — every publishing step's own conclusion
+  `success` — with the `pam-agent` binaries (Linux and Windows), the SPDX SBOM
   and `SHA256SUMS` attached
 - [x] All pins via the sweep — exactly one release under `deploy/`. Helm
   chart `version` 0.0.77 -> **0.0.78**, tracking the app version

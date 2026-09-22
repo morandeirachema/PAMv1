@@ -70,7 +70,7 @@ Tier 10 table with its remaining ten rows.
 `rights`, a probe rule without an `action` (it kills), and any deployment
 with `PAM_SSH_KNOWN_HOSTS` set behave exactly as before. The image is
 `ghcr.io/morandeirachema/pamv1:0.0.78`, digest
-`TBD`
+`sha256:c0b896120a4df8faf0499a367883cb76af3d302140995aea9f300c2f8cfd1142`
 ([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.78)).
 
 ## [0.0.77] — 2026-09-22
