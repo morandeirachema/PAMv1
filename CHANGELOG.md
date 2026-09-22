@@ -2,12 +2,64 @@
 
 All notable released changes to PAMv1 are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
-[Semantic Versioning](https://semver.org/) with 0.x semantics — breaking
-changes may land in minor versions until 1.0.
+[Semantic Versioning](https://semver.org/) with **0.0.x semantics from
+v0.0.77 on**: every release is a patch-level tag, and any of them may carry a
+breaking change until the interfaces are declared stable. Releases before it
+ran v0.10.0 → v0.76.0 with 0.x semantics; the counter simply continued
+(0.76 → 0.0.77) so the history stays in order by its last component. Note
+that plain semver ordering puts v0.0.77 *below* v0.76.0 — `go install
+…@latest`, a Helm repository index or a "highest version" Dependabot rule
+will still pick v0.76.0. Pin the tag or the digest, never "latest by
+version".
 
 PAMv1 is built phase by phase, and the full per-phase history — what shipped in
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
+
+## [0.0.77] — 2026-09-22
+
+The first release under the **0.0.x numbering** (see the note at the top).
+It ships **Phase 266** — the Windows session probe — and **Phase 267**, a
+documentation currency pass. **One migration is new** (`0061`), seven routes
+and one store role are new, and no environment variable moved on the server
+(the agent binary gains `PAM_AGENT_MODE` and `PAM_AGENT_PROBE_INTERVAL`).
+Upgrade if you broker RDP sessions to Windows servers and want to see, and
+stop, what runs inside them.
+
+**Added.**
+
+- **Windows session probe** (Phase 266). A second kind of endpoint agent:
+  `pam-agent` with `PAM_AGENT_MODE=probe`, launched at log-on inside each
+  operator's RDP session **with that user's own token**, reports the
+  session's processes and network connections to pam-server and ends what
+  the block rules match — process rules (image glob) and connection rules
+  (remote IP/CIDR, port, protocol), global or per target, pushed on every
+  change. An administrator can end one process on demand. Every enforcement
+  is audited (`probe.*`) and exported as an OCSF Detection Finding. The probe
+  holds the user's permissions and nothing more: no firewall rules, and the
+  user can end it — a tripwire with telemetry, **not a containment
+  boundary**. Console menu **34**; *Work with Active Sessions* → **8**;
+  `GET /api/probes`, `GET /api/probes/{id}`, `POST /api/probes/{id}/kill`,
+  `GET /api/sessions/{id}/probes`, `GET/POST /api/probe-rules`,
+  `DELETE /api/probe-rules/{id}`; `POST /api/endpoint-agents` takes
+  `"kind":"probe"`. The release ships `pam-agent_windows_amd64.exe`. The
+  Windows platform layer compiles and vets under `GOOS=windows` in CI but
+  has not been exercised against a real Windows host.
+- `GET /api/sessions` rows carry `cred_user`, the account a session was
+  opened as.
+
+**Documentation.** Phase 267 resynced every document: headers that
+contradicted their own change logs, a docs index naming a release nine
+releases old, a security policy that said no release existed, a backup
+runbook nine migrations behind, and this file's v0.76.0 upgrade guidance,
+which named one of six fixes. `TestDocHeadersAgree` now fails CI on drift.
+
+**What has not changed.** A tunnel endpoint agent (Phase 153) behaves
+exactly as before; the `kind` column defaults to `tunnel` for every existing
+row. The image is
+`ghcr.io/morandeirachema/pamv1:0.0.77`, digest
+`TBD`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.77)).
 
 ## [0.76.0] — 2026-09-17
 
@@ -3511,7 +3563,8 @@ The image is `ghcr.io/morandeirachema/pamv1:0.10.0`, digest
 `sha256:ab2a5fa5db27fae805f9096dfdf526497ddff4cc3774b33469ab108b98637b39`
 ([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.10.0)).
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.76.0...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.0.77...HEAD
+[0.0.77]: https://github.com/morandeirachema/pamv1/releases/tag/v0.0.77
 [0.76.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.76.0
 [0.75.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.75.1
 [0.75.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.75.0
