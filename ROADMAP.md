@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–267 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–268 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,38 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 268 — v0.0.77 ✅
+
+Releases **266** (the Windows session probe) and **267** (the documentation
+currency pass). The first release under the **0.0.x numbering**, asked for
+directly ("change the version to 0.0.x instead of 0.x"): the counter
+continues (0.76 → 0.0.77) so the last component still orders the history,
+and CHANGELOG's header records the one consequence — plain semver ordering
+puts v0.0.77 below v0.76.0, so "latest by version" resolvers (`go install
+…@latest`, a Helm repo index) keep picking v0.76.0; pin the tag or digest.
+
+- [x] **v0.0.77** through the test-gated pipeline. `.github/workflows/release.yml`
+  changed in 266 (the Windows agent asset), so it was rehearsed before the
+  tag. Published 2026-09-22 as `ghcr.io/morandeirachema/pamv1:0.0.77`
+  (also `latest`), digest `TBD`, **public** (anonymous pull), signed and
+  attested — with the `pam-agent`
+  binaries (now including `pam-agent_windows_amd64.exe`), the SPDX SBOM and
+  `SHA256SUMS` attached
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm
+  chart `version` 0.67.0 -> **0.0.77**: the chart now tracks the app version
+  exactly
+- [x] Migration high-water **`0060` -> `0061`**; `store.Store` **229 ->
+  232**; routes **211 -> 218**
+- [x] Both READMEs restated; every `Reflects:` header, both READMEs' *What
+  works today* range, `docs/README.md`, this banner and CHANGELOG's
+  `[Unreleased]` link — now checked by `TestDocHeadersAgree`, and README's
+  status digest reads `TBD` until the digest PR, as `TestReleaseDigestsAgree`
+  now requires
+- [x] `CHANGELOG.md` explains the numbering change and its ordering caveat
+  before the entry
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
 
 ## Phase 267 — Documentation currency pass, and the test that keeps it current ✅
 

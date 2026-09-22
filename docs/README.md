@@ -1,6 +1,6 @@
 # PAMv1 — documentation
 
-> Last updated: 2026-09-22 · Reflects: Phases 0–227 and 229–267, and release v0.76.0 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-09-22 · Reflects: Phases 0–227 and 229–268, and release v0.0.77 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-09-22 | Phase 268 (v0.0.77): every `Reflects:` header, both READMEs' ranges and the banner through 268; the release token above; the version numbering moves to **0.0.x** (see CHANGELOG). |
 | 2026-09-22 | **Phase 267 — documentation currency pass.** Every `Reflects:` header now names the newest phase AND carries the date it was actually swept (the two halves contradicted each other on thirteen docs); this header's release token (`v0.69.0`, nine releases stale) restated; SECURITY.md's *Supported versions* rewritten (it still said no release existed); BACKUP-AND-RESTORE's migration high-water mark `0051` → `0061` with 0052–0061 attributed; CHANGELOG `[0.76.0]`'s upgrade guidance names every fix; ROADMAP's Phase 265 intro records the `SetApprovalState` signature change. **Enforced from now on** by `internal/releasedocs` `TestDocHeadersAgree`: every header, both READMEs' ranges and this file's release token must agree with the ROADMAP banner and CHANGELOG — the sweep is no longer a hand ritual. |
 | 2026-09-22 | Phase 266 (Windows session probes) documented: ARCHITECTURE-LOW-LEVEL (package tree, §2.5 probe bullet, env row, audit family, tests, change log), ARCHITECTURE-HIGH-LEVEL (table row, change log), ADMIN-GUIDE (§6 setup subsection), PORTS-AND-FLOWS (I8 carries the probe), CODE-GUIDE (package map, §5.3 bullet, change log), USER-GUIDE (menus 32–34, RDP note, change log), EXTERNAL-INFRA-GAPS (§3 row: the Windows platform layer is unverified here), both READMEs' coverage tables, ARCHITECTURE-DIAGRAMS (routes 218). |
 | 2026-09-17 | Phase 264 (the review of 250–262) documented: ARCHITECTURE-LOW-LEVEL (credential-scope paragraph, migration mark `0060`, change log), ARCHITECTURE-HIGH-LEVEL and CODE-GUIDE (§3.3 mark, change log), ADMIN-GUIDE (credential-level grants paragraph, change log), USER-GUIDE change log. |
