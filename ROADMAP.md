@@ -2435,8 +2435,11 @@ puts v0.0.77 below v0.76.0, so "latest by version" resolvers (`go install
 - [x] **v0.0.77** through the test-gated pipeline. `.github/workflows/release.yml`
   changed in 266 (the Windows agent asset), so it was rehearsed before the
   tag. Published 2026-09-22 as `ghcr.io/morandeirachema/pamv1:0.0.77`
-  (also `latest`), digest `TBD`, **public** (anonymous pull), signed and
-  attested — with the `pam-agent`
+  (also `latest`), digest
+  `sha256:36590ed1a224cd5486ed9d017ee86a39020ffaa0e3dc3809b9c2544626dd922a`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
+  digest), signed and attested — every publishing step's own conclusion
+  `success` — with the `pam-agent`
   binaries (now including `pam-agent_windows_amd64.exe`), the SPDX SBOM and
   `SHA256SUMS` attached
 - [x] All pins via the sweep — exactly one release under `deploy/`. Helm
