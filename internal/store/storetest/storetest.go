@@ -2192,6 +2192,76 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("disabled scim key must resolve as not found, got %v", err)
 	}
 
+	// --- approval depth (Phase 274) ---
+	adr := &store.AccessRequest{Requester: "depth-alice", TargetID: tgt.ID, Reason: "depth", Status: "pending", ExpiresAt: time.Now().Add(2 * time.Hour).UTC()}
+	if err := st.CreateAccessRequest(ctx, adr); err != nil {
+		t.Fatalf("CreateAccessRequest(depth): %v", err)
+	}
+	if err := st.NoteAccessRequest(ctx, adr.ID, "bob", "approved: looks fine"); err != nil {
+		t.Fatalf("NoteAccessRequest: %v", err)
+	}
+	if err := st.NoteAccessRequest(ctx, adr.ID, "carol", "cancelled: incident over"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.GetAccessRequest(ctx, adr.ID); got.Notes != "bob: approved: looks fine\ncarol: cancelled: incident over" {
+		t.Fatalf("Notes: %q", got.Notes)
+	}
+	if err := st.NoteAccessRequest(ctx, 999999, "x", "y"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("note on a missing request: %v", err)
+	}
+	// Shorten only shortens.
+	sooner := time.Now().Add(30 * time.Minute).UTC().Truncate(time.Second)
+	if err := st.ShortenAccessRequest(ctx, adr.ID, sooner); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.GetAccessRequest(ctx, adr.ID); !got.ExpiresAt.Equal(sooner) {
+		t.Fatalf("ShortenAccessRequest: %v want %v", got.ExpiresAt, sooner)
+	}
+	if err := st.ShortenAccessRequest(ctx, adr.ID, sooner.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.GetAccessRequest(ctx, adr.ID); !got.ExpiresAt.Equal(sooner) {
+		t.Fatalf("ShortenAccessRequest must not extend: %v", got.ExpiresAt)
+	}
+	// Cancel needs approved; pending is a conflict.
+	if err := st.CancelAccessRequest(ctx, adr.ID, "carol", time.Now()); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("cancel pending: %v", err)
+	}
+	decidedNow := time.Now()
+	if err := st.SetApprovalState(ctx, adr.ID, "bob", "admin", "approved", "bob", &decidedNow); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := st.HasActiveApproval(ctx, "depth-alice", tgt.ID, time.Now()); !ok {
+		t.Fatal("approved request should be active")
+	}
+	if err := st.CancelAccessRequest(ctx, adr.ID, "carol", time.Now()); err != nil {
+		t.Fatalf("CancelAccessRequest: %v", err)
+	}
+	if got, _ := st.GetAccessRequest(ctx, adr.ID); got.Status != "cancelled" || got.Approver != "carol" || got.DecidedAt == nil {
+		t.Fatalf("after cancel: %+v", got)
+	}
+	if ok, _ := st.HasActiveApproval(ctx, "depth-alice", tgt.ID, time.Now()); ok {
+		t.Fatal("a cancelled request must not be active")
+	}
+	if err := st.CancelAccessRequest(ctx, 999999, "x", time.Now()); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cancel missing: %v", err)
+	}
+	// Timeout sweep: only pending rows older than the cut-off.
+	stale := &store.AccessRequest{Requester: "depth-alice", TargetID: tgt.ID, Reason: "stale", Status: "pending", ExpiresAt: time.Now().Add(time.Hour).UTC()}
+	if err := st.CreateAccessRequest(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+	if expired, err := st.ExpirePendingAccessRequests(ctx, time.Now().Add(-time.Hour)); err != nil || len(expired) != 0 {
+		t.Fatalf("sweep with a past cut-off must expire nothing: %+v err %v", expired, err)
+	}
+	expiredRows, err := st.ExpirePendingAccessRequests(ctx, time.Now().Add(time.Second))
+	if err != nil || len(expiredRows) != 1 || expiredRows[0].ID != stale.ID || expiredRows[0].Status != "expired" {
+		t.Fatalf("sweep: %+v err %v", expiredRows, err)
+	}
+	if got, _ := st.GetAccessRequest(ctx, stale.ID); got.Status != "expired" || got.DecidedAt == nil {
+		t.Fatalf("after sweep: %+v", got)
+	}
+
 	// --- host-key pins (Phase 272) ---
 	hk := &store.TargetHostKey{TargetID: tgt.ID, KeyType: "ssh-ed25519", Fingerprint: "SHA256:aaa", PublicKey: "ssh-ed25519 AAAA1"}
 	if err := st.PutTargetHostKey(ctx, hk); err != nil || hk.FirstSeen.IsZero() || hk.LastSeen.IsZero() {

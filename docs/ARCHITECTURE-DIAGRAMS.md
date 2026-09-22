@@ -263,6 +263,7 @@ erDiagram
     ptr_time_Time ConsumedAt
     int RecurDays
     arr_TierState Tiers
+    string Notes
     ptr_time_Time NextRunAt
   }
   AgentCallReservation {
@@ -660,13 +661,14 @@ erDiagram
 
 ## 3. REST API surface
 
-The 220 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 221 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
 | GET | `/api/access-requests` | CapReadInventory |
 | POST | `/api/access-requests` | CapConnect |
 | POST | `/api/access-requests/{id}/approve` | CapReadInventory |
+| POST | `/api/access-requests/{id}/cancel` | CapApprove |
 | POST | `/api/access-requests/{id}/deny` | CapReadInventory |
 | POST | `/api/access-requests/{id}/invite` | CapApprove |
 | GET | `/api/access-requests/{id}/invites` | CapApprove |

@@ -273,7 +273,12 @@ type Config struct {
 	// outbound network calls (alert webhooks) for isolated deployments.
 	RequireApproval bool
 	ApprovalWindow  time.Duration
-	AirGap          bool
+	// ApprovalTimeout (Phase 274) expires a PENDING request nobody decided
+	// within it (0 = never); ApprovalCommentRequired makes every approve,
+	// deny and cancel carry the approver's comment.
+	ApprovalTimeout         time.Duration
+	ApprovalCommentRequired bool
+	AirGap                  bool
 	// ITSM / ticketing gate (Phase 20). RequireTicket makes an access request
 	// carry a change/incident ticket; TicketPattern is a regex it must match and
 	// TicketValidateURL is a webhook the ITSM system answers 2xx for a valid ticket.
@@ -907,6 +912,8 @@ func Load() (*Config, error) {
 		RetentionArchiveDir:     os.Getenv("PAM_RETENTION_ARCHIVE_DIR"),
 		RequireApproval:         boolean("PAM_REQUIRE_APPROVAL", false),
 		ApprovalWindow:          time.Duration(integer("PAM_APPROVAL_WINDOW_MIN", 60)) * time.Minute,
+		ApprovalTimeout:         time.Duration(integer("PAM_APPROVAL_TIMEOUT_MIN", 0)) * time.Minute,
+		ApprovalCommentRequired: boolean("PAM_APPROVAL_COMMENT_REQUIRED", false),
 		RequireTicket:           boolean("PAM_REQUIRE_TICKET", false),
 		RevalidateTicket:        boolean("PAM_TICKET_REVALIDATE", false),
 		TicketPattern:           os.Getenv("PAM_TICKET_PATTERN"),
@@ -1417,6 +1424,9 @@ func Load() (*Config, error) {
 		errs = append(errs, "PAM_ALERT_EMAIL_SMTP, PAM_ALERT_EMAIL_FROM and PAM_ALERT_EMAIL_TO must all be set together (or all empty)")
 	}
 	errs = append(errs, airGapConflicts(cfg)...)
+	if cfg.ApprovalTimeout < 0 {
+		errs = append(errs, "PAM_APPROVAL_TIMEOUT_MIN must be 0 (never) or positive")
+	}
 	switch cfg.SSHHostKeyCheck {
 	case "tofu", "strict", "off":
 	default:

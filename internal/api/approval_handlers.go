@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/alert"
+	"github.com/morandeirachema/pamv1/internal/auditfmt"
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
@@ -330,7 +331,135 @@ func (s *Server) approveAccessRequest(w http.ResponseWriter, r *http.Request) {
 	if !s.requireDecider(w, r, id) {
 		return
 	}
-	s.decideAccessRequest(w, r, id, "approved", actorFrom(r.Context()))
+	in, ok := s.readDecision(w, r)
+	if !ok {
+		return
+	}
+	s.decideAccessRequestWith(w, r, id, "approved", actorFrom(r.Context()), in)
+}
+
+// approvalDecisionIn is the optional body of an approve, deny or cancel (Phase 274):
+// the approver's comment (required when PAM_APPROVAL_COMMENT_REQUIRED) and,
+// on an approve, the duration granted in minutes — capped at what the
+// request asked for, never extending it.
+type approvalDecisionIn struct {
+	Comment     string `json:"comment"`
+	DurationMin int    `json:"duration_min"`
+}
+
+// readDecision reads the optional decision body: absent is the zero value
+// (the pre-274 call shape), present must parse and satisfy the comment
+// policy.
+func (s *Server) readDecision(w http.ResponseWriter, r *http.Request) (approvalDecisionIn, bool) {
+	var in approvalDecisionIn
+	if r.ContentLength != 0 {
+		if !readJSON(w, r, &in) {
+			return in, false
+		}
+	}
+	in.Comment = strings.TrimSpace(in.Comment)
+	if len(in.Comment) > 500 {
+		writeError(w, http.StatusUnprocessableEntity, "comment is limited to 500 characters")
+		return in, false
+	}
+	if s.approvalCommentRequired && in.Comment == "" {
+		writeError(w, http.StatusUnprocessableEntity, "a comment is required on every decision (PAM_APPROVAL_COMMENT_REQUIRED)")
+		return in, false
+	}
+	if in.DurationMin < 0 {
+		writeError(w, http.StatusUnprocessableEntity, "duration_min must be positive")
+		return in, false
+	}
+	return in, true
+}
+
+// commentDetail renders a comment for an audit row, quoted (it is free text).
+func commentDetail(c string) string {
+	if c == "" {
+		return ""
+	}
+	return " comment:" + auditfmt.Value(c, 200)
+}
+
+// cancelAccessRequest ends an APPROVED request before its window closes
+// (Phase 274): the request moves to "cancelled", every live session the
+// requester holds on that target is cut, and the trail records who, why and
+// how many sessions ended. Four-eyes as for a decision: the requester cannot
+// cancel their own approval (they can simply stop using it); a comment is
+// always required here, because a cancel that ends someone's session must
+// say why.
+func (s *Server) cancelAccessRequest(w http.ResponseWriter, r *http.Request) {
+	id, ok := idParam(w, r)
+	if !ok {
+		return
+	}
+	ar, err := s.store.GetAccessRequest(r.Context(), id)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	approver := actorFrom(r.Context())
+	if ar.Requester == approver {
+		s.audit(r.Context(), "access.decision_denied", fmt.Sprintf("request:%d reason:self-cancel", ar.ID))
+		writeError(w, http.StatusForbidden, "four-eyes: you cannot cancel your own approved request")
+		return
+	}
+	in, ok := s.readDecision(w, r)
+	if !ok {
+		return
+	}
+	if in.Comment == "" {
+		writeError(w, http.StatusUnprocessableEntity, "a comment is required to cancel an approved request")
+		return
+	}
+	if ar.Status != "approved" {
+		writeError(w, http.StatusConflict, "only an approved request can be cancelled (this one is "+ar.Status+")")
+		return
+	}
+	if err := s.store.CancelAccessRequest(r.Context(), ar.ID, approver, time.Now()); err != nil {
+		storeError(w, err)
+		return
+	}
+	_ = s.store.NoteAccessRequest(r.Context(), ar.ID, approver, "cancelled: "+in.Comment)
+	killed := 0
+	target, terr := s.store.GetTarget(r.Context(), ar.TargetID)
+	if terr == nil && s.sessions != nil {
+		killed = s.sessions.KillByActorTarget(ar.Requester, target.Name)
+	}
+	s.audit(r.Context(), "access.cancel", fmt.Sprintf("request:%d requester:%s target:%d sessions_killed:%d", ar.ID, ar.Requester, ar.TargetID, killed)+commentDetail(in.Comment))
+	s.alerter.Notify(r.Context(), alert.Event{Type: "access.cancel", Actor: approver,
+		Detail: fmt.Sprintf("request:%d requester:%s target:%d sessions_killed:%d", ar.ID, ar.Requester, ar.TargetID, killed), Remote: r.RemoteAddr, Time: time.Now()})
+	ar.Status = "cancelled"
+	ar.Approver = approver
+	writeJSON(w, http.StatusOK, ar)
+}
+
+// SweepApprovalTimeouts runs the approval-timeout sweep once, as of now, and
+// reports how many pending requests expired — what the scheduler calls
+// every tick, exposed so a test (or an operator's one-off) can run it.
+func (s *Server) SweepApprovalTimeouts(ctx context.Context, now time.Time) int {
+	return s.expirePendingAccessRequests(ctx, now)
+}
+
+// expirePendingAccessRequests is the approval-timeout sweep (Phase 274): a
+// pending request nobody decided within ApprovalTimeout becomes "expired",
+// each one audited and alerted, so a request does not sit open for days
+// waiting for an approver who never saw it. Returns how many expired.
+func (s *Server) expirePendingAccessRequests(ctx context.Context, now time.Time) int {
+	if s.approvalTimeout <= 0 {
+		return 0
+	}
+	expired, err := s.store.ExpirePendingAccessRequests(ctx, now.Add(-s.approvalTimeout))
+	if err != nil {
+		s.log.Error("approval timeout sweep", "err", err)
+		return 0
+	}
+	for _, ar := range expired {
+		s.auditAs(ctx, "system", "access.expired", fmt.Sprintf("request:%d requester:%s target:%d timeout_min:%d", ar.ID, ar.Requester, ar.TargetID, int(s.approvalTimeout.Minutes())))
+		s.alerter.Notify(ctx, alert.Event{Type: "access.expired", Actor: "system",
+			Detail: fmt.Sprintf("request:%d requester:%s target:%d", ar.ID, ar.Requester, ar.TargetID), Time: now})
+	}
+	return len(expired)
 }
 
 // denyAccessRequest denies the access request named in the {id} path value.
@@ -342,7 +471,11 @@ func (s *Server) denyAccessRequest(w http.ResponseWriter, r *http.Request) {
 	if !s.requireDecider(w, r, id) {
 		return
 	}
-	s.decideAccessRequest(w, r, id, "denied", actorFrom(r.Context()))
+	in, ok := s.readDecision(w, r)
+	if !ok {
+		return
+	}
+	s.decideAccessRequestWith(w, r, id, "denied", actorFrom(r.Context()), in)
 }
 
 // decideAccessRequest records approver's decision on the access request id,
@@ -360,6 +493,13 @@ func (s *Server) denyAccessRequest(w http.ResponseWriter, r *http.Request) {
 // already have been decided by someone else between invite creation and
 // redemption.
 func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, id int64, decision, approver string) bool {
+	return s.decideAccessRequestWith(w, r, id, decision, approver, approvalDecisionIn{})
+}
+
+// decideAccessRequestWith is decideAccessRequest with the Phase 274 body:
+// the comment is noted on the request and written to the audit row, and a
+// granted duration shortens the approved window.
+func (s *Server) decideAccessRequestWith(w http.ResponseWriter, r *http.Request, id int64, decision, approver string, in approvalDecisionIn) bool {
 	ar, err := s.store.GetAccessRequest(r.Context(), id)
 	if err != nil {
 		storeError(w, err)
@@ -380,6 +520,10 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, id 
 		if err := s.store.DecideAccessRequest(r.Context(), ar.ID, "denied", approver, time.Now()); err != nil {
 			storeError(w, err)
 			return false
+		}
+		if in.Comment != "" {
+			_ = s.store.NoteAccessRequest(r.Context(), ar.ID, approver, "denied: "+in.Comment)
+			s.audit(r.Context(), "access.comment", fmt.Sprintf("request:%d approver:%s", ar.ID, approver)+commentDetail(in.Comment))
 		}
 		s.notifyDecision(r, "access.deny", approver, ar)
 		ar.Status = "denied"
@@ -439,13 +583,30 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, id 
 		required = floor
 	}
 	joined := strings.Join(approvers, ",")
+	if in.Comment != "" {
+		_ = s.store.NoteAccessRequest(r.Context(), ar.ID, approver, "approved: "+in.Comment)
+	}
 	if chainComplete && len(approvers) >= required {
 		now := time.Now()
 		if err := s.store.SetApprovalState(r.Context(), ar.ID, joined, approvedAs, "approved", approver, &now); err != nil {
 			storeError(w, err)
 			return false
 		}
-		s.audit(r.Context(), "access.approve", fmt.Sprintf("request:%d requester:%s target:%d approvers:%d/%d", ar.ID, ar.Requester, ar.TargetID, len(approvers), required))
+		// The approver's duration (Phase 274) shortens the window the request
+		// asked for; it can never extend it — the request is the ceiling.
+		granted := ""
+		if in.DurationMin > 0 {
+			until := now.Add(time.Duration(in.DurationMin) * time.Minute).UTC()
+			if until.Before(ar.ExpiresAt) {
+				if err := s.store.ShortenAccessRequest(r.Context(), ar.ID, until); err != nil {
+					storeError(w, err)
+					return false
+				}
+				ar.ExpiresAt = until
+				granted = " granted_until:" + until.Format(time.RFC3339)
+			}
+		}
+		s.audit(r.Context(), "access.approve", fmt.Sprintf("request:%d requester:%s target:%d approvers:%d/%d", ar.ID, ar.Requester, ar.TargetID, len(approvers), required)+granted+commentDetail(in.Comment))
 		s.notifyDecision(r, "access.approve", approver, ar)
 		ar.Status = "approved"
 		ar.Approver = approver
@@ -465,7 +626,7 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, id 
 			storeError(w, err)
 			return false
 		}
-		s.audit(r.Context(), "access.approve_partial", fmt.Sprintf("request:%d target:%d approver:%s approvals:%d/%d", ar.ID, ar.TargetID, approver, len(approvers), required))
+		s.audit(r.Context(), "access.approve_partial", fmt.Sprintf("request:%d target:%d approver:%s approvals:%d/%d", ar.ID, ar.TargetID, approver, len(approvers), required)+commentDetail(in.Comment))
 	}
 	ar.ApprovedBy, ar.ApprovedAs = joined, approvedAs
 	writeJSON(w, http.StatusOK, ar)
