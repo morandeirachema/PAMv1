@@ -82,9 +82,10 @@ import (
 // Phase 256 added UserStore.UpdateUserManager (1) — a user's direct manager,
 // the one approver a "manager" tier of an approval chain accepts. Phase 266
 // added ProbeRuleStore (3) — the block rules a session probe enforces inside
-// an operator's logon session on a target.
+// an operator's logon session on a target. Phase 272 added
+// TargetHostKeyStore (3) — the per-target SSH host-key pins.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 232
+	const want = 235
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

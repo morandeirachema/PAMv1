@@ -1598,6 +1598,8 @@ func run() error {
 			Shares:               shares,
 			EndpointAgents:       endpointAgents,
 			ProbeHub:             probeHub,
+			HostKeyCheck:         cfg.SSHHostKeyCheck,
+			Alerter:              alerter,
 			CA:                   sshCA,
 			CertTTL:              cfg.SSHCertTTL,
 			AuthRatePerMin:       cfg.ProxyAuthRatePerMin,

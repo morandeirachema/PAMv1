@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–271 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–272 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,50 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 272 — Host keys pinned on first contact (Tier 10, row 4) ✅
+
+*Tier 10's fourth row. WALLIX keeps every target's SSH host key and RDP
+certificate in a per-device store with a check mode — fail on mismatch,
+accept first seen — and notifies on "new fingerprint saved" and "wrong
+fingerprint". PAMv1 had one global known_hosts file, and without it
+trusted any key with a warning.*
+
+- [x] **A pin per target, trusted on first contact.** `target_host_keys`
+  (migration `0064`): the key type, the SHA256 fingerprint, the public-key
+  line, first and last seen. `proxy/tofu.go` replaces the single upstream
+  callback on the session dial when no known_hosts file is configured: a
+  matching pin is accepted (last seen refreshed); a target with no pin is
+  pinned and accepted under **tofu** — `target.hostkey_saved`, alerted
+  `hostkey.saved` — or refused under **strict** (`target.hostkey_unknown`);
+  a pin that does not match REFUSES the session, audits
+  `target.hostkey_mismatch` with both fingerprints under the operator's
+  actor, alerts `hostkey.mismatch`, and is never re-learned. A store error
+  refuses the dial. `PAM_SSH_KNOWN_HOSTS`, when set, stays authoritative.
+- [x] **The default changed, on purpose.** An unpinned deployment used to
+  trust any key with a startup warning. It now pins on first contact: the
+  same trust on the first session, a refusal instead of silence on the
+  second. `PAM_SSH_HOST_KEY_CHECK=off` restores the old behaviour, loudly.
+  This is the one Tier 10 row where PAMv1 chose the stricter of WALLIX's
+  modes as its default.
+- [x] **Reset is a decision, not a side effect.** `GET /api/targets/{id}/host-key`
+  shows the pin; `DELETE` forgets it — `target.hostkey_reset` with the
+  fingerprint dropped — so the next key seen is trusted. Console: *Work
+  with Targets* → **12**, F6=Reset pin, with the `ssh-keygen -lf` line to
+  verify a first contact by hand.
+- [x] **Not RDP, and the doc says why.** guacd terminates the RDP TLS
+  session; PAMv1 relays Guacamole instructions and never sees the server
+  certificate, so it has nothing to pin. `PAM_GUACD_IGNORE_CERT` governs
+  guacd's own verification. Also not the management connections (rotation,
+  discovery, forensics), which keep the known_hosts-or-trust-any rule — a
+  named follow-on, since `rotate.SSHConnector` takes a host, not a target.
+- [x] **Proven against two real upstream sshds** with different keys
+  (`TestHostKeyTOFU`): pin, accept, refuse-and-never-relearn, reset, re-pin;
+  strict, off and known_hosts precedence (`TestHostKeyStrictAndOff`); the
+  routes and capability boundaries; the store contract's first_seen rule.
+- [x] **Living docs**: low-level §2.5/§4/§5/§7/§8, high-level, ADMIN-GUIDE
+  §6, USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE (`0064`), SECURITY-GAPS
+  row 4 (SSH now fixed), README Tier 10 row.
 
 ## Phase 271 — Probe metadata as a session artifact, and notify rules (Tier 10, row 3) ✅
 
