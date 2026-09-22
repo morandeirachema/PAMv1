@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–274 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–275 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,42 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 275 — Per-user and per-role restriction rules, with size rules (Tier 10, row 6) ✅
+
+*Tier 10's sixth row. WALLIX attaches Restrictions to a user group — a regex
+per sub-protocol with `notify` or `kill`, plus `$filesize`/`$downsize` for
+transfers. PAMv1 had one deployment-wide deny/allow list, kill only, and one
+SFTP byte cap.*
+
+- [x] **A rule belongs to a subject.** `restriction_rules` (migration
+  `0066`): user or role, sub-protocol (`ssh_exec`, `winrm`, `sql`,
+  `kubernetes`, `sftp`, `*`), a regular expression over the command or an
+  SFTP size rule, `kill` or `notify`. A user's rules and their roles' rules
+  add up; when both a kill and a notify match, kill wins. Validated on
+  write (an unknown sub-protocol, an uncompilable regex, a size rule
+  anywhere but sftp are refused) so a typo cannot become a silent gap.
+- [x] **Loaded once, at admission.** `restrict.Load` runs in `admit()` and
+  the compiled set rides in `admitResult`, so no command pays a store read
+  and a running session keeps the rules it was admitted under. A set that
+  cannot be read refuses the session — it must not read as "no rule".
+- [x] **Enforced wherever a discrete command or transfer is visible**, right
+  after the deployment guard: the SSH exec hook and WinRM (kill ends the
+  session through the registry), both SQL proxies (a fatal refusal), the
+  REST `guardCommand` chokepoint (kubectl, WinRM, the broker's tools — a
+  refusal, there being no session), and the SFTP inspector, where
+  `$filesize`/`$downsize` count bytes per file handle and refuse the write or
+  read that crosses the limit (`sftp.size_limit`), ending the session under
+  kill. Every match is audited with the rule and the quoted pattern.
+- [x] **Not a containment boundary**, and the docs say so where they said it
+  of command control: an interactive PTY is never parsed.
+- [x] **Proven** against the real upstream (exec: notify runs and is
+  recorded, kill refuses and the connection dies), the real SFTP upstream
+  (an upload past the limit refused under kill, recorded once under notify),
+  the REST WinRM path (the killed command never reaches the runner), the
+  engine's algebra, and the store contract.
+- [x] **Living docs**: low-level §1/§5/§7/§8, high-level, ADMIN-GUIDE §9.4a,
+  USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE (`0066`), README Tier 10 row.
 
 ## Phase 274 — Approval depth (Tier 10, row 5) ✅
 

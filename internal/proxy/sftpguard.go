@@ -26,6 +26,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
+	"github.com/morandeirachema/pamv1/internal/restrict"
 )
 
 // SFTPMode is the SSH proxy's file-transfer policy.
@@ -155,6 +156,55 @@ type sftpInspector struct {
 	buf     bytes.Buffer                // accumulates bytes until a full packet is framed
 	giveUp  bool                        // set on a parse error: forward the rest opaquely
 	fatal   error                       // set when capture demands the session fail closed
+	// Size limits (Phase 275): the subject's tightest $filesize (upload) and
+	// $downsize (download) rules, enforced per handle — bytes written to or
+	// read from one file beyond the limit are refused (kill also ends the
+	// session through onKill) or merely audited (notify), once per handle.
+	upLimit, downLimit restrict.SizeRule
+	hasUp, hasDown     bool
+	written, read      map[string]int64
+	flagged            map[string]bool
+	onKill             func()
+}
+
+// setSizeLimits installs the subject's size rules (Phase 275).
+func (s *sftpInspector) setSizeLimits(set *restrict.Set, onKill func()) {
+	if s == nil {
+		return
+	}
+	s.upLimit, s.hasUp = set.SizeLimit(true)
+	s.downLimit, s.hasDown = set.SizeLimit(false)
+	s.written, s.read, s.flagged = map[string]int64{}, map[string]int64{}, map[string]bool{}
+	s.onKill = onKill
+}
+
+// overSize accounts n bytes against handle in a direction and reports
+// whether the transfer must be refused: the limit is exceeded and the rule
+// kills. A notify rule audits the first crossing and lets the bytes through.
+func (s *sftpInspector) overSize(handle string, n int64, up bool) bool {
+	limit, has, counts, dir := s.downLimit, s.hasDown, s.read, "down"
+	if up {
+		limit, has, counts, dir = s.upLimit, s.hasUp, s.written, "up"
+	}
+	if !has {
+		return false
+	}
+	counts[handle] += n
+	if counts[handle] <= limit.Max {
+		return false
+	}
+	key := dir + ":" + handle
+	if !s.flagged[key] {
+		s.flagged[key] = true
+		s.audit("sftp.size_limit", fmt.Sprintf("direction:%s bytes:%d limit:%d rule:%d action:%s", dir, counts[handle], limit.Max, limit.RuleID, limit.Action))
+	}
+	if limit.Action != restrict.ActionKill {
+		return false
+	}
+	if s.onKill != nil {
+		s.onKill()
+	}
+	return true
 }
 
 // auditPath makes a client-supplied SFTP path safe for an audit detail. These
@@ -405,7 +455,7 @@ func (s *sftpInspector) handlePacket(body []byte, reply io.Writer) (forward bool
 // mode). Without capture the packet forwards untouched, as before Phase 59.
 // rest: uint32 id, string handle, uint64 offset, string data.
 func (s *sftpInspector) handleWrite(rest []byte, reply io.Writer) (forward bool) {
-	if s.capture == nil {
+	if s.capture == nil && !s.hasUp {
 		return true
 	}
 	id, r, ok := readU32(rest)
@@ -413,9 +463,16 @@ func (s *sftpInspector) handleWrite(rest []byte, reply io.Writer) (forward bool)
 	offset, r3, ok3 := readU64(r2)
 	data, _, ok4 := readBytesView(r3)
 	if !(ok && ok2 && ok3 && ok4) {
+		if s.capture == nil {
+			return true // no capture to keep honest; a size rule cannot see an unparsable write
+		}
 		return s.captureUnparsable("write")
 	}
-	if s.capture.gateWrite(handle, offset, data) {
+	if s.overSize(handle, int64(len(data)), true) {
+		s.deny(reply, id)
+		return false
+	}
+	if s.capture != nil && s.capture.gateWrite(handle, offset, data) {
 		s.deny(reply, id)
 		return false
 	}
@@ -427,7 +484,7 @@ func (s *sftpInspector) handleWrite(rest []byte, reply io.Writer) (forward bool)
 // cannot cover the bytes it asks for. rest: uint32 id, string handle,
 // uint64 offset, uint32 len.
 func (s *sftpInspector) handleRead(rest []byte, reply io.Writer) (forward bool) {
-	if s.capture == nil {
+	if s.capture == nil && !s.hasDown {
 		return true
 	}
 	id, r, ok := readU32(rest)
@@ -435,9 +492,16 @@ func (s *sftpInspector) handleRead(rest []byte, reply io.Writer) (forward bool) 
 	offset, r3, ok3 := readU64(r2)
 	length, _, ok4 := readU32(r3)
 	if !(ok && ok2 && ok3 && ok4) {
+		if s.capture == nil {
+			return true
+		}
 		return s.captureUnparsable("read")
 	}
-	if s.capture.gateRead(id, handle, offset, length) {
+	if s.overSize(handle, int64(length), false) {
+		s.deny(reply, id)
+		return false
+	}
+	if s.capture != nil && s.capture.gateRead(id, handle, offset, length) {
 		s.deny(reply, id)
 		return false
 	}

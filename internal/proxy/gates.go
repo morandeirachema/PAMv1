@@ -31,6 +31,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/oncall"
 	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
+	"github.com/morandeirachema/pamv1/internal/restrict"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/vault"
@@ -111,6 +112,9 @@ type admitResult struct {
 	// (Phase 270, auth.EffectiveRights): "" is everything the deployment
 	// allows, "none" nothing. Each proxy applies its own ceilings on top.
 	rights string
+	// restrictions is the principal's restriction set (Phase 275), loaded
+	// once here so no command pays a store read; nil is "no rule".
+	restrictions *restrict.Set
 }
 
 // sessionBounds carries a grant-imposed end for a session: the instant and
@@ -384,6 +388,14 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 	// What the session may do inside the protocol (Phase 270): the target's
 	// set narrowed by the grants that admitted this principal.
 	rights := auth.EffectiveRights(principal, target, grants, now)
+	// The principal's restriction set (Phase 275): what they may not do
+	// inside the session, loaded once. A set that cannot be read refuses the
+	// session — it must not read as "no rule".
+	restrictions, rerr := restrict.Load(ctx, g.store, restrict.Subject{Name: principal.Name, Roles: principal.RoleNames()})
+	if rerr != nil {
+		g.log.Error("restriction set load failed", "actor", principal.Name, "err", rerr)
+		return admitResult{outcome: admitCheckFailed, gate: gateTargetGrants, target: target, cred: cred}
+	}
 
 	// 12. Per-session MFA (Phase 244): a second factor proven for THIS session
 	// — a code answered in-band (the SSH proxy's prompt) or a ticket minted
@@ -484,5 +496,5 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 		}
 	}
 
-	return admitResult{outcome: admitOK, gate: gateNone, target: target, cred: cred, secret: secret, bounds: bounds, rights: rights}
+	return admitResult{outcome: admitOK, gate: gateNone, target: target, cred: cred, secret: secret, bounds: bounds, rights: rights, restrictions: restrictions}
 }

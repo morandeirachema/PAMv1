@@ -40,6 +40,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
 	"github.com/morandeirachema/pamv1/internal/recording"
+	"github.com/morandeirachema/pamv1/internal/restrict"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/vault"
@@ -462,7 +463,7 @@ func (d *DBProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		d.fireSessionEnd(cred.ID)
 	}()
 
-	d.relay(ctx, backend, up.fe, conn, up.conn, actor, target, rec, sid)
+	d.relay(ctx, backend, up.fe, conn, up.conn, actor, target, rec, sid, res.restrictions)
 }
 
 // upstreamPG is an authenticated connection to the real PostgreSQL server.
@@ -527,7 +528,7 @@ func (d *DBProxy) dialUpstream(ctx context.Context, target *store.Target, user, 
 // relay brokers messages both ways until either side closes. Client→upstream
 // Query/Parse statements are audited and recorded; everything else passes
 // through so result sets, prepared statements and COPY still work.
-func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgproto3.Frontend, clientConn, upConn net.Conn, actor string, target *store.Target, rec *Recording, sid string) {
+func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgproto3.Frontend, clientConn, upConn net.Conn, actor string, target *store.Target, rec *Recording, sid string, rs *restrict.Set) {
 	// A per-connection context so a paused step-up (which blocks on a supervisor's
 	// decision) is released when either peer disconnects, instead of parking until
 	// the step-up TTL elapses.
@@ -565,7 +566,7 @@ func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgpr
 			touch() // any client message is operator activity (Phase 240 idle timeout)
 			switch m := msg.(type) {
 			case *pgproto3.Query:
-				if sqlBlockedStatement(ctx, &d.listener, &d.pol, cl, actor, target, m.String, false) {
+				if sqlBlockedStatement(ctx, &d.listener, &d.pol, cl, actor, target, m.String, false, rs) {
 					continue // refused by policy; session stays usable
 				}
 				if sqlStepUpRefused(relayCtx, &d.listener, &d.pol, cl, actor, target, m.String, sid, false) {
@@ -575,7 +576,7 @@ func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgpr
 					return // recording cap reached: end the session rather than run it unrecorded
 				}
 			case *pgproto3.Parse:
-				if sqlBlockedStatement(ctx, &d.listener, &d.pol, cl, actor, target, m.Query, true) {
+				if sqlBlockedStatement(ctx, &d.listener, &d.pol, cl, actor, target, m.Query, true, rs) {
 					return // fail-closed: end the extended-protocol session
 				}
 				// Step-up covers the extended protocol too, so a client can't dodge a

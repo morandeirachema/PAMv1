@@ -268,6 +268,15 @@ func (p *Proxy) serveEndpointAgent(ctx context.Context, sconn *ssh.ServerConn, c
 		fmt.Sprintf("agent:%d target:%d remote:%s", agentID, targetID, remote))
 }
 
+// killRegistered ends a registered session through the registry (its kill
+// closes the connection); a session with no registration is left to the
+// caller's own refusal. Used by a kill restriction (Phase 275).
+func (p *Proxy) killRegistered(sid string) {
+	if sid != "" && p.sessions != nil {
+		p.sessions.Kill(sid)
+	}
+}
+
 // serveProbe opens the one pam-probe@pamv1 channel toward a probe agent and
 // runs the hub's side of the protocol on it until it ends. Every enforcement
 // the probe reports is audited under the agent's actor with the session it

@@ -47,6 +47,7 @@ type Memstore struct {
 	endpointAgents   map[int64]store.EndpointAgent
 	probeRules       map[int64]store.ProbeRule
 	hostKeys         map[int64]store.TargetHostKey
+	restrictions     map[int64]store.RestrictionRule
 	brokerLog        []store.BrokerAuditEvent
 	brokerTok        map[string]store.BrokerToken
 	settings         map[string]store.Setting
@@ -104,6 +105,7 @@ func New() *Memstore {
 		endpointAgents:   make(map[int64]store.EndpointAgent),
 		probeRules:       make(map[int64]store.ProbeRule),
 		hostKeys:         make(map[int64]store.TargetHostKey),
+		restrictions:     make(map[int64]store.RestrictionRule),
 		brokerTok:        make(map[string]store.BrokerToken),
 		settings:         make(map[string]store.Setting),
 		keyMaterial:      make(map[string]string),
@@ -3144,6 +3146,39 @@ func (m *Memstore) DeleteProbeRule(_ context.Context, id int64) error {
 		return store.ErrNotFound
 	}
 	delete(m.probeRules, id)
+	return nil
+}
+
+// CreateRestrictionRule inserts a rule, assigning ID and CreatedAt.
+func (m *Memstore) CreateRestrictionRule(_ context.Context, r *store.RestrictionRule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r.ID = m.id()
+	r.CreatedAt = time.Now().UTC()
+	m.restrictions[r.ID] = *r
+	return nil
+}
+
+// ListRestrictionRules returns every rule ordered by ID.
+func (m *Memstore) ListRestrictionRules(_ context.Context) ([]store.RestrictionRule, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]store.RestrictionRule, 0, len(m.restrictions))
+	for _, r := range m.restrictions {
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// DeleteRestrictionRule removes a rule; ErrNotFound if absent.
+func (m *Memstore) DeleteRestrictionRule(_ context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.restrictions[id]; !ok {
+		return store.ErrNotFound
+	}
+	delete(m.restrictions, id)
 	return nil
 }
 

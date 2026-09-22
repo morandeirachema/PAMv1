@@ -455,7 +455,9 @@ func (s *Server) guardCommand(ctx context.Context, actor, targetName, path, comm
 		pattern, blocked = "not-allowed", true
 	}
 	if !blocked {
-		return nil
+		// The deployment's guard passed; the caller's own restriction set
+		// (Phase 275) has the second word.
+		return s.checkRestriction(ctx, actor, targetName, path, command)
 	}
 	s.log.Warn("command blocked", "actor", actor, "target", targetName, "path", path, "pattern", pattern)
 	s.auditAs(ctx, actor, "command.blocked",

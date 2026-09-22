@@ -40,6 +40,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/probe"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
 	"github.com/morandeirachema/pamv1/internal/recording"
+	"github.com/morandeirachema/pamv1/internal/restrict"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/sshca"
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -963,7 +964,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	// Non-SSH targets are brokered differently: WinRM targets get an interactive
 	// command loop (if a runner is configured); anything else is refused.
 	if target.Protocol != "ssh" {
-		p.serveWinRM(ctx, sconn, chans, target, cred, secret, actor, remote, observeMode, res.bounds)
+		p.serveWinRM(ctx, sconn, chans, target, cred, secret, actor, remote, observeMode, res.bounds, res.restrictions)
 		return
 	}
 
@@ -1050,7 +1051,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 				defer wg.Done()
 				defer live.Add(-1)
 				defer recoverPanicLog(p.log, "session")
-				p.handleSession(ctx, nc, upstream, target, cred, actor, observe, principal.BreakGlass, sid, res.rights)
+				p.handleSession(ctx, nc, upstream, target, cred, actor, observe, principal.BreakGlass, sid, res.rights, res.restrictions)
 			}(nc)
 		case "direct-tcpip":
 			if live.Load() >= maxChannelsPerConn {
@@ -1353,7 +1354,7 @@ func (j *jumpConn) Close() error {
 // channel, forwarding channel requests and stdin/stdout/stderr both directions
 // and tee'ing the target's output into an asciicast recording. On close the
 // recording's SHA-256 and its position in the tamper-evident chain are audited.
-func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *ssh.Client, target *store.Target, cred *store.Credential, actor string, observe, breakGlass bool, sid string, rights string) {
+func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *ssh.Client, target *store.Target, cred *store.Credential, actor string, observe, breakGlass bool, sid string, rights string, rs *restrict.Set) {
 	clientChan, clientReqs, err := nc.Accept()
 	if err != nil {
 		return
@@ -1435,6 +1436,14 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		}
 		return true
 	}
+	// killSession ends this session (Phase 275, a kill restriction): through
+	// the registry when the session is registered, else the connection.
+	killSession := func() {
+		if sid != "" && p.sessions != nil && p.sessions.Kill(sid) {
+			return
+		}
+		_ = upstream.Close()
+	}
 	onExec := func(payload []byte) bool {
 		if denyRight(store.RightSSHExec) {
 			return false
@@ -1451,6 +1460,21 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 			}
 			p.audit(ctx, actor, "command.blocked", fmt.Sprintf("target:%s via:proxy pattern:%s cmd:%s", target.Name, pat, auditCmd(m.Command)))
 			return false // do not forward the exec request upstream
+		}
+		// The operator's own restriction set (Phase 275): notify lets the
+		// command through on the record; kill refuses it and ends the session.
+		if rm, ok := rs.Check("ssh_exec", m.Command); ok {
+			detail := fmt.Sprintf("target:%s via:proxy rule:%d pattern:%s cmd:%s", target.Name, rm.RuleID, auditValue(rm.Pattern, 128), auditCmd(m.Command))
+			if rm.Action == restrict.ActionNotify {
+				p.audit(ctx, actor, "restriction.notified", detail)
+			} else {
+				if rec != nil {
+					_, _ = io.WriteString(rec, "$ "+m.Command+"\r\npamv1: session ended by a restriction rule\r\n")
+				}
+				p.audit(ctx, actor, "restriction.killed", detail)
+				killSession()
+				return false
+			}
 		}
 		if rec != nil {
 			_, _ = io.WriteString(rec, "$ "+m.Command+"\r\n")
@@ -1482,6 +1506,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		respWatch = &sftpRespWatcher{cap: capState}
 	}
 	insp := newSFTPInspector(p.sftpMode, p.sftpPaths, capState, sftpAudit)
+	insp.setSizeLimits(rs, killSession) // $filesize / $downsize rules (Phase 275)
 	onSubsystem := func(payload []byte) bool {
 		var m struct{ Name string }
 		_ = ssh.Unmarshal(payload, &m)
@@ -1934,7 +1959,7 @@ func answerJoinRequests(in <-chan *ssh.Request, done <-chan struct{}) {
 // allowlist). Each operator line is run as a separate WinRM command — this is a
 // command loop, not a stateful PowerShell (working directory / variables do not
 // persist across lines). Refuses cleanly when no WinRM runner is configured.
-func (p *Proxy) serveWinRM(ctx context.Context, sconn *ssh.ServerConn, chans <-chan ssh.NewChannel, target *store.Target, cred *store.Credential, secret, actor, remote string, observe bool, bounds sessionBounds) {
+func (p *Proxy) serveWinRM(ctx context.Context, sconn *ssh.ServerConn, chans <-chan ssh.NewChannel, target *store.Target, cred *store.Credential, secret, actor, remote string, observe bool, bounds sessionBounds, rs *restrict.Set) {
 	if target.Protocol != "winrm" || p.winrm == nil {
 		p.log.Warn("session denied: protocol not proxyable", "actor", actor, "target", target.Name, "protocol", target.Protocol)
 		p.audit(ctx, actor, "session.denied", "target:"+target.Name+" reason:protocol-not-proxyable")
@@ -1968,7 +1993,7 @@ func (p *Proxy) serveWinRM(ctx context.Context, sconn *ssh.ServerConn, chans <-c
 			nc.Reject(ssh.UnknownChannelType, "PAMv1: only session channels are proxied")
 			continue
 		}
-		p.handleWinRMSession(ctx, nc, target, cred, secret, actor, observe, sid)
+		p.handleWinRMSession(ctx, nc, target, cred, secret, actor, observe, sid, rs)
 	}
 }
 
@@ -1977,7 +2002,7 @@ func (p *Proxy) serveWinRM(ctx context.Context, sconn *ssh.ServerConn, chans <-c
 // command, tee'ing output into an asciicast recording and — under sid — into
 // the live-monitoring hub, so a supervisor can watch a WinRM session as it
 // happens the way they can an SSH or PostgreSQL one.
-func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, target *store.Target, cred *store.Credential, secret, actor string, observe bool, sid string) {
+func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, target *store.Target, cred *store.Credential, secret, actor string, observe bool, sid string, rs *restrict.Set) {
 	ch, reqs, err := nc.Accept()
 	if err != nil {
 		return
@@ -2026,7 +2051,7 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 			if req.WantReply {
 				req.Reply(true, nil)
 			}
-			p.winrmShellLoop(ctx, ch, out, cw, target, cred, secret, actor, observe, sid)
+			p.winrmShellLoop(ctx, ch, out, cw, target, cred, secret, actor, observe, sid, rs)
 			ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{0}))
 			return
 		case "exec":
@@ -2035,7 +2060,7 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 			}
 			var m struct{ Command string }
 			_ = ssh.Unmarshal(req.Payload, &m)
-			code := p.winrmRun(ctx, out, target, cred, secret, actor, observe, m.Command)
+			code := p.winrmRun(ctx, out, target, cred, secret, actor, observe, m.Command, rs, func() { p.killRegistered(sid) })
 			p.winrmCapStop(ctx, cw, ch, sid, actor, target, cred)
 			ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{uint32(code)}))
 			return
@@ -2052,7 +2077,7 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 // built once by handleWinRMSession). "exit"/"quit"/"logout" or EOF ends the
 // session — and so does the recording size cap, which cw latches: a session the
 // recording refuses does not keep running unrecorded.
-func (p *Proxy) winrmShellLoop(ctx context.Context, ch ssh.Channel, out io.Writer, cw *capWriter, target *store.Target, cred *store.Credential, secret, actor string, observe bool, sid string) {
+func (p *Proxy) winrmShellLoop(ctx context.Context, ch ssh.Channel, out io.Writer, cw *capWriter, target *store.Target, cred *store.Credential, secret, actor string, observe bool, sid string, rs *restrict.Set) {
 	fmt.Fprintf(out, "PAMv1 WinRM shell for %s (each line is a separate command; type 'exit' to quit)\r\n", target.Name)
 	prompt := "PAMv1 " + target.Name + "> "
 	scanner := bufio.NewScanner(ch)
@@ -2079,7 +2104,7 @@ func (p *Proxy) winrmShellLoop(ctx context.Context, ch ssh.Channel, out io.Write
 			return
 		}
 		// winrmRun echoes the command into the recording itself.
-		p.winrmRun(ctx, out, target, cred, secret, actor, observe, line)
+		p.winrmRun(ctx, out, target, cred, secret, actor, observe, line, rs, func() { p.killRegistered(sid) })
 	}
 }
 
@@ -2088,7 +2113,7 @@ func (p *Proxy) winrmShellLoop(ctx context.Context, ch ssh.Channel, out io.Write
 // exit code. If the audit store is unavailable the output is withheld — the
 // fail-closed contract the REST WinRM endpoint has always had. In observer mode
 // it refuses to run.
-func (p *Proxy) winrmRun(ctx context.Context, out io.Writer, target *store.Target, cred *store.Credential, secret, actor string, observe bool, command string) int {
+func (p *Proxy) winrmRun(ctx context.Context, out io.Writer, target *store.Target, cred *store.Credential, secret, actor string, observe bool, command string, rs *restrict.Set, killSession func()) int {
 	// Echo the command into the recording (WinRM output doesn't echo the input the
 	// way an interactive SSH shell does) so the .cast is a faithful record of what
 	// was run — the non-repudiation guarantee.
@@ -2106,6 +2131,19 @@ func (p *Proxy) winrmRun(ctx context.Context, out io.Writer, target *store.Targe
 		fmt.Fprint(out, "PAMv1: command blocked by policy\r\n")
 		p.audit(ctx, actor, "command.blocked", fmt.Sprintf("target:%s via:proxy pattern:%s cmd:%s", target.Name, pat, auditCmd(command)))
 		return 1
+	}
+	if rm, ok := rs.Check("winrm", command); ok {
+		detail := fmt.Sprintf("target:%s via:proxy rule:%d pattern:%s cmd:%s", target.Name, rm.RuleID, auditValue(rm.Pattern, 128), auditCmd(command))
+		if rm.Action == restrict.ActionNotify {
+			p.audit(ctx, actor, "restriction.notified", detail)
+		} else {
+			fmt.Fprint(out, "PAMv1: session ended by a restriction rule\r\n")
+			p.audit(ctx, actor, "restriction.killed", detail)
+			if killSession != nil {
+				killSession()
+			}
+			return 1
+		}
 	}
 	res, err := p.winrm.Run(ctx, target.Host, target.Port, cred.Username, secret, command)
 	if err != nil {

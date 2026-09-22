@@ -1327,6 +1327,11 @@ func (s *Server) routes() {
 		s.mux.Handle("GET /api/endpoint-agents", s.authz(auth.CapReadInventory, s.listEndpointAgents))
 		s.mux.Handle("DELETE /api/endpoint-agents/{id}", s.authz(auth.CapManageTargets, s.revokeEndpointAgent))
 	}
+	// Per-subject restriction rules (Phase 275): what a user or role may not
+	// do inside a session — a policy on people, so managed with users.
+	s.mux.Handle("GET /api/restriction-rules", s.authz(auth.CapReadInventory, s.listRestrictionRules))
+	s.mux.Handle("POST /api/restriction-rules", s.authz(auth.CapManageUsers, s.createRestrictionRule))
+	s.mux.Handle("DELETE /api/restriction-rules/{id}", s.authz(auth.CapManageUsers, s.deleteRestrictionRule))
 	// Per-target SSH host-key pins (Phase 272): reading one is inventory,
 	// resetting one — telling the proxy to trust the next key it sees — is
 	// target management and is audited.

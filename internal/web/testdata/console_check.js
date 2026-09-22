@@ -517,6 +517,24 @@ const screens = [
     }),
   },
   {
+    // Phase 275: restriction rules. The pattern is class="detail" (a regex
+    // can be anything); every other cell is bounded.
+    name: "restrictions",
+    src: /\n {6}restrictions\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: (long) => ({
+      restrictions: [
+        { id: long ? BIG : 1, subject_type: "role", subject: long ? LONGNAME : "user", subprotocol: long ? LONGNAME : "ssh_exec", pattern: long ? LONG : "rm\\s+-rf", action: "kill", note: long ? LONG : "no wipes", created_by: long ? LONGNAME : "admin", created_at: "2026-09-22T09:00:00Z" },
+        { id: long ? BIG : 2, subject_type: "user", subject: long ? LONGNAME : "alice", subprotocol: "sftp", pattern: "$filesize:>10m", action: "notify", created_by: "admin", created_at: "2026-09-22T09:00:00Z" },
+      ],
+    }),
+  },
+  {
+    name: "restrictionadd",
+    noRows: true,
+    src: /\n {6}restrictionadd\(\) \{\n[\s\S]*?\n {6}\},\n/,
+    state: () => ({}),
+  },
+  {
     // Phase 272: a target's pinned host key — a detail form, no table; the
     // public-key line is class="detail" (free-flowing by design).
     name: "hostkey",

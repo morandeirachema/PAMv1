@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
+	"github.com/morandeirachema/pamv1/internal/restrict"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
 )
@@ -167,12 +168,25 @@ func sqlStepUpRefused(ctx context.Context, l *listener, pol *sqlPolicy, cl sqlCl
 // is, it audits command.blocked and refuses the statement to the client: a
 // graceful (usable) refusal for a simple statement, or a fatal refusal for a
 // PostgreSQL extended-protocol Parse (extended=true), which the caller then ends.
-func sqlBlockedStatement(ctx context.Context, l *listener, pol *sqlPolicy, cl sqlClient, actor string, target *store.Target, sql string, extended bool) bool {
+func sqlBlockedStatement(ctx context.Context, l *listener, pol *sqlPolicy, cl sqlClient, actor string, target *store.Target, sql string, extended bool, rs *restrict.Set) bool {
 	pat, blocked := pol.guard.Blocked(sql)
 	if !blocked && pol.allowGuard != nil && !pol.allowGuard.Allowed(sql) {
 		pat, blocked = "not-allowed", true
 	}
 	if !blocked {
+		// The operator's own restriction set (Phase 275): a notify match is
+		// on the record and runs; a kill match refuses the statement fatally,
+		// which ends the session.
+		if rm, ok := rs.Check("sql", sql); ok {
+			detail := fmt.Sprintf("target:%s via:%s rule:%d pattern:%s sql:%s", target.Name, pol.via, rm.RuleID, auditValue(rm.Pattern, 128), auditCmd(sql))
+			if rm.Action == restrict.ActionNotify {
+				l.audit(ctx, actor, "restriction.notified", detail)
+				return false
+			}
+			l.audit(ctx, actor, "restriction.killed", detail)
+			cl.refuseFatal("PAMv1: session ended by a restriction rule")
+			return true
+		}
 		return false
 	}
 	l.audit(ctx, actor, "command.blocked", fmt.Sprintf("target:%s via:%s pattern:%s sql:%s", target.Name, pol.via, pat, auditCmd(sql)))

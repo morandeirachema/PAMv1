@@ -2311,6 +2311,37 @@ type EndpointAgentStore interface {
 	TouchEndpointAgent(ctx context.Context, id int64, at time.Time) error
 }
 
+// RestrictionRule (Phase 275) is one thing a subject — a user or a role —
+// may not do inside a session, per sub-protocol: WALLIX's user-group
+// Restrictions. Pattern is a regular expression matched against the command
+// (`Subprotocol` ssh_exec, winrm, sql, kubernetes, or "*" for every one) or,
+// with Subprotocol "sftp", a size rule: "$filesize:>10m" refuses an upload
+// larger than that, "$downsize:>100m" a download. Action "kill" ends the
+// session (refuses the call where there is no session to end); "notify"
+// audits the match and lets it through. A user's rules and the rules of
+// every role they hold add up.
+type RestrictionRule struct {
+	ID          int64     `json:"id"`
+	SubjectType string    `json:"subject_type"` // user | role
+	Subject     string    `json:"subject"`
+	Subprotocol string    `json:"subprotocol"`
+	Pattern     string    `json:"pattern"`
+	Action      string    `json:"action"`
+	Note        string    `json:"note,omitempty"`
+	CreatedBy   string    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// RestrictionStore holds the per-subject restriction rules (Phase 275).
+type RestrictionStore interface {
+	// CreateRestrictionRule inserts a rule, populating ID and CreatedAt.
+	CreateRestrictionRule(ctx context.Context, r *RestrictionRule) error
+	// ListRestrictionRules returns every rule ordered by ID.
+	ListRestrictionRules(ctx context.Context) ([]RestrictionRule, error)
+	// DeleteRestrictionRule removes a rule, or ErrNotFound.
+	DeleteRestrictionRule(ctx context.Context, id int64) error
+}
+
 // TargetHostKey is the SSH host key a target presented the first time the
 // proxy reached it (Phase 272, trust-on-first-use): every later connection is
 // checked against it, a mismatch refuses the session and is audited, and an
@@ -2591,6 +2622,7 @@ type Store interface {
 	EndpointAgentStore
 	ProbeRuleStore
 	TargetHostKeyStore
+	RestrictionStore
 	VendorStore
 	ShareInviteStore
 	ApprovalInviteStore

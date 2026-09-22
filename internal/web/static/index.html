@@ -398,6 +398,7 @@
   let endpointAgents = [], newEndpointAgent = null; // Phase 153: outbound-only endpoint agents
   let probes = [], probeView = null, probeRules = []; // Phase 266: session probes (Windows telemetry & blocking)
   let hostKeyTarget = null, hostKey = null; // Phase 272: a target's pinned SSH host key (null = none pinned)
+  let restrictions = []; // Phase 275: per-subject restriction rules (command patterns, transfer sizes)
   let quarantine = []; // Phase 159: quarantined agent identities (agent-key name, or a full SPIFFE ID)
   let dlockCred = null;  // Phase 187: the credential DoubleLock is being set on
   let scimKeys = [];     // Phase 187: SCIM client keys (menu 29)
@@ -949,6 +950,12 @@
     try { [endpointAgents, targets] = await Promise.all([api("GET", "/api/endpoint-agents"), apiAll("/api/targets").catch(() => targets)]); }
     catch (e) { if (e.status === 404) say("ENDPOINT AGENTS ARE DISABLED (set PAM_ENDPOINT_AGENTS_ENABLED=true)."); }
     go("endpointagents");
+  }
+  // Phase 275: per-subject restriction rules (menu 35).
+  async function openRestrictions() {
+    restrictions = [];
+    try { restrictions = await api("GET", "/api/restriction-rules"); } catch (e) { say("CPF9999: " + e.message, true); }
+    go("restrictions");
   }
   // Phase 272: a target's SSH host-key pin, trusted on first contact.
   async function openHostKey(t) {
@@ -1700,6 +1707,7 @@ ${fkeys("")}
           line(32, can("read_inventory"), "Work with label rules (allow / deny by label)") +
           line(33, true, "Join a shared desktop (session invite)") +
           line(34, can("read_audit"), "Work with session probes (Windows telemetry & blocking)") +
+          line(35, can("read_inventory"), "Work with restriction rules (per user/role command & transfer limits)") +
           "90. Sign off\n";
         term.innerHTML = `${head("PAMMAIN", "PAMV1 Main Menu")}
 Select one of the following:
@@ -1725,6 +1733,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
             "32": openLabelRules,
             "33": () => go("sharejoin"),
             "34": openProbes,
+            "35": openRestrictions,
             "90": signoff,
           };
           if (routes[c]) { try { await routes[c](); } catch (e) { say("CPF9999: " + e.message, true); render(); } }
@@ -2986,6 +2995,59 @@ It reports and enforces within that session only, with that user's permissions. 
   PAM_AGENT_LOCAL_ADDR=127.0.0.1:22       PAM_AGENT_SERVER_HOST_KEY="$(ssh-keyscan -p 2222 &lt;pam-host&gt; | cut -d' ' -f2-)"
 Only the key's hash is stored here.</div>`}
 ${fkeys("F3=Exit   F12=Cancel")}`;
+      },
+
+      // Menu 35 — restriction rules (Phase 275): what a user or role may not
+      // do inside a session, per sub-protocol — a regex over the command, or
+      // an SFTP size rule; kill ends the session, notify records the match.
+      restrictions() {
+        back = "main";
+        const canManage = can("manage_users");
+        term.innerHTML = `${head("PAMWRKRST", "Work with Restriction Rules")}
+A rule names a user or a role, a sub-protocol (ssh_exec, winrm, sql, kubernetes, sftp or * for any),
+and a pattern: a regular expression over the command, or for sftp a size rule ($filesize:>10m for
+an upload, $downsize:>100m for a download). kill ends the session; notify records the match.
+Loaded when a session is admitted — a running session keeps the rules it started with.
+Type options, press Enter.  <span class="cyan">${canManage ? "4=Delete" : "(read-only role)"}</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>ID</th><th>Subject</th><th>Subproto</th><th>Action</th><th>Pattern</th><th>Note</th><th>By</th><th>Created</th></tr>
+${restrictions.map((r) => `<tr><td>${canManage ? opt(r.id) : "  "}</td><td>${cell(String(r.id), 5)}</td><td class="white">${cell(r.subject_type + ":" + r.subject, 18)}</td><td>${cell(r.subprotocol, 10)}</td><td class="${r.action === "notify" ? "cyan" : "red"}">${pad(r.action === "notify" ? "notify" : "kill", 6)}</td><td class="detail">${esc(r.pattern)}</td><td>${cell(r.note || "", 14)}</td><td>${cell(r.created_by || "", 10)}</td><td class="cyan">${fmtTime(r.created_at)}</td></tr>`).join("")}
+</table>${restrictions.length ? "" : `<div class="cyan indent">(No restriction rules. Press F6 to add one.)</div>`}
+<input type="submit" hidden></form>
+${fkeys("F3=Exit   F5=Refresh" + (canManage ? "   F6=Add rule" : "") + "   F12=Cancel")}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const r of restrictions) {
+              const o = optVal(ev.target, r.id);
+              if (o === "4" && canManage) { await api("DELETE", `/api/restriction-rules/${r.id}`); say(`RULE ${r.id} DELETED.`); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openRestrictions();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      restrictionadd() {
+        back = "restrictions";
+        term.innerHTML = `${head("PAMADDRST", "Add Restriction Rule")}
+<form id="f-add" class="indent">
+<label>Subject type  . . . :  <select name="subject_type"><option>role</option><option>user</option></select></label>
+<label>Subject . . . . . . :  <input name="subject" size="24" required autofocus>   <span class="cyan">a role (admin/user/…) or a username</span></label>
+<label>Sub-protocol  . . . :  <select name="subprotocol"><option value="*">* (any)</option><option>ssh_exec</option><option>winrm</option><option>sql</option><option>kubernetes</option><option>sftp</option></select></label>
+<label>Pattern . . . . . . :  <input name="pattern" size="48" required>   <span class="cyan">regex, or $filesize:>10m / $downsize:>100m (sftp)</span></label>
+<label>Action  . . . . . . :  <select name="action"><option value="kill">kill (end the session)</option><option value="notify">notify (record the match)</option></select></label>
+<label>Note  . . . . . . . :  <input name="note" size="40"></label>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-add").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          try { await api("POST", "/api/restriction-rules", f); say("RESTRICTION RULE ADDED."); await openRestrictions(); }
+          catch (e) { say("CPF9898: " + e.message, true); render(); }
+        };
       },
 
       // Targets → 12 — the SSH host key pinned for a target (Phase 272):
@@ -4826,7 +4888,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   }
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
-  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, identities: openIdentities, scimkeys: openScimKeys, endpointagents: openEndpointAgents, hostkey: () => hostKeyTarget && openHostKey(hostKeyTarget), probes: openProbes, probeview: () => probeView && openProbe(probeView.key), proberules: openProbeRules, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid), reach: () => openReach(reachSubject, reachKind), labelrules: openLabelRules };
+  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, identities: openIdentities, scimkeys: openScimKeys, endpointagents: openEndpointAgents, hostkey: () => hostKeyTarget && openHostKey(hostKeyTarget), restrictions: openRestrictions, probes: openProbes, probeview: () => probeView && openProbe(probeView.key), proberules: openProbeRules, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid), reach: () => openReach(reachSubject, reachKind), labelrules: openLabelRules };
   // cycleTheme rotates green → amber → slate → green, persists the choice, and
   // re-renders so the F-key hint's confirmation message shows immediately.
   function cycleTheme() {
@@ -4839,7 +4901,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
     render();
   }
 
-  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), quarantine: () => go("quarantineadd"), identities: () => go("identityadd"), scimkeys: () => go("scimkeyadd"), exttoken: mintExtToken, endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, shareinvites: () => go("shareinvitenew"), mfawebauthn: () => go("mfawebauthnadd"), labelrules: () => { if (can("manage_targets")) go("labelruleadd"); }, proberules: () => { if (can("manage_targets")) go("proberuleadd"); }, hostkey: async () => { if (!hostKey || !can("manage_targets") || !window.confirm(`RESET THE PINNED HOST KEY FOR ${String((hostKeyTarget || {}).name).toUpperCase()}? The next key seen will be trusted.`)) return; await api("DELETE", `/api/targets/${hostKeyTarget.id}/host-key`); say("HOST KEY PIN RESET; THE NEXT CONNECTION PINS THE KEY IT SEES."); await openHostKey(hostKeyTarget); } };
+  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), quarantine: () => go("quarantineadd"), identities: () => go("identityadd"), scimkeys: () => go("scimkeyadd"), exttoken: mintExtToken, endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, shareinvites: () => go("shareinvitenew"), mfawebauthn: () => go("mfawebauthnadd"), labelrules: () => { if (can("manage_targets")) go("labelruleadd"); }, proberules: () => { if (can("manage_targets")) go("proberuleadd"); }, restrictions: () => { if (can("manage_users")) go("restrictionadd"); }, hostkey: async () => { if (!hostKey || !can("manage_targets") || !window.confirm(`RESET THE PINNED HOST KEY FOR ${String((hostKeyTarget || {}).name).toUpperCase()}? The next key seen will be trusted.`)) return; await api("DELETE", `/api/targets/${hostKeyTarget.id}/host-key`); say("HOST KEY PIN RESET; THE NEXT CONNECTION PINS THE KEY IT SEES."); await openHostKey(hostKeyTarget); } };
 
   window.addEventListener("keydown", async (ev) => {
     // While the RDP viewer is open it owns the keyboard (its own capture-phase
