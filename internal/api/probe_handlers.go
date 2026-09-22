@@ -116,7 +116,9 @@ type probeRuleIn struct {
 	Match    string `json:"match"`
 	Port     int    `json:"port"`
 	Proto    string `json:"proto"`
-	Note     string `json:"note"`
+	// Action is "kill" (default) or "notify" (Phase 271).
+	Action string `json:"action"`
+	Note   string `json:"note"`
 }
 
 // listProbeRules returns every block rule, with target names resolved.
@@ -154,7 +156,11 @@ func (s *Server) createProbeRule(w http.ResponseWriter, r *http.Request) {
 	in.Kind = strings.ToLower(strings.TrimSpace(in.Kind))
 	in.Proto = strings.ToLower(strings.TrimSpace(in.Proto))
 	in.Match = strings.TrimSpace(in.Match)
-	if err := (probe.Rule{Kind: in.Kind, Match: in.Match, Port: in.Port, Proto: in.Proto}).Validate(); err != nil {
+	in.Action = strings.ToLower(strings.TrimSpace(in.Action))
+	if in.Action == "" {
+		in.Action = store.ProbeActionKill
+	}
+	if err := (probe.Rule{Kind: in.Kind, Match: in.Match, Port: in.Port, Proto: in.Proto, Action: in.Action}).Validate(); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
@@ -171,12 +177,12 @@ func (s *Server) createProbeRule(w http.ResponseWriter, r *http.Request) {
 		}
 		targetName = t.Name
 	}
-	pr := store.ProbeRule{TargetID: in.TargetID, Kind: in.Kind, Match: in.Match, Port: in.Port, Proto: in.Proto, Note: in.Note, CreatedBy: actorFrom(r.Context())}
+	pr := store.ProbeRule{TargetID: in.TargetID, Kind: in.Kind, Match: in.Match, Port: in.Port, Proto: in.Proto, Action: in.Action, Note: in.Note, CreatedBy: actorFrom(r.Context())}
 	if err := s.store.CreateProbeRule(r.Context(), &pr); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "probe.rule_create", fmt.Sprintf("rule:%d target:%s kind:%s match:%s port:%d proto:%s", pr.ID, targetName, pr.Kind, auditfmt.Value(pr.Match, 128), pr.Port, pr.Proto))
+	s.audit(r.Context(), "probe.rule_create", fmt.Sprintf("rule:%d target:%s kind:%s match:%s port:%d proto:%s action:%s", pr.ID, targetName, pr.Kind, auditfmt.Value(pr.Match, 128), pr.Port, pr.Proto, pr.Action))
 	s.probeHub.RefreshPolicy(r.Context())
 	writeJSON(w, http.StatusCreated, pr)
 }

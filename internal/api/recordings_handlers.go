@@ -43,7 +43,7 @@ const recordingMaxList = 500
 // / .sftp suffixes). Anything else — a
 // path separator, a dotfile like the .chain head — is refused, which also
 // forecloses traversal: no accepted name can leave the recording directory.
-var recordingNameRe = regexp.MustCompile(`^[A-Za-z0-9_@-][A-Za-z0-9._@-]*\.(cast|winrm\.log|ssh\.log|k8s\.log|forensics\.log|sftp|guac)$`)
+var recordingNameRe = regexp.MustCompile(`^[A-Za-z0-9_@-][A-Za-z0-9._@-]*\.(cast|winrm\.log|ssh\.log|k8s\.log|forensics\.log|probe\.log|sftp|guac)$`)
 
 // recordingAuditActionList names every audit action that stamps a recording's
 // file and SHA-256: proxied sessions, WinRM runs, SFTP content capture, and
@@ -155,6 +155,8 @@ func recordingKind(name string) string {
 		return "transcript"
 	case strings.HasSuffix(name, ".forensics.log"):
 		return "forensics"
+	case strings.HasSuffix(name, ".probe.log"):
+		return "probe" // a Windows session probe's metadata stream (Phase 271)
 	case strings.HasSuffix(name, ".sftp"):
 		return "file"
 	case strings.HasSuffix(name, ".guac"):
@@ -377,7 +379,9 @@ func (s *Server) searchRecordings(w http.ResponseWriter, r *http.Request) {
 		// asciicast only (see the doc comment above) — a name that also
 		// satisfies the general recording-name allowlist, defense in depth
 		// against a stray same-suffixed file that is not one of ours.
-		if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), ".cast") || !recordingNameRe.MatchString(e.Name()) {
+		// asciicast and, since Phase 271, probe metadata streams — the two
+		// kinds whose content a search can answer over.
+		if !e.Type().IsRegular() || !(strings.HasSuffix(e.Name(), ".cast") || strings.HasSuffix(e.Name(), ".probe.log")) || !recordingNameRe.MatchString(e.Name()) {
 			continue
 		}
 		fi, ferr := e.Info()
@@ -449,7 +453,12 @@ func (s *Server) searchOneRecording(ctx context.Context, name, query string) (re
 		s.log.Warn("recording search: skip unreadable recording", "file", name, "err", err)
 		return recording.SearchResult{}, false
 	}
-	res, err := recording.SearchASCIICast(pr, recordingSearchMaxBytes, query)
+	var res recording.SearchResult
+	if strings.HasSuffix(name, ".probe.log") {
+		res, err = recording.SearchLines(pr, recordingSearchMaxBytes, query)
+	} else {
+		res, err = recording.SearchASCIICast(pr, recordingSearchMaxBytes, query)
+	}
 	if err != nil {
 		s.log.Warn("recording search: skip", "file", name, "err", err)
 		return recording.SearchResult{}, false
