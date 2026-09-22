@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–265 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–266 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,104 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 266 — The Windows session probe ✅
+
+*Asked for directly: "a probe to connect to windows servers and have
+telemetry, blocking connections and blocking processes — to run with the same
+permissions as the user when they connect through RDP."*
+
+The command denylist governs every path where PAMv1 can see a discrete
+command, and §6 of "What is left" is explicit that an interactive PTY is never
+parsed. A brokered RDP desktop is the widest form of that blind spot: guacd
+relays pixels and keystrokes, and nothing on the PAMv1 side knows which
+programs the operator started on the server or where they connected from it.
+The only vantage point that does know is the server, and the only PAMv1 code
+that runs on a target is the Phase 153 endpoint agent — which Phase 157
+noted "would need a reporting path 153 deliberately refused to open". This
+phase opens exactly that path, narrowly, and in the direction the ask fixed:
+**with the user's permissions, not above them.**
+
+- [x] **A second kind of endpoint agent.** `EndpointAgent.Kind` is `tunnel`
+  (everything Phase 153 did) or `probe`; one live agent per (target, kind), so
+  a Windows target can carry both, and a probe is never the target's dial
+  (`GetEndpointAgentForTarget` returns only the tunnel; the API refuses a
+  tunnel on a non-SSH target and admits a probe on any). Migration `0061`:
+  the `kind` column, the partial unique index re-keyed, and `probe_rules`.
+- [x] **The probe runs inside the operator's logon session, as that user.**
+  `pam-agent` with `PAM_AGENT_MODE=probe`, launched at log-on (a scheduled
+  task, "run only when user is logged on"), resolves its own Windows session
+  with `ProcessIdToSessionId`, dials the same `:2222` listener with the same
+  bearer-key login and pinned host key, and sends one `probe@pamv1` request
+  carrying who and where it is. It opens nothing toward PAMv1 — pam-server
+  opens the one `pam-probe@pamv1` channel toward it. On it: JSON lines,
+  bounded, a `Snapshot` of the session's processes and TCP/UDP endpoints every
+  `PAM_AGENT_PROBE_INTERVAL` seconds (PowerShell `Get-CimInstance
+  Win32_Process -Filter SessionId=…`, `Get-NetTCPConnection`, present on any
+  supported Windows Server), an `Event` per enforcement; down, the `Policy`
+  and `kill` `Command`s. The command vocabulary is closed — a compromised
+  pam-server can tell a probe the rules and a PID, nothing else.
+- [x] **Blocking processes and connections, with the user's permissions.** A
+  *process* rule is a case-insensitive glob over image name and path; a
+  *connection* rule is a remote IP/CIDR and/or port, optionally a protocol;
+  the matching process (or the one holding the matching connection) is ended
+  with `TerminateProcess` under the probe's own token. That is the whole
+  enforcement, and it is the ask's own boundary: the probe ends only what the
+  session user could end (Windows refuses the rest, and the refusal is the
+  audit row), installs no firewall rules — those need an administrator, which
+  a brokered operator deliberately is not — and the user can end the probe. It
+  is the desktop twin of `cmdguard`: visibility plus a tripwire, **not a
+  containment boundary**, and the docs say so wherever the feature is named.
+  Rules are global or per target, pushed on connect and re-pushed on every
+  change (`Hub.RefreshPolicy`), so a rule takes effect on the next scan, not
+  the next logon.
+- [x] **Telemetry where the session is.** `probe.Hub` (per replica, like the
+  tunnel registry) keeps each probe's latest snapshot in memory — never
+  persisted; the audit trail carries the enforcements — and maps a brokered
+  session to its probes by target and by the account the session was opened
+  as (`session.Info.CredUser`, new, stamped by the SSH proxy and the RDP/VNC
+  viewer; `SameUser` strips `DOMAIN\` and `@domain`). Routes: `GET
+  /api/probes`, `GET /api/probes/{id}` (with the snapshot), `POST
+  /api/probes/{id}/kill`, `GET /api/sessions/{id}/probes`, `GET/POST
+  /api/probe-rules`, `DELETE /api/probe-rules/{id}` (211 → 218). Console:
+  menu **34** (probes; 5=Display with processes and connections and 4=End
+  process; F10 block rules with F6=Add), option **8** on *Work with Active
+  Sessions*, and kind + session count on menu 28. Reading telemetry takes
+  `read_audit`; rules and kills take `manage_targets`.
+- [x] **Audited like everything else that touches a target.** New family
+  `probe.*`: `connected`/`disconnected`/`refused`/`error` under the agent's
+  actor; `process_killed`/`connection_blocked`/`command_killed`/`kill_failed`
+  with agent, target, account, Windows session, PID, rule or command id, and
+  the endpoint-declared image name, path and remote quoted through
+  `auditfmt.Value` (they came off a wire); the administrator's `kill`,
+  `kill_refused`, `rule_create`, `rule_delete`. The two kinds refuse each
+  other's request with a reason (`probe.refused reason:not-a-probe`,
+  `endpoint_agent.refused reason:not-a-tunnel`).
+- [x] **Proven where it can be, honest where it cannot.** `internal/probe`'s
+  tests run the real agent-side loop against the real hub over a pipe with a
+  scripted logon session; the proxy test runs the real `endpointagent`
+  library in probe mode over a real SSH connection to the real proxy and
+  walks the whole life: hello, channel, snapshot, a rule created after
+  connect enforced, a kill, the session match, the cross-refusals, revoke and
+  kick. The API test covers the routes, validation, live listing, the
+  session lookup and the capability boundaries. **What is not proven here**:
+  `platform_windows.go` — the PowerShell enumeration and `TerminateProcess` —
+  compiles and vets under `GOOS=windows` in CI (a new gate) and the release
+  ships `pam-agent_windows_amd64.exe`, but no Windows host exists in this
+  environment to run it against. Same posture as SQL Server (53) and the
+  browser extension (147): a documented gap, not a silent one; the protocol,
+  enforcement logic and every server-side path are exercised for real.
+- [x] **Living docs** — low-level §1/§2.5/§4/§5/§7/§8, high-level table and
+  log, ADMIN-GUIDE §6 (a full setup subsection), PORTS-AND-FLOWS (I8 carries
+  the probe; no new port or egress), `archgen` regenerated.
+
+Deliberately not done: per-session firewall rules (would need
+administrator rights the probe must not have); a SYSTEM-level service
+watching every session (a different, privileged design the ask ruled out);
+persisting snapshots (the audit trail is the durable record); Linux/macOS
+platforms (`NewPlatform` is `ErrUnsupported` there — the session model is
+Windows'); telling two simultaneous sessions of one account apart (the
+desktop knows only the account).
 
 ## Phase 265 — v0.76.0 ✅
 

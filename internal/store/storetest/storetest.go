@@ -2255,9 +2255,58 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if list, err := st.ListEndpointAgents(ctx); err != nil || len(list) != 2 || list[0].ID != ea.ID || list[1].ID != ea2.ID {
 		t.Fatalf("ListEndpointAgents: %+v err %v", list, err)
 	}
-	// Deleting the target cascades to its agents.
+	// Kinds (Phase 266): the zero kind reads back as a tunnel; a PROBE may
+	// coexist with the live tunnel on the same target (one per kind), is
+	// never the target's dial, and a second live probe is refused.
+	if ea2.Kind != store.EndpointAgentTunnel {
+		t.Fatalf("zero kind should normalize to tunnel, got %q", ea2.Kind)
+	}
+	pr := &store.EndpointAgent{Name: "win-probe", TargetID: eaTarget.ID, Kind: store.EndpointAgentProbe, KeyHash: "prhash1"}
+	if err := st.CreateEndpointAgent(ctx, pr); err != nil {
+		t.Fatalf("CreateEndpointAgent(probe) beside a live tunnel: %v", err)
+	}
+	if err := st.CreateEndpointAgent(ctx, &store.EndpointAgent{Name: "win-probe-2", TargetID: eaTarget.ID, Kind: store.EndpointAgentProbe, KeyHash: "prhash2"}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("second live probe for the same target: want ErrConflict, got %v", err)
+	}
+	if by, err := st.GetEndpointAgentByKeyHash(ctx, "prhash1"); err != nil || by.Kind != store.EndpointAgentProbe {
+		t.Fatalf("probe kind not persisted: %+v err %v", by, err)
+	}
+	if by, err := st.GetEndpointAgentForTarget(ctx, eaTarget.ID); err != nil || by.ID != ea2.ID {
+		t.Fatalf("GetEndpointAgentForTarget must return the tunnel, not the probe: %+v err %v", by, err)
+	}
+
+	// --- probe block rules (Phase 266) ---
+	rule := &store.ProbeRule{TargetID: eaTarget.ID, Kind: store.ProbeRuleProcess, Match: "psexec*", Note: "lateral movement", CreatedBy: "admin"}
+	if err := st.CreateProbeRule(ctx, rule); err != nil || rule.ID == 0 || rule.CreatedAt.IsZero() {
+		t.Fatalf("CreateProbeRule: %+v err %v", rule, err)
+	}
+	global := &store.ProbeRule{Kind: store.ProbeRuleConnection, Match: "10.0.0.0/8", Port: 445, Proto: "tcp"}
+	if err := st.CreateProbeRule(ctx, global); err != nil {
+		t.Fatalf("CreateProbeRule(global): %v", err)
+	}
+	if err := st.CreateProbeRule(ctx, &store.ProbeRule{TargetID: 999999, Kind: store.ProbeRuleProcess, Match: "x"}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("probe rule for a missing target: want ErrNotFound, got %v", err)
+	}
+	if list, err := st.ListProbeRules(ctx); err != nil || len(list) != 2 || list[0].ID != rule.ID || list[0].TargetID != eaTarget.ID || list[0].Match != "psexec*" ||
+		list[1].ID != global.ID || list[1].TargetID != 0 || list[1].Port != 445 || list[1].Proto != "tcp" {
+		t.Fatalf("ListProbeRules: %+v err %v", list, err)
+	}
+	if err := st.DeleteProbeRule(ctx, 999999); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("DeleteProbeRule missing: want ErrNotFound, got %v", err)
+	}
+	// Deleting the target cascades to its agents and its rules; a global
+	// rule survives it.
 	if err := st.DeleteTarget(ctx, eaTarget.ID); err != nil {
 		t.Fatalf("DeleteTarget(endpoint-agent): %v", err)
+	}
+	if list, err := st.ListProbeRules(ctx); err != nil || len(list) != 1 || list[0].ID != global.ID {
+		t.Fatalf("probe rules after target delete: want only the global one, got %+v err %v", list, err)
+	}
+	if err := st.DeleteProbeRule(ctx, global.ID); err != nil {
+		t.Fatalf("DeleteProbeRule: %v", err)
+	}
+	if list, _ := st.ListProbeRules(ctx); len(list) != 0 {
+		t.Fatalf("probe rules after delete: %+v", list)
 	}
 	if list, _ := st.ListEndpointAgents(ctx); len(list) != 0 {
 		t.Fatalf("endpoint agents should cascade with their target: %+v", list)

@@ -91,6 +91,23 @@ var findingExact = map[string]bool{
 	"k8s.refused":          true,
 	"winrm.refused":        true,
 	"sftp.blocked":         true,
+	// Endpoint agents and session probes (Phases 153, 266). The two kinds
+	// refusing each other's request (`endpoint_agent.refused`, `probe.refused`)
+	// is an authenticated agent-class key asking for what its row does not
+	// allow — a stolen or misregistered key probing, in the SIEM's terms. A
+	// probe's enforcements are findings the way `command.blocked` is: a
+	// process ended by a rule or a connection cut inside a brokered desktop
+	// session is precisely the row a detection rule wants; `kill_failed` is
+	// an enforcement that could NOT run (the process outlived the rule), and
+	// an administrator's `kill_refused` the same from the other side.
+	"endpoint_agent.refused":   true,
+	"probe.refused":            true,
+	"probe.error":              true,
+	"probe.process_killed":     true,
+	"probe.connection_blocked": true,
+	"probe.command_killed":     true,
+	"probe.kill_failed":        true,
+	"probe.kill_refused":       true,
 }
 
 // isFinding reports whether an action maps to a Detection Finding.

@@ -171,7 +171,12 @@ jobs:
               -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${GITHUB_SHA}" \
               -o "dist/pam-agent_linux_${arch}" ./cmd/pam-agent
           done
-          (cd dist && sha256sum pam-agent_linux_* > SHA256SUMS)
+          # The Windows build is the session probe (Phase 266): the same
+          # binary, run in probe mode inside an operator's RDP session.
+          GOOS=windows GOARCH=amd64 go build -trimpath \
+            -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${GITHUB_SHA}" \
+            -o "dist/pam-agent_windows_amd64.exe" ./cmd/pam-agent
+          (cd dist && sha256sum pam-agent_* > SHA256SUMS)
           ls -l dist
 
       # The release page is where a digest is looked up, so it is written there
@@ -223,4 +228,5 @@ jobs:
             sbom.spdx.json
             dist/pam-agent_linux_amd64
             dist/pam-agent_linux_arm64
+            dist/pam-agent_windows_amd64.exe
             dist/SHA256SUMS

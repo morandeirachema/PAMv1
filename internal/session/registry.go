@@ -25,6 +25,12 @@ type Info struct {
 	Protocol string    `json:"protocol"` // ssh | rdp | vnc | winrm | postgres | mssql | ssh_exec
 	Remote   string    `json:"remote"`
 	Started  time.Time `json:"started"`
+	// CredUser is the account the session was opened AS on the target (the
+	// credential's username; Phase 266) — what a session probe reporting
+	// from inside that logon session is matched against. Stamped by the SSH
+	// proxy and the RDP/VNC viewer; empty where a session has no such
+	// account (a database role, an exec).
+	CredUser string `json:"cred_user,omitempty"`
 	// Replica names the replica hosting the session. Stamped by the cluster
 	// inventory (Phase 55); empty in a single-replica deployment.
 	Replica string `json:"replica,omitempty"`
