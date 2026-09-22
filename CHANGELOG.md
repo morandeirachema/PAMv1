@@ -12,8 +12,11 @@ file records **releases**: the tagged, signed points you can actually deploy.
 ## [0.76.0] — 2026-09-17
 
 A minor that ships **Phase 264** — the review of Phases 250–262. **One
-migration is new** (`0060`); no route or environment variable moved. Upgrade
-if you use credential-scoped grants with the AI-agent broker.
+migration is new** (`0060`); no route or environment variable moved, and one
+store method signature changed (`SetApprovalState`). Upgrade if you use
+credential-scoped grants with the AI-agent broker, share or suspend desktop
+sessions, or set `PAM_RECORDING_RETENTION_DAYS` — each of the fixes below is
+one of those.
 
 **Security fixes.**
 

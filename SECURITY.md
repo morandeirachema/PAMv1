@@ -86,6 +86,9 @@ already been swept:
 
 ## Supported versions
 
-There are no published releases yet, so **`main` is the only supported ref**.
-Fixes land there. Once releases begin, this section will name the versions that
-receive them.
+Fixes ship as **a new tagged, cosign-signed release** — never as an unreleased
+change banked on `main`. The supported line is the **newest release** (the
+[CHANGELOG](CHANGELOG.md) names it; the README's *Status* paragraph carries its
+image digest); a fix to an older release is a new release on top of the newest,
+not a backport. `main` between releases is pre-release: it holds every fix,
+but pin a tag or digest for anything you run.

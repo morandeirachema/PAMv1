@@ -16,7 +16,7 @@ var (
 	// A digest recorded against its release page: the form every changelog
 	// entry uses since Phase 262.
 	pageLinkRe     = regexp.MustCompile("`(sha256:[0-9a-f]{64})`\\s*\\(\\[release page\\]\\(https://github\\.com/morandeirachema/PAMv1/releases/tag/v(\\d+\\.\\d+\\.\\d+)\\)\\)")
-	readmeStatusRe = regexp.MustCompile("(?s)\\*\\*Status:\\*\\* \\*\\*\\[v(\\d+\\.\\d+\\.\\d+)\\].*?`(sha256:[0-9a-f]{64})`")
+	readmeStatusRe = regexp.MustCompile("(?s)\\*\\*Status:\\*\\* \\*\\*\\[v(\\d+\\.\\d+\\.\\d+)\\].*?`(sha256:[0-9a-f]{64}|TBD)`")
 )
 
 func read(t *testing.T, name string) string {
@@ -137,11 +137,17 @@ func TestReleaseDigestsAgree(t *testing.T) {
 	}
 	if strings.Contains(releases[v], "digest `TBD`") {
 		// Between a release PR and its digest PR the README already names the
-		// new release while still showing the previous digest: that digest
-		// must be the previous release's, not a typo.
-		if len(order) < 2 || !has(releases[order[1]], digest) {
-			t.Errorf("README.md shows %s for v%s, whose digest is not recorded yet — it must be the previous release's digest", digest, v)
+		// new release; it must say TBD too (Phase 267). It used to be allowed
+		// to keep the previous release's digest, which for the fifteen minutes
+		// between PRs labelled the old image as the new release — exactly the
+		// tag/digest confusion the paragraph exists to prevent.
+		if digest != "TBD" {
+			t.Errorf("README.md shows %s for v%s, whose digest is not recorded yet — it must say `TBD` until the digest PR lands", digest, v)
 		}
+		return
+	}
+	if digest == "TBD" {
+		t.Errorf("README.md still says `TBD` for v%s, whose digest ROADMAP.md records", v)
 		return
 	}
 	if !has(releases[v], digest) {

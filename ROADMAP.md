@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–266 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–267 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2422,6 +2422,60 @@ store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
 
+## Phase 267 — Documentation currency pass, and the test that keeps it current ✅
+
+*Asked for directly, after 266: "resync all the documentation." A
+`/code-review` of the v0.76.0 release ran alongside and found what a hand
+sweep leaves behind.*
+
+What the review found, each reproduced by reading the file, not by
+assumption:
+
+- [x] **Thirteen headers contradicted themselves.** `Last updated:
+  2026-09-02 · Reflects: Phases 0–227 and 229–265` — a range that includes
+  phases which landed on 2026-09-17, under a date two weeks older. The
+  cadence rule ("READMEs' ranges and the other sixteen headers move only at
+  release") moved the range without the date, so the date read as a
+  verification stamp it was not. Now every header carries the date it was
+  actually swept, and the sweep is every phase's — see the last item.
+- [x] **`docs/README.md` said the docs reflected release v0.69.0** for nine
+  releases: the `s/229–263/229–265/` sweep touched that exact line and left
+  the token beside it. Restated (`v0.76.0`).
+- [x] **`SECURITY.md` said no release existed** — thirty-six releases after
+  v0.10.0 — and pointed reporters at unpinned `main`, the one practice every
+  manifest comment warns against. Rewritten: fixes ship as a new signed
+  release, the newest release is the supported line, `main` is pre-release.
+- [x] **`BACKUP-AND-RESTORE.md`'s migration high-water mark sat at `0051`**
+  through nine migrations, including the one v0.76.0 itself shipped. Now
+  `0061`, with `0052`–`0061` attributed and their backup posture stated.
+- [x] **`CHANGELOG [0.76.0]`'s upgrade guidance** named one of six fixes; an
+  operator without credential-scoped grants would have skipped a release
+  that fixed a suspend that did nothing and a kick that left viewers
+  attached. It now names every fix's audience — and the
+  `SetApprovalState` signature change the Phase 265 intro had called "no
+  store method moved".
+- [x] **Phase 266's rows in the docs the feature phase did not reach**:
+  CODE-GUIDE (package map, the endpoint-agents bullet grows the probe, log),
+  USER-GUIDE (menu rows 32–34 — 32 and 33 had never been listed — an RDP
+  note, log), EXTERNAL-INFRA-GAPS (§3: the Windows platform layer is the
+  unverified half, like SQL Server's interop), both READMEs' coverage tables.
+- [x] **The test that makes the sweep unnecessary to remember.**
+  `internal/releasedocs` gains `TestDocHeadersAgree`: every `Reflects:
+  Phases 0–227 and 229–N` header under `docs/`, both READMEs' phase-range
+  sentences and this file's banner must name the same N; every swept
+  header's date must not predate the newest ROADMAP phase's date; and
+  `docs/README.md`'s release token must be CHANGELOG's newest version. A
+  release PR that forgets a doc, or a feature phase that adds a ROADMAP entry
+  without sweeping, now fails CI instead of drifting for nine releases. The
+  cadence changes with it: the header sweep is part of every phase, not of
+  the release.
+
+Not changed: `RELATED-PROJECTS.md` (it reflects a market survey, not a
+phase range, and its header says so); the README *Status* paragraph's
+digest (v0.76.0's is recorded); the release PR's practice of writing the
+previous digest into README — replaced at the next release by `TBD`, which
+`TestReleaseDigestsAgree` now requires whenever ROADMAP's newest is `TBD`.
+
 ## Phase 266 — The Windows session probe ✅
 
 *Asked for directly: "a probe to connect to windows servers and have
@@ -2523,7 +2577,8 @@ desktop knows only the account).
 ## Phase 265 — v0.76.0 ✅
 
 Releases **264** — the review of 250–262. A **minor**: the schema moved
-(`0060`); no route, store method or env var did. Fixes do not bank on `main`:
+(`0060`); no route or env var did, and one store method's signature
+(`SetApprovalState`, count unchanged at 229). Fixes do not bank on `main`:
 one of them is an authorization bypass in the agent broker.
 
 - [x] **v0.76.0** through the test-gated pipeline. `.github/` untouched
