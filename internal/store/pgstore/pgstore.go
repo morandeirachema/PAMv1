@@ -1034,7 +1034,7 @@ func (s *PGStore) DeleteCredential(ctx context.Context, id int64) error {
 // accessRequestCols is the one column list every access-request read uses, so
 // a field cannot reach some reads and quietly miss others.
 const accessRequestCols = `id, requester, target_id, reason, status, approver, created_at, decided_at,
-	expires_at, ticket, required_approvals, approved_by, not_before, one_time, consumed_at, recur_days, next_run_at, approved_as`
+	expires_at, ticket, required_approvals, approved_by, not_before, one_time, consumed_at, recur_days, next_run_at, approved_as, notes`
 
 // CreateAccessRequest inserts a request (defaulting status to pending),
 // populating its ID and CreatedAt; ErrNotFound if the target is missing.
@@ -1251,6 +1251,47 @@ func (s *PGStore) ConsumeApprovalByID(ctx context.Context, id int64, requester s
 }
 
 // SetApprovalState records a multi-approver decision (Phase 21).
+// NoteAccessRequest appends an approver's comment to notes; ErrNotFound if absent.
+func (s *PGStore) NoteAccessRequest(ctx context.Context, id int64, approver, note string) error {
+	return execExpectingRow(ctx, s.pool,
+		`UPDATE access_requests SET notes = CASE WHEN notes = '' THEN $2 ELSE notes || E'\n' || $2 END WHERE id = $1`,
+		id, approver+": "+note)
+}
+
+// ShortenAccessRequest moves expires_at earlier, never later; ErrNotFound if absent.
+func (s *PGStore) ShortenAccessRequest(ctx context.Context, id int64, expiresAt time.Time) error {
+	return execExpectingRow(ctx, s.pool,
+		`UPDATE access_requests SET expires_at = LEAST(expires_at, $2) WHERE id = $1`, id, expiresAt.UTC())
+}
+
+// CancelAccessRequest moves an approved request to cancelled (CAS on approved).
+func (s *PGStore) CancelAccessRequest(ctx context.Context, id int64, approver string, at time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE access_requests SET status = 'cancelled', approver = $2, decided_at = $3 WHERE id = $1 AND status = 'approved'`,
+		id, approver, at.UTC())
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		if _, gerr := s.GetAccessRequest(ctx, id); gerr != nil {
+			return gerr
+		}
+		return store.ErrConflict
+	}
+	return nil
+}
+
+// ExpirePendingAccessRequests moves stale pending requests to expired and returns them.
+func (s *PGStore) ExpirePendingAccessRequests(ctx context.Context, olderThan time.Time) ([]store.AccessRequest, error) {
+	rows, err := s.pool.Query(ctx,
+		`UPDATE access_requests SET status = 'expired', decided_at = now() WHERE status = 'pending' AND created_at < $1
+		 RETURNING `+accessRequestCols, olderThan.UTC())
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanAccessRequest)
+}
+
 func (s *PGStore) SetApprovalState(ctx context.Context, id int64, approvedBy, approvedAs, status, approver string, decidedAt *time.Time) error {
 	// Compare-and-set on pending (2026-08-26 audit, M-4). Both transitions this
 	// serves — accumulating another approver (pending->pending) and the final
@@ -3365,7 +3406,7 @@ func scanAccessRequest(row pgx.CollectableRow) (store.AccessRequest, error) {
 	err := row.Scan(&ar.ID, &ar.Requester, &ar.TargetID, &ar.Reason, &ar.Status,
 		&ar.Approver, &ar.CreatedAt, &ar.DecidedAt, &ar.ExpiresAt, &ar.Ticket,
 		&ar.RequiredApprovals, &ar.ApprovedBy, &ar.NotBefore, &ar.OneTime, &ar.ConsumedAt,
-		&ar.RecurDays, &ar.NextRunAt, &ar.ApprovedAs)
+		&ar.RecurDays, &ar.NextRunAt, &ar.ApprovedAs, &ar.Notes)
 	return ar, err
 }
 

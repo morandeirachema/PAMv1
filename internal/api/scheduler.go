@@ -247,6 +247,9 @@ func (s *Server) RunAccessRequestScheduler(ctx context.Context) {
 			return
 		case <-ticker.C:
 			ran, err := s.store.WithLeaderLock(systemContext(ctx), accessRequestLockKey, func(c context.Context) error {
+				if n := s.expirePendingAccessRequests(c, time.Now()); n > 0 {
+					s.log.Info("approval timeout sweep", "expired", n)
+				}
 				if n := s.spawnDueAccessRequests(c, time.Now()); n > 0 {
 					s.log.Info("recurring access requests filed", "count", n)
 				}

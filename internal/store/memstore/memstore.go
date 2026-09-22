@@ -995,6 +995,74 @@ func (m *Memstore) SetApprovalState(_ context.Context, id int64, approvedBy, app
 	return nil
 }
 
+// NoteAccessRequest appends an approver's comment; ErrNotFound if absent.
+func (m *Memstore) NoteAccessRequest(_ context.Context, id int64, approver, note string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ar, ok := m.accessReq[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	if ar.Notes != "" {
+		ar.Notes += "\n"
+	}
+	ar.Notes += approver + ": " + note
+	m.accessReq[id] = ar
+	return nil
+}
+
+// ShortenAccessRequest moves ExpiresAt earlier, never later; ErrNotFound if absent.
+func (m *Memstore) ShortenAccessRequest(_ context.Context, id int64, expiresAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ar, ok := m.accessReq[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	if expiresAt.Before(ar.ExpiresAt) {
+		ar.ExpiresAt = expiresAt.UTC()
+		m.accessReq[id] = ar
+	}
+	return nil
+}
+
+// CancelAccessRequest moves an approved request to cancelled (CAS on approved).
+func (m *Memstore) CancelAccessRequest(_ context.Context, id int64, approver string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ar, ok := m.accessReq[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	if ar.Status != "approved" {
+		return store.ErrConflict
+	}
+	ar.Status = "cancelled"
+	ar.Approver = approver
+	t := at.UTC()
+	ar.DecidedAt = &t
+	m.accessReq[id] = ar
+	return nil
+}
+
+// ExpirePendingAccessRequests moves stale pending requests to expired.
+func (m *Memstore) ExpirePendingAccessRequests(_ context.Context, olderThan time.Time) ([]store.AccessRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []store.AccessRequest
+	now := time.Now().UTC()
+	for id, ar := range m.accessReq {
+		if ar.Status == "pending" && ar.CreatedAt.Before(olderThan) {
+			ar.Status = "expired"
+			ar.DecidedAt = &now
+			m.accessReq[id] = ar
+			out = append(out, ar)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
 // GetAccessRequest returns the access request with the given ID, or ErrNotFound.
 func (m *Memstore) GetAccessRequest(_ context.Context, id int64) (*store.AccessRequest, error) {
 	m.mu.Lock()
