@@ -25,3 +25,9 @@ type Platform interface {
 	// denied for a process the session user does not own, or already gone).
 	Kill(ctx context.Context, pid uint32) error
 }
+
+// ForegroundReporter is implemented by a Platform that can name the session's
+// foreground window (Phase 271); the agent reports a change as an event.
+type ForegroundReporter interface {
+	Foreground() (Window, bool)
+}

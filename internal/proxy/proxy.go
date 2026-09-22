@@ -372,6 +372,12 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		posture:        cfg.PostureAttestor,
 		oncall:         cfg.OnCallAttestor,
 	}
+	// The probe's metadata artifacts land beside the session recordings
+	// (Phase 271) — sealed and chained like them — so the hub is given the
+	// proxy's writer here, where the recording key and chain live.
+	if p.probeHub != nil {
+		p.probeHub.Artifacts = &probeArtifacts{p: p}
+	}
 	p.gate = &gates{
 		store:        st,
 		vault:        v,

@@ -73,6 +73,12 @@ type agent struct {
 	rule []Rule
 	kick chan struct{} // "scan now" (a policy arrived)
 	done chan error    // the read loop ended
+	// prev is the previous scan's process table, for start/end events
+	// (Phase 271); nil before the first scan, so the first snapshot reports
+	// nothing as "started".
+	prev map[uint32]Process
+	// fg is the last foreground window reported.
+	fg Window
 }
 
 // send writes one JSON line.
@@ -178,16 +184,47 @@ func (a *agent) scan(ctx context.Context) error {
 		conns, snap.Truncated = conns[:a.o.MaxConnections], true
 	}
 	snap.Processes, snap.Connections = procs, conns
+	if fr, ok := a.pl.(ForegroundReporter); ok {
+		if w, ok := fr.Foreground(); ok {
+			snap.Foreground = &w
+		}
+	}
 	if err := a.send(Message{Type: TypeSnapshot, Snapshot: &snap}); err != nil {
 		return err
+	}
+	// Session metadata (Phase 271): what changed since the last scan. The
+	// first scan establishes the baseline and reports nothing — a session
+	// that was already running a hundred processes did not just start them.
+	byPID := make(map[uint32]Process, len(procs))
+	for _, p := range procs {
+		byPID[p.PID] = p
+	}
+	if a.prev != nil {
+		for _, p := range procs {
+			if _, seen := a.prev[p.PID]; !seen {
+				if err := a.send(Message{Type: TypeEvent, Event: &Event{Kind: EventProcessStarted, At: snap.Taken, PID: p.PID, PPID: p.PPID, Name: p.Name, Path: p.Path, CommandLine: p.CommandLine}}); err != nil {
+					return err
+				}
+			}
+		}
+		for pid, p := range a.prev {
+			if _, still := byPID[pid]; !still {
+				if err := a.send(Message{Type: TypeEvent, Event: &Event{Kind: EventProcessEnded, At: snap.Taken, PID: p.PID, Name: p.Name, Path: p.Path}}); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	a.prev = byPID
+	if snap.Foreground != nil && *snap.Foreground != a.fg {
+		a.fg = *snap.Foreground
+		if err := a.send(Message{Type: TypeEvent, Event: &Event{Kind: EventForegroundWindow, At: snap.Taken, PID: a.fg.PID, Name: byPID[a.fg.PID].Name, Title: a.fg.Title}}); err != nil {
+			return err
+		}
 	}
 	rules := a.rules()
 	if len(rules) == 0 {
 		return nil
-	}
-	byPID := make(map[uint32]Process, len(procs))
-	for _, p := range procs {
-		byPID[p.PID] = p
 	}
 	killed := map[uint32]bool{}
 	for _, p := range procs {
@@ -195,7 +232,7 @@ func (a *agent) scan(ctx context.Context) error {
 			if !r.MatchesProcess(p) {
 				continue
 			}
-			if err := a.enforce(ctx, p, Event{Kind: EventProcessKilled, RuleID: r.ID}, killed); err != nil {
+			if err := a.enforce(ctx, p, Event{Kind: EventProcessKilled, RuleID: r.ID}, r.Action, killed); err != nil {
 				return err
 			}
 			break
@@ -211,7 +248,7 @@ func (a *agent) scan(ctx context.Context) error {
 				p = Process{PID: c.PID}
 			}
 			ev := Event{Kind: EventConnectionBlocked, RuleID: r.ID, Remote: fmt.Sprintf("%s:%d/%s", c.RemoteAddr, c.RemotePort, c.Proto)}
-			if err := a.enforce(ctx, p, ev, killed); err != nil {
+			if err := a.enforce(ctx, p, ev, r.Action, killed); err != nil {
 				return err
 			}
 			break
@@ -222,13 +259,20 @@ func (a *agent) scan(ctx context.Context) error {
 
 // enforce ends p once per scan (a process matching several rules, or holding
 // several blocked connections, is killed and reported once) and sends the
-// outcome as ev with the process filled in.
-func (a *agent) enforce(ctx context.Context, p Process, ev Event, killed map[uint32]bool) error {
+// outcome as ev with the process filled in. A notify rule (Phase 271) reports
+// the match and leaves the process alone — once per scan as well, so a
+// long-running match is one row per scan, not one per rule.
+func (a *agent) enforce(ctx context.Context, p Process, ev Event, action string, killed map[uint32]bool) error {
 	if killed[p.PID] {
 		return nil
 	}
 	killed[p.PID] = true
-	ev.PID, ev.Name, ev.Path = p.PID, p.Name, p.Path
+	ev.PID, ev.Name, ev.Path, ev.At = p.PID, p.Name, p.Path, time.Now().UTC()
+	if action == ActionNotify {
+		ev.Kind = EventRuleNotified
+		a.o.Logger.Info("probe: rule matched (notify)", "pid", p.PID, "name", p.Name, "rule", ev.RuleID)
+		return a.send(Message{Type: TypeEvent, Event: &ev})
+	}
 	if err := a.pl.Kill(ctx, p.PID); err != nil {
 		ev.Kind, ev.Error = EventKillFailed, err.Error()
 		a.o.Logger.Warn("probe: kill failed", "pid", p.PID, "name", p.Name, "err", err)

@@ -3019,6 +3019,7 @@ ${fkeys("F3=Exit   F5=Refresh   F10=Block rules   F12=Cancel")}`;
         const conns = (snap.connections || []).filter((c) => c.remote_addr);
         term.innerHTML = `${head("PAMDSPPRB", "Display Session Probe")}
 Target <span class="white">${esc(p.target_name)}</span>  host <span class="white">${esc(h.hostname)}</span>  user <span class="white">${esc(h.user)}</span>  session <span class="white">${esc(h.session_id)}</span>  scanned <span class="cyan">${fmtTime(snap.taken)}</span>${snap.truncated ? '  <span class="amber">(truncated)</span>' : ""}
+${snap.foreground ? `Foreground window . :  <span class="white">${esc(snap.foreground.title)}</span>  <span class="cyan">(pid ${esc(snap.foreground.pid)})</span>` : ""}
 ${(snap.errors || []).length ? `<div class="red indent">${(snap.errors || []).map((e) => esc(e)).join("<br>")}</div>` : ""}
 Processes in the session${canKill ? ' (type an option, press Enter — <span class="cyan">4=End process</span>, with the session user\'s permissions)' : ""}:
 <form id="f-list"><table>
@@ -3057,8 +3058,8 @@ process holding the connection is ended. Not a containment boundary: the probe h
 Type options, press Enter.  <span class="cyan">${canManage ? "4=Delete" : "(read-only role)"}</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Target</th><th>Kind</th><th>Match</th><th>Note</th><th>By</th><th>Created</th></tr>
-${probeRules.map((r) => `<tr><td>${canManage ? opt(r.id) : "  "}</td><td>${cell(String(r.id), 5)}</td><td>${cell(r.target_id ? (r.target_name || r.target_id) : "* (all)", 14)}</td><td>${pad(r.kind === "process" ? "process" : "connect", 8)}</td><td class="white">${cell(what(r), 28)}</td><td>${cell(r.note || "", 16)}</td><td>${cell(r.created_by || "", 10)}</td><td class="cyan">${fmtTime(r.created_at)}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Target</th><th>Kind</th><th>Action</th><th>Match</th><th>Note</th><th>By</th><th>Created</th></tr>
+${probeRules.map((r) => `<tr><td>${canManage ? opt(r.id) : "  "}</td><td>${cell(String(r.id), 5)}</td><td>${cell(r.target_id ? (r.target_name || r.target_id) : "* (all)", 14)}</td><td>${pad(r.kind === "process" ? "process" : "connect", 8)}</td><td class="${r.action === "notify" ? "cyan" : "red"}">${pad(r.action === "notify" ? "notify" : "kill", 6)}</td><td class="white">${cell(what(r), 28)}</td><td>${cell(r.note || "", 16)}</td><td>${cell(r.created_by || "", 10)}</td><td class="cyan">${fmtTime(r.created_at)}</td></tr>`).join("")}
 </table>${probeRules.length ? "" : `<div class="cyan indent">(No block rules. Press F6 to add one.)</div>`}
 <input type="submit" hidden></form>
 ${fkeys("F3=Exit   F5=Refresh" + (canManage ? "   F6=Add rule" : "") + "   F12=Cancel")}`;
@@ -3087,6 +3088,7 @@ address or CIDR and/or a port (protocol optional). Takes effect on every connect
 <label>Match . . . . . . . :  <input name="match" size="40" autofocus> <span class="cyan">(image glob, or remote IP/CIDR)</span></label>
 <label>Port  . . . . . . . :  <input name="port" size="6" value="0"> <span class="cyan">(connection rules; 0 = any)</span></label>
 <label>Proto . . . . . . . :  <select name="proto"><option value="">either</option><option value="tcp">tcp</option><option value="udp">udp</option></select></label>
+<label>Action  . . . . . . :  <select name="action"><option value="kill">kill (end the process)</option><option value="notify">notify (report the match, leave it running)</option></select></label>
 <label>Note  . . . . . . . :  <input name="note" size="40"></label>
 <input type="submit" hidden>
 </form>

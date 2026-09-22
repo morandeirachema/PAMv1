@@ -48,6 +48,21 @@ type Status struct {
 	Events      int       `json:"events"`
 }
 
+// Artifact is one probe session's metadata record (Phase 271): a JSON line
+// per event, opened when the probe connects and closed when it disconnects.
+// The proxy provides the implementation (a sealed, hashed file in the
+// recording directory, chained like every recording); Close returns the
+// audit detail describing the stored file.
+type Artifact interface {
+	WriteLine(line []byte) error
+	Close() (detail string)
+}
+
+// Artifacts opens an Artifact for a probe link.
+type Artifacts interface {
+	Open(l Link) (Artifact, error)
+}
+
 // Hub is the per-replica registry of connected probes, the server side of
 // the protocol: it pushes policy, keeps each probe's latest Snapshot, turns
 // Events into audit rows, and relays kill commands. Like session.EndpointAgents
@@ -60,6 +75,8 @@ type Hub struct {
 	log    *slog.Logger
 	// CommandTimeout bounds Kill's wait for the probe's Result (default 15s).
 	CommandTimeout time.Duration
+	// Artifacts, when set, records each probe session's events (Phase 271).
+	Artifacts Artifacts
 }
 
 // link is one connected probe's server-side state.
@@ -119,6 +136,25 @@ func (h *Hub) Serve(ctx context.Context, l Link, rw io.ReadWriteCloser, audit fu
 	// The user is what the endpoint SAID it is — quoted and colon-escaped
 	// like every other value that comes off a wire into an audit detail.
 	prefix := fmt.Sprintf("agent:%d target:%s user:%s session:%d ", l.AgentID, l.TargetName, auditfmt.Value(l.Hello.User, 128), l.Hello.SessionID)
+	// The session's metadata artifact (Phase 271): every event, enforcement
+	// and metadata alike, as one JSON line; opened now, closed and audited
+	// when the probe leaves. An artifact that cannot be opened refuses the
+	// probe — telemetry that leaves no record is exactly what this exists to
+	// prevent.
+	var art Artifact
+	if h.Artifacts != nil {
+		var err error
+		art, err = h.Artifacts.Open(l)
+		if err != nil {
+			return fmt.Errorf("open probe artifact: %w", err)
+		}
+		head, _ := json.Marshal(map[string]any{"probe": l, "connected": lk.Connected})
+		if err := art.WriteLine(head); err != nil {
+			art.Close()
+			return fmt.Errorf("write probe artifact: %w", err)
+		}
+		defer func() { audit("probe.record", prefix+art.Close()) }()
+	}
 	r := bufio.NewReaderSize(rw, 64<<10)
 	for {
 		line, err := readLine(r, MaxLine)
@@ -144,6 +180,22 @@ func (h *Hub) Serve(ctx context.Context, l Link, rw io.ReadWriteCloser, audit fu
 			h.mu.Lock()
 			lk.Events++
 			h.mu.Unlock()
+			if art != nil {
+				if m.Event.At.IsZero() {
+					m.Event.At = time.Now().UTC()
+				}
+				if b, err := json.Marshal(m.Event); err == nil {
+					if err := art.WriteLine(b); err != nil {
+						h.log.Warn("probe: artifact write failed; dropping probe", "agent", l.AgentName, "err", err)
+						return fmt.Errorf("write probe artifact: %w", err)
+					}
+				}
+			}
+			// Metadata is the artifact's; only an enforcement or a rule
+			// match is an audit row.
+			if m.Event.IsMetadata() {
+				continue
+			}
 			audit(eventAction(m.Event.Kind), prefix+eventDetail(*m.Event))
 		case m.Type == TypeResult && m.Result != nil:
 			lk.wmu.Lock()
@@ -177,6 +229,8 @@ func eventAction(kind string) string {
 		return "probe.command_killed"
 	case EventKillFailed:
 		return "probe.kill_failed"
+	case EventRuleNotified:
+		return "probe.rule_notified"
 	}
 	return "probe.event"
 }
@@ -193,6 +247,9 @@ func eventDetail(e Event) string {
 	}
 	if e.Path != "" {
 		fmt.Fprintf(&b, " path:%s", auditfmt.Value(e.Path, 255))
+	}
+	if e.Title != "" {
+		fmt.Fprintf(&b, " title:%s", auditfmt.Value(e.Title, 128))
 	}
 	if e.Remote != "" {
 		fmt.Fprintf(&b, " remote:%s", auditfmt.Value(e.Remote, 64))

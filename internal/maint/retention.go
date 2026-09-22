@@ -25,7 +25,7 @@ import (
 // transcripts (.ssh.log, .k8s.log), forensic reconstructions and RDP/VNC
 // recordings (.guac, Phase 258) were never pruned: PAM_RECORDING_RETENTION_DAYS
 // silently did not apply to them.
-var recordingExts = []string{".cast", ".winrm.log", ".ssh.log", ".k8s.log", ".forensics.log", ".sftp", ".guac"}
+var recordingExts = []string{".cast", ".winrm.log", ".ssh.log", ".k8s.log", ".forensics.log", ".probe.log", ".sftp", ".guac"}
 
 // IsRecording reports whether retention treats name as a recording.
 func IsRecording(name string) bool { return isRecording(name) }
