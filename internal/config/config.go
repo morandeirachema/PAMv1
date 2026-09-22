@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -658,6 +659,22 @@ type Config struct {
 	LDAPGroupAuditor       string
 	LDAPGroupApprover      string
 
+	// RADIUS* configure a RADIUS (RFC 2865) server as an identity source
+	// (Phase 269). Empty RADIUSAddr disables it. RADIUSMode is "login" (the
+	// server authenticates username + password, optionally challenging for a
+	// one-time code, alongside LDAP/Entra in the chain) or "second_factor"
+	// (a directory-authenticated user's one-time code is verified by the
+	// server). RADIUSClass* map a Class attribute value returned on accept to
+	// a role; RADIUSRole is the role when none matches (default user).
+	RADIUSAddr          string
+	RADIUSSecret        string
+	RADIUSNASIdentifier string
+	RADIUSMode          string
+	RADIUSRole          string
+	RADIUSClassAdmin    string
+	RADIUSClassUser     string
+	RADIUSClassAuditor  string
+	RADIUSClassApprover string
 	// Entra* configure Microsoft Entra ID (Azure AD) login. Empty tenant disables it.
 	EntraTenantID      string
 	EntraClientID      string
@@ -998,15 +1015,24 @@ func Load() (*Config, error) {
 		LDAPGroupAuditor:       os.Getenv("PAM_LDAP_GROUP_AUDITOR"),
 		LDAPGroupApprover:      os.Getenv("PAM_LDAP_GROUP_APPROVER"),
 
-		EntraTenantID:      os.Getenv("PAM_ENTRA_TENANT_ID"),
-		EntraClientID:      os.Getenv("PAM_ENTRA_CLIENT_ID"),
-		EntraClientSecret:  os.Getenv("PAM_ENTRA_CLIENT_SECRET"),
-		EntraScope:         os.Getenv("PAM_ENTRA_SCOPE"),
-		EntraAuthorityHost: os.Getenv("PAM_ENTRA_AUTHORITY_HOST"),
-		EntraRoleAdmin:     os.Getenv("PAM_ENTRA_ROLE_ADMIN"),
-		EntraRoleUser:      os.Getenv("PAM_ENTRA_ROLE_USER"),
-		EntraRoleAuditor:   os.Getenv("PAM_ENTRA_ROLE_AUDITOR"),
-		EntraRoleApprover:  os.Getenv("PAM_ENTRA_ROLE_APPROVER"),
+		RADIUSAddr:          os.Getenv("PAM_RADIUS_ADDR"),
+		RADIUSSecret:        os.Getenv("PAM_RADIUS_SECRET"),
+		RADIUSNASIdentifier: getenv("PAM_RADIUS_NAS_ID", "pamv1"),
+		RADIUSMode:          strings.ToLower(getenv("PAM_RADIUS_MODE", "login")),
+		RADIUSRole:          strings.ToLower(getenv("PAM_RADIUS_ROLE", "user")),
+		RADIUSClassAdmin:    os.Getenv("PAM_RADIUS_CLASS_ADMIN"),
+		RADIUSClassUser:     os.Getenv("PAM_RADIUS_CLASS_USER"),
+		RADIUSClassAuditor:  os.Getenv("PAM_RADIUS_CLASS_AUDITOR"),
+		RADIUSClassApprover: os.Getenv("PAM_RADIUS_CLASS_APPROVER"),
+		EntraTenantID:       os.Getenv("PAM_ENTRA_TENANT_ID"),
+		EntraClientID:       os.Getenv("PAM_ENTRA_CLIENT_ID"),
+		EntraClientSecret:   os.Getenv("PAM_ENTRA_CLIENT_SECRET"),
+		EntraScope:          os.Getenv("PAM_ENTRA_SCOPE"),
+		EntraAuthorityHost:  os.Getenv("PAM_ENTRA_AUTHORITY_HOST"),
+		EntraRoleAdmin:      os.Getenv("PAM_ENTRA_ROLE_ADMIN"),
+		EntraRoleUser:       os.Getenv("PAM_ENTRA_ROLE_USER"),
+		EntraRoleAuditor:    os.Getenv("PAM_ENTRA_ROLE_AUDITOR"),
+		EntraRoleApprover:   os.Getenv("PAM_ENTRA_ROLE_APPROVER"),
 
 		OIDCIssuer:       os.Getenv("PAM_OIDC_ISSUER"),
 		OIDCClientID:     os.Getenv("PAM_OIDC_CLIENT_ID"),
@@ -1370,6 +1396,24 @@ func Load() (*Config, error) {
 		errs = append(errs, "PAM_ALERT_EMAIL_SMTP, PAM_ALERT_EMAIL_FROM and PAM_ALERT_EMAIL_TO must all be set together (or all empty)")
 	}
 	errs = append(errs, airGapConflicts(cfg)...)
+	if cfg.RADIUSAddr != "" {
+		if cfg.RADIUSSecret == "" {
+			errs = append(errs, "PAM_RADIUS_SECRET is required when PAM_RADIUS_ADDR is set")
+		}
+		if _, _, err := net.SplitHostPort(cfg.RADIUSAddr); err != nil {
+			errs = append(errs, "PAM_RADIUS_ADDR must be host:port (1812 is the standard port)")
+		}
+		switch cfg.RADIUSMode {
+		case "login", "second_factor":
+		default:
+			errs = append(errs, fmt.Sprintf("PAM_RADIUS_MODE: %q must be login or second_factor", cfg.RADIUSMode))
+		}
+		switch cfg.RADIUSRole {
+		case "admin", "user", "auditor", "approver":
+		default:
+			errs = append(errs, fmt.Sprintf("PAM_RADIUS_ROLE: %q must be admin, user, auditor or approver", cfg.RADIUSRole))
+		}
+	}
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("config: %s", strings.Join(errs, "; "))
 	}
