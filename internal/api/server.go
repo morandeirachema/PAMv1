@@ -86,6 +86,10 @@ func setActor(ctx context.Context, actor string) {
 
 // Options tunes server policy.
 type Options struct {
+	// RDPDrive / RDPPrinter / RDPAudio / RDPAudioIn (Phase 270) are the
+	// deployment ceilings for the desktop redirections a target's or grant's
+	// rights may enable; a redirection off here stays off everywhere.
+	RDPDrive, RDPPrinter, RDPAudio, RDPAudioIn bool
 	// RADIUS / RADIUSSecondFactor (Phase 269) seed the runtime config; see
 	// RuntimeConfig for their meaning.
 	RADIUS             *auth.RADIUSAuthenticator
@@ -493,28 +497,29 @@ type Options struct {
 }
 
 type Server struct {
-	store                store.Store
-	vault                *vault.Vault
-	resolver             *auth.Resolver
-	winrm                winrm.Runner
-	recordingDir         string
-	webAuthn             *webauthn.WebAuthn
-	certRemindDays       int
-	passwordPolicy       rotate.PasswordPolicy
-	passwordHistoryCount int
-	credentialFileMaxKB  int
-	extensionTokenTTL    time.Duration
-	checkoutMaxExtend    time.Duration
-	requireRecording     bool
-	portalURL            string
-	guacdAddr            string
-	sshProxyAddr         string
-	sshProxyHostKey      ssh.PublicKey
-	guacdRecordingPath   string
-	guacdRDPSecurity     string
-	guacdIgnoreCert      bool
-	rdpClipboard         string
-	authLimiter          *ratelimit.Limiter
+	store                                      store.Store
+	vault                                      *vault.Vault
+	resolver                                   *auth.Resolver
+	winrm                                      winrm.Runner
+	recordingDir                               string
+	webAuthn                                   *webauthn.WebAuthn
+	certRemindDays                             int
+	passwordPolicy                             rotate.PasswordPolicy
+	passwordHistoryCount                       int
+	credentialFileMaxKB                        int
+	extensionTokenTTL                          time.Duration
+	checkoutMaxExtend                          time.Duration
+	requireRecording                           bool
+	portalURL                                  string
+	guacdAddr                                  string
+	sshProxyAddr                               string
+	sshProxyHostKey                            ssh.PublicKey
+	guacdRecordingPath                         string
+	guacdRDPSecurity                           string
+	guacdIgnoreCert                            bool
+	rdpDrive, rdpPrinter, rdpAudio, rdpAudioIn bool
+	rdpClipboard                               string
+	authLimiter                                *ratelimit.Limiter
 	// keyFailLimiter throttles FAILED bearer-credential attempts (X-API-Key,
 	// agent key, application key) per source IP. It is separate from
 	// authLimiter — which throttles every call to the login endpoints — because
@@ -841,66 +846,67 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		guacdRecordingPath:   opts.GuacdRecordingPath,
 		guacdRDPSecurity:     opts.GuacdRDPSecurity,
 		guacdIgnoreCert:      opts.GuacdIgnoreCert,
-		rdpClipboard:         rdpClipboardMode(opts.RDPClipboard),
-		authLimiter:          ratelimit.New(opts.AuthRatePerMin),
-		keyFailLimiter:       ratelimit.New(opts.AuthRatePerMin),
-		cmdGuard:             opts.CommandGuard,
-		cmdAllowGuard:        opts.CommandAllowGuard,
-		recKey:               apiRecKey(opts.EncryptRecordings, v),
-		opaqueRecNames:       opts.OpaqueRecordingNames,
-		maxRecordingBytes:    opts.MaxRecordingBytes,
-		rdpClipAudit:         guacd.NormalizeClipAudit(opts.RDPClipboardAudit),
-		trustedProxyHops:     opts.TrustedProxyHops,
-		sessions:             opts.Sessions,
-		live:                 opts.Live,
-		shares:               opts.Shares,
-		shareInviteTTL:       opts.ShareInviteTTL,
-		approvalInviteTTL:    opts.ApprovalInviteTTL,
-		slackWebhookURL:      opts.SlackWebhookURL,
-		slackSigningSecret:   opts.SlackSigningSecret,
-		userTokenTTL:         opts.UserTokenTTL,
-		sessionMFA:           opts.SessionMFA,
-		shareGuestTTL:        opts.ShareGuestSessionTTL,
-		shareSMTPAddr:        opts.ShareSMTPAddr,
-		shareSMTPFrom:        opts.ShareSMTPFrom,
-		shareSMTPUser:        opts.ShareSMTPUser,
-		shareSMTPPass:        opts.ShareSMTPPass,
-		cluster:              opts.Cluster,
-		stepup:               opts.StepUp,
-		bgThreshold:          opts.BreakGlassThreshold,
-		bgTTL:                bgTTL,
-		unseal:               newUnsealState(),
-		alerter:              alerter,
-		rotators:             rotators,
-		verifiers:            verifiers,
-		sshConnector:         sshConn,
-		airGap:               opts.AirGap,
-		discoveryDial:        opts.DiscoveryDial,
-		reconfigure:          opts.Reconfigure,
-		auditSignKey:         opts.AuditSignKey,
-		sshCA:                opts.CA,
-		sshOperatorCertTTL:   opts.SSHOperatorCertTTL,
-		vendorAttestor:       opts.VendorAttestor,
-		postureAttestor:      opts.PostureAttestor,
-		oncallAttestor:       opts.OnCallAttestor,
-		deviceHeader:         opts.DeviceHeader,
-		analytics:            opts.Analytics,
-		analyticsWindow:      opts.AnalyticsWindow,
-		analyticsAutoKill:    opts.AnalyticsAutoKill,
-		analyticsBaseline:    opts.AnalyticsBaseline,
-		analyticsAutoStepUp:  opts.AnalyticsAutoStepUp,
-		analyticsAlerted:     make(map[string]analyticsAlert),
-		appSecretsEnabled:    opts.AppSecretsEnabled,
-		scimEnabled:          opts.ScimEnabled,
-		endpointAgents:       opts.EndpointAgents,
-		probeHub:             opts.ProbeHub,
-		k8sConfig:            opts.K8s,
-		forensics:            opts.SessionForensics,
-		forensicsMaxEvents:   opts.SessionForensicsMaxEvents,
-		forensicsTimeout:     opts.SessionForensicsTimeout,
-		metrics:              metrics.New(),
-		log:                  logging.Component("api"),
-		mux:                  http.NewServeMux(),
+		rdpDrive:             opts.RDPDrive, rdpPrinter: opts.RDPPrinter, rdpAudio: opts.RDPAudio, rdpAudioIn: opts.RDPAudioIn,
+		rdpClipboard:        rdpClipboardMode(opts.RDPClipboard),
+		authLimiter:         ratelimit.New(opts.AuthRatePerMin),
+		keyFailLimiter:      ratelimit.New(opts.AuthRatePerMin),
+		cmdGuard:            opts.CommandGuard,
+		cmdAllowGuard:       opts.CommandAllowGuard,
+		recKey:              apiRecKey(opts.EncryptRecordings, v),
+		opaqueRecNames:      opts.OpaqueRecordingNames,
+		maxRecordingBytes:   opts.MaxRecordingBytes,
+		rdpClipAudit:        guacd.NormalizeClipAudit(opts.RDPClipboardAudit),
+		trustedProxyHops:    opts.TrustedProxyHops,
+		sessions:            opts.Sessions,
+		live:                opts.Live,
+		shares:              opts.Shares,
+		shareInviteTTL:      opts.ShareInviteTTL,
+		approvalInviteTTL:   opts.ApprovalInviteTTL,
+		slackWebhookURL:     opts.SlackWebhookURL,
+		slackSigningSecret:  opts.SlackSigningSecret,
+		userTokenTTL:        opts.UserTokenTTL,
+		sessionMFA:          opts.SessionMFA,
+		shareGuestTTL:       opts.ShareGuestSessionTTL,
+		shareSMTPAddr:       opts.ShareSMTPAddr,
+		shareSMTPFrom:       opts.ShareSMTPFrom,
+		shareSMTPUser:       opts.ShareSMTPUser,
+		shareSMTPPass:       opts.ShareSMTPPass,
+		cluster:             opts.Cluster,
+		stepup:              opts.StepUp,
+		bgThreshold:         opts.BreakGlassThreshold,
+		bgTTL:               bgTTL,
+		unseal:              newUnsealState(),
+		alerter:             alerter,
+		rotators:            rotators,
+		verifiers:           verifiers,
+		sshConnector:        sshConn,
+		airGap:              opts.AirGap,
+		discoveryDial:       opts.DiscoveryDial,
+		reconfigure:         opts.Reconfigure,
+		auditSignKey:        opts.AuditSignKey,
+		sshCA:               opts.CA,
+		sshOperatorCertTTL:  opts.SSHOperatorCertTTL,
+		vendorAttestor:      opts.VendorAttestor,
+		postureAttestor:     opts.PostureAttestor,
+		oncallAttestor:      opts.OnCallAttestor,
+		deviceHeader:        opts.DeviceHeader,
+		analytics:           opts.Analytics,
+		analyticsWindow:     opts.AnalyticsWindow,
+		analyticsAutoKill:   opts.AnalyticsAutoKill,
+		analyticsBaseline:   opts.AnalyticsBaseline,
+		analyticsAutoStepUp: opts.AnalyticsAutoStepUp,
+		analyticsAlerted:    make(map[string]analyticsAlert),
+		appSecretsEnabled:   opts.AppSecretsEnabled,
+		scimEnabled:         opts.ScimEnabled,
+		endpointAgents:      opts.EndpointAgents,
+		probeHub:            opts.ProbeHub,
+		k8sConfig:           opts.K8s,
+		forensics:           opts.SessionForensics,
+		forensicsMaxEvents:  opts.SessionForensicsMaxEvents,
+		forensicsTimeout:    opts.SessionForensicsTimeout,
+		metrics:             metrics.New(),
+		log:                 logging.Component("api"),
+		mux:                 http.NewServeMux(),
 	}
 	// The initial runtime snapshot comes from opts (built by main from the base
 	// env config + stored overrides); PUT /api/config later swaps it via

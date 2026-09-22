@@ -107,6 +107,10 @@ type admitResult struct {
 	// stamped on the registered session as its deadline. Zero when the
 	// principal's access is not bounded by a grant edge.
 	bounds sessionBounds
+	// rights is the sub-protocol set the admitting grants leave the session
+	// (Phase 270, auth.EffectiveRights): "" is everything the deployment
+	// allows, "none" nothing. Each proxy applies its own ceilings on top.
+	rights string
 }
 
 // sessionBounds carries a grant-imposed end for a session: the instant and
@@ -377,6 +381,9 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 	if dl, why, bounded := auth.GrantDeadlineFor(principal, grants, &cred.ID, personal, now); bounded {
 		bounds = sessionBounds{deadline: &dl, reason: why}
 	}
+	// What the session may do inside the protocol (Phase 270): the target's
+	// set narrowed by the grants that admitted this principal.
+	rights := auth.EffectiveRights(principal, target, grants, now)
 
 	// 12. Per-session MFA (Phase 244): a second factor proven for THIS session
 	// — a code answered in-band (the SSH proxy's prompt) or a ticket minted
@@ -477,5 +484,5 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 		}
 	}
 
-	return admitResult{outcome: admitOK, gate: gateNone, target: target, cred: cred, secret: secret, bounds: bounds}
+	return admitResult{outcome: admitOK, gate: gateNone, target: target, cred: cred, secret: secret, bounds: bounds, rights: rights}
 }

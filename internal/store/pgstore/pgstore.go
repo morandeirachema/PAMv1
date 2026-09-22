@@ -160,9 +160,9 @@ func limitArg(limit int) any {
 // CreateTarget inserts a target, populating its ID and CreatedAt; ErrConflict if the name is taken.
 func (s *PGStore) CreateTarget(ctx context.Context, t *store.Target) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO targets (name, host, port, os_type, protocol, require_approval, rdp_clipboard, rdp_clipboard_audit, require_session_mfa, labels, approval_tiers)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, created_at`,
-		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA, t.Labels, t.ApprovalTiers,
+		`INSERT INTO targets (name, host, port, os_type, protocol, require_approval, rdp_clipboard, rdp_clipboard_audit, require_session_mfa, labels, approval_tiers, rights)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id, created_at`,
+		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA, t.Labels, t.ApprovalTiers, t.Rights,
 	).Scan(&t.ID, &t.CreatedAt)
 	if pgCode(err) == pgUniqueViolation {
 		return store.ErrConflict
@@ -173,7 +173,7 @@ func (s *PGStore) CreateTarget(ctx context.Context, t *store.Target) error {
 // ListTargets returns targets in the (limit, afterID) window, ordered by ID.
 func (s *PGStore) ListTargets(ctx context.Context, limit int, afterID int64) ([]store.Target, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa, labels, approval_tiers
+		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa, labels, approval_tiers, rights
 		 FROM targets WHERE id > $1 ORDER BY id LIMIT $2`, afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
@@ -187,9 +187,9 @@ func (s *PGStore) ListTargets(ctx context.Context, limit int, afterID int64) ([]
 func (s *PGStore) UpdateTarget(ctx context.Context, t *store.Target) error {
 	err := s.pool.QueryRow(ctx,
 		`UPDATE targets SET name = $1, host = $2, port = $3, os_type = $4, protocol = $5, require_approval = $6,
-		        rdp_clipboard = $7, rdp_clipboard_audit = $8, require_session_mfa = $9, labels = $10, approval_tiers = $11
-		 WHERE id = $12 RETURNING safe_id, created_at`,
-		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA, t.Labels, t.ApprovalTiers, t.ID,
+		        rdp_clipboard = $7, rdp_clipboard_audit = $8, require_session_mfa = $9, labels = $10, approval_tiers = $11, rights = $12
+		 WHERE id = $13 RETURNING safe_id, created_at`,
+		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA, t.Labels, t.ApprovalTiers, t.Rights, t.ID,
 	).Scan(&t.SafeID, &t.CreatedAt)
 	switch {
 	case pgCode(err) == pgUniqueViolation:
@@ -203,7 +203,7 @@ func (s *PGStore) UpdateTarget(ctx context.Context, t *store.Target) error {
 // GetTarget returns the target with the given ID, or ErrNotFound.
 func (s *PGStore) GetTarget(ctx context.Context, id int64) (*store.Target, error) {
 	return getOne(ctx, s.pool, scanTarget,
-		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa, labels, approval_tiers
+		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa, labels, approval_tiers, rights
 		 FROM targets WHERE id = $1`, id)
 }
 
@@ -309,8 +309,8 @@ func (s *PGStore) CreateTargetGrant(ctx context.Context, g *store.TargetGrant) e
 		}
 	}
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO target_grants (target_id, subject_type, subject, created_by, expires_at, time_frame, credential_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-		g.TargetID, g.SubjectType, g.Subject, g.CreatedBy, g.ExpiresAt, g.TimeFrame, g.CredentialID,
+		`INSERT INTO target_grants (target_id, subject_type, subject, created_by, expires_at, time_frame, credential_id, rights) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+		g.TargetID, g.SubjectType, g.Subject, g.CreatedBy, g.ExpiresAt, g.TimeFrame, g.CredentialID, g.Rights,
 	).Scan(&g.ID)
 	switch pgCode(err) {
 	case pgUniqueViolation:
@@ -324,13 +324,13 @@ func (s *PGStore) CreateTargetGrant(ctx context.Context, g *store.TargetGrant) e
 // ListTargetGrants returns the grants for a target, ordered by ID.
 func (s *PGStore) ListTargetGrants(ctx context.Context, targetID int64) ([]store.TargetGrant, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, target_id, subject_type, subject, created_by, expires_at, time_frame, credential_id FROM target_grants WHERE target_id = $1 ORDER BY id`, targetID)
+		`SELECT id, target_id, subject_type, subject, created_by, expires_at, time_frame, credential_id, rights FROM target_grants WHERE target_id = $1 ORDER BY id`, targetID)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.TargetGrant, error) {
 		var g store.TargetGrant
-		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject, &g.CreatedBy, &g.ExpiresAt, &g.TimeFrame, &g.CredentialID)
+		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject, &g.CreatedBy, &g.ExpiresAt, &g.TimeFrame, &g.CredentialID, &g.Rights)
 		return g, err
 	})
 }
@@ -345,10 +345,10 @@ func (s *PGStore) DeleteTargetGrant(ctx context.Context, id int64) error {
 // members (Phase 17).
 func (s *PGStore) EffectiveTargetGrants(ctx context.Context, targetID int64) ([]store.TargetGrant, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, target_id, subject_type, subject, expires_at, time_frame, NULL::text, credential_id FROM target_grants
+		`SELECT id, target_id, subject_type, subject, expires_at, time_frame, NULL::text, credential_id, rights FROM target_grants
 		  WHERE target_id = $1
 		 UNION
-		 SELECT sm.id, $1::bigint, sm.subject_type, sm.subject, sm.expires_at, sm.time_frame, sm.permissions, NULL::bigint
+		 SELECT sm.id, $1::bigint, sm.subject_type, sm.subject, sm.expires_at, sm.time_frame, sm.permissions, NULL::bigint, ''::text
 		   FROM safe_members sm JOIN targets t ON t.safe_id = sm.safe_id
 		  WHERE t.id = $1
 		 ORDER BY id`, targetID)
@@ -361,7 +361,7 @@ func (s *PGStore) EffectiveTargetGrants(ctx context.Context, targetID int64) ([]
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.TargetGrant, error) {
 		var g store.TargetGrant
 		var perms *string
-		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject, &g.ExpiresAt, &g.TimeFrame, &perms, &g.CredentialID)
+		err := row.Scan(&g.ID, &g.TargetID, &g.SubjectType, &g.Subject, &g.ExpiresAt, &g.TimeFrame, &perms, &g.CredentialID, &g.Rights)
 		if perms != nil {
 			g.Permissions = store.ParseSafePermissions(*perms)
 		}
@@ -3319,7 +3319,7 @@ func (s *PGStore) Close() {
 // scanTarget maps one result row into a store.Target.
 func scanTarget(row pgx.CollectableRow) (store.Target, error) {
 	var t store.Target
-	err := row.Scan(&t.ID, &t.Name, &t.Host, &t.Port, &t.OSType, &t.Protocol, &t.RequireApproval, &t.SafeID, &t.RDPClipboard, &t.RDPClipboardAudit, &t.CreatedAt, &t.RequireSessionMFA, &t.Labels, &t.ApprovalTiers)
+	err := row.Scan(&t.ID, &t.Name, &t.Host, &t.Port, &t.OSType, &t.Protocol, &t.RequireApproval, &t.SafeID, &t.RDPClipboard, &t.RDPClipboardAudit, &t.CreatedAt, &t.RequireSessionMFA, &t.Labels, &t.ApprovalTiers, &t.Rights)
 	return t, err
 }
 
