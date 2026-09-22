@@ -58,7 +58,7 @@ which named one of six fixes. `TestDocHeadersAgree` now fails CI on drift.
 exactly as before; the `kind` column defaults to `tunnel` for every existing
 row. The image is
 `ghcr.io/morandeirachema/pamv1:0.0.77`, digest
-`TBD`
+`sha256:36590ed1a224cd5486ed9d017ee86a39020ffaa0e3dc3809b9c2544626dd922a`
 ([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.77)).
 
 ## [0.76.0] — 2026-09-17
