@@ -2192,6 +2192,45 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("disabled scim key must resolve as not found, got %v", err)
 	}
 
+	// --- sub-protocol rights (Phase 270) ---
+	rt := &store.Target{Name: "rights-box", Host: "10.9.9.9", Port: 22, OSType: "linux", Protocol: "ssh", Rights: "ssh_sftp,ssh_shell"}
+	if err := st.CreateTarget(ctx, rt); err != nil {
+		t.Fatalf("CreateTarget(rights): %v", err)
+	}
+	if got, err := st.GetTarget(ctx, rt.ID); err != nil || got.Rights != "ssh_sftp,ssh_shell" {
+		t.Fatalf("target rights not persisted: %+v err %v", got, err)
+	}
+	rt.Rights = "ssh_shell"
+	if err := st.UpdateTarget(ctx, rt); err != nil {
+		t.Fatalf("UpdateTarget(rights): %v", err)
+	}
+	if list, err := st.ListTargets(ctx, 0, 0); err != nil {
+		t.Fatal(err)
+	} else {
+		found := false
+		for _, x := range list {
+			if x.ID == rt.ID && x.Rights == "ssh_shell" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("updated target rights not listed: %+v", list)
+		}
+	}
+	rg := &store.TargetGrant{TargetID: rt.ID, SubjectType: "user", Subject: "rights-user", Rights: "ssh_shell", CreatedBy: "admin"}
+	if err := st.CreateTargetGrant(ctx, rg); err != nil {
+		t.Fatalf("CreateTargetGrant(rights): %v", err)
+	}
+	if gs, err := st.ListTargetGrants(ctx, rt.ID); err != nil || len(gs) != 1 || gs[0].Rights != "ssh_shell" {
+		t.Fatalf("grant rights not listed: %+v err %v", gs, err)
+	}
+	if gs, err := st.EffectiveTargetGrants(ctx, rt.ID); err != nil || len(gs) != 1 || gs[0].Rights != "ssh_shell" {
+		t.Fatalf("grant rights not in effective grants: %+v err %v", gs, err)
+	}
+	if err := st.DeleteTarget(ctx, rt.ID); err != nil {
+		t.Fatal(err)
+	}
+
 	// --- endpoint agents (Phase 153) ---
 	eaTarget := &store.Target{Name: "branch-box", Host: "127.0.0.1", Port: 22, OSType: "linux", Protocol: "ssh"}
 	if err := st.CreateTarget(ctx, eaTarget); err != nil {

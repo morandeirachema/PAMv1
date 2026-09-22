@@ -63,6 +63,10 @@ type targetIn struct {
 	// PUT clears the set, like the clipboard overrides, and that reset is
 	// audited for the same reason: it can widen access.
 	Labels map[string]string `json:"labels"`
+	// Rights is the target's sub-protocol allow-set (Phase 270), a comma
+	// list of store.AllRights names; empty (or "*") is no narrowing.
+	Rights string `json:"rights"`
+	rights string
 	// labels is the validated canonical form, filled in by validateTargetIn.
 	labels string
 	// ApprovalTiers is the target's ordered approval chain (Phase 256),
@@ -110,6 +114,12 @@ func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
 			return false
 		}
 		in.labels = labels
+		rights, err := store.NormalizeRights(in.Rights)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "rights: "+err.Error())
+			return false
+		}
+		in.rights = rights
 		tiers, err := store.NormalizeApprovalTiers(in.ApprovalTiers)
 		if err != nil {
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
@@ -125,7 +135,17 @@ func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
 func targetFromIn(in targetIn) store.Target {
 	return store.Target{Name: in.Name, Host: in.Host, Port: in.Port, OSType: in.OSType, Protocol: in.Protocol,
 		RequireApproval: in.RequireApproval, RequireSessionMFA: in.RequireSessionMFA,
-		RDPClipboard: in.RDPClipboard, RDPClipboardAudit: in.RDPClipboardAudit, Labels: in.labels, ApprovalTiers: in.approvalTiers}
+		RDPClipboard: in.RDPClipboard, RDPClipboardAudit: in.RDPClipboardAudit, Labels: in.labels, ApprovalTiers: in.approvalTiers, Rights: in.rights}
+}
+
+// rightsDetail renders a target's sub-protocol set for an audit detail
+// (Phase 270): what a session there may do is an authorization decision, so
+// setting or clearing it is recorded on the target.create/update row.
+func rightsDetail(t store.Target) string {
+	if t.Rights == "" {
+		return ""
+	}
+	return " rights:" + t.Rights
 }
 
 // labelDetail renders a target's labels for an audit detail (Phase 250).
@@ -171,7 +191,7 @@ func (s *Server) createTarget(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "target.create", t.Name+" "+clipDetail(t)+labelDetail(t))
+	s.audit(r.Context(), "target.create", t.Name+" "+clipDetail(t)+labelDetail(t)+rightsDetail(t))
 	writeJSON(w, http.StatusCreated, t)
 }
 
@@ -215,7 +235,7 @@ func (s *Server) updateTarget(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "target.update", fmt.Sprintf("target:%d name:%s host:%s:%d %s%s", t.ID, t.Name, auditField(t.Host, 255), t.Port, clipDetail(t), labelDetail(t)))
+	s.audit(r.Context(), "target.update", fmt.Sprintf("target:%d name:%s host:%s:%d %s%s%s", t.ID, t.Name, auditField(t.Host, 255), t.Port, clipDetail(t), labelDetail(t), rightsDetail(t)))
 	writeJSON(w, http.StatusOK, t)
 }
 
@@ -271,6 +291,9 @@ type grantIn struct {
 	// (timeframe.Parse).
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	TimeFrame string     `json:"time_frame,omitempty"`
+	// Rights narrows the target's sub-protocol set for this subject (Phase
+	// 270); empty is the target's own set.
+	Rights string `json:"rights,omitempty"`
 }
 
 // validGrantLifetime checks a grant's or membership's optional bounds (Phase
@@ -346,12 +369,21 @@ func (s *Server) createTargetGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	// The creator is recorded so a certification review can enforce four-eyes:
 	// the principal who granted access may not be the one certifying it (Phase 46).
-	g := store.TargetGrant{TargetID: id, CredentialID: in.CredentialID, SubjectType: in.SubjectType, Subject: in.Subject, CreatedBy: actorFrom(r.Context()), ExpiresAt: in.ExpiresAt, TimeFrame: frame}
+	rights, err := store.NormalizeRights(in.Rights)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "rights: "+err.Error())
+		return
+	}
+	g := store.TargetGrant{TargetID: id, CredentialID: in.CredentialID, SubjectType: in.SubjectType, Subject: in.Subject, CreatedBy: actorFrom(r.Context()), ExpiresAt: in.ExpiresAt, TimeFrame: frame, Rights: rights}
 	if err := s.store.CreateTargetGrant(r.Context(), &g); err != nil {
 		storeError(w, err)
 		return
 	}
-	s.audit(r.Context(), "grant.create", fmt.Sprintf("target:%d %s:%s", id, in.SubjectType, in.Subject)+credDetail+lifetimeDetail(in.ExpiresAt, frame))
+	rightsDetail := ""
+	if rights != "" {
+		rightsDetail = " rights:" + rights
+	}
+	s.audit(r.Context(), "grant.create", fmt.Sprintf("target:%d %s:%s", id, in.SubjectType, in.Subject)+credDetail+lifetimeDetail(in.ExpiresAt, frame)+rightsDetail)
 	writeJSON(w, http.StatusCreated, g)
 }
 

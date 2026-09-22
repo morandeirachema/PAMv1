@@ -1,6 +1,6 @@
 # PAMv1 — documentation
 
-> Last updated: 2026-09-22 · Reflects: Phases 0–227 and 229–269, and release v0.0.77 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-09-22 · Reflects: Phases 0–227 and 229–270, and release v0.0.77 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-09-22 | Phase 270 (sub-protocol rights) documented: ARCHITECTURE-LOW-LEVEL (§2.2 bullet, env rows, audit action, tests, change log), ARCHITECTURE-HIGH-LEVEL (table row, change log), ADMIN-GUIDE (§6 subsection + env rows), USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE (mark `0062`), README Tier 10 row 2 closed, ARCHITECTURE-DIAGRAMS regenerated. |
 | 2026-09-22 | Phase 269 (RADIUS) documented: ARCHITECTURE-LOW-LEVEL (package tree, §2.3 bullet, env rows, tests, change log), ARCHITECTURE-HIGH-LEVEL (table row, change log), ADMIN-GUIDE (§6 subsection), USER-GUIDE (§3), CODE-GUIDE (package map), PORTS-AND-FLOWS (E17), EXTERNAL-INFRA-GAPS (§1 row), README (Tier 8 row closed, **Tier 10** table opened). |
 | 2026-09-22 | Phase 268 (v0.0.77): every `Reflects:` header, both READMEs' ranges and the banner through 268; the release token above; the version numbering moves to **0.0.x** (see CHANGELOG). |
 | 2026-09-22 | **Phase 267 — documentation currency pass.** Every `Reflects:` header now names the newest phase AND carries the date it was actually swept (the two halves contradicted each other on thirteen docs); this header's release token (`v0.69.0`, nine releases stale) restated; SECURITY.md's *Supported versions* rewritten (it still said no release existed); BACKUP-AND-RESTORE's migration high-water mark `0051` → `0061` with 0052–0061 attributed; CHANGELOG `[0.76.0]`'s upgrade guidance names every fix; ROADMAP's Phase 265 intro records the `SetApprovalState` signature change. **Enforced from now on** by `internal/releasedocs` `TestDocHeadersAgree`: every header, both READMEs' ranges and this file's release token must agree with the ROADMAP banner and CHANGELOG — the sweep is no longer a hand ritual. |

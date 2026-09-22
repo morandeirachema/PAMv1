@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–269 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–270 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,64 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 270 — Per-target and per-grant sub-protocol rights (Tier 10, row 2) ✅
+
+*Tier 10's second row. WALLIX attaches a sub-protocol list to every service
+(RDP clipboard/drive/printer/smartcard/audio; SSH shell/exec/SCP/SFTP/X11/
+forwards/agent) and to every authorization; PAMv1 had three deployment-wide
+switches and a per-target clipboard override.*
+
+- [x] **Nine rights, two rows, one resolver.** `store/rights.go` names them
+  (`ssh_shell`, `ssh_exec`, `ssh_sftp`, `ssh_forward`, `ssh_x11`,
+  `rdp_drive`, `rdp_printer`, `rdp_audio`, `rdp_audio_in`) and normalizes a
+  comma list into canonical form, refusing an unknown name rather than
+  letting a typo become "nothing allowed". A target carries a set; a grant
+  carries a set; both default to empty, which is exactly what every
+  existing row means today: no narrowing. `auth.EffectiveRights` resolves a
+  session's set — the target's, narrowed by the union of the live allow
+  grants that match the principal, an unbounded matching grant leaving the
+  target's set whole, and a narrowing that leaves nothing the target allows
+  yielding an explicit `"none"` rather than the `""` that means everything.
+  Migration `0062`, two additive columns.
+- [x] **The deployment's switches stay ceilings.** A right can only narrow:
+  `PAM_SSH_PORT_FORWARD=false` and `PAM_SSH_SFTP_MODE=deny` still refuse
+  whatever a row says, and the desktop gains four ceilings —
+  `PAM_RDP_DRIVE`, `PAM_RDP_PRINTER` (both off by default, as drive
+  redirection always was), `PAM_RDP_AUDIO` (on), `PAM_RDP_AUDIO_IN` (off).
+  This is the deliberate difference from WALLIX, where the service's options
+  are the authority: PAMv1's operators are not administrators of the
+  target, and a fleet-wide "no files leave through a redirected drive"
+  must not be undone one target at a time.
+- [x] **Enforced where the request arrives.** The SSH proxy carries the set
+  out of `admit()` into `handleSession`: a new generic request hook gates
+  `shell` and `x11-req`, the exec hook gates exec (a non-sftp subsystem
+  counts as exec), the sftp hook gates sftp, and the `direct-tcpip` switch
+  gates the forward — each refusal answered to the client, written into the
+  recording as `pamv1: <right> is not granted for this target`, and audited
+  `session.right_denied right:…`. The desktop viewer resolves the same set
+  from the same grants and sends guacd all four redirection switches
+  explicitly (`enable-drive`, `enable-printing`, `disable-audio`,
+  `enable-audio-input`) — guacd's own defaults never decide. WinRM,
+  Kubernetes and the database proxies have no sub-protocols to gate.
+- [x] **Proven against the real upstream.** `TestSubprotocolRights`: a
+  shell-only target refuses exec, sftp and a forward with the three audit
+  rows; an unset target admits them (the forward reaching the upstream dial
+  is the proof the gate let it through); a grant narrowing an open target
+  to exec refuses the shell for its subject. Plus the resolver's algebra,
+  the guacd translation under every ceiling, the REST validation and audit
+  rows, the store contract for both columns, and the console forms under
+  the width harness.
+- [x] **Living docs**: low-level §2.2/§4/§5/§7/§8, high-level, ADMIN-GUIDE
+  §6 (the table of rights, the ceiling rule, what a refusal looks like),
+  USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE (`0062`), README Tier 10 row.
+
+Deliberately not done: smartcard and SSH agent forwarding (the proxy
+supports neither, so there is nothing to gate); a separate clipboard-file
+right (guacd has no switch distinct from the clipboard itself — the
+per-target clipboard policy covers it); per-safe-membership rights (a
+membership confers a permission set already; adding a second vocabulary to
+it is a separate decision).
 
 ## Phase 269 — RADIUS authentication (Tier 10, row 1) ✅
 

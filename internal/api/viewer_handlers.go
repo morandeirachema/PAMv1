@@ -38,8 +38,9 @@ type viewerProto struct {
 	defaultPort int
 	scope       string // session scope minted for this viewer's tunnel token
 	// extra builds the guacd parameters this protocol needs beyond the common
-	// ones, given the effective clipboard policy.
-	extra func(s *Server, clipboard string) map[string]string
+	// ones, given the effective clipboard policy and the session's
+	// sub-protocol set (Phase 270; "" = everything the deployment allows).
+	extra func(s *Server, clipboard, rights string) map[string]string
 	// gateArgs are the guacd parameters this protocol enforces the clipboard
 	// policy through. If guacd does not advertise them, the policy cannot be
 	// applied and a non-permissive one must refuse rather than run ungated.
@@ -49,14 +50,15 @@ type viewerProto struct {
 var (
 	protoRDP = viewerProto{
 		name: "rdp", label: "RDP", defaultPort: 3389, scope: auth.SessionScopeRDP,
-		extra: func(s *Server, clipboard string) map[string]string {
-			return rdpExtra(s.guacdRDPSecurity, s.guacdIgnoreCert, clipboard)
+		extra: func(s *Server, clipboard, rights string) map[string]string {
+			return rdpExtra(s.guacdRDPSecurity, s.guacdIgnoreCert, clipboard, rdpRedirections{
+				drive: s.rdpDrive, printer: s.rdpPrinter, audio: s.rdpAudio, audioIn: s.rdpAudioIn}, rights)
 		},
 		gateArgs: []string{"disable-copy", "disable-paste"},
 	}
 	protoVNC = viewerProto{
 		name: "vnc", label: "VNC", defaultPort: 5900, scope: auth.SessionScopeVNC,
-		extra: func(_ *Server, clipboard string) map[string]string {
+		extra: func(_ *Server, clipboard, _ string) map[string]string {
 			return vncExtra(clipboard)
 		},
 		gateArgs: []string{"disable-copy", "disable-paste"},
@@ -373,6 +375,10 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	// transfer watcher — three views of one decision.
 	clipMode := strictestClipboard(s.rdpClipboard, target.RDPClipboard)
 	clipAudit := strictestClipAudit(s.rdpClipAudit, target.RDPClipboardAudit)
+	// The session's sub-protocol set (Phase 270): the target's, narrowed by
+	// the grants that admitted this principal; the deployment ceilings are
+	// applied when it becomes guacd parameters (rdpRedirectionParams).
+	rights := auth.EffectiveRights(principal, target, grants, time.Now())
 
 	gconn, err := guacd.Connect(ctx, s.guacdAddr, guacd.Params{
 		Protocol: proto.name, Hostname: target.Host, Port: strconv.Itoa(port),
@@ -381,7 +387,7 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 		Height:        clampDim(atoiOr(r.URL.Query().Get("height"), 768)),
 		RecordingPath: s.guacdRecordingPath,
 		RecordingName: recName,
-		Extra:         proto.extra(s, clipMode),
+		Extra:         proto.extra(s, clipMode, rights),
 	})
 	if err != nil {
 		s.log.Error("viewer connect failed", "protocol", proto.name, "target", target.Name, "err", err)
@@ -665,8 +671,11 @@ func clampDim(n int) int {
 // and verifies the RDP server certificate. A security mode is passed through when
 // set; ignore-cert is only sent (disabling cert verification) when explicitly
 // enabled for dev/self-signed hosts.
-func rdpExtra(security string, ignoreCert bool, clipboard string) map[string]string {
+func rdpExtra(security string, ignoreCert bool, clipboard string, ceilings rdpRedirections, rights string) map[string]string {
 	extra := rdpClipboardParams(clipboard)
+	for k, v := range rdpRedirectionParams(ceilings, rights) {
+		extra[k] = v
+	}
 	if security != "" {
 		extra["security"] = security
 	}
@@ -751,7 +760,41 @@ func strictestClipAudit(global, target string) string {
 // that leaves no record.
 func rdpClipboardParams(mode string) map[string]string {
 	m := clipboardParams(mode)
+	// Drive redirection stays off unless a right AND the deployment ceiling
+	// turn it on (rdpRedirectionParams, Phase 270); this default is what the
+	// VNC-shaped callers and every older path get.
 	m["enable-drive"] = "false"
+	return m
+}
+
+// rdpRedirections are the deployment ceilings for the desktop redirections
+// (PAM_RDP_DRIVE / _PRINTER / _AUDIO / _AUDIO_IN, Phase 270).
+type rdpRedirections struct {
+	drive, printer, audio, audioIn bool
+}
+
+// rdpRedirectionParams translates the session's sub-protocol set into guacd's
+// redirection switches, under the deployment ceilings: a redirection is on
+// only when the deployment allows it AND the rights include it. Every switch
+// is always sent explicitly, so guacd's own defaults never decide.
+func rdpRedirectionParams(c rdpRedirections, rights string) map[string]string {
+	on := func(ceiling bool, right string) string {
+		if ceiling && store.RightsAllow(rights, right) {
+			return "true"
+		}
+		return "false"
+	}
+	m := map[string]string{
+		"enable-drive":       on(c.drive, store.RightRDPDrive),
+		"enable-printing":    on(c.printer, store.RightRDPPrinter),
+		"enable-audio-input": on(c.audioIn, store.RightRDPAudioIn),
+	}
+	// guacd's audio switch is a disable: "disable-audio=true" silences.
+	if on(c.audio, store.RightRDPAudio) == "true" {
+		m["disable-audio"] = "false"
+	} else {
+		m["disable-audio"] = "true"
+	}
 	return m
 }
 
