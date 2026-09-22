@@ -2523,6 +2523,34 @@ func (s *PGStore) DeleteProbeRule(ctx context.Context, id int64) error {
 	return execExpectingRow(ctx, s.pool, `DELETE FROM probe_rules WHERE id = $1`, id)
 }
 
+// CreateRestrictionRule inserts a rule, populating ID and CreatedAt.
+func (s *PGStore) CreateRestrictionRule(ctx context.Context, r *store.RestrictionRule) error {
+	return s.pool.QueryRow(ctx,
+		`INSERT INTO restriction_rules (subject_type, subject, subprotocol, pattern, action, note, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
+		r.SubjectType, r.Subject, r.Subprotocol, r.Pattern, r.Action, r.Note, r.CreatedBy,
+	).Scan(&r.ID, &r.CreatedAt)
+}
+
+// ListRestrictionRules returns every rule ordered by ID.
+func (s *PGStore) ListRestrictionRules(ctx context.Context) ([]store.RestrictionRule, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, subject_type, subject, subprotocol, pattern, action, note, created_by, created_at FROM restriction_rules ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.RestrictionRule, error) {
+		var r store.RestrictionRule
+		err := row.Scan(&r.ID, &r.SubjectType, &r.Subject, &r.Subprotocol, &r.Pattern, &r.Action, &r.Note, &r.CreatedBy, &r.CreatedAt)
+		return r, err
+	})
+}
+
+// DeleteRestrictionRule removes a rule, or ErrNotFound.
+func (s *PGStore) DeleteRestrictionRule(ctx context.Context, id int64) error {
+	return execExpectingRow(ctx, s.pool, `DELETE FROM restriction_rules WHERE id = $1`, id)
+}
+
 // GetTargetHostKey returns the target's host-key pin, or ErrNotFound.
 func (s *PGStore) GetTargetHostKey(ctx context.Context, targetID int64) (*store.TargetHostKey, error) {
 	return getOne(ctx, s.pool, func(row pgx.CollectableRow) (store.TargetHostKey, error) {

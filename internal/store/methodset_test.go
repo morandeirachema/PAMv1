@@ -85,9 +85,10 @@ import (
 // an operator's logon session on a target. Phase 272 added
 // TargetHostKeyStore (3) — the per-target SSH host-key pins. Phase 274 added
 // NoteAccessRequest, ShortenAccessRequest, CancelAccessRequest and
-// ExpirePendingAccessRequests (4) — approval depth.
+// ExpirePendingAccessRequests (4) — approval depth. Phase 275 added
+// RestrictionStore (3) — per-subject restriction rules.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 239
+	const want = 242
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

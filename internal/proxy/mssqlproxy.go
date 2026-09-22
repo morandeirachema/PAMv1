@@ -30,6 +30,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/posture"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
 	"github.com/morandeirachema/pamv1/internal/recording"
+	"github.com/morandeirachema/pamv1/internal/restrict"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/tds"
@@ -428,7 +429,7 @@ func (m *MSSQLProxy) handleConn(ctx context.Context, nConn net.Conn) {
 		m.fireSessionEnd(cred.ID)
 	}()
 
-	m.relay(ctx, c, up, conn, actor, target, rec, sid, tds72)
+	m.relay(ctx, c, up, conn, actor, target, rec, sid, tds72, res.restrictions)
 }
 
 // serverPreLogin answers the client's PRELOGIN and, when TLS is configured,
@@ -610,7 +611,7 @@ func (m *MSSQLProxy) dialUpstream(ctx context.Context, target *store.Target, use
 // SQLBatch and RPC requests are audited, recorded and policy-checked; every
 // other message type is forwarded verbatim, so bulk load, attention signals and
 // transaction manager requests still work.
-func (m *MSSQLProxy) relay(ctx context.Context, client *tds.Conn, up *upstreamMSSQL, clientConn net.Conn, actor string, target *store.Target, rec *Recording, sid string, tds72 bool) {
+func (m *MSSQLProxy) relay(ctx context.Context, client *tds.Conn, up *upstreamMSSQL, clientConn net.Conn, actor string, target *store.Target, rec *Recording, sid string, tds72 bool, rs *restrict.Set) {
 	// A per-connection context so a paused step-up is released when either peer
 	// disconnects, instead of parking until the step-up TTL elapses.
 	relayCtx, cancel := context.WithCancel(ctx)
@@ -665,7 +666,7 @@ func (m *MSSQLProxy) relay(ctx context.Context, client *tds.Conn, up *upstreamMS
 				// Every call in the message is inspected, not just the first: an
 				// RPC message may carry several, and auditing only the leading
 				// one would let a benign call escort arbitrary statements.
-				if m.refuseRequests(ctx, relayCtx, sendClient, actor, target, reqs, sid, typ, tds72) {
+				if m.refuseRequests(ctx, relayCtx, sendClient, actor, target, reqs, sid, typ, tds72, rs) {
 					continue // refused by policy; the session stays usable
 				}
 				capped := false
@@ -720,7 +721,7 @@ func parseTDSRequest(typ byte, data []byte) ([]tds.Request, error) {
 // and reports whether the message was refused. A call whose text could not be
 // recovered is refused when a guard is configured — an unreadable statement is
 // exactly the shape a bypass takes, so it fails closed rather than through.
-func (m *MSSQLProxy) refuseRequests(ctx, relayCtx context.Context, sendClient func(byte, []byte) error, actor string, target *store.Target, reqs []tds.Request, sid string, reqType byte, tds72 bool) bool {
+func (m *MSSQLProxy) refuseRequests(ctx, relayCtx context.Context, sendClient func(byte, []byte) error, actor string, target *store.Target, reqs []tds.Request, sid string, reqType byte, tds72 bool, rs *restrict.Set) bool {
 	// cl adapts this message's TDS framing (reqType/tds72 vary per message) to the
 	// shared per-statement pipeline's sqlClient interface (see sqlproxy.go). TDS
 	// refusals never end the session — with MARS off there is no pipelining to
@@ -737,7 +738,7 @@ func (m *MSSQLProxy) refuseRequests(ctx, relayCtx context.Context, sendClient fu
 		// Guard EVERY recovered character parameter, not only the one believed
 		// to be the statement: which parameter carries SQL varies by procedure.
 		for _, text := range req.GuardTexts() {
-			if sqlBlockedStatement(ctx, &m.listener, &m.pol, cl, actor, target, text, false) {
+			if sqlBlockedStatement(ctx, &m.listener, &m.pol, cl, actor, target, text, false, rs) {
 				return true
 			}
 			if sqlStepUpRefused(relayCtx, &m.listener, &m.pol, cl, actor, target, text, sid, false) {
@@ -745,7 +746,7 @@ func (m *MSSQLProxy) refuseRequests(ctx, relayCtx context.Context, sendClient fu
 			}
 		}
 		if len(req.GuardTexts()) == 0 {
-			if sqlBlockedStatement(ctx, &m.listener, &m.pol, cl, actor, target, req.AuditText, false) {
+			if sqlBlockedStatement(ctx, &m.listener, &m.pol, cl, actor, target, req.AuditText, false, rs) {
 				return true
 			}
 		}
