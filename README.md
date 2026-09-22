@@ -37,7 +37,7 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
-runs 0–227 and 229–268, and **every phase has shipped**, and the current
+runs 0–227 and 229–269, and **every phase has shipped**, and the current
 tagged, cosign-signed release is
 **[v0.0.77](https://github.com/morandeirachema/pamv1/releases/tag/v0.0.77)** (2026-09-22;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
@@ -519,7 +519,8 @@ before being listed. Rows are added as each phase ships.
 | ~~**Credential-level grants for humans** (object-level access control)~~ **✅ shipped (Phase 252)** | CyberArk OLAC | a target grant may name **one credential** on its target (`credential_id` on `POST /api/targets/{id}/grants`): the subject uses or retrieves that credential and no other, on every door — the three proxies, reveal/checkout, the viewer, WinRM, kubectl, the broker. A scoped grant still gates the target, so the other credentials are refused, not open |
 | ~~**Browser SSH terminal in the portal**~~ **✅ shipped (Phase 254)** | all three | *Work with Targets* → **11=Open terminal**: an xterm.js surface over a WebSocket, behind which the API server is an SSH client of the session proxy on the operator's behalf — so it is a proxy session in every respect (every gate, recording, registry, sharing, kill, session MFA). A 60-second, single-use, target-bound token the proxy accepts only over loopback; the session is recorded under the browser's address |
 | ~~**Level-tiered and direct-manager approval**~~ **✅ shipped (Phase 256)** | CyberArk multi-level confirmation | a target or safe carries an **ordered approval chain** — `manager; approver:2; admin` — and a user carries a direct manager. Each approval counts toward the first unsatisfied tier the approver qualifies for; an out-of-turn approver is refused with the tier named; the request is granted only when the chain is complete. Re-read at every decision, like the dual-control floor |
-| **FIPS build mode** · **RADIUS authentication** · **multi-tenancy** | Teleport FIPS binaries · CyberArk/WALLIX RADIUS · WALLIX multi-tenant | none; the last is a scope decision |
+| ~~**RADIUS authentication**~~ **✅ shipped (Phase 269)** | CyberArk/WALLIX RADIUS | a RADIUS server as a login source behind the directory (challenge for a code answered from the sign-on screen) or as the second factor verifying a directory user's code; replies verified under the shared secret, fail-closed when the server is down — see Tier 10 |
+| **FIPS build mode** · **multi-tenancy** | Teleport FIPS binaries · WALLIX multi-tenant | none; the last is a scope decision |
 
 ### Tier 9 — WALLIX Bastion / Access Manager / One IDaaS research (2026-09-15)
 
@@ -556,6 +557,38 @@ added as each phase ships.
 | **Critical-target flag with notification** · **unused users/targets reports** · **scheduled, directory-sourced discovery** | Bastion admin guide §8.2.2, §14; audit guide §11 | none of the three |
 | **Portal login lifetime and idle timeout** | IDaaS session settings | a login session lasts a fixed 12 h |
 | **An MFA re-prompt window** | IDaaS [non-systematic MFA](https://trustelem-doc.wallix.com/books/trustelem-news/page/new-features) | every session proves a factor (Phase 244) — no caching window |
+
+### Tier 10 — WALLIX Bastion 12 / Access Manager training-material pass (2026-09-22)
+
+A fifth pass, this time over the **eWCP-P and eWCE-P (Bastion 12, Access
+Manager 4/5) course material** rather than the public guides: what the product
+is taught to do, feature by feature, compared against this repository's
+routes, env vars, store types and console. What Tier 8 and Tier 9 already name
+is not repeated; what needs infrastructure this repository cannot exercise
+honestly (X.509 and Kerberos login, RemoteApp/AppDriver publishing and RDS
+clusters, the twenty rotation plugins, external vault plugins, the WAAPM
+client, OCR, SNMP, appliance replication, licensing) stays in
+[docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md) or is a scope
+decision. Two facts the pass established in PAMv1's favour: the material
+describes no FIDO2/WebAuthn anywhere and two factors at most, and Bastion's
+audit data is not replicated across nodes. Rows are struck as phases ship.
+
+| Gap | WALLIX | PAMv1 today |
+|---|---|---|
+| ~~**RADIUS (and TACACS+) as a first or second factor**~~ **✅ RADIUS shipped (Phase 269)** — *TACACS+ open* | PAP over RFC 2865, `State` for a challenge, `NAS-Identifier`, 5 s timeout; usable as the second step after LDAP | `PAM_RADIUS_MODE=login\|second_factor`; Access-Challenge answered from the sign-on screen; `Class` → role; every reply verified under the shared secret; a down server fails closed |
+| **Per-target and per-grant sub-protocol rights** | per service: RDP clipboard up/down/file, drive, printer, smartcard, audio in/out; SSH shell, exec, SCP up/down, SFTP, X11, forwards, agent | clipboard, drive and SFTP switches, mostly deployment-wide; a per-target clipboard override |
+| **Probe metadata as a session artifact** | the Session Probe emits process start/stop, foreground window title and masked keystrokes as searchable metadata beside the video; rules can `notify` as well as `kill` | Phase 266's probe sends snapshots and enforcement events; rules only end a process |
+| **Trust-on-first-use host key and certificate store per target** | the target's SSH key or RDP certificate kept on first contact, a check mode (fail on mismatch / accept first seen), a Certificates tab, "new fingerprint saved" and "wrong fingerprint" notifications | one global known_hosts file; nothing for RDP |
+| **Approval depth** | quorum as a number, the approver types a duration capped at the request, an approval timeout, comment/ticket mandatory per authorization, cancel an approved request mid-session, "outside the time frame: require approval instead of blocking" | Tier 9's row, sharpened by the material |
+| **Per-group restriction sets with size rules** | `notify`/`kill` on a regex per sub-protocol, `$filesize`/`$downsize` limits | deployment-wide deny/allow lists, kill only; one SFTP byte cap |
+| **Login banner and recording consent** | two texts, five languages, acknowledged on RDP and printed on SSH | none |
+| **Reporting** | unused users/targets over a window, connection statistics with CSV, critical-target notification on every connection, a daily digest mail | risk analytics and the NIS2 report; SMTP alerting exists |
+| **Bulk CSV import/export of inventory** | 14 object classes, secrets exported hidden | IaC export of configuration only |
+| **Telnet targets and SEND/EXPECT startup scenarios** | scenario login for telnet/rlogin and a scripted first step on SSH | none |
+| **ICAP scanning of desktop file transfers and clipboard** | up/down file and clipboard-text verification on RDP through the same ICAP servers | SFTP only (detection) |
+| **Portable recording archives** | export by user/target/window/protocol with a manifest and purge; re-import for replay | retention pruning; no archive |
+| **Credential escrow export** | a periodic encrypted dump of every secret to a recipient key, mailed or stored, so credentials survive a dead PAM | database backups carry the vault |
+| **Raw TCP tunnel targets** with capture | Universal Tunneling for appliances, recorded as `.pcap` | `ssh -L` to the target's own host only |
 
 ### Deliberate non-goal
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,6 +24,10 @@ type loginIn struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	OTP      string `json:"otp"`
+	// RADIUSState (Phase 269) echoes the state a previous reply carried in
+	// `radius_state`: the RADIUS server asked for a further value and OTP is
+	// the user's answer to it.
+	RADIUSState string `json:"radius_state"`
 }
 
 // login verifies a username + password against the configured identity source
@@ -41,7 +46,33 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	principal, err := rt.authn.Authenticate(r.Context(), in.Username, in.Password)
+	var principal *auth.Principal
+	var err error
+	if in.RADIUSState != "" && rt.radius != nil && !rt.radiusSecondFactor {
+		// Second leg of a RADIUS challenge (Phase 269): the state the server
+		// handed back plus the code the user typed. The password is not
+		// re-sent — the server already accepted it before challenging.
+		state, derr := base64.StdEncoding.DecodeString(in.RADIUSState)
+		if derr != nil {
+			writeError(w, http.StatusBadRequest, "radius_state is not valid base64")
+			return
+		}
+		principal, err = rt.radius.Continue(r.Context(), in.Username, in.OTP, state)
+	} else {
+		principal, err = rt.authn.Authenticate(r.Context(), in.Username, in.Password)
+	}
+	var challenge *auth.ChallengeError
+	if errors.As(err, &challenge) {
+		// Not a refusal: the RADIUS server wants a one-time code before it
+		// decides. Nothing is minted; the client re-posts with otp + the state.
+		s.auditAs(r.Context(), auditField(in.Username, 64), "login.challenge", "source:radius remote:"+r.RemoteAddr)
+		writeJSON(w, http.StatusUnauthorized, map[string]any{
+			"error": "one-time code required", "mfa_required": true,
+			"radius_state": base64.StdEncoding.EncodeToString(challenge.State),
+			"message":      auditField(challenge.Message, 128),
+		})
+		return
+	}
 	if err != nil {
 		s.log.Warn("login failed", "user", in.Username, "remote", r.RemoteAddr)
 		// The username is UNAUTHENTICATED client input here — a failed login,
@@ -76,6 +107,31 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	switch {
+	case rt.radius != nil && rt.radiusSecondFactor:
+		// RADIUS as the second factor (Phase 269): the directory (or the
+		// chain) vouched for the password; the RADIUS server vouches for the
+		// code. Takes precedence over a local TOTP/WebAuthn enrolment for
+		// password logins — one deployment, one second-factor authority — and
+		// fails closed on any server error.
+		if in.OTP == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{
+				"error": "one-time code required", "mfa_required": true,
+			})
+			return
+		}
+		ok, ferr := rt.radius.SecondFactor(r.Context(), principal.Name, in.OTP)
+		if ferr != nil {
+			s.log.Error("radius second factor unavailable", "user", principal.Name, "err", ferr)
+			s.auditAs(r.Context(), principal.Name, "login.failed", "reason:radius-unavailable remote:"+r.RemoteAddr)
+			writeError(w, http.StatusServiceUnavailable, "second-factor server unavailable")
+			return
+		}
+		if !ok {
+			s.log.Warn("radius second factor refused", "user", principal.Name, "remote", r.RemoteAddr)
+			s.auditAs(r.Context(), principal.Name, "login.failed", "reason:mfa source:radius remote:"+r.RemoteAddr)
+			writeError(w, http.StatusUnauthorized, "invalid one-time code")
+			return
+		}
 	case mfaErr == nil && enr.Confirmed:
 		// User has MFA — require a valid code (or a single-use recovery code).
 		if in.OTP == "" {

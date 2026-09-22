@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-09-22 · Reflects: Phases 0–227 and 229–268 + the 2026-07 hardening passes.
+> Last updated: 2026-09-22 · Reflects: Phases 0–227 and 229–269 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -162,6 +162,7 @@ flowchart TB
     ldap["auth/ldap · entra · chain"]
     oidc["oidc"]
     saml["saml — SAML 2.0 SP (crewjam/saml)"]
+    radius["radius — RADIUS RFC 2865 client (Phase 269)"]
     mfa["mfa (TOTP)"]
   end
   subgraph lifecycle["Credential lifecycle"]
@@ -1226,6 +1227,7 @@ phase-by-phase status.
 | Date | Change |
 |---|---|
 | 2026-09-16 | Phase 248 (the review of 240–247): `store.SafePermissionsCover` + `SafePermissionOrder` beside `GrantPermits`, and a single-pass `ParseSafePermissions`; `api.safeManagement` replacing `canManageSafe` where the caller's own permission set matters (`canManageSafe` stays as its boolean wrapper), the `Covers` guard in `api.rotateUserToken`, `api.operatorInput` in the viewer bridge, `api.grantDeadline` deleted (the tunnel uses the grants it was admitted under); `auth.ReasonSessionMFAExtension`; `session.entry.swept`; `pgstore.SweepExpiredGrants` on one transaction; `timeframe.Frame.End` building wall-clock edges. |
+| 2026-09-22 | Phase 269 (RADIUS): `internal/radius` (`Client.Authenticate`, `hidePassword`, `decodeResponse`; `radiustest.Server`/`Unhide`), `auth.RADIUSAuthenticator` (`Authenticate`/`Continue`/`SecondFactor`, `ChallengeError`, `highestRole`), `buildAuthenticator` now returns the RADIUS authenticator too, `api.RuntimeConfig.RADIUS`/`RADIUSSecondFactor`, `loginIn.RADIUSState`. |
 | 2026-09-22 | Phase 267 (documentation currency pass): no code; §3.3 package map and §5.3 gain Phase 266's probe; `internal/releasedocs` gains `TestDocHeadersAgree` (every `Reflects:` header, both READMEs' ranges and `docs/README.md`'s release token must agree with ROADMAP and CHANGELOG). |
 | 2026-09-22 | Phase 266 (Windows session probe): `internal/probe` (`probe.go` types + `Rule.Validate`/`MatchesProcess`/`MatchesConnection`/`glob`, `agent.go` `Serve`, `hub.go` `Hub`/`Link`/`Status`/`ForSession`/`SameUser`/`Kill`/`RefreshPolicy`/`Kick`/`eventAction`/`Clean`, `platform.go` `Platform`/`ErrUnsupported`, `platform_windows.go`); `endpointagent.Config.Mode`/`ProbePlatform` + `serveProbe`/`keepalive`; `proxy/endpointagent.go` `serveProbe`/`sanitizeHello` and the `endpoint_agent_kind` permission; `api/probe_handlers.go`; `store.ProbeRule`/`ProbeRuleStore`, `EndpointAgent.Kind`; `session.Info.CredUser`; `ocsf.findingExact` gains `probe.*`. |
 | 2026-09-17 | Phase 264 (review of 250–262): `firstUsableCredential`, `credentialByUsername`, `memberStanding`, `suspendedInput`, `approvedAsByApprover`/`appendApprovedAs`, `tierQualifier(ctx, *AccessRequest)`; `session.ShareRegistry.IssueMemberKey`/`GuestKeyIsMember`, ref-counted `joinedEntry`; `auth.TerminalPassword`/`SplitTerminalPassword`/`Principal.CarryTicket`/`RoleNames`; `maint.IsRecording`; migration `0060`; tests in `internal/api/review264*_test.go`. |

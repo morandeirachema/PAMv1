@@ -81,6 +81,8 @@ flowchart LR
     n_pam_agent[pam-agent]
     n_posture[posture]
     n_probe[probe]
+    n_radius[radius]
+    n_radiustest[radiustest]
     n_ratelimit[ratelimit]
     n_recording[recording]
     n_releasedocs[releasedocs]
@@ -148,6 +150,7 @@ flowchart LR
   n_auditfwd --> n_store
   n_auth --> n_mfa
   n_auth --> n_oidc
+  n_auth --> n_radius
   n_auth --> n_store
   n_broker --> n_agentid
   n_broker --> n_alert

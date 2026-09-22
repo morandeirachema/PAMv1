@@ -86,6 +86,10 @@ func setActor(ctx context.Context, actor string) {
 
 // Options tunes server policy.
 type Options struct {
+	// RADIUS / RADIUSSecondFactor (Phase 269) seed the runtime config; see
+	// RuntimeConfig for their meaning.
+	RADIUS             *auth.RADIUSAuthenticator
+	RADIUSSecondFactor bool
 	// MFARequired makes password login require a confirmed second factor: users
 	// without one get an enrollment-only session until they set up MFA.
 	MFARequired bool
@@ -653,14 +657,21 @@ type Server struct {
 // Transport/bootstrap settings (listeners, TLS, DB URL, KEK) are not here —
 // they stay environment-only and require a restart.
 type RuntimeConfig struct {
-	Authn          auth.Authenticator
-	Directory      auth.DirectorySource
-	OIDC           *oidc.Provider
-	OIDCRoleMap    map[string]auth.Role
-	SAML           *saml.Provider
-	SAMLRoleMap    map[string]auth.Role
-	MFARequired    bool
-	RevealDisabled bool
+	Authn     auth.Authenticator
+	Directory auth.DirectorySource
+	// RADIUS (Phase 269) is the RADIUS authenticator when one is configured.
+	// In login mode it is ALSO inside Authn's chain, and is kept here so the
+	// login handler can finish an Access-Challenge (Continue); in second-factor
+	// mode (RADIUSSecondFactor) it is not in the chain and verifies the code a
+	// directory-authenticated user typed.
+	RADIUS             *auth.RADIUSAuthenticator
+	RADIUSSecondFactor bool
+	OIDC               *oidc.Provider
+	OIDCRoleMap        map[string]auth.Role
+	SAML               *saml.Provider
+	SAMLRoleMap        map[string]auth.Role
+	MFARequired        bool
+	RevealDisabled     bool
 	// RequireTargetGrant refuses a connection to a target with NO grants at all
 	// (PAM_REQUIRE_TARGET_GRANT, Phase 203). False keeps the historical default.
 	RequireTargetGrant bool
@@ -678,14 +689,16 @@ func (s *Server) Metrics() *metrics.Metrics { return s.metrics }
 // stored behind s.rtc (atomic.Pointer) so in-flight requests read a consistent
 // snapshot while a swap is in progress.
 type runtimeConf struct {
-	authn          auth.Authenticator
-	directory      auth.DirectorySource
-	oidc           *oidc.Provider
-	oidcRoleMap    map[string]auth.Role
-	saml           *saml.Provider
-	samlRoleMap    map[string]auth.Role
-	mfaRequired    bool
-	revealDisabled bool
+	authn              auth.Authenticator
+	directory          auth.DirectorySource
+	radius             *auth.RADIUSAuthenticator
+	radiusSecondFactor bool
+	oidc               *oidc.Provider
+	oidcRoleMap        map[string]auth.Role
+	saml               *saml.Provider
+	samlRoleMap        map[string]auth.Role
+	mfaRequired        bool
+	revealDisabled     bool
 	// ungated is what a target with NO grants means here (Phase 203):
 	// auth.UngatedOpen (anyone connect-capable reaches it — the historical
 	// default) or auth.UngatedDeny under PAM_REQUIRE_TARGET_GRANT.
@@ -716,19 +729,21 @@ func snapshot(rc RuntimeConfig) *runtimeConf {
 		rc.CheckoutTTL = 30 * time.Minute
 	}
 	return &runtimeConf{
-		authn:            rc.Authn,
-		directory:        rc.Directory,
-		oidc:             rc.OIDC,
-		oidcRoleMap:      rc.OIDCRoleMap,
-		saml:             rc.SAML,
-		samlRoleMap:      rc.SAMLRoleMap,
-		mfaRequired:      rc.MFARequired,
-		revealDisabled:   rc.RevealDisabled,
-		ungated:          ungatedDefault(rc.RequireTargetGrant),
-		approvalRequired: rc.ApprovalRequired,
-		approvalWindow:   rc.ApprovalWindow,
-		checkoutTTL:      rc.CheckoutTTL,
-		allowedProtocols: protocolSet(rc.AllowedProtocols),
+		authn:              rc.Authn,
+		radius:             rc.RADIUS,
+		radiusSecondFactor: rc.RADIUSSecondFactor,
+		directory:          rc.Directory,
+		oidc:               rc.OIDC,
+		oidcRoleMap:        rc.OIDCRoleMap,
+		saml:               rc.SAML,
+		samlRoleMap:        rc.SAMLRoleMap,
+		mfaRequired:        rc.MFARequired,
+		revealDisabled:     rc.RevealDisabled,
+		ungated:            ungatedDefault(rc.RequireTargetGrant),
+		approvalRequired:   rc.ApprovalRequired,
+		approvalWindow:     rc.ApprovalWindow,
+		checkoutTTL:        rc.CheckoutTTL,
+		allowedProtocols:   protocolSet(rc.AllowedProtocols),
 	}
 }
 
@@ -891,18 +906,20 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 	// env config + stored overrides); PUT /api/config later swaps it via
 	// applyReconfigure.
 	s.rtc.Store(snapshot(RuntimeConfig{
-		Authn:            authn,
-		Directory:        opts.Directory,
-		OIDC:             opts.OIDC,
-		OIDCRoleMap:      opts.OIDCRoleMap,
-		SAML:             opts.SAML,
-		SAMLRoleMap:      opts.SAMLRoleMap,
-		MFARequired:      opts.MFARequired,
-		RevealDisabled:   opts.RevealDisabled,
-		ApprovalRequired: opts.RequireApproval,
-		ApprovalWindow:   opts.ApprovalWindow,
-		CheckoutTTL:      opts.CheckoutTTL,
-		AllowedProtocols: opts.AllowedProtocols,
+		Authn:              authn,
+		Directory:          opts.Directory,
+		OIDC:               opts.OIDC,
+		OIDCRoleMap:        opts.OIDCRoleMap,
+		SAML:               opts.SAML,
+		SAMLRoleMap:        opts.SAMLRoleMap,
+		MFARequired:        opts.MFARequired,
+		RADIUS:             opts.RADIUS,
+		RADIUSSecondFactor: opts.RADIUSSecondFactor,
+		RevealDisabled:     opts.RevealDisabled,
+		ApprovalRequired:   opts.RequireApproval,
+		ApprovalWindow:     opts.ApprovalWindow,
+		CheckoutTTL:        opts.CheckoutTTL,
+		AllowedProtocols:   opts.AllowedProtocols,
 	}))
 	if s.analyticsWindow <= 0 {
 		s.analyticsWindow = time.Hour
