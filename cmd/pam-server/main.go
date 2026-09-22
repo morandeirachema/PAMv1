@@ -44,6 +44,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/auditchain"
 	"github.com/morandeirachema/pamv1/internal/auditfwd"
 	"github.com/morandeirachema/pamv1/internal/auth"
+	"github.com/morandeirachema/pamv1/internal/banner"
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/config"
 	"github.com/morandeirachema/pamv1/internal/conjur"
@@ -949,6 +950,12 @@ func run() error {
 	// through them) and the API (which reports status and kicks on revoke).
 	// nil keeps the feature off end to end: the agent login is refused and
 	// the routes are not registered.
+	// Login banner and session notice (Phase 276), shared by the portal and
+	// the SSH proxy; nil when none is configured.
+	banners := banner.New(cfg.Banners)
+	if banners != nil {
+		log.Info("banners configured", "login", banners.Has(banner.Login), "session", banners.Has(banner.Session))
+	}
 	var endpointAgents *session.EndpointAgents
 	// Session probes (Phase 266) are the second kind of endpoint agent and
 	// share the switch: the hub reads each probe's rule set (its target's
@@ -1382,6 +1389,7 @@ func run() error {
 		CheckoutMaxExtend:         cfg.CheckoutMaxExtend,
 		AllowedProtocols:          splitAndTrim(cfg.AllowedProtocols),
 		Directory:                 directory,
+		Banners:                   banners,
 		RDPDrive:                  cfg.RDPDrive,
 		RDPPrinter:                cfg.RDPPrinter,
 		RDPAudio:                  cfg.RDPAudio,
@@ -1601,6 +1609,7 @@ func run() error {
 			EndpointAgents:       endpointAgents,
 			ProbeHub:             probeHub,
 			HostKeyCheck:         cfg.SSHHostKeyCheck,
+			Banners:              banners,
 			Alerter:              alerter,
 			CA:                   sshCA,
 			CertTTL:              cfg.SSHCertTTL,

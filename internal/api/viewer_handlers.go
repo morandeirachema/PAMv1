@@ -16,6 +16,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
+	"github.com/morandeirachema/pamv1/internal/banner"
 	"github.com/morandeirachema/pamv1/internal/guacd"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -93,10 +94,28 @@ func (s *Server) viewerToken(w http.ResponseWriter, r *http.Request, proto viewe
 	// whether or not anyone asked first; this only makes it answerable.
 	var in struct {
 		TargetID int64 `json:"target_id"`
+		// Consent (Phase 276) acknowledges the session notice; required
+		// when one is configured, or the mint answers 428 with the text.
+		Consent bool   `json:"consent"`
+		Lang    string `json:"lang"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
+	}
+	// The recording notice a desktop opens under (Phase 276): shown by the
+	// portal and acknowledged before any token exists — a refusal mints
+	// nothing, and an acknowledgement is on the record with the notice's
+	// digest. The SSH proxy prints the same notice; a desktop has no stream
+	// to print it into, so it is asked for up front.
+	if notice := s.banners.Get(banner.Session, in.Lang); notice != "" {
+		if !in.Consent {
+			writeJSON(w, http.StatusPreconditionRequired, map[string]any{
+				"error": "the session notice must be acknowledged", "consent_required": true, "banner": notice,
+			})
+			return
+		}
+		s.audit(r.Context(), "session.consent", fmt.Sprintf("target:%d protocol:%s mode:acknowledged banner_sha256:%s", in.TargetID, proto.name, banner.Digest(notice)))
 	}
 	if in.TargetID > 0 && !p.BreakGlass {
 		target, err := s.store.GetTarget(r.Context(), in.TargetID)

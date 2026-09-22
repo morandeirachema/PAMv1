@@ -68,6 +68,7 @@ flowchart LR
     n_analytics[analytics]
     n_auditfmt[auditfmt]
     n_auditfwd[auditfwd]
+    n_banner[banner]
     n_blast[blast]
     n_cmdguard[cmdguard]
     n_conjur[conjur]
@@ -111,6 +112,7 @@ flowchart LR
   n_api --> n_auditchain
   n_api --> n_auditfmt
   n_api --> n_auth
+  n_api --> n_banner
   n_api --> n_blast
   n_api --> n_broker
   n_api --> n_cmdguard
@@ -182,6 +184,7 @@ flowchart LR
   n_pam_server --> n_auditchain
   n_pam_server --> n_auditfwd
   n_pam_server --> n_auth
+  n_pam_server --> n_banner
   n_pam_server --> n_cmdguard
   n_pam_server --> n_config
   n_pam_server --> n_conjur
@@ -216,6 +219,7 @@ flowchart LR
   n_proxy --> n_alert
   n_proxy --> n_auditfmt
   n_proxy --> n_auth
+  n_proxy --> n_banner
   n_proxy --> n_cmdguard
   n_proxy --> n_icap
   n_proxy --> n_logging
@@ -676,7 +680,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 224 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 225 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -704,6 +708,7 @@ The 224 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/auth/saml/acs` | public (rate-limited) |
 | GET | `/api/auth/saml/metadata` | public (rate-limited) |
 | GET | `/api/auth/saml/start` | public (rate-limited) |
+| GET | `/api/banner` | public (rate-limited) |
 | POST | `/api/blast/analyze` | CapReadAudit |
 | POST | `/api/breakglass/unseal` | public (rate-limited) |
 | GET | `/api/ca/ssh` | CapReadInventory |

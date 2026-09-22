@@ -17,6 +17,19 @@ func setRequired(t *testing.T) {
 // TestLoadValidation covers the fail-loud guards for negative rate limits and a
 // partial email-alert config (which would otherwise silently disable controls).
 func TestLoadValidation(t *testing.T) {
+	t.Run("banners from env with language variants", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_BANNER_LOGIN", "Authorized use only\\nViolators prosecuted")
+		t.Setenv("PAM_BANNER_LOGIN_ES", "Solo uso autorizado")
+		t.Setenv("PAM_BANNER_SESSION_FR", "Session enregistrée")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Banners["login"] != "Authorized use only\nViolators prosecuted" || cfg.Banners["login_es"] != "Solo uso autorizado" || cfg.Banners["session_fr"] != "Session enregistrée" || cfg.Banners["session"] != "" {
+			t.Fatalf("banners: %+v", cfg.Banners)
+		}
+	})
 	t.Run("radius needs a secret, a host:port and a known mode", func(t *testing.T) {
 		setRequired(t)
 		t.Setenv("PAM_RADIUS_ADDR", "radius.example")

@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–275 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–276 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,37 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 276 — Login banner and recording consent (Tier 10, row 7) ✅
+
+*Tier 10's seventh row: WALLIX's Connection messages — a login banner and
+a recording acknowledgement, in five languages, printed on SSH and clicked
+through on RDP. PAMv1 showed neither, and its NIS2 report had nothing to
+point at for the consent a recording regime expects.*
+
+- [x] **Two texts, per language.** `internal/banner`: `login` and `session`,
+  each with an optional variant per language tag (`PAM_BANNER_LOGIN_ES`);
+  `es-MX` falls back to `es`, then to the default. `Digest` is the text's
+  SHA-256, on every audit row, so the trail names which notice was shown.
+- [x] **Before authentication.** The SSH proxy sends the login banner as the
+  RFC 4252 pre-auth banner every client prints before the password prompt;
+  the portal shows it on the Sign On screen through `GET /api/banner`,
+  which is public for exactly that reason and exposes nothing else.
+- [x] **When a session opens.** An SSH session gets the notice printed
+  before anything from the target and written into the recording, so the
+  `.cast` opens with it — `session.consent mode:printed`. A desktop has no
+  stream to print into, so the portal asks first: the token request is
+  answered `428` with the text until the operator clicks OK; only then is
+  a token minted, `session.consent mode:acknowledged`. A refusal mints
+  nothing — the one way a client-side dialog can be made to mean anything.
+- [x] **Not everywhere, and the doc says where not**: database sessions and
+  WinRM have no banner mechanism and show none.
+- [x] **Proven** against a real SSH client's `BannerCallback`, the session
+  output and the `.cast` on disk, the public route per language, and the
+  desktop `428` → consent → audit round trip (and no gate when nothing is
+  configured).
+- [x] **Living docs**: low-level §1/§4/§5/§7/§8, high-level, ADMIN-GUIDE
+  §9.1a, USER-GUIDE, CODE-GUIDE, README Tier 10 row.
 
 ## Phase 275 — Per-user and per-role restriction rules, with size rules (Tier 10, row 6) ✅
 

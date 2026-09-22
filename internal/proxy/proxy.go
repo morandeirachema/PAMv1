@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"github.com/morandeirachema/pamv1/internal/alert"
 	"github.com/morandeirachema/pamv1/internal/auditfmt"
+	"github.com/morandeirachema/pamv1/internal/banner"
 	"io"
 	"log/slog"
 	"net"
@@ -204,6 +205,10 @@ type Config struct {
 	// the "endpoint-agent:<name>" login is refused and a target bound to an
 	// agent row is unreachable (never silently dialed direct).
 	EndpointAgents *session.EndpointAgents
+	// Banners (optional, Phase 276): the login banner is sent as the SSH
+	// pre-authentication banner; the session notice is printed into every
+	// interactive session (and its recording) when it opens, and audited.
+	Banners *banner.Banners
 	// ProbeHub (optional, Phase 266) is the SHARED registry of connected
 	// session probes — the same instance handed to api.Options. nil refuses
 	// the probe@pamv1 request; it is enabled together with EndpointAgents.
@@ -286,6 +291,7 @@ type Proxy struct {
 	// probeHub is the shared live registry of connected session probes
 	// (Phase 266); nil = probes refused.
 	probeHub *probe.Hub
+	banners  *banner.Banners
 	// onForensics is the post-session reconstruction hook (Phase 157); nil =
 	// disabled.
 	onForensics func(SessionForensics)
@@ -372,6 +378,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		shares:         cfg.Shares,
 		endpointAgents: cfg.EndpointAgents,
 		probeHub:       cfg.ProbeHub,
+		banners:        cfg.Banners,
 		onForensics:    cfg.OnSessionForensics,
 		ca:             cfg.CA,
 		certTTL:        cfg.CertTTL,
@@ -440,6 +447,13 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		p.log.Info("SSH targets routed through a jump host", "jump", cfg.Jump.Addr)
 	}
 	p.sshCfg = &ssh.ServerConfig{PasswordCallback: p.authenticate}
+	if p.banners.Has(banner.Login) {
+		// The pre-authentication banner (RFC 4252 §5.4): shown by every SSH
+		// client before the password prompt, in the deployment's default
+		// language — the proxy cannot know the operator's.
+		text := p.banners.Get(banner.Login, "")
+		p.sshCfg.BannerCallback = func(ssh.ConnMetadata) string { return text + "\n" }
+	}
 	p.sshCfg.AddHostKey(cfg.HostKey)
 	return p, nil
 }
@@ -1403,6 +1417,18 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 			fmt.Fprintln(p.teeLive(clientChan.Stderr(), sid), "PAMv1: session recording is unavailable; session refused")
 			return
 		}
+	}
+
+	// The session notice (Phase 276): printed to the operator before anything
+	// from the target, into the recording too, so the record shows the
+	// acknowledgement it opened with; audited with the notice's digest.
+	if notice := p.banners.Get(banner.Session, ""); notice != "" {
+		line := notice + "\r\n"
+		_, _ = io.WriteString(clientChan, line)
+		if rec != nil {
+			_, _ = io.WriteString(rec, line)
+		}
+		p.audit(ctx, actor, "session.consent", fmt.Sprintf("target:%s cred_user:%s mode:printed banner_sha256:%s", target.Name, cred.Username, banner.Digest(notice)))
 	}
 
 	// Forward channel requests both directions (pty-req, shell, exec,
