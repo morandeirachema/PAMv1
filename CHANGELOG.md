@@ -16,6 +16,63 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.0.78] — 2026-09-22
+
+Ships the first four rows of the **Tier 10** pass (the WALLIX Bastion 12 /
+Access Manager training material compared against PAMv1): **Phases 269–272**.
+**Three migrations are new** (`0062`, `0063`, `0064`), nine routes, three
+store methods and seven environment variables; **one default changed** — read
+the host-key note before upgrading.
+
+**Added.**
+
+- **RADIUS authentication** (Phase 269). A RADIUS server (RFC 2865, PAP) as a
+  login source behind the directory — an Access-Challenge for a one-time code
+  is answered from the sign-on screen — or as the second factor that verifies
+  a directory user's code (`PAM_RADIUS_MODE=login|second_factor`,
+  `PAM_RADIUS_ADDR`/`_SECRET`/`_ROLE`/`_CLASS_*`/`_NAS_ID`). Every reply is
+  verified under the shared secret; a down server fails closed. Audit
+  `login.challenge`. Not verified against a real RADIUS server.
+- **Per-target and per-grant sub-protocol rights** (Phase 270). `rights` on a
+  target and on a grant over `ssh_shell`, `ssh_exec`, `ssh_sftp`,
+  `ssh_forward`, `ssh_x11`, `rdp_drive`, `rdp_printer`, `rdp_audio`,
+  `rdp_audio_in`; a grant narrows the target; the deployment switches stay
+  ceilings (new `PAM_RDP_DRIVE`/`_PRINTER`/`_AUDIO`/`_AUDIO_IN`). Refusals are
+  audited `session.right_denied`. Empty rights — every existing row — change
+  nothing.
+- **Probe metadata as a session artifact, and notify rules** (Phase 271). The
+  Windows session probe reports process start/end (with the command line) and
+  foreground-window changes into a sealed, chained `.probe.log` beside the
+  desktop recording — listed as kind `probe`, playable, content-searchable —
+  and a rule may `notify` instead of `kill` (`probe.rule_notified`).
+  Keystrokes are deliberately not captured.
+- **Host keys pinned on first contact** (Phase 272). Without
+  `PAM_SSH_KNOWN_HOSTS`, each SSH target's host key is pinned the first time
+  the proxy reaches it and checked on every later session; a mismatch refuses
+  the session, is audited with both fingerprints and alerted, and is reset only
+  by an administrator (`DELETE /api/targets/{id}/host-key`, *Work with
+  Targets* → 12). `PAM_SSH_HOST_KEY_CHECK=tofu|strict|off`.
+
+**Changed default — read before upgrading.** A deployment without
+`PAM_SSH_KNOWN_HOSTS` used to trust any upstream SSH host key with a startup
+warning. It now **pins on first contact**: every target's first session after
+the upgrade stores the key it sees, and a later session presenting a different
+key is refused until the pin is reset. A host re-keyed *before* its first
+post-upgrade session pins the new key silently; one re-keyed *after* it needs
+the reset. Set `PAM_SSH_HOST_KEY_CHECK=off` to keep the old behaviour. The
+rotation, discovery and forensics connections are unaffected (they still
+follow the known_hosts-or-trust-any rule).
+
+**Documentation.** Every document swept through Phase 273; README gains the
+Tier 10 table with its remaining ten rows.
+
+**What has not changed.** A tunnel endpoint agent, a target or grant with no
+`rights`, a probe rule without an `action` (it kills), and any deployment
+with `PAM_SSH_KNOWN_HOSTS` set behave exactly as before. The image is
+`ghcr.io/morandeirachema/pamv1:0.0.78`, digest
+`TBD`
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.78)).
+
 ## [0.0.77] — 2026-09-22
 
 The first release under the **0.0.x numbering** (see the note at the top).
@@ -3563,7 +3620,8 @@ The image is `ghcr.io/morandeirachema/pamv1:0.10.0`, digest
 `sha256:ab2a5fa5db27fae805f9096dfdf526497ddff4cc3774b33469ab108b98637b39`
 ([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.10.0)).
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.0.77...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.0.78...HEAD
+[0.0.78]: https://github.com/morandeirachema/pamv1/releases/tag/v0.0.78
 [0.0.77]: https://github.com/morandeirachema/pamv1/releases/tag/v0.0.77
 [0.76.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.76.0
 [0.75.1]: https://github.com/morandeirachema/pamv1/releases/tag/v0.75.1

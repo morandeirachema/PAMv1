@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–272 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–273 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,32 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 273 — v0.0.78 ✅
+
+Releases **269–272**, the first four rows of the Tier 10 pass. Three
+migrations (`0062`–`0064`), nine routes, three store methods, seven env vars,
+and **one changed default** (host keys pinned on first contact) — CHANGELOG
+says so before the entry, with the upgrade consequence spelled out. Fixes do
+not bank on `main`, and neither do features.
+
+- [x] **v0.0.78** through the test-gated pipeline. `release.yml` unchanged
+  since v0.0.77, so no rehearsal. Published 2026-09-22 as
+  `ghcr.io/morandeirachema/pamv1:0.0.78`
+  (also `latest`), digest `TBD`, **public** (anonymous pull), signed and
+  attested — with the `pam-agent` binaries (Linux and Windows), the SPDX SBOM
+  and `SHA256SUMS` attached
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm
+  chart `version` 0.0.77 -> **0.0.78**, tracking the app version
+- [x] Migration high-water **`0061` -> `0064`**; `store.Store` **232 ->
+  235**; routes **218 -> 220**
+- [x] Both READMEs restated; every `Reflects:` header, both READMEs' *What
+  works today* range, `docs/README.md`, the NIS2 evidence row, this banner and
+  CHANGELOG's `[Unreleased]` link — `TestDocHeadersAgree` enforced; README's
+  status digest reads `TBD` until the digest PR
+- [x] `CHANGELOG.md` leads with the changed default and who it affects
+- [x] The tag is pushed only **after** the release PR is confirmed merged
+- [x] Full CI-gate sweep re-verified clean on `main` before tagging
 
 ## Phase 272 — Host keys pinned on first contact (Tier 10, row 4) ✅
 
