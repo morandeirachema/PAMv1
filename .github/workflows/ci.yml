@@ -47,6 +47,17 @@ jobs:
           "$(go env GOPATH)/bin/gosec" -quiet -confidence high -exclude=G104,G115,G306 ./...
       - name: build
         run: go build ./...
+      - name: build pam-agent for windows
+        # The session probe (Phase 266) has a Windows-only platform layer
+        # behind a build tag; nothing on a Linux runner compiles it unless
+        # asked. Cross-compiling the agent and vetting the probe package for
+        # windows/amd64 is the gate that keeps that file honest.
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          go build -o /dev/null ./cmd/pam-agent
+          go vet ./internal/probe/ ./internal/endpointagent/ ./cmd/pam-agent/
       - name: console
         # The portal is ~2,500 lines of JavaScript embedded in index.html, and
         # go:embed copies bytes without parsing them — so before this step a

@@ -30,10 +30,21 @@
 // The agent holds one tunnel per configured server address: an HA pam-server
 // deployment lists every replica, since an agent's TCP connection terminates
 // on exactly one process and each replica must be able to reach the endpoint.
+//
+// Probe mode (Phase 266, Config.Mode = ModeProbe) keeps everything above —
+// the same login, the same pinned host key, the same "opens nothing toward
+// PAMv1" — and replaces the reverse forward with the session probe of
+// internal/probe: instead of a tunnel the connection carries one channel
+// pam-server opens toward the agent, on which the agent reports the
+// processes and connections of the Windows logon session it runs in and
+// enforces the block rules pam-server pushes. A probe registers no tunnel, so
+// it never becomes a target's dial; the server refuses the other request
+// either way, by the agent row's kind.
 package endpointagent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -44,14 +55,32 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/morandeirachema/pamv1/internal/probe"
 )
 
 // LoginPrefix mirrors proxy.EndpointAgentLoginPrefix: the SSH username an
 // agent authenticates with is LoginPrefix + Name.
 const LoginPrefix = "endpoint-agent:"
 
+// The two agent modes.
+const (
+	ModeTunnel = "tunnel"
+	ModeProbe  = "probe"
+)
+
 // Config configures Run.
 type Config struct {
+	// Mode is ModeTunnel (the default: hold a reverse tunnel to LocalAddr) or
+	// ModeProbe (run the session probe; LocalAddr is unused).
+	Mode string
+	// Probe configures probe mode: the Platform is required there (main
+	// resolves it with probe.NewPlatform), Interval defaults inside probe.
+	Probe probe.Options
+	// ProbePlatform is the OS seam the probe reports and enforces through.
+	ProbePlatform probe.Platform
+	// Version is reported in the probe's Hello (informational).
+	Version string
 	// Servers are pam-server SSH listener addresses (host:port), one tunnel
 	// each. At least one is required.
 	Servers []string
@@ -106,7 +135,18 @@ func (c *Config) validate() error {
 	if c.Key == "" {
 		return errors.New("endpoint agent: key is required")
 	}
-	if _, _, err := net.SplitHostPort(c.LocalAddr); err != nil {
+	switch c.Mode {
+	case "":
+		c.Mode = ModeTunnel
+	case ModeTunnel, ModeProbe:
+	default:
+		return fmt.Errorf("endpoint agent: mode %q must be %q or %q", c.Mode, ModeTunnel, ModeProbe)
+	}
+	if c.Mode == ModeProbe {
+		if c.ProbePlatform == nil {
+			return errors.New("endpoint agent: probe mode needs a platform (" + probe.ErrUnsupported.Error() + ")")
+		}
+	} else if _, _, err := net.SplitHostPort(c.LocalAddr); err != nil {
 		return fmt.Errorf("endpoint agent: local address %q must be host:port: %w", c.LocalAddr, err)
 	}
 	if c.HostKey == nil {
@@ -210,6 +250,10 @@ func serveTunnel(ctx context.Context, cfg Config, server string, log *slog.Logge
 	client := ssh.NewClient(sconn, chans, reqs)
 	defer client.Close()
 
+	if cfg.Mode == ModeProbe {
+		return serveProbe(ctx, client, cfg, server, log)
+	}
+
 	// The reverse forward. The address is only a label the server echoes back
 	// on each channel; port 0 lets the server assign the (equally nominal)
 	// port. What the streams actually reach is decided HERE, by LocalAddr.
@@ -223,29 +267,8 @@ func serveTunnel(ctx context.Context, cfg Config, server string, log *slog.Logge
 		cfg.OnTunnel(server)
 	}
 
-	// Keepalives detect a connection that died without a FIN (NAT timeouts,
-	// pulled cables): a failed request closes the client, which ends Accept.
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		t := time.NewTicker(cfg.KeepAlive)
-		defer t.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-ctx.Done():
-				client.Close()
-				return
-			case <-t.C:
-				if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
-					log.Warn("keepalive failed; dropping tunnel", "err", err)
-					client.Close()
-					return
-				}
-			}
-		}
-	}()
+	stop := keepalive(ctx, client, cfg, log)
+	defer stop()
 
 	var streams sync.WaitGroup
 	defer streams.Wait()
@@ -263,6 +286,97 @@ func serveTunnel(ctx context.Context, cfg Config, server string, log *slog.Logge
 			pipe(cfg, conn, log)
 		}()
 	}
+}
+
+// keepalive starts the keepalive@openssh.com ticker that detects a connection
+// which died without a FIN (NAT timeouts, pulled cables): a failed request
+// closes the client, which ends whatever the caller is blocked on. It also
+// closes the client when ctx ends. The returned stop ends the ticker.
+func keepalive(ctx context.Context, client *ssh.Client, cfg Config, log *slog.Logger) (stop func()) {
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(cfg.KeepAlive)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				client.Close()
+				return
+			case <-t.C:
+				if _, _, err := client.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+					log.Warn("keepalive failed; dropping connection", "err", err)
+					client.Close()
+					return
+				}
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
+// serveProbe is probe mode's half of serveTunnel: announce the session with
+// one probe@pamv1 request, accept the one pam-probe@pamv1 channel the server
+// opens back, and run the probe on it until the channel or connection ends.
+// The channel handler is registered BEFORE the request so the server's open
+// cannot race ahead of it and be refused.
+func serveProbe(ctx context.Context, client *ssh.Client, cfg Config, server string, log *slog.Logger) (established bool, err error) {
+	opens := client.HandleChannelOpen(probe.ChannelType)
+	if opens == nil {
+		return false, errors.New("probe channel handler already registered")
+	}
+	hello, err := cfg.ProbePlatform.Identity()
+	if err != nil {
+		return false, fmt.Errorf("probe identity: %w", err)
+	}
+	hello.Version = cfg.Version
+	payload, err := json.Marshal(hello)
+	if err != nil {
+		return false, err
+	}
+	ok, _, err := client.SendRequest(probe.RequestType, true, payload)
+	if err != nil {
+		return false, fmt.Errorf("probe request: %w", err)
+	}
+	if !ok {
+		return false, errors.New("probe refused by server (is the agent registered as a probe?)")
+	}
+	stop := keepalive(ctx, client, cfg, log)
+	defer stop()
+	var nc ssh.NewChannel
+	select {
+	case nc = <-opens:
+		if nc == nil {
+			return false, errors.New("connection ended before the probe channel opened")
+		}
+	case <-ctx.Done():
+		return false, ctx.Err()
+	case <-time.After(cfg.DialTimeout):
+		return false, errors.New("server accepted the probe but opened no channel")
+	}
+	ch, reqs, err := nc.Accept()
+	if err != nil {
+		return false, fmt.Errorf("accept probe channel: %w", err)
+	}
+	defer ch.Close()
+	go ssh.DiscardRequests(reqs)
+	// Any further opens (a second channel) are refused: one probe, one channel.
+	go func() {
+		for extra := range opens {
+			_ = extra.Reject(ssh.Prohibited, "one probe channel per connection")
+		}
+	}()
+	log.Info("probe established", "host", hello.Hostname, "user", hello.User, "session", hello.SessionID)
+	if cfg.OnTunnel != nil {
+		cfg.OnTunnel(server)
+	}
+	opts := cfg.Probe
+	opts.Logger = log
+	if err := probe.Serve(ctx, ch, cfg.ProbePlatform, opts); err != nil && ctx.Err() == nil {
+		return true, fmt.Errorf("probe: %w", err)
+	}
+	return true, nil
 }
 
 // pipe delivers one tunneled stream to LocalAddr and copies bytes both ways

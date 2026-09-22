@@ -467,7 +467,7 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 		}
 		sid = s.sessions.Register(session.Info{
 			Actor: principal.Name, Target: target.Name, Protocol: proto.name, Remote: r.RemoteAddr, Started: time.Now(),
-			Deadline: deadline, DeadlineReason: why,
+			CredUser: cred.Username, Deadline: deadline, DeadlineReason: why,
 		}, func() { cancel(); gconn.Close() })
 		defer s.sessions.Remove(sid)
 		touch = s.sessions.Activity(sid)

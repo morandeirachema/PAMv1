@@ -36,6 +36,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/oncall"
 	"github.com/morandeirachema/pamv1/internal/posture"
+	"github.com/morandeirachema/pamv1/internal/probe"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
 	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/session"
@@ -193,6 +194,10 @@ type Config struct {
 	// the "endpoint-agent:<name>" login is refused and a target bound to an
 	// agent row is unreachable (never silently dialed direct).
 	EndpointAgents *session.EndpointAgents
+	// ProbeHub (optional, Phase 266) is the SHARED registry of connected
+	// session probes — the same instance handed to api.Options. nil refuses
+	// the probe@pamv1 request; it is enabled together with EndpointAgents.
+	ProbeHub *probe.Hub
 }
 
 // SessionForensics describes one finished interactive session to the
@@ -266,6 +271,9 @@ type Proxy struct {
 	// endpointAgents is the shared live registry of connected endpoint agents
 	// (Phase 153); nil = feature disabled.
 	endpointAgents *session.EndpointAgents
+	// probeHub is the shared live registry of connected session probes
+	// (Phase 266); nil = probes refused.
+	probeHub *probe.Hub
 	// onForensics is the post-session reconstruction hook (Phase 157); nil =
 	// disabled.
 	onForensics func(SessionForensics)
@@ -349,6 +357,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		live:           cfg.Live,
 		shares:         cfg.Shares,
 		endpointAgents: cfg.EndpointAgents,
+		probeHub:       cfg.ProbeHub,
 		onForensics:    cfg.OnSessionForensics,
 		ca:             cfg.CA,
 		certTTL:        cfg.CertTTL,
@@ -783,7 +792,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	if idStr := ext["endpoint_agent"]; idStr != "" {
 		agentID, _ := strconv.ParseInt(idStr, 10, 64)
 		targetID, _ := strconv.ParseInt(ext["endpoint_agent_target"], 10, 64)
-		p.serveEndpointAgent(ctx, sconn, chans, reqs, agentID, targetID, ext["endpoint_agent_name"], sconn.RemoteAddr().String())
+		p.serveEndpointAgent(ctx, sconn, chans, reqs, agentID, targetID, ext["endpoint_agent_name"], ext["endpoint_agent_kind"], sconn.RemoteAddr().String())
 		return
 	}
 	go ssh.DiscardRequests(reqs)
@@ -947,7 +956,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	if p.sessions != nil {
 		sid = p.sessions.Register(session.Info{
 			Actor: actor, Target: target.Name, Protocol: "ssh", Remote: remote, Started: time.Now(),
-			Deadline: res.bounds.deadline, DeadlineReason: res.bounds.reason,
+			CredUser: cred.Username, Deadline: res.bounds.deadline, DeadlineReason: res.bounds.reason,
 		}, func() { sconn.Close() })
 		defer p.sessions.Remove(sid)
 		p.live.Publish(sid, watermarkBanner(actor, target.Name))

@@ -30,6 +30,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/oncall"
 	"github.com/morandeirachema/pamv1/internal/policy"
 	"github.com/morandeirachema/pamv1/internal/posture"
+	"github.com/morandeirachema/pamv1/internal/probe"
 	"github.com/morandeirachema/pamv1/internal/ratelimit"
 	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/rotate"
@@ -481,6 +482,10 @@ type Options struct {
 	// a revoke can drop the live tunnel. nil disables the feature (routes not
 	// registered).
 	EndpointAgents *session.EndpointAgents
+	// ProbeHub (Phase 266) is the SHARED live registry of connected session
+	// probes — the same instance the proxy serves. nil = probes disabled: the
+	// probe routes are not registered and a probe-kind agent cannot be created.
+	ProbeHub *probe.Hub
 }
 
 type Server struct {
@@ -574,6 +579,7 @@ type Server struct {
 	appSecretsEnabled   bool
 	scimEnabled         bool
 	endpointAgents      *session.EndpointAgents
+	probeHub            *probe.Hub
 	k8sConfig           k8s.Config
 	forensics           bool
 	forensicsMaxEvents  int
@@ -872,6 +878,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		appSecretsEnabled:    opts.AppSecretsEnabled,
 		scimEnabled:          opts.ScimEnabled,
 		endpointAgents:       opts.EndpointAgents,
+		probeHub:             opts.ProbeHub,
 		k8sConfig:            opts.K8s,
 		forensics:            opts.SessionForensics,
 		forensicsMaxEvents:   opts.SessionForensicsMaxEvents,
@@ -1287,6 +1294,18 @@ func (s *Server) routes() {
 		s.mux.Handle("POST /api/endpoint-agents", s.authz(auth.CapManageTargets, s.createEndpointAgent))
 		s.mux.Handle("GET /api/endpoint-agents", s.authz(auth.CapReadInventory, s.listEndpointAgents))
 		s.mux.Handle("DELETE /api/endpoint-agents/{id}", s.authz(auth.CapManageTargets, s.revokeEndpointAgent))
+	}
+	// Session probes (Phase 266): telemetry from inside an operator's logon
+	// session is audit-grade data, so reading it takes the audit capability;
+	// the block rules and a kill are target infrastructure, like the agents.
+	if s.probeHub != nil {
+		s.mux.Handle("GET /api/probes", s.authz(auth.CapReadAudit, s.listProbes))
+		s.mux.Handle("GET /api/probes/{id}", s.authz(auth.CapReadAudit, s.getProbe))
+		s.mux.Handle("POST /api/probes/{id}/kill", s.authz(auth.CapManageTargets, s.killProbeProcess))
+		s.mux.Handle("GET /api/sessions/{id}/probes", s.authz(auth.CapReadAudit, s.sessionProbes))
+		s.mux.Handle("GET /api/probe-rules", s.authz(auth.CapReadInventory, s.listProbeRules))
+		s.mux.Handle("POST /api/probe-rules", s.authz(auth.CapManageTargets, s.createProbeRule))
+		s.mux.Handle("DELETE /api/probe-rules/{id}", s.authz(auth.CapManageTargets, s.deleteProbeRule))
 	}
 	if s.scimEnabled {
 		s.mux.Handle("POST /v1/scim-keys", s.authz(auth.CapManageUsers, s.createScimKey))

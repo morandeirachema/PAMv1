@@ -80,6 +80,7 @@ flowchart LR
     n_oncall[oncall]
     n_pam_agent[pam-agent]
     n_posture[posture]
+    n_probe[probe]
     n_ratelimit[ratelimit]
     n_recording[recording]
     n_releasedocs[releasedocs]
@@ -124,6 +125,7 @@ flowchart LR
   n_api --> n_oncall
   n_api --> n_policy
   n_api --> n_posture
+  n_api --> n_probe
   n_api --> n_ratelimit
   n_api --> n_recording
   n_api --> n_rotate
@@ -156,6 +158,7 @@ flowchart LR
   n_broker --> n_policy
   n_broker --> n_store
   n_conjur --> n_logging
+  n_endpointagent --> n_probe
   n_guacd --> n_auditfmt
   n_keycustody --> n_store
   n_maint --> n_store
@@ -166,6 +169,7 @@ flowchart LR
   n_oidc --> n_jwtutil
   n_pam_agent --> n_endpointagent
   n_pam_agent --> n_logging
+  n_pam_agent --> n_probe
   n_pam_server --> n_agentid
   n_pam_server --> n_alert
   n_pam_server --> n_analytics
@@ -187,6 +191,7 @@ flowchart LR
   n_pam_server --> n_pgstore
   n_pam_server --> n_policy
   n_pam_server --> n_posture
+  n_pam_server --> n_probe
   n_pam_server --> n_proxy
   n_pam_server --> n_recording
   n_pam_server --> n_rotate
@@ -202,6 +207,7 @@ flowchart LR
   n_pgstore --> n_logging
   n_pgstore --> n_session
   n_pgstore --> n_store
+  n_probe --> n_auditfmt
   n_proxy --> n_auditfmt
   n_proxy --> n_auth
   n_proxy --> n_cmdguard
@@ -209,6 +215,7 @@ flowchart LR
   n_proxy --> n_logging
   n_proxy --> n_oncall
   n_proxy --> n_posture
+  n_proxy --> n_probe
   n_proxy --> n_ratelimit
   n_proxy --> n_recording
   n_proxy --> n_session
@@ -403,6 +410,7 @@ erDiagram
     int64 ID
     string Name
     int64 TargetID
+    string Kind
     string CreatedBy
     time_Time CreatedAt
     ptr_time_Time LastSeen
@@ -430,6 +438,17 @@ erDiagram
   MFAEnrollment {
     string Username
     bool Confirmed
+    time_Time CreatedAt
+  }
+  ProbeRule {
+    int64 ID
+    int64 TargetID
+    string Kind
+    string Match
+    int Port
+    string Proto
+    string Note
+    string CreatedBy
     time_Time CreatedAt
   }
   Profile {
@@ -615,6 +634,7 @@ erDiagram
   Target ||--o{ Checkout : "has"
   Target ||--o{ Credential : "has"
   Target ||--o{ EndpointAgent : "has"
+  Target ||--o{ ProbeRule : "has"
   Target ||--o{ Session : "has"
   Target ||--o{ SubjectGrant : "has"
   Target ||--o{ TargetGrant : "has"
@@ -624,7 +644,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 211 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 218 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -706,6 +726,12 @@ The 211 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/mfa/enroll` | authenticated |
 | POST | `/api/mfa/recovery-codes` | authenticated |
 | POST | `/api/mfa/verify` | authenticated (rate-limited) |
+| GET | `/api/probe-rules` | CapReadInventory |
+| POST | `/api/probe-rules` | CapManageTargets |
+| DELETE | `/api/probe-rules/{id}` | CapManageTargets |
+| GET | `/api/probes` | CapReadAudit |
+| GET | `/api/probes/{id}` | CapReadAudit |
+| POST | `/api/probes/{id}/kill` | CapManageTargets |
 | GET | `/api/profiles` | CapManageUsers |
 | POST | `/api/profiles` | CapManageUsers |
 | DELETE | `/api/profiles/{id}` | CapManageUsers |
@@ -727,6 +753,7 @@ The 211 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/sessions` | CapReadAudit |
 | GET | `/api/sessions/stepups` | CapReadAudit |
 | DELETE | `/api/sessions/{id}` | CapManageTargets |
+| GET | `/api/sessions/{id}/probes` | CapReadAudit |
 | POST | `/api/sessions/{id}/resume` | CapApprove |
 | GET | `/api/sessions/{id}/share` | CapReadAudit |
 | POST | `/api/sessions/{id}/share` | CapConnect |

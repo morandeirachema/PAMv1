@@ -396,6 +396,7 @@
   let vendors = [], vendorGrants = [], grantsVendor = 0, newVendor = null, editVendor = null;
   let sshCerts = [], caInfo = null, loginSessions = [], agents = [], newAgent = null;
   let endpointAgents = [], newEndpointAgent = null; // Phase 153: outbound-only endpoint agents
+  let probes = [], probeView = null, probeRules = []; // Phase 266: session probes (Windows telemetry & blocking)
   let quarantine = []; // Phase 159: quarantined agent identities (agent-key name, or a full SPIFFE ID)
   let dlockCred = null;  // Phase 187: the credential DoubleLock is being set on
   let scimKeys = [];     // Phase 187: SCIM client keys (menu 29)
@@ -947,6 +948,33 @@
     try { [endpointAgents, targets] = await Promise.all([api("GET", "/api/endpoint-agents"), apiAll("/api/targets").catch(() => targets)]); }
     catch (e) { if (e.status === 404) say("ENDPOINT AGENTS ARE DISABLED (set PAM_ENDPOINT_AGENTS_ENABLED=true)."); }
     go("endpointagents");
+  }
+  // Phase 266: session probes (menu 34). The list is this replica's live view
+  // of pam-agent probes running inside operators' logon sessions.
+  async function openProbes() {
+    probes = [];
+    try { probes = await api("GET", "/api/probes"); }
+    catch (e) { if (e.status === 404) say("SESSION PROBES ARE DISABLED (set PAM_ENDPOINT_AGENTS_ENABLED=true)."); else throw e; }
+    go("probes");
+  }
+  async function openProbe(key) {
+    probeView = await api("GET", `/api/probes/${key}`);
+    go("probeview");
+  }
+  // The probe(s) of a live session: the session's target and the account it
+  // was opened as decide which. A desktop knows only the account, so the
+  // answer is a list; the newest is shown.
+  async function openSessionProbe(sess) {
+    const list = await api("GET", `/api/sessions/${encodeURIComponent(sess.id)}/probes`);
+    if (!list.length) { say(`NO PROBE IS REPORTING FROM SESSION ${String(sess.id).slice(0, 8)} (target ${String(sess.target).toUpperCase()}, account ${String(sess.cred_user || "?").toUpperCase()}).`, true); render(); return; }
+    probeView = list[0];
+    go("probeview");
+  }
+  async function openProbeRules() {
+    probeRules = [];
+    try { [probeRules, targets] = await Promise.all([api("GET", "/api/probe-rules"), apiAll("/api/targets").catch(() => targets)]); }
+    catch (e) { if (e.status === 404) say("SESSION PROBES ARE DISABLED (set PAM_ENDPOINT_AGENTS_ENABLED=true)."); else throw e; }
+    go("proberules");
   }
   async function openDeps(credID) {
     depsCred = creds.find((c) => c.id === credID) || { id: credID };
@@ -1650,6 +1678,7 @@ ${fkeys("")}
           line(31, can("read_audit"), "What can this subject reach? (access review)") +
           line(32, can("read_inventory"), "Work with label rules (allow / deny by label)") +
           line(33, true, "Join a shared desktop (session invite)") +
+          line(34, can("read_audit"), "Work with session probes (Windows telemetry & blocking)") +
           "90. Sign off\n";
         term.innerHTML = `${head("PAMMAIN", "PAMV1 Main Menu")}
 Select one of the following:
@@ -1674,6 +1703,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
             "31": () => openReach(""),
             "32": openLabelRules,
             "33": () => go("sharejoin"),
+            "34": openProbes,
             "90": signoff,
           };
           if (routes[c]) { try { await routes[c](); } catch (e) { say("CPF9999: " + e.message, true); render(); } }
@@ -2037,7 +2067,7 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         const canKill = can("manage_targets");
         term.innerHTML = `${head("PAMWRKSSN", "Work with Active Sessions")}
 Live proxied sessions (auto-refresh 5s). Type options, press Enter.
-  <span class="cyan">${[canKill ? "4=End session (kill)" : "", "5=Watch (live monitor; RDP/VNC opens the desktop view-only)", "6=Share invites", can("approve") ? "7=Suspend / resume input" : ""].filter(Boolean).join("   ")}</span>
+  <span class="cyan">${[canKill ? "4=End session (kill)" : "", "5=Watch (live monitor; RDP/VNC opens the desktop view-only)", "6=Share invites", can("approve") ? "7=Suspend / resume input" : "", "8=Session probe (processes & connections inside the session)"].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
 <tr><th>Opt</th><th>ID</th><th>Actor</th><th>Target</th><th>Proto</th><th>Remote</th><th>Replica</th><th>Started</th></tr>
@@ -2062,6 +2092,7 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
               }
               else if (o === "5") { return VIEWERS[s.protocol] ? watchDesktop(s) : watchSession(s); }
               else if (o === "6") { watchSess = null; return openShareInvites(s.id); }
+              else if (o === "8") { return openSessionProbe(s); }
               else if (o === "7" && can("approve")) {
                 // The one suspend switch a desktop has (Phase 264): its watch is
                 // a full-screen overlay with no function keys. Read the state,
@@ -2860,12 +2891,13 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         term.innerHTML = `${head("PAMWRKEPA", "Work with Endpoint Agents")}
 Outbound-only agents (pam-agent) for targets PAMv1 cannot dial into: the agent dials OUT
 to the SSH listener and holds a reverse tunnel; the target is then reached ONLY through it.
-Type options, press Enter.  <span class="cyan">${canManage ? "4=Revoke (key stops resolving, live tunnel dropped)" : "(read-only role)"}</span>
+A PROBE agent (Phase 266) instead runs inside each operator's logon session on a Windows target
+and reports it — see menu 34. Type options, press Enter.  <span class="cyan">${canManage ? "4=Revoke (key stops resolving, live link dropped)" : "(read-only role)"}</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Name</th><th>Target</th><th>Status</th><th>Since / last seen</th><th>Remote</th></tr>
-${endpointAgents.map((a) => `<tr><td>${canManage ? opt(a.id) : "  "}</td><td>${esc(a.id)}</td><td class="white">${cell(a.name, 16)}</td><td>${cell(a.target_name || a.target_id, 16)}</td><td>${status(a)}</td><td class="cyan">${fmtTime(a.connected_since || a.last_seen)}</td><td>${cell(a.remote || "-", 21)}</td></tr>`).join("")}
-</table>${endpointAgents.length ? "" : `<div class="cyan indent">(No endpoint agents. Press F6 to register one for an SSH target — requires PAM_ENDPOINT_AGENTS_ENABLED.)</div>`}
+<tr><th>Opt</th><th>ID</th><th>Name</th><th>Kind</th><th>Sess</th><th>Target</th><th>Status</th><th>Since / last seen</th><th>Remote</th></tr>
+${endpointAgents.map((a) => `<tr><td>${canManage ? opt(a.id) : "  "}</td><td>${esc(a.id)}</td><td class="white">${cell(a.name, 16)}</td><td>${pad(a.kind === "probe" ? "probe" : "tunnel", 6)}</td><td>${cell(a.kind === "probe" ? String(a.probes || 0) : "-", 4)}</td><td>${cell(a.target_name || a.target_id, 16)}</td><td>${status(a)}</td><td class="cyan">${fmtTime(a.connected_since || a.last_seen)}</td><td>${cell(a.remote || "-", 21)}</td></tr>`).join("")}
+</table>${endpointAgents.length ? "" : `<div class="cyan indent">(No endpoint agents. Press F6 to register one — requires PAM_ENDPOINT_AGENTS_ENABLED.)</div>`}
 <input type="submit" hidden></form>
 <div class="cyan">Status is this replica's live view; in HA, point pam-agent at every replica (PAM_AGENT_SERVERS).</div>
 ${fkeys("F3=Exit   F5=Refresh" + (canManage ? "   F6=Register agent" : "") + "   F12=Cancel")}`;
@@ -2884,17 +2916,20 @@ ${fkeys("F3=Exit   F5=Refresh" + (canManage ? "   F6=Register agent" : "") + "  
 
       endpointagentadd() {
         back = "endpointagents";
-        const sshTargets = (targets || []).filter((t) => (t.protocol || "ssh") === "ssh");
+        const all = targets || [];
         term.innerHTML = `${head("PAMADDEPA", "Register Endpoint Agent")}
-Binds an outbound-only agent to ONE SSH target (key shown once). From then on the target
-is reached only through the agent — never dialed directly — until the agent is revoked.
+Binds an outbound-only agent to ONE target (key shown once). A TUNNEL binds an SSH target,
+which is then reached only through the agent — never dialed directly — until it is revoked.
+A PROBE (Phase 266) binds the Windows target whose operators' RDP sessions it will report from;
+launched at logon inside each session, it changes nothing about how the target is reached.
 
 <form id="f-add" class="indent">
 <label>Agent name  . . . . :  <input name="name" size="20" required autofocus></label>
-<label>Target  . . . . . . :  <select name="target_id" required>${sshTargets.map((t) => `<option value="${esc(t.id)}">${esc(t.name)} (${esc(t.host)}:${esc(t.port)})</option>`).join("")}</select></label>
+<label>Kind  . . . . . . . :  <select name="kind"><option value="tunnel">tunnel (SSH target reached through the agent)</option><option value="probe">probe (session telemetry &amp; blocking on a Windows target)</option></select></label>
+<label>Target  . . . . . . :  <select name="target_id" required>${all.map((t) => `<option value="${esc(t.id)}">${esc(t.name)} [${esc(t.protocol || "ssh")}] (${esc(t.host)}:${esc(t.port)})</option>`).join("")}</select></label>
 <input type="submit" hidden>
 </form>
-${sshTargets.length ? "" : `<div class="red indent">No SSH targets to bind. Create the target first (menu 1) — its host:port is the address AS SEEN FROM THE ENDPOINT, e.g. 127.0.0.1:22.</div>`}
+${all.length ? "" : `<div class="red indent">No targets to bind. Create the target first (menu 1) — for a tunnel its host:port is the address AS SEEN FROM THE ENDPOINT, e.g. 127.0.0.1:22.</div>`}
 ${fkeys("F3=Exit   F12=Cancel")}`;
         document.getElementById("f-add").onsubmit = async (ev) => {
           ev.preventDefault();
@@ -2918,11 +2953,139 @@ SSH login . . . . . :  <span class="white">${esc(a.login)}</span>
 
 Agent key . . . . . :  <span class="white">${esc(a.key)}</span>
 </div>
-<div class="cyan indent">On the endpoint, run pam-agent with:
+${a.kind === "probe" ? `<div class="cyan indent">On the Windows server, launch pam-agent.exe at logon INSIDE each operator's session (a scheduled task
+"At log on of any user", running as the logged-on user, not SYSTEM) with:
+  PAM_AGENT_MODE=probe   PAM_AGENT_SERVERS=&lt;pam-host&gt;:2222   PAM_AGENT_NAME=${esc(a.name)}   PAM_AGENT_KEY=&lt;the key above&gt;
+  PAM_AGENT_SERVER_HOST_KEY="&lt;pam-server's host key line, from ssh-keyscan -p 2222 &lt;pam-host&gt;&gt;"
+It reports and enforces within that session only, with that user's permissions. Only the key's hash is stored here.</div>` : `<div class="cyan indent">On the endpoint, run pam-agent with:
   PAM_AGENT_SERVERS=&lt;pam-host&gt;:2222   PAM_AGENT_NAME=${esc(a.name)}   PAM_AGENT_KEY=&lt;the key above&gt;
   PAM_AGENT_LOCAL_ADDR=127.0.0.1:22       PAM_AGENT_SERVER_HOST_KEY="$(ssh-keyscan -p 2222 &lt;pam-host&gt; | cut -d' ' -f2-)"
-Only the key's hash is stored here.</div>
+Only the key's hash is stored here.</div>`}
 ${fkeys("F3=Exit   F12=Cancel")}`;
+      },
+
+      // Menu 34 — session probes (Phase 266): pam-agent in probe mode running
+      // INSIDE an operator's logon session on a Windows target, reporting that
+      // session's processes and connections and ending what the block rules
+      // match — with the session user's own permissions, never more.
+      probes() {
+        back = "main";
+        term.innerHTML = `${head("PAMWRKPRB", "Work with Session Probes")}
+Each probe reports from inside one operator's logon session on a Windows target, with that user's
+own permissions: the session's processes and connections, and what the block rules ended.
+Type options, press Enter.  <span class="cyan">5=Display (processes &amp; connections)</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>Key</th><th>Target</th><th>Host</th><th>User</th><th>Sess</th><th>Procs</th><th>Conns</th><th>Rules</th><th>Events</th><th>Since</th></tr>
+${probes.map((p) => `<tr><td>${opt(p.key)}</td><td>${cell(String(p.key), 5)}</td><td class="white">${cell(p.target_name, 14)}</td><td>${cell((p.hello || {}).hostname || "-", 14)}</td><td>${cell((p.hello || {}).user || "-", 16)}</td><td>${cell(String((p.hello || {}).session_id ?? "-"), 4)}</td><td>${cell(String(p.processes), 5)}</td><td>${cell(String(p.connections), 5)}</td><td>${cell(String(p.rules), 5)}</td><td>${cell(String(p.events), 6)}</td><td class="cyan">${fmtTime(p.connected)}</td></tr>`).join("")}
+</table>${probes.length ? "" : `<div class="cyan indent">(No probes connected to this replica. Register a PROBE agent for the Windows target — menu 28, F6, kind=probe — and launch pam-agent at logon.)</div>`}
+<input type="submit" hidden></form>
+<div class="cyan">Live view of this replica. Rules are enforced on the next scan; a session's probe is also reachable from menu 4 (option 8).</div>
+${fkeys("F3=Exit   F5=Refresh   F10=Block rules   F12=Cancel")}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const p of probes) {
+              const o = optVal(ev.target, p.key);
+              if (o === "5") { return openProbe(p.key); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            render();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      probeview() {
+        back = "probes";
+        const p = probeView || {};
+        const h = p.hello || {};
+        const snap = p.snapshot || { processes: [], connections: [] };
+        const canKill = can("manage_targets");
+        const procs = snap.processes || [];
+        const conns = (snap.connections || []).filter((c) => c.remote_addr);
+        term.innerHTML = `${head("PAMDSPPRB", "Display Session Probe")}
+Target <span class="white">${esc(p.target_name)}</span>  host <span class="white">${esc(h.hostname)}</span>  user <span class="white">${esc(h.user)}</span>  session <span class="white">${esc(h.session_id)}</span>  scanned <span class="cyan">${fmtTime(snap.taken)}</span>${snap.truncated ? '  <span class="amber">(truncated)</span>' : ""}
+${(snap.errors || []).length ? `<div class="red indent">${(snap.errors || []).map((e) => esc(e)).join("<br>")}</div>` : ""}
+Processes in the session${canKill ? ' (type an option, press Enter — <span class="cyan">4=End process</span>, with the session user\'s permissions)' : ""}:
+<form id="f-list"><table>
+<tr><th>Opt</th><th>PID</th><th>PPID</th><th>Name</th><th>Path</th><th>Started</th><th>Command line</th></tr>
+${procs.map((r) => `<tr><td>${canKill ? opt(r.pid) : "  "}</td><td>${cell(String(r.pid), 6)}</td><td>${cell(String(r.ppid || ""), 6)}</td><td class="white">${cell(r.name, 18)}</td><td>${cell(r.path || "-", 30)}</td><td class="cyan">${fmtTime(r.started)}</td><td class="detail">${esc(r.command_line || "")}</td></tr>`).join("")}
+</table>${procs.length ? "" : `<div class="cyan indent">(No processes reported yet.)</div>`}
+<input type="submit" hidden></form>
+
+Connections with a remote peer:
+<table>
+<tr><th>PID</th><th>Proto</th><th>Local</th><th>Remote</th><th>State</th></tr>
+${conns.map((c) => `<tr><td>${cell(String(c.pid), 6)}</td><td>${cell(c.proto, 5)}</td><td>${cell(c.local_addr + ":" + c.local_port, 26)}</td><td class="white">${cell(c.remote_addr + ":" + c.remote_port, 26)}</td><td>${cell(c.state || "-", 12)}</td></tr>`).join("")}
+</table>${conns.length ? "" : `<div class="cyan indent">(No outbound connections.)</div>`}
+${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const r of procs) {
+              const o = optVal(ev.target, r.pid);
+              if (o === "4" && canKill) { await api("POST", `/api/probes/${p.key}/kill`, { pid: r.pid }); say(`PROCESS ${r.pid} (${String(r.name).toUpperCase()}) ENDED.`); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openProbe(p.key);
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      proberules() {
+        back = "probes";
+        const canManage = can("manage_targets");
+        const what = (r) => r.kind === "process" ? r.match : [r.match || "any", r.port ? ":" + r.port : "", r.proto ? "/" + r.proto : ""].join("");
+        term.innerHTML = `${head("PAMWRKPRL", "Work with Probe Block Rules")}
+What a probe ends inside the session it reports from: a PROCESS rule matches an image name or path
+(glob, case-insensitive); a CONNECTION rule matches a remote address/CIDR, port and protocol — the
+process holding the connection is ended. Not a containment boundary: the probe has the user's permissions.
+Type options, press Enter.  <span class="cyan">${canManage ? "4=Delete" : "(read-only role)"}</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>ID</th><th>Target</th><th>Kind</th><th>Match</th><th>Note</th><th>By</th><th>Created</th></tr>
+${probeRules.map((r) => `<tr><td>${canManage ? opt(r.id) : "  "}</td><td>${cell(String(r.id), 5)}</td><td>${cell(r.target_id ? (r.target_name || r.target_id) : "* (all)", 14)}</td><td>${pad(r.kind === "process" ? "process" : "connect", 8)}</td><td class="white">${cell(what(r), 28)}</td><td>${cell(r.note || "", 16)}</td><td>${cell(r.created_by || "", 10)}</td><td class="cyan">${fmtTime(r.created_at)}</td></tr>`).join("")}
+</table>${probeRules.length ? "" : `<div class="cyan indent">(No block rules. Press F6 to add one.)</div>`}
+<input type="submit" hidden></form>
+${fkeys("F3=Exit   F5=Refresh" + (canManage ? "   F6=Add rule" : "") + "   F12=Cancel")}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          try {
+            for (const r of probeRules) {
+              const o = optVal(ev.target, r.id);
+              if (o === "4" && canManage) { await api("DELETE", `/api/probe-rules/${r.id}`); say(`RULE ${r.id} DELETED; PROBES UPDATED.`); }
+              else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID.", true); }
+            }
+            await openProbeRules();
+          } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      proberuleadd() {
+        back = "proberules";
+        term.innerHTML = `${head("PAMADDPRL", "Add Probe Block Rule")}
+A process rule needs a glob (e.g. psexec*, *\\mimikatz.exe). A connection rule needs a remote
+address or CIDR and/or a port (protocol optional). Takes effect on every connected probe's next scan.
+
+<form id="f-add" class="indent">
+<label>Kind  . . . . . . . :  <select name="kind"><option value="process">process</option><option value="connection">connection</option></select></label>
+<label>Target  . . . . . . :  <select name="target_id"><option value="0">* (every probed target)</option>${(targets || []).map((t) => `<option value="${esc(t.id)}">${esc(t.name)} [${esc(t.protocol || "ssh")}]</option>`).join("")}</select></label>
+<label>Match . . . . . . . :  <input name="match" size="40" autofocus> <span class="cyan">(image glob, or remote IP/CIDR)</span></label>
+<label>Port  . . . . . . . :  <input name="port" size="6" value="0"> <span class="cyan">(connection rules; 0 = any)</span></label>
+<label>Proto . . . . . . . :  <select name="proto"><option value="">either</option><option value="tcp">tcp</option><option value="udp">udp</option></select></label>
+<label>Note  . . . . . . . :  <input name="note" size="40"></label>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-add").onsubmit = async (ev) => {
+          ev.preventDefault();
+          const f = Object.fromEntries(new FormData(ev.target));
+          f.target_id = Number(f.target_id);
+          f.port = Number(f.port) || 0;
+          if (f.kind === "process") { f.port = 0; f.proto = ""; }
+          try { await api("POST", "/api/probe-rules", f); say("RULE ADDED; PROBES UPDATED."); await openProbeRules(); }
+          catch (e) { say("CPF9898: " + e.message, true); render(); }
+        };
       },
 
       agentadd() {
@@ -4595,7 +4758,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   }
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
-  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, identities: openIdentities, scimkeys: openScimKeys, endpointagents: openEndpointAgents, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid), reach: () => openReach(reachSubject, reachKind), labelrules: openLabelRules };
+  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, identities: openIdentities, scimkeys: openScimKeys, endpointagents: openEndpointAgents, probes: openProbes, probeview: () => probeView && openProbe(probeView.key), proberules: openProbeRules, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid), reach: () => openReach(reachSubject, reachKind), labelrules: openLabelRules };
   // cycleTheme rotates green → amber → slate → green, persists the choice, and
   // re-renders so the F-key hint's confirmation message shows immediately.
   function cycleTheme() {
@@ -4608,7 +4771,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
     render();
   }
 
-  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), quarantine: () => go("quarantineadd"), identities: () => go("identityadd"), scimkeys: () => go("scimkeyadd"), exttoken: mintExtToken, endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, shareinvites: () => go("shareinvitenew"), mfawebauthn: () => go("mfawebauthnadd"), labelrules: () => { if (can("manage_targets")) go("labelruleadd"); } };
+  const adders = { targets: () => go("targetadd"), creds: () => go("credadd"), grants: () => go("grantadd"), users: () => go("useradd"), requests: () => go("requestadd"), profiles: () => go("profileadd"), config: () => go("configset"), apps: () => go("appadd"), appgrants: () => go("appgrantadd"), safes: () => go("safeadd"), safemembers: () => go("safememberadd"), campaigns: openCampaignAdd, vendors: () => go("vendoradd"), vendorgrants: () => go("vendorgrantadd"), agents: () => go("agentadd"), quarantine: () => go("quarantineadd"), identities: () => go("identityadd"), scimkeys: () => go("scimkeyadd"), exttoken: mintExtToken, endpointagents: () => { if (can("manage_targets")) go("endpointagentadd"); }, deps: () => go("depadd"), sesswatch: () => { shareInviteSid = watchSess && watchSess.id; go("shareinvitenew"); }, shareinvites: () => go("shareinvitenew"), mfawebauthn: () => go("mfawebauthnadd"), labelrules: () => { if (can("manage_targets")) go("labelruleadd"); }, proberules: () => { if (can("manage_targets")) go("proberuleadd"); } };
 
   window.addEventListener("keydown", async (ev) => {
     // While the RDP viewer is open it owns the keyboard (its own capture-phase
@@ -4657,7 +4820,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
       else if (k === "F7") { if (screen === "effective") await exportIaC("helm"); else if (screen === "agents") await openQuarantine(); else if (screen === "audit") await fetchAuditHead(); else if (screen === "campaigns" && can("approve")) await openMyQueue(); else if (screen === "sesswatch" && watchSess) await openShareInvites(watchSess.id); }
       else if (k === "F8") { if (screen === "effective") await exportIaC("terraform"); else if (screen === "audit") await openNIS2Report(); else if (screen === "agents") await openIdentities(); else if (screen === "sesswatch" && watchSess && can("approve")) await toggleSuspend(); }
       else if (k === "F9") { if (screen === "audit") await exportAudit(); else if (screen === "users") await reconcileIdentities(); else if (screen === "sshcerts") await download("/api/ca/ssh/krl", "pamv1-revoked-certs.krl", "KRL"); else if (screen === "nis2report") await download("/api/compliance/nis2" + (nis2Query() ? "?" + nis2Query() : ""), "pamv1-nis2-report.json", "NIS2 REPORT"); }
-      else if (k === "F10") { if (screen === "audit") await download("/api/audit/ocsf", "pamv1-audit-ocsf.json", "OCSF"); }
+      else if (k === "F10") { if (screen === "audit") await download("/api/audit/ocsf", "pamv1-audit-ocsf.json", "OCSF"); else if (screen === "probes") await openProbeRules(); }
       else if (k === "F12") { go(back); }
     } catch (e) { say("CPF9999: " + e.message, true); render(); }
   });

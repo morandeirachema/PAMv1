@@ -3,6 +3,9 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/morandeirachema/pamv1/internal/endpointagent"
 )
 
 // TestConfigFromEnv pins the fail-loud rules: no host key (and no explicit
@@ -55,5 +58,37 @@ func TestConfigFromEnv(t *testing.T) {
 	set(m)
 	if _, err := configFromEnv(); err == nil || !strings.Contains(err.Error(), "HOST_KEY") {
 		t.Fatalf("garbage host key should be refused: %v", err)
+	}
+}
+
+// TestProbeModeFromEnv pins the Phase 266 switches: the mode defaults to
+// tunnel, "probe" parses (the platform is resolved in main, not here), an
+// unknown mode and an out-of-range interval are refused.
+func TestProbeModeFromEnv(t *testing.T) {
+	const goodKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGwvBv2h6NcJoZ7VXW1kUeE9dqm4YQ5Q6zNlD9c8L2Kk"
+	t.Setenv("PAM_AGENT_SERVERS", "pam.example:2222")
+	t.Setenv("PAM_AGENT_NAME", "win-probe")
+	t.Setenv("PAM_AGENT_KEY", "k")
+	t.Setenv("PAM_AGENT_SERVER_HOST_KEY", goodKey)
+	t.Setenv("PAM_AGENT_MODE", "")
+	t.Setenv("PAM_AGENT_PROBE_INTERVAL", "")
+	cfg, err := configFromEnv()
+	if err != nil || cfg.Mode != endpointagent.ModeTunnel {
+		t.Fatalf("default mode: %q err %v", cfg.Mode, err)
+	}
+	t.Setenv("PAM_AGENT_MODE", "Probe")
+	t.Setenv("PAM_AGENT_PROBE_INTERVAL", "30")
+	cfg, err = configFromEnv()
+	if err != nil || cfg.Mode != endpointagent.ModeProbe || cfg.Probe.Interval != 30*time.Second {
+		t.Fatalf("probe mode: %+v err %v", cfg, err)
+	}
+	t.Setenv("PAM_AGENT_PROBE_INTERVAL", "0")
+	if _, err := configFromEnv(); err == nil || !strings.Contains(err.Error(), "INTERVAL") {
+		t.Fatalf("interval 0 should be refused: %v", err)
+	}
+	t.Setenv("PAM_AGENT_PROBE_INTERVAL", "")
+	t.Setenv("PAM_AGENT_MODE", "sensor")
+	if _, err := configFromEnv(); err == nil || !strings.Contains(err.Error(), "MODE") {
+		t.Fatalf("unknown mode should be refused: %v", err)
 	}
 }

@@ -7,12 +7,21 @@
 // inbound is ever needed at the endpoint; see internal/endpointagent for the
 // mechanism and its security posture.
 //
+// In probe mode (Phase 266, PAM_AGENT_MODE=probe) the same binary is instead
+// the SESSION PROBE for a Windows server operators reach over RDP: launched
+// inside the operator's logon session with that user's own token (a scheduled
+// task "at log on", or a Run key), it reports the session's processes and
+// network connections to pam-server and terminates what the configured block
+// rules match — see internal/probe. It holds no tunnel and exposes nothing.
+//
 // Configuration is environment-only (12-factor, like pam-server):
 //
 //	PAM_AGENT_SERVERS         pam-server SSH listener(s), comma-separated host:port — one tunnel each (HA: list every replica)
 //	PAM_AGENT_NAME            the agent's registered name (POST /api/endpoint-agents)
 //	PAM_AGENT_KEY             the bearer key returned once at registration
-//	PAM_AGENT_LOCAL_ADDR      the one local address to expose (default 127.0.0.1:22)
+//	PAM_AGENT_MODE            tunnel (default) | probe — must match the kind the agent was registered as
+//	PAM_AGENT_LOCAL_ADDR      tunnel mode: the one local address to expose (default 127.0.0.1:22)
+//	PAM_AGENT_PROBE_INTERVAL  probe mode: seconds between scans (default 5)
 //	PAM_AGENT_SERVER_HOST_KEY pam-server's SSH host public key, authorized_keys format (`ssh-keyscan -p 2222 pam-host`) — required
 //	PAM_AGENT_INSECURE_SKIP_HOST_KEY=true  demos only: accept any server host key (a network attacker could then harvest PAM_AGENT_KEY)
 //	PAM_AGENT_LOG_LEVEL / PAM_AGENT_LOG_FORMAT  debug|info|warn|error / json|text (default info / json)
@@ -27,13 +36,16 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
 	"github.com/morandeirachema/pamv1/internal/endpointagent"
 	"github.com/morandeirachema/pamv1/internal/logging"
+	"github.com/morandeirachema/pamv1/internal/probe"
 )
 
 // version and commit are stamped at build time (see deploy/docker/Dockerfile).
@@ -57,9 +69,18 @@ func main() {
 		os.Exit(2)
 	}
 	cfg.Logger = log
+	cfg.Version = version
+	if cfg.Mode == endpointagent.ModeProbe {
+		pl, err := probe.NewPlatform()
+		if err != nil {
+			log.Error("probe mode unavailable", "err", err)
+			os.Exit(2)
+		}
+		cfg.ProbePlatform = pl
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	log.Info("pam-agent starting", "version", version, "commit", commit,
+	log.Info("pam-agent starting", "version", version, "commit", commit, "mode", cfg.Mode,
 		"servers", cfg.Servers, "agent", cfg.Name, "local", cfg.LocalAddr)
 	if err := endpointagent.Run(ctx, cfg); err != nil && !errors.Is(err, context.Canceled) {
 		log.Error("agent stopped", "err", err)
@@ -76,6 +97,21 @@ func configFromEnv() (endpointagent.Config, error) {
 		Name:      os.Getenv("PAM_AGENT_NAME"),
 		Key:       os.Getenv("PAM_AGENT_KEY"),
 		LocalAddr: os.Getenv("PAM_AGENT_LOCAL_ADDR"),
+		Mode:      strings.ToLower(strings.TrimSpace(os.Getenv("PAM_AGENT_MODE"))),
+	}
+	switch cfg.Mode {
+	case "":
+		cfg.Mode = endpointagent.ModeTunnel
+	case endpointagent.ModeTunnel, endpointagent.ModeProbe:
+	default:
+		return cfg, fmt.Errorf("PAM_AGENT_MODE=%q: must be tunnel or probe", cfg.Mode)
+	}
+	if v := os.Getenv("PAM_AGENT_PROBE_INTERVAL"); v != "" {
+		secs, err := strconv.Atoi(v)
+		if err != nil || secs < 1 || secs > 3600 {
+			return cfg, errors.New("PAM_AGENT_PROBE_INTERVAL must be 1–3600 seconds")
+		}
+		cfg.Probe.Interval = time.Duration(secs) * time.Second
 	}
 	for _, s := range strings.Split(os.Getenv("PAM_AGENT_SERVERS"), ",") {
 		if s = strings.TrimSpace(s); s != "" {

@@ -2389,10 +2389,13 @@ func (s *PGStore) DeleteScimKey(ctx context.Context, id int64) error {
 // A duplicate key hash or a second live agent for the target is ErrConflict;
 // a missing target is ErrNotFound.
 func (s *PGStore) CreateEndpointAgent(ctx context.Context, a *store.EndpointAgent) error {
+	if a.Kind == "" {
+		a.Kind = store.EndpointAgentTunnel
+	}
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO endpoint_agents (name, target_id, key_hash, created_by)
-		 VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
-		a.Name, a.TargetID, a.KeyHash, a.CreatedBy,
+		`INSERT INTO endpoint_agents (name, target_id, kind, key_hash, created_by)
+		 VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
+		a.Name, a.TargetID, a.Kind, a.KeyHash, a.CreatedBy,
 	).Scan(&a.ID, &a.CreatedAt)
 	switch pgCode(err) {
 	case pgUniqueViolation:
@@ -2407,21 +2410,22 @@ func (s *PGStore) CreateEndpointAgent(ctx context.Context, a *store.EndpointAgen
 // matches, or ErrNotFound.
 func (s *PGStore) GetEndpointAgentByKeyHash(ctx context.Context, keyHashHex string) (*store.EndpointAgent, error) {
 	return getOne(ctx, s.pool, scanEndpointAgent,
-		`SELECT id, name, target_id, key_hash, created_by, created_at, last_seen, revoked_at
+		`SELECT id, name, target_id, kind, key_hash, created_by, created_at, last_seen, revoked_at
 		 FROM endpoint_agents WHERE key_hash = $1`, keyHashHex)
 }
 
-// GetEndpointAgentForTarget returns the target's unrevoked agent, or ErrNotFound.
+// GetEndpointAgentForTarget returns the target's unrevoked TUNNEL agent, or
+// ErrNotFound: a probe (Phase 266) never becomes the target's dial.
 func (s *PGStore) GetEndpointAgentForTarget(ctx context.Context, targetID int64) (*store.EndpointAgent, error) {
 	return getOne(ctx, s.pool, scanEndpointAgent,
-		`SELECT id, name, target_id, key_hash, created_by, created_at, last_seen, revoked_at
-		 FROM endpoint_agents WHERE target_id = $1 AND revoked_at IS NULL`, targetID)
+		`SELECT id, name, target_id, kind, key_hash, created_by, created_at, last_seen, revoked_at
+		 FROM endpoint_agents WHERE target_id = $1 AND kind = $2 AND revoked_at IS NULL`, targetID, store.EndpointAgentTunnel)
 }
 
 // ListEndpointAgents returns every endpoint agent ordered by ID.
 func (s *PGStore) ListEndpointAgents(ctx context.Context) ([]store.EndpointAgent, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, target_id, key_hash, created_by, created_at, last_seen, revoked_at
+		`SELECT id, name, target_id, kind, key_hash, created_by, created_at, last_seen, revoked_at
 		 FROM endpoint_agents ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -2439,6 +2443,40 @@ func (s *PGStore) RevokeEndpointAgent(ctx context.Context, id int64, at time.Tim
 func (s *PGStore) TouchEndpointAgent(ctx context.Context, id int64, at time.Time) error {
 	return execExpectingRow(ctx, s.pool,
 		`UPDATE endpoint_agents SET last_seen = $2 WHERE id = $1`, id, at)
+}
+
+// CreateProbeRule inserts a probe block rule, populating ID and CreatedAt;
+// a TargetID naming no target is ErrNotFound (0 is stored as NULL: global).
+func (s *PGStore) CreateProbeRule(ctx context.Context, r *store.ProbeRule) error {
+	var target *int64
+	if r.TargetID != 0 {
+		target = &r.TargetID
+	}
+	err := s.pool.QueryRow(ctx,
+		`INSERT INTO probe_rules (target_id, kind, match, port, proto, note, created_by)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
+		target, r.Kind, r.Match, r.Port, r.Proto, r.Note, r.CreatedBy,
+	).Scan(&r.ID, &r.CreatedAt)
+	if pgCode(err) == pgForeignKeyViolation {
+		return store.ErrNotFound
+	}
+	return err
+}
+
+// ListProbeRules returns every probe block rule ordered by ID.
+func (s *PGStore) ListProbeRules(ctx context.Context) ([]store.ProbeRule, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, target_id, kind, match, port, proto, note, created_by, created_at
+		 FROM probe_rules ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanProbeRule)
+}
+
+// DeleteProbeRule removes a probe block rule by ID, or ErrNotFound.
+func (s *PGStore) DeleteProbeRule(ctx context.Context, id int64) error {
+	return execExpectingRow(ctx, s.pool, `DELETE FROM probe_rules WHERE id = $1`, id)
 }
 
 // GrantAppSecret authorizes an app to retrieve a credential's secret.
@@ -3331,8 +3369,20 @@ func scanScimKey(row pgx.CollectableRow) (store.ScimKey, error) {
 // scanEndpointAgent maps one result row into a store.EndpointAgent.
 func scanEndpointAgent(row pgx.CollectableRow) (store.EndpointAgent, error) {
 	var a store.EndpointAgent
-	err := row.Scan(&a.ID, &a.Name, &a.TargetID, &a.KeyHash, &a.CreatedBy, &a.CreatedAt, &a.LastSeen, &a.RevokedAt)
+	err := row.Scan(&a.ID, &a.Name, &a.TargetID, &a.Kind, &a.KeyHash, &a.CreatedBy, &a.CreatedAt, &a.LastSeen, &a.RevokedAt)
 	return a, err
+}
+
+// scanProbeRule maps one result row into a store.ProbeRule; a NULL target_id
+// (a global rule) reads as 0.
+func scanProbeRule(row pgx.CollectableRow) (store.ProbeRule, error) {
+	var r store.ProbeRule
+	var target *int64
+	err := row.Scan(&r.ID, &target, &r.Kind, &r.Match, &r.Port, &r.Proto, &r.Note, &r.CreatedBy, &r.CreatedAt)
+	if target != nil {
+		r.TargetID = *target
+	}
+	return r, err
 }
 
 // scanSession maps one result row into a store.Session.

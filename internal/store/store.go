@@ -895,9 +895,18 @@ type ScimKey struct {
 // set, is never an auth.Principal, and can open nothing toward PAMv1 — its
 // connection only ever carries channels PAMv1 opens toward IT.
 type EndpointAgent struct {
-	ID        int64      `json:"id"`
-	Name      string     `json:"name"`
-	TargetID  int64      `json:"target_id"`
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	TargetID int64  `json:"target_id"`
+	// Kind is what the agent's connection carries (Phase 266): a
+	// EndpointAgentTunnel holds the reverse tunnel described above; a
+	// EndpointAgentProbe is the session probe — it runs INSIDE an operator's
+	// logon session on the target with that user's own token, reports the
+	// session's processes and connections, and enforces ProbeRules there.
+	// A probe never registers a tunnel and a tunnel never speaks the probe
+	// protocol; the proxy refuses the other request either way. One live
+	// agent per (target, kind), so a target may carry both.
+	Kind      string     `json:"kind"`
 	KeyHash   string     `json:"-"`
 	CreatedBy string     `json:"created_by"`
 	CreatedAt time.Time  `json:"created_at"`
@@ -907,6 +916,46 @@ type EndpointAgent struct {
 
 // Active reports whether the agent may still authenticate (not revoked).
 func (a *EndpointAgent) Active() bool { return a.RevokedAt == nil }
+
+// The two EndpointAgent kinds. The zero value is normalized to a tunnel by
+// both store backends so rows and callers from before Phase 266 keep meaning
+// what they meant.
+const (
+	EndpointAgentTunnel = "tunnel"
+	EndpointAgentProbe  = "probe"
+)
+
+// The two ProbeRule kinds.
+const (
+	ProbeRuleProcess    = "process"
+	ProbeRuleConnection = "connection"
+)
+
+// ProbeRule is one block rule a session probe (Phase 266) enforces inside an
+// operator's logon session on a target — the Windows-desktop counterpart of
+// the command denylist, and like it NOT a containment boundary: the probe
+// runs with the session user's own permissions, so it can end only what that
+// user could end, and the user can end the probe.
+//
+// A process rule (Kind ProbeRuleProcess) names an image by glob (`Match`,
+// case-insensitive, matched against the image name and the full path —
+// "powershell*", "*\psexec.exe"); a matching process seen in the session is
+// terminated. A connection rule (Kind ProbeRuleConnection) names a remote
+// address (`Match`: an IP or CIDR, empty = any), a remote `Port` (0 = any)
+// and a `Proto` ("tcp"/"udp", empty = either); the session process holding a
+// matching connection is terminated. TargetID scopes the rule to one target;
+// 0 applies it to every probed target.
+type ProbeRule struct {
+	ID        int64     `json:"id"`
+	TargetID  int64     `json:"target_id"`
+	Kind      string    `json:"kind"`
+	Match     string    `json:"match"`
+	Port      int       `json:"port,omitempty"`
+	Proto     string    `json:"proto,omitempty"`
+	Note      string    `json:"note,omitempty"`
+	CreatedBy string    `json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
+}
 
 // The two audit actions a brokered tool call spends budget on, spelled here so
 // both store backends charge for exactly the same thing.
@@ -2223,6 +2272,20 @@ type EndpointAgentStore interface {
 	TouchEndpointAgent(ctx context.Context, id int64, at time.Time) error
 }
 
+// ProbeRuleStore holds the block rules session probes enforce (Phase 266).
+// The rules are durable; which probes are connected right now is in-process
+// state in probe.Hub, which re-pushes the rule set to every probe of a target
+// whenever it changes.
+type ProbeRuleStore interface {
+	// CreateProbeRule inserts a rule, populating ID and CreatedAt; a
+	// TargetID that names no target is ErrNotFound.
+	CreateProbeRule(ctx context.Context, r *ProbeRule) error
+	// ListProbeRules returns every rule ordered by ID.
+	ListProbeRules(ctx context.Context) ([]ProbeRule, error)
+	// DeleteProbeRule removes a rule, or ErrNotFound.
+	DeleteProbeRule(ctx context.Context, id int64) error
+}
+
 // VendorStore is the third-party vendor access gate.
 type VendorStore interface {
 	// Third-party vendor access gate (Phase 29).
@@ -2460,6 +2523,7 @@ type Store interface {
 	AppSecretStore
 	ScimStore
 	EndpointAgentStore
+	ProbeRuleStore
 	VendorStore
 	ShareInviteStore
 	ApprovalInviteStore

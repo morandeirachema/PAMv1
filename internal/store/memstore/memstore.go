@@ -45,6 +45,7 @@ type Memstore struct {
 	appGrants        map[int64]store.AppSecretGrant
 	scimKeys         map[int64]store.ScimKey
 	endpointAgents   map[int64]store.EndpointAgent
+	probeRules       map[int64]store.ProbeRule
 	brokerLog        []store.BrokerAuditEvent
 	brokerTok        map[string]store.BrokerToken
 	settings         map[string]store.Setting
@@ -100,6 +101,7 @@ func New() *Memstore {
 		appGrants:        make(map[int64]store.AppSecretGrant),
 		scimKeys:         make(map[int64]store.ScimKey),
 		endpointAgents:   make(map[int64]store.EndpointAgent),
+		probeRules:       make(map[int64]store.ProbeRule),
 		brokerTok:        make(map[string]store.BrokerToken),
 		settings:         make(map[string]store.Setting),
 		keyMaterial:      make(map[string]string),
@@ -268,6 +270,12 @@ func (m *Memstore) DeleteTarget(_ context.Context, id int64) error {
 	for eid, ea := range m.endpointAgents {
 		if ea.TargetID == id {
 			delete(m.endpointAgents, eid)
+		}
+	}
+	// probe_rules.target_id cascades too (Phase 266); a global rule (0) stays.
+	for rid, pr := range m.probeRules {
+		if pr.TargetID == id {
+			delete(m.probeRules, rid)
 		}
 	}
 	// pgstore FKs cascade checkouts on target delete — match it so an orphaned
@@ -2942,8 +2950,11 @@ func (m *Memstore) CreateEndpointAgent(_ context.Context, a *store.EndpointAgent
 	if _, ok := m.targets[a.TargetID]; !ok {
 		return store.ErrNotFound
 	}
+	if a.Kind == "" {
+		a.Kind = store.EndpointAgentTunnel
+	}
 	for _, existing := range m.endpointAgents {
-		if existing.KeyHash == a.KeyHash || (existing.TargetID == a.TargetID && existing.RevokedAt == nil) {
+		if existing.KeyHash == a.KeyHash || (existing.TargetID == a.TargetID && existing.Kind == a.Kind && existing.RevokedAt == nil) {
 			return store.ErrConflict
 		}
 	}
@@ -2967,12 +2978,13 @@ func (m *Memstore) GetEndpointAgentByKeyHash(_ context.Context, keyHashHex strin
 	return nil, store.ErrNotFound
 }
 
-// GetEndpointAgentForTarget returns the target's unrevoked agent, or ErrNotFound.
+// GetEndpointAgentForTarget returns the target's unrevoked TUNNEL agent, or
+// ErrNotFound: a probe (Phase 266) never becomes the target's dial.
 func (m *Memstore) GetEndpointAgentForTarget(_ context.Context, targetID int64) (*store.EndpointAgent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, a := range m.endpointAgents {
-		if a.TargetID == targetID && a.RevokedAt == nil {
+		if a.TargetID == targetID && a.Kind == store.EndpointAgentTunnel && a.RevokedAt == nil {
 			out := a
 			return &out, nil
 		}
@@ -3019,6 +3031,45 @@ func (m *Memstore) TouchEndpointAgent(_ context.Context, id int64, at time.Time)
 	t := at.UTC()
 	a.LastSeen = &t
 	m.endpointAgents[id] = a
+	return nil
+}
+
+// CreateProbeRule inserts a probe block rule, assigning ID and CreatedAt;
+// ErrNotFound if it names a target that does not exist.
+func (m *Memstore) CreateProbeRule(_ context.Context, r *store.ProbeRule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if r.TargetID != 0 {
+		if _, ok := m.targets[r.TargetID]; !ok {
+			return store.ErrNotFound
+		}
+	}
+	r.ID = m.id()
+	r.CreatedAt = time.Now().UTC()
+	m.probeRules[r.ID] = *r
+	return nil
+}
+
+// ListProbeRules returns every probe block rule ordered by ID.
+func (m *Memstore) ListProbeRules(_ context.Context) ([]store.ProbeRule, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]store.ProbeRule, 0, len(m.probeRules))
+	for _, r := range m.probeRules {
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// DeleteProbeRule removes a probe block rule; ErrNotFound if absent.
+func (m *Memstore) DeleteProbeRule(_ context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.probeRules[id]; !ok {
+		return store.ErrNotFound
+	}
+	delete(m.probeRules, id)
 	return nil
 }
 
