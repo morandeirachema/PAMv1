@@ -72,8 +72,10 @@ flowchart LR
     n_blast[blast]
     n_cmdguard[cmdguard]
     n_conjur[conjur]
+    n_csvcell[csvcell]
     n_endpointagent[endpointagent]
     n_icap[icap]
+    n_inventorycsv[inventorycsv]
     n_jwtutil[jwtutil]
     n_k8s[k8s]
     n_keycustody[keycustody]
@@ -169,6 +171,7 @@ flowchart LR
   n_conjur --> n_logging
   n_endpointagent --> n_probe
   n_guacd --> n_auditfmt
+  n_inventorycsv --> n_csvcell
   n_keycustody --> n_store
   n_maint --> n_store
   n_maint --> n_vault
@@ -238,6 +241,7 @@ flowchart LR
   n_proxy --> n_vault
   n_proxy --> n_winrm
   n_report --> n_auditfmt
+  n_report --> n_csvcell
   n_report --> n_store
   n_restrict --> n_store
   n_rotate --> n_store

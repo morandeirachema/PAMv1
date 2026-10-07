@@ -3,8 +3,9 @@ package report
 import (
 	"encoding/csv"
 	"io"
-	"strings"
 	"time"
+
+	"github.com/morandeirachema/pamv1/internal/csvcell"
 )
 
 // WriteConnectionsCSV writes one row per connection — ts (RFC 3339, UTC),
@@ -25,14 +26,6 @@ func WriteConnectionsCSV(w io.Writer, conns []Connection) error {
 	return cw.Error()
 }
 
-// csvCell defuses CSV/formula injection (CWE-1236). The user column is an
-// actor name, which for a guest or a directory identity is not a validated
-// identifier; a cell beginning with = + - @ or a tab/CR is read as a formula
-// by common spreadsheets, so it is prefixed with a single quote, the OWASP
-// recommendation. encoding/csv already quotes commas, quotes and newlines.
-func csvCell(s string) string {
-	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
-		return "'" + s
-	}
-	return s
-}
+// csvCell is csvcell.Neutralize: the user column is an actor name, which
+// for a guest or a directory identity is not a validated identifier.
+func csvCell(s string) string { return csvcell.Neutralize(s) }
