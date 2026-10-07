@@ -268,6 +268,11 @@ type Options struct {
 	ShareSMTPFrom string
 	ShareSMTPUser string
 	ShareSMTPPass string
+	// DigestTo / DigestHour configure the daily report digest (Phase 277):
+	// mailed to DigestTo through the ShareSMTP relay once a day at DigestHour
+	// UTC by RunDigestWorker. Empty DigestTo disables it.
+	DigestTo   []string
+	DigestHour int
 	// Cluster (optional) is the cross-replica live-monitoring coordinator
 	// (Phase 55): GET /api/sessions lists cluster-wide and the stream endpoint
 	// can watch a session hosted on another replica. nil = replica-local, the
@@ -564,6 +569,7 @@ type Server struct {
 	shareSMTPFrom      string
 	shareSMTPUser      string
 	shareSMTPPass      string
+	digest             digestState
 	cluster            *session.Cluster
 	stepup             *session.StepUp
 	bgThreshold        int
@@ -886,6 +892,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		shareSMTPFrom:       opts.ShareSMTPFrom,
 		shareSMTPUser:       opts.ShareSMTPUser,
 		shareSMTPPass:       opts.ShareSMTPPass,
+		digest:              digestState{to: opts.DigestTo, hour: opts.DigestHour},
 		cluster:             opts.Cluster,
 		stepup:              opts.StepUp,
 		bgThreshold:         opts.BreakGlassThreshold,

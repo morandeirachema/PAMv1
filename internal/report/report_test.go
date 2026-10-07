@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"encoding/csv"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,5 +130,34 @@ func TestWriteConnectionsCSV(t *testing.T) {
 	}
 	if rows[3][1] != "guest:a,b@example.com" {
 		t.Errorf("comma cell must round-trip: %q", rows[3][1])
+	}
+}
+
+func TestDigest(t *testing.T) {
+	events := append(trail(),
+		store.AuditEvent{TS: at(5), Actor: "alice", Action: "target.critical_connect", Detail: "target:pg-01 protocol:postgres cred_user:app"},
+		store.AuditEvent{TS: at(6), Actor: "evil\nCONNECTIONS: 0", Action: "target.critical_connect", Detail: "target:pg-01 protocol:postgres cred_user:app"},
+	)
+	st := Summarize(Connections(events), day0, day0.AddDate(0, 0, 1))
+	crit := CriticalConnects(events)
+	unused := Unused{Users: []UnusedUser{{Username: "zoe", Role: "user"}}, Targets: []UnusedTarget{{Name: "idle-01", Protocol: "ssh", Critical: true}}, TooNewUsers: 1}
+	subject, body := Digest("2026-10-01", st, crit, unused, 30)
+	if subject != "[PAMv1] Daily report 2026-10-01: 4 connections, 2 to critical targets" {
+		t.Errorf("subject = %q", subject)
+	}
+	for _, want := range []string{
+		"CONNECTIONS: 4\n",
+		"2026-10-01T05:00:00Z  alice -> pg-01 (postgres)\n",
+		"UNUSED IN THE LAST 30 DAYS: 1 users, 1 targets\n",
+		"  user   zoe (user)\n",
+		"  target idle-01 (ssh, critical)\n",
+		"created inside the window: 1 users, 0 targets",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("digest lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "\nCONNECTIONS: 0") {
+		t.Fatalf("an actor name forged a report line:\n%s", body)
 	}
 }

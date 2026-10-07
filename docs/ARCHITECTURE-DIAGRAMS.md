@@ -237,6 +237,7 @@ flowchart LR
   n_proxy --> n_tds
   n_proxy --> n_vault
   n_proxy --> n_winrm
+  n_report --> n_auditfmt
   n_report --> n_store
   n_restrict --> n_store
   n_rotate --> n_store

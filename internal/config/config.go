@@ -279,6 +279,11 @@ type Config struct {
 	ApprovalTimeout         time.Duration
 	ApprovalCommentRequired bool
 	AirGap                  bool
+	// ReportDigestTo (Phase 277) is the comma-separated recipients of the
+	// daily report digest, mailed through the PAM_ALERT_EMAIL_* relay at
+	// ReportDigestHour (UTC, 0-23, default 6); empty disables the digest.
+	ReportDigestTo   string
+	ReportDigestHour int
 	// ITSM / ticketing gate (Phase 20). RequireTicket makes an access request
 	// carry a change/incident ticket; TicketPattern is a regex it must match and
 	// TicketValidateURL is a webhook the ITSM system answers 2xx for a valid ticket.
@@ -919,6 +924,8 @@ func Load() (*Config, error) {
 		RequireApproval:         boolean("PAM_REQUIRE_APPROVAL", false),
 		ApprovalWindow:          time.Duration(integer("PAM_APPROVAL_WINDOW_MIN", 60)) * time.Minute,
 		ApprovalTimeout:         time.Duration(integer("PAM_APPROVAL_TIMEOUT_MIN", 0)) * time.Minute,
+		ReportDigestTo:          os.Getenv("PAM_REPORT_DIGEST_TO"),
+		ReportDigestHour:        integer("PAM_REPORT_DIGEST_HOUR", 6),
 		ApprovalCommentRequired: boolean("PAM_APPROVAL_COMMENT_REQUIRED", false),
 		RequireTicket:           boolean("PAM_REQUIRE_TICKET", false),
 		RevalidateTicket:        boolean("PAM_TICKET_REVALIDATE", false),
@@ -1429,6 +1436,12 @@ func Load() (*Config, error) {
 	if emailSet != 0 && emailSet != 3 {
 		errs = append(errs, "PAM_ALERT_EMAIL_SMTP, PAM_ALERT_EMAIL_FROM and PAM_ALERT_EMAIL_TO must all be set together (or all empty)")
 	}
+	if cfg.ReportDigestTo != "" && (cfg.AlertEmailSMTP == "" || cfg.AlertEmailFrom == "") {
+		errs = append(errs, "PAM_REPORT_DIGEST_TO mails through the alert relay: set PAM_ALERT_EMAIL_SMTP and PAM_ALERT_EMAIL_FROM too")
+	}
+	if cfg.ReportDigestHour < 0 || cfg.ReportDigestHour > 23 {
+		errs = append(errs, "PAM_REPORT_DIGEST_HOUR must be 0-23 (UTC)")
+	}
 	errs = append(errs, airGapConflicts(cfg)...)
 	if cfg.ApprovalTimeout < 0 {
 		errs = append(errs, "PAM_APPROVAL_TIMEOUT_MIN must be 0 (never) or positive")
@@ -1513,6 +1526,7 @@ func airGapConflicts(cfg *Config) []string {
 		{"PAM_SAML_IDP_METADATA_URL", cfg.SAMLIDPMetadataURL},
 		{"PAM_CONJUR_URL", os.Getenv("PAM_CONJUR_URL")},
 		{"PAM_ALERT_WEBHOOK", cfg.AlertWebhook},
+		{"PAM_REPORT_DIGEST_TO", cfg.ReportDigestTo},
 	} {
 		if c.value != "" && !allowed[c.name] {
 			errs = append(errs, fmt.Sprintf(

@@ -1338,6 +1338,8 @@ func run() error {
 		ShareSMTPFrom:             cfg.AlertEmailFrom,
 		ShareSMTPUser:             cfg.AlertEmailUser,
 		ShareSMTPPass:             cfg.AlertEmailPass,
+		DigestTo:                  splitAndTrim(cfg.ReportDigestTo),
+		DigestHour:                cfg.ReportDigestHour,
 		Cluster:                   cluster,
 		StepUp:                    stepUp,
 		SSHHostKeyCallback:        upstreamHostKey,
@@ -1478,6 +1480,8 @@ func run() error {
 	// Grant expiry (Phase 240): expired target grants and safe memberships are
 	// deleted and audited; same unconditional shape as the two above.
 	go handler.RunGrantExpirySweeper(ctx)
+	// The daily report digest (Phase 277); a no-op without PAM_REPORT_DIGEST_TO.
+	go handler.RunDigestWorker(ctx)
 	// Runtime secret refresh (Phase 78, rebuilt in Phase 80). Opt-in, and NOT
 	// leader-locked: every replica holds its own copy of these comparison values,
 	// so every replica has to re-read them itself — a leader-only refresh would
