@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-10-07 · Reflects: Phases 0–227 and 229–280 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-10-08 · Reflects: Phases 0–227 and 229–281 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** PAMv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -542,6 +542,17 @@ What is deliberately left out:
 
 Each export is audited `inventory.export` and each import `inventory.import`,
 with the class and the row counts. Console: main menu **37**.
+
+**Since the review of 274–280 (Phase 281):**
+
+- A target in a personal safe is not exported at all, nor its credentials and
+  grants. Exported without its safe it would have imported as a target in no
+  safe, open to everyone who may connect.
+- If a target is created but cannot be placed in its safe, it is deleted again
+  (audited) and the row is reported failed.
+- The `secret` column is read exactly as written: no trimming, no formula
+  quote removed.
+- A label key that appears twice in one cell fails the row.
 
 ## 6. Managing credentials
 
@@ -1490,6 +1501,19 @@ scenario runs, and no longer. A scenario that needs the password on a
 credential without one, such as an SSH certificate credential, is refused
 when the session opens.
 
+**Since the review of 274–280 (Phase 281):**
+
+- A scenario that types `${password}` can be set or changed only by someone
+  with the reveal capability. Whoever writes it decides what is typed with
+  the secret, and `send echo ${password}` would print it.
+- A telnet session is a shell: it needs the `ssh_shell` right where a
+  target's or grant's sub-protocol set is narrowed, and it waits for a
+  supervisor under `PAM_REQUIRE_SUPERVISION`.
+- `outcome:ok` means every step of the scenario ran. The default login ends
+  with sending the password, so a wrong password still shows `ok`; end a
+  scenario with an `expect` for the device's prompt to make a failed login
+  fail the scenario.
+
 ### Database targets (SQL Server)
 
 Phase 53 adds the TDS sibling of the PostgreSQL proxy. Same gates, same guards,
@@ -2032,6 +2056,17 @@ minus nothing that a proxy can honour:
   pending two hours after it was filed (`access.expired`, actor `system`,
   alerted), so an unanswered request does not sit open for days. Approved
   requests are unaffected — their own window governs.
+
+**Since the review of 274–280 (Phase 281):**
+
+- A granted duration counts from the start of the requested window when that
+  is later than the approval, so approving tomorrow's window today grants the
+  first part of tomorrow's window.
+- Every approver's duration narrows the window, partial approvers' too; the
+  shortest wins.
+- With `PAM_APPROVAL_COMMENT_REQUIRED`, Slack buttons and magic links are
+  refused too (`access.decision_denied reason:comment-required`); decide in
+  the portal, where a comment can be typed.
 
 ### Level-tiered and direct-manager approval (Phase 256)
 
@@ -3704,6 +3739,17 @@ then to the default; the SSH proxy always uses the default). `\n` in a value
 is a line break. Database sessions and WinRM have no banner mechanism of
 their own and show none.
 
+**Since the review of 274–280 (Phase 281):**
+
+- The SSH session notice is printed on **stderr**. On stdout it corrupted SFTP,
+  scp and the output of `ssh target command > file`.
+- With a session notice configured, a desktop opens only with a token from
+  `/api/rdp-token` or `/api/vnc-token`, which is where the notice is
+  acknowledged. An API key or a session-MFA ticket in the tunnel URL is refused
+  (`authz.denied reason:consent-required`).
+- If only language variants are set (`PAM_BANNER_SESSION_ES` with no default),
+  the first variant is shown for every other language rather than nothing.
+
 ### 9.1 Operational logs (stdout)
 
 Structured [slog](https://pkg.go.dev/log/slog) lines, one per event, tagged with
@@ -3955,6 +4001,18 @@ failover neither repeats nor skips a day. A failed send is audited
 digest is refused unless `PAM_OT_AIRGAP_ALLOW` names `PAM_REPORT_DIGEST_TO`,
 certifying the relay is inside the enclave.
 
+**Since the review of 274–280 (Phase 281):**
+
+- Brokered kubectl operations and REST WinRM commands count as connections,
+  and to a critical target they raise the same alert. A kubernetes target never
+  opens a session, so before this it always read as unused.
+- A sign-in counts as use only once completed: a password accepted while a
+  second factor is pending does not.
+- Reports read only the audit actions they count, not the whole window.
+- Reports match targets by **name**: a target renamed during the window reads
+  as unused under its new name, and a name reused for a new target inherits
+  the old one's use.
+
 ### 9.3 Session recordings
 
 **Encryption at rest (Phase 41).** By default a recording is protected only by its
@@ -4171,6 +4229,11 @@ export PAM_ICAP_DESKTOP_MAX_MB=25    # largest transfer held in memory
 - What may cross at all is still decided first by `PAM_RDP_CLIPBOARD` and
   the target's drive right; scanning only judges what policy allows.
 - Images, sound and directory listings are never held.
+- A message the portal cannot read as Guacamole instructions ends the session
+  (`rdp.refused reason:unframeable-instruction`) rather than being passed on
+  unscanned. At most four transfers are held at once per session; a fifth is
+  refused (`outcome:too-many-transfers`). An upload's final acknowledgement
+  comes from guacd, so a write the target refuses shows as refused.
 - With `PAM_ICAP_DESKTOP` on, `PAM_ICAP_URL` no longer needs SFTP capture.
 
 Operators copy and paste in the viewer with **Ctrl+Alt+V** (paste the
@@ -4505,6 +4568,18 @@ crosses the limit is the one refused. Like command control, this is not a
 containment boundary: an interactive shell is never parsed, so a
 restriction covers the paths where a discrete command or transfer is
 visible — exec, WinRM, SQL, kubectl and SFTP.
+
+**Since the review of 274–280 (Phase 281):**
+
+- Every size rule in a direction applies. A `$filesize:>10m` notify rule and a
+  `$filesize:>100m` kill rule both fire on a large upload; before, the smaller
+  rule hid the larger.
+- Sizes are counted per open file handle and start again when the file is
+  closed. A file written across several opens is judged per open.
+- A kill rule on `sql` ends the database session, as it does on SSH and WinRM.
+- An `sftp` rule must be a size rule; a regex there never ran and is refused.
+- Listing the rules needs `CapReadAudit` (auditors and admins), so the users
+  a rule watches cannot read it.
 
 ### 9.4b Mandatory live supervision (Phase 112)
 
@@ -5343,6 +5418,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-10-08 | **Phase 281 (review of 274–280).** "Since the review" notes in §5.1, the telnet section, the approval-depth section, §9.1a, §9.2c, §9.3c and §9.4a: what changed in behaviour and why. |
 | 2026-10-07 | **Phase 280 (desktop ICAP).** §9.3c *Scanning desktop transfers*: holding file and clipboard streams for ICAP, outcomes, audit and alerts, the viewer's Ctrl+Alt+V and Ctrl+Alt+U; the SFTP ICAP note no longer says desktops are unscanned; env row. |
 | 2026-10-07 | **Phase 279 (telnet and scenarios).** New subsection *Telnet targets and startup scenarios*: the cleartext opt-in, connecting, the scenario syntax, the SSH scripted first step, what is hidden and audited, the secret's lifetime; env row `PAM_TELNET_ENABLED`. |
 | 2026-10-07 | **Phase 278 (inventory CSV).** §5.1 new subsection: the five classes, their capabilities and references, import semantics (create only, per-row results, all-or-nothing parsing), what is never exported. |
