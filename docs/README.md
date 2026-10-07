@@ -1,6 +1,6 @@
 # PAMv1 — documentation
 
-> Last updated: 2026-10-07 · Reflects: Phases 0–227 and 229–278, and release v0.0.78 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-10-07 · Reflects: Phases 0–227 and 229–279, and release v0.0.78 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-10-07 | Phase 279 (telnet and scenarios) documented: ARCHITECTURE-LOW-LEVEL (package tree, env row, audit vocabulary, invariant 6, tests, change log), ARCHITECTURE-HIGH-LEVEL, ADMIN-GUIDE (telnet and scenarios + env row), USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE (`0068`), PORTS-AND-FLOWS (E18, telnet 23), PROTOCOLS-AND-CRYPTO (telnet outbound), README Tier 9 and Tier 10 rows. |
 | 2026-10-07 | Phase 278 (inventory CSV) documented: ARCHITECTURE-LOW-LEVEL (package tree, audit vocabulary, tests, change log), ARCHITECTURE-HIGH-LEVEL (table row, change log), ADMIN-GUIDE (§5.1), USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE (a CSV export is not a backup), README Tier 10 row 9, ARCHITECTURE-DIAGRAMS (routes 237). |
 | 2026-10-07 | Phase 277 (reporting) documented: ARCHITECTURE-LOW-LEVEL (package tree, env row, audit vocabulary, tests, change log), ARCHITECTURE-HIGH-LEVEL (table row, change log), ADMIN-GUIDE (§9.2c + env row), USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE (`0067`), README Tier 10 row 8, ARCHITECTURE-DIAGRAMS (routes 227). |
 | 2026-09-22 | Phase 276 (banners) documented: ARCHITECTURE-LOW-LEVEL (package tree, env row, audit vocabulary, tests, change log), ARCHITECTURE-HIGH-LEVEL (table row, change log), ADMIN-GUIDE (§9.1a + env row), USER-GUIDE, CODE-GUIDE, README Tier 10 row 7, ARCHITECTURE-DIAGRAMS (routes 225). |

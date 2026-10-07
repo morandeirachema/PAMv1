@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
+	"github.com/morandeirachema/pamv1/internal/expect"
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/timeframe"
 )
@@ -18,7 +21,7 @@ var (
 	// "kubernetes" (Phase 155) is a cluster's API server rather than a host:
 	// there is no session to proxy, only discrete, audited kubectl-shaped
 	// operations over POST /api/targets/{id}/kubectl.
-	validProtocol = map[string]bool{"ssh": true, "winrm": true, "rdp": true, "vnc": true, "postgres": true, "mssql": true, "kubernetes": true}
+	validProtocol = map[string]bool{"ssh": true, "winrm": true, "rdp": true, "vnc": true, "postgres": true, "mssql": true, "kubernetes": true, "telnet": true}
 	// "ssh_ca" and "db_zsp" are Zero Standing Privilege credentials (Phase 22,
 	// extended to databases in Phase 129): neither stores a secret — the proxy
 	// mints a short-lived certificate, or provisions-and-drops an ephemeral
@@ -54,6 +57,10 @@ type targetIn struct {
 	RequireSessionMFA bool `json:"require_session_mfa"`
 	// Critical makes every connection to the target alert (Phase 277).
 	Critical bool `json:"critical"`
+	// Scenario is the SEND/EXPECT startup scenario (Phase 279), validated
+	// by expect.Parse and stored canonical; ssh and telnet targets only.
+	Scenario string `json:"scenario"`
+	scenario string
 	// Per-target RDP clipboard tightening; "" inherits the global policy and the
 	// effective mode is the stricter of the two.
 	RDPClipboard      string `json:"rdp_clipboard"`
@@ -88,8 +95,11 @@ func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
 		// a Kubernetes API server is 6443, and defaulting it to 22 would only
 		// ever produce a connection refused on the first brokered call.
 		in.Port = 22
-		if in.Protocol == "kubernetes" {
+		switch in.Protocol {
+		case "kubernetes":
 			in.Port = 6443
+		case "telnet":
+			in.Port = 23
 		}
 	}
 	switch {
@@ -102,7 +112,11 @@ func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
 	case !validOS[in.OSType]:
 		writeError(w, http.StatusUnprocessableEntity, `os_type must be "linux" or "windows"`)
 	case !validProtocol[in.Protocol]:
-		writeError(w, http.StatusUnprocessableEntity, `protocol must be "ssh", "winrm", "rdp", "vnc", "postgres", "mssql" or "kubernetes"`)
+		writeError(w, http.StatusUnprocessableEntity, `protocol must be "ssh", "winrm", "rdp", "vnc", "postgres", "mssql", "kubernetes" or "telnet"`)
+	case in.Protocol == "telnet" && !s.telnetEnabled:
+		writeError(w, http.StatusUnprocessableEntity, "telnet targets are disabled: telnet carries the credential in cleartext; set PAM_TELNET_ENABLED=true to accept that")
+	case in.Scenario != "" && in.Protocol != "ssh" && in.Protocol != "telnet":
+		writeError(w, http.StatusUnprocessableEntity, "a scenario runs on ssh and telnet targets only")
 	case !s.protocolAllowed(in.Protocol):
 		writeError(w, http.StatusUnprocessableEntity, "protocol "+in.Protocol+" is not allowed by policy")
 	case !validOverride(clipboardRank, in.RDPClipboard):
@@ -128,6 +142,12 @@ func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
 			return false
 		}
 		in.approvalTiers = tiers
+		sc, err := expect.Parse(in.Scenario)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "scenario: "+err.Error())
+			return false
+		}
+		in.scenario = sc.String()
 		return true
 	}
 	return false
@@ -137,7 +157,8 @@ func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
 func targetFromIn(in targetIn) store.Target {
 	return store.Target{Name: in.Name, Host: in.Host, Port: in.Port, OSType: in.OSType, Protocol: in.Protocol,
 		RequireApproval: in.RequireApproval, RequireSessionMFA: in.RequireSessionMFA, Critical: in.Critical,
-		RDPClipboard: in.RDPClipboard, RDPClipboardAudit: in.RDPClipboardAudit, Labels: in.labels, ApprovalTiers: in.approvalTiers, Rights: in.rights}
+		RDPClipboard: in.RDPClipboard, RDPClipboardAudit: in.RDPClipboardAudit, Labels: in.labels, ApprovalTiers: in.approvalTiers, Rights: in.rights,
+		Scenario: in.scenario}
 }
 
 // rightsDetail renders a target's sub-protocol set for an audit detail
@@ -177,7 +198,15 @@ func clipDetail(t store.Target) string {
 	// what every session to the target must prove (Phase 244).
 	// critical rides along too (Phase 277): clearing it silences the alert on
 	// every connection, which is exactly the edit an insider would want quiet.
-	return fmt.Sprintf("clipboard:%s clip_audit:%s require_session_mfa:%t critical:%t", orDash(t.RDPClipboard), orDash(t.RDPClipboardAudit), t.RequireSessionMFA, t.Critical)
+	// The scenario (Phase 279) decides what PAMv1 types into the target
+	// with the vaulted secret, so setting or clearing it is recorded too —
+	// by its digest, which names the exact script without spelling it out.
+	scenario := "-"
+	if t.Scenario != "" {
+		sum := sha256.Sum256([]byte(t.Scenario))
+		scenario = hex.EncodeToString(sum[:])[:16]
+	}
+	return fmt.Sprintf("clipboard:%s clip_audit:%s require_session_mfa:%t critical:%t scenario:%s", orDash(t.RDPClipboard), orDash(t.RDPClipboardAudit), t.RequireSessionMFA, t.Critical, scenario)
 }
 
 // createTarget validates and persists a new target (defaulting the port to 22),

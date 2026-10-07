@@ -74,6 +74,7 @@ flowchart LR
     n_conjur[conjur]
     n_csvcell[csvcell]
     n_endpointagent[endpointagent]
+    n_expect[expect]
     n_icap[icap]
     n_inventorycsv[inventorycsv]
     n_jwtutil[jwtutil]
@@ -96,6 +97,7 @@ flowchart LR
     n_sessionforensics[sessionforensics]
     n_slack[slack]
     n_sshca[sshca]
+    n_telnet[telnet]
     n_testutil[testutil]
     n_ticket[ticket]
     n_timeframe[timeframe]
@@ -121,6 +123,7 @@ flowchart LR
   n_api --> n_cmdguard
   n_api --> n_config
   n_api --> n_discovery
+  n_api --> n_expect
   n_api --> n_guacd
   n_api --> n_inventorycsv
   n_api --> n_k8s
@@ -227,6 +230,7 @@ flowchart LR
   n_proxy --> n_auth
   n_proxy --> n_banner
   n_proxy --> n_cmdguard
+  n_proxy --> n_expect
   n_proxy --> n_icap
   n_proxy --> n_logging
   n_proxy --> n_oncall
@@ -239,6 +243,7 @@ flowchart LR
   n_proxy --> n_sshca
   n_proxy --> n_store
   n_proxy --> n_tds
+  n_proxy --> n_telnet
   n_proxy --> n_vault
   n_proxy --> n_winrm
   n_report --> n_auditfmt
@@ -593,6 +598,7 @@ erDiagram
     string ApprovalTiers
     string Rights
     bool Critical
+    string Scenario
     time_Time CreatedAt
   }
   TargetGrant {

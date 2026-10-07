@@ -92,7 +92,7 @@ func (s *Server) inventoryRows(ctx context.Context, c inventorycsv.Class) ([][]s
 			}
 			rows = append(rows, []string{t.Name, t.Host, strconv.Itoa(t.Port), t.OSType, t.Protocol, safe,
 				b(t.RequireApproval), b(t.RequireSessionMFA), b(t.Critical), t.Labels, t.ApprovalTiers, t.Rights,
-				t.RDPClipboard, t.RDPClipboardAudit})
+				t.RDPClipboard, t.RDPClipboardAudit, t.Scenario})
 		}
 	case inventorycsv.Credentials.Name:
 		creds, err := s.store.ListCredentialsMeta(ctx, 0, 0, 0)

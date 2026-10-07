@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-10-07 · Reflects: Phases 0–227 and 229–278 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-10-07 · Reflects: Phases 0–227 and 229–279 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** PAMv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -294,6 +294,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_SSH_PORT_FORWARD` | | `true` | **`ssh -L` port forwarding** (Phase 141): a client-initiated forward is admitted only to the connected target's own host (any port). `false` disables the feature deployment-wide. Always refused in an observer session or while `PAM_REQUIRE_LIVE_SUPERVISION`/`PAM_REQUIRE_RECORDING` are set. See §9.4. |
 | `PAM_BANNER_LOGIN` / `PAM_BANNER_SESSION` | | | (Phase 276) The **login banner** (shown before authentication: SSH pre-auth banner, sign-on screen) and the **session notice** (recording consent: printed into every SSH session and its recording; acknowledged before a desktop opens). `\n` is a line break. Add `_ES`, `_FR`, … for per-language variants (`PAM_BANNER_LOGIN_ES`); a language without one gets the default. See §9.1a. |
 | `PAM_REPORT_DIGEST_TO` / `PAM_REPORT_DIGEST_HOUR` | | `6` | (Phase 277) Recipients (comma-separated) of the **daily report digest**, and the UTC hour it goes out. Sent through the `PAM_ALERT_EMAIL_*` relay, which must be configured. Empty disables it. See §9.2c. |
+| `PAM_TELNET_ENABLED` | | `false` | (Phase 279) Allows **telnet** targets. Telnet carries the injected credential and the session in cleartext between PAMv1 and the target, so it is off until you accept that. See *Telnet targets and startup scenarios*. |
 | `PAM_RDP_DRIVE` / `PAM_RDP_PRINTER` / `PAM_RDP_AUDIO` / `PAM_RDP_AUDIO_IN` | | `false` / `false` / `true` / `false` | (Phase 270) Deployment ceilings for the RDP redirections a target's or grant's **rights** may enable; see "Sub-protocol rights" under §6. |
 | `PAM_RDP_CLIPBOARD` | | `allow` | RDP clipboard policy (Phase 33): `allow`, `readonly` (block paste into the target), `deny` (clipboard off both ways); drive redirection always off. A target's `rdp_clipboard` field can tighten this per target — the **stricter** of the two wins. |
 | `PAM_RDP_CLIPBOARD_AUDIT` | | `off` | **Audit clipboard transfers** (Phase 50): `meta` records direction, mimetype, size and SHA-256; `full` also records the content (truncated). Content is opt-in because a privileged desktop's clipboard often holds a password the operator just copied. Emits `rdp.clipboard`. A target's `rdp_clipboard_audit` field can raise this per target (whichever records more wins). See §9.4. |
@@ -1417,6 +1418,76 @@ Guacamole's RDP implementation has no certificate/smartcard authentication
 parameter for the RDP protocol itself (confirmed against its own
 documentation) — a permanent limitation of guacd/FreeRDP, not an
 infrastructure gap more hardware would resolve.
+
+### Telnet targets and startup scenarios (Phase 279)
+
+Some devices only offer telnet: switches, routers, serial-console servers,
+older appliances. PAMv1 brokers them through the same SSH gateway as an SSH
+target, and logs in for the operator with the vaulted password, so the
+operator never learns it.
+
+**Telnet is cleartext.** The operator's leg to PAMv1 is SSH, but the leg from
+PAMv1 to the device carries the password and the whole session unencrypted.
+Telnet targets are therefore refused until you set `PAM_TELNET_ENABLED=true`.
+Keep that hop inside a segment you trust, as with VNC.
+
+```bash
+curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/targets -d '{
+  "name": "core-sw-01", "host": "10.20.0.2", "os_type": "linux", "protocol": "telnet",
+  "scenario": "expect Username:\nsend ${login}\nexpect Password:\nsend ${password}\nexpect #"
+}'
+```
+
+The port defaults to 23. Add a **password** credential as for any target.
+The operator connects exactly as to an SSH target, with a terminal:
+
+```bash
+ssh -p 2222 core-sw-01@pam-host
+```
+
+**The startup scenario** is a short script, one step per line:
+
+- `expect TEXT` waits for TEXT in the device's output, up to ten seconds.
+- `send TEXT` types TEXT and presses Enter.
+- `${login}` and `${password}` are the credential's username and secret, and
+  only a `send` may use them.
+- Quote a text (`expect "Password: "`) to keep leading or trailing spaces.
+- At most 32 steps. Lines starting with `#` are comments.
+
+A telnet target without a scenario runs the usual dialogue: wait for
+`login:`, send the username, wait for `Password:`, send the password.
+
+**On an SSH target**, a scenario is a scripted first step. It runs in every
+shell opened to the target, before the operator's first keystroke reaches
+it. A typical use is to become root, or to enter a device's privileged mode:
+
+```text
+expect $
+send sudo -i
+expect password for
+send ${password}
+expect #
+```
+
+An `ssh target command` (exec) or SFTP is not a shell, so it runs unscripted.
+
+What the operator and the auditor see:
+
+- The scenario's dialogue never reaches the operator or the recording,
+  because a device may echo what was typed. The operator starts at whatever
+  the device printed after the last expected prompt. The recording notes that
+  the scenario ran.
+- Each run is audited `session.scenario` with the number of steps and the
+  outcome: `ok`, `timeout`, `closed` or `failed`. A failed scenario ends the
+  session, and the operator is told which step failed and what it was
+  waiting for. What was sent is never shown or logged.
+- Setting or clearing a scenario is on the target's audit row, by its digest.
+
+The vaulted password normally exists in memory only while PAMv1 dials the
+target. A scenario that types `${password}` keeps it for as long as the
+scenario runs, and no longer. A scenario that needs the password on a
+credential without one, such as an SSH certificate credential, is refused
+when the session opens.
 
 ### Database targets (SQL Server)
 
@@ -5239,6 +5310,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-10-07 | **Phase 279 (telnet and scenarios).** New subsection *Telnet targets and startup scenarios*: the cleartext opt-in, connecting, the scenario syntax, the SSH scripted first step, what is hidden and audited, the secret's lifetime; env row `PAM_TELNET_ENABLED`. |
 | 2026-10-07 | **Phase 278 (inventory CSV).** §5.1 new subsection: the five classes, their capabilities and references, import semantics (create only, per-row results, all-or-nothing parsing), what is never exported. |
 | 2026-10-07 | **Phase 277 (reporting).** §9.2c new subsection: the unused and connection reports, the CSV, the critical-target flag and its alert, the daily digest; env row `PAM_REPORT_DIGEST_TO`/`_HOUR`. |
 | 2026-09-22 | **Phase 276 (banners).** §9.1a new subsection: the login banner and the session notice, where each is shown, the desktop acknowledgement, per-language variants; env row. |
