@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–281 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–282 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,28 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 282 — v0.0.79 ✅
+
+Releases **274–281**: the next seven rows of the Tier 10 pass and the review
+that fixed what they shipped with. Four migrations (`0065`–`0068`), routes
+**220 -> 237**, `store.Store` **235 -> 243**, nine environment variables,
+and **no changed default**.
+
+- [ ] **v0.0.79** through the test-gated pipeline; image
+  `ghcr.io/morandeirachema/pamv1:0.0.79`, digest `TBD` until the digest PR
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm
+  chart `version` 0.0.78 -> **0.0.79**, tracking the app version
+- [x] Migration high-water **`0064` -> `0068`**; `store.Store` **235 ->
+  243**; routes **220 -> 237**
+- [x] Both READMEs restated; every `Reflects:` header, both READMEs' ranges,
+  `docs/README.md`'s release token, the NIS2 evidence row, this banner and
+  CHANGELOG's `[Unreleased]` link — `TestDocHeadersAgree` and
+  `TestReleaseDigestsAgree` enforced; README's status digest reads `TBD`
+- [x] `CHANGELOG.md` names the fixes Phase 281 made before any tag carried
+  the defects
+- [ ] The tag is pushed only **after** this PR is merged, with the
+  operator's go-ahead
 
 ## Phase 281 — The review of 274–280, and what it found ✅
 

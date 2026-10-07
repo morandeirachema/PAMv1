@@ -16,6 +16,78 @@ PAMv1 is built phase by phase, and the full per-phase history — what shipped i
 each phase, in what order, and why — lives in [ROADMAP.md](ROADMAP.md). This
 file records **releases**: the tagged, signed points you can actually deploy.
 
+## [0.0.79] — 2026-10-08
+
+Ships the next seven rows of the **Tier 10** pass (**Phases 274–280**) and
+**Phase 281**, the review of all seven. **Four migrations are new** (`0065`,
+`0066`, `0067`, `0068`); routes 220 → 237, store methods 235 → 243, and nine
+environment variables. **No default changed**: every new capability is off,
+or empty, until configured.
+
+**Added.**
+
+- **Approval depth** (Phase 274). An approver may comment and grant a
+  shorter duration than requested; `POST /api/access-requests/{id}/cancel`
+  ends an approved request and the requester's live sessions on the target;
+  `PAM_APPROVAL_TIMEOUT_MIN` expires undecided requests;
+  `PAM_APPROVAL_COMMENT_REQUIRED` requires a comment on every decision.
+- **Per-user and per-role restriction rules** (Phase 275). A regex over the
+  command on `ssh_exec`, `winrm`, `sql` or `kubernetes`, or a size rule on
+  `sftp` (`$filesize:>N`, `$downsize:>N`), with `kill` or `notify`. Console
+  menu 35.
+- **Login banner and recording consent** (Phase 276). `PAM_BANNER_LOGIN` and
+  `PAM_BANNER_SESSION`, with per-language variants: the SSH pre-auth banner,
+  the sign-on screen, the notice printed into every SSH session and
+  acknowledged before a desktop opens. Audit `session.consent`.
+- **Reporting** (Phase 277). `GET /api/reports/unused` and
+  `/api/reports/connections` (JSON or CSV), a `critical` target flag that
+  audits and alerts every connection, and a daily digest mail
+  (`PAM_REPORT_DIGEST_TO`, `PAM_REPORT_DIGEST_HOUR`). Console menu 36.
+- **Bulk inventory CSV import and export** (Phase 278). Safes, targets,
+  credentials, users and grants at `/api/inventory/{class}.csv`, by name;
+  import replays each row through the normal create handler and only
+  creates. Secrets are never exported. Console menu 37.
+- **Telnet targets and startup scenarios** (Phase 279). `telnet` targets
+  behind `PAM_TELNET_ENABLED` (cleartext; off by default), logged in to by a
+  per-target `expect`/`send` scenario with the vaulted password; the same
+  scenario runs as a scripted first step in SSH shells (`sudo -i`,
+  `enable`). Migration `0068`.
+- **ICAP scanning of desktop transfers** (Phase 280). With
+  `PAM_ICAP_DESKTOP=files|clipboard|all`, RDP/VNC file and clipboard
+  transfers are held until `PAM_ICAP_URL` passes them, and blocked otherwise.
+  The portal viewer gains a clipboard (Ctrl+Alt+V) and file transfer
+  (Ctrl+Alt+U, downloads).
+
+**Fixed before release** (Phase 281, the review of 274–280). Each of these
+was found in the shipped phases and fixed before any tag carried them:
+
+- the desktop transfer gate passed an unframeable message through
+  unscanned; it now ends the session;
+- a small notify size rule hid a larger kill rule, and a SQL kill rule
+  did not end the session;
+- a scenario that types `${password}` could print it; such a scenario now
+  needs the reveal capability;
+- the SSH session notice was written to stdout and broke SFTP and scp; it
+  is on stderr;
+- the desktop consent could be skipped with an API key in the tunnel URL;
+- approval durations counted from the approval rather than the window,
+  and only the last approver's applied;
+- a personal-safe target exported and re-imported as a target in no safe;
+- imported secrets were trimmed and altered.
+
+The full list is in ROADMAP.md, Phase 281.
+
+**Upgrade notes.** Run the four migrations (they apply on startup, as
+always). `PAM_ICAP_URL` no longer requires SFTP capture when
+`PAM_ICAP_DESKTOP` is on. `GET /api/restriction-rules`, new in this release,
+needs `CapReadAudit`. With a session notice configured, the desktop tunnel
+only accepts tokens from `/api/rdp-token` or `/api/vnc-token`.
+
+**What has not changed.** A deployment that sets none of the new variables
+behaves as v0.0.78 did. The image is `ghcr.io/morandeirachema/pamv1:0.0.79`,
+digest `TBD` until the digest PR
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.79)).
+
 ## [0.0.78] — 2026-09-22
 
 Ships the first four rows of the **Tier 10** pass (the WALLIX Bastion 12 /
@@ -3620,7 +3692,8 @@ The image is `ghcr.io/morandeirachema/pamv1:0.10.0`, digest
 `sha256:ab2a5fa5db27fae805f9096dfdf526497ddff4cc3774b33469ab108b98637b39`
 ([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.10.0)).
 
-[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.0.78...HEAD
+[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v0.0.79...HEAD
+[0.0.79]: https://github.com/morandeirachema/pamv1/releases/tag/v0.0.79
 [0.0.78]: https://github.com/morandeirachema/pamv1/releases/tag/v0.0.78
 [0.0.77]: https://github.com/morandeirachema/pamv1/releases/tag/v0.0.77
 [0.76.0]: https://github.com/morandeirachema/pamv1/releases/tag/v0.76.0
