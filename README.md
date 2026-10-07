@@ -37,7 +37,7 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
-runs 0–227 and 229–277, and **every phase has shipped**, and the current
+runs 0–227 and 229–278, and **every phase has shipped**, and the current
 tagged, cosign-signed release is
 **[v0.0.78](https://github.com/morandeirachema/pamv1/releases/tag/v0.0.78)** (2026-09-22;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
@@ -583,7 +583,7 @@ audit data is not replicated across nodes. Rows are struck as phases ship.
 | ~~**Per-group restriction sets with size rules**~~ **✅ shipped (Phase 275)** | `notify`/`kill` on a regex per sub-protocol, `$filesize`/`$downsize` limits | `restriction_rules` per user or role: a regex over the command on `ssh_exec`/`winrm`/`sql`/`kubernetes` or `*`, `$filesize:>N`/`$downsize:>N` on `sftp`, `kill` (the session ends) or `notify`; loaded at admission, enforced on every path that sees a discrete command or transfer; menu 35 |
 | ~~**Login banner and recording consent**~~ **✅ shipped (Phase 276)** | two texts, five languages, acknowledged on RDP and printed on SSH | `PAM_BANNER_LOGIN`/`PAM_BANNER_SESSION` with per-language variants (`_ES`, `_FR`, …): the SSH pre-auth banner and the sign-on screen; the session notice printed into every SSH session and its recording, and acknowledged in a dialog before a desktop opens (a refusal mints no token); each showing audited `session.consent` with the text's digest |
 | ~~**Reporting**~~ **✅ shipped (Phase 277)** | unused users/targets over a window, connection statistics with CSV, critical-target notification on every connection, a daily digest mail | `GET /api/reports/unused?days=` and `GET /api/reports/connections` (JSON totals by user/target/protocol/day, or one CSV row per connection), both read back from the audit trail and audited `report.view`; a `critical` target writes `target.critical_connect` and alerts on every session it opens, never refusing one; `PAM_REPORT_DIGEST_TO`/`_HOUR` mails a daily digest of all three through the alert relay, once a day across replicas; console menu 36 |
-| **Bulk CSV import/export of inventory** | 14 object classes, secrets exported hidden | IaC export of configuration only |
+| ~~**Bulk CSV import/export of inventory**~~ **✅ shipped (Phase 278)** | 14 object classes, secrets exported hidden | five classes — safes, targets, credentials, users, grants — at `GET`/`POST /api/inventory/{class}.csv`, referenced by name; import replays every row through the normal create handler (same validation, guards, vault AAD and audit), creates only and reports per row; the credentials file has an always-empty `secret` column; personal safes are not exported; console menu 37. Safe membership, label and restriction rules stay on their own screens |
 | **Telnet targets and SEND/EXPECT startup scenarios** | scenario login for telnet/rlogin and a scripted first step on SSH | none |
 | **ICAP scanning of desktop file transfers and clipboard** | up/down file and clipboard-text verification on RDP through the same ICAP servers | SFTP only (detection) |
 | **Portable recording archives** | export by user/target/window/protocol with a manifest and purge; re-import for replay | retention pruning; no archive |
