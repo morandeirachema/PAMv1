@@ -113,7 +113,9 @@ func transferGuacd(t *testing.T, got chan<- fakeInst) string {
 		}
 		conn.Write([]byte(guacd.Instruction{Opcode: "ready", Args: []string{"$xfer"}}.Encode()))
 		acks := make(chan string, 64)
+		readerDone := make(chan struct{})
 		go func() {
+			defer close(readerDone)
 			for {
 				inst, err := readFakeInst(r)
 				if err != nil {
@@ -122,7 +124,10 @@ func transferGuacd(t *testing.T, got chan<- fakeInst) string {
 				}
 				switch {
 				case inst.op == "ack" && len(inst.args) > 0:
-					acks <- inst.args[0]
+					select {
+					case acks <- inst.args[0]:
+					default: // nobody is waiting on acks any more
+					}
 				case inst.op == "file" || inst.op == "blob" || inst.op == "end":
 					conn.Write([]byte(guacd.Instruction{Opcode: "ack", Args: []string{inst.args[0], "OK (guacd)", "0"}}.Encode()))
 				}
@@ -148,7 +153,9 @@ func transferGuacd(t *testing.T, got chan<- fakeInst) string {
 			}
 			conn.Write([]byte(guacd.Instruction{Opcode: "end", Args: []string{d.stream}}.Encode()))
 		}
-		io.Copy(io.Discard, r)
+		// Only the reader goroutine reads r: a second reader here would
+		// steal instructions from it.
+		<-readerDone
 	}()
 	return ln.Addr().String()
 }
@@ -264,6 +271,10 @@ func TestDesktopTransfersScanned(t *testing.T) {
 	auditHasEventually(t, st, "rdp.transfer_blocked", "bad.txt")
 	auditHas(t, st, "rdp.transfer_scanned", "clean.txt")
 	auditHas(t, st, "rdp.transfer_blocked", "outcome:infected")
+	// The alert follows the audit row on the tunnel's goroutine.
+	for wait := time.Now().Add(5 * time.Second); box.count("rdp.transfer_blocked") < 2 && time.Now().Before(wait); {
+		time.Sleep(10 * time.Millisecond)
+	}
 	if n := box.count("rdp.transfer_blocked"); n != 2 {
 		t.Fatalf("blocked transfers alerted %d times, want 2", n)
 	}
