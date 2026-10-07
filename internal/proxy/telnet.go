@@ -199,6 +199,17 @@ func (p *Proxy) handleTelnetSession(ctx context.Context, nc ssh.NewChannel, targ
 		}
 	}()
 
+	// The session notice, before anything is typed into the target — as the
+	// SSH path prints it before the target is reached (review of 274-280) —
+	// on stderr, into the recording, audited with its digest.
+	if notice := p.banners.Get(banner.Session, ""); notice != "" {
+		_, _ = io.WriteString(ch.Stderr(), notice+"\r\n")
+		if rec != nil {
+			_, _ = io.WriteString(rec, notice+"\r\n")
+		}
+		p.audit(ctx, actor, "session.consent", fmt.Sprintf("target:%s cred_user:%s mode:printed banner_sha256:%s", target.Name, cred.Username, banner.Digest(notice)))
+	}
+
 	// The login. Nothing the target prints during it reaches the operator.
 	stream := expect.NewStream(tc)
 	defer stream.Close()
@@ -224,10 +235,6 @@ func (p *Proxy) handleTelnetSession(ctx context.Context, nc ssh.NewChannel, targ
 	out := p.teeLive(cw, sid)
 	if rec != nil {
 		_, _ = io.WriteString(rec, fmt.Sprintf("pamv1: logged in to %s by its startup scenario (%d steps)\r\n", target.Name, len(sc)))
-	}
-	if notice := p.banners.Get(banner.Session, ""); notice != "" {
-		_, _ = io.WriteString(out, notice+"\r\n")
-		p.audit(ctx, actor, "session.consent", fmt.Sprintf("target:%s cred_user:%s mode:printed banner_sha256:%s", target.Name, cred.Username, banner.Digest(notice)))
 	}
 
 	go func() {
