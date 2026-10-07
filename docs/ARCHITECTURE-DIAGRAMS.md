@@ -72,8 +72,10 @@ flowchart LR
     n_blast[blast]
     n_cmdguard[cmdguard]
     n_conjur[conjur]
+    n_csvcell[csvcell]
     n_endpointagent[endpointagent]
     n_icap[icap]
+    n_inventorycsv[inventorycsv]
     n_jwtutil[jwtutil]
     n_k8s[k8s]
     n_keycustody[keycustody]
@@ -120,6 +122,7 @@ flowchart LR
   n_api --> n_config
   n_api --> n_discovery
   n_api --> n_guacd
+  n_api --> n_inventorycsv
   n_api --> n_k8s
   n_api --> n_logging
   n_api --> n_maint
@@ -169,6 +172,7 @@ flowchart LR
   n_conjur --> n_logging
   n_endpointagent --> n_probe
   n_guacd --> n_auditfmt
+  n_inventorycsv --> n_csvcell
   n_keycustody --> n_store
   n_maint --> n_store
   n_maint --> n_vault
@@ -238,6 +242,7 @@ flowchart LR
   n_proxy --> n_vault
   n_proxy --> n_winrm
   n_report --> n_auditfmt
+  n_report --> n_csvcell
   n_report --> n_store
   n_restrict --> n_store
   n_rotate --> n_store
@@ -685,7 +690,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 227 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 237 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -756,6 +761,16 @@ The 227 routes registered on the API mux, with the capability or guard each enfo
 | DELETE | `/api/endpoint-agents/{id}` | CapManageTargets |
 | POST | `/api/extension-token` | CapRevealSecret |
 | POST | `/api/identity/reconcile` | CapManageUsers |
+| GET | `/api/inventory/credentials.csv` | CapReadInventory |
+| POST | `/api/inventory/credentials.csv` | CapManageCredentials |
+| GET | `/api/inventory/grants.csv` | CapManageTargets |
+| POST | `/api/inventory/grants.csv` | CapManageTargets |
+| GET | `/api/inventory/safes.csv` | CapReadInventory |
+| POST | `/api/inventory/safes.csv` | CapManageTargets |
+| GET | `/api/inventory/targets.csv` | CapReadInventory |
+| POST | `/api/inventory/targets.csv` | CapManageTargets |
+| GET | `/api/inventory/users.csv` | CapManageUsers |
+| POST | `/api/inventory/users.csv` | CapManageUsers |
 | GET | `/api/label-rules` | CapReadInventory |
 | POST | `/api/label-rules` | CapManageTargets |
 | DELETE | `/api/label-rules/{id}` | CapManageTargets |

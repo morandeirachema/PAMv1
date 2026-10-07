@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-10-07 · Reflects: Phases 0–227 and 229–277 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-10-07 · Reflects: Phases 0–227 and 229–278 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** PAMv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -483,6 +483,63 @@ curl -H "X-API-Key: $PAM_API_KEY" -X DELETE http://localhost:8080/api/targets/1/
 Grants are enforced by the SSH proxy, WinRM and RDP alike. To force every access
 through the recorded proxy, set `PAM_REVEAL_DISABLED=true` so credential reveal
 becomes break-glass-only.
+
+### 5.1 Bulk import and export as CSV (Phase 278)
+
+Five object classes move in and out as one CSV file each: **safes**,
+**targets**, **credentials**, **users** and **grants**. Objects refer to
+each other by name, never by database id, so a file exported from one
+deployment imports into another. Import the classes in that order, since
+each one can name objects from the ones before it.
+
+| Class | Export (`GET`) | Import (`POST`) | References |
+|---|---|---|---|
+| safes | `CapReadInventory` | `CapManageTargets` | none |
+| targets | `CapReadInventory` | `CapManageTargets` | `safe` by name |
+| credentials | `CapReadInventory` | `CapManageCredentials` | `target` by name |
+| users | `CapManageUsers` | `CapManageUsers` | `manager` by username |
+| grants | `CapManageTargets` | `CapManageTargets` | `target`, and `credential_user` on that target |
+
+```bash
+curl -H "X-API-Key: $PAM_API_KEY" -o targets.csv http://localhost:8080/api/inventory/targets.csv
+curl -H "X-API-Key: $PAM_API_KEY" -H "Content-Type: text/csv" \
+  --data-binary @targets.csv http://localhost:8080/api/inventory/targets.csv
+```
+
+How import behaves:
+
+- **It only creates.** A row whose object already exists is reported
+  `exists` and left untouched. Re-importing a file changes nothing, and an
+  import can never quietly rewrite the policy of an existing object.
+- **Every row goes through the normal create path**, under your identity.
+  It gets the same validation, the same checks and its own audit row
+  (`target.create`, `credential.create`, and so on), as if you had created
+  it by hand. The result lists each row's line, its status, and the reason
+  when it failed. A bad row fails on its own; the others still import.
+- **A file that does not parse imports nothing.** An unknown or repeated
+  column, a missing required column, or a ragged row is refused with `422`.
+  A file holds at most 5000 rows and 16 MiB.
+- **Booleans** read `true`/`false`, `yes`/`no` or `1`/`0`, and anything else
+  fails the row. **Labels** are `key=value` pairs separated by commas, and a
+  term without `=` fails the row rather than being dropped.
+- **A new user's API token** is returned in the import result, once, just
+  as `POST /api/users` returns it.
+
+What is deliberately left out:
+
+- **Secrets are never exported.** The credentials file has a `secret`
+  column so it doubles as an import template, and that column is always
+  empty on export. Fill it in, import the file, and delete it. A CSV export
+  is therefore not a backup; see [BACKUP-AND-RESTORE](BACKUP-AND-RESTORE.md).
+- **Personal safes are not exported**, and a target in one exports with no
+  safe. Without its personal flag such a safe would import back as a shared
+  one.
+- Safe membership, label rules, restriction rules and the configuration
+  overrides have their own screens and the IaC export (§4.1); they are not
+  CSV classes.
+
+Each export is audited `inventory.export` and each import `inventory.import`,
+with the class and the row counts. Console: main menu **37**.
 
 ## 6. Managing credentials
 
@@ -5182,6 +5239,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-10-07 | **Phase 278 (inventory CSV).** §5.1 new subsection: the five classes, their capabilities and references, import semantics (create only, per-row results, all-or-nothing parsing), what is never exported. |
 | 2026-10-07 | **Phase 277 (reporting).** §9.2c new subsection: the unused and connection reports, the CSV, the critical-target flag and its alert, the daily digest; env row `PAM_REPORT_DIGEST_TO`/`_HOUR`. |
 | 2026-09-22 | **Phase 276 (banners).** §9.1a new subsection: the login banner and the session notice, where each is shown, the desktop acknowledgement, per-language variants; env row. |
 | 2026-09-22 | **Phase 275 (restriction rules).** §9.4a new subsection: per-user/per-role rules, the fields, kill vs notify, SFTP size rules, admission-time loading, what a match looks like. |

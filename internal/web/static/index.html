@@ -420,6 +420,19 @@
   // Reports (Phase 277): the unused-objects window in days and the
   // connection-statistics window, both kept across F5.
   let reports = null, repDays = "30", repSince = "", repUntil = "";
+  // Inventory import/export (Phase 278): the last import's result, shown
+  // until the screen is left — a new user's token appears in it once.
+  let invResult = null;
+  // The classes, in the order a whole inventory must be imported, with the
+  // capability each direction needs (the same as the class's list/create).
+  // Each path is both the export (GET) and the import (POST) route.
+  const invClasses = [
+    { name: "safes", path: "/api/inventory/safes.csv", exp: "read_inventory", imp: "manage_targets", note: "personal safes are not exported" },
+    { name: "targets", path: "/api/inventory/targets.csv", exp: "read_inventory", imp: "manage_targets", note: "safe by name; import safes first" },
+    { name: "credentials", path: "/api/inventory/credentials.csv", exp: "read_inventory", imp: "manage_credentials", note: "secret column is always empty on export" },
+    { name: "users", path: "/api/inventory/users.csv", exp: "manage_users", imp: "manage_users", note: "a new user's token is shown once" },
+    { name: "grants", path: "/api/inventory/grants.csv", exp: "manage_targets", imp: "manage_targets", note: "target and credential by name" },
+  ];
   let assignItem = null, myQueue = [];
   let brokerApprovals = [], stepUps = [];
   let watchSess = null, watchAbort = null, watchText = "";
@@ -783,6 +796,25 @@
   // the screen only asks for the two windows.
   function repQuery() {
     return [repSince && "since=" + encodeURIComponent(repSince), repUntil && "until=" + encodeURIComponent(repUntil)].filter(Boolean).join("&");
+  }
+  // importInventory uploads one class's CSV and shows the per-row result.
+  // The file is read in the browser and posted as-is; nothing is kept.
+  function importInventory(cls, path) {
+    const input = document.createElement("input");
+    input.type = "file"; input.accept = ".csv,text/csv";
+    input.onchange = async () => {
+      const f = input.files && input.files[0];
+      if (!f) return;
+      try {
+        const res = await fetch(path, { method: "POST", headers: { "X-API-Key": apiKey, "Content-Type": "text/csv" }, body: await f.text() });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) { say("CPF9999: " + String(d.error || res.statusText).toUpperCase(), true); render(); return; }
+        invResult = d;
+        say(`${cls.toUpperCase()}: ${d.created} CREATED, ${d.exists} ALREADY PRESENT, ${d.failed} FAILED.`, d.failed > 0);
+        go("inventory");
+      } catch (e) { say("CPF9999: " + e.message, true); render(); }
+    };
+    input.click();
   }
   async function openReports() {
     reports = null;
@@ -1737,6 +1769,7 @@ ${fkeys("")}
           line(34, can("read_audit"), "Work with session probes (Windows telemetry & blocking)") +
           line(35, can("read_inventory"), "Work with restriction rules (per user/role command & transfer limits)") +
           line(36, can("read_audit"), "Reports (unused users/targets, connection statistics)") +
+          line(37, can("read_inventory"), "Inventory import/export (CSV)") +
           "90. Sign off\n";
         term.innerHTML = `${head("PAMMAIN", "PAMV1 Main Menu")}
 Select one of the following:
@@ -1764,6 +1797,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
             "34": openProbes,
             "35": openRestrictions,
             "36": openReports,
+            "37": () => { invResult = null; go("inventory"); },
             "90": signoff,
           };
           if (routes[c]) { try { await routes[c](); } catch (e) { say("CPF9999: " + e.message, true); render(); } }
@@ -4786,6 +4820,37 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
             }
             await openCampaign(c.id);
           } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
+      inventory() {
+        back = "main";
+        const r = invResult;
+        term.innerHTML = `${head("PAMINV", "Inventory Import/Export")}
+One CSV per class, objects referenced by name. Import only creates: a row whose object
+already exists is left untouched, so a file can be imported again safely. Every row
+goes through the same checks and audit as creating it by hand. Secrets are never exported.
+Type options, press Enter.  <span class="cyan">1=Export (download)   2=Import (choose a .csv file)</span>
+
+<form id="f-list"><table>
+<tr><th>Opt</th><th>Class</th><th>Export</th><th>Import</th><th>Note</th></tr>
+${invClasses.map((c) => `<tr><td>${can(c.exp) || can(c.imp) ? opt(c.name) : "  "}</td><td class="white">${pad(c.name, 12)}</td><td>${can(c.exp) ? "yes" : "-"}</td><td>${can(c.imp) ? "yes" : "-"}</td><td class="cyan">${esc(c.note)}</td></tr>`).join("")}
+</table>
+<input type="submit" hidden></form>
+${r ? `<div class="white">Last import: ${esc(r.class)} — ${esc(r.created)} created, ${esc(r.exists)} already present, ${esc(r.failed)} failed</div>
+<table>
+<tr><th>Line</th><th>Object</th><th>Status</th><th>Detail</th></tr>
+${(r.rows || []).map((x) => `<tr><td>${esc(x.line)}</td><td>${cell(x.name || "", 28)}</td><td class="${x.status === "error" ? "red" : x.status === "created" ? "green" : "cyan"}">${pad(x.status, 8)}</td><td class="detail">${x.token ? `token <span class="amber">${esc(x.token)}</span> (shown once)` : esc(x.error || (x.id ? "id " + x.id : ""))}</td></tr>`).join("")}
+</table>` : ""}
+${fkeys("F3=Exit   F12=Cancel")}`;
+        document.getElementById("f-list").onsubmit = async (ev) => {
+          ev.preventDefault();
+          for (const c of invClasses) {
+            const o = optVal(ev.target, c.name);
+            if (o === "1" && can(c.exp)) await download(c.path, `pamv1-${c.name}.csv`, c.name.toUpperCase());
+            else if (o === "2" && can(c.imp)) { importInventory(c.name, c.path); return; }
+            else if (o) { say("CPF0002: OPTION " + o.toUpperCase() + " NOT VALID FOR " + c.name.toUpperCase() + ".", true); render(); }
+          }
         };
       },
 
