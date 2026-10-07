@@ -1230,6 +1230,11 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/audit/verify", s.authz(auth.CapReadAudit, s.verifyAudit))
 	s.mux.Handle("GET /api/audit/head", s.authz(auth.CapReadAudit, s.auditHead))
 	s.mux.Handle("GET /api/compliance/nis2", s.authz(auth.CapReadAudit, s.nis2Report)) // Phase 114
+	// Operational reports (Phase 277): unused users/targets and connection
+	// statistics, both read back from the audit trail — review reads, so the
+	// same gate as the trail itself.
+	s.mux.Handle("GET /api/reports/unused", s.authz(auth.CapReadAudit, s.reportUnused))
+	s.mux.Handle("GET /api/reports/connections", s.authz(auth.CapReadAudit, s.reportConnections))
 	// The subject-indexed grant query (Phase 189): every other grant route is
 	// target-indexed, this one answers "what can this subject reach?". A review
 	// read, so CapReadAudit — the same gate as the audit trail it complements.

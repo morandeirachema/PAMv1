@@ -134,6 +134,7 @@ flowchart LR
   n_api --> n_probe
   n_api --> n_ratelimit
   n_api --> n_recording
+  n_api --> n_report
   n_api --> n_restrict
   n_api --> n_rotate
   n_api --> n_saml
@@ -683,7 +684,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 225 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 227 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -781,6 +782,8 @@ The 225 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/recordings` | CapReadAudit |
 | GET | `/api/recordings/search` | CapReadAudit |
 | GET | `/api/recordings/{name}` | CapReadAudit |
+| GET | `/api/reports/connections` | CapReadAudit |
+| GET | `/api/reports/unused` | CapReadAudit |
 | GET | `/api/restriction-rules` | CapReadInventory |
 | POST | `/api/restriction-rules` | CapManageUsers |
 | DELETE | `/api/restriction-rules/{id}` | CapManageUsers |
