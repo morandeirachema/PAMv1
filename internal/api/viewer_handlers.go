@@ -570,7 +570,11 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	}
 	bridgeGuacd(ctx, ws, gconn, clip, touch, record, suspended, func(t guacd.ClipTransfer) {
 		s.audit(auditCtx, proto.name+".clipboard", "target:"+target.Name+" "+t.Detail())
-	}, gate, onVerdict)
+	}, gate, onVerdict, func(direction string) {
+		// The gate could not frame a message: the session ends rather than
+		// forward bytes it could not fully read (review of 274-280).
+		s.audit(auditCtx, proto.name+".refused", "target:"+target.Name+" reason:unframeable-instruction direction:"+direction)
+	})
 }
 
 // tunnelUUID returns a random identifier for the Guacamole tunnel handshake. The
@@ -614,8 +618,9 @@ func guacamolePrelude(uuid, connID string) [][]byte {
 // gate, when non-nil, holds file and clipboard streams until they are
 // scanned (Phase 280): each frame goes through it, what it forwards is
 // forwarded (and recorded, and observed), what it replies goes back to the
-// frame's sender, and each finished transfer is reported to onVerdict.
-func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, clip *guacd.ClipWatcher, touch func(), record func([]byte) error, suspended func() bool, onClip func(guacd.ClipTransfer), gate *guacd.Gate, onVerdict func(guacd.Verdict)) {
+// frame's sender, and each finished transfer is reported to onVerdict. A
+// frame the gate cannot frame ends the session through onAbort.
+func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, clip *guacd.ClipWatcher, touch func(), record func([]byte) error, suspended func() bool, onClip func(guacd.ClipTransfer), gate *guacd.Gate, onVerdict func(guacd.Verdict), onAbort func(direction string)) {
 	done := make(chan struct{}, 2)
 	note := func(direction string, frame []byte) {
 		if onClip == nil {
@@ -638,6 +643,10 @@ func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, cli
 			inst, err := gconn.NextInstruction()
 			if len(inst) > 0 {
 				res := gate.Process(ctx, guacd.DirOut, inst)
+				if res.Abort {
+					onAbort(guacd.DirOut)
+					break
+				}
 				for _, r := range res.Reply {
 					if _, werr := gconn.Write(r); werr != nil {
 						break out
@@ -679,6 +688,10 @@ func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, cli
 				touch() // keyboard/mouse from the browser is operator activity (Phase 240)
 			}
 			res := gate.Process(ctx, guacd.DirIn, data)
+			if res.Abort {
+				onAbort(guacd.DirIn)
+				break
+			}
 			failed := false
 			for _, f := range res.Forward {
 				if _, werr := gconn.Write(f); werr != nil {

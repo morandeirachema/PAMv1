@@ -68,18 +68,18 @@ func TestCleanUploadIsReleased(t *testing.T) {
 	if joined(o.Forward) != open+blob+end || len(o.Done) != 1 || !o.Done[0].Released() || o.Done[0].Bytes != 5 || o.Done[0].Name != "notes.txt" {
 		t.Fatalf("end: forward %q done %+v", joined(o.Forward), o.Done)
 	}
-	if joined(o.Reply) != enc("ack", "3", "OK", "0") {
-		t.Fatalf("the end of an upload must be acked: %q", joined(o.Reply))
+	if joined(o.Reply) != "" {
+		t.Fatalf("a released upload's end is acked by guacd, not the gate: %q", joined(o.Reply))
 	}
-	// guacd now acks open, blob and end: all three are swallowed, a fourth
-	// (some later stream reusing index 3) passes.
-	for i := 0; i < 3; i++ {
+	// guacd acks open and blob — swallowed, the browser had those — then the
+	// end, which passes: the browser hears guacd's own verdict on the write.
+	for i := 0; i < 2; i++ {
 		if o := g.Process(ctx, DirOut, []byte(enc("ack", "3", "OK (DATA RECEIVED)", "0"))); len(o.Forward) != 0 {
 			t.Fatalf("ack %d from guacd was not swallowed", i)
 		}
 	}
-	if o := g.Process(ctx, DirOut, []byte(enc("ack", "3", "OK", "0"))); len(o.Forward) != 1 {
-		t.Fatal("an ack beyond the released stream must pass")
+	if o := g.Process(ctx, DirOut, []byte(enc("ack", "3", "OK (STREAM END)", "0"))); len(o.Forward) != 1 {
+		t.Fatal("guacd's end ack must reach the browser")
 	}
 }
 
@@ -175,3 +175,56 @@ func TestSplitInstructions(t *testing.T) {
 		t.Fatal("a non-numeric length is malformed")
 	}
 }
+
+// TestGateFailsClosed (review of 274-280): a message the gate cannot frame —
+// invalid UTF-8 inside an element, a zero-padded length, garbage — ends the
+// session and forwards nothing, not even the instructions before it, because
+// guacd may read those bytes differently and find a stream in them.
+func TestGateFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	file := enc("file", "1", "text/plain", "x") + enc("blob", "1", b64("EICAR")) + enc("end", "1")
+	for name, msg := range map[string]string{
+		"invalid utf-8": "4.nop\xc3A;" + file,
+		"zero-padded":   "0003.nop;" + file,
+		"garbage":       "hello;" + file,
+	} {
+		g := newTestGate(1 << 20)
+		o := g.Process(ctx, DirIn, []byte(msg))
+		if !o.Abort || len(o.Forward) != 0 || len(o.Done) != 0 {
+			t.Errorf("%s: abort %v forward %q done %v", name, o.Abort, joined(o.Forward), o.Done)
+		}
+	}
+}
+
+// TestGateBoundsHeldTransfers (review of 274-280): past maxHeld concurrent
+// held transfers a new one is refused outright and keeps nothing.
+func TestGateBoundsHeldTransfers(t *testing.T) {
+	ctx := context.Background()
+	g := newTestGate(1 << 20)
+	for i := 0; i < maxHeld; i++ {
+		g.Process(ctx, DirIn, []byte(enc("file", itoa(i), "text/plain", "f")))
+	}
+	extra := itoa(maxHeld)
+	g.Process(ctx, DirIn, []byte(enc("file", extra, "text/plain", "g")+enc("blob", extra, b64("clean"))))
+	o := g.Process(ctx, DirIn, []byte(enc("end", extra)))
+	if len(o.Forward) != 0 || len(o.Done) != 1 || o.Done[0].Outcome != OutcomeTooMany {
+		t.Fatalf("a transfer past the bound: forward %q done %+v", joined(o.Forward), o.Done)
+	}
+}
+
+// TestGuacdRefusalReachesTheBrowser (review of 274-280): after a released
+// upload, an error ack from guacd (the drive is off, the write failed) is
+// forwarded, not swallowed as one of the acks the gate already answered.
+func TestGuacdRefusalReachesTheBrowser(t *testing.T) {
+	ctx := context.Background()
+	g := newTestGate(1 << 20)
+	g.Process(ctx, DirIn, []byte(enc("file", "3", "text/plain", "a.txt")))
+	g.Process(ctx, DirIn, []byte(enc("blob", "3", b64("hi"))))
+	g.Process(ctx, DirIn, []byte(enc("end", "3")))
+	refusal := enc("ack", "3", "File transfer unsupported", "256")
+	if o := g.Process(ctx, DirOut, []byte(refusal)); joined(o.Forward) != refusal {
+		t.Fatalf("guacd's refusal was swallowed: %q", joined(o.Forward))
+	}
+}
+
+func itoa(i int) string { return string(rune('0' + i)) }
