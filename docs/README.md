@@ -1,6 +1,6 @@
 # PAMv1 — documentation
 
-> Last updated: 2026-10-08 · Reflects: Phases 0–227 and 229–281, and release v0.0.78 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-10-08 · Reflects: Phases 0–227 and 229–282, and release v0.0.79 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-10-08 | Phase 282 (v0.0.79): every `Reflects:` header, both READMEs' ranges and the banner through 282; the release token above. |
 | 2026-10-08 | Phase 281 (review of 274–280) documented: ARCHITECTURE-LOW-LEVEL (invariant 6 reworded, audit reasons, change log), ARCHITECTURE-HIGH-LEVEL, ADMIN-GUIDE (a "since the review" note in each affected section), USER-GUIDE, CODE-GUIDE. |
 | 2026-10-07 | Phase 280 (desktop ICAP) documented: ARCHITECTURE-LOW-LEVEL (package tree, env row, audit vocabulary, tests, change log), ARCHITECTURE-HIGH-LEVEL, ADMIN-GUIDE (§9.3c + env row), USER-GUIDE, CODE-GUIDE, PORTS-AND-FLOWS (E15), PROTOCOLS-AND-CRYPTO (ICAP), README Tier 10 row 11. |
 | 2026-10-07 | Phase 279 (telnet and scenarios) documented: ARCHITECTURE-LOW-LEVEL (package tree, env row, audit vocabulary, invariant 6, tests, change log), ARCHITECTURE-HIGH-LEVEL, ADMIN-GUIDE (telnet and scenarios + env row), USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE (`0068`), PORTS-AND-FLOWS (E18, telnet 23), PROTOCOLS-AND-CRYPTO (telnet outbound), README Tier 9 and Tier 10 rows. |
