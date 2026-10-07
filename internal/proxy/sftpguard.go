@@ -160,8 +160,7 @@ type sftpInspector struct {
 	// $downsize (download) rules, enforced per handle — bytes written to or
 	// read from one file beyond the limit are refused (kill also ends the
 	// session through onKill) or merely audited (notify), once per handle.
-	upLimit, downLimit restrict.SizeRule
-	hasUp, hasDown     bool
+	upRules, downRules []restrict.SizeRule
 	written, read      map[string]int64
 	flagged            map[string]bool
 	onKill             func()
@@ -172,39 +171,59 @@ func (s *sftpInspector) setSizeLimits(set *restrict.Set, onKill func()) {
 	if s == nil {
 		return
 	}
-	s.upLimit, s.hasUp = set.SizeLimit(true)
-	s.downLimit, s.hasDown = set.SizeLimit(false)
+	s.upRules, s.downRules = set.SizeRules(true), set.SizeRules(false)
 	s.written, s.read, s.flagged = map[string]int64{}, map[string]int64{}, map[string]bool{}
 	s.onKill = onKill
 }
 
 // overSize accounts n bytes against handle in a direction and reports
-// whether the transfer must be refused: the limit is exceeded and the rule
-// kills. A notify rule audits the first crossing and lets the bytes through.
+// whether the transfer must be refused: EVERY size rule for the direction is
+// checked, each crossing is audited once per handle and rule, and the bytes
+// are refused when any crossed rule kills. A crossed notify rule alone lets
+// them through. Counts are per open handle and reset when it is closed
+// (handleClose), so two files uploaded one after the other on a reused
+// handle string are judged separately; a file written across several opens
+// is judged per open. A download counts the bytes READ requests ask for,
+// which can exceed what a short file returns by one request.
 func (s *sftpInspector) overSize(handle string, n int64, up bool) bool {
-	limit, has, counts, dir := s.downLimit, s.hasDown, s.read, "down"
+	rules, counts, dir := s.downRules, s.read, "down"
 	if up {
-		limit, has, counts, dir = s.upLimit, s.hasUp, s.written, "up"
+		rules, counts, dir = s.upRules, s.written, "up"
 	}
-	if !has {
+	if len(rules) == 0 {
 		return false
 	}
 	counts[handle] += n
-	if counts[handle] <= limit.Max {
-		return false
+	kill := false
+	for _, limit := range rules {
+		if counts[handle] <= limit.Max {
+			continue
+		}
+		key := fmt.Sprintf("%s:%d:%s", dir, limit.RuleID, handle)
+		if !s.flagged[key] {
+			s.flagged[key] = true
+			s.audit("sftp.size_limit", fmt.Sprintf("direction:%s bytes:%d limit:%d rule:%d action:%s", dir, counts[handle], limit.Max, limit.RuleID, limit.Action))
+		}
+		if limit.Action == restrict.ActionKill {
+			kill = true
+		}
 	}
-	key := dir + ":" + handle
-	if !s.flagged[key] {
-		s.flagged[key] = true
-		s.audit("sftp.size_limit", fmt.Sprintf("direction:%s bytes:%d limit:%d rule:%d action:%s", dir, counts[handle], limit.Max, limit.RuleID, limit.Action))
-	}
-	if limit.Action != restrict.ActionKill {
-		return false
-	}
-	if s.onKill != nil {
+	if kill && s.onKill != nil {
 		s.onKill()
 	}
-	return true
+	return kill
+}
+
+// forgetHandle drops a closed handle's size counts: SFTP servers reuse
+// handle strings, and a new file on a reused handle starts from zero.
+func (s *sftpInspector) forgetHandle(handle string) {
+	delete(s.written, handle)
+	delete(s.read, handle)
+	for k := range s.flagged {
+		if strings.HasSuffix(k, ":"+handle) {
+			delete(s.flagged, k)
+		}
+	}
 }
 
 // auditPath makes a client-supplied SFTP path safe for an audit detail. These
@@ -455,7 +474,7 @@ func (s *sftpInspector) handlePacket(body []byte, reply io.Writer) (forward bool
 // mode). Without capture the packet forwards untouched, as before Phase 59.
 // rest: uint32 id, string handle, uint64 offset, string data.
 func (s *sftpInspector) handleWrite(rest []byte, reply io.Writer) (forward bool) {
-	if s.capture == nil && !s.hasUp {
+	if s.capture == nil && len(s.upRules) == 0 {
 		return true
 	}
 	id, r, ok := readU32(rest)
@@ -484,7 +503,7 @@ func (s *sftpInspector) handleWrite(rest []byte, reply io.Writer) (forward bool)
 // cannot cover the bytes it asks for. rest: uint32 id, string handle,
 // uint64 offset, uint32 len.
 func (s *sftpInspector) handleRead(rest []byte, reply io.Writer) (forward bool) {
-	if s.capture == nil && !s.hasDown {
+	if s.capture == nil && len(s.downRules) == 0 {
 		return true
 	}
 	id, r, ok := readU32(rest)
@@ -511,11 +530,14 @@ func (s *sftpInspector) handleRead(rest []byte, reply io.Writer) (forward bool) 
 // handleClose tells content capture a handle is done so its artifact can be
 // finalized (hashed, chained, audited). rest: uint32 id, string handle.
 func (s *sftpInspector) handleClose(rest []byte) (forward bool) {
+	_, r, ok := readU32(rest)
+	handle, _, ok2 := readString(r)
+	if ok && ok2 && s.written != nil {
+		s.forgetHandle(handle)
+	}
 	if s.capture == nil {
 		return true
 	}
-	_, r, ok := readU32(rest)
-	handle, _, ok2 := readString(r)
 	if !(ok && ok2) {
 		return s.captureUnparsable("close")
 	}

@@ -86,9 +86,12 @@ import (
 // TargetHostKeyStore (3) — the per-target SSH host-key pins. Phase 274 added
 // NoteAccessRequest, ShortenAccessRequest, CancelAccessRequest and
 // ExpirePendingAccessRequests (4) — approval depth. Phase 275 added
-// RestrictionStore (3) — per-subject restriction rules.
+// RestrictionStore (3) — per-subject restriction rules. Phase 281 (the
+// review of 274-280) added AuditStore.ExportAuditActions (1) — the reports'
+// trail read filtered to the actions they count, so a year-long report no
+// longer loads every per-statement row of the year.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 242
+	const want = 243
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)

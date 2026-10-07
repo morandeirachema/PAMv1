@@ -36,6 +36,12 @@ type Class struct {
 	Columns []string
 	// Required are the columns an import file must carry.
 	Required []string
+	// Raw are columns read byte-exact: not trimmed and not formula-restored.
+	// A secret is never exported, so it was never neutralised, and a
+	// password that begins with a quote or a space, or a file secret that
+	// ends in a newline, must reach the vault exactly as typed (review of
+	// 274-280).
+	Raw []string
 }
 
 // The classes, in the order an import of a whole inventory must follow:
@@ -50,7 +56,8 @@ var (
 		Required: []string{"name", "host", "os_type", "protocol"}}
 	Credentials = Class{Name: "credentials",
 		Columns:  []string{"target", "username", "secret_type", "provisioner", "secret"},
-		Required: []string{"target", "username"}}
+		Required: []string{"target", "username"},
+		Raw:      []string{"secret"}}
 	Users = Class{Name: "users",
 		Columns:  []string{"username", "role", "ip_allowlist", "device_fingerprint", "slack_user_id", "manager", "token_ttl_hours"},
 		Required: []string{"username", "role"}}
@@ -109,6 +116,10 @@ func Read(c Class, r io.Reader) ([]Row, error) {
 			return nil, fmt.Errorf("missing required column %q", req)
 		}
 	}
+	raw := map[string]bool{}
+	for _, col := range c.Raw {
+		raw[col] = true
+	}
 	var rows []Row
 	for {
 		rec, err := cr.Read()
@@ -125,7 +136,9 @@ func Read(c Class, r io.Reader) ([]Row, error) {
 		f := make(map[string]string, len(header))
 		blank := true
 		for i, v := range rec {
-			v = csvcell.Restore(strings.TrimSpace(v))
+			if !raw[header[i]] {
+				v = csvcell.Restore(strings.TrimSpace(v))
+			}
 			f[header[i]] = v
 			if v != "" {
 				blank = false

@@ -1677,6 +1677,26 @@ func (m *Memstore) ExportAudit(_ context.Context, since, until time.Time) ([]sto
 	return out, nil
 }
 
+// ExportAuditActions is ExportAudit filtered to actions.
+func (m *Memstore) ExportAuditActions(_ context.Context, since, until time.Time, actions []string) ([]store.AuditEvent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if until.IsZero() {
+		until = time.Now()
+	}
+	want := make(map[string]bool, len(actions))
+	for _, a := range actions {
+		want[a] = true
+	}
+	out := []store.AuditEvent{}
+	for _, e := range m.audit {
+		if want[e.Action] && (since.IsZero() || !e.TS.Before(since)) && e.TS.Before(until) {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
 // LatestAuditByAction returns the most recent event with the given action, or
 // (nil, nil) if there is none.
 func (m *Memstore) LatestAuditByAction(_ context.Context, action string) (*store.AuditEvent, error) {

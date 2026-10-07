@@ -1840,6 +1840,13 @@ type AuditStore interface {
 	// oldest-first (for NIS2 incident-report exports). A zero since means "from
 	// the beginning"; a zero until means "up to now".
 	ExportAudit(ctx context.Context, since, until time.Time) ([]AuditEvent, error)
+	// ExportAuditActions is ExportAudit restricted to the given actions
+	// (review of 274-280): the reports read a year of trail but need only
+	// the half-dozen actions that record access, and loading every
+	// per-statement db.query row of a year to count logins was an
+	// unbounded read any auditor could trigger. An empty list returns
+	// nothing.
+	ExportAuditActions(ctx context.Context, since, until time.Time, actions []string) ([]AuditEvent, error)
 	// LatestAuditByAction returns the most recent audit event with the given
 	// action, or (nil, nil) when there is none.
 	//

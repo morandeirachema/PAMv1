@@ -28,6 +28,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -171,17 +172,24 @@ type Stream struct {
 	ch      chan []byte
 	err     error // set before ch is closed
 	pending []byte
+	done    chan struct{}
+	once    sync.Once
 }
 
-// NewStream starts reading r.
+// NewStream starts reading r. Close the Stream when done with it: its
+// reader would otherwise wait forever to hand over a chunk nobody reads.
 func NewStream(r io.Reader) *Stream {
-	s := &Stream{ch: make(chan []byte, 16)}
+	s := &Stream{ch: make(chan []byte, 16), done: make(chan struct{})}
 	go func() {
 		buf := make([]byte, 4096)
 		for {
 			n, err := r.Read(buf)
 			if n > 0 {
-				s.ch <- append([]byte(nil), buf[:n]...)
+				select {
+				case s.ch <- append([]byte(nil), buf[:n]...):
+				case <-s.done:
+					return
+				}
 			}
 			if err != nil {
 				s.err = err
@@ -192,6 +200,10 @@ func NewStream(r io.Reader) *Stream {
 	}()
 	return s
 }
+
+// Close releases the reader goroutine. It does not close the underlying
+// reader; whoever owns that closes it.
+func (s *Stream) Close() { s.once.Do(func() { close(s.done) }) }
 
 // Wait blocks until the stream has output to read, reporting false when it
 // ended first. It consumes nothing.

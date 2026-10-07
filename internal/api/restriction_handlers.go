@@ -118,10 +118,9 @@ func (s *Server) checkRestriction(ctx context.Context, actor, targetName, path, 
 		return nil
 	}
 	detail := fmt.Sprintf("target:%s path:%s rule:%d pattern:%s", targetName, path, m.RuleID, auditfmt.Value(m.Pattern, 128))
+	s.auditAs(ctx, actor, m.AuditAction(), detail)
 	if m.Action == restrict.ActionNotify {
-		s.auditAs(ctx, actor, "restriction.notified", detail)
 		return nil
 	}
-	s.auditAs(ctx, actor, "restriction.killed", detail)
 	return errCommandBlocked
 }

@@ -25,17 +25,47 @@ import (
 // connection. session.start covers SSH and WinRM through the SSH gateway (its
 // detail carries protocol: when not ssh); db.session.start covers PostgreSQL
 // and, with via:mssql, SQL Server.
+//
+// Two more are access without a session (review of 274-280): a brokered
+// kubectl operation (k8s.run — a kubernetes target never opens a session,
+// so without it every one read as unused forever) and a REST WinRM command
+// (winrm.run without via:proxy; the proxy's WinRM shell writes a winrm.run
+// per command inside a session already counted by its session.start).
 var connectActions = map[string]string{
 	"session.start":    "ssh",
 	"db.session.start": "postgres",
 	"rdp.connect":      "rdp",
 	"vnc.connect":      "vnc",
+	"k8s.run":          "kubernetes",
+	"winrm.run":        "winrm",
 }
 
-// IsConnect reports whether an audit action records an opened connection.
-func IsConnect(action string) bool {
-	_, ok := connectActions[action]
+// Actions is every audit action the reports read: the connection actions,
+// portal logins and critical connections — what a report asks the store
+// for instead of a whole window of trail.
+func Actions() []string {
+	out := []string{"login", "target.critical_connect"}
+	for a := range connectActions {
+		out = append(out, a)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// IsConnect reports whether an audit row records an opened connection.
+func IsConnect(e store.AuditEvent) bool {
+	_, ok := connectActions[e.Action]
+	if ok && e.Action == "winrm.run" && Field(e.Detail, "via") == "proxy" {
+		return false
+	}
 	return ok
+}
+
+// isSignIn reports whether a login row is a completed sign-in. A password
+// accepted while a second factor or MFA enrollment is still pending is
+// written as login with scope: — that is not use of the account.
+func isSignIn(e store.AuditEvent) bool {
+	return e.Action == "login" && Field(e.Detail, "scope") == ""
 }
 
 // Connection is one opened privileged session, read back from the trail.
@@ -65,10 +95,10 @@ func Field(detail, key string) string {
 func Connections(events []store.AuditEvent) []Connection {
 	var out []Connection
 	for _, e := range events {
-		proto, ok := connectActions[e.Action]
-		if !ok {
+		if !IsConnect(e) {
 			continue
 		}
+		proto := connectActions[e.Action]
 		target := Field(e.Detail, "target")
 		if target == "" {
 			continue
@@ -189,9 +219,9 @@ func FindUnused(users []store.User, targets []store.Target, events []store.Audit
 			continue
 		}
 		switch {
-		case e.Action == "login":
+		case isSignIn(e):
 			seenUser[e.Actor] = true
-		case IsConnect(e.Action):
+		case IsConnect(e):
 			seenUser[e.Actor] = true
 			if t := Field(e.Detail, "target"); t != "" {
 				seenTarget[t] = true

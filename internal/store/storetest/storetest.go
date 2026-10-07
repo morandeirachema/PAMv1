@@ -1953,6 +1953,23 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if evs, err := st.ListAudit(ctx, 10); err != nil || len(evs) == 0 {
 		t.Fatalf("ListAudit: %d err %v", len(evs), err)
 	}
+	// ExportAuditActions (review of 274-280) returns only the asked-for
+	// actions, oldest first, and nothing for an empty list.
+	if all, err := st.ExportAudit(ctx, time.Time{}, future); err == nil && len(all) > 0 {
+		pick := all[0].Action
+		got, err := st.ExportAuditActions(ctx, time.Time{}, future, []string{pick})
+		if err != nil || len(got) == 0 {
+			t.Fatalf("ExportAuditActions(%q): %d events, err %v", pick, len(got), err)
+		}
+		for _, e := range got {
+			if e.Action != pick {
+				t.Fatalf("ExportAuditActions returned action %q, asked for %q", e.Action, pick)
+			}
+		}
+		if none, err := st.ExportAuditActions(ctx, time.Time{}, future, nil); err != nil || len(none) != 0 {
+			t.Fatalf("ExportAuditActions(nil) = %d events, err %v; want none", len(none), err)
+		}
+	}
 	if evs, err := st.ExportAudit(ctx, time.Time{}, future); err != nil || len(evs) == 0 {
 		t.Fatalf("ExportAudit: %d err %v", len(evs), err)
 	}

@@ -111,3 +111,23 @@ func TestWindowSizeAfterNAWS(t *testing.T) {
 		t.Fatalf("NAWS with 255 = %v", b)
 	}
 }
+
+// TestSubnegotiationIsBounded (review of 274-280): escaped 0xFF bytes inside
+// a subnegotiation no longer grow the buffer without limit; the data after
+// it still arrives.
+func TestSubnegotiationIsBounded(t *testing.T) {
+	cl, srv := pair(t)
+	go func() {
+		msg := []byte{iac, sb, optTType}
+		for i := 0; i < 100000; i++ {
+			msg = append(msg, iac, iac)
+		}
+		msg = append(msg, iac, se, 'o', 'k')
+		_, _ = srv.Write(msg)
+	}()
+	buf := make([]byte, 8)
+	n, err := cl.Read(buf)
+	if err != nil || string(buf[:n]) != "ok" {
+		t.Fatalf("read %q %v", buf[:n], err)
+	}
+}

@@ -671,7 +671,9 @@ func (m *MSSQLProxy) relay(ctx context.Context, client *tds.Conn, up *upstreamMS
 				// Every call in the message is inspected, not just the first: an
 				// RPC message may carry several, and auditing only the leading
 				// one would let a benign call escort arbitrary statements.
-				if m.refuseRequests(ctx, relayCtx, sendClient, actor, target, reqs, sid, typ, tds72, rs) {
+				if refused, kill := m.refuseRequests(ctx, relayCtx, sendClient, actor, target, reqs, sid, typ, tds72, rs); kill {
+					return // a kill restriction rule: end the session
+				} else if refused {
 					continue // refused by policy; the session stays usable
 				}
 				capped := false
@@ -726,7 +728,7 @@ func parseTDSRequest(typ byte, data []byte) ([]tds.Request, error) {
 // and reports whether the message was refused. A call whose text could not be
 // recovered is refused when a guard is configured — an unreadable statement is
 // exactly the shape a bypass takes, so it fails closed rather than through.
-func (m *MSSQLProxy) refuseRequests(ctx, relayCtx context.Context, sendClient func(byte, []byte) error, actor string, target *store.Target, reqs []tds.Request, sid string, reqType byte, tds72 bool, rs *restrict.Set) bool {
+func (m *MSSQLProxy) refuseRequests(ctx, relayCtx context.Context, sendClient func(byte, []byte) error, actor string, target *store.Target, reqs []tds.Request, sid string, reqType byte, tds72 bool, rs *restrict.Set) (refused, kill bool) {
 	// cl adapts this message's TDS framing (reqType/tds72 vary per message) to the
 	// shared per-statement pipeline's sqlClient interface (see sqlproxy.go). TDS
 	// refusals never end the session — with MARS off there is no pipelining to
@@ -738,25 +740,25 @@ func (m *MSSQLProxy) refuseRequests(ctx, relayCtx context.Context, sendClient fu
 				fmt.Sprintf("target:%s via:mssql pattern:unreadable-parameters sql:%s", target.Name, auditCmd(req.AuditText)))
 			_ = sendClient(tds.PacketTabularResult, tds.Refusal(mssqlErrPolicy, 16,
 				"PAMv1: statement could not be read for policy inspection", reqType, tds72))
-			return true
+			return true, false
 		}
 		// Guard EVERY recovered character parameter, not only the one believed
 		// to be the statement: which parameter carries SQL varies by procedure.
 		for _, text := range req.GuardTexts() {
-			if sqlBlockedStatement(ctx, &m.listener, &m.pol, cl, actor, target, text, false, rs) {
-				return true
+			if blocked, kill := sqlBlockedStatement(ctx, &m.listener, &m.pol, cl, actor, target, text, false, rs); blocked {
+				return true, kill
 			}
 			if sqlStepUpRefused(relayCtx, &m.listener, &m.pol, cl, actor, target, text, sid, false) {
-				return true
+				return true, false
 			}
 		}
 		if len(req.GuardTexts()) == 0 {
-			if sqlBlockedStatement(ctx, &m.listener, &m.pol, cl, actor, target, req.AuditText, false, rs) {
-				return true
+			if blocked, kill := sqlBlockedStatement(ctx, &m.listener, &m.pol, cl, actor, target, req.AuditText, false, rs); blocked {
+				return true, kill
 			}
 		}
 	}
-	return false
+	return false, false
 }
 
 // tdsKind names a request type for an audit detail.
@@ -792,8 +794,9 @@ func (c mssqlSQLClient) refuse(msg string) {
 }
 
 // refuseFatal has no distinct TDS encoding (no extended-protocol desync to
-// guard against), so it refuses exactly as refuse does; the shared pipeline
-// never asks the SQL Server proxy for a fatal refusal.
+// guard against), so it refuses exactly as refuse does. The shared pipeline
+// asks for it on a kill restriction rule, and the relay then ends the
+// session itself (sqlBlockedStatement's kill result).
 func (c mssqlSQLClient) refuseFatal(msg string) { c.refuse(msg) }
 
 // fail sends an error token to the operator's client and ends the exchange.

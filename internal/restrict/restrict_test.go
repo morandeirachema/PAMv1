@@ -64,12 +64,22 @@ func TestCompileAndCheck(t *testing.T) {
 	if _, ok := alice.Check("sql", "select 1"); ok {
 		t.Fatal("select matched")
 	}
-	// Size: the tightest upload limit is alice's own 1m (notify); download 100m.
-	if r, ok := alice.SizeLimit(true); !ok || r.Max != 1<<20 || r.Action != ActionNotify {
-		t.Fatalf("upload limit: %+v %v", r, ok)
+	// Size: every rule in a direction is returned, not just the tightest —
+	// a small notify rule must not hide a larger kill rule (review of
+	// 274-280). Alice's own 1m notify is among her upload rules; one
+	// download rule, 100m.
+	up := alice.SizeRules(true)
+	foundNotify := false
+	for _, r := range up {
+		if r.Max == 1<<20 && r.Action == ActionNotify {
+			foundNotify = true
+		}
 	}
-	if r, ok := alice.SizeLimit(false); !ok || r.Max != 100<<20 || r.RuleID != 7 {
-		t.Fatalf("download limit: %+v %v", r, ok)
+	if !foundNotify {
+		t.Fatalf("upload rules: %+v", up)
+	}
+	if down := alice.SizeRules(false); len(down) != 1 || down[0].Max != 100<<20 || down[0].RuleID != 7 {
+		t.Fatalf("download rules: %+v", down)
 	}
 	// Carol (role auditor) has nothing: nil set, safe to call.
 	carol := Compile(rules, Subject{Name: "carol", Roles: []string{"auditor"}})
@@ -79,8 +89,8 @@ func TestCompileAndCheck(t *testing.T) {
 	if _, ok := carol.Check("ssh_exec", "rm -rf /"); ok {
 		t.Fatal("nil set matched")
 	}
-	if _, ok := carol.SizeLimit(true); ok {
-		t.Fatal("nil set has a size limit")
+	if len(carol.SizeRules(true)) != 0 {
+		t.Fatal("nil set has a size rule")
 	}
 	// Bob: everything killed.
 	bob := Compile(rules, Subject{Name: "bob"})
@@ -95,6 +105,20 @@ func TestParseSize(t *testing.T) {
 		_, got, err := parseSize(in)
 		if err != nil || got != want {
 			t.Errorf("%s: %d %v want %d", in, got, err, want)
+		}
+	}
+}
+
+// TestValidateReviewFixes: a regex on sftp is refused (it would never run)
+// and a size that would overflow int64 is refused (it wrapped negative and
+// killed every transfer).
+func TestValidateReviewFixes(t *testing.T) {
+	for name, r := range map[string]store.RestrictionRule{
+		"sftp regex": {SubjectType: "role", Subject: "user", Subprotocol: "sftp", Pattern: "secret", Action: "kill"},
+		"overflow":   {SubjectType: "role", Subject: "user", Subprotocol: "sftp", Pattern: "$filesize:>99999999999g", Action: "kill"},
+	} {
+		if err := Validate(r); err == nil {
+			t.Errorf("%s: want an error", name)
 		}
 	}
 }

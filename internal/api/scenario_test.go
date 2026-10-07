@@ -43,3 +43,37 @@ func TestTelnetTargetsAndScenarios(t *testing.T) {
 		}
 	}
 }
+
+// TestScenarioTypingPasswordNeedsReveal (review of 274-280): a scenario that
+// types ${password} decides what is done with the secret — `send echo
+// ${password}` would print it — so only a principal who may reveal secrets
+// may set or change one. A target manager without reveal may still edit
+// the target if the scenario is left as it was.
+func TestScenarioTypingPasswordNeedsReveal(t *testing.T) {
+	srv, st := newTestServerOpts(t, nil, api.Options{})
+	if code, d := do(t, srv, http.MethodPost, "/api/profiles", testAPIKey, map[string]any{
+		"name": "targeteer", "capabilities": []string{"read_inventory", "manage_targets"}}); code != http.StatusCreated {
+		t.Fatalf("profile: %d %s", code, d)
+	}
+	tok := seedUser(t, srv, "tom", "targeteer")
+	echo := "expect $\nsend echo ${password}"
+	body := map[string]any{"name": "web-01", "host": "10.0.0.5", "os_type": "linux", "protocol": "ssh", "scenario": echo}
+	if code, d := do(t, srv, http.MethodPost, "/api/targets", tok, body); code != http.StatusForbidden {
+		t.Fatalf("a manager without reveal set a password-typing scenario: %d %s", code, d)
+	}
+	auditHas(t, st, "authz.denied", "reason:scenario-types-password")
+	code, d := do(t, srv, http.MethodPost, "/api/targets", testAPIKey, body)
+	if code != http.StatusCreated {
+		t.Fatalf("admin: %d %s", code, d)
+	}
+	id := itoa(int64(jsonMap(t, d)["id"].(float64)))
+	// Unchanged scenario: the manager may edit the rest.
+	body["host"] = "10.0.0.6"
+	if code, d := do(t, srv, http.MethodPut, "/api/targets/"+id, tok, body); code != http.StatusOK {
+		t.Fatalf("an edit leaving the scenario as it was: %d %s", code, d)
+	}
+	body["scenario"] = "expect $\nsend sudo -i\nexpect password\nsend ${password}"
+	if code, d := do(t, srv, http.MethodPut, "/api/targets/"+id, tok, body); code != http.StatusForbidden {
+		t.Fatalf("a manager without reveal changed a password-typing scenario: %d %s", code, d)
+	}
+}

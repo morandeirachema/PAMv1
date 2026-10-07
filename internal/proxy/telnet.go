@@ -32,7 +32,11 @@ import (
 // Telnet itself is cleartext between PAMv1 and the target. The operator's
 // leg is SSH; the target leg is only brokered when PAM_TELNET_ENABLED says
 // the deployment accepts that.
-func (p *Proxy) serveTelnet(ctx context.Context, sconn *ssh.ServerConn, chans <-chan ssh.NewChannel, target *store.Target, cred *store.Credential, secret, actor, remote string, observe bool, bounds sessionBounds) {
+//
+// A telnet session is a shell, so it is held to what an SSH shell is (review
+// of 274-280): the ssh_shell right of the session's sub-protocol set, and
+// mandatory live supervision.
+func (p *Proxy) serveTelnet(ctx context.Context, sconn *ssh.ServerConn, chans <-chan ssh.NewChannel, target *store.Target, cred *store.Credential, secret, actor, remote string, observe, breakGlass bool, bounds sessionBounds, rights string) {
 	if !p.telnet {
 		p.audit(ctx, actor, "session.denied", "target:"+target.Name+" reason:telnet-disabled")
 		rejectAll(chans, ssh.Prohibited, "PAMv1: telnet targets are disabled on this server")
@@ -71,7 +75,7 @@ func (p *Proxy) serveTelnet(ctx context.Context, sconn *ssh.ServerConn, chans <-
 			nc.Reject(ssh.UnknownChannelType, "PAMv1: only session channels are proxied")
 			continue
 		}
-		p.handleTelnetSession(ctx, nc, target, cred, secret, actor, observe, sid, sc)
+		p.handleTelnetSession(ctx, nc, target, cred, secret, actor, observe, breakGlass, sid, sc, rights)
 		// One telnet connection per SSH connection: the target has one
 		// login, and a second channel would need a second one.
 		sconn.Close()
@@ -85,7 +89,7 @@ type ptyReq struct {
 	Modes                string
 }
 
-func (p *Proxy) handleTelnetSession(ctx context.Context, nc ssh.NewChannel, target *store.Target, cred *store.Credential, secret, actor string, observe bool, sid string, sc expect.Script) {
+func (p *Proxy) handleTelnetSession(ctx context.Context, nc ssh.NewChannel, target *store.Target, cred *store.Credential, secret, actor string, observe, breakGlass bool, sid string, sc expect.Script, rights string) {
 	ch, reqs, err := nc.Accept()
 	if err != nil {
 		return
@@ -117,6 +121,11 @@ func (p *Proxy) handleTelnetSession(ctx context.Context, nc ssh.NewChannel, targ
 		case "env":
 			reply(req, true)
 		case "shell":
+			if !store.RightsAllow(rights, store.RightSSHShell) {
+				p.audit(ctx, actor, "session.right_denied", fmt.Sprintf("target:%s cred_user:%s right:%s", target.Name, cred.Username, store.RightSSHShell))
+				reply(req, false)
+				return
+			}
 			reply(req, true)
 			started = true
 		default: // exec, subsystem, x11-req: not something telnet can carry
@@ -136,6 +145,13 @@ func (p *Proxy) handleTelnetSession(ctx context.Context, nc ssh.NewChannel, targ
 		close(winCh)
 	}()
 
+	if p.requireSup && !observe && !breakGlass && !p.awaitSupervision(ctx, sid) {
+		p.audit(ctx, actor, "session.unsupervised", fmt.Sprintf("target:%s cred_user:%s timeout:%s", target.Name, cred.Username, p.supTimeout))
+		fmt.Fprintln(ch.Stderr(), "PAMv1: no supervisor attached to watch this session; refused")
+		exitStatus(ch, 1)
+		return
+	}
+
 	addr := net.JoinHostPort(target.Host, strconv.Itoa(target.Port))
 	nconn, err := net.DialTimeout("tcp", addr, p.dialTimeout)
 	if err != nil {
@@ -148,10 +164,19 @@ func (p *Proxy) handleTelnetSession(ctx context.Context, nc ssh.NewChannel, targ
 	tc := telnet.New(nconn, term, cols, rows)
 	defer tc.Close()
 	// A kill (registry, idle, lifetime) closes the SSH connection, which
-	// ends ch; closing the telnet connection then ends the copy below.
+	// ends ch; the operator-side copy below then closes the telnet
+	// connection, which ends the target-side copy. The listener's context
+	// only matters at shutdown; this goroutine ends with the session either
+	// way (review of 274-280: it used to wait on that context alone and
+	// leaked one per session).
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
-		<-ctx.Done()
-		tc.Close()
+		select {
+		case <-ctx.Done():
+			tc.Close()
+		case <-done:
+		}
 	}()
 
 	now := time.Now()
@@ -174,8 +199,20 @@ func (p *Proxy) handleTelnetSession(ctx context.Context, nc ssh.NewChannel, targ
 		}
 	}()
 
+	// The session notice, before anything is typed into the target — as the
+	// SSH path prints it before the target is reached (review of 274-280) —
+	// on stderr, into the recording, audited with its digest.
+	if notice := p.banners.Get(banner.Session, ""); notice != "" {
+		_, _ = io.WriteString(ch.Stderr(), notice+"\r\n")
+		if rec != nil {
+			_, _ = io.WriteString(rec, notice+"\r\n")
+		}
+		p.audit(ctx, actor, "session.consent", fmt.Sprintf("target:%s cred_user:%s mode:printed banner_sha256:%s", target.Name, cred.Username, banner.Digest(notice)))
+	}
+
 	// The login. Nothing the target prints during it reaches the operator.
 	stream := expect.NewStream(tc)
+	defer stream.Close()
 	runErr := sc.Run(ctx, stream, tc, cred.Username, secret, "\r\n", p.scenarioStep)
 	if runErr != nil {
 		reason := "failed"
@@ -199,10 +236,6 @@ func (p *Proxy) handleTelnetSession(ctx context.Context, nc ssh.NewChannel, targ
 	if rec != nil {
 		_, _ = io.WriteString(rec, fmt.Sprintf("pamv1: logged in to %s by its startup scenario (%d steps)\r\n", target.Name, len(sc)))
 	}
-	if notice := p.banners.Get(banner.Session, ""); notice != "" {
-		_, _ = io.WriteString(out, notice+"\r\n")
-		p.audit(ctx, actor, "session.consent", fmt.Sprintf("target:%s cred_user:%s mode:printed banner_sha256:%s", target.Name, cred.Username, banner.Digest(notice)))
-	}
 
 	go func() {
 		for wc := range winCh {
@@ -210,7 +243,10 @@ func (p *Proxy) handleTelnetSession(ctx context.Context, nc ssh.NewChannel, targ
 		}
 	}()
 	if observe {
-		go func() { _, _ = io.Copy(io.Discard, ch) }()
+		go func() {
+			_, _ = io.Copy(io.Discard, ch)
+			tc.Close() // the watcher left or was killed: hang up, as below
+		}()
 	} else {
 		go func() {
 			_, _ = io.Copy(tc, activityReader{r: ch, touch: p.sessions.Activity(sid)})

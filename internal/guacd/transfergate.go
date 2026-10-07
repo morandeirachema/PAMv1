@@ -59,6 +59,16 @@ const streamIndexMime = "application/vnd.glyptodon.guacamole.stream-index+json"
 // maxCarry bounds an incomplete instruction carried between messages.
 const maxCarry = 4 << 20
 
+// maxHeld bounds the transfers one session may have held at once. With
+// MaxBytes per transfer it bounds the gate's memory; a transfer opened past
+// it is refused outright (review of 274-280: a client could open hundreds of
+// never-ended streams, each acked by the gate, and grow the server without
+// limit).
+const maxHeld = 4
+
+// OutcomeTooMany is a transfer refused because maxHeld were already held.
+const OutcomeTooMany = "too-many-transfers"
+
 // Scanner judges reassembled content. err means the verdict is unknown.
 type Scanner func(ctx context.Context, data []byte) (clean bool, reason string, err error)
 
@@ -102,8 +112,9 @@ type heldStream struct {
 	kind, name, mimetype string
 	acked                bool // a file stream: the sender expects acks
 	frames               [][]byte
-	data                 []byte
+	size                 int // decoded bytes so far
 	over                 bool
+	refused              bool // opened past maxHeld: nothing is kept
 	blobs                int
 }
 
@@ -139,6 +150,13 @@ type GateOut struct {
 	Reply [][]byte
 	// Done are the transfers this frame completed.
 	Done []Verdict
+	// Abort means the frame could not be framed as Guacamole instructions
+	// and the session must end; nothing of it is forwarded. Passing such
+	// bytes on would let the receiver find a stream in them that the gate
+	// never saw: libguac sizes a character by its first byte and accepts a
+	// zero-padded length, so a message the gate reads as malformed can carry
+	// a file guacd reads as valid (review of 274-280).
+	Abort bool
 }
 
 func opposite(dir string) string {
@@ -161,18 +179,15 @@ func (g *Gate) Process(ctx context.Context, dir string, frame []byte) GateOut {
 	g.mu.Lock()
 	data := append(g.carry[dir], frame...)
 	insts, tail, bad := splitInstructions(data)
-	switch {
-	case bad:
-		// Malformed: the receiver will refuse it too. Pass the bytes on
-		// rather than invent a reading of them, and start framing afresh.
+	if bad || len(tail) > maxCarry {
+		// Fail closed: a message that does not frame cleanly ends the
+		// session, whole — not even the instructions before the bad one are
+		// forwarded, so nothing the gate could not fully read crosses.
 		delete(g.carry, dir)
-	case len(tail) > maxCarry:
-		delete(g.carry, dir)
-		bad, tail = true, data[len(data)-len(tail):]
-	default:
-		g.carry[dir] = append([]byte(nil), tail...)
-		tail = nil
+		g.mu.Unlock()
+		return GateOut{Abort: true}
 	}
+	g.carry[dir] = append([]byte(nil), tail...)
 	g.mu.Unlock()
 
 	var out GateOut
@@ -198,9 +213,6 @@ func (g *Gate) Process(ctx context.Context, dir string, frame []byte) GateOut {
 		out.Reply = append(out.Reply, reply...)
 		out.Done = append(out.Done, *verdict)
 	}
-	if bad && len(tail) > 0 {
-		pass = append(pass, tail...)
-	}
 	flush()
 	return out
 }
@@ -225,8 +237,16 @@ func (g *Gate) one(ctx context.Context, dir string, ri rawInstruction) (fwd [][]
 		if hs == nil {
 			return passthrough, nil, nil
 		}
+		if g.liveHeld() >= maxHeld {
+			hs.refused, hs.over = true, true
+		}
+		// A new stream on an index clears any acks still owed to swallow
+		// for an older stream that used it.
+		delete(g.swallow, opposite(dir)+":"+streamIndex(in))
 		g.held[k] = hs
-		hs.frames = append(hs.frames, ri.raw)
+		if !hs.over {
+			hs.frames = append(hs.frames, ri.raw)
+		}
 		if hs.acked {
 			return nil, [][]byte{ackFor(streamIndex(in))}, nil
 		}
@@ -238,11 +258,11 @@ func (g *Gate) one(ctx context.Context, dir string, ri rawInstruction) (fwd [][]
 		}
 		hs.blobs++
 		if !hs.over {
-			chunk, err := base64.StdEncoding.DecodeString(argOr(in, 1))
-			if err != nil || len(hs.data)+len(chunk) > g.cfg.MaxBytes {
-				hs.over, hs.frames, hs.data = true, nil, nil
+			n := base64.StdEncoding.DecodedLen(len(argOr(in, 1)))
+			if hs.size+n > g.cfg.MaxBytes+3 { // DecodedLen may overcount padding by up to 2
+				hs.over, hs.frames = true, nil
 			} else {
-				hs.data = append(hs.data, chunk...)
+				hs.size += n
 				hs.frames = append(hs.frames, ri.raw)
 			}
 		}
@@ -258,16 +278,24 @@ func (g *Gate) one(ctx context.Context, dir string, ri rawInstruction) (fwd [][]
 		}
 		delete(g.held, k)
 		v := Verdict{Direction: dir, Kind: hs.kind, Name: hs.name, Mimetype: hs.mimetype}
-		if hs.over {
+		data, derr := hs.decode()
+		switch {
+		case hs.refused:
+			v.Outcome = OutcomeTooMany
+		case hs.over || len(data) > g.cfg.MaxBytes:
 			v.Outcome = OutcomeTooLarge
-			return [][]byte{}, g.endReply(dir, hs, in.Args[0], false), &v
+		case derr != nil:
+			v.Outcome, v.Reason = OutcomeScanError, "undecodable blob"
 		}
-		sum := sha256.Sum256(hs.data)
-		v.Bytes, v.SHA256 = len(hs.data), hex.EncodeToString(sum[:])
+		if v.Outcome != "" {
+			return [][]byte{}, g.endReply(dir, hs, in.Args[0]), &v
+		}
+		sum := sha256.Sum256(data)
+		v.Bytes, v.SHA256 = len(data), hex.EncodeToString(sum[:])
 		// The scan runs with the lock released: it is network I/O, and the
 		// other direction must keep flowing meanwhile.
 		g.mu.Unlock()
-		clean, reason, err := g.cfg.Scan(ctx, hs.data)
+		clean, reason, err := g.cfg.Scan(ctx, data)
 		g.mu.Lock()
 		switch {
 		case err != nil:
@@ -278,20 +306,25 @@ func (g *Gate) one(ctx context.Context, dir string, ri rawInstruction) (fwd [][]
 			v.Outcome = OutcomeClean
 		}
 		if !v.Released() {
-			return [][]byte{}, g.endReply(dir, hs, in.Args[0], false), &v
+			return [][]byte{}, g.endReply(dir, hs, in.Args[0]), &v
 		}
 		if hs.acked {
-			// The receiver will ack the open and every blob (guacd also the
-			// end of an upload); the sender already had those from the gate.
-			n := 1 + hs.blobs
-			if dir == DirIn {
-				n++
-			}
-			g.swallow[opposite(dir)+":"+in.Args[0]] += n
+			// The receiver will ack the open and every blob; the sender
+			// already had those from the gate. The END of a released upload
+			// is not acked by the gate: guacd's own end ack reaches the
+			// browser, so a write guacd refuses is reported as refused
+			// rather than as uploaded (review of 274-280).
+			g.swallow[opposite(dir)+":"+in.Args[0]] += 1 + hs.blobs
 		}
-		return append(hs.frames, ri.raw), g.endReply(dir, hs, in.Args[0], true), &v
+		return append(hs.frames, ri.raw), nil, &v
 	case "ack":
 		k := key(0)
+		// An error ack is never swallowed: it is the receiver refusing the
+		// transfer, and the sender must hear it. It also ends what is owed.
+		if g.swallow[k] > 0 && argOr(in, 2) != "0" {
+			delete(g.swallow, k)
+			return passthrough, nil, nil
+		}
 		if g.swallow[k] > 0 {
 			g.swallow[k]--
 			if g.swallow[k] == 0 {
@@ -303,23 +336,48 @@ func (g *Gate) one(ctx context.Context, dir string, ri rawInstruction) (fwd [][]
 	return passthrough, nil, nil
 }
 
-// endReply is what the sender of a finished upload hears: guacd acks the end
-// of an upload stream, so the gate does too — OK when it released the file,
-// a refusal (0x0303, CLIENT_FORBIDDEN) when it did not, so the operator's
-// client reports the upload as failed rather than done. A download's sender
-// (guacd) and any clipboard stream expect nothing.
-func (g *Gate) endReply(dir string, hs *heldStream, index string, released bool) [][]byte {
+// endReply is what the sender of a refused upload hears: a refusal (0x0303,
+// CLIENT_FORBIDDEN) acking its end, so the operator's client reports the
+// upload as failed rather than done. A released upload's end is acked by
+// guacd itself. A download's sender (guacd) and any clipboard stream expect
+// nothing.
+func (g *Gate) endReply(dir string, hs *heldStream, index string) [][]byte {
 	if dir != DirIn || !hs.acked {
 		return nil
-	}
-	if released {
-		return [][]byte{ackFor(index)}
 	}
 	return [][]byte{[]byte(Instruction{Opcode: "ack", Args: []string{index, "Blocked by content scan", "771"}}.Encode())}
 }
 
 // open decides whether a stream-opening instruction is held, returning the
 // stream state and its key.
+// liveHeld counts the transfers currently held (refused ones keep nothing).
+func (g *Gate) liveHeld() int {
+	n := 0
+	for _, hs := range g.held {
+		if !hs.refused {
+			n++
+		}
+	}
+	return n
+}
+
+// decode reassembles a held stream's content from its blob frames.
+func (hs *heldStream) decode() ([]byte, error) {
+	var out []byte
+	for _, f := range hs.frames {
+		insts, _, _ := splitInstructions(f)
+		if len(insts) != 1 || insts[0].inst.Opcode != "blob" {
+			continue
+		}
+		chunk, err := base64.StdEncoding.DecodeString(argOr(insts[0].inst, 1))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, chunk...)
+	}
+	return out, nil
+}
+
 func (g *Gate) open(dir string, in Instruction) (*heldStream, string) {
 	switch in.Opcode {
 	case "clipboard": // clipboard,<stream>,<mimetype>
@@ -383,7 +441,9 @@ func splitInstructions(raw []byte) (out []rawInstruction, tail []byte, bad bool)
 			if j == len(raw) {
 				return out, raw[start:], false
 			}
-			if j == i || raw[j] != '.' || j-i > 9 {
+			// A length is plain decimal: no leading zero (libguac would read
+			// "0003" as 3, the gate must not read it any other way).
+			if j == i || raw[j] != '.' || j-i > 9 || (raw[i] == '0' && j-i > 1) {
 				return out, raw[start:], true
 			}
 			n, _ := strconv.Atoi(string(raw[i:j]))
@@ -392,7 +452,13 @@ func splitInstructions(raw []byte) (out []rawInstruction, tail []byte, bad bool)
 				if k >= len(raw) || !utf8.FullRune(raw[k:]) {
 					return out, raw[start:], false
 				}
-				_, size := utf8.DecodeRune(raw[k:])
+				r, size := utf8.DecodeRune(raw[k:])
+				// Invalid UTF-8 is malformed, not one replacement character:
+				// guacd sizes a character by its lead byte alone, and the two
+				// readings must never disagree on where an element ends.
+				if r == utf8.RuneError && size == 1 {
+					return out, raw[start:], true
+				}
 				k += size
 			}
 			if k >= len(raw) {

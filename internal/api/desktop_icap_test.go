@@ -278,19 +278,21 @@ func TestDesktopTransfersScanned(t *testing.T) {
 	if n := box.count("rdp.transfer_blocked"); n != 2 {
 		t.Fatalf("blocked transfers alerted %d times, want 2", n)
 	}
-	// guacd acked the upload three times; the browser saw only the gate's
-	// three acks for stream 3, never guacd's.
-	n := 0
+	// guacd acked the upload's open, blob and end; the gate had already
+	// answered the first two, so only guacd's END ack reaches the browser —
+	// its own verdict on the write (review of 274-280).
+	until("10.OK (guacd)")
+	n, fromGuacd := 0, 0
 	for _, f := range seen {
-		if strings.Contains(f, "OK (guacd)") {
-			t.Fatalf("guacd's own ack for a released upload reached the browser: %q", f)
-		}
 		if strings.HasPrefix(f, "3.ack,1.3,") {
 			n++
+			if strings.Contains(f, "OK (guacd)") {
+				fromGuacd++
+			}
 		}
 	}
-	if n > 3 {
-		t.Fatalf("stream 3 was acked %d times", n)
+	if n != 3 || fromGuacd != 1 {
+		t.Fatalf("stream 3 acks seen by the browser: %d, %d of them guacd's; want 3 and 1", n, fromGuacd)
 	}
 }
 
@@ -313,5 +315,47 @@ func auditHasEventually(t *testing.T, st store.Store, action, want string) {
 			t.Fatalf("no audit event action=%q containing %q", action, want)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestDesktopGateClosesOnUnframeable (review of 274-280): with scanning on,
+// a message the gate cannot frame ends the tunnel, audited, and none of it
+// reaches guacd.
+func TestDesktopGateClosesOnUnframeable(t *testing.T) {
+	icapClient, err := icap.NewClient(fakeICAP(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromBrowser := make(chan fakeInst, 64)
+	srv, st := newTestServerOpts(t, nil, api.Options{GuacdAddr: transferGuacd(t, fromBrowser),
+		ICAP: icapClient, ICAPDesktop: "all", ICAPDesktopMaxBytes: 1 << 20})
+	_, data := do(t, srv, "POST", "/api/targets", testAPIKey, map[string]any{"name": "win-rdp", "host": "10.0.0.9", "port": 3389, "os_type": "windows", "protocol": "rdp"})
+	id := int64(jsonMap(t, data)["id"].(float64))
+	do(t, srv, "POST", "/api/credentials", testAPIKey, map[string]any{"target_id": id, "username": "Administrator", "secret": "Rdp-S3cret!"})
+	_, data = do(t, srv, "POST", "/api/rdp-token", testAPIKey, nil)
+	tok := jsonMap(t, data)["token"].(string)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/api/targets/"+itoa(id)+"/rdp?token="+tok, &websocket.DialOptions{Subprotocols: []string{"guacamole"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(websocket.StatusNormalClosure, "")
+	msg := "0003.nop;" + guacd.Instruction{Opcode: "file", Args: []string{"1", "text/plain", "x"}}.Encode()
+	if err := c.Write(ctx, websocket.MessageText, []byte(msg)); err != nil {
+		t.Fatal(err)
+	}
+	auditHasEventually(t, st, "rdp.refused", "reason:unframeable-instruction direction:in")
+	for {
+		if _, _, err := c.Read(ctx); err != nil {
+			break // the tunnel closed
+		}
+	}
+	select {
+	case in := <-fromBrowser:
+		if in.op == "file" {
+			t.Fatal("the unframeable message's file stream reached guacd")
+		}
+	default:
 	}
 }

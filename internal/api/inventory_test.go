@@ -77,11 +77,12 @@ func TestInventoryExport(t *testing.T) {
 
 	code, d = call(http.MethodGet, "/api/inventory/targets.csv", testAPIKey, nil)
 	rows = csvRows(t, d)
-	if code != http.StatusOK || len(rows) != 3 {
+	// alice-box sits in alice's personal safe: it is not exported at all
+	// (review of 274-280), or it would import as a target in no safe.
+	if code != http.StatusOK || len(rows) != 2 {
 		t.Fatalf("targets: %d %q", code, rows)
 	}
-	// Sorted by name: alice-box, then web-01.
-	if rows[1][0] != "alice-box" || rows[1][5] != "" || rows[2][0] != "web-01" || rows[2][5] != "prod" || rows[2][8] != "true" || rows[2][9] != "env=prod" {
+	if rows[1][0] != "web-01" || rows[1][5] != "prod" || rows[1][8] != "true" || rows[1][9] != "env=prod" {
 		t.Fatalf("targets rows = %q", rows)
 	}
 
@@ -167,7 +168,7 @@ func TestInventoryRoundTrip(t *testing.T) {
 	export["credentials"] = strings.Replace(export["credentials"], "web-01,root,password,false,", "web-01,root,password,false,"+inventorySecret, 1)
 
 	to, st := newTestServerOpts(t, nil, api.Options{})
-	want := map[string][3]int{"safes": {1, 0, 0}, "targets": {2, 0, 0}, "credentials": {1, 0, 0}, "users": {1, 0, 0}, "grants": {1, 0, 0}}
+	want := map[string][3]int{"safes": {1, 0, 0}, "targets": {1, 0, 0}, "credentials": {1, 0, 0}, "users": {1, 0, 0}, "grants": {1, 0, 0}}
 	var token string
 	for _, c := range []string{"safes", "targets", "credentials", "users", "grants"} {
 		code, res := postCSV(t, to, "/api/inventory/"+c+".csv", testAPIKey, export[c])
@@ -184,7 +185,7 @@ func TestInventoryRoundTrip(t *testing.T) {
 	if token == "" {
 		t.Fatal("an imported user must get its token, once, in the result")
 	}
-	auditHas(t, st, "inventory.import", "class:targets rows:2 created:2 exists:0 failed:0")
+	auditHas(t, st, "inventory.import", "class:targets rows:1 created:1 exists:0 failed:0")
 	auditHas(t, st, "target.create", "web-01")
 	auditHas(t, st, "credential.create", "")
 
@@ -264,5 +265,33 @@ func TestInventoryImportErrors(t *testing.T) {
 		if code, _ := postCSV(t, srv, "/api/inventory/"+c+".csv", tok, "x\n"); code != http.StatusForbidden {
 			t.Errorf("an auditor importing %s = %d, want 403", c, code)
 		}
+	}
+}
+
+// TestInventoryImportReviewFixes (review of 274-280): a secret reaches the
+// vault byte-exact — a leading quote or space is not "restored" or trimmed
+// away — and a repeated label key fails the row instead of keeping one value.
+func TestInventoryImportReviewFixes(t *testing.T) {
+	srv, st := newTestServerOpts(t, nil, api.Options{})
+	code, res := postCSV(t, srv, "/api/inventory/targets.csv", testAPIKey,
+		"name,host,os_type,protocol,labels\nweb-01,10.0.0.5,linux,ssh,env=prod\ndup-01,10.0.0.6,linux,ssh,\"env=prod,env=dev\"\n")
+	if code != http.StatusOK || importCounts(res) != [3]int{1, 0, 1} {
+		t.Fatalf("targets: %d %v", code, res)
+	}
+	if e := fmt.Sprint(res["rows"].([]any)[1].(map[string]any)["error"]); !strings.Contains(e, "appears twice") {
+		t.Fatalf("duplicate label key: %q", e)
+	}
+	const secret = "'-Odd pw "
+	code, res = postCSV(t, srv, "/api/inventory/credentials.csv", testAPIKey, "target,username,secret\nweb-01,root,\""+secret+"\"\n")
+	if code != http.StatusOK || importCounts(res) != [3]int{1, 0, 0} {
+		t.Fatalf("credentials: %d %v", code, res)
+	}
+	creds, err := st.ListCredentialsMeta(context.Background(), 0, 0, 0)
+	if err != nil || len(creds) != 1 {
+		t.Fatal(creds, err)
+	}
+	code, d := do(t, srv, http.MethodPost, "/api/credentials/"+itoa(creds[0].ID)+"/reveal", testAPIKey, nil)
+	if code != http.StatusOK || jsonMap(t, d)["secret"] != secret {
+		t.Fatalf("the secret changed on import: %d %s", code, d)
 	}
 }

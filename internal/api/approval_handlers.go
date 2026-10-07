@@ -500,6 +500,15 @@ func (s *Server) decideAccessRequest(w http.ResponseWriter, r *http.Request, id 
 // the comment is noted on the request and written to the audit row, and a
 // granted duration shortens the approved window.
 func (s *Server) decideAccessRequestWith(w http.ResponseWriter, r *http.Request, id int64, decision, approver string, in approvalDecisionIn) bool {
+	// PAM_APPROVAL_COMMENT_REQUIRED binds every decision path, not just the
+	// portal's (review of 274-280): a Slack button or a magic link carries no
+	// comment, so with the requirement on they are refused and the approver
+	// is sent to the portal.
+	if s.approvalCommentRequired && strings.TrimSpace(in.Comment) == "" {
+		s.audit(r.Context(), "access.decision_denied", fmt.Sprintf("request:%d reason:comment-required", id))
+		writeError(w, http.StatusUnprocessableEntity, "a comment is required on every decision (PAM_APPROVAL_COMMENT_REQUIRED); decide in the portal")
+		return false
+	}
 	ar, err := s.store.GetAccessRequest(r.Context(), id)
 	if err != nil {
 		storeError(w, err)
@@ -583,29 +592,48 @@ func (s *Server) decideAccessRequestWith(w http.ResponseWriter, r *http.Request,
 		required = floor
 	}
 	joined := strings.Join(approvers, ",")
-	if in.Comment != "" {
-		_ = s.store.NoteAccessRequest(r.Context(), ar.ID, approver, "approved: "+in.Comment)
+	now := time.Now()
+	// The approver's duration (Phase 274) shortens the window the request
+	// asked for; it can never extend it — the request is the ceiling. Fixed
+	// in the review of 274-280:
+	//   - it counts from the window's START when that is later than now, so
+	//     approving tomorrow's 09:00-17:00 window today for 120 minutes grants
+	//     09:00-11:00 tomorrow rather than an expiry before the window opens;
+	//   - every approver's duration applies, a partial approver's too, so the
+	//     shortest wins instead of only the last approver's;
+	//   - it is applied BEFORE the state changes: a failure leaves the request
+	//     pending (and only ever narrower), never approved for the full window
+	//     with no access.approve row.
+	granted := ""
+	if in.DurationMin > 0 {
+		base := now
+		if ar.NotBefore != nil && ar.NotBefore.After(base) {
+			base = *ar.NotBefore
+		}
+		until := base.Add(time.Duration(in.DurationMin) * time.Minute).UTC()
+		if until.Before(ar.ExpiresAt) {
+			if err := s.store.ShortenAccessRequest(r.Context(), ar.ID, until); err != nil {
+				storeError(w, err)
+				return false
+			}
+			ar.ExpiresAt = until
+			granted = " granted_until:" + until.Format(time.RFC3339)
+		}
+	}
+	// The comment is noted only once the approval has landed (below): a
+	// caller that loses the compare-and-set race must not leave an
+	// "approved:" note on a request it never approved.
+	note := func() {
+		if in.Comment != "" {
+			_ = s.store.NoteAccessRequest(r.Context(), ar.ID, approver, "approved: "+in.Comment)
+		}
 	}
 	if chainComplete && len(approvers) >= required {
-		now := time.Now()
 		if err := s.store.SetApprovalState(r.Context(), ar.ID, joined, approvedAs, "approved", approver, &now); err != nil {
 			storeError(w, err)
 			return false
 		}
-		// The approver's duration (Phase 274) shortens the window the request
-		// asked for; it can never extend it — the request is the ceiling.
-		granted := ""
-		if in.DurationMin > 0 {
-			until := now.Add(time.Duration(in.DurationMin) * time.Minute).UTC()
-			if until.Before(ar.ExpiresAt) {
-				if err := s.store.ShortenAccessRequest(r.Context(), ar.ID, until); err != nil {
-					storeError(w, err)
-					return false
-				}
-				ar.ExpiresAt = until
-				granted = " granted_until:" + until.Format(time.RFC3339)
-			}
-		}
+		note()
 		s.audit(r.Context(), "access.approve", fmt.Sprintf("request:%d requester:%s target:%d approvers:%d/%d", ar.ID, ar.Requester, ar.TargetID, len(approvers), required)+granted+commentDetail(in.Comment))
 		s.notifyDecision(r, "access.approve", approver, ar)
 		ar.Status = "approved"
@@ -626,7 +654,8 @@ func (s *Server) decideAccessRequestWith(w http.ResponseWriter, r *http.Request,
 			storeError(w, err)
 			return false
 		}
-		s.audit(r.Context(), "access.approve_partial", fmt.Sprintf("request:%d target:%d approver:%s approvals:%d/%d", ar.ID, ar.TargetID, approver, len(approvers), required)+commentDetail(in.Comment))
+		note()
+		s.audit(r.Context(), "access.approve_partial", fmt.Sprintf("request:%d target:%d approver:%s approvals:%d/%d", ar.ID, ar.TargetID, approver, len(approvers), required)+granted+commentDetail(in.Comment))
 	}
 	ar.ApprovedBy, ar.ApprovedAs = joined, approvedAs
 	writeJSON(w, http.StatusOK, ar)

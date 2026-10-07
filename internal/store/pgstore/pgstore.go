@@ -1567,6 +1567,26 @@ func (s *PGStore) ExportAudit(ctx context.Context, since, until time.Time) ([]st
 	return pgx.CollectRows(rows, scanAuditEvent)
 }
 
+// ExportAuditActions is ExportAudit filtered to actions, in SQL, so a
+// year-long report never loads the rows it does not count.
+func (s *PGStore) ExportAuditActions(ctx context.Context, since, until time.Time, actions []string) ([]store.AuditEvent, error) {
+	if len(actions) == 0 {
+		return []store.AuditEvent{}, nil
+	}
+	if until.IsZero() {
+		until = time.Now()
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, ts, actor, action, detail
+		 FROM audit_events
+		 WHERE ($1::timestamptz IS NULL OR ts >= $1) AND ts < $2 AND action = ANY($3)
+		 ORDER BY id ASC`, nullableTime(since), until.UTC(), actions)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanAuditEvent)
+}
+
 // LatestAuditByAction returns the most recent event with the given action, or
 // (nil, nil) if there is none.
 //

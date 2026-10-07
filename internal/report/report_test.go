@@ -161,3 +161,34 @@ func TestDigest(t *testing.T) {
 		t.Fatalf("an actor name forged a report line:\n%s", body)
 	}
 }
+
+// TestAccessWithoutASession (review of 274-280): a brokered kubectl
+// operation and a REST WinRM command are access to the target; a WinRM
+// command inside a proxied shell is not counted again; a password accepted
+// while MFA is still pending is not a sign-in.
+func TestAccessWithoutASession(t *testing.T) {
+	events := []store.AuditEvent{
+		{TS: at(1), Actor: "kim", Action: "k8s.run", Detail: "target:k8s-prod cred_user:sa command:\"get pods\" status:0"},
+		{TS: at(2), Actor: "wes", Action: "winrm.run", Detail: "target:win-01 cred_user:Administrator exit:0"},
+		{TS: at(3), Actor: "wes", Action: "winrm.run", Detail: "target:win-02 cred_user:Administrator via:proxy exit:0 cmd:dir"},
+		{TS: at(4), Actor: "pat", Action: "login", Detail: "user:pat scope:mfa_pending"},
+	}
+	conns := Connections(events)
+	if len(conns) != 2 || conns[0].Protocol != "kubernetes" || conns[1].Target != "win-01" {
+		t.Fatalf("connections = %+v", conns)
+	}
+	old := day0.AddDate(0, -1, 0)
+	u := FindUnused([]store.User{{Username: "pat", CreatedAt: old}}, []store.Target{{Name: "k8s-prod", CreatedAt: old}, {Name: "win-02", CreatedAt: old}}, events, day0, day0.AddDate(0, 0, 1))
+	if len(u.Users) != 1 || len(u.Targets) != 1 || u.Targets[0].Name != "win-02" {
+		t.Fatalf("unused = %+v", u)
+	}
+	for _, a := range []string{"login", "k8s.run", "winrm.run", "target.critical_connect", "session.start"} {
+		found := false
+		for _, b := range Actions() {
+			found = found || a == b
+		}
+		if !found {
+			t.Errorf("Actions() lacks %s", a)
+		}
+	}
+}

@@ -246,3 +246,34 @@ func TestTelnetScenarioFailsClosed(t *testing.T) {
 		t.Fatal("the refusal must be audited")
 	}
 }
+
+// TestTelnetShellRight (review of 274-280): a telnet session is a shell, so
+// a sub-protocol set without ssh_shell refuses it, audited, before the
+// target is ever dialed.
+func TestTelnetShellRight(t *testing.T) {
+	host, port := startTelnetDevice(t)
+	st := memstore.New()
+	v := mustVault(t)
+	target := seedTarget(t, st, v, host, port)
+	target.Name, target.Protocol, target.Rights = "sw-01", "telnet", "ssh_exec"
+	if err := st.UpdateTarget(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
+	addr, _ := telnetProxy(t, st, v, true)
+	client, err := dialProxy(t, addr, "sw-01", proxyAPIKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	sess, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Shell(); err == nil {
+		t.Fatal("a telnet shell opened without the ssh_shell right")
+	}
+	waitForAuditDetail(t, st, "session.right_denied", "target:sw-01 cred_user:"+upstreamUser+" right:ssh_shell")
+	if hasAuditReason(t, st, "session.scenario", "target:sw-01") {
+		t.Fatal("the scenario ran for a refused shell")
+	}
+}

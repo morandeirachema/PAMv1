@@ -19,6 +19,7 @@ package restrict
 import (
 	"context"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -109,6 +110,11 @@ func Validate(r store.RestrictionRule) error {
 	if strings.TrimSpace(r.Pattern) == "" {
 		return fmt.Errorf("pattern is required")
 	}
+	// SFTP carries no command to match a regex against; only size rules run
+	// there. Accepting a regex would store a rule that never fires.
+	if r.Subprotocol == "sftp" {
+		return fmt.Errorf(`an sftp rule is a size rule ("$filesize:>N" or "$downsize:>N"); a regex never runs on sftp`)
+	}
 	if _, err := regexp.Compile(r.Pattern); err != nil {
 		return fmt.Errorf("pattern: %w", err)
 	}
@@ -139,6 +145,11 @@ func parseSize(s string) (up bool, max int64, err error) {
 	n, err := strconv.ParseInt(rest, 10, 64)
 	if err != nil || n <= 0 {
 		return false, 0, fmt.Errorf("size rule: %q is not a positive size", s)
+	}
+	// n * mult must not wrap: an overflowed limit went negative and killed
+	// every transfer.
+	if n > math.MaxInt64/mult {
+		return false, 0, fmt.Errorf("size rule: %q is too large", s)
 	}
 	return up, n * mult, nil
 }
@@ -220,23 +231,30 @@ func (s *Set) Check(subprotocol, cmd string) (Match, bool) {
 	return found, ok
 }
 
-// SizeLimit reports the tightest size rule in a direction (up = upload):
-// the smallest Max among the subject's rules for it, and whether one exists.
-func (s *Set) SizeLimit(up bool) (SizeRule, bool) {
+// SizeRules returns every size rule in a direction (up = upload). All of
+// them apply: a 10m notify rule and a 100m kill rule both fire on a 5g
+// upload. Until the review of 274-280 only the smallest was kept, so a
+// small notify rule hid a larger kill rule and the upload ran to the end.
+func (s *Set) SizeRules(up bool) []SizeRule {
 	if s == nil {
-		return SizeRule{}, false
+		return nil
 	}
-	var best SizeRule
-	ok := false
+	var out []SizeRule
 	for _, r := range s.sizes {
-		if r.Up != up {
-			continue
-		}
-		if !ok || r.Max < best.Max || (r.Max == best.Max && r.Action == ActionKill) {
-			best, ok = r, true
+		if r.Up == up {
+			out = append(out, r)
 		}
 	}
-	return best, ok
+	return out
+}
+
+// AuditAction is the audit action a match is recorded under, the same on
+// every path that enforces it: restriction.notified or restriction.killed.
+func (m Match) AuditAction() string {
+	if m.Action == ActionNotify {
+		return "restriction.notified"
+	}
+	return "restriction.killed"
 }
 
 // Empty reports whether the set holds no rule at all.

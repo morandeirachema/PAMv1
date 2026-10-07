@@ -61,6 +61,17 @@ func TestBannersOnTheProxy(t *testing.T) {
 	if !strings.Contains(string(out), "This session is recorded.") || !strings.Contains(string(out), targetOutput) {
 		t.Fatalf("session notice missing from the session output: %q", out)
 	}
+	// The notice is on stderr, never stdout (review of 274–280): stdout is
+	// the data stream of an exec, an scp or an SFTP subsystem.
+	sess2, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := sess2.Output("whoami")
+	sess2.Close()
+	if err != nil || strings.Contains(string(stdout), "This session is recorded.") || string(stdout) != targetOutput {
+		t.Fatalf("stdout must be the target's output alone: %q err %v", stdout, err)
+	}
 	client.Close()
 	waitForAuditDetail(t, st, "session.consent", "target:web-01 cred_user:"+upstreamUser+" mode:printed banner_sha256:"+banner.Digest("This session is recorded."))
 	// And it is in the recording.

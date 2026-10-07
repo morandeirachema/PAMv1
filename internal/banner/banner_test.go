@@ -28,9 +28,11 @@ func TestBanners(t *testing.T) {
 			t.Errorf("Get(%q,%q) = %q want %q", k[0], k[1], got, want)
 		}
 	}
-	// A variant without a default still answers that language only.
-	only := New(map[string]string{"session_es": "Grabada"})
-	if only.Get(Session, "es") != "Grabada" || only.Get(Session, "") != "" || !only.Has(Session) {
+	// A variant without a default answers every language (review of
+	// 274–280): a configured notice must never come back empty, or a
+	// desktop opens without consent and the SSH notice prints nothing.
+	only := New(map[string]string{"session_fr": "Enregistrée", "session_es": "Grabada"})
+	if only.Get(Session, "fr") != "Enregistrée" || only.Get(Session, "") != "Grabada" || only.Get(Session, "en") != "Grabada" || !only.Has(Session) {
 		t.Fatal("variant-only set")
 	}
 	if len(Digest("x")) != 64 || Digest("x") == Digest("y") {

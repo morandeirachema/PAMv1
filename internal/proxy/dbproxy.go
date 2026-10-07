@@ -571,7 +571,9 @@ func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgpr
 			touch() // any client message is operator activity (Phase 240 idle timeout)
 			switch m := msg.(type) {
 			case *pgproto3.Query:
-				if sqlBlockedStatement(ctx, &d.listener, &d.pol, cl, actor, target, m.String, false, rs) {
+				if blocked, kill := sqlBlockedStatement(ctx, &d.listener, &d.pol, cl, actor, target, m.String, false, rs); kill {
+					return // a kill restriction rule: end the session
+				} else if blocked {
 					continue // refused by policy; session stays usable
 				}
 				if sqlStepUpRefused(relayCtx, &d.listener, &d.pol, cl, actor, target, m.String, sid, false) {
@@ -581,8 +583,8 @@ func (d *DBProxy) relay(ctx context.Context, backend *pgproto3.Backend, fe *pgpr
 					return // recording cap reached: end the session rather than run it unrecorded
 				}
 			case *pgproto3.Parse:
-				if sqlBlockedStatement(ctx, &d.listener, &d.pol, cl, actor, target, m.Query, true, rs) {
-					return // fail-closed: end the extended-protocol session
+				if blocked, _ := sqlBlockedStatement(ctx, &d.listener, &d.pol, cl, actor, target, m.Query, true, rs); blocked {
+					return // fail-closed: end the extended-protocol session (and a kill rule's)
 				}
 				// Step-up covers the extended protocol too, so a client can't dodge a
 				// supervisor by sending a guarded statement as Parse+Bind+Execute.
