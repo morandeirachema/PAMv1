@@ -209,6 +209,25 @@ func clipDetail(t store.Target) string {
 	return fmt.Sprintf("clipboard:%s clip_audit:%s require_session_mfa:%t critical:%t scenario:%s", orDash(t.RDPClipboard), orDash(t.RDPClipboardAudit), t.RequireSessionMFA, t.Critical, scenario)
 }
 
+// mayTypePassword guards a startup scenario that types ${password} (review
+// of 274-280). Whoever writes such a scenario decides what PAMv1 types with
+// the vaulted secret — and `send echo ${password}` prints it into the
+// writer's own terminal and the recording. So setting or changing one needs
+// CapRevealSecret, the capability that could read the secret anyway; a
+// target manager without it may still edit a target whose scenario they
+// leave as it was.
+func (s *Server) mayTypePassword(w http.ResponseWriter, r *http.Request, scenario, current string) bool {
+	if scenario == current || !strings.Contains(scenario, expect.Password) {
+		return true
+	}
+	if principalFrom(r.Context()).Can(auth.CapRevealSecret) {
+		return true
+	}
+	s.audit(r.Context(), "authz.denied", r.Method+" "+r.URL.Path+" reason:scenario-types-password")
+	writeError(w, http.StatusForbidden, "a scenario that types ${password} needs the reveal capability: it decides what is done with the secret")
+	return false
+}
+
 // createTarget validates and persists a new target (defaulting the port to 22),
 // then audits the creation.
 func (s *Server) createTarget(w http.ResponseWriter, r *http.Request) {
@@ -217,6 +236,9 @@ func (s *Server) createTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.validateTargetIn(w, &in) {
+		return
+	}
+	if !s.mayTypePassword(w, r, in.scenario, "") {
 		return
 	}
 	t := targetFromIn(in)
@@ -244,6 +266,14 @@ func (s *Server) updateTarget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.validateTargetIn(w, &in) {
+		return
+	}
+	current, err := s.store.GetTarget(r.Context(), id)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	if !s.mayTypePassword(w, r, in.scenario, current.Scenario) {
 		return
 	}
 	// A protocol-bound credential (ssh_ca, db_zsp, k8s_token) is only ever

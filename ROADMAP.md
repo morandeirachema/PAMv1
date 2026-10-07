@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–280 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–281 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,54 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 281 — The review of 274–280, and what it found ✅
+
+*Seven phases shipped in two days. Before releasing them, three read-only
+reviews covered 274–276, 277–278 and 279–280, in the 248 and 264
+tradition: the review of a feature is part of the feature. Every finding
+below was checked in the code before it was fixed, and each fix has a
+test that would have failed before it.*
+
+- [x] **Fail-open, fixed.** The desktop transfer gate forwarded any message
+  it could not frame, and guacd could read a file stream in it: it now
+  ends the session. A small notify size rule hid a larger kill rule: all
+  rules apply now. A SQL kill rule refused the statement and relayed the
+  next one: it ends the session now.
+- [x] **The secret.** A scenario typing `${password}` could print it, and a
+  target manager without reveal could write one: such scenarios now need
+  `CapRevealSecret`. Invariant 6 now says the truth: the secret is kept for
+  the connection.
+- [x] **Consent.** The session notice on stdout broke SFTP and scp: it is on
+  stderr now. The desktop tunnel took tokens that never saw the notice:
+  with a notice configured it takes only consent-gated tokens. A
+  variant-only notice came back empty for other languages: the first
+  variant is used.
+- [x] **Approvals.** Durations count from the window's start, every
+  approver's applies, nothing changes state on a failed shortening, and
+  `PAM_APPROVAL_COMMENT_REQUIRED` binds Slack and magic links too.
+- [x] **Reports.** kubectl and REST WinRM use count and alert. An unfinished
+  sign-in is not use. The read is filtered to the actions counted
+  (`ExportAuditActions`, store 243). A digest whose row cannot be written
+  is not re-sent every tick.
+- [x] **Inventory.** Personal-safe targets are no longer exported to
+  re-import open. A failed safe placement is rolled back. Secrets import
+  byte-exact. A repeated label key fails the row.
+- [x] **Telnet.** It enforces the shell right and supervision. The
+  subnegotiation buffer is bounded. A killed observe session no longer
+  hangs, and two goroutine leaks are closed.
+- [x] **Smaller.** SFTP counts reset per closed handle. An sftp regex rule is
+  refused, and an overflowing size is refused. Restriction rules are
+  readable by auditors only. guacd's upload refusals reach the browser.
+  The macOS analytics test flake is gone.
+- [x] **Living docs**: low-level (invariant 6, audit reasons, change log),
+  high-level, ADMIN-GUIDE notes in every affected section, USER-GUIDE,
+  CODE-GUIDE.
+
+Left as findings, on purpose: reports match targets by name (documented);
+a `*` restriction rule also covers the REST discovery, forensics and
+dependency paths; the telnet and WinRM session plumbing could share a
+helper. None of these is a security defect.
 
 ## Phase 280 — ICAP scanning of desktop transfers and clipboard (Tier 10, row 11) ✅
 

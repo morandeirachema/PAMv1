@@ -1381,7 +1381,10 @@ func (s *Server) routes() {
 	}
 	// Per-subject restriction rules (Phase 275): what a user or role may not
 	// do inside a session — a policy on people, so managed with users.
-	s.mux.Handle("GET /api/restriction-rules", s.authz(auth.CapReadInventory, s.listRestrictionRules))
+	// Read by those who review policy, not by those it watches (review of
+	// 274-280): a plain user who could list the notify patterns aimed at
+	// them could simply avoid them.
+	s.mux.Handle("GET /api/restriction-rules", s.authz(auth.CapReadAudit, s.listRestrictionRules))
 	s.mux.Handle("POST /api/restriction-rules", s.authz(auth.CapManageUsers, s.createRestrictionRule))
 	s.mux.Handle("DELETE /api/restriction-rules/{id}", s.authz(auth.CapManageUsers, s.deleteRestrictionRule))
 	// Per-target SSH host-key pins (Phase 272): reading one is inventory,

@@ -22,6 +22,16 @@ import (
 type inventoryNames struct {
 	targets map[int64]string
 	safes   map[int64]store.Safe
+	safeOf  map[int64]*int64 // target id -> its safe
+}
+
+// personal reports whether a target sits in a personal safe.
+func (n inventoryNames) personal(targetID int64) bool {
+	id := n.safeOf[targetID]
+	if id == nil {
+		return false
+	}
+	return n.safes[*id].Personal
 }
 
 func (s *Server) loadInventoryNames(ctx context.Context) (inventoryNames, []store.Target, []store.Safe, error) {
@@ -33,9 +43,10 @@ func (s *Server) loadInventoryNames(ctx context.Context) (inventoryNames, []stor
 	if err != nil {
 		return inventoryNames{}, nil, nil, err
 	}
-	n := inventoryNames{targets: map[int64]string{}, safes: map[int64]store.Safe{}}
+	n := inventoryNames{targets: map[int64]string{}, safes: map[int64]store.Safe{}, safeOf: map[int64]*int64{}}
 	for _, t := range targets {
 		n.targets[t.ID] = t.Name
+		n.safeOf[t.ID] = t.SafeID
 	}
 	for _, sf := range safes {
 		n.safes[sf.ID] = sf
@@ -82,11 +93,17 @@ func (s *Server) inventoryRows(ctx context.Context, c inventorycsv.Class) ([][]s
 		}
 	case inventorycsv.Targets.Name:
 		for _, t := range targets {
+			// A target in a personal safe is not exported at all (review of
+			// 274-280): written out without its safe it would import as a
+			// target in NO safe, which by default anyone who may connect can
+			// reach — wider than the shared safe the personal one would have
+			// become. Its credentials and grants are skipped with it.
+			if names.personal(t.ID) {
+				continue
+			}
 			safe := ""
 			if t.SafeID != nil {
-				// A target in a personal safe exports with no safe, for the
-				// reason the safe itself is not exported.
-				if sf, ok := names.safes[*t.SafeID]; ok && !sf.Personal {
+				if sf, ok := names.safes[*t.SafeID]; ok {
 					safe = sf.Name
 				}
 			}
@@ -100,6 +117,9 @@ func (s *Server) inventoryRows(ctx context.Context, c inventorycsv.Class) ([][]s
 			return nil, err
 		}
 		for _, cr := range creds {
+			if names.personal(cr.TargetID) {
+				continue
+			}
 			rows = append(rows, []string{names.targets[cr.TargetID], cr.Username, cr.SecretType, b(cr.Provisioner), ""})
 		}
 	case inventorycsv.Users.Name:
@@ -120,6 +140,9 @@ func (s *Server) inventoryRows(ctx context.Context, c inventorycsv.Class) ([][]s
 			credUser[cr.ID] = cr.Username
 		}
 		for _, t := range targets {
+			if names.personal(t.ID) {
+				continue
+			}
 			grants, err := s.store.ListTargetGrants(ctx, t.ID)
 			if err != nil {
 				return nil, err

@@ -993,7 +993,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	// interactive command loop (if a runner is configured); anything else is
 	// refused.
 	if target.Protocol == "telnet" {
-		p.serveTelnet(ctx, sconn, chans, target, cred, secret, actor, remote, observeMode, res.bounds)
+		p.serveTelnet(ctx, sconn, chans, target, cred, secret, actor, remote, observeMode, principal.BreakGlass, res.bounds, res.rights)
 		return
 	}
 	if target.Protocol != "ssh" {
@@ -1002,8 +1002,9 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	}
 
 	// The startup scenario (Phase 279) is the one consumer of the secret
-	// after the dial: it is kept for the session only when the target's
-	// scenario types ${password}, and only as long as the scenario runs.
+	// after the dial: when the target's scenario types ${password} it is
+	// kept for the CONNECTION — every shell channel opened on it runs the
+	// scenario again — and when it does not, the scenario never receives it.
 	sshScenario, scenarioSecret, scErr := sshScenarioFor(target, cred, secret)
 	if scErr != "" {
 		p.audit(ctx, actor, "session.error", fmt.Sprintf("target:%s cred_user:%s reason:%s", target.Name, cred.Username, scErr))
@@ -1449,10 +1450,15 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 
 	// The session notice (Phase 276): printed to the operator before anything
 	// from the target, into the recording too, so the record shows the
-	// acknowledgement it opened with; audited with the notice's digest.
+	// acknowledgement it opened with; audited with the notice's digest. On
+	// STDERR (review of 274–280): this runs before the channel says whether
+	// it is a shell, an exec or a subsystem, and text on stdout corrupted an
+	// SFTP or scp stream (the client read "This" as a packet length) and the
+	// output of `ssh target cmd > file`. An interactive terminal shows stderr
+	// all the same.
 	if notice := p.banners.Get(banner.Session, ""); notice != "" {
 		line := notice + "\r\n"
-		_, _ = io.WriteString(clientChan, line)
+		_, _ = io.WriteString(clientChan.Stderr(), line)
 		if rec != nil {
 			_, _ = io.WriteString(rec, line)
 		}
@@ -1530,13 +1536,11 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		// command through on the record; kill refuses it and ends the session.
 		if rm, ok := rs.Check("ssh_exec", m.Command); ok {
 			detail := fmt.Sprintf("target:%s via:proxy rule:%d pattern:%s cmd:%s", target.Name, rm.RuleID, auditValue(rm.Pattern, 128), auditCmd(m.Command))
-			if rm.Action == restrict.ActionNotify {
-				p.audit(ctx, actor, "restriction.notified", detail)
-			} else {
-				if rec != nil {
-					_, _ = io.WriteString(rec, "$ "+m.Command+"\r\npamv1: session ended by a restriction rule\r\n")
-				}
-				p.audit(ctx, actor, "restriction.killed", detail)
+			if rm.Action != restrict.ActionNotify && rec != nil {
+				_, _ = io.WriteString(rec, "$ "+m.Command+"\r\npamv1: session ended by a restriction rule\r\n")
+			}
+			p.audit(ctx, actor, rm.AuditAction(), detail)
+			if rm.Action != restrict.ActionNotify {
 				killSession()
 				return false
 			}
@@ -1700,6 +1704,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	var src io.Reader = upChan
 	if !gate.isOpen() {
 		stream := expect.NewStream(upChan)
+		defer stream.Close()
 		src = stream
 		// The shell flag is set before the shell request goes upstream, so by
 		// the target's first byte it is known whether this is a shell.
@@ -1709,7 +1714,6 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 				upChan.Close()
 			}
 		}
-		scSecret = ""
 		gate.open()
 	}
 	var cerr error
@@ -2219,11 +2223,11 @@ func (p *Proxy) winrmRun(ctx context.Context, out io.Writer, target *store.Targe
 	}
 	if rm, ok := rs.Check("winrm", command); ok {
 		detail := fmt.Sprintf("target:%s via:proxy rule:%d pattern:%s cmd:%s", target.Name, rm.RuleID, auditValue(rm.Pattern, 128), auditCmd(command))
-		if rm.Action == restrict.ActionNotify {
-			p.audit(ctx, actor, "restriction.notified", detail)
-		} else {
+		if rm.Action != restrict.ActionNotify {
 			fmt.Fprint(out, "PAMv1: session ended by a restriction rule\r\n")
-			p.audit(ctx, actor, "restriction.killed", detail)
+		}
+		p.audit(ctx, actor, rm.AuditAction(), detail)
+		if rm.Action != restrict.ActionNotify {
 			if killSession != nil {
 				killSession()
 			}

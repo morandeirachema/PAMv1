@@ -807,7 +807,7 @@ The 237 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/recordings/{name}` | CapReadAudit |
 | GET | `/api/reports/connections` | CapReadAudit |
 | GET | `/api/reports/unused` | CapReadAudit |
-| GET | `/api/restriction-rules` | CapReadInventory |
+| GET | `/api/restriction-rules` | CapReadAudit |
 | POST | `/api/restriction-rules` | CapManageUsers |
 | DELETE | `/api/restriction-rules/{id}` | CapManageUsers |
 | GET | `/api/safes` | CapReadInventory |

@@ -12,10 +12,12 @@ import (
 
 // notifyCritical records and announces a session opened to a critical target
 // (Phase 277): an audit row target.critical_connect under the operator's
-// actor, then an alert through the configured channels. It runs after the
-// session-start row was durably written, so a critical connection is never
-// announced for a session that did not open, and it never refuses one — the
-// flag is notification, not authorization. A failed append is logged and the
+// actor, then an alert through the configured channels. It runs at admission,
+// right after the session-start row was durably written and before the
+// secret is decrypted and the target dialed — so it announces an admitted
+// session even if the dial then fails, which for a critical system is the
+// side to err on. It never refuses one — the flag is notification, not
+// authorization. A failed append is logged and the
 // alert is still sent: losing the second row must not also lose the page.
 func notifyCritical(ctx context.Context, st store.Store, log *slog.Logger, alerter alert.Notifier,
 	actor string, target *store.Target, credUser, remote string) {

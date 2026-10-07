@@ -108,13 +108,22 @@ func (s *Server) digestPass(ctx context.Context, now time.Time) bool {
 		s.audit(ctx, "report.digest_failed", fmt.Sprintf("day:%s error:%q", day, err.Error()))
 		return false
 	}
-	s.audit(ctx, "report.digest_sent", fmt.Sprintf("day:%s recipients:%d connections:%d", day, len(s.digest.to), conns))
+	// The digest_sent row is the only record that today's mail went out; if
+	// it cannot be written, the next tick would mail again, every five
+	// minutes (review of 274-280). Hold this replica off for the retry
+	// period instead: one duplicate an hour at worst, not a flood.
+	if err := s.auditAs(ctx, digestActor, "report.digest_sent", fmt.Sprintf("day:%s recipients:%d connections:%d", day, len(s.digest.to), conns)); err != nil {
+		s.digest.mu.Lock()
+		s.digest.failedDay, s.digest.retryAt = day, now.Add(digestRetry)
+		s.digest.mu.Unlock()
+		s.log.Error("report digest sent but not recorded; holding off", "day", day, "err", err)
+	}
 	return true
 }
 
 // buildDigest reads the trail and inventory and renders the mail.
 func (s *Server) buildDigest(ctx context.Context, day string, since, until, unusedSince time.Time) (subject, body string, conns int, err error) {
-	events, err := s.store.ExportAudit(ctx, unusedSince, until)
+	events, err := s.store.ExportAuditActions(ctx, unusedSince, until, report.Actions())
 	if err != nil {
 		return "", "", 0, err
 	}

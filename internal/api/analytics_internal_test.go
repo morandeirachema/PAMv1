@@ -69,6 +69,15 @@ func newAnalyticsServer(t *testing.T, autoKill bool) (*Server, store.Store, *cap
 	return srv, st, capt, reg
 }
 
+// afterSeed is the "now" a pass runs at after seeding. A pass reads the
+// half-open window [now-window, now), and the store stamps each event with
+// the wall clock (no monotonic reading), so on a clock whose resolution is a
+// microsecond (macOS) the last seeded event could carry exactly time.Now()
+// and fall outside the window — the first pass then scored one event, the
+// second two, and the "steady-state" tests saw a worsening actor. A
+// millisecond past the seed is unambiguously after it.
+func afterSeed() time.Time { return time.Now().Add(time.Millisecond) }
+
 // seedAudit appends n audit events for actor/action.
 func seedAudit(t *testing.T, st store.Store, actor, action string, n int) {
 	t.Helper()
@@ -89,7 +98,7 @@ func TestAnalyticsPassAutoKills(t *testing.T) {
 	var killed int
 	reg.Register(session.Info{Actor: "mallory", Target: "web-01", Protocol: "ssh"}, func() { killed++ })
 
-	srv.analyticsPass(context.Background(), time.Now())
+	srv.analyticsPass(context.Background(), afterSeed())
 
 	if killed != 1 {
 		t.Fatalf("auto-kill should have terminated mallory's 1 session, killed=%d", killed)
@@ -113,8 +122,8 @@ func TestAnalyticsPassDedupes(t *testing.T) {
 	srv, st, capt, _ := newAnalyticsServer(t, false)
 	seedAudit(t, st, "mallory", "breakglass.access", 2) // critical (score 100)
 
-	srv.analyticsPass(context.Background(), time.Now())
-	srv.analyticsPass(context.Background(), time.Now()) // same score → no new alert
+	srv.analyticsPass(context.Background(), afterSeed())
+	srv.analyticsPass(context.Background(), afterSeed()) // same score → no new alert
 
 	if got := capt.types()["analytics.risk_flagged"]; got != 1 {
 		t.Fatalf("steady-state actor should be alerted once, got %d", got)
@@ -125,7 +134,7 @@ func TestAnalyticsPassDedupes(t *testing.T) {
 	srv.analyticsMu.Lock()
 	delete(srv.analyticsAlerted, "mallory")
 	srv.analyticsMu.Unlock()
-	srv.analyticsPass(context.Background(), time.Now())
+	srv.analyticsPass(context.Background(), afterSeed())
 	if got := capt.types()["analytics.risk_flagged"]; got != 2 {
 		t.Fatalf("a re-elevated actor should alert again, got %d", got)
 	}
@@ -142,7 +151,7 @@ func TestAnalyticsPassCooldownReAlerts(t *testing.T) {
 	srv.analyticsCooldown = 30 * time.Minute
 	seedAudit(t, st, "mallory", "breakglass.access", 2) // critical (score 100)
 
-	t0 := time.Now()
+	t0 := afterSeed()
 	srv.analyticsPass(context.Background(), t0)
 	srv.analyticsPass(context.Background(), t0.Add(10*time.Minute)) // within cooldown
 	if got := capt.types()["analytics.risk_flagged"]; got != 1 {
@@ -190,7 +199,7 @@ func TestAnalyticsPassIgnoresAuthFailureOnlyActor(t *testing.T) {
 	killed := 0
 	reg.Register(session.Info{Actor: "victim", Target: "web-01", Protocol: "ssh"}, func() { killed++ })
 
-	srv.analyticsPass(context.Background(), time.Now())
+	srv.analyticsPass(context.Background(), afterSeed())
 
 	if killed != 0 {
 		t.Fatalf("spoofed failed logins killed the victim's live session (killed=%d) — a DoS driven by the response itself", killed)

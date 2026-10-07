@@ -137,3 +137,64 @@ func TestRestrictionSFTPSizeLimit(t *testing.T) {
 func be32ToInt(b []byte) int {
 	return int(b[0])<<24 | int(b[1])<<16 | int(b[2])<<8 | int(b[3])
 }
+
+// TestRestrictionSFTPSizeRulesAllApply proves two fixes from the review of
+// 274-280: every size rule in a direction applies — a 10-byte notify rule
+// no longer hides a 20-byte kill rule — and a handle's count starts again
+// once it is closed, because SFTP servers reuse handle strings.
+func TestRestrictionSFTPSizeRulesAllApply(t *testing.T) {
+	up := startUpstreamSFTP(t)
+	ctx := context.Background()
+	st := memstore.New()
+	v := mustVault(t)
+	seedTarget(t, st, v, up.host, up.port)
+	notify := &store.RestrictionRule{SubjectType: "role", Subject: "admin", Subprotocol: "sftp", Pattern: "$filesize:>10", Action: "notify"}
+	kill := &store.RestrictionRule{SubjectType: "role", Subject: "admin", Subprotocol: "sftp", Pattern: "$filesize:>20", Action: "kill"}
+	for _, r := range []*store.RestrictionRule{notify, kill} {
+		if err := st.CreateRestrictionRule(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	addr := startRestrictedProxy(t, st, v, proxy.SFTPAllow)
+	client, ch, ok := openSFTPChannel(t, addr)
+	if !ok {
+		t.Fatal("sftp refused")
+	}
+	defer client.Close()
+	initSFTP(t, ch)
+	id := uint32(1)
+	write := func(handle string, offset byte) (byte, []byte, error) {
+		id++
+		ch.Write(sftpPacket(tWrite, be32(id), sftpStr(handle), append(make([]byte, 7), offset), sftpStr("12345678")))
+		return readPacket(ch)
+	}
+	okStatus := func(typ byte, body []byte, err error) bool {
+		return err == nil && typ == tStatus && len(body) >= 8 && be32ToInt(body[4:8]) == 0
+	}
+	// 8 bytes, then close: a reused handle starts from zero, so another 8 on
+	// "h" is 8, not 16 — no rule crossed.
+	if !okStatus(write("h", 0)) {
+		t.Fatal("first write refused")
+	}
+	id++
+	ch.Write(sftpPacket(tClose, be32(id), sftpStr("h")))
+	if typ, _, err := readPacket(ch); err != nil || typ != tStatus {
+		t.Fatalf("close: %d %v", typ, err)
+	}
+	if !okStatus(write("h", 0)) {
+		t.Fatal("a reused handle carried the previous file's count")
+	}
+	if n := countAudit(t, st, "sftp.size_limit"); n != 0 {
+		t.Fatalf("a reused handle crossed a rule: %d rows", n)
+	}
+	// 16 bytes: the notify rule fires and the bytes pass.
+	if !okStatus(write("h", 8)) {
+		t.Fatal("a notify-only crossing was refused")
+	}
+	waitForAuditDetail(t, st, "sftp.size_limit", "direction:up bytes:16 limit:10 rule:"+itoa(notify.ID)+" action:notify")
+	// 24 bytes: the kill rule fires although a smaller notify rule exists.
+	if okStatus(write("h", 16)) {
+		t.Fatal("the kill rule was hidden by the smaller notify rule")
+	}
+	waitForAuditDetail(t, st, "sftp.size_limit", "direction:up bytes:24 limit:20 rule:"+itoa(kill.ID)+" action:kill")
+}

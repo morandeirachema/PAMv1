@@ -187,3 +187,29 @@ func TestApprovalCommentRequired(t *testing.T) {
 		t.Fatalf("approve with comment: %d", s)
 	}
 }
+
+// TestApprovalDurationFromWindowStart (review of 274-280): a granted
+// duration on a scheduled request counts from the window's start, not from
+// the moment of approval — approving tomorrow's window today for 30 minutes
+// grants the first 30 minutes of it, not an expiry before it opens.
+func TestApprovalDurationFromWindowStart(t *testing.T) {
+	srv, _ := newTestServerOpts(t, nil, api.Options{})
+	targetID := seedApprovalTarget(t, srv, true)
+	alice := seedUser(t, srv, "alice", "user")
+	bob := seedUser(t, srv, "bob", "approver")
+	status, body := do(t, srv, http.MethodPost, "/api/access-requests", alice, map[string]any{
+		"target_id": targetID, "reason": "scheduled", "not_before": "2030-01-01T22:00:00Z", "not_after": "2030-01-01T23:00:00Z"})
+	if status != http.StatusCreated {
+		t.Fatalf("file: %d %s", status, body)
+	}
+	var ar store.AccessRequest
+	_ = json.Unmarshal(body, &ar)
+	status, body = do(t, srv, http.MethodPost, "/api/access-requests/"+itoa64(ar.ID)+"/approve", bob, map[string]any{"duration_min": 30})
+	if status != http.StatusOK {
+		t.Fatalf("approve: %d %s", status, body)
+	}
+	_ = json.Unmarshal(body, &ar)
+	if want := time.Date(2030, 1, 1, 22, 30, 0, 0, time.UTC); !ar.ExpiresAt.Equal(want) {
+		t.Fatalf("expires_at = %s, want %s (window start + 30m)", ar.ExpiresAt, want)
+	}
+}

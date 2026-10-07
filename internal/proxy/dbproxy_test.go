@@ -849,3 +849,55 @@ func TestDBProxyStepUpExtended(t *testing.T) {
 	assertAuditContains(t, st, "db.stepup_required", "DELETE FROM")
 	assertAuditContains(t, st, "db.stepup_denied", "accounts")
 }
+
+// TestDBProxyRestrictionKillEndsSession proves the review of 274-280's fix:
+// a kill restriction rule on SQL ends the session. Before, the statement was
+// refused and the client's next statement was relayed as if nothing had
+// happened.
+func TestDBProxyRestrictionKillEndsSession(t *testing.T) {
+	st := memstore.New()
+	auditOnFailure(t, st)
+	v := mustVault(t)
+	fake := startFakePostgres(t, upstreamSecret)
+	seedPGTarget(t, st, v, fake.addr)
+	rule := &store.RestrictionRule{SubjectType: "role", Subject: "admin", Subprotocol: "sql", Pattern: `(?i)\bdrop\b`, Action: "kill"}
+	if err := st.CreateRestrictionRule(context.Background(), rule); err != nil {
+		t.Fatal(err)
+	}
+	resolver, err := auth.NewResolver(st, proxyAPIKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbx, err := proxy.NewDB(st, v, resolver, proxy.DBConfig{RecordingDir: t.TempDir(), DialTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := serveDBProxy(t, dbx)
+	fe, conn := openDBSession(t, addr, "dbuser@pg-01", "appdb", proxyAPIKey)
+	defer conn.Close()
+
+	fe.Send(&pgproto3.Query{String: "DROP TABLE users"})
+	if err := fe.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if msg, err := fe.Receive(); err != nil {
+		t.Fatal(err)
+	} else if _, ok := msg.(*pgproto3.ErrorResponse); !ok {
+		t.Fatalf("killed statement: want ErrorResponse, got %T", msg)
+	}
+	// The session is over: the next statement must not reach the target.
+	fe.Send(&pgproto3.Query{String: "SELECT 'after the kill'"})
+	_ = fe.Flush()
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for {
+		if _, err := fe.Receive(); err != nil {
+			break // the proxy closed the connection
+		}
+	}
+	for _, q := range fake.allQueries() {
+		if strings.Contains(q, "after the kill") || strings.Contains(strings.ToUpper(q), "DROP") {
+			t.Fatalf("a statement reached the target after a kill rule: %q", q)
+		}
+	}
+	assertAuditContains(t, st, "restriction.killed", "rule:"+itoa(rule.ID))
+}

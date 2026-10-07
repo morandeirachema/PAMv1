@@ -168,7 +168,12 @@ func sqlStepUpRefused(ctx context.Context, l *listener, pol *sqlPolicy, cl sqlCl
 // is, it audits command.blocked and refuses the statement to the client: a
 // graceful (usable) refusal for a simple statement, or a fatal refusal for a
 // PostgreSQL extended-protocol Parse (extended=true), which the caller then ends.
-func sqlBlockedStatement(ctx context.Context, l *listener, pol *sqlPolicy, cl sqlClient, actor string, target *store.Target, sql string, extended bool, rs *restrict.Set) bool {
+//
+// kill reports a restriction rule with action kill (Phase 275): the caller
+// must END the session, not merely skip the statement. Until the review of
+// 274-280 both relay loops treated it as an ordinary refusal and relayed the
+// client's next statement, so a kill rule on SQL only ever refused.
+func sqlBlockedStatement(ctx context.Context, l *listener, pol *sqlPolicy, cl sqlClient, actor string, target *store.Target, sql string, extended bool, rs *restrict.Set) (blocked, kill bool) {
 	pat, blocked := pol.guard.Blocked(sql)
 	if !blocked && pol.allowGuard != nil && !pol.allowGuard.Allowed(sql) {
 		pat, blocked = "not-allowed", true
@@ -179,15 +184,14 @@ func sqlBlockedStatement(ctx context.Context, l *listener, pol *sqlPolicy, cl sq
 		// which ends the session.
 		if rm, ok := rs.Check("sql", sql); ok {
 			detail := fmt.Sprintf("target:%s via:%s rule:%d pattern:%s sql:%s", target.Name, pol.via, rm.RuleID, auditValue(rm.Pattern, 128), auditCmd(sql))
+			l.audit(ctx, actor, rm.AuditAction(), detail)
 			if rm.Action == restrict.ActionNotify {
-				l.audit(ctx, actor, "restriction.notified", detail)
-				return false
+				return false, false
 			}
-			l.audit(ctx, actor, "restriction.killed", detail)
 			cl.refuseFatal("PAMv1: session ended by a restriction rule")
-			return true
+			return true, true
 		}
-		return false
+		return false, false
 	}
 	l.audit(ctx, actor, "command.blocked", fmt.Sprintf("target:%s via:%s pattern:%s sql:%s", target.Name, pol.via, pat, auditCmd(sql)))
 	const msg = "PAMv1: command blocked by policy"
@@ -196,7 +200,7 @@ func sqlBlockedStatement(ctx context.Context, l *listener, pol *sqlPolicy, cl sq
 	} else {
 		cl.refuse(msg)
 	}
-	return true
+	return true, false
 }
 
 // sqlDeny audits a refused session (db.session.denied) and reports it to the

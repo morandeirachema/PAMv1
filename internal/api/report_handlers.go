@@ -34,7 +34,7 @@ func (s *Server) reportUnused(w http.ResponseWriter, r *http.Request) {
 	until := time.Now().UTC()
 	since := until.AddDate(0, 0, -days)
 	ctx := r.Context()
-	events, err := s.store.ExportAudit(ctx, since, until)
+	events, err := s.store.ExportAuditActions(ctx, since, until, report.Actions())
 	if err != nil {
 		storeError(w, err)
 		return
@@ -90,7 +90,7 @@ func (s *Server) reportConnections(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	events, err := s.store.ExportAudit(ctx, since, until)
+	events, err := s.store.ExportAuditActions(ctx, since, until, report.Actions())
 	if err != nil {
 		storeError(w, err)
 		return
