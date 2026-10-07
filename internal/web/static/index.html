@@ -420,6 +420,8 @@
   // Reports (Phase 277): the unused-objects window in days and the
   // connection-statistics window, both kept across F5.
   let reports = null, repDays = "30", repSince = "", repUntil = "";
+  // Recording archives (Phase 283): the export filter, kept across visits.
+  let arcFilter = { actor: "", target: "", protocol: "", since: "", until: "" };
   // Inventory import/export (Phase 278): the last import's result, shown
   // until the screen is left — a new user's token appears in it once.
   let invResult = null;
@@ -4929,6 +4931,32 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         };
       },
 
+      recarchive() {
+        back = "recordings";
+        const f = arcFilter;
+        term.innerHTML = `${head("PAMRECARC", "Archive Recordings")}
+Download the recordings stamped in a window as one archive: a tar with a manifest
+that names, per file, the audit row that vouches for it and whether the stored bytes
+still match. Sealed recordings stay sealed. The export is audited with the manifest's
+SHA-256. Leave a field blank to take every value.
+
+<form id="f-arc" class="indent">
+<label>Actor . . . . . . . :  <input name="actor" size="20" value="${esc(f.actor)}"></label>
+<label>Target  . . . . . . :  <input name="target" size="20" value="${esc(f.target)}"></label>
+<label>Protocol  . . . . . :  <input name="protocol" size="12" value="${esc(f.protocol)}" placeholder="ssh, rdp, …">   <span class="cyan">ssh, telnet, winrm, rdp, vnc, sftp, postgres, mssql, kubernetes</span></label>
+<label>Since (RFC3339) . . :  <input name="since" size="24" value="${esc(f.since)}" placeholder="default: 30 days back"></label>
+<label>Until (RFC3339) . . :  <input name="until" size="24" value="${esc(f.until)}" placeholder="default: now"></label>
+<input type="submit" hidden>
+</form>
+${fkeys("F3=Exit   Enter=Download archive   F12=Cancel")}`;
+        document.getElementById("f-arc").onsubmit = async (ev) => {
+          ev.preventDefault();
+          for (const k of Object.keys(arcFilter)) arcFilter[k] = ev.target[k].value.trim();
+          const q = Object.entries(arcFilter).filter(([, v]) => v).map(([k, v]) => k + "=" + encodeURIComponent(v)).join("&");
+          await download("/api/recordings/archive" + (q ? "?" + q : ""), "pamv1-recordings.tar", "RECORDING ARCHIVE");
+        };
+      },
+
       reports() {
         back = "main";
         const r = reports || {}, u = r.unused || {}, c = r.conns || {};
@@ -5007,7 +5035,7 @@ Stored recordings, newest first. Type options, press Enter.
 ${recordings.map((c) => `<tr><td>${opt(c.name)}</td><td class="detail">${esc(c.name)}</td><td class="white">${cell(c.target || "-", 14)}</td><td>${cell(c.actor || "-", 12)}</td><td>${pad(c.kind, 10)}</td><td>${pad(kb(c.size), 7)}</td><td class="cyan">${fmtTime(c.modified)}</td></tr>`).join("")}
 </table>${recordings.length ? "" : `<div class="cyan indent">(No recordings on disk yet — proxied sessions write asciicasts as they run.)</div>`}
 <input type="submit" hidden></form>
-${fkeys("F3=Exit   F4=Search   F5=Refresh   F12=Cancel")}`;
+${fkeys("F3=Exit   F4=Search   F5=Refresh   F7=Archive   F12=Cancel")}`;
         document.getElementById("f-list").onsubmit = async (ev) => {
           ev.preventDefault();
           try {
@@ -5154,7 +5182,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
       else if (k === "F4") { if (screen === "recordings") openRecSearch(); }
       else if (k === "F5") { const r = refreshers[screen]; if (r) await r(); else render(); }
       else if (k === "F6") { if (screen === "effective") await exportIaC("env"); else if (screen === "audit") await verifyChain(); else { const a = adders[screen]; if (a) a(); } }
-      else if (k === "F7") { if (screen === "effective") await exportIaC("helm"); else if (screen === "agents") await openQuarantine(); else if (screen === "audit") await fetchAuditHead(); else if (screen === "campaigns" && can("approve")) await openMyQueue(); else if (screen === "sesswatch" && watchSess) await openShareInvites(watchSess.id); }
+      else if (k === "F7") { if (screen === "recordings") go("recarchive"); else if (screen === "effective") await exportIaC("helm"); else if (screen === "agents") await openQuarantine(); else if (screen === "audit") await fetchAuditHead(); else if (screen === "campaigns" && can("approve")) await openMyQueue(); else if (screen === "sesswatch" && watchSess) await openShareInvites(watchSess.id); }
       else if (k === "F8") { if (screen === "effective") await exportIaC("terraform"); else if (screen === "audit") await openNIS2Report(); else if (screen === "agents") await openIdentities(); else if (screen === "sesswatch" && watchSess && can("approve")) await toggleSuspend(); }
       else if (k === "F9") { if (screen === "audit") await exportAudit(); else if (screen === "users") await reconcileIdentities(); else if (screen === "sshcerts") await download("/api/ca/ssh/krl", "pamv1-revoked-certs.krl", "KRL"); else if (screen === "reports") await download("/api/reports/connections?format=csv" + (repQuery() ? "&" + repQuery() : ""), "pamv1-connections.csv", "CONNECTIONS CSV"); else if (screen === "nis2report") await download("/api/compliance/nis2" + (nis2Query() ? "?" + nis2Query() : ""), "pamv1-nis2-report.json", "NIS2 REPORT"); }
       else if (k === "F10") { if (screen === "audit") await download("/api/audit/ocsf", "pamv1-audit-ocsf.json", "OCSF"); else if (screen === "probes") await openProbeRules(); }

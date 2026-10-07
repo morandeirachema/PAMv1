@@ -1339,6 +1339,9 @@ func (s *Server) routes() {
 	// recording ever being named "search" (recordingNameRe would refuse it).
 	s.mux.Handle("GET /api/recordings", s.authz(auth.CapReadAudit, s.listRecordings))
 	s.mux.Handle("GET /api/recordings/search", s.authz(auth.CapReadAudit, s.searchRecordings))
+	// Portable recording archives (Phase 283). Registered before the
+	// {name} route; "archive" never matches recordingNameRe either way.
+	s.mux.Handle("GET /api/recordings/archive", s.authz(auth.CapReadAudit, s.exportRecordingArchive))
 	s.mux.Handle("GET /api/recordings/{name}", s.authz(auth.CapReadAudit, s.playRecording))
 
 	// Privileged threat analytics (Phase 23): behavioral risk scores over the
