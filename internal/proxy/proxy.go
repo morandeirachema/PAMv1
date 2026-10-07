@@ -18,9 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/morandeirachema/pamv1/internal/alert"
-	"github.com/morandeirachema/pamv1/internal/auditfmt"
-	"github.com/morandeirachema/pamv1/internal/banner"
 	"io"
 	"log/slog"
 	"net"
@@ -29,6 +26,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/morandeirachema/pamv1/internal/alert"
+	"github.com/morandeirachema/pamv1/internal/auditfmt"
+	"github.com/morandeirachema/pamv1/internal/banner"
+	"github.com/morandeirachema/pamv1/internal/expect"
 
 	"golang.org/x/crypto/ssh"
 
@@ -999,6 +1001,15 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		return
 	}
 
+	// The startup scenario (Phase 279) is the one consumer of the secret
+	// after the dial: it is kept for the session only when the target's
+	// scenario types ${password}, and only as long as the scenario runs.
+	sshScenario, scenarioSecret, scErr := sshScenarioFor(target, cred, secret)
+	if scErr != "" {
+		p.audit(ctx, actor, "session.error", fmt.Sprintf("target:%s cred_user:%s reason:%s", target.Name, cred.Username, scErr))
+		rejectAll(chans, ssh.ConnectionFailed, "PAMv1: the target's startup scenario cannot run with this credential")
+		return
+	}
 	upstream, err := p.dialUpstream(ctx, target, cred, secret, actor, viaAgent)
 	if err != nil {
 		p.log.Error("upstream connection failed", "actor", actor, "target", target.Name,
@@ -1082,7 +1093,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 				defer wg.Done()
 				defer live.Add(-1)
 				defer recoverPanicLog(p.log, "session")
-				p.handleSession(ctx, nc, upstream, target, cred, actor, observe, principal.BreakGlass, sid, res.rights, res.restrictions)
+				p.handleSession(ctx, nc, upstream, target, cred, actor, observe, principal.BreakGlass, sid, res.rights, res.restrictions, sshScenario, scenarioSecret)
 			}(nc)
 		case "direct-tcpip":
 			if live.Load() >= maxChannelsPerConn {
@@ -1385,7 +1396,7 @@ func (j *jumpConn) Close() error {
 // channel, forwarding channel requests and stdin/stdout/stderr both directions
 // and tee'ing the target's output into an asciicast recording. On close the
 // recording's SHA-256 and its position in the tamper-evident chain are audited.
-func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *ssh.Client, target *store.Target, cred *store.Credential, actor string, observe, breakGlass bool, sid string, rights string, rs *restrict.Set) {
+func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *ssh.Client, target *store.Target, cred *store.Credential, actor string, observe, breakGlass bool, sid string, rights string, rs *restrict.Set, sc expect.Script, scSecret string) {
 	clientChan, clientReqs, err := nc.Accept()
 	if err != nil {
 		return
@@ -1470,10 +1481,20 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		p.audit(ctx, actor, "session.right_denied", fmt.Sprintf("target:%s cred_user:%s right:%s", target.Name, cred.Username, right))
 		return true
 	}
+	// The startup scenario's gate (Phase 279): with a scenario, the
+	// operator's keystrokes are held until it has run in the shell; an exec
+	// or a subsystem is not a shell, so it opens the gate at once and the
+	// scenario does not run.
+	gate := newInputGate(len(sc) == 0 || observe)
+	var shellRequested atomic.Bool
 	onRequest := func(reqType string) bool {
 		switch reqType {
 		case "shell":
-			return !denyRight(store.RightSSHShell)
+			if denyRight(store.RightSSHShell) {
+				return false
+			}
+			shellRequested.Store(true)
+			return true
 		case "x11-req":
 			return !denyRight(store.RightSSHX11)
 		}
@@ -1488,6 +1509,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		_ = upstream.Close()
 	}
 	onExec := func(payload []byte) bool {
+		gate.open()
 		if denyRight(store.RightSSHExec) {
 			return false
 		}
@@ -1551,6 +1573,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	insp := newSFTPInspector(p.sftpMode, p.sftpPaths, capState, sftpAudit)
 	insp.setSizeLimits(rs, killSession) // $filesize / $downsize rules (Phase 275)
 	onSubsystem := func(payload []byte) bool {
+		gate.open()
 		var m struct{ Name string }
 		_ = ssh.Unmarshal(payload, &m)
 		if right := store.RightSSHSFTP; m.Name != "sftp" {
@@ -1642,6 +1665,10 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		// Every read of operator input resets the idle clock (Phase 240).
 		keyIn = activityReader{r: keyIn, touch: p.sessions.Activity(sid)}
 		go func() {
+			// Held until the startup scenario (if any) has run.
+			if !gate.wait() {
+				return
+			}
 			// Operator keystrokes -> target. For an SFTP session the inspector parses
 			// this leg to audit + gate file operations; for a shell/exec session it is
 			// a transparent pass-through (the inspector stays inactive).
@@ -1670,11 +1697,26 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		out = io.MultiWriter(clientOut, rec)
 	}
 	out = p.teeLive(out, sid)
+	var src io.Reader = upChan
+	if !gate.isOpen() {
+		stream := expect.NewStream(upChan)
+		src = stream
+		// The shell flag is set before the shell request goes upstream, so by
+		// the target's first byte it is known whether this is a shell.
+		if stream.Wait() && shellRequested.Load() {
+			if !p.runSSHScenario(ctx, stream, upChan, clientChan, rec, target, cred, actor, sc, scSecret) {
+				gate.fail()
+				upChan.Close()
+			}
+		}
+		scSecret = ""
+		gate.open()
+	}
 	var cerr error
 	if respWatch != nil {
-		cerr = copyObserved(out, upChan, insp.enabled, respWatch)
+		cerr = copyObserved(out, src, insp.enabled, respWatch)
 	} else {
-		_, cerr = io.Copy(out, upChan)
+		_, cerr = io.Copy(out, src)
 	}
 	if errors.Is(cerr, errRecordingLimit) {
 		p.audit(ctx, actor, "session.record_limit", "target:"+target.Name+" cred_user:"+cred.Username+" reason:recording-size-cap")

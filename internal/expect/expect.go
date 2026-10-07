@@ -193,6 +193,20 @@ func NewStream(r io.Reader) *Stream {
 	return s
 }
 
+// Wait blocks until the stream has output to read, reporting false when it
+// ended first. It consumes nothing.
+func (s *Stream) Wait() bool {
+	if len(s.pending) > 0 {
+		return true
+	}
+	b, ok := <-s.ch
+	if !ok {
+		return false
+	}
+	s.pending = b
+	return true
+}
+
 // Read returns the leftover from a scenario first, then the stream.
 func (s *Stream) Read(p []byte) (int, error) {
 	if len(s.pending) > 0 {
