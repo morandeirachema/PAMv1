@@ -126,7 +126,12 @@ type Target struct {
 	// 270, see rights.go): which of shell/exec/sftp/forward/X11 (SSH) and
 	// drive/printer/audio (RDP) a session here may use. Empty is no narrowing
 	// — the deployment's switches apply as before.
-	Rights    string    `json:"rights,omitempty"`
+	Rights string `json:"rights,omitempty"`
+	// Critical marks a target whose every connection is worth telling a
+	// human about (Phase 277): each opened session raises an alert through
+	// the configured channels and an audit row target.critical_connect, and
+	// the reports flag it. It changes no authorization decision.
+	Critical  bool      `json:"critical"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

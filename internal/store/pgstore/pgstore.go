@@ -160,9 +160,9 @@ func limitArg(limit int) any {
 // CreateTarget inserts a target, populating its ID and CreatedAt; ErrConflict if the name is taken.
 func (s *PGStore) CreateTarget(ctx context.Context, t *store.Target) error {
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO targets (name, host, port, os_type, protocol, require_approval, rdp_clipboard, rdp_clipboard_audit, require_session_mfa, labels, approval_tiers, rights)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id, created_at`,
-		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA, t.Labels, t.ApprovalTiers, t.Rights,
+		`INSERT INTO targets (name, host, port, os_type, protocol, require_approval, rdp_clipboard, rdp_clipboard_audit, require_session_mfa, labels, approval_tiers, rights, critical)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id, created_at`,
+		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA, t.Labels, t.ApprovalTiers, t.Rights, t.Critical,
 	).Scan(&t.ID, &t.CreatedAt)
 	if pgCode(err) == pgUniqueViolation {
 		return store.ErrConflict
@@ -173,7 +173,7 @@ func (s *PGStore) CreateTarget(ctx context.Context, t *store.Target) error {
 // ListTargets returns targets in the (limit, afterID) window, ordered by ID.
 func (s *PGStore) ListTargets(ctx context.Context, limit int, afterID int64) ([]store.Target, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa, labels, approval_tiers, rights
+		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa, labels, approval_tiers, rights, critical
 		 FROM targets WHERE id > $1 ORDER BY id LIMIT $2`, afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
@@ -187,9 +187,9 @@ func (s *PGStore) ListTargets(ctx context.Context, limit int, afterID int64) ([]
 func (s *PGStore) UpdateTarget(ctx context.Context, t *store.Target) error {
 	err := s.pool.QueryRow(ctx,
 		`UPDATE targets SET name = $1, host = $2, port = $3, os_type = $4, protocol = $5, require_approval = $6,
-		        rdp_clipboard = $7, rdp_clipboard_audit = $8, require_session_mfa = $9, labels = $10, approval_tiers = $11, rights = $12
-		 WHERE id = $13 RETURNING safe_id, created_at`,
-		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA, t.Labels, t.ApprovalTiers, t.Rights, t.ID,
+		        rdp_clipboard = $7, rdp_clipboard_audit = $8, require_session_mfa = $9, labels = $10, approval_tiers = $11, rights = $12, critical = $13
+		 WHERE id = $14 RETURNING safe_id, created_at`,
+		t.Name, t.Host, t.Port, t.OSType, t.Protocol, t.RequireApproval, t.RDPClipboard, t.RDPClipboardAudit, t.RequireSessionMFA, t.Labels, t.ApprovalTiers, t.Rights, t.Critical, t.ID,
 	).Scan(&t.SafeID, &t.CreatedAt)
 	switch {
 	case pgCode(err) == pgUniqueViolation:
@@ -203,7 +203,7 @@ func (s *PGStore) UpdateTarget(ctx context.Context, t *store.Target) error {
 // GetTarget returns the target with the given ID, or ErrNotFound.
 func (s *PGStore) GetTarget(ctx context.Context, id int64) (*store.Target, error) {
 	return getOne(ctx, s.pool, scanTarget,
-		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa, labels, approval_tiers, rights
+		`SELECT id, name, host, port, os_type, protocol, require_approval, safe_id, rdp_clipboard, rdp_clipboard_audit, created_at, require_session_mfa, labels, approval_tiers, rights, critical
 		 FROM targets WHERE id = $1`, id)
 }
 
@@ -3424,7 +3424,7 @@ func (s *PGStore) Close() {
 // scanTarget maps one result row into a store.Target.
 func scanTarget(row pgx.CollectableRow) (store.Target, error) {
 	var t store.Target
-	err := row.Scan(&t.ID, &t.Name, &t.Host, &t.Port, &t.OSType, &t.Protocol, &t.RequireApproval, &t.SafeID, &t.RDPClipboard, &t.RDPClipboardAudit, &t.CreatedAt, &t.RequireSessionMFA, &t.Labels, &t.ApprovalTiers, &t.Rights)
+	err := row.Scan(&t.ID, &t.Name, &t.Host, &t.Port, &t.OSType, &t.Protocol, &t.RequireApproval, &t.SafeID, &t.RDPClipboard, &t.RDPClipboardAudit, &t.CreatedAt, &t.RequireSessionMFA, &t.Labels, &t.ApprovalTiers, &t.Rights, &t.Critical)
 	return t, err
 }
 

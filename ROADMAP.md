@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–276 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–277 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,52 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 277 — Reporting (Tier 10, row 8) ✅
+
+*Tier 10's eighth row: WALLIX reports unused users and targets over a
+window, connection statistics with a CSV export, a notification on every
+connection to a critical target, and a daily digest mail. PAMv1 had risk
+analytics and the NIS2 report, but nothing that answered "who never uses
+their access" or "how much privileged access happened this week". Tier 9's
+row named the first two as well; they close here, and its third item,
+scheduled directory-sourced discovery, stays open.*
+
+- [x] **Read back from the audit trail.** `internal/report` computes every
+  figure from the rows the proxies already write before a session may open,
+  so a report cannot disagree with the trail the auditors read. A
+  connection is a session that opened (`session.start`, `db.session.start`,
+  `rdp.connect`, `vnc.connect`); a refused attempt is not one.
+- [x] **Unused users and targets.** `GET /api/reports/unused?days=N`: stored
+  users with no portal sign-in and no connection, targets nobody connected
+  to. Objects created inside the window are counted as too new rather than
+  listed, so last week's new hire is not a finding.
+- [x] **Connection statistics.** `GET /api/reports/connections`: totals by
+  user, target, protocol and UTC day, every day present; `format=csv` is one
+  row per connection, with formula cells neutralised. Windows are capped at
+  366 days, both routes need `CapReadAudit`, and each run is audited
+  `report.view`.
+- [x] **Critical targets.** `targets.critical` (`0067`). Every session
+  opened to one is audited `target.critical_connect` and alerted through
+  every channel, from the proxies' shared `admit()` and from the desktop
+  viewer, after the session's own start row. Notification only: it never
+  refuses a session, and clearing it shows on `target.update`.
+- [x] **The daily digest.** `PAM_REPORT_DIGEST_TO`/`_HOUR` mails the last
+  24 hours' statistics, the critical connections and the 30-day unused
+  list through the alert relay. One replica sends it, and the day it last
+  went out is read from the last `report.digest_sent` row, so a restart or
+  failover neither repeats nor skips one; a failure audits
+  `report.digest_failed` and retries an hour later.
+- [x] **Console**: main menu 36 (Reports, F9 = CSV), a Crit column and
+  checkbox on the target screens.
+- [x] **Proven** through a real upstream sshd (an ordinary target raises
+  nothing, a critical one is audited and alerted and still connects), the
+  store contract round trip, both routes over a seeded trail with the CSV
+  parsed back, the digest's once-a-day and back-off behaviour, and a
+  header-injection attempt in the mail subject.
+- [x] **Living docs**: low-level §1/§4/§5/§7/§8, high-level, ADMIN-GUIDE
+  §9.2c, USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE (`0067`), README Tier 9
+  and Tier 10 rows.
 
 ## Phase 276 — Login banner and recording consent (Tier 10, row 7) ✅
 

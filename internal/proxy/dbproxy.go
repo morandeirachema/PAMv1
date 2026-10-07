@@ -33,6 +33,7 @@ import (
 	"github.com/jackc/pgx/v5/pgproto3"
 	"golang.org/x/crypto/pbkdf2"
 
+	"github.com/morandeirachema/pamv1/internal/alert"
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/logging"
@@ -48,6 +49,9 @@ import (
 
 // DBConfig configures the PostgreSQL session proxy.
 type DBConfig struct {
+	// Alerter (optional) is told of every session opened to a critical
+	// target (Phase 277).
+	Alerter         alert.Notifier
 	Addr            string            // listen address, e.g. ":5433"; "off" disables it
 	RecordingDir    string            // where session recordings are written
 	Sessions        *session.Registry // live-session registry (optional)
@@ -208,6 +212,7 @@ func NewDB(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg DBConfig
 		posture:      d.posture,
 		oncall:       d.oncall,
 		sessionMFA:   cfg.SessionMFA,
+		alerter:      cfg.Alerter,
 	}
 	d.pol = sqlPolicy{
 		guard:       d.guard,

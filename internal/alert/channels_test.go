@@ -250,3 +250,24 @@ func TestSendDirectEndToEnd(t *testing.T) {
 		t.Fatal("fake SMTP server never received a DATA payload")
 	}
 }
+
+// TestBuildTextMessage pins the digest mail's shape (Phase 277): headers
+// folded to one line, CRLF line endings throughout, the body intact.
+func TestBuildTextMessage(t *testing.T) {
+	now := time.Date(2026, 10, 7, 6, 0, 0, 0, time.UTC)
+	msg := string(buildTextMessage("pam@example.com", []string{"a@example.com", "b@example.com"},
+		"Daily\r\nBcc: evil@example.com", "line one\nline two", now))
+	for _, want := range []string{
+		"From: pam@example.com\r\n",
+		"To: a@example.com, b@example.com\r\n",
+		"Date: Wed, 07 Oct 2026 06:00:00 +0000\r\n",
+		"Content-Type: text/plain; charset=utf-8\r\n\r\nline one\r\nline two\r\n",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message lacks %q:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "\r\nBcc:") {
+		t.Fatalf("subject injected a header:\n%s", msg)
+	}
+}

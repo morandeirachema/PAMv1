@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/morandeirachema/pamv1/internal/alert"
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/oncall"
 	"github.com/morandeirachema/pamv1/internal/posture"
@@ -204,6 +205,10 @@ type gates struct {
 	// fresh second factor. Targets and safes can require it on their own;
 	// store.EffectiveSessionMFA folds all three, strictest wins.
 	sessionMFA bool
+	// alerter (optional) is told of every session opened to a critical
+	// target (Phase 277); nil sends no alert but the audit row is still
+	// written.
+	alerter alert.Notifier
 }
 
 // sessionMFARefusal is the wire message for a per-session MFA refusal, the
@@ -479,6 +484,9 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 	startAction, startDetail := req.startAudit(target, cred)
 	if err := appendAuditErr(ctx, g.store, g.log, actor, startAction, startDetail); err != nil {
 		return admitResult{outcome: admitAuditUnavailable, gate: gateAudit, target: target, cred: cred}
+	}
+	if target.Critical {
+		notifyCritical(ctx, g.store, g.log, g.alerter, actor, target, cred.Username, req.remoteAddr)
 	}
 
 	// 18. Just-in-time decryption. A credential the caller declared has no stored

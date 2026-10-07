@@ -65,6 +65,31 @@ func TestLoadValidation(t *testing.T) {
 			t.Fatalf("Load() = %v, want PAM_ALERT_EMAIL error", err)
 		}
 	})
+	t.Run("digest without a relay", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_REPORT_DIGEST_TO", "soc@x")
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PAM_REPORT_DIGEST_TO") {
+			t.Fatalf("Load() = %v, want PAM_REPORT_DIGEST_TO error", err)
+		}
+	})
+	t.Run("digest hour out of range", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_REPORT_DIGEST_HOUR", "24")
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PAM_REPORT_DIGEST_HOUR") {
+			t.Fatalf("Load() = %v, want PAM_REPORT_DIGEST_HOUR error", err)
+		}
+	})
+	t.Run("digest with the alert relay", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_ALERT_EMAIL_SMTP", "smtp:25")
+		t.Setenv("PAM_ALERT_EMAIL_FROM", "pam@x")
+		t.Setenv("PAM_ALERT_EMAIL_TO", "sec@x")
+		t.Setenv("PAM_REPORT_DIGEST_TO", "soc@x, ops@x")
+		cfg, err := Load()
+		if err != nil || cfg.ReportDigestTo != "soc@x, ops@x" || cfg.ReportDigestHour != 6 {
+			t.Fatalf("Load() = %+v, %v", cfg, err)
+		}
+	})
 	t.Run("slack webhook without signing secret", func(t *testing.T) {
 		setRequired(t)
 		t.Setenv("PAM_SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/x")
@@ -308,6 +333,7 @@ func TestAirGapRefusesEgressingIntegrations(t *testing.T) {
 		{"OIDC issuer", "PAM_OIDC_ISSUER", "https://idp.example", "PAM_OIDC_ISSUER"},
 		{"Conjur", "PAM_CONJUR_URL", "https://conjur.example", "PAM_CONJUR_URL"},
 		{"alert webhook", "PAM_ALERT_WEBHOOK", "https://hooks.example/x", "PAM_ALERT_WEBHOOK"},
+		{"report digest", "PAM_REPORT_DIGEST_TO", "soc@example.com", "PAM_OT_AIRGAP_ALLOW"},
 		{"cloud KEK", "PAM_KEK_PROVIDER", "aws-kms", "PAM_KEK_PROVIDER"},
 		{"cloud identity", "PAM_ENTRA_TENANT_ID", "a-tenant-guid", "PAM_ENTRA_TENANT_ID"},
 	} {
