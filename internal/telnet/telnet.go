@@ -178,7 +178,7 @@ func (t *Conn) subnegotiation() error {
 			if nb == se {
 				break
 			}
-			if nb == iac {
+			if nb == iac && len(buf) < 64 { // the escaped byte is bounded too
 				buf = append(buf, iac)
 			}
 			continue

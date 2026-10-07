@@ -17,9 +17,11 @@ import (
 // sshScenarioFor resolves an SSH target's startup scenario (Phase 279) and
 // the one thing it may need from the vault. The decrypted secret normally
 // lives only from admit() to dialUpstream; a scenario that types
-// ${password} (an `enable` or `sudo -i` prompt) keeps it for exactly as
-// long as the scenario runs, and no other scenario keeps it at all. The
-// third result is an audit reason when the scenario cannot run.
+// ${password} (an `enable` or `sudo -i` prompt) keeps it for the life of
+// the connection, because each shell opened on it runs the scenario, and no
+// other scenario receives it at all. Only a principal with the reveal
+// capability may set such a scenario (api.mayTypePassword). The third
+// result is an audit reason when the scenario cannot run.
 func sshScenarioFor(target *store.Target, cred *store.Credential, secret string) (expect.Script, string, string) {
 	if target.Scenario == "" {
 		return nil, "", ""

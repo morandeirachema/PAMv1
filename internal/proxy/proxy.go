@@ -993,7 +993,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	// interactive command loop (if a runner is configured); anything else is
 	// refused.
 	if target.Protocol == "telnet" {
-		p.serveTelnet(ctx, sconn, chans, target, cred, secret, actor, remote, observeMode, res.bounds)
+		p.serveTelnet(ctx, sconn, chans, target, cred, secret, actor, remote, observeMode, principal.BreakGlass, res.bounds, res.rights)
 		return
 	}
 	if target.Protocol != "ssh" {
@@ -1002,8 +1002,9 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 	}
 
 	// The startup scenario (Phase 279) is the one consumer of the secret
-	// after the dial: it is kept for the session only when the target's
-	// scenario types ${password}, and only as long as the scenario runs.
+	// after the dial: when the target's scenario types ${password} it is
+	// kept for the CONNECTION — every shell channel opened on it runs the
+	// scenario again — and when it does not, the scenario never receives it.
 	sshScenario, scenarioSecret, scErr := sshScenarioFor(target, cred, secret)
 	if scErr != "" {
 		p.audit(ctx, actor, "session.error", fmt.Sprintf("target:%s cred_user:%s reason:%s", target.Name, cred.Username, scErr))
@@ -1703,6 +1704,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	var src io.Reader = upChan
 	if !gate.isOpen() {
 		stream := expect.NewStream(upChan)
+		defer stream.Close()
 		src = stream
 		// The shell flag is set before the shell request goes upstream, so by
 		// the target's first byte it is known whether this is a shell.
@@ -1712,7 +1714,6 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 				upChan.Close()
 			}
 		}
-		scSecret = ""
 		gate.open()
 	}
 	var cerr error
