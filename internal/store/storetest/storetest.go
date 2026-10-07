@@ -150,7 +150,7 @@ func RunStoreContract(t *testing.T, st store.Store) {
 
 	// --- targets ---
 	tgt := &store.Target{Name: "web-01", Host: "10.0.0.5", Port: 22, OSType: "linux", Protocol: "ssh", RequireApproval: true,
-		RequireSessionMFA: true, RDPClipboard: "deny", RDPClipboardAudit: "meta"}
+		RequireSessionMFA: true, RDPClipboard: "deny", RDPClipboardAudit: "meta", Critical: true}
 	if err := st.CreateTarget(ctx, tgt); err != nil {
 		t.Fatalf("CreateTarget: %v", err)
 	}
@@ -162,6 +162,26 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	}
 	if ts, err := st.ListTargets(ctx, 0, 0); err != nil || len(ts) != 1 || !ts[0].RequireSessionMFA {
 		t.Fatalf("ListTargets must carry require_session_mfa (Phase 244): %+v err %v", ts, err)
+	}
+	// Critical (Phase 277) must round-trip through create, list and update —
+	// a column dropped from one of the three queries would silently turn the
+	// per-connection alert off.
+	if got, err := st.GetTarget(ctx, tgt.ID); err != nil || !got.Critical {
+		t.Fatalf("GetTarget must carry critical (Phase 277): %+v err %v", got, err)
+	}
+	if ts, err := st.ListTargets(ctx, 0, 0); err != nil || len(ts) != 1 || !ts[0].Critical {
+		t.Fatalf("ListTargets must carry critical (Phase 277): %+v err %v", ts, err)
+	}
+	tgt.Critical = false
+	if err := st.UpdateTarget(ctx, tgt); err != nil {
+		t.Fatalf("UpdateTarget clearing critical: %v", err)
+	}
+	if got, err := st.GetTarget(ctx, tgt.ID); err != nil || got.Critical {
+		t.Fatalf("UpdateTarget must clear critical: %+v err %v", got, err)
+	}
+	tgt.Critical = true
+	if err := st.UpdateTarget(ctx, tgt); err != nil {
+		t.Fatalf("UpdateTarget restoring critical: %v", err)
 	}
 	if err := st.CreateTarget(ctx, &store.Target{Name: "web-01", Host: "x", Port: 22, OSType: "linux", Protocol: "ssh"}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("duplicate target name: want ErrConflict, got %v", err)

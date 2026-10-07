@@ -75,7 +75,8 @@ type Config struct {
 	// "off" is trust-any. See hostkey.go.
 	HostKeyCheck string
 	// Alerter (optional) receives the host-key events (a pin saved, a
-	// mismatch refused) so a SIEM or an inbox learns of them at once.
+	// mismatch refused) and every session opened to a critical target
+	// (Phase 277) so a SIEM or an inbox learns of them at once.
 	Alerter alert.Notifier
 	// OnBreakGlass, if set, is called when a session is opened with the emergency
 	// key. The proxies resolve their own principal outside the HTTP authz
@@ -411,6 +412,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		posture:      p.posture,
 		oncall:       p.oncall,
 		sessionMFA:   cfg.SessionMFA,
+		alerter:      cfg.Alerter,
 	}
 	if p.certTTL <= 0 {
 		p.certTTL = 2 * time.Minute

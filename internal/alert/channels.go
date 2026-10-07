@@ -250,3 +250,43 @@ func buildDirectMessage(from, to, subject, htmlBody string, inlinePNG []byte, in
 	msg.Write(parts.Bytes())
 	return msg.Bytes(), nil
 }
+
+// SendText sends one plain-text email to a fixed recipient list, outside the
+// alert fan-out — the daily report digest (Phase 277), which is a scheduled
+// document rather than a security event and must report whether it went out
+// so the worker can audit the outcome. It reuses the PAM_ALERT_EMAIL_* relay
+// and SendMailBounded, like SendDirect.
+func SendText(addr, from string, to []string, username, password, subject, body string) error {
+	var auth smtp.Auth
+	if username != "" {
+		host := addr
+		if h, _, err := net.SplitHostPort(addr); err == nil {
+			host = h
+		}
+		auth = smtp.PlainAuth("", username, password, host)
+	}
+	rcpts := make([]string, len(to))
+	for i, r := range to {
+		rcpts[i] = auditfmt.OneLine(r)
+	}
+	return SendMailBounded(addr, auth, from, rcpts, buildTextMessage(from, rcpts, subject, body, time.Now()))
+}
+
+// buildTextMessage renders SendText's RFC 5322 message. The header values
+// are folded to one line (header injection), and every body line ends in
+// CRLF as SMTP DATA requires; a body line that is exactly "." would end
+// DATA early and is dot-stuffed by net/smtp's writer, so it needs no help
+// here.
+func buildTextMessage(from string, to []string, subject, body string, now time.Time) []byte {
+	var b strings.Builder
+	fmt.Fprintf(&b, "From: %s\r\n", auditfmt.OneLine(from))
+	fmt.Fprintf(&b, "To: %s\r\n", strings.Join(to, ", "))
+	fmt.Fprintf(&b, "Subject: %s\r\n", auditfmt.OneLine(subject))
+	fmt.Fprintf(&b, "Date: %s\r\n", now.Format(time.RFC1123Z))
+	b.WriteString("MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n")
+	for _, line := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
+		b.WriteString(line)
+		b.WriteString("\r\n")
+	}
+	return []byte(b.String())
+}

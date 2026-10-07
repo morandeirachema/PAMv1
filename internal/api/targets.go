@@ -52,6 +52,8 @@ type targetIn struct {
 	// RequireSessionMFA demands a fresh second factor for every session to the
 	// target (Phase 244), strictest-wins with PAM_SESSION_MFA and its safe.
 	RequireSessionMFA bool `json:"require_session_mfa"`
+	// Critical makes every connection to the target alert (Phase 277).
+	Critical bool `json:"critical"`
 	// Per-target RDP clipboard tightening; "" inherits the global policy and the
 	// effective mode is the stricter of the two.
 	RDPClipboard      string `json:"rdp_clipboard"`
@@ -134,7 +136,7 @@ func (s *Server) validateTargetIn(w http.ResponseWriter, in *targetIn) bool {
 // targetFromIn builds the store row both handlers persist.
 func targetFromIn(in targetIn) store.Target {
 	return store.Target{Name: in.Name, Host: in.Host, Port: in.Port, OSType: in.OSType, Protocol: in.Protocol,
-		RequireApproval: in.RequireApproval, RequireSessionMFA: in.RequireSessionMFA,
+		RequireApproval: in.RequireApproval, RequireSessionMFA: in.RequireSessionMFA, Critical: in.Critical,
 		RDPClipboard: in.RDPClipboard, RDPClipboardAudit: in.RDPClipboardAudit, Labels: in.labels, ApprovalTiers: in.approvalTiers, Rights: in.rights}
 }
 
@@ -173,7 +175,9 @@ func clipDetail(t store.Target) string {
 	}
 	// require_session_mfa rides along for the same reason: clearing it lowers
 	// what every session to the target must prove (Phase 244).
-	return fmt.Sprintf("clipboard:%s clip_audit:%s require_session_mfa:%t", orDash(t.RDPClipboard), orDash(t.RDPClipboardAudit), t.RequireSessionMFA)
+	// critical rides along too (Phase 277): clearing it silences the alert on
+	// every connection, which is exactly the edit an insider would want quiet.
+	return fmt.Sprintf("clipboard:%s clip_audit:%s require_session_mfa:%t critical:%t", orDash(t.RDPClipboard), orDash(t.RDPClipboardAudit), t.RequireSessionMFA, t.Critical)
 }
 
 // createTarget validates and persists a new target (defaulting the port to 22),

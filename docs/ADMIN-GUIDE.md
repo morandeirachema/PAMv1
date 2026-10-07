@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-09-22 · Reflects: Phases 0–227 and 229–276 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-10-07 · Reflects: Phases 0–227 and 229–277 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** PAMv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -293,6 +293,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_ICAP_URL` | | (off) | **ICAP AV/DLP scanning of SFTP transfers** (Phase 143): `icap://host[:port]/service`. Requires `PAM_SSH_SFTP_CAPTURE` enabled and `PAM_SSH_SFTP_CAPTURE_MAX_MB` set (> 0). Detection only — the file has already reached its destination by the time a whole-object scan can complete. A flagged file audits `sftp.icap_flagged`; a scan failure audits `sftp.icap_scan_failed` and the transfer still proceeds. Joins the `PAM_OT_AIRGAP` conflict list. See §9.4. |
 | `PAM_SSH_PORT_FORWARD` | | `true` | **`ssh -L` port forwarding** (Phase 141): a client-initiated forward is admitted only to the connected target's own host (any port). `false` disables the feature deployment-wide. Always refused in an observer session or while `PAM_REQUIRE_LIVE_SUPERVISION`/`PAM_REQUIRE_RECORDING` are set. See §9.4. |
 | `PAM_BANNER_LOGIN` / `PAM_BANNER_SESSION` | | | (Phase 276) The **login banner** (shown before authentication: SSH pre-auth banner, sign-on screen) and the **session notice** (recording consent: printed into every SSH session and its recording; acknowledged before a desktop opens). `\n` is a line break. Add `_ES`, `_FR`, … for per-language variants (`PAM_BANNER_LOGIN_ES`); a language without one gets the default. See §9.1a. |
+| `PAM_REPORT_DIGEST_TO` / `PAM_REPORT_DIGEST_HOUR` | | `6` | (Phase 277) Recipients (comma-separated) of the **daily report digest**, and the UTC hour it goes out. Sent through the `PAM_ALERT_EMAIL_*` relay, which must be configured. Empty disables it. See §9.2c. |
 | `PAM_RDP_DRIVE` / `PAM_RDP_PRINTER` / `PAM_RDP_AUDIO` / `PAM_RDP_AUDIO_IN` | | `false` / `false` / `true` / `false` | (Phase 270) Deployment ceilings for the RDP redirections a target's or grant's **rights** may enable; see "Sub-protocol rights" under §6. |
 | `PAM_RDP_CLIPBOARD` | | `allow` | RDP clipboard policy (Phase 33): `allow`, `readonly` (block paste into the target), `deny` (clipboard off both ways); drive redirection always off. A target's `rdp_clipboard` field can tighten this per target — the **stricter** of the two wins. |
 | `PAM_RDP_CLIPBOARD_AUDIT` | | `off` | **Audit clipboard transfers** (Phase 50): `meta` records direction, mimetype, size and SHA-256; `full` also records the content (truncated). Content is opt-in because a privileged desktop's clipboard often holds a password the operator just copied. Emits `rdp.clipboard`. A target's `rdp_clipboard_audit` field can raise this per target (whichever records more wins). See §9.4. |
@@ -3777,6 +3778,54 @@ imply. If you need one of those, the building blocks (`ExportAudit`, the
 family-prefix bucketing, the digest/audit conventions) are the same ones this
 report is built from.
 
+### 9.2c Reports, critical targets and the daily digest (Phase 277)
+
+Three questions an operations review asks of a bastion, answered from the
+audit trail rather than from a separate counter, so a report can never
+disagree with what the auditors see:
+
+- **Who and what went unused?** `GET /api/reports/unused?days=30` lists the
+  stored users with no portal sign-in and no connection in the last N days
+  (1–366, default 30), and the targets nobody connected to. A user or target
+  created inside the window has not had the time to be used, so it is counted
+  (`too_new_users`, `too_new_targets`) rather than listed.
+- **How much privileged access happened?** `GET /api/reports/connections`
+  totals the connections opened over a window (`since`/`until`, RFC 3339,
+  default the last seven days, at most 366) by user, target, protocol and UTC
+  day. `format=csv` returns one row per connection instead, for a
+  spreadsheet; a cell a spreadsheet would run as a formula is prefixed with a
+  quote. A connection is a session that opened (`session.start`,
+  `db.session.start`, `rdp.connect`, `vnc.connect`); a refused attempt is not
+  one.
+- **Was a critical system touched?** Mark a target **critical** (`"critical":
+  true` on `POST`/`PUT /api/targets`, or the checkbox on the target screens).
+  Every session opened to it is then audited `target.critical_connect` and
+  alerted through every configured channel — webhook, syslog, email. The flag
+  is notification only: it never refuses a session. Clearing it is visible on
+  the `target.update` row (`critical:false`).
+
+```bash
+curl -H "X-API-Key: $PAM_API_KEY" "http://localhost:8080/api/reports/unused?days=90"
+curl -H "X-API-Key: $PAM_API_KEY" -o connections.csv \
+  "http://localhost:8080/api/reports/connections?since=2026-09-01T00:00:00Z&format=csv"
+```
+
+Both routes need `CapReadAudit`, the gate of the audit trail itself, and each
+run is audited `report.view`. Console: main menu **36** (F9 downloads the
+CSV).
+
+**The daily digest.** Set `PAM_REPORT_DIGEST_TO` to one or more addresses and
+PAMv1 mails a plain-text digest once a day at `PAM_REPORT_DIGEST_HOUR` (UTC,
+default 6): the last 24 hours' connections by protocol, user and target,
+every connection to a critical target, and the users and targets unused over
+the last 30 days. It goes through the alert relay (`PAM_ALERT_EMAIL_SMTP` and
+`_FROM` are required). Only one replica sends it, and whether today's has gone
+out is read back from the last `report.digest_sent` row, so a restart or a
+failover neither repeats nor skips a day. A failed send is audited
+`report.digest_failed` and retried an hour later. Under `PAM_OT_AIRGAP` the
+digest is refused unless `PAM_OT_AIRGAP_ALLOW` names `PAM_REPORT_DIGEST_TO`,
+certifying the relay is inside the enclave.
+
 ### 9.3 Session recordings
 
 **Encryption at rest (Phase 41).** By default a recording is protected only by its
@@ -5133,6 +5182,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-10-07 | **Phase 277 (reporting).** §9.2c new subsection: the unused and connection reports, the CSV, the critical-target flag and its alert, the daily digest; env row `PAM_REPORT_DIGEST_TO`/`_HOUR`. |
 | 2026-09-22 | **Phase 276 (banners).** §9.1a new subsection: the login banner and the session notice, where each is shown, the desktop acknowledgement, per-language variants; env row. |
 | 2026-09-22 | **Phase 275 (restriction rules).** §9.4a new subsection: per-user/per-role rules, the fields, kill vs notify, SFTP size rules, admission-time loading, what a match looks like. |
 | 2026-09-22 | **Phase 274 (approval depth).** §9 new subsection *Approver comment, granted duration, cancel and timeout*; env rows `PAM_APPROVAL_TIMEOUT_MIN`, `PAM_APPROVAL_COMMENT_REQUIRED`. |

@@ -87,6 +87,7 @@ flowchart LR
     n_ratelimit[ratelimit]
     n_recording[recording]
     n_releasedocs[releasedocs]
+    n_report[report]
     n_restrict[restrict]
     n_saml[saml]
     n_samltest[samltest]
@@ -133,6 +134,7 @@ flowchart LR
   n_api --> n_probe
   n_api --> n_ratelimit
   n_api --> n_recording
+  n_api --> n_report
   n_api --> n_restrict
   n_api --> n_rotate
   n_api --> n_saml
@@ -235,6 +237,8 @@ flowchart LR
   n_proxy --> n_tds
   n_proxy --> n_vault
   n_proxy --> n_winrm
+  n_report --> n_auditfmt
+  n_report --> n_store
   n_restrict --> n_store
   n_rotate --> n_store
   n_rotate --> n_winrm
@@ -583,6 +587,7 @@ erDiagram
     string Labels
     string ApprovalTiers
     string Rights
+    bool Critical
     time_Time CreatedAt
   }
   TargetGrant {
@@ -680,7 +685,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 225 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 227 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -778,6 +783,8 @@ The 225 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/recordings` | CapReadAudit |
 | GET | `/api/recordings/search` | CapReadAudit |
 | GET | `/api/recordings/{name}` | CapReadAudit |
+| GET | `/api/reports/connections` | CapReadAudit |
+| GET | `/api/reports/unused` | CapReadAudit |
 | GET | `/api/restriction-rules` | CapReadInventory |
 | POST | `/api/restriction-rules` | CapManageUsers |
 | DELETE | `/api/restriction-rules/{id}` | CapManageUsers |

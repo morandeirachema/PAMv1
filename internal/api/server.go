@@ -268,6 +268,11 @@ type Options struct {
 	ShareSMTPFrom string
 	ShareSMTPUser string
 	ShareSMTPPass string
+	// DigestTo / DigestHour configure the daily report digest (Phase 277):
+	// mailed to DigestTo through the ShareSMTP relay once a day at DigestHour
+	// UTC by RunDigestWorker. Empty DigestTo disables it.
+	DigestTo   []string
+	DigestHour int
 	// Cluster (optional) is the cross-replica live-monitoring coordinator
 	// (Phase 55): GET /api/sessions lists cluster-wide and the stream endpoint
 	// can watch a session hosted on another replica. nil = replica-local, the
@@ -564,6 +569,7 @@ type Server struct {
 	shareSMTPFrom      string
 	shareSMTPUser      string
 	shareSMTPPass      string
+	digest             digestState
 	cluster            *session.Cluster
 	stepup             *session.StepUp
 	bgThreshold        int
@@ -886,6 +892,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		shareSMTPFrom:       opts.ShareSMTPFrom,
 		shareSMTPUser:       opts.ShareSMTPUser,
 		shareSMTPPass:       opts.ShareSMTPPass,
+		digest:              digestState{to: opts.DigestTo, hour: opts.DigestHour},
 		cluster:             opts.Cluster,
 		stepup:              opts.StepUp,
 		bgThreshold:         opts.BreakGlassThreshold,
@@ -1230,6 +1237,11 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/audit/verify", s.authz(auth.CapReadAudit, s.verifyAudit))
 	s.mux.Handle("GET /api/audit/head", s.authz(auth.CapReadAudit, s.auditHead))
 	s.mux.Handle("GET /api/compliance/nis2", s.authz(auth.CapReadAudit, s.nis2Report)) // Phase 114
+	// Operational reports (Phase 277): unused users/targets and connection
+	// statistics, both read back from the audit trail — review reads, so the
+	// same gate as the trail itself.
+	s.mux.Handle("GET /api/reports/unused", s.authz(auth.CapReadAudit, s.reportUnused))
+	s.mux.Handle("GET /api/reports/connections", s.authz(auth.CapReadAudit, s.reportConnections))
 	// The subject-indexed grant query (Phase 189): every other grant route is
 	// target-indexed, this one answers "what can this subject reach?". A review
 	// read, so CapReadAudit — the same gate as the audit trail it complements.

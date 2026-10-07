@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/morandeirachema/pamv1/internal/alert"
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/logging"
@@ -61,6 +62,9 @@ const (
 // never has to reason about one database proxy being configured differently
 // from the other.
 type MSSQLConfig struct {
+	// Alerter (optional) is told of every session opened to a critical
+	// target (Phase 277).
+	Alerter         alert.Notifier
 	Addr            string            // listen address, e.g. ":1433"; "off" disables it
 	RecordingDir    string            // where session recordings are written
 	Sessions        *session.Registry // live-session registry (optional)
@@ -216,6 +220,7 @@ func NewMSSQL(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg MSSQL
 		posture:      m.posture,
 		oncall:       m.oncall,
 		sessionMFA:   cfg.SessionMFA,
+		alerter:      cfg.Alerter,
 	}
 	m.pol = sqlPolicy{
 		guard:       m.guard,
