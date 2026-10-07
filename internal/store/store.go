@@ -131,7 +131,13 @@ type Target struct {
 	// human about (Phase 277): each opened session raises an alert through
 	// the configured channels and an audit row target.critical_connect, and
 	// the reports flag it. It changes no authorization decision.
-	Critical  bool      `json:"critical"`
+	Critical bool `json:"critical"`
+	// Scenario is the target's SEND/EXPECT startup scenario in canonical
+	// form (Phase 279, see internal/expect): on a telnet target it is the
+	// login dialogue (empty runs the default login/password prompts); on an
+	// SSH target it is a scripted first step run in the shell. It may name
+	// ${login} and ${password}, never hold a secret itself.
+	Scenario  string    `json:"scenario,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

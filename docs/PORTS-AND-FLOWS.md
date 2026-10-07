@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-10-07 · Reflects: Phases 0–227 and 229–278. **Phase 53 added the first new
+> Last updated: 2026-10-07 · Reflects: Phases 0–227 and 229–279. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; nothing after
 > it adds a port or listener (55–94 ride the existing listeners and flows: the
 > live-monitor relay and the step-up decision bus ride the server ↔ PostgreSQL
@@ -230,6 +230,7 @@ add `5433 → 5433` and/or `1433 → 1433` when the database proxies are enabled
 | E15 | pam-server | ICAP AV/DLP gateway (mgmt zone) | 1344 (default) | ICAP (RFC 3507) | Whole-file RESPMOD scan of a finalized SFTP transfer (`PAM_ICAP_URL`); **detection only** — the file has already crossed E2 in either direction by the time a verdict exists. Plaintext, no TLS option in v1: keep the gateway inside a trusted segment | ✅ P143 |
 | E17 | pam-server | RADIUS server (mgmt zone) | **1812** | RADIUS over **UDP** (RFC 2865) | Portal login as a source or as the second factor (`PAM_RADIUS_ADDR`, Phase 269): Access-Request with the PAP-hidden password, replies verified under the shared secret; bounded retransmits. No inbound port | ✅ P269 |
 | E16 | pam-server | Kubernetes API server (target zone) | **6443** | HTTPS | Brokered kubectl-shaped operations (`get`/`logs`/`apply`/`delete`) with a JIT-injected service-account token; certificate verified against `PAM_K8S_CA_FILE` or the system roots (Phase 155) | ✅ P155 |
+| E18 | pam-server (proxy) | Telnet target (target zone) | **23** | TELNET (**cleartext**) | JIT-logged-in brokered telnet session, the operator's leg being SSH `:2222` (Phase 279). **The injected password and the whole session cross this hop unencrypted** — only with `PAM_TELNET_ENABLED=true`, and only inside a trusted segment | ✅ P279 |
 
 ## 4. Internal / data-plane
 
@@ -388,6 +389,7 @@ specific target hosts and protocols, and default-deny everything else across the
 
 | Date | Change |
 |---|---|
+| 2026-10-07 | **Phase 279 — telnet targets.** New egress **E18**: the SSH gateway to a telnet target on 23, cleartext, opt-in (`PAM_TELNET_ENABLED`). No new listener: the operator connects to `:2222` as for SSH. |
 | 2026-08-16 | **Phase 155 — Kubernetes targets: one new EGRESS destination (E16), no new listener.** A `kubernetes` target is a cluster's API server, brokered as discrete operations over the existing `:8080` control plane rather than proxied on a listener of its own — so the only new flow is pam-server → API server `:6443` (HTTPS, certificate verified against `PAM_K8S_CA_FILE` or the system roots; no trust-any fallback, since every request carries a bearer token). One request per operation, no long-lived connection, and no streaming: `exec`/`attach`/`port-forward` are not brokered, so nothing here opens a multiplexed SPDY/WebSocket channel |
 | 2026-09-22 | **Phase 269 — one new egress, E17 (UDP 1812 to a RADIUS server).** The first UDP egress in the table: RADIUS has no TLS of its own, so the shared secret and the Response Authenticator are the whole integrity story — keep the server in the management zone and the secret long. The client never listens; the reply arrives on the request's own socket |
 | 2026-09-22 | **Phase 266 — session probes ride I8.** The Windows session probe is `pam-agent` in probe mode: it connects in to the same `:2222` listener as `endpoint-agent:<name>`, sends one `probe@pamv1` request, and thereafter carries only the one `pam-probe@pamv1` channel pam-server opens toward it — JSON lines up (snapshots, events) and down (rules, kill commands). No new ingress or egress row; the endpoint still needs no inbound rule. Runs as the logged-on user, so it needs no firewall privileges and installs no rules |

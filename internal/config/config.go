@@ -284,6 +284,11 @@ type Config struct {
 	// ReportDigestHour (UTC, 0-23, default 6); empty disables the digest.
 	ReportDigestTo   string
 	ReportDigestHour int
+	// TelnetEnabled (PAM_TELNET_ENABLED, Phase 279) allows telnet targets.
+	// Off by default: telnet carries the injected credential and the whole
+	// session in cleartext between PAMv1 and the target, which a deployment
+	// must accept knowingly.
+	TelnetEnabled bool
 	// ITSM / ticketing gate (Phase 20). RequireTicket makes an access request
 	// carry a change/incident ticket; TicketPattern is a regex it must match and
 	// TicketValidateURL is a webhook the ITSM system answers 2xx for a valid ticket.
@@ -926,6 +931,7 @@ func Load() (*Config, error) {
 		ApprovalTimeout:         time.Duration(integer("PAM_APPROVAL_TIMEOUT_MIN", 0)) * time.Minute,
 		ReportDigestTo:          os.Getenv("PAM_REPORT_DIGEST_TO"),
 		ReportDigestHour:        integer("PAM_REPORT_DIGEST_HOUR", 6),
+		TelnetEnabled:           boolean("PAM_TELNET_ENABLED", false),
 		ApprovalCommentRequired: boolean("PAM_APPROVAL_COMMENT_REQUIRED", false),
 		RequireTicket:           boolean("PAM_REQUIRE_TICKET", false),
 		RevalidateTicket:        boolean("PAM_TICKET_REVALIDATE", false),

@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–278 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–279 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,49 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 279 — Telnet targets and SEND/EXPECT startup scenarios (Tier 10, row 10) ✅
+
+*Tier 10's tenth row: WALLIX logs in to telnet and rlogin devices with a
+scenario, and can script a first step on SSH. PAMv1 brokered SSH, WinRM,
+RDP, VNC, PostgreSQL, SQL Server and Kubernetes, but a switch that only
+speaks telnet was out of reach, and a session that needed `sudo -i` or
+`enable` made the operator type a password the vault was supposed to hold.*
+
+- [x] **Telnet, opt-in.** `internal/telnet` is the client half of RFC
+  854/855. A `telnet` target is refused until `PAM_TELNET_ENABLED=true`,
+  because the target leg is cleartext. The operator connects through the
+  SSH gateway as for an SSH target, so their own leg stays encrypted.
+- [x] **Scenarios.** `internal/expect`: one step per line, `expect TEXT` /
+  `send TEXT`, `${login}` and `${password}` in a send only, at most 32
+  steps, a per-step timeout. Stored canonical on the target (`0068`),
+  audited by digest, carried by the inventory CSV.
+- [x] **Telnet login.** The target's scenario, or the default
+  login/password dialogue, runs with the vaulted credential before the
+  operator is bridged in. After that the session is recorded, watchable,
+  idle-timed and killable like an SSH shell; window size follows NAWS.
+- [x] **A scripted first step on SSH.** A scenario on an SSH target runs in
+  every shell before operator input is released. An exec or SFTP is not a
+  shell and runs unscripted.
+- [x] **Nothing leaks.** The dialogue stays out of the operator's stream and
+  the recording. `session.scenario` audits steps and outcome, never what
+  was sent. The secret is held past the dial only while a scenario that
+  types it runs; invariant 6 says so.
+- [x] **Console**: the telnet protocol and the scenario field on the target
+  screens.
+- [x] **Proven** against an in-process telnet device and an sshd whose
+  `sudo -i` both accept only the vaulted password. The operator lands at
+  the device or root prompt, keystrokes typed early are held, the
+  dialogue and the secret are absent from the `.cast`, a failed scenario
+  ends the session, and telnet is denied when disabled.
+- [x] **Living docs**: low-level §1/§4/§5/§6/§7/§8, high-level, ADMIN-GUIDE,
+  USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE, PORTS-AND-FLOWS (E18),
+  PROTOCOLS-AND-CRYPTO, README Tier 9 and Tier 10 rows.
+
+Left out, on purpose: **rlogin**, which authenticates by source host and
+privileged port, a trust model a proxy cannot carry honestly; and regular
+expressions in `expect`, since substrings cover the prompts a scenario
+waits for and are far easier to review.
 
 ## Phase 278 — Bulk inventory CSV import/export (Tier 10, row 9) ✅
 

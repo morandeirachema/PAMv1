@@ -1851,7 +1851,7 @@ Type choices, press Enter.
 <label>Host  . . . . . . . :  <input name="host" size="24" required></label>
 <label>Port  . . . . . . . :  <input name="port" type="number" value="22" min="1" max="65535" size="6" required></label>
 <label>OS type . . . . . . :  <select name="os_type"><option>linux</option><option>windows</option></select>   <span class="cyan">linux, windows</span></label>
-<label>Protocol  . . . . . :  <select name="protocol"><option>ssh</option><option>winrm</option><option>rdp</option><option>vnc</option><option>postgres</option><option>mssql</option><option>kubernetes</option></select>   <span class="cyan">ssh, winrm, rdp, vnc, postgres, mssql, kubernetes (port defaults to 6443)</span></label>
+<label>Protocol  . . . . . :  <select name="protocol"><option>ssh</option><option>winrm</option><option>rdp</option><option>vnc</option><option>postgres</option><option>mssql</option><option>kubernetes</option><option>telnet</option></select>   <span class="cyan">ssh, winrm, rdp, vnc, postgres, mssql, kubernetes (port 6443), telnet (port 23, cleartext — PAM_TELNET_ENABLED)</span></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox">   <span class="cyan">connections need an approved request (4-eyes)</span></label>
 <label>Session MFA . . . . :  <input name="require_session_mfa" type="checkbox">   <span class="cyan">every session and every secret handed out needs a fresh second factor</span></label>
 <label>Critical  . . . . . :  <input name="critical" type="checkbox">   <span class="cyan">every connection is alerted and audited (target.critical_connect)</span></label>
@@ -1859,6 +1859,7 @@ Type choices, press Enter.
 <label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value="">(global)</option><option>allow</option><option>readonly</option><option>deny</option></select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
 <label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value="">(global)</option><option>off</option><option>meta</option><option>full</option></select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
 <label>Labels  . . . . . . :  <input name="labels" size="36" placeholder="env=prod,tier=db">   <span class="cyan">label rules (menu 32) grant or DENY by these</span></label>
+<label>Startup scenario  . :  <textarea name="scenario" rows="3" cols="40" placeholder="expect $&#10;send sudo -i&#10;expect password for&#10;send \${password}"></textarea>   <span class="cyan">ssh/telnet: one step per line, expect TEXT / send TEXT; \${login} \${password} (telnet blank = login/password prompts)</span></label>
 <input type="submit" hidden>
 </form>
 ${fkeys("F3=Exit   F12=Cancel")}`;
@@ -1867,7 +1868,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           const f = Object.fromEntries(new FormData(ev.target));
           const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked,
             require_session_mfa: ev.target.require_session_mfa.checked, critical: ev.target.critical.checked,
-            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit, labels: parseLabels(f.labels), approval_tiers: f.approval_tiers || "", rights: (f.rights || "").trim() };
+            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit, labels: parseLabels(f.labels), approval_tiers: f.approval_tiers || "", rights: (f.rights || "").trim(), scenario: f.scenario || "" };
           try { await api("POST", "/api/targets", body); say(`TARGET ${String(f.name).toUpperCase()} ADDED.`); await openTargets(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };
@@ -1888,7 +1889,7 @@ Editing target <span class="white">${esc(t.name)}</span> (id ${esc(t.id)}). Type
 <label>Host  . . . . . . . :  <input name="host" size="24" required value="${esc(t.host)}"></label>
 <label>Port  . . . . . . . :  <input name="port" type="number" min="1" max="65535" size="6" required value="${esc(t.port)}"></label>
 <label>OS type . . . . . . :  <select name="os_type">${sel(["linux", "windows"], t.os_type)}</select></label>
-<label>Protocol  . . . . . :  <select name="protocol">${sel(["ssh", "winrm", "rdp", "vnc", "postgres", "mssql", "kubernetes"], t.protocol)}</select></label>
+<label>Protocol  . . . . . :  <select name="protocol">${sel(["ssh", "winrm", "rdp", "vnc", "postgres", "mssql", "kubernetes", "telnet"], t.protocol)}</select></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox"${t.require_approval ? " checked" : ""}>   <span class="cyan">connections need an approved request (4-eyes)</span></label>
 <label>Session MFA . . . . :  <input name="require_session_mfa" type="checkbox"${t.require_session_mfa ? " checked" : ""}>   <span class="cyan">every session and every secret handed out needs a fresh second factor</span></label>
 <label>Critical  . . . . . :  <input name="critical" type="checkbox"${t.critical ? " checked" : ""}>   <span class="cyan">every connection is alerted and audited (target.critical_connect)</span></label>
@@ -1896,6 +1897,7 @@ Editing target <span class="white">${esc(t.name)}</span> (id ${esc(t.id)}). Type
 <label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value=""${t.rdp_clipboard ? "" : " selected"}>(global)</option>${sel(["allow", "readonly", "deny"], t.rdp_clipboard)}</select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
 <label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value=""${t.rdp_clipboard_audit ? "" : " selected"}>(global)</option>${sel(["off", "meta", "full"], t.rdp_clipboard_audit)}</select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
 <label>Labels  . . . . . . :  <input name="labels" size="36" value="${esc(t.labels || "")}" placeholder="env=prod,tier=db">   <span class="cyan">label rules (menu 32) grant or DENY by these</span></label>
+<label>Startup scenario  . :  <textarea name="scenario" rows="3" cols="40">${esc(t.scenario || "")}</textarea>   <span class="cyan">ssh/telnet: one step per line, expect TEXT / send TEXT; \${login} \${password} (telnet blank = login/password prompts)</span></label>
 <div class="cyan">Credentials, grants and safe assignment are kept. Safe: use option 8.</div>
 <input type="submit" hidden>
 </form>
@@ -1905,7 +1907,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           const f = Object.fromEntries(new FormData(ev.target));
           const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked,
             require_session_mfa: ev.target.require_session_mfa.checked, critical: ev.target.critical.checked,
-            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit, labels: parseLabels(f.labels), approval_tiers: f.approval_tiers || "", rights: (f.rights || "").trim() };
+            rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit, labels: parseLabels(f.labels), approval_tiers: f.approval_tiers || "", rights: (f.rights || "").trim(), scenario: f.scenario || "" };
           try { await api("PUT", `/api/targets/${t.id}`, body); say(`TARGET ${String(f.name).toUpperCase()} CHANGED.`); await openTargets(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
         };

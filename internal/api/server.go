@@ -274,6 +274,8 @@ type Options struct {
 	// UTC by RunDigestWorker. Empty DigestTo disables it.
 	DigestTo   []string
 	DigestHour int
+	// TelnetEnabled allows telnet targets (PAM_TELNET_ENABLED, Phase 279).
+	TelnetEnabled bool
 	// Cluster (optional) is the cross-replica live-monitoring coordinator
 	// (Phase 55): GET /api/sessions lists cluster-wide and the stream endpoint
 	// can watch a session hosted on another replica. nil = replica-local, the
@@ -571,6 +573,7 @@ type Server struct {
 	shareSMTPUser      string
 	shareSMTPPass      string
 	digest             digestState
+	telnetEnabled      bool
 	cluster            *session.Cluster
 	stepup             *session.StepUp
 	bgThreshold        int
@@ -894,6 +897,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		shareSMTPUser:       opts.ShareSMTPUser,
 		shareSMTPPass:       opts.ShareSMTPPass,
 		digest:              digestState{to: opts.DigestTo, hour: opts.DigestHour},
+		telnetEnabled:       opts.TelnetEnabled,
 		cluster:             opts.Cluster,
 		stepup:              opts.StepUp,
 		bgThreshold:         opts.BreakGlassThreshold,

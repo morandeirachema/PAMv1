@@ -37,7 +37,7 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
-runs 0–227 and 229–278, and **every phase has shipped**, and the current
+runs 0–227 and 229–279, and **every phase has shipped**, and the current
 tagged, cosign-signed release is
 **[v0.0.78](https://github.com/morandeirachema/pamv1/releases/tag/v0.0.78)** (2026-09-22;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
@@ -552,7 +552,7 @@ added as each phase ships.
 | **Search past sessions by metadata** (user, target, protocol, window, outcome) | Access Manager / Bastion audit search | content search over SSH recordings; the live session list; an audit list that takes only a limit |
 | **SSH public-key and FIDO2 (`sk-`) login to the proxy** | Bastion 12.2 release notes (WAB-13752) | the proxy takes a password (the token) only |
 | **X.509 client-certificate login** | Bastion, Access Manager, IDaaS | none — `PAM_DEVICE_HEADER` binds a device, it does not authenticate |
-| **Telnet and rlogin targets** | Bastion connection policies | none |
+| ~~**Telnet**~~ and rlogin targets **✅ telnet shipped (Phase 279)** — *rlogin open* | Bastion connection policies | telnet targets with scenario login, see Tier 10; rlogin none |
 | **One credential shared by many targets** (a global domain, rotated once) | Bastion admin guide §11.3 | a credential belongs to one target |
 | ~~**Critical-target flag with notification**~~ · ~~**unused users/targets reports**~~ **✅ shipped (Phase 277)** · **scheduled, directory-sourced discovery** | Bastion admin guide §8.2.2, §14; audit guide §11 | a `critical` target audits and alerts every connection; `GET /api/reports/unused` — see Tier 10. Scheduled, directory-sourced discovery is still open |
 | **Portal login lifetime and idle timeout** | IDaaS session settings | a login session lasts a fixed 12 h |
@@ -584,7 +584,7 @@ audit data is not replicated across nodes. Rows are struck as phases ship.
 | ~~**Login banner and recording consent**~~ **✅ shipped (Phase 276)** | two texts, five languages, acknowledged on RDP and printed on SSH | `PAM_BANNER_LOGIN`/`PAM_BANNER_SESSION` with per-language variants (`_ES`, `_FR`, …): the SSH pre-auth banner and the sign-on screen; the session notice printed into every SSH session and its recording, and acknowledged in a dialog before a desktop opens (a refusal mints no token); each showing audited `session.consent` with the text's digest |
 | ~~**Reporting**~~ **✅ shipped (Phase 277)** | unused users/targets over a window, connection statistics with CSV, critical-target notification on every connection, a daily digest mail | `GET /api/reports/unused?days=` and `GET /api/reports/connections` (JSON totals by user/target/protocol/day, or one CSV row per connection), both read back from the audit trail and audited `report.view`; a `critical` target writes `target.critical_connect` and alerts on every session it opens, never refusing one; `PAM_REPORT_DIGEST_TO`/`_HOUR` mails a daily digest of all three through the alert relay, once a day across replicas; console menu 36 |
 | ~~**Bulk CSV import/export of inventory**~~ **✅ shipped (Phase 278)** | 14 object classes, secrets exported hidden | five classes — safes, targets, credentials, users, grants — at `GET`/`POST /api/inventory/{class}.csv`, referenced by name; import replays every row through the normal create handler (same validation, guards, vault AAD and audit), creates only and reports per row; the credentials file has an always-empty `secret` column; personal safes are not exported; console menu 37. Safe membership, label and restriction rules stay on their own screens |
-| **Telnet targets and SEND/EXPECT startup scenarios** | scenario login for telnet/rlogin and a scripted first step on SSH | none |
+| ~~**Telnet targets and SEND/EXPECT startup scenarios**~~ **✅ shipped (Phase 279)** — *rlogin not* | scenario login for telnet/rlogin and a scripted first step on SSH | `telnet` targets behind `PAM_TELNET_ENABLED` (cleartext, opt-in), brokered by the SSH gateway and logged in to by a per-target `expect`/`send` scenario with the vaulted password (default: the login/password prompts); the same scenario on an SSH target runs as a scripted first step in every shell (`sudo -i`, `enable`), operator input held until it has run; the dialogue and the secret never reach the operator or the recording; `session.scenario` audits each run. rlogin is not brokered: it authenticates by source host, which a proxy cannot honestly carry |
 | **ICAP scanning of desktop file transfers and clipboard** | up/down file and clipboard-text verification on RDP through the same ICAP servers | SFTP only (detection) |
 | **Portable recording archives** | export by user/target/window/protocol with a manifest and purge; re-import for replay | retention pruning; no archive |
 | **Credential escrow export** | a periodic encrypted dump of every secret to a recipient key, mailed or stored, so credentials survive a dead PAM | database backups carry the vault |
