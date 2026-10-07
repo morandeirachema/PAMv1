@@ -417,6 +417,9 @@
   let deps = [], depsCred = null, blastResult = null, auditHead = null, nis2Report = null;
   let nis2Since = "", nis2Until = "";
   let campaigns = [], campView = null, risk = null, riskMin = "", riskWin = "";
+  // Reports (Phase 277): the unused-objects window in days and the
+  // connection-statistics window, both kept across F5.
+  let reports = null, repDays = "30", repSince = "", repUntil = "";
   let assignItem = null, myQueue = [];
   let brokerApprovals = [], stepUps = [];
   let watchSess = null, watchAbort = null, watchText = "";
@@ -776,6 +779,18 @@
     go("campitems");
   }
   // Risk dashboard (Phase 23). A 404 means the analytics engine is not wired in.
+  // Reports (Phase 277): both are read from the audit trail server-side, so
+  // the screen only asks for the two windows.
+  function repQuery() {
+    return [repSince && "since=" + encodeURIComponent(repSince), repUntil && "until=" + encodeURIComponent(repUntil)].filter(Boolean).join("&");
+  }
+  async function openReports() {
+    reports = null;
+    const unused = await api("GET", "/api/reports/unused?days=" + encodeURIComponent(repDays || "30"));
+    const conns = await api("GET", "/api/reports/connections" + (repQuery() ? "?" + repQuery() : ""));
+    reports = { unused, conns };
+    go("reports");
+  }
   async function openRisk() {
     risk = null;
     try {
@@ -1721,6 +1736,7 @@ ${fkeys("")}
           line(33, true, "Join a shared desktop (session invite)") +
           line(34, can("read_audit"), "Work with session probes (Windows telemetry & blocking)") +
           line(35, can("read_inventory"), "Work with restriction rules (per user/role command & transfer limits)") +
+          line(36, can("read_audit"), "Reports (unused users/targets, connection statistics)") +
           "90. Sign off\n";
         term.innerHTML = `${head("PAMMAIN", "PAMV1 Main Menu")}
 Select one of the following:
@@ -1747,6 +1763,7 @@ ${fkeys("F3=Sign off   F5=Refresh")}`;
             "33": () => go("sharejoin"),
             "34": openProbes,
             "35": openRestrictions,
+            "36": openReports,
             "90": signoff,
           };
           if (routes[c]) { try { await routes[c](); } catch (e) { say("CPF9999: " + e.message, true); render(); } }
@@ -1763,8 +1780,8 @@ Type options, press Enter.
   <span class="cyan">${[canManage ? "2=Change" : "", canManage ? "4=Delete" : "", canManage ? "5=Work with grants" : "", canConnect ? "6=Run kubectl (kubernetes)" : "", canConnect ? "7=Open viewer (rdp/vnc targets)" : "", canManage ? "8=Assign to safe" : "", canManage ? "9=Discover accounts (ssh/winrm)" : "", canConnect ? "10=Session MFA ticket (ssh/db clients)" : "", canConnect ? "11=Open terminal (ssh targets)" : "", "12=Host key (pinned on first contact)", !canManage && !canConnect ? "(read-only role)" : ""].filter(Boolean).join("   ")}</span>
 
 <form id="f-list"><table>
-<tr><th>Opt</th><th>ID</th><th>Name</th><th>Host</th><th>Port</th><th>OS</th><th>Proto</th><th>Approval</th><th>MFA</th><th>Clip</th><th>Safe</th><th>Labels</th></tr>
-${targets.map((t) => `<tr><td>${opt(t.id)}</td><td>${esc(t.id)}</td><td>${pad(t.name, 16)}</td><td>${pad(t.host, 20)}</td><td>${esc(t.port)}</td><td>${pad(t.os_type, 8)}</td><td>${pad(t.protocol, 6)}</td><td>${t.require_approval ? '<span class="amber">required</span>' : "-"}</td><td>${t.require_session_mfa ? '<span class="amber">each</span>' : "-"}</td><td>${t.rdp_clipboard ? `<span class="amber">${esc(t.rdp_clipboard)}</span>` : "-"}</td><td class="cyan">${esc(safeName(t.safe_id))}</td><td class="cyan">${cell(t.labels || "-", 22)}</td></tr>`).join("")}
+<tr><th>Opt</th><th>ID</th><th>Name</th><th>Host</th><th>Port</th><th>OS</th><th>Proto</th><th>Approval</th><th>MFA</th><th>Crit</th><th>Clip</th><th>Safe</th><th>Labels</th></tr>
+${targets.map((t) => `<tr><td>${opt(t.id)}</td><td>${esc(t.id)}</td><td>${pad(t.name, 16)}</td><td>${pad(t.host, 20)}</td><td>${esc(t.port)}</td><td>${pad(t.os_type, 8)}</td><td>${pad(t.protocol, 6)}</td><td>${t.require_approval ? '<span class="amber">required</span>' : "-"}</td><td>${t.require_session_mfa ? '<span class="amber">each</span>' : "-"}</td><td>${t.critical ? '<span class="red">yes</span>' : "-"}</td><td>${t.rdp_clipboard ? `<span class="amber">${esc(t.rdp_clipboard)}</span>` : "-"}</td><td class="cyan">${esc(safeName(t.safe_id))}</td><td class="cyan">${cell(t.labels || "-", 22)}</td></tr>`).join("")}
 </table>${targets.length ? "" : `<div class="cyan indent">(No targets defined.${canManage ? " Press F6 to add." : ""})</div>`}
 <input type="submit" hidden></form>
 ${fkeys(`F3=Exit   F5=Refresh${canManage ? "   F6=Add target" : ""}   F12=Cancel`)}`;
@@ -1803,6 +1820,7 @@ Type choices, press Enter.
 <label>Protocol  . . . . . :  <select name="protocol"><option>ssh</option><option>winrm</option><option>rdp</option><option>vnc</option><option>postgres</option><option>mssql</option><option>kubernetes</option></select>   <span class="cyan">ssh, winrm, rdp, vnc, postgres, mssql, kubernetes (port defaults to 6443)</span></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox">   <span class="cyan">connections need an approved request (4-eyes)</span></label>
 <label>Session MFA . . . . :  <input name="require_session_mfa" type="checkbox">   <span class="cyan">every session and every secret handed out needs a fresh second factor</span></label>
+<label>Critical  . . . . . :  <input name="critical" type="checkbox">   <span class="cyan">every connection is alerted and audited (target.critical_connect)</span></label>
 <label>Approval tiers  . . :  <input name="approval_tiers" size="36" placeholder="manager; approver:2; admin">   <span class="cyan">ordered chain (Phase 256); blank = the safe's, else N-of-M</span></label>
 <label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value="">(global)</option><option>allow</option><option>readonly</option><option>deny</option></select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
 <label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value="">(global)</option><option>off</option><option>meta</option><option>full</option></select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
@@ -1814,7 +1832,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
           const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked,
-            require_session_mfa: ev.target.require_session_mfa.checked,
+            require_session_mfa: ev.target.require_session_mfa.checked, critical: ev.target.critical.checked,
             rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit, labels: parseLabels(f.labels), approval_tiers: f.approval_tiers || "", rights: (f.rights || "").trim() };
           try { await api("POST", "/api/targets", body); say(`TARGET ${String(f.name).toUpperCase()} ADDED.`); await openTargets(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
@@ -1839,6 +1857,7 @@ Editing target <span class="white">${esc(t.name)}</span> (id ${esc(t.id)}). Type
 <label>Protocol  . . . . . :  <select name="protocol">${sel(["ssh", "winrm", "rdp", "vnc", "postgres", "mssql", "kubernetes"], t.protocol)}</select></label>
 <label>Require approval  . :  <input name="require_approval" type="checkbox"${t.require_approval ? " checked" : ""}>   <span class="cyan">connections need an approved request (4-eyes)</span></label>
 <label>Session MFA . . . . :  <input name="require_session_mfa" type="checkbox"${t.require_session_mfa ? " checked" : ""}>   <span class="cyan">every session and every secret handed out needs a fresh second factor</span></label>
+<label>Critical  . . . . . :  <input name="critical" type="checkbox"${t.critical ? " checked" : ""}>   <span class="cyan">every connection is alerted and audited (target.critical_connect)</span></label>
 <label>Approval tiers  . . :  <input name="approval_tiers" size="36" value="${esc(t.approval_tiers || "")}" placeholder="manager; approver:2; admin">   <span class="cyan">ordered chain (Phase 256); blank = the safe's, else N-of-M</span></label>
 <label>RDP clipboard . . . :  <select name="rdp_clipboard"><option value=""${t.rdp_clipboard ? "" : " selected"}>(global)</option>${sel(["allow", "readonly", "deny"], t.rdp_clipboard)}</select>   <span class="cyan">tighten the global policy for this target (strictest wins)</span></label>
 <label>RDP clip. audit . . :  <select name="rdp_clipboard_audit"><option value=""${t.rdp_clipboard_audit ? "" : " selected"}>(global)</option>${sel(["off", "meta", "full"], t.rdp_clipboard_audit)}</select>   <span class="cyan">full records clipboard CONTENT — often a password</span></label>
@@ -1851,7 +1870,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
           ev.preventDefault();
           const f = Object.fromEntries(new FormData(ev.target));
           const body = { name: f.name, host: f.host, port: Number(f.port), os_type: f.os_type, protocol: f.protocol, require_approval: ev.target.require_approval.checked,
-            require_session_mfa: ev.target.require_session_mfa.checked,
+            require_session_mfa: ev.target.require_session_mfa.checked, critical: ev.target.critical.checked,
             rdp_clipboard: f.rdp_clipboard, rdp_clipboard_audit: f.rdp_clipboard_audit, labels: parseLabels(f.labels), approval_tiers: f.approval_tiers || "", rights: (f.rights || "").trim() };
           try { await api("PUT", `/api/targets/${t.id}`, body); say(`TARGET ${String(f.name).toUpperCase()} CHANGED.`); await openTargets(); }
           catch (e) { say("CPF9898: " + e.message, true); render(); }
@@ -4770,6 +4789,41 @@ ${fkeys("F3=Exit   F5=Refresh   F12=Cancel")}`;
         };
       },
 
+      reports() {
+        back = "main";
+        const r = reports || {}, u = r.unused || {}, c = r.conns || {};
+        const counts = (rows, n) => (rows || []).slice(0, n).map((x) => `${pad(x.key, 18)} ${esc(x.n)}`).join("<br>") || "(none)";
+        const cols = [["By protocol", c.by_protocol], ["Top users", c.by_user], ["Top targets", c.by_target]];
+        term.innerHTML = `${head("PAMRPT", "Reports")}
+Read back from the audit trail. A connection is a session that opened; a denied
+attempt is not one. Objects created inside the unused window are not judged.
+
+<form id="f-rep" class="indent">
+<label>Unused window (days):  <input name="days" size="4" inputmode="numeric" value="${esc(repDays)}">   <span class="cyan">1-366</span></label>
+<label>Since (RFC3339) . . :  <input name="since" size="24" value="${esc(repSince)}" placeholder="default: 7 days back"></label>
+<label>Until (RFC3339) . . :  <input name="until" size="24" value="${esc(repUntil)}" placeholder="default: now"></label>
+<input type="submit" hidden>
+</form>
+<div class="white">UNUSED IN THE LAST ${esc(repDays)} DAYS: ${(u.users || []).length} users, ${(u.targets || []).length} targets   <span class="cyan">(not judged: ${esc(u.too_new_users ?? 0)} users, ${esc(u.too_new_targets ?? 0)} targets)</span></div>
+<table>
+<tr><th>Kind</th><th>Name</th><th>Role / proto</th><th>Created</th></tr>
+${(u.users || []).map((x) => `<tr><td>user</td><td>${pad(x.username, 20)}</td><td>${pad(x.role, 10)}</td><td class="cyan">${fmtTime(x.created_at)}</td></tr>`).join("")}
+${(u.targets || []).map((x) => `<tr><td>target</td><td>${pad(x.name, 20)}</td><td>${pad(x.protocol, 10)}${x.critical ? ' <span class="red">critical</span>' : ""}</td><td class="cyan">${fmtTime(x.created_at)}</td></tr>`).join("")}
+</table>
+<div class="white">CONNECTIONS ${esc(c.since || "")} .. ${esc(c.until || "")}: ${esc(c.total ?? 0)}</div>
+<table><tr>${cols.map(([t]) => `<th>${esc(t)}</th>`).join("")}</tr>
+<tr>${cols.map(([, rows]) => `<td>${counts(rows, 10)}</td>`).join("")}</tr></table>
+<div class="cyan">Per day: ${(c.by_day || []).map((d) => `${esc(d.key.slice(5))}=${esc(d.n)}`).join("  ")}</div>
+${fkeys("F3=Exit   F5=Refresh   F9=Download connections CSV   F12=Cancel")}`;
+        document.getElementById("f-rep").onsubmit = async (ev) => {
+          ev.preventDefault();
+          repDays = ev.target.days.value.trim() || "30";
+          repSince = ev.target.since.value.trim();
+          repUntil = ev.target.until.value.trim();
+          try { await openReports(); } catch (e) { say("CPF9999: " + e.message, true); render(); }
+        };
+      },
+
       risk() {
         back = "main";
         const r = risk;
@@ -4901,7 +4955,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
   }
   function signoff() { stopLive(); stopWatch(); apiKey = ""; me = null; sessionStorage.removeItem("pam_api_key"); say("SIGN OFF COMPLETE."); go("signon"); }
 
-  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, identities: openIdentities, scimkeys: openScimKeys, endpointagents: openEndpointAgents, hostkey: () => hostKeyTarget && openHostKey(hostKeyTarget), restrictions: openRestrictions, probes: openProbes, probeview: () => probeView && openProbe(probeView.key), proberules: openProbeRules, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid), reach: () => openReach(reachSubject, reachKind), labelrules: openLabelRules };
+  const refreshers = { targets: openTargets, creds: openCreds, sessions: openSessions, checkouts: openCheckouts, users: openUsers, mfa: openMfa, audit: openAudit, reconcile: openReconcile, requests: openRequests, grants: () => openGrants(grantsTarget), profiles: openProfiles, config: openConfig, effective: openEffective, apps: openApps, appgrants: () => openAppGrants(grantsApp), safes: openSafes, safemembers: () => openSafeMembers(membersSafe), campaigns: openCampaigns, campitems: () => campView && openCampaign(campView.campaign.id), myqueue: openMyQueue, risk: openRisk, recordings: openRecordings, brokerapprovals: openBrokerApprovals, stepups: openStepUps, vendors: openVendors, vendorgrants: () => openVendorGrants(grantsVendor), sshcerts: openSSHCerts, loginsessions: openLoginSessions, agents: openAgents, quarantine: openQuarantine, identities: openIdentities, scimkeys: openScimKeys, endpointagents: openEndpointAgents, hostkey: () => hostKeyTarget && openHostKey(hostKeyTarget), restrictions: openRestrictions, probes: openProbes, probeview: () => probeView && openProbe(probeView.key), proberules: openProbeRules, tokenexchange: openTokenExchange, deps: () => depsCred && openDeps(depsCred.id), nis2report: openNIS2Report, shareinvites: () => openShareInvites(shareInviteSid), reach: () => openReach(reachSubject, reachKind), labelrules: openLabelRules, reports: openReports };
   // cycleTheme rotates green → amber → slate → green, persists the choice, and
   // re-renders so the F-key hint's confirmation message shows immediately.
   function cycleTheme() {
@@ -4962,7 +5016,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
       else if (k === "F6") { if (screen === "effective") await exportIaC("env"); else if (screen === "audit") await verifyChain(); else { const a = adders[screen]; if (a) a(); } }
       else if (k === "F7") { if (screen === "effective") await exportIaC("helm"); else if (screen === "agents") await openQuarantine(); else if (screen === "audit") await fetchAuditHead(); else if (screen === "campaigns" && can("approve")) await openMyQueue(); else if (screen === "sesswatch" && watchSess) await openShareInvites(watchSess.id); }
       else if (k === "F8") { if (screen === "effective") await exportIaC("terraform"); else if (screen === "audit") await openNIS2Report(); else if (screen === "agents") await openIdentities(); else if (screen === "sesswatch" && watchSess && can("approve")) await toggleSuspend(); }
-      else if (k === "F9") { if (screen === "audit") await exportAudit(); else if (screen === "users") await reconcileIdentities(); else if (screen === "sshcerts") await download("/api/ca/ssh/krl", "pamv1-revoked-certs.krl", "KRL"); else if (screen === "nis2report") await download("/api/compliance/nis2" + (nis2Query() ? "?" + nis2Query() : ""), "pamv1-nis2-report.json", "NIS2 REPORT"); }
+      else if (k === "F9") { if (screen === "audit") await exportAudit(); else if (screen === "users") await reconcileIdentities(); else if (screen === "sshcerts") await download("/api/ca/ssh/krl", "pamv1-revoked-certs.krl", "KRL"); else if (screen === "reports") await download("/api/reports/connections?format=csv" + (repQuery() ? "&" + repQuery() : ""), "pamv1-connections.csv", "CONNECTIONS CSV"); else if (screen === "nis2report") await download("/api/compliance/nis2" + (nis2Query() ? "?" + nis2Query() : ""), "pamv1-nis2-report.json", "NIS2 REPORT"); }
       else if (k === "F10") { if (screen === "audit") await download("/api/audit/ocsf", "pamv1-audit-ocsf.json", "OCSF"); else if (screen === "probes") await openProbeRules(); }
       else if (k === "F12") { go(back); }
     } catch (e) { say("CPF9999: " + e.message, true); render(); }
