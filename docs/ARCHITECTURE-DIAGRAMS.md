@@ -88,6 +88,7 @@ flowchart LR
     n_radius[radius]
     n_radiustest[radiustest]
     n_ratelimit[ratelimit]
+    n_recarchive[recarchive]
     n_recording[recording]
     n_releasedocs[releasedocs]
     n_report[report]
