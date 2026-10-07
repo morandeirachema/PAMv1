@@ -1535,13 +1535,11 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		// command through on the record; kill refuses it and ends the session.
 		if rm, ok := rs.Check("ssh_exec", m.Command); ok {
 			detail := fmt.Sprintf("target:%s via:proxy rule:%d pattern:%s cmd:%s", target.Name, rm.RuleID, auditValue(rm.Pattern, 128), auditCmd(m.Command))
-			if rm.Action == restrict.ActionNotify {
-				p.audit(ctx, actor, "restriction.notified", detail)
-			} else {
-				if rec != nil {
-					_, _ = io.WriteString(rec, "$ "+m.Command+"\r\npamv1: session ended by a restriction rule\r\n")
-				}
-				p.audit(ctx, actor, "restriction.killed", detail)
+			if rm.Action != restrict.ActionNotify && rec != nil {
+				_, _ = io.WriteString(rec, "$ "+m.Command+"\r\npamv1: session ended by a restriction rule\r\n")
+			}
+			p.audit(ctx, actor, rm.AuditAction(), detail)
+			if rm.Action != restrict.ActionNotify {
 				killSession()
 				return false
 			}
@@ -2224,11 +2222,11 @@ func (p *Proxy) winrmRun(ctx context.Context, out io.Writer, target *store.Targe
 	}
 	if rm, ok := rs.Check("winrm", command); ok {
 		detail := fmt.Sprintf("target:%s via:proxy rule:%d pattern:%s cmd:%s", target.Name, rm.RuleID, auditValue(rm.Pattern, 128), auditCmd(command))
-		if rm.Action == restrict.ActionNotify {
-			p.audit(ctx, actor, "restriction.notified", detail)
-		} else {
+		if rm.Action != restrict.ActionNotify {
 			fmt.Fprint(out, "PAMv1: session ended by a restriction rule\r\n")
-			p.audit(ctx, actor, "restriction.killed", detail)
+		}
+		p.audit(ctx, actor, rm.AuditAction(), detail)
+		if rm.Action != restrict.ActionNotify {
 			if killSession != nil {
 				killSession()
 			}
