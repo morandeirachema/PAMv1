@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–277 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–278 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,46 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 278 — Bulk inventory CSV import/export (Tier 10, row 9) ✅
+
+*Tier 10's ninth row: WALLIX imports and exports fourteen object classes as
+CSV, with secrets exported hidden. PAMv1 could export its configuration
+overrides as IaC, but an inventory of hundreds of targets had to be entered
+one form at a time.*
+
+- [x] **Five classes, referenced by name.** Safes, targets, credentials,
+  users and grants, one CSV each at `/api/inventory/{class}.csv`. A target
+  names its safe, a credential its target, a grant its target and
+  credential user, so a file moves between deployments.
+- [x] **Import is the normal create path, replayed.** Every row goes through
+  the class's own create handler under the caller's identity, so it gets the
+  same validation, guards, vault AAD and per-object audit row. There is no
+  second copy of the rules to drift. Each route carries its list or create
+  route's capability.
+- [x] **Create only, per-row results.** An existing object is reported
+  `exists` and left alone, so a file can be re-imported safely. A bad row
+  fails alone with its line and reason. A file that does not parse imports
+  nothing.
+- [x] **Nothing secret leaves.** Credentials are read without their
+  ciphertext, and the `secret` column is always empty, so an export doubles
+  as an import template. Personal safes are not exported, since they would
+  import back as shared safes. Formula cells are neutralised on the way out
+  and restored on the way in, through one shared `internal/csvcell`.
+- [x] **Console**: main menu 37, export or import per class with the result
+  shown per row.
+- [x] **Proven** by a round trip: a whole inventory exported from one server
+  imports into an empty one and re-exports byte-identically, and the
+  imported credential reveals its secret. Also covered: re-import as all
+  `exists`, bad files and rows, every class's capability, and the console
+  parity guard.
+- [x] **Living docs**: low-level §1/§5/§7/§8, high-level, ADMIN-GUIDE §5.1,
+  USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE, README Tier 10 row.
+
+Left out, on purpose: updating existing objects from a file (a rewrite of
+policy deserves its own review per object), and the classes that already
+have their own screens and audit vocabulary, namely safe membership, label
+rules, restriction rules and configuration overrides.
 
 ## Phase 277 — Reporting (Tier 10, row 8) ✅
 
