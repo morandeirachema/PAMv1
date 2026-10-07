@@ -230,6 +230,7 @@ flowchart LR
   n_proxy --> n_auth
   n_proxy --> n_banner
   n_proxy --> n_cmdguard
+  n_proxy --> n_expect
   n_proxy --> n_icap
   n_proxy --> n_logging
   n_proxy --> n_oncall
@@ -242,6 +243,7 @@ flowchart LR
   n_proxy --> n_sshca
   n_proxy --> n_store
   n_proxy --> n_tds
+  n_proxy --> n_telnet
   n_proxy --> n_vault
   n_proxy --> n_winrm
   n_report --> n_auditfmt

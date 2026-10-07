@@ -54,7 +54,12 @@ type Config struct {
 	HostKey      ssh.Signer // proxy SSH host key
 	RecordingDir string     // where session recordings are written
 	DialTimeout  time.Duration
-	Sessions     *session.Registry // live-session registry (optional)
+	// TelnetEnabled lets the gateway broker telnet targets (Phase 279,
+	// PAM_TELNET_ENABLED); ScenarioStepTimeout bounds each expect of a
+	// startup scenario (0 = expect.DefaultStepTimeout).
+	TelnetEnabled       bool
+	ScenarioStepTimeout time.Duration
+	Sessions            *session.Registry // live-session registry (optional)
 	// RequireApproval gates every session behind an approved access request
 	// (global OT policy); per-target Target.RequireApproval also applies.
 	RequireApproval bool
@@ -249,6 +254,8 @@ type Proxy struct {
 	hostKey      ssh.Signer
 	recordingDir string
 	dialTimeout  time.Duration
+	telnet       bool
+	scenarioStep time.Duration
 	sessions     *session.Registry
 	requireApprv bool
 	ungated      auth.UngatedDefault
@@ -359,6 +366,8 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, cfg Config) (*
 		hostKey:        cfg.HostKey,
 		recordingDir:   cfg.RecordingDir,
 		dialTimeout:    cfg.DialTimeout,
+		telnet:         cfg.TelnetEnabled,
+		scenarioStep:   cfg.ScenarioStepTimeout,
 		sessions:       cfg.Sessions,
 		requireApprv:   cfg.RequireApproval,
 		ungated:        ungatedDefault(cfg.RequireTargetGrant),
@@ -913,7 +922,7 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 		// rather than expectProtocol (which the DB proxies use). serveWinRM
 		// re-checks defensively.
 		proxyable: func(t *store.Target) bool {
-			return t.Protocol == "ssh" || (t.Protocol == "winrm" && p.winrm != nil)
+			return t.Protocol == "ssh" || (t.Protocol == "winrm" && p.winrm != nil) || (t.Protocol == "telnet" && p.telnet)
 		},
 		// A Zero Standing Privilege ("ssh_ca") credential has no stored secret;
 		// the proxy mints a short-lived certificate at dial time (dialUpstream)
@@ -977,8 +986,14 @@ func (p *Proxy) handleConn(ctx context.Context, nConn net.Conn) {
 
 	observeMode := ext["observe"] == "true"
 
-	// Non-SSH targets are brokered differently: WinRM targets get an interactive
-	// command loop (if a runner is configured); anything else is refused.
+	// Non-SSH targets are brokered differently: a telnet target is dialed
+	// and logged in to by its scenario (Phase 279); WinRM targets get an
+	// interactive command loop (if a runner is configured); anything else is
+	// refused.
+	if target.Protocol == "telnet" {
+		p.serveTelnet(ctx, sconn, chans, target, cred, secret, actor, remote, observeMode, res.bounds)
+		return
+	}
 	if target.Protocol != "ssh" {
 		p.serveWinRM(ctx, sconn, chans, target, cred, secret, actor, remote, observeMode, res.bounds, res.restrictions)
 		return

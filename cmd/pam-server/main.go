@@ -1614,6 +1614,7 @@ func run() error {
 			EndpointAgents:       endpointAgents,
 			ProbeHub:             probeHub,
 			HostKeyCheck:         cfg.SSHHostKeyCheck,
+			TelnetEnabled:        cfg.TelnetEnabled,
 			Banners:              banners,
 			Alerter:              alerter,
 			CA:                   sshCA,
