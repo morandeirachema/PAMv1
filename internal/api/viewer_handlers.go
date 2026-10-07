@@ -466,7 +466,7 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	}
 	defer s.audit(ctx, proto.name+".end", "target:"+target.Name)
 	if target.Critical {
-		s.notifyCritical(ctx, target, cred.Username, s.clientIP(r))
+		s.notifyCritical(ctx, actorFrom(ctx), target, cred.Username, s.clientIP(r))
 	}
 	s.log.Info("viewer session", "protocol", proto.name, "actor", principal.Name, "target", target.Name)
 	auditCtx := context.WithoutCancel(ctx)

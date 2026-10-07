@@ -245,6 +245,9 @@ func (s *Server) execKubectl(ctx context.Context, target *store.Target, cred *st
 		s.live.Publish(sid, []byte("PAMv1: audit log unavailable; output withheld\r\n"))
 		return k8s.Result{}, errAuditUnavailable
 	}
+	if target.Critical { // Phase 277, extended to this path by the review of 274-280
+		s.notifyCritical(ctx, actor, target, cred.Username, "")
+	}
 	// Output reaches live watchers only AFTER the durable audit above, or the
 	// withheld-result contract would be defeated by a stream that already
 	// delivered what the 503 withholds.
