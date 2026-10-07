@@ -583,6 +583,7 @@ erDiagram
     string Labels
     string ApprovalTiers
     string Rights
+    bool Critical
     time_Time CreatedAt
   }
   TargetGrant {

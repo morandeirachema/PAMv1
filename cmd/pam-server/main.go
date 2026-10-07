@@ -1697,6 +1697,7 @@ func run() error {
 		}
 		dbx, err := proxy.NewDB(st, v, resolver, proxy.DBConfig{
 			RecordingDir:         cfg.RecordingDir,
+			Alerter:              alerter,
 			Sessions:             sessions,
 			RequireApproval:      cfg.RequireApproval,
 			SessionMFA:           cfg.SessionMFA,
@@ -1746,6 +1747,7 @@ func run() error {
 		}
 		mx, err := proxy.NewMSSQL(st, v, resolver, proxy.MSSQLConfig{
 			RecordingDir:         cfg.RecordingDir,
+			Alerter:              alerter,
 			Sessions:             sessions,
 			RequireApproval:      cfg.RequireApproval,
 			SessionMFA:           cfg.SessionMFA,
