@@ -270,7 +270,14 @@ func labelsMap(s string) (map[string]string, error) {
 		if !ok {
 			return nil, fmt.Errorf("label %q is not key=value", term)
 		}
-		out[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		k = strings.TrimSpace(k)
+		// A repeated key would keep only its last value — env=prod,env=dev
+		// stored as env=dev, outside an env=prod deny rule. Refused instead
+		// (review of 274-280).
+		if _, dup := out[k]; dup {
+			return nil, fmt.Errorf("label key %q appears twice", k)
+		}
+		out[k] = strings.TrimSpace(v)
 	}
 	return out, nil
 }
@@ -318,11 +325,17 @@ func (imp *inventoryImport) target(row inventorycsv.Row) importRow {
 		id := strconv.FormatInt(out.ID, 10)
 		if code, _, msg := replay(imp.r, imp.s.setTargetSafe, http.MethodPut, "/api/targets/"+id+"/safe",
 			map[string]string{"id": id}, map[string]any{"safe_id": *safeID}); code != http.StatusNoContent {
-			// The target exists now; say so, and why it is not in its safe,
-			// rather than reporting a clean failure that would invite a
-			// re-run to create it twice.
-			out.Status = "error"
-			out.Error = "created, but not placed in safe " + strconv.Quote(row.Get("safe")) + ": " + msg
+			// A target left outside its safe is reachable by everyone who may
+			// connect, and a re-run would call it "exists" and never fix it
+			// (review of 274-280). Delete it again — through the delete
+			// handler, so the removal is audited — and report the row failed.
+			dcode, _, _ := replay(imp.r, imp.s.deleteTarget, http.MethodDelete, "/api/targets/"+id, map[string]string{"id": id}, nil)
+			delete(imp.targets, name)
+			out.Status, out.ID = "error", 0
+			out.Error = "not placed in safe " + strconv.Quote(row.Get("safe")) + ": " + msg + "; the target was removed again"
+			if dcode != http.StatusNoContent {
+				out.Error = "not placed in safe " + strconv.Quote(row.Get("safe")) + ": " + msg + "; REMOVING THE TARGET ALSO FAILED — it exists outside its safe"
+			}
 		}
 	}
 	return out
