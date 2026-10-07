@@ -690,7 +690,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 232 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 237 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -762,10 +762,15 @@ The 232 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/extension-token` | CapRevealSecret |
 | POST | `/api/identity/reconcile` | CapManageUsers |
 | GET | `/api/inventory/credentials.csv` | CapReadInventory |
+| POST | `/api/inventory/credentials.csv` | CapManageCredentials |
 | GET | `/api/inventory/grants.csv` | CapManageTargets |
+| POST | `/api/inventory/grants.csv` | CapManageTargets |
 | GET | `/api/inventory/safes.csv` | CapReadInventory |
+| POST | `/api/inventory/safes.csv` | CapManageTargets |
 | GET | `/api/inventory/targets.csv` | CapReadInventory |
+| POST | `/api/inventory/targets.csv` | CapManageTargets |
 | GET | `/api/inventory/users.csv` | CapManageUsers |
+| POST | `/api/inventory/users.csv` | CapManageUsers |
 | GET | `/api/label-rules` | CapReadInventory |
 | POST | `/api/label-rules` | CapManageTargets |
 | DELETE | `/api/label-rules/{id}` | CapManageTargets |

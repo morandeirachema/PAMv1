@@ -1250,6 +1250,13 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/inventory/credentials.csv", s.authz(auth.CapReadInventory, s.exportInventory(inventorycsv.Credentials)))
 	s.mux.Handle("GET /api/inventory/users.csv", s.authz(auth.CapManageUsers, s.exportInventory(inventorycsv.Users)))
 	s.mux.Handle("GET /api/inventory/grants.csv", s.authz(auth.CapManageTargets, s.exportInventory(inventorycsv.Grants)))
+	// Bulk inventory import (Phase 278): each class behind its create route's
+	// capability, every row replayed through that create handler.
+	s.mux.Handle("POST /api/inventory/safes.csv", s.authz(auth.CapManageTargets, s.importInventory(inventorycsv.Safes)))
+	s.mux.Handle("POST /api/inventory/targets.csv", s.authz(auth.CapManageTargets, s.importInventory(inventorycsv.Targets)))
+	s.mux.Handle("POST /api/inventory/credentials.csv", s.authz(auth.CapManageCredentials, s.importInventory(inventorycsv.Credentials)))
+	s.mux.Handle("POST /api/inventory/users.csv", s.authz(auth.CapManageUsers, s.importInventory(inventorycsv.Users)))
+	s.mux.Handle("POST /api/inventory/grants.csv", s.authz(auth.CapManageTargets, s.importInventory(inventorycsv.Grants)))
 	// The subject-indexed grant query (Phase 189): every other grant route is
 	// target-indexed, this one answers "what can this subject reach?". A review
 	// read, so CapReadAudit — the same gate as the audit trail it complements.
