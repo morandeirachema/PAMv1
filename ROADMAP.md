@@ -6,7 +6,7 @@ Status: ✅ done · 🚧 in progress · ⬜ planned
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–279 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–280 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -2421,6 +2421,45 @@ Deliberately **not** done: narrowing all 129 handlers. `api.Server` holds one
 store and uses most of it; rewriting every signature would be a large diff for
 little gain. The value is that a *new* consumer can now state its 3 methods, and
 two did.
+
+## Phase 280 — ICAP scanning of desktop transfers and clipboard (Tier 10, row 11) ✅
+
+*Tier 10's eleventh row: WALLIX verifies RDP file transfers and clipboard
+text, both ways, through the same ICAP servers as its other scans. PAMv1
+scanned SFTP, and only after the fact, because a finished file has already
+arrived. A desktop transfer is different: it is a stream of Guacamole
+instructions crossing the portal, so it can be held.*
+
+- [x] **Held, then judged.** `guacd.Gate` keeps every frame of a file
+  (`file`/`put`/`body`) or clipboard stream back, has the reassembled bytes
+  scanned, and releases the stream only when clean. Infected, unscannable or
+  oversized content never reaches the other side. This is prevention, not
+  detection.
+- [x] **Flow control kept alive.** The gate answers a held file stream's
+  sender with the acks it would have had, swallows the receiver's own acks
+  after release, and tells the browser when an upload was refused.
+- [x] **Not bypassable by framing.** The gate does its own instruction
+  framing, so an instruction split across two WebSocket messages is judged
+  whole.
+- [x] **Configuration.** `PAM_ICAP_DESKTOP=off|files|clipboard|all` and
+  `PAM_ICAP_DESKTOP_MAX_MB` (1-1024, default 25), on `PAM_ICAP_URL`, which no
+  longer needs SFTP capture when desktop scanning is on.
+- [x] **Audit**: `rdp|vnc.transfer_scanned` for clean,
+  `rdp|vnc.transfer_blocked` plus an alert for anything else, with the
+  quoted file name, direction, size, SHA-256, outcome and reason.
+- [x] **Console**: the portal viewer never had a clipboard or file transfer.
+  It now copies out, pastes with Ctrl+Alt+V, saves downloads and uploads
+  with Ctrl+Alt+U, honouring acks.
+- [x] **Proven** through the real viewer tunnel against a fake guacd that
+  drives downloads by acks and acks uploads, and a fake ICAP service. Clean
+  transfers cross whole, infected ones never do, and both directions are
+  audited and alerted. Gate unit tests cover the split-instruction bypass.
+- [x] **Living docs**: low-level, high-level, ADMIN-GUIDE §9.3c, USER-GUIDE,
+  CODE-GUIDE, PORTS-AND-FLOWS (E15), PROTOCOLS-AND-CRYPTO, README Tier 10 row.
+
+Left out, on purpose: scanning while the stream is still arriving (ICAP
+judges a whole object), and holding streams a third-party Guacamole client
+invents beyond file, put, body and clipboard.
 
 ## Phase 279 — Telnet targets and SEND/EXPECT startup scenarios (Tier 10, row 10) ✅
 

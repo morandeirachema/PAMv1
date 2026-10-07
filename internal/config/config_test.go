@@ -65,6 +65,36 @@ func TestLoadValidation(t *testing.T) {
 			t.Fatalf("Load() = %v, want PAM_ALERT_EMAIL error", err)
 		}
 	})
+	t.Run("desktop ICAP without a URL", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_ICAP_DESKTOP", "files")
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PAM_ICAP_DESKTOP requires PAM_ICAP_URL") {
+			t.Fatalf("Load() = %v", err)
+		}
+	})
+	t.Run("desktop ICAP bad mode", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_ICAP_DESKTOP", "everything")
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PAM_ICAP_DESKTOP must be") {
+			t.Fatalf("Load() = %v", err)
+		}
+	})
+	t.Run("ICAP URL alone", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_ICAP_URL", "icap://av.example/respmod")
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "or PAM_ICAP_DESKTOP to be on") {
+			t.Fatalf("Load() = %v", err)
+		}
+	})
+	t.Run("desktop ICAP alone needs no SFTP capture", func(t *testing.T) {
+		setRequired(t)
+		t.Setenv("PAM_ICAP_URL", "icap://av.example/respmod")
+		t.Setenv("PAM_ICAP_DESKTOP", "ALL")
+		cfg, err := Load()
+		if err != nil || cfg.ICAPDesktop != "all" || cfg.ICAPDesktopMaxMB != 25 {
+			t.Fatalf("Load() = %+v, %v", cfg, err)
+		}
+	})
 	t.Run("digest without a relay", func(t *testing.T) {
 		setRequired(t)
 		t.Setenv("PAM_REPORT_DIGEST_TO", "soc@x")

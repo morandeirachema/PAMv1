@@ -5,7 +5,7 @@
 > groups, NetworkPolicies and OT segmentation. The *what and why* of each
 > protocol and cipher lives in [PROTOCOLS-AND-CRYPTO.md](PROTOCOLS-AND-CRYPTO.md).
 >
-> Last updated: 2026-10-07 · Reflects: Phases 0–227 and 229–279. **Phase 53 added the first new
+> Last updated: 2026-10-07 · Reflects: Phases 0–227 and 229–280. **Phase 53 added the first new
 > listener since Phase 24** — the SQL Server (TDS) proxy on `:1433`; nothing after
 > it adds a port or listener (55–94 ride the existing listeners and flows: the
 > live-monitor relay and the step-up decision bus ride the server ↔ PostgreSQL
@@ -227,7 +227,7 @@ add `5433 → 5433` and/or `1433 → 1433` when the database proxies are enabled
 | E11 | pam-server | CyberArk Conjur (identity/secrets zone) | 443 | HTTPS | Source bootstrap secrets at startup, and — with `PAM_CONJUR_REFRESH_MIN` — re-read the refreshable ones every N minutes from **every replica** (optional) | ✅ P18, P78 |
 | E12 | pam-server | KMS / HSM (Vault-Transit / AWS-KMS / PKCS#11) | 443 / — | HTTPS / PKCS#11 | Envelope-encryption KEK (wrap/unwrap), when not `local` | ✅ P5 |
 | E14 | pam-server | ITSM (mgmt zone: ServiceNow / Jira / generic webhook) | 443 | HTTPS | Change-ticket validation on access requests — generic 2xx webhook (P20) or **first-class ServiceNow/Jira lookup** (P84: ticket state, change window, ticket **names the operator**); with `PAM_TICKET_REVALIDATE`, checked again at the moment access is used (P60) | ✅ P20/P60/P84 |
-| E15 | pam-server | ICAP AV/DLP gateway (mgmt zone) | 1344 (default) | ICAP (RFC 3507) | Whole-file RESPMOD scan of a finalized SFTP transfer (`PAM_ICAP_URL`); **detection only** — the file has already crossed E2 in either direction by the time a verdict exists. Plaintext, no TLS option in v1: keep the gateway inside a trusted segment | ✅ P143 |
+| E15 | pam-server | ICAP AV/DLP gateway (mgmt zone) | 1344 (default) | ICAP (RFC 3507) | Whole-object RESPMOD scan of a held RDP/VNC file or clipboard transfer **before** it crosses (`PAM_ICAP_DESKTOP`, Phase 280: blocked unless clean), and of a finalized SFTP transfer (`PAM_ICAP_URL`); for SFTP **detection only** — the file has already crossed E2 in either direction by the time a verdict exists. Plaintext, no TLS option in v1: keep the gateway inside a trusted segment | ✅ P143 |
 | E17 | pam-server | RADIUS server (mgmt zone) | **1812** | RADIUS over **UDP** (RFC 2865) | Portal login as a source or as the second factor (`PAM_RADIUS_ADDR`, Phase 269): Access-Request with the PAP-hidden password, replies verified under the shared secret; bounded retransmits. No inbound port | ✅ P269 |
 | E16 | pam-server | Kubernetes API server (target zone) | **6443** | HTTPS | Brokered kubectl-shaped operations (`get`/`logs`/`apply`/`delete`) with a JIT-injected service-account token; certificate verified against `PAM_K8S_CA_FILE` or the system roots (Phase 155) | ✅ P155 |
 | E18 | pam-server (proxy) | Telnet target (target zone) | **23** | TELNET (**cleartext**) | JIT-logged-in brokered telnet session, the operator's leg being SSH `:2222` (Phase 279). **The injected password and the whole session cross this hop unencrypted** — only with `PAM_TELNET_ENABLED=true`, and only inside a trusted segment | ✅ P279 |
@@ -389,6 +389,7 @@ specific target hosts and protocols, and default-deny everything else across the
 
 | Date | Change |
 |---|---|
+| 2026-10-07 | **Phase 280 — desktop ICAP.** E15 now also carries the RDP/VNC transfer scans (`PAM_ICAP_DESKTOP`), which block before delivery. No new port. |
 | 2026-10-07 | **Phase 279 — telnet targets.** New egress **E18**: the SSH gateway to a telnet target on 23, cleartext, opt-in (`PAM_TELNET_ENABLED`). No new listener: the operator connects to `:2222` as for SSH. |
 | 2026-08-16 | **Phase 155 — Kubernetes targets: one new EGRESS destination (E16), no new listener.** A `kubernetes` target is a cluster's API server, brokered as discrete operations over the existing `:8080` control plane rather than proxied on a listener of its own — so the only new flow is pam-server → API server `:6443` (HTTPS, certificate verified against `PAM_K8S_CA_FILE` or the system roots; no trust-any fallback, since every request carries a bearer token). One request per operation, no long-lived connection, and no streaming: `exec`/`attach`/`port-forward` are not brokered, so nothing here opens a multiplexed SPDY/WebSocket channel |
 | 2026-09-22 | **Phase 269 — one new egress, E17 (UDP 1812 to a RADIUS server).** The first UDP egress in the table: RADIUS has no TLS of its own, so the shared secret and the Response Authenticator are the whole integrity story — keep the server in the management zone and the secret long. The client never listens; the reply arrives on the request's own socket |

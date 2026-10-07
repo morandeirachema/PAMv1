@@ -15,6 +15,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/morandeirachema/pamv1/internal/alert"
 	"github.com/morandeirachema/pamv1/internal/auth"
 	"github.com/morandeirachema/pamv1/internal/banner"
 	"github.com/morandeirachema/pamv1/internal/guacd"
@@ -544,9 +545,21 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	if sid != "" {
 		suspended = func() bool { return s.shares.Suspended(sid) }
 	}
+	// Desktop transfer scanning (Phase 280): file and clipboard streams are
+	// held until the ICAP service has judged them.
+	gate := s.desktopGate()
+	onVerdict := func(v guacd.Verdict) {
+		detail := "target:" + target.Name + " cred_user:" + cred.Username + " " + v.Detail()
+		if v.Released() {
+			s.audit(auditCtx, proto.name+".transfer_scanned", detail)
+			return
+		}
+		s.audit(auditCtx, proto.name+".transfer_blocked", detail)
+		s.alerter.Notify(auditCtx, alert.Event{Type: proto.name + ".transfer_blocked", Actor: principal.Name, Detail: detail, Time: time.Now()})
+	}
 	bridgeGuacd(ctx, ws, gconn, clip, touch, record, suspended, func(t guacd.ClipTransfer) {
 		s.audit(auditCtx, proto.name+".clipboard", "target:"+target.Name+" "+t.Detail())
-	})
+	}, gate, onVerdict)
 }
 
 // tunnelUUID returns a random identifier for the Guacamole tunnel handshake. The
@@ -586,7 +599,12 @@ func guacamolePrelude(uuid, connID string) [][]byte {
 // honoured here since the review of 250–262): only the protocol's own
 // keep-alive and flow control reach guacd, so the display keeps updating and
 // nothing the operator does reaches the desktop.
-func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, clip *guacd.ClipWatcher, touch func(), record func([]byte) error, suspended func() bool, onClip func(guacd.ClipTransfer)) {
+//
+// gate, when non-nil, holds file and clipboard streams until they are
+// scanned (Phase 280): each frame goes through it, what it forwards is
+// forwarded (and recorded, and observed), what it replies goes back to the
+// frame's sender, and each finished transfer is reported to onVerdict.
+func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, clip *guacd.ClipWatcher, touch func(), record func([]byte) error, suspended func() bool, onClip func(guacd.ClipTransfer), gate *guacd.Gate, onVerdict func(guacd.Verdict)) {
 	done := make(chan struct{}, 2)
 	note := func(direction string, frame []byte) {
 		if onClip == nil {
@@ -604,18 +622,30 @@ func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, cli
 		// tunnel parses each message independently and closes on a partial instruction,
 		// so a raw byte-stream copy (which splits large img/blob paints at the read
 		// boundary) corrupts or kills the viewer on the first real screen update.
+	out:
 		for {
 			inst, err := gconn.NextInstruction()
 			if len(inst) > 0 {
-				if record != nil {
-					if rerr := record(inst); rerr != nil {
-						break
+				res := gate.Process(ctx, guacd.DirOut, inst)
+				for _, r := range res.Reply {
+					if _, werr := gconn.Write(r); werr != nil {
+						break out
 					}
 				}
-				if werr := ws.Write(ctx, websocket.MessageText, inst); werr != nil {
-					break
+				for _, f := range res.Forward {
+					if record != nil {
+						if rerr := record(f); rerr != nil {
+							break out
+						}
+					}
+					if werr := ws.Write(ctx, websocket.MessageText, f); werr != nil {
+						break out
+					}
+					note("out", f) // copied FROM the target to the operator
 				}
-				note("out", inst) // copied FROM the target to the operator
+				for _, v := range res.Done {
+					onVerdict(v)
+				}
 			}
 			if err != nil {
 				break
@@ -634,13 +664,29 @@ func bridgeGuacd(ctx context.Context, ws *websocket.Conn, gconn *guacd.Conn, cli
 					continue
 				}
 			}
-			if _, werr := gconn.Write(data); werr != nil {
-				break
-			}
 			if operatorInput(data) {
 				touch() // keyboard/mouse from the browser is operator activity (Phase 240)
 			}
-			note("in", data) // pasted INTO the target by the operator
+			res := gate.Process(ctx, guacd.DirIn, data)
+			failed := false
+			for _, f := range res.Forward {
+				if _, werr := gconn.Write(f); werr != nil {
+					failed = true
+					break
+				}
+				note("in", f) // pasted INTO the target by the operator
+			}
+			for _, r := range res.Reply {
+				if werr := ws.Write(ctx, websocket.MessageText, r); werr != nil {
+					failed = true
+				}
+			}
+			for _, v := range res.Done {
+				onVerdict(v)
+			}
+			if failed {
+				break
+			}
 		}
 		done <- struct{}{}
 	}()
@@ -850,4 +896,24 @@ func vncExtra(clipboard string) map[string]string {
 	extra := clipboardParams(clipboard)
 	extra["enable-sftp"] = "false"
 	return extra
+}
+
+// desktopGate builds one desktop session's transfer gate (Phase 280), or nil
+// when desktop scanning is off — the bridge is then exactly what it was.
+// Every held transfer is judged by the ICAP service; an error, like an
+// oversized transfer, blocks it.
+func (s *Server) desktopGate() *guacd.Gate {
+	if s.icap == nil || !s.icap.Enabled() {
+		return nil
+	}
+	files := s.icapDesktop == "files" || s.icapDesktop == "all"
+	clip := s.icapDesktop == "clipboard" || s.icapDesktop == "all"
+	return guacd.NewGate(guacd.GateConfig{Files: files, Clipboard: clip, MaxBytes: s.icapDesktopMax,
+		Scan: func(ctx context.Context, data []byte) (bool, string, error) {
+			res, err := s.icap.ScanRespmod(ctx, data)
+			if err != nil {
+				return false, "", err
+			}
+			return res.Clean, res.Reason, nil
+		}})
 }

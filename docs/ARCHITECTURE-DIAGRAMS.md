@@ -125,6 +125,7 @@ flowchart LR
   n_api --> n_discovery
   n_api --> n_expect
   n_api --> n_guacd
+  n_api --> n_icap
   n_api --> n_inventorycsv
   n_api --> n_k8s
   n_api --> n_logging
