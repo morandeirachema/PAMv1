@@ -87,6 +87,7 @@ flowchart LR
     n_ratelimit[ratelimit]
     n_recording[recording]
     n_releasedocs[releasedocs]
+    n_report[report]
     n_restrict[restrict]
     n_saml[saml]
     n_samltest[samltest]
@@ -235,6 +236,7 @@ flowchart LR
   n_proxy --> n_tds
   n_proxy --> n_vault
   n_proxy --> n_winrm
+  n_report --> n_store
   n_restrict --> n_store
   n_rotate --> n_store
   n_rotate --> n_winrm
