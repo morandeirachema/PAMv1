@@ -24,6 +24,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/broker"
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/guacd"
+	"github.com/morandeirachema/pamv1/internal/icap"
 	"github.com/morandeirachema/pamv1/internal/inventorycsv"
 	"github.com/morandeirachema/pamv1/internal/k8s"
 	"github.com/morandeirachema/pamv1/internal/logging"
@@ -276,6 +277,12 @@ type Options struct {
 	DigestHour int
 	// TelnetEnabled allows telnet targets (PAM_TELNET_ENABLED, Phase 279).
 	TelnetEnabled bool
+	// ICAP is the content scanner (PAM_ICAP_URL); ICAPDesktop says which
+	// desktop transfers the viewer holds for it (Phase 280: off, files,
+	// clipboard, all) and ICAPDesktopMaxBytes bounds one held transfer.
+	ICAP                *icap.Client
+	ICAPDesktop         string
+	ICAPDesktopMaxBytes int
 	// Cluster (optional) is the cross-replica live-monitoring coordinator
 	// (Phase 55): GET /api/sessions lists cluster-wide and the stream endpoint
 	// can watch a session hosted on another replica. nil = replica-local, the
@@ -574,6 +581,9 @@ type Server struct {
 	shareSMTPPass      string
 	digest             digestState
 	telnetEnabled      bool
+	icap               *icap.Client
+	icapDesktop        string
+	icapDesktopMax     int
 	cluster            *session.Cluster
 	stepup             *session.StepUp
 	bgThreshold        int
@@ -898,6 +908,9 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		shareSMTPPass:       opts.ShareSMTPPass,
 		digest:              digestState{to: opts.DigestTo, hour: opts.DigestHour},
 		telnetEnabled:       opts.TelnetEnabled,
+		icap:                opts.ICAP,
+		icapDesktop:         opts.ICAPDesktop,
+		icapDesktopMax:      opts.ICAPDesktopMaxBytes,
 		cluster:             opts.Cluster,
 		stepup:              opts.StepUp,
 		bgThreshold:         opts.BreakGlassThreshold,

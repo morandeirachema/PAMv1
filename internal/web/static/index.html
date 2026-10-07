@@ -1467,11 +1467,17 @@
     const wrap = document.createElement("div"); wrap.className = "rdpwrap"; wrap.tabIndex = -1;
     const bar = document.createElement("div"); bar.className = "rdpbar";
     bar.innerHTML = `<span><span class="white">${esc(v.label)}</span> ${esc(t.name)} <span class="cyan">${esc(t.host)}:${esc(t.port || v.port)}</span></span>` +
-      `<span class="amber">Ctrl+Alt+Q = disconnect</span>`;
+      `<span class="amber">Ctrl+Alt+V = paste · Ctrl+Alt+U = upload · Ctrl+Alt+Q = disconnect</span>`;
     const view = document.createElement("div"); view.className = "rdpview";
     wrap.appendChild(bar); wrap.appendChild(view); document.body.appendChild(wrap);
     wrap.focus(); // the overlay must hold focus to receive key events
     rdpActive = true;
+    // A one-line status in the bar for clipboard and file transfers (Phase
+    // 280): what the target copied, what was pasted, what was uploaded or
+    // downloaded, and a transfer the content scan refused.
+    const note = document.createElement("span"); note.className = "cyan";
+    bar.insertBefore(note, bar.lastChild);
+    const status = (msg, bad) => { note.textContent = msg; note.className = bad ? "red" : "cyan"; };
 
     const w = Math.max(640, Math.min(view.clientWidth || 1024, 4096));
     const h = Math.max(480, Math.min((window.innerHeight - 30) || 768, 4096));
@@ -1500,9 +1506,76 @@
         teardown();
         return true;
       }
+      // Ctrl+Alt+V pastes the browser clipboard; Ctrl+Alt+U uploads a file.
+      // Both chords are swallowed like the disconnect chord.
+      if (keyboard.modifiers.ctrl && keyboard.modifiers.alt && (sym === 0x076 || sym === 0x056)) { paste(); return true; }
+      if (keyboard.modifiers.ctrl && keyboard.modifiers.alt && (sym === 0x075 || sym === 0x055)) { pickUpload(); return true; }
       client.sendKeyEvent(1, sym);
     };
     keyboard.onkeyup = (sym) => client.sendKeyEvent(0, sym);
+
+    // Clipboard and files (Phase 280). Whether each direction is allowed is
+    // decided server-side (PAM_RDP_CLIPBOARD, the drive right); with
+    // PAM_ICAP_DESKTOP on, every transfer is also held and scanned before it
+    // crosses, and a refused upload comes back as an error ack.
+    client.onclipboard = (stream, mimetype) => {
+      if (!/^text\//.test(mimetype)) { stream.sendAck("Unsupported clipboard type", 0x0100); return; }
+      const reader = new Guac.StringReader(stream);
+      let text = "";
+      reader.ontext = (t) => { text += t; };
+      reader.onend = () => {
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(() => {});
+        status(`CLIPBOARD FROM TARGET: ${text.length} CHARACTERS`);
+      };
+    };
+    const pasteText = (text) => {
+      if (!text) return;
+      const w = new Guac.StringWriter(client.createClipboardStream("text/plain"));
+      w.sendText(text); w.sendEnd();
+      status(`PASTED ${text.length} CHARACTERS TO TARGET`);
+    };
+    const paste = () => {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        navigator.clipboard.readText().then(pasteText).catch(() => pasteText(window.prompt("Text to paste into the target:") || ""));
+      } else {
+        pasteText(window.prompt("Text to paste into the target:") || "");
+      }
+    };
+    client.onfile = (stream, mimetype, filename) => {
+      stream.sendAck("OK", 0);
+      const reader = new Guac.BlobReader(stream, mimetype);
+      reader.onend = () => {
+        const url = URL.createObjectURL(reader.getBlob());
+        const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        status(`DOWNLOADED ${filename}`);
+      };
+    };
+    // upload sends one file as a Guacamole file stream, one blob per ack —
+    // the flow control guacd (or the content scan holding the stream) drives.
+    const upload = (file) => {
+      const stream = client.createFileStream(file.type || "application/octet-stream", file.name);
+      const writer = new Guac.ArrayBufferWriter(stream);
+      const chunk = writer.blobLength;
+      let offset = 0, buf = null, ended = false;
+      file.arrayBuffer().then((b) => { buf = new Uint8Array(b); });
+      status(`UPLOADING ${file.name}…`);
+      writer.onack = (st) => {
+        if (st.isError()) { status(`UPLOAD OF ${file.name} REFUSED: ${String(st.message || "error").toUpperCase()}`, true); return; }
+        if (ended) { status(`UPLOADED ${file.name}`); return; }
+        const next = () => {
+          if (!buf) { setTimeout(next, 20); return; }
+          if (offset >= buf.length) { ended = true; writer.sendEnd(); return; }
+          writer.sendData(buf.subarray(offset, offset + chunk)); offset += chunk;
+        };
+        next();
+      };
+    };
+    const pickUpload = () => {
+      const input = document.createElement("input"); input.type = "file";
+      input.onchange = () => { if (input.files && input.files[0]) upload(input.files[0]); wrap.focus(); };
+      input.click();
+    };
 
     const errMsg = (st, what) => "CPF9999: " + what + " — " + String((st && st.message) || "error").toUpperCase();
     client.onerror = (st) => teardown(errMsg(st, v.label), true);

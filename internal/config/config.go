@@ -80,6 +80,12 @@ type Config struct {
 	// a deployment that turns on scanning without bounding file size would
 	// buffer an unbounded amount of memory per open transfer.
 	ICAPURL string
+	// ICAPDesktop (PAM_ICAP_DESKTOP, Phase 280) holds desktop transfers in
+	// the RDP/VNC viewer until PAM_ICAP_URL has passed them: off, files,
+	// clipboard or all. ICAPDesktopMaxMB bounds one held transfer; a larger
+	// one is blocked rather than let through unscanned.
+	ICAPDesktop      string
+	ICAPDesktopMaxMB int
 	// SSHJump* route SSH targets through an SSH bastion (for legacy equipment only
 	// reachable via a jump host). Empty SSHJumpHost disables it.
 	SSHJumpHost string
@@ -865,6 +871,8 @@ func Load() (*Config, error) {
 		SSHSFTPCapture:          strings.ToLower(getenv("PAM_SSH_SFTP_CAPTURE", "off")),
 		SSHSFTPCaptureMaxMB:     integer("PAM_SSH_SFTP_CAPTURE_MAX_MB", 0),
 		ICAPURL:                 getenv("PAM_ICAP_URL", ""),
+		ICAPDesktop:             strings.ToLower(getenv("PAM_ICAP_DESKTOP", "off")),
+		ICAPDesktopMaxMB:        integer("PAM_ICAP_DESKTOP_MAX_MB", 25),
 		SSHJumpHost:             os.Getenv("PAM_SSH_JUMP_HOST"),
 		SSHJumpUser:             os.Getenv("PAM_SSH_JUMP_USER"),
 		SSHJumpKey:              os.Getenv("PAM_SSH_JUMP_KEY"),
@@ -1358,11 +1366,26 @@ func Load() (*Config, error) {
 	// memory per open transfer (the same buffer capture's own disk artifact
 	// is bounded by, mirrored in memory) — both must fail loud at startup
 	// rather than silently scan nothing, or silently have no size ceiling.
+	// Desktop scanning (Phase 280) is the second consumer of PAM_ICAP_URL:
+	// with it on, SFTP capture is no longer required for the URL to mean
+	// something, but each consumer's own bound still is.
+	switch cfg.ICAPDesktop {
+	case "off", "files", "clipboard", "all":
+	default:
+		errs = append(errs, fmt.Sprintf("PAM_ICAP_DESKTOP must be off, files, clipboard or all (got %q)", cfg.ICAPDesktop))
+	}
+	desktopICAP := cfg.ICAPDesktop != "off" && cfg.ICAPDesktop != ""
+	if desktopICAP && cfg.ICAPURL == "" {
+		errs = append(errs, "PAM_ICAP_DESKTOP requires PAM_ICAP_URL, the ICAP service that judges each transfer")
+	}
+	if desktopICAP && (cfg.ICAPDesktopMaxMB <= 0 || cfg.ICAPDesktopMaxMB > 1024) {
+		errs = append(errs, "PAM_ICAP_DESKTOP_MAX_MB must be 1-1024: a held transfer is buffered in memory")
+	}
 	if cfg.ICAPURL != "" {
-		if cfg.SSHSFTPCapture == "off" {
-			errs = append(errs, "PAM_ICAP_URL requires PAM_SSH_SFTP_CAPTURE to be uploads, downloads, or all")
+		if cfg.SSHSFTPCapture == "off" && !desktopICAP {
+			errs = append(errs, "PAM_ICAP_URL requires PAM_SSH_SFTP_CAPTURE to be uploads, downloads, or all, or PAM_ICAP_DESKTOP to be on")
 		}
-		if cfg.SSHSFTPCaptureMaxMB <= 0 {
+		if cfg.SSHSFTPCapture != "off" && cfg.SSHSFTPCaptureMaxMB <= 0 {
 			errs = append(errs, "PAM_ICAP_URL requires PAM_SSH_SFTP_CAPTURE_MAX_MB to be set (> 0), so the in-memory scan buffer is bounded")
 		}
 		// A light, stdlib-only shape check: this package deliberately imports
