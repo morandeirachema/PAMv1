@@ -9,8 +9,8 @@ import (
 func TestRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
 	rows := [][]string{
-		{"web-01", "10.0.0.5", "22", "linux", "ssh", "true", "false", "true", "env=prod", "", "", "", ""},
-		{"=evil", "10.0.0.6", "", "linux", "ssh", "", "", "", "", "", "", "", ""},
+		{"web-01", "10.0.0.5", "22", "linux", "ssh", "", "true", "false", "true", "env=prod", "", "", "", ""},
+		{"=evil", "10.0.0.6", "", "linux", "ssh", "", "", "", "", "", "", "", "", ""},
 	}
 	if err := Write(&buf, Targets, rows); err != nil {
 		t.Fatal(err)

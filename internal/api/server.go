@@ -24,6 +24,7 @@ import (
 	"github.com/morandeirachema/pamv1/internal/broker"
 	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/guacd"
+	"github.com/morandeirachema/pamv1/internal/inventorycsv"
 	"github.com/morandeirachema/pamv1/internal/k8s"
 	"github.com/morandeirachema/pamv1/internal/logging"
 	"github.com/morandeirachema/pamv1/internal/metrics"
@@ -1242,6 +1243,13 @@ func (s *Server) routes() {
 	// same gate as the trail itself.
 	s.mux.Handle("GET /api/reports/unused", s.authz(auth.CapReadAudit, s.reportUnused))
 	s.mux.Handle("GET /api/reports/connections", s.authz(auth.CapReadAudit, s.reportConnections))
+	// Bulk inventory export (Phase 278): one CSV per class, each behind the
+	// capability its own list route already requires.
+	s.mux.Handle("GET /api/inventory/safes.csv", s.authz(auth.CapReadInventory, s.exportInventory(inventorycsv.Safes)))
+	s.mux.Handle("GET /api/inventory/targets.csv", s.authz(auth.CapReadInventory, s.exportInventory(inventorycsv.Targets)))
+	s.mux.Handle("GET /api/inventory/credentials.csv", s.authz(auth.CapReadInventory, s.exportInventory(inventorycsv.Credentials)))
+	s.mux.Handle("GET /api/inventory/users.csv", s.authz(auth.CapManageUsers, s.exportInventory(inventorycsv.Users)))
+	s.mux.Handle("GET /api/inventory/grants.csv", s.authz(auth.CapManageTargets, s.exportInventory(inventorycsv.Grants)))
 	// The subject-indexed grant query (Phase 189): every other grant route is
 	// target-indexed, this one answers "what can this subject reach?". A review
 	// read, so CapReadAudit — the same gate as the audit trail it complements.

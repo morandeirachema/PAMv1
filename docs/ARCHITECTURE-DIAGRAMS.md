@@ -122,6 +122,7 @@ flowchart LR
   n_api --> n_config
   n_api --> n_discovery
   n_api --> n_guacd
+  n_api --> n_inventorycsv
   n_api --> n_k8s
   n_api --> n_logging
   n_api --> n_maint
@@ -689,7 +690,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 227 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 232 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -760,6 +761,11 @@ The 227 routes registered on the API mux, with the capability or guard each enfo
 | DELETE | `/api/endpoint-agents/{id}` | CapManageTargets |
 | POST | `/api/extension-token` | CapRevealSecret |
 | POST | `/api/identity/reconcile` | CapManageUsers |
+| GET | `/api/inventory/credentials.csv` | CapReadInventory |
+| GET | `/api/inventory/grants.csv` | CapManageTargets |
+| GET | `/api/inventory/safes.csv` | CapReadInventory |
+| GET | `/api/inventory/targets.csv` | CapReadInventory |
+| GET | `/api/inventory/users.csv` | CapManageUsers |
 | GET | `/api/label-rules` | CapReadInventory |
 | POST | `/api/label-rules` | CapManageTargets |
 | DELETE | `/api/label-rules/{id}` | CapManageTargets |
