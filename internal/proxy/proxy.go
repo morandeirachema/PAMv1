@@ -1449,10 +1449,15 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 
 	// The session notice (Phase 276): printed to the operator before anything
 	// from the target, into the recording too, so the record shows the
-	// acknowledgement it opened with; audited with the notice's digest.
+	// acknowledgement it opened with; audited with the notice's digest. On
+	// STDERR (review of 274–280): this runs before the channel says whether
+	// it is a shell, an exec or a subsystem, and text on stdout corrupted an
+	// SFTP or scp stream (the client read "This" as a packet length) and the
+	// output of `ssh target cmd > file`. An interactive terminal shows stderr
+	// all the same.
 	if notice := p.banners.Get(banner.Session, ""); notice != "" {
 		line := notice + "\r\n"
-		_, _ = io.WriteString(clientChan, line)
+		_, _ = io.WriteString(clientChan.Stderr(), line)
 		if rec != nil {
 			_, _ = io.WriteString(rec, line)
 		}

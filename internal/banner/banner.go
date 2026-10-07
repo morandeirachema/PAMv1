@@ -55,7 +55,11 @@ func New(kv map[string]string) *Banners {
 }
 
 // Get returns the text of kind for lang (an IETF tag; "es-ES" falls back to
-// "es", then to the default), or "" when none is configured.
+// "es", then to the default), or "" when none is configured. When only
+// language variants are configured and none matches, the alphabetically
+// first variant is returned (review of 274–280): a deployment that set
+// PAM_BANNER_SESSION_ES alone has a notice, and an operator whose browser
+// asks for "en" must still be shown one rather than skip the consent.
 func (b *Banners) Get(kind, lang string) string {
 	if b == nil {
 		return ""
@@ -70,7 +74,16 @@ func (b *Banners) Get(kind, lang string) string {
 			return t
 		}
 	}
-	return m[""]
+	if t, ok := m[""]; ok {
+		return t
+	}
+	first := ""
+	for l := range m {
+		if first == "" || l < first {
+			first = l
+		}
+	}
+	return m[first]
 }
 
 // Has reports whether any text of kind is configured.

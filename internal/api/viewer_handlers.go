@@ -205,6 +205,17 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	// session; it cannot be the one door with a shorter checklist than the rest.
 	// The tunnel legitimately serves TunnelOnly tokens, so that is the one narrow
 	// scope MayOpenSession is told to allow through.
+	// The session notice is acknowledged when the tunnel token is minted
+	// (POST /api/rdp-token, /api/vnc-token); a token from anywhere else — an
+	// API key in the URL, a session-MFA ticket — never passed that dialog, so
+	// with a notice configured it cannot open a desktop (review of 274–280:
+	// otherwise the consent was advisory, and the desktop opened with no
+	// session.consent row).
+	if s.banners.Has(banner.Session) && principal.NarrowScope() != auth.ScopeTunnelOnly {
+		s.audit(r.Context(), "authz.denied", r.Method+" "+r.URL.Path+" reason:consent-required")
+		writeError(w, http.StatusPreconditionRequired, "acknowledge the session notice: open the desktop with a token from /api/"+proto.name+"-token")
+		return
+	}
 	if !principal.MayOpenSession(auth.ScopeTunnelOnly) {
 		reason, msg := "narrow-scoped-token", "this token cannot open a "+proto.label+" session"
 		switch principal.NarrowScope() {

@@ -71,3 +71,23 @@ func TestBannerRouteAndDesktopConsent(t *testing.T) {
 		t.Fatalf("banner with none configured: %d %s", s, b)
 	}
 }
+
+// TestDesktopConsentCannotBeSkipped proves the review of 274–280's fix: with
+// a session notice configured, the desktop tunnel opens only with a token
+// minted through the consent dialog — the API key itself in the URL is
+// refused 428 and audited, before guacd is ever dialed.
+func TestDesktopConsentCannotBeSkipped(t *testing.T) {
+	b := banner.New(map[string]string{"session_es": "Esta sesión se graba."})
+	srv, st := newTestServerOpts(t, nil, api.Options{Banners: b, GuacdAddr: "127.0.0.1:1"})
+	_, data := do(t, srv, "POST", "/api/targets", testAPIKey, map[string]any{"name": "win-rdp", "host": "10.0.0.9", "port": 3389, "os_type": "windows", "protocol": "rdp"})
+	id := int64(jsonMap(t, data)["id"].(float64))
+	code, d := do(t, srv, "GET", "/api/targets/"+itoa(id)+"/rdp?token="+testAPIKey, "", nil)
+	if code != http.StatusPreconditionRequired {
+		t.Fatalf("API key on the tunnel with a notice configured: %d %s", code, d)
+	}
+	auditHas(t, st, "authz.denied", "reason:consent-required")
+	// A variant-only notice is still a notice for an "en" browser.
+	if code, d := do(t, srv, "POST", "/api/rdp-token", testAPIKey, map[string]any{"target_id": id, "lang": "en"}); code != http.StatusPreconditionRequired || !strings.Contains(string(d), "Esta sesión se graba.") {
+		t.Fatalf("variant-only notice skipped for lang en: %d %s", code, d)
+	}
+}
