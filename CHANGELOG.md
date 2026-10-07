@@ -85,7 +85,8 @@ only accepts tokens from `/api/rdp-token` or `/api/vnc-token`.
 
 **What has not changed.** A deployment that sets none of the new variables
 behaves as v0.0.78 did. The image is `ghcr.io/morandeirachema/pamv1:0.0.79`,
-digest `TBD` until the digest PR
+digest
+`sha256:ead932b47f31f36aba52b41db9ba9b865ded2461bdb444ddec65bd18450f0699`
 ([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.79)).
 
 ## [0.0.78] — 2026-09-22

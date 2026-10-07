@@ -2429,8 +2429,13 @@ that fixed what they shipped with. Four migrations (`0065`–`0068`), routes
 **220 -> 237**, `store.Store` **235 -> 243**, nine environment variables,
 and **no changed default**.
 
-- [ ] **v0.0.79** through the test-gated pipeline; image
-  `ghcr.io/morandeirachema/pamv1:0.0.79`, digest `TBD` until the digest PR
+- [x] **v0.0.79** through the test-gated pipeline. Published 2026-10-07 (UTC)
+  as `ghcr.io/morandeirachema/pamv1:0.0.79` (also `latest`), digest
+  `sha256:ead932b47f31f36aba52b41db9ba9b865ded2461bdb444ddec65bd18450f0699`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
+  digest), signed and attested — every publishing step's own conclusion
+  `success` — with the `pam-agent` binaries (Linux and Windows), the SPDX SBOM
+  and `SHA256SUMS` attached
 - [x] All pins via the sweep — exactly one release under `deploy/`. Helm
   chart `version` 0.0.78 -> **0.0.79**, tracking the app version
 - [x] Migration high-water **`0064` -> `0068`**; `store.Store` **235 ->
@@ -2441,7 +2446,7 @@ and **no changed default**.
   `TestReleaseDigestsAgree` enforced; README's status digest reads `TBD`
 - [x] `CHANGELOG.md` names the fixes Phase 281 made before any tag carried
   the defects
-- [ ] The tag is pushed only **after** this PR is merged, with the
+- [x] The tag was pushed only **after** the release PR was merged, with the
   operator's go-ahead
 
 ## Phase 281 — The review of 274–280, and what it found ✅
