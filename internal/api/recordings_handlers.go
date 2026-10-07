@@ -252,6 +252,16 @@ func (s *Server) playRecording(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	// Provenance (Phase 283): a recording put back from an archive is
+	// vouched for by its import row, not by a row written when it was
+	// recorded — on another deployment, there is none. It replays as
+	// imported, and is never reported as audited on that strength alone.
+	imported := false
+	if !audited {
+		if ok, ferr := s.store.FindAuditDetail(r.Context(), "recording.imported", "sha256:"+sum); ferr == nil && ok {
+			imported = true
+		}
+	}
 
 	// Fail CLOSED, before a byte leaves. This is a read of KEK-protected material
 	// — a sealed recording is everything the operator typed and saw, and since
@@ -263,7 +273,7 @@ func (s *Server) playRecording(w http.ResponseWriter, r *http.Request) {
 	// that did not, so an audit outage made the whole recording archive readable
 	// with no record of who read it. Invariant §6.4.
 	if !s.mustAudit(w, r.Context(), "session.playback",
-		fmt.Sprintf("file:%s bytes:%d sha256:%s audited:%t", name, fi.Size(), sum, audited)) {
+		fmt.Sprintf("file:%s bytes:%d sha256:%s audited:%t imported:%t", name, fi.Size(), sum, audited, imported)) {
 		return
 	}
 
@@ -279,6 +289,7 @@ func (s *Server) playRecording(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-PAM-Recording-SHA256", sum)
 	w.Header().Set("X-PAM-Recording-Audited", strconv.FormatBool(audited))
+	w.Header().Set("X-PAM-Recording-Imported", strconv.FormatBool(imported))
 
 	// Captured SFTP file content (Phase 59): by default serve the RECONSTRUCTED
 	// bytes — what actually moved — decrypting the artifact if it is sealed;

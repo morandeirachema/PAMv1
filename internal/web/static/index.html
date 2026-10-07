@@ -422,6 +422,26 @@
   let reports = null, repDays = "30", repSince = "", repUntil = "";
   // Recording archives (Phase 283): the export filter, kept across visits.
   let arcFilter = { actor: "", target: "", protocol: "", since: "", until: "" };
+  let arcResult = null;
+  // uploadArchive posts a chosen .tar to an archive route — import, or a
+  // purge of what the archive lists — and shows the per-file result.
+  function uploadArchive(path, what, summarize) {
+    const input = document.createElement("input");
+    input.type = "file"; input.accept = ".tar,application/x-tar";
+    input.onchange = async () => {
+      const f = input.files && input.files[0];
+      if (!f) return;
+      try {
+        const res = await fetch(path, { method: "POST", headers: { "X-API-Key": apiKey, "Content-Type": "application/x-tar" }, body: f });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) { say("CPF9999: " + String(d.error || res.statusText).toUpperCase(), true); render(); return; }
+        arcResult = { what, summary: summarize(d), files: d.files };
+        say(`${what}: ${summarize(d)}`.toUpperCase());
+        go("recarchive");
+      } catch (e) { say("CPF9999: " + e.message, true); render(); }
+    };
+    input.click();
+  }
   // Inventory import/export (Phase 278): the last import's result, shown
   // until the screen is left — a new user's token appears in it once.
   let invResult = null;
@@ -1185,6 +1205,7 @@
       total: frames.length ? frames[frames.length - 1].t : 0,
       sha: res.headers.get("X-PAM-Recording-SHA256") || "",
       audited: res.headers.get("X-PAM-Recording-Audited") === "true",
+      imported: res.headers.get("X-PAM-Recording-Imported") === "true",
       i: 0, pos: 0, speed: 1, playing: false, timer: null, text: "",
     };
     replaySource = seekSeconds != null ? "recsearch" : "recordings";
@@ -1697,9 +1718,10 @@
       blob = await res.blob();
     } catch (e) { say("CPF9999: " + String(e.message || "REPLAY UNAVAILABLE").toUpperCase(), true); render(); return; }
     const audited = res.headers.get("X-PAM-Recording-Audited") === "true";
+    const imported = res.headers.get("X-PAM-Recording-Imported") === "true";
     const sha = res.headers.get("X-PAM-Recording-SHA256") || "";
     const recording = new Guac.SessionRecording(blob);
-    const verdict = audited ? `<span class="green">HASH IN AUDIT TRAIL</span>` : `<span class="red">HASH NOT IN AUDIT TRAIL</span>`;
+    const verdict = audited ? `<span class="green">HASH IN AUDIT TRAIL</span>` : imported ? `<span class="cyan">IMPORTED FROM AN ARCHIVE</span>` : `<span class="red">HASH NOT IN AUDIT TRAIL</span>`;
     const ov = viewerOverlay(
       `<span><span class="white">REPLAY</span> ${esc(rec.name)} ${verdict} <span class="cyan" id="guac-pos">loading…</span></span>` +
       `<span class="amber">Space = play/pause · ←/→ = 10s · Esc = close</span>`,
@@ -4948,7 +4970,11 @@ SHA-256. Leave a field blank to take every value.
 <label>Until (RFC3339) . . :  <input name="until" size="24" value="${esc(f.until)}" placeholder="default: now"></label>
 <input type="submit" hidden>
 </form>
-${fkeys("F3=Exit   Enter=Download archive   F12=Cancel")}`;
+${arcResult ? `<div class="white">${esc(arcResult.what)}: ${esc(arcResult.summary)}</div>
+<table><tr><th>Recording</th><th>Status</th><th>Detail</th></tr>
+${(arcResult.files || []).map((x) => `<tr><td class="detail">${esc(x.name)}</td><td class="${x.status === "imported" || x.status === "purged" ? "green" : x.status === "exists" ? "cyan" : "red"}">${pad(x.status, 9)}</td><td class="detail">${esc(x.error || "")}</td></tr>`).join("")}
+</table>` : ""}
+${fkeys("F3=Exit   Enter=Download archive   F9=Import an archive   F12=Cancel")}`;
         document.getElementById("f-arc").onsubmit = async (ev) => {
           ev.preventDefault();
           for (const k of Object.keys(arcFilter)) arcFilter[k] = ev.target[k].value.trim();
@@ -5085,7 +5111,7 @@ ${fkeys("F3=Exit   F12=Cancel")}`;
         const rp = replay || { name: "", kind: "", sha: "", audited: false, text: "" };
         term.innerHTML = `${head("PAMPLYREC", "Replay Recording")}
 Recording <span class="white">${esc(rp.name)}</span>  (${esc(rp.kind)})
-${rp.audited ? `<span class="green">HASH VERIFIED IN AUDIT TRAIL</span>` : `<span class="amber">HASH NOT FOUND IN AUDIT TRAIL — tampered, trimmed, or never audited</span>`}   <span class="cyan">sha256:${esc(rp.sha.slice(0, 16))}…</span>
+${rp.audited ? `<span class="green">HASH VERIFIED IN AUDIT TRAIL</span>` : rp.imported ? `<span class="cyan">IMPORTED FROM AN ARCHIVE — vouched for by its import row, not by a recording row here</span>` : `<span class="amber">HASH NOT FOUND IN AUDIT TRAIL — tampered, trimmed, or never audited</span>`}   <span class="cyan">sha256:${esc(rp.sha.slice(0, 16))}…</span>
 <div id="rp-status" class="white"></div>
 <div id="replay-pane" class="watchpane">${esc(rp.text)}</div>
 ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
@@ -5184,7 +5210,7 @@ ${fkeys("Space=Pause/Play   F5=Restart   F6=Speed   F3=Exit   F12=Back")}`;
       else if (k === "F6") { if (screen === "effective") await exportIaC("env"); else if (screen === "audit") await verifyChain(); else { const a = adders[screen]; if (a) a(); } }
       else if (k === "F7") { if (screen === "recordings") go("recarchive"); else if (screen === "effective") await exportIaC("helm"); else if (screen === "agents") await openQuarantine(); else if (screen === "audit") await fetchAuditHead(); else if (screen === "campaigns" && can("approve")) await openMyQueue(); else if (screen === "sesswatch" && watchSess) await openShareInvites(watchSess.id); }
       else if (k === "F8") { if (screen === "effective") await exportIaC("terraform"); else if (screen === "audit") await openNIS2Report(); else if (screen === "agents") await openIdentities(); else if (screen === "sesswatch" && watchSess && can("approve")) await toggleSuspend(); }
-      else if (k === "F9") { if (screen === "audit") await exportAudit(); else if (screen === "users") await reconcileIdentities(); else if (screen === "sshcerts") await download("/api/ca/ssh/krl", "pamv1-revoked-certs.krl", "KRL"); else if (screen === "reports") await download("/api/reports/connections?format=csv" + (repQuery() ? "&" + repQuery() : ""), "pamv1-connections.csv", "CONNECTIONS CSV"); else if (screen === "nis2report") await download("/api/compliance/nis2" + (nis2Query() ? "?" + nis2Query() : ""), "pamv1-nis2-report.json", "NIS2 REPORT"); }
+      else if (k === "F9") { if (screen === "recarchive" && can("manage_users")) uploadArchive("/api/recordings/archive", "Import", (d) => `${d.imported} imported, ${d.exists} already stored, ${d.conflicts} conflicts, ${d.errors} errors`); else if (screen === "audit") await exportAudit(); else if (screen === "users") await reconcileIdentities(); else if (screen === "sshcerts") await download("/api/ca/ssh/krl", "pamv1-revoked-certs.krl", "KRL"); else if (screen === "reports") await download("/api/reports/connections?format=csv" + (repQuery() ? "&" + repQuery() : ""), "pamv1-connections.csv", "CONNECTIONS CSV"); else if (screen === "nis2report") await download("/api/compliance/nis2" + (nis2Query() ? "?" + nis2Query() : ""), "pamv1-nis2-report.json", "NIS2 REPORT"); }
       else if (k === "F10") { if (screen === "audit") await download("/api/audit/ocsf", "pamv1-audit-ocsf.json", "OCSF"); else if (screen === "probes") await openProbeRules(); }
       else if (k === "F12") { go(back); }
     } catch (e) { say("CPF9999: " + e.message, true); render(); }

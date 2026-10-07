@@ -190,3 +190,95 @@ func orDash(v string) string {
 	}
 	return v
 }
+
+// maxArchiveImport bounds one uploaded archive.
+const maxArchiveImport = 8 << 30
+
+// importedFile is one archived file's outcome.
+type importedFile struct {
+	Name   string `json:"name"`
+	Status string `json:"status"` // imported | exists | conflict | error
+	Error  string `json:"error,omitempty"`
+}
+
+// importRecordingArchive is POST /api/recordings/archive: an archive made by
+// GET /api/recordings/archive — here or on another deployment — is put back
+// on disk for replay. Every file is verified against the manifest as it
+// streams into a hidden temporary file, and nothing is promoted unless the
+// whole archive verifies. A file already present with the same bytes is
+// left alone; one present with DIFFERENT bytes is never overwritten (a
+// conflict). Each imported file is audited recording.imported with its
+// SHA-256, which is how playback tells an imported recording from one this
+// deployment recorded itself: it says imported, never audited. Requires
+// CapManageUsers — it writes into the evidence store.
+func (s *Server) importRecordingArchive(w http.ResponseWriter, r *http.Request) {
+	if s.recordingDir == "" {
+		writeError(w, http.StatusNotFound, "recordings are not configured")
+		return
+	}
+	ctx := r.Context()
+	temps := map[string]string{} // name -> temp path
+	cleanup := func() {
+		for _, p := range temps {
+			_ = os.Remove(p)
+		}
+	}
+	m, digest, err := recarchive.Read(http.MaxBytesReader(w, r.Body, maxArchiveImport), recordingNameRe.MatchString,
+		func(e recarchive.Entry, body io.Reader) error {
+			f, err := os.CreateTemp(s.recordingDir, ".import-*")
+			if err != nil {
+				return err
+			}
+			temps[e.Name] = f.Name()
+			if _, err := io.Copy(f, body); err != nil {
+				f.Close()
+				return err
+			}
+			return f.Close()
+		})
+	if err != nil {
+		cleanup()
+		writeError(w, http.StatusUnprocessableEntity, "archive: "+err.Error())
+		return
+	}
+	if !s.mustAudit(w, ctx, "recording.import", fmt.Sprintf("manifest_sha256:%s files:%d source_by:%s source_at:%s",
+		digest, len(m.Files), auditField(m.CreatedBy, 64), m.CreatedAt.UTC().Format(time.RFC3339))) {
+		cleanup()
+		return
+	}
+	out := make([]importedFile, 0, len(m.Files))
+	counts := map[string]int{}
+	for _, e := range m.Files {
+		dst := filepath.Join(s.recordingDir, e.Name)
+		res := importedFile{Name: e.Name}
+		switch sum, err := fileSHA256(dst); {
+		case err == nil && sum == e.SHA256:
+			res.Status = "exists"
+		case err == nil:
+			res.Status, res.Error = "conflict", "a different recording with this name is already stored; not overwritten"
+		case !os.IsNotExist(err):
+			res.Status, res.Error = "error", "cannot read the stored recording"
+		default:
+			// Audit first: a recording that appears with no record of how it
+			// arrived would replay as nobody's evidence.
+			detail := fmt.Sprintf("file:%s sha256:%s manifest:%s source_actor:%s source_target:%s audited_at_source:%t",
+				e.Name, e.SHA256, digest, auditField(orDash(e.Actor), 64), auditField(orDash(e.Target), 64), e.Audited)
+			if aerr := s.auditAs(ctx, actorFrom(ctx), "recording.imported", detail); aerr != nil {
+				res.Status, res.Error = "error", "audit unavailable"
+			} else if rerr := os.Rename(temps[e.Name], dst); rerr != nil {
+				res.Status, res.Error = "error", "could not store it"
+			} else {
+				delete(temps, e.Name)
+				_ = os.Chtimes(dst, e.Modified, e.Modified)
+				res.Status = "imported"
+			}
+		}
+		counts[res.Status]++
+		out = append(out, res)
+	}
+	cleanup()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"manifest_sha256": digest, "created_by": m.CreatedBy, "created_at": m.CreatedAt,
+		"imported": counts["imported"], "exists": counts["exists"], "conflicts": counts["conflict"], "errors": counts["error"], "files": out,
+	})
+}
