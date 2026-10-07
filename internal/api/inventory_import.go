@@ -307,6 +307,7 @@ func (imp *inventoryImport) target(row inventorycsv.Row) importRow {
 		"require_approval": b["require_approval"], "require_session_mfa": b["require_session_mfa"], "critical": b["critical"],
 		"labels": labels, "approval_tiers": row.Get("approval_tiers"), "rights": row.Get("rights"),
 		"rdp_clipboard": row.Get("rdp_clipboard"), "rdp_clipboard_audit": row.Get("rdp_clipboard_audit"),
+		"scenario": row.Get("scenario"),
 	})
 	out := created(row.Line, name, code, body, msg)
 	if out.Status != "created" {

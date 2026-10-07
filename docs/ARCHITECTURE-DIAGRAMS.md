@@ -123,6 +123,7 @@ flowchart LR
   n_api --> n_cmdguard
   n_api --> n_config
   n_api --> n_discovery
+  n_api --> n_expect
   n_api --> n_guacd
   n_api --> n_inventorycsv
   n_api --> n_k8s
@@ -595,6 +596,7 @@ erDiagram
     string ApprovalTiers
     string Rights
     bool Critical
+    string Scenario
     time_Time CreatedAt
   }
   TargetGrant {

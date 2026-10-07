@@ -9,8 +9,8 @@ import (
 func TestRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
 	rows := [][]string{
-		{"web-01", "10.0.0.5", "22", "linux", "ssh", "", "true", "false", "true", "env=prod", "", "", "", ""},
-		{"=evil", "10.0.0.6", "", "linux", "ssh", "", "", "", "", "", "", "", "", ""},
+		{"web-01", "10.0.0.5", "22", "linux", "ssh", "", "true", "false", "true", "env=prod", "", "", "", "", "expect $\nsend id"},
+		{"=evil", "10.0.0.6", "", "linux", "ssh", "", "", "", "", "", "", "", "", "", ""},
 	}
 	if err := Write(&buf, Targets, rows); err != nil {
 		t.Fatal(err)
@@ -25,8 +25,13 @@ func TestRoundTrip(t *testing.T) {
 	if len(got) != 2 || got[0].Get("name") != "web-01" || got[0].Get("critical") != "true" || got[1].Get("name") != "=evil" {
 		t.Fatalf("round trip = %+v", got)
 	}
-	if got[0].Line != 2 || got[1].Line != 3 {
-		t.Errorf("lines = %d, %d; want 2, 3", got[0].Line, got[1].Line)
+	// The first row's scenario spans two lines, so the second row starts on
+	// line 4: the line an operator would open the file at.
+	if got[0].Line != 2 || got[1].Line != 4 {
+		t.Errorf("lines = %d, %d; want 2, 4", got[0].Line, got[1].Line)
+	}
+	if got[0].Get("scenario") != "expect $\nsend id" {
+		t.Errorf("a multi-line cell must round-trip: %q", got[0].Get("scenario"))
 	}
 }
 

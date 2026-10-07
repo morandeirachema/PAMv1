@@ -1340,6 +1340,7 @@ func run() error {
 		ShareSMTPPass:             cfg.AlertEmailPass,
 		DigestTo:                  splitAndTrim(cfg.ReportDigestTo),
 		DigestHour:                cfg.ReportDigestHour,
+		TelnetEnabled:             cfg.TelnetEnabled,
 		Cluster:                   cluster,
 		StepUp:                    stepUp,
 		SSHHostKeyCallback:        upstreamHostKey,

@@ -180,8 +180,16 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatalf("UpdateTarget must clear critical: %+v err %v", got, err)
 	}
 	tgt.Critical = true
+	tgt.Scenario = "expect $\nsend sudo -i\nexpect assword\nsend ${password}"
 	if err := st.UpdateTarget(ctx, tgt); err != nil {
 		t.Fatalf("UpdateTarget restoring critical: %v", err)
+	}
+	// Scenario (Phase 279) round-trips through update, get and list.
+	if got, err := st.GetTarget(ctx, tgt.ID); err != nil || got.Scenario != tgt.Scenario {
+		t.Fatalf("GetTarget must carry scenario (Phase 279): %+v err %v", got, err)
+	}
+	if ts, err := st.ListTargets(ctx, 0, 0); err != nil || len(ts) != 1 || ts[0].Scenario != tgt.Scenario {
+		t.Fatalf("ListTargets must carry scenario (Phase 279): %+v err %v", ts, err)
 	}
 	if err := st.CreateTarget(ctx, &store.Target{Name: "web-01", Host: "x", Port: 22, OSType: "linux", Protocol: "ssh"}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("duplicate target name: want ErrConflict, got %v", err)

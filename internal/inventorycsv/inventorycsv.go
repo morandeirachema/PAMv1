@@ -46,7 +46,7 @@ var (
 		Required: []string{"name"}}
 	Targets = Class{Name: "targets",
 		Columns: []string{"name", "host", "port", "os_type", "protocol", "safe", "require_approval", "require_session_mfa", "critical",
-			"labels", "approval_tiers", "rights", "rdp_clipboard", "rdp_clipboard_audit"},
+			"labels", "approval_tiers", "rights", "rdp_clipboard", "rdp_clipboard_audit", "scenario"},
 		Required: []string{"name", "host", "os_type", "protocol"}}
 	Credentials = Class{Name: "credentials",
 		Columns:  []string{"target", "username", "secret_type", "provisioner", "secret"},
