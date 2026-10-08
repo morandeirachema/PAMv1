@@ -8,7 +8,7 @@ Phases are listed **newest first**, from the latest release down to Phase 0; wha
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–282 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–283 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -148,6 +148,44 @@ the headline deferrals are:
 - **The remaining three Tier-3 gaps** — connector/plugin breadth, cloud CIEM, and web/SaaS session proxying — each need a real device, cloud account, or browser/SaaS console to build honestly.
 
 ---
+
+## Phase 283 — Portable recording archives (Tier 10, row 12) ✅
+
+*Tier 10's twelfth row: WALLIX exports recordings by user, target, window or
+protocol with a manifest, purges them, and re-imports them for replay.
+PAMv1 could prune recordings and move aged ones to WORM storage, but could
+not hand a selection to someone, or bring it back.*
+
+- [x] **The trail is the index.** Each recording is stamped by one audit
+  row naming its file, target, user and SHA-256, so a selection by actor,
+  target, protocol and window is a query over those rows, joined with the
+  files on disk.
+- [x] **The archive.** `internal/recarchive`: a tar of `MANIFEST.json`, then
+  each recording as stored (sealed stays sealed). Per file, the manifest
+  records its stamping row and whether the bytes still matched it. The
+  manifest's SHA-256 is the archive's identity and is audited on export.
+- [x] **Export** (`GET /api/recordings/archive`, `CapReadAudit`), audited
+  before a byte leaves.
+- [x] **Import** (`POST`, `CapManageUsers`). Files are verified before
+  anything is written and never overwrite a different file. They replay as
+  *imported*, never as audited.
+- [x] **Purge** (`POST /api/recordings/purge`, `CapManageUsers`). It needs an
+  archive exported here and deletes only unchanged files, each audited
+  first.
+- [x] **Console**: *Session Recordings* → F7 *Archive Recordings* (export,
+  F9 import, F10 purge).
+- [x] **Proven** by round trips between two servers. A file altered after
+  stamping is archived as not matching. A tampered archive writes nothing.
+  A conflicting name is not overwritten. Re-import is idempotent. A purge
+  keeps a changed file. A foreign archive purges nothing. Every route's
+  capability is checked.
+- [x] **Living docs**: low-level, high-level, ADMIN-GUIDE §9.3, USER-GUIDE,
+  CODE-GUIDE, BACKUP-AND-RESTORE, README Tier 10 row.
+
+Left out, on purpose: signing the archive itself (its identity is the
+manifest digest on the exporting deployment's audit trail, which an
+importer elsewhere cannot check), and re-encrypting sealed recordings for
+another deployment's key.
 
 ## Phase 282 — v0.0.79 ✅
 
