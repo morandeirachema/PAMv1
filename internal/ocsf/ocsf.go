@@ -114,6 +114,10 @@ var findingExact = map[string]bool{
 	// unpinned target is a refusal of an authenticated operator's session.
 	"target.hostkey_mismatch": true,
 	"target.hostkey_unknown":  true,
+	// Phase 283: an attempt to purge recordings with an archive this
+	// deployment never exported — a forged or foreign manifest naming
+	// evidence to delete. Refused, and exactly what a detection rule wants.
+	"recording.purge_refused": true,
 }
 
 // isFinding reports whether an action maps to a Detection Finding.
