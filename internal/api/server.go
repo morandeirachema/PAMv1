@@ -1343,6 +1343,7 @@ func (s *Server) routes() {
 	// {name} route; "archive" never matches recordingNameRe either way.
 	s.mux.Handle("GET /api/recordings/archive", s.authz(auth.CapReadAudit, s.exportRecordingArchive))
 	s.mux.Handle("POST /api/recordings/archive", s.authz(auth.CapManageUsers, s.importRecordingArchive))
+	s.mux.Handle("POST /api/recordings/purge", s.authz(auth.CapManageUsers, s.purgeRecordingArchive))
 	s.mux.Handle("GET /api/recordings/{name}", s.authz(auth.CapReadAudit, s.playRecording))
 
 	// Privileged threat analytics (Phase 23): behavioral risk scores over the

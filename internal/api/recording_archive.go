@@ -282,3 +282,69 @@ func (s *Server) importRecordingArchive(w http.ResponseWriter, r *http.Request) 
 		"imported": counts["imported"], "exists": counts["exists"], "conflicts": counts["conflict"], "errors": counts["error"], "files": out,
 	})
 }
+
+// purgeRecordingArchive is POST /api/recordings/purge: the recordings an
+// archive lists are deleted from disk — "export, then purge", the archive
+// being where they now live. Only the manifest is read. The archive must
+// have been exported HERE: its manifest digest must appear on a
+// recording.archive row, so a hand-made manifest cannot name recordings to
+// delete. A listed file is deleted only if its stored bytes still match the
+// manifest — one that changed since the export is kept and reported, since
+// the archive does not hold what is on disk. Each deletion is audited
+// before it happens. Requires CapManageUsers.
+func (s *Server) purgeRecordingArchive(w http.ResponseWriter, r *http.Request) {
+	if s.recordingDir == "" {
+		writeError(w, http.StatusNotFound, "recordings are not configured")
+		return
+	}
+	ctx := r.Context()
+	m, digest, err := recarchive.ReadManifest(http.MaxBytesReader(w, r.Body, maxArchiveImport))
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "archive: "+err.Error())
+		return
+	}
+	if ok, ferr := s.store.FindAuditDetail(ctx, "recording.archive", "manifest_sha256:"+digest); ferr != nil {
+		storeError(w, ferr)
+		return
+	} else if !ok {
+		s.audit(ctx, "recording.purge_refused", "manifest_sha256:"+digest+" reason:not-exported-here")
+		writeError(w, http.StatusUnprocessableEntity, "this archive was not exported by this deployment (no recording.archive row for its manifest); nothing was purged")
+		return
+	}
+	if !s.mustAudit(w, ctx, "recording.purge", fmt.Sprintf("manifest_sha256:%s files:%d", digest, len(m.Files))) {
+		return
+	}
+	out := make([]importedFile, 0, len(m.Files))
+	counts := map[string]int{}
+	for _, e := range m.Files {
+		res := importedFile{Name: e.Name}
+		if !recordingNameRe.MatchString(e.Name) {
+			res.Status, res.Error = "error", "not a recording name"
+			counts[res.Status]++
+			out = append(out, res)
+			continue
+		}
+		path := filepath.Join(s.recordingDir, e.Name)
+		switch sum, err := fileSHA256(path); {
+		case os.IsNotExist(err):
+			res.Status = "absent"
+		case err != nil:
+			res.Status, res.Error = "error", "cannot read the stored recording"
+		case sum != e.SHA256:
+			res.Status, res.Error = "changed", "the stored bytes differ from the archive; kept"
+		default:
+			if aerr := s.auditAs(ctx, actorFrom(ctx), "recording.purged", fmt.Sprintf("file:%s sha256:%s manifest:%s", e.Name, sum, digest)); aerr != nil {
+				res.Status, res.Error = "error", "audit unavailable; kept"
+			} else if rerr := os.Remove(path); rerr != nil {
+				res.Status, res.Error = "error", "could not delete it"
+			} else {
+				res.Status = "purged"
+			}
+		}
+		counts[res.Status]++
+		out = append(out, res)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"manifest_sha256": digest, "purged": counts["purged"], "absent": counts["absent"], "changed": counts["changed"], "errors": counts["error"], "files": out,
+	})
+}

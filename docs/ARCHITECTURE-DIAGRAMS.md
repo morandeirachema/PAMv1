@@ -699,7 +699,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 239 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 240 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -807,6 +807,7 @@ The 239 routes registered on the API mux, with the capability or guard each enfo
 | GET | `/api/recordings` | CapReadAudit |
 | GET | `/api/recordings/archive` | CapReadAudit |
 | POST | `/api/recordings/archive` | CapManageUsers |
+| POST | `/api/recordings/purge` | CapManageUsers |
 | GET | `/api/recordings/search` | CapReadAudit |
 | GET | `/api/recordings/{name}` | CapReadAudit |
 | GET | `/api/reports/connections` | CapReadAudit |

@@ -192,3 +192,51 @@ func TestRecordingArchiveImport(t *testing.T) {
 		t.Fatalf("a refused archive left files behind: %v", entries)
 	}
 }
+
+// TestRecordingArchivePurge proves Phase 283's purge: the recordings an
+// archive exported HERE lists are deleted, each audited first; a file
+// changed since the export is kept; an archive this deployment did not
+// export purges nothing; and only an administrator may purge.
+func TestRecordingArchivePurge(t *testing.T) {
+	dir := t.TempDir()
+	srv, st := newTestServerOpts(t, nil, api.Options{RecordingDir: dir})
+	seedRecording(t, st, dir, "100_web-01_alice.cast", "one", "alice", "session.record", "target:web-01 cred_user:root")
+	seedRecording(t, st, dir, "110_web-01_alice.cast", "two", "alice", "session.record", "target:web-01 cred_user:root")
+	seedRecording(t, st, dir, "120_db-01_bob.cast", "three", "bob", "session.record", "proto:postgres target:db-01")
+	code, _, archive := getRaw(t, srv.URL+"/api/recordings/archive?actor=alice", testAPIKey)
+	if code != http.StatusOK {
+		t.Fatalf("export: %d", code)
+	}
+	// Changed after the export: the archive does not hold these bytes.
+	if err := os.WriteFile(filepath.Join(dir, "110_web-01_alice.cast"), []byte("two, edited"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	auditor := seedUser(t, srv, "aud", "auditor")
+	if code, _ := postTar(t, srv.URL+"/api/recordings/purge", auditor, archive); code != http.StatusForbidden {
+		t.Fatalf("an auditor purged: %d", code)
+	}
+	code, res := postTar(t, srv.URL+"/api/recordings/purge", testAPIKey, archive)
+	if code != http.StatusOK || res["purged"] != float64(1) || res["changed"] != float64(1) {
+		t.Fatalf("purge: %d %v", code, res)
+	}
+	for name, want := range map[string]bool{"100_web-01_alice.cast": false, "110_web-01_alice.cast": true, "120_db-01_bob.cast": true} {
+		if _, err := os.Stat(filepath.Join(dir, name)); (err == nil) != want {
+			t.Errorf("%s present=%v, want %v", name, err == nil, want)
+		}
+	}
+	auditHas(t, st, "recording.purged", "file:100_web-01_alice.cast")
+	auditHas(t, st, "recording.purge", "files:2")
+
+	// An archive from elsewhere — same layout, never exported here.
+	otherDir := t.TempDir()
+	other, otherSt := newTestServerOpts(t, nil, api.Options{RecordingDir: otherDir})
+	seedRecording(t, otherSt, otherDir, "120_db-01_bob.cast", "three", "bob", "session.record", "proto:postgres target:db-01")
+	_, _, foreign := getRaw(t, other.URL+"/api/recordings/archive", testAPIKey)
+	if code, _ := postTar(t, srv.URL+"/api/recordings/purge", testAPIKey, foreign); code != http.StatusUnprocessableEntity {
+		t.Fatalf("a foreign archive purged: %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "120_db-01_bob.cast")); err != nil {
+		t.Fatal("a foreign archive deleted a recording")
+	}
+	auditHas(t, st, "recording.purge_refused", "reason:not-exported-here")
+}
