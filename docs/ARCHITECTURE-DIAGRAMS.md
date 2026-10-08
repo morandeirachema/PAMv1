@@ -88,6 +88,7 @@ flowchart LR
     n_radius[radius]
     n_radiustest[radiustest]
     n_ratelimit[ratelimit]
+    n_recarchive[recarchive]
     n_recording[recording]
     n_releasedocs[releasedocs]
     n_report[report]
@@ -140,6 +141,7 @@ flowchart LR
   n_api --> n_posture
   n_api --> n_probe
   n_api --> n_ratelimit
+  n_api --> n_recarchive
   n_api --> n_recording
   n_api --> n_report
   n_api --> n_restrict
@@ -697,7 +699,7 @@ erDiagram
 
 ## 3. REST API surface
 
-The 237 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
+The 240 routes registered on the API mux, with the capability or guard each enforces (see `internal/auth` for the role → capability matrix).
 
 | Method | Path | Guard |
 |---|---|---|
@@ -803,6 +805,9 @@ The 237 routes registered on the API mux, with the capability or guard each enfo
 | POST | `/api/rdp-token` | CapConnect |
 | GET | `/api/reconcile` | CapManageCredentials |
 | GET | `/api/recordings` | CapReadAudit |
+| GET | `/api/recordings/archive` | CapReadAudit |
+| POST | `/api/recordings/archive` | CapManageUsers |
+| POST | `/api/recordings/purge` | CapManageUsers |
 | GET | `/api/recordings/search` | CapReadAudit |
 | GET | `/api/recordings/{name}` | CapReadAudit |
 | GET | `/api/reports/connections` | CapReadAudit |

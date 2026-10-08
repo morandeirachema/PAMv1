@@ -1,6 +1,6 @@
 # PAMv1 — documentation
 
-> Last updated: 2026-10-08 · Reflects: Phases 0–227 and 229–282, and release v0.0.79 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-10-08 · Reflects: Phases 0–227 and 229–283, and release v0.0.79 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-10-08 | Phase 283 (recording archives) documented: ARCHITECTURE-LOW-LEVEL (package tree, audit vocabulary, change log), ARCHITECTURE-HIGH-LEVEL, ADMIN-GUIDE §9.3, USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE, README Tier 10 row 12. |
 | 2026-10-08 | Phase 282 (v0.0.79): every `Reflects:` header, both READMEs' ranges and the banner through 282; the release token above. |
 | 2026-10-08 | Phase 281 (review of 274–280) documented: ARCHITECTURE-LOW-LEVEL (invariant 6 reworded, audit reasons, change log), ARCHITECTURE-HIGH-LEVEL, ADMIN-GUIDE (a "since the review" note in each affected section), USER-GUIDE, CODE-GUIDE. |
 | 2026-10-07 | Phase 280 (desktop ICAP) documented: ARCHITECTURE-LOW-LEVEL (package tree, env row, audit vocabulary, tests, change log), ARCHITECTURE-HIGH-LEVEL, ADMIN-GUIDE (§9.3c + env row), USER-GUIDE, CODE-GUIDE, PORTS-AND-FLOWS (E15), PROTOCOLS-AND-CRYPTO (ICAP), README Tier 10 row 11. |

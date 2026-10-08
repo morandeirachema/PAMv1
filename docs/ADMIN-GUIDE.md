@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-10-08 · Reflects: Phases 0–227 and 229–282 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-10-08 · Reflects: Phases 0–227 and 229–283 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** PAMv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -4083,6 +4083,50 @@ text, but out of scope for this pass) are not covered.
 curl -s "https://pam.example/api/recordings/search?q=aws_secret_access_key" -H "X-API-Key: $PAM_API_KEY"
 ```
 
+**Portable recording archives (Phase 283).** Recordings can leave the
+deployment as one archive, for long-term storage, a legal hold or a hand-over,
+and come back for replay.
+
+```bash
+# Export: everything alice recorded on RDP in September
+curl -H "X-API-Key: $PAM_API_KEY" -o sept.tar \
+  "http://localhost:8080/api/recordings/archive?actor=alice&protocol=rdp&since=2026-09-01T00:00:00Z&until=2026-10-01T00:00:00Z"
+# Import it here or on another deployment
+curl -H "X-API-Key: $PAM_API_KEY" -H "Content-Type: application/x-tar" \
+  --data-binary @sept.tar http://localhost:8080/api/recordings/archive
+# Purge, from the deployment that exported it, what the archive now holds
+curl -H "X-API-Key: $PAM_API_KEY" -H "Content-Type: application/x-tar" \
+  --data-binary @sept.tar http://localhost:8080/api/recordings/purge
+```
+
+- **What is selected.** Every recording is stamped by one audit row when it
+  is written, naming its file, target, user and SHA-256. The export filters
+  those rows by `actor`, `target`, `protocol` and the window (`since`/`until`,
+  default the last 30 days, at most 366), and takes the matching files still
+  on disk.
+- **What is in it.** A tar with `MANIFEST.json` first, then each recording
+  exactly as stored. A sealed recording stays sealed and replays only where
+  its key-encryption key is. The manifest lists, per file, its stamping row
+  and whether the stored bytes still matched it when exported, so an archive
+  made after tampering says so.
+- **Who may do what.** Exporting needs `CapReadAudit`, as playback does.
+  Importing and purging change the evidence store, so they need
+  `CapManageUsers`.
+- **Import** verifies every file against the manifest before writing
+  anything. A file already stored with the same bytes is skipped. One stored
+  with different bytes is never overwritten and is reported as a conflict.
+  An imported recording replays as **imported**, never as audited: no row on
+  this deployment vouches for when it was recorded.
+- **Purge** works only with an archive this deployment exported, proven by
+  the `recording.archive` row that carries its manifest digest. It deletes
+  only files whose bytes still match the archive, and audits each deletion
+  first. Keep the archive: after a purge it is the only copy.
+- Everything is audited: `recording.archive`, `recording.import` and
+  `recording.imported`, `recording.purge` and `recording.purged`.
+
+Console: *Session Recordings* → **F7** opens *Archive Recordings*. Enter
+downloads an archive for the filter shown, F9 imports one, F10 purges.
+
 ### 9.3b What actually RAN: post-session forensic reconstruction (Phase 157)
 
 A session recording shows what was **typed**. That is not the same as what
@@ -5418,6 +5462,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-10-08 | **Phase 283 (recording archives).** §9.3 *Portable recording archives*: export by user/target/protocol/window, the manifest, import and its imported verdict, purge from the exporting deployment only. |
 | 2026-10-08 | **Phase 281 (review of 274–280).** "Since the review" notes in §5.1, the telnet section, the approval-depth section, §9.1a, §9.2c, §9.3c and §9.4a: what changed in behaviour and why. |
 | 2026-10-07 | **Phase 280 (desktop ICAP).** §9.3c *Scanning desktop transfers*: holding file and clipboard streams for ICAP, outcomes, audit and alerts, the viewer's Ctrl+Alt+V and Ctrl+Alt+U; the SFTP ICAP note no longer says desktops are unscanned; env row. |
 | 2026-10-07 | **Phase 279 (telnet and scenarios).** New subsection *Telnet targets and startup scenarios*: the cleartext opt-in, connecting, the scenario syntax, the SSH scripted first step, what is hidden and audited, the secret's lifetime; env row `PAM_TELNET_ENABLED`. |

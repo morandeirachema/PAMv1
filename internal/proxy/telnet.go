@@ -195,7 +195,7 @@ func (p *Proxy) handleTelnetSession(ctx context.Context, nc ssh.NewChannel, targ
 			path, sum, n := rec.Close()
 			chain := p.chain.append(sum)
 			p.auditClosing(ctx, actor, "session.record",
-				fmt.Sprintf("target:%s cred_user:%s file:%s bytes:%d sha256:%s chain:%s", target.Name, cred.Username, path, n, sum, chain))
+				fmt.Sprintf("target:%s cred_user:%s file:%s bytes:%d sha256:%s chain:%s protocol:telnet", target.Name, cred.Username, path, n, sum, chain))
 		}
 	}()
 
