@@ -11,8 +11,8 @@
 > 🟢 **Living document** — updated in the same change as the code, without a
 > separate ask (the policy is in the [documentation hub](docs/README.md)).
 
-[![CI](https://github.com/morandeirachema/pamv1/actions/workflows/ci.yml/badge.svg)](https://github.com/morandeirachema/pamv1/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/morandeirachema/pamv1?color=2c6d5c)](https://github.com/morandeirachema/pamv1/releases/latest)
+[![CI](https://github.com/morandeirachema/PAMv1/actions/workflows/ci.yml/badge.svg)](https://github.com/morandeirachema/PAMv1/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/morandeirachema/PAMv1?color=2c6d5c)](https://github.com/morandeirachema/PAMv1/releases/latest)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8.svg?logo=go&logoColor=white)](https://go.dev/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-hardened-336791.svg?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
@@ -39,7 +39,7 @@ Built phase by phase with a single rule: **every phase is functional end to end*
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
 runs 0–227 and 229–283, and **every phase has shipped**, and the current
 tagged, cosign-signed release is
-**[v0.0.79](https://github.com/morandeirachema/pamv1/releases/tag/v0.0.79)** (2026-10-08;
+**[v0.0.79](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.79)** (2026-10-08;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
 brokering** for SSH, PostgreSQL, WinRM and in-portal RDP and SSH; **RBAC + custom profiles** with
 AD/Entra/OIDC login and TOTP MFA; **break-glass** with M-of-N quorum unseal; **safes** and
@@ -221,7 +221,7 @@ PAM for AI agents — the same chokepoint, extended to autonomous tools. Opt-in 
 
 - **PostgreSQL storage** via [pgx](https://github.com/jackc/pgx) with embedded, versioned migrations; an in-memory store for tests and demos; optional **[CloudNativePG](https://cloudnative-pg.io/) HA**.
 - **Observability** — a dependency-free [Prometheus](https://prometheus.io/) `/metrics` endpoint (request counts by status, audit volume, break-glass use, rotations, active-sessions gauge), plus a health/readiness split (`/healthz` liveness, `/readyz` checks the database).
-- **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. The release pipeline builds by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance** — see [Verifying a release](#verifying-a-release). *Current release: **[v0.0.79](https://github.com/morandeirachema/pamv1/releases/tag/v0.0.79)** (2026-10-08; first was v0.10.0) — the signed image is public at `ghcr.io/morandeirachema/pamv1:0.0.79`, which is what every manifest here pins, so the published-artifact paths below work.*
+- **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. The release pipeline builds by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance** — see [Verifying a release](#verifying-a-release). *Current release: **[v0.0.79](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.79)** (2026-10-08; first was v0.10.0) — the signed image is public at `ghcr.io/morandeirachema/pamv1:0.0.79`, which is what every manifest here pins, so the published-artifact paths below work.*
 - **Encrypted secrets in git** — the Kubernetes secret manifest can be sealed with **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: values are encrypted while `kind`/`metadata` stay reviewable, decrypted at deploy time (`sops -d | kubectl apply -f -`, plaintext never on disk) or natively by Flux / Argo / helm-secrets — so secrets live in the **same IaC repo** without leaking. See **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **Or source secrets from CyberArk Conjur** — as a runtime alternative to SOPS, set `PAM_CONJUR_URL` and PAMv1 fetches its own bootstrap secrets (master key, API key, DB URL, …) from **[Conjur](https://www.conjur.org/)** at startup, authenticating with a host API key or a **Kubernetes `authn-jwt`** projected token — so no bootstrap secret lives in Git at all. With `PAM_CONJUR_REFRESH_MIN` (Phase 78), the secrets that can honestly change on a running server (`PAM_API_KEY`, `PAM_BREAK_GLASS_KEY_HASH`) are **re-read periodically without a restart**; the KEK, database URL and audit-chain keys stay pinned to a restart by design. Both mechanisms ship; SOPS stays the zero-dependency default. See **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
 
@@ -601,16 +601,16 @@ vault + proxy chokepoint, and is **out of scope** by design.
 
 Every phase through 62 has shipped and the 2026-07 and 2026-08 security self-audits
 are closed ([docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md)).
-**[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** — the
+**[v0.10.0](https://github.com/morandeirachema/PAMv1/releases/tag/v0.10.0)** — the
 first signed release — met the last of the four beta criteria on 2026-07-28, and
-**[v0.11.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.11.0)**
+**[v0.11.0](https://github.com/morandeirachema/PAMv1/releases/tag/v0.11.0)**
 (2026-08-07) brought the pinned image back in step with the tree — 0.10.0 was tagged
 two days before the 2026-07-30 sweep's fixes landed, so for a week every manifest
 pinned a build that predated them — and
-**[v0.11.2](https://github.com/morandeirachema/pamv1/releases/tag/v0.11.2)** and
+**[v0.11.2](https://github.com/morandeirachema/PAMv1/releases/tag/v0.11.2)** and
 **every release since** has kept it there — each cut without letting fixes bank
 indefinitely on an unpinned `main`, most recently
-**[v0.0.79](https://github.com/morandeirachema/pamv1/releases/tag/v0.0.79)**. The full list is in
+**[v0.0.79](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.79)**. The full list is in
 [CHANGELOG.md](CHANGELOG.md).
 
 What is left is consolidated in
@@ -767,13 +767,13 @@ IMAGE=ghcr.io/morandeirachema/pamv1
 #    it is `PAMv1` since v0.58.1 and was `pamv1` before — while the image name
 #    is always lowercase, as an OCI reference must be.
 cosign verify \
-  --certificate-identity-regexp "(?i)^https://github.com/morandeirachema/pamv1/.github/workflows/release.yml@refs/tags/" \
+  --certificate-identity-regexp "(?i)^https://github.com/morandeirachema/PAMv1/.github/workflows/release.yml@refs/tags/" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   "$IMAGE:${TAG#v}"
 
 # 2. The SBOM attached to it is the one that build produced.
 cosign verify-attestation --type spdxjson \
-  --certificate-identity-regexp "(?i)^https://github.com/morandeirachema/pamv1/.github/workflows/release.yml@refs/tags/" \
+  --certificate-identity-regexp "(?i)^https://github.com/morandeirachema/PAMv1/.github/workflows/release.yml@refs/tags/" \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   "$IMAGE:${TAG#v}"
 
@@ -788,7 +788,7 @@ kubectl -n pamv1 exec deploy/pamv1 -- /pam-server -version   # → pam-server 0.
 curl -s http://pamv1:8080/metrics | grep pam_build_info      # same, for monitoring
 ```
 
-**Status:** **[v0.0.79](https://github.com/morandeirachema/pamv1/releases/tag/v0.0.79)
+**Status:** **[v0.0.79](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.79)
 was released on 2026-10-08**, and every manifest here pins its tag, `0.0.79` — image
 digest
 `sha256:ead932b47f31f36aba52b41db9ba9b865ded2461bdb444ddec65bd18450f0699`, public
@@ -799,7 +799,7 @@ in [CHANGELOG.md](CHANGELOG.md) and at the top of its release notes, with the
 `cosign verify` line for that exact image. (`v0.11.1` is a source tag only: its pipeline failed
 before the push, and it stays where it is because the Go module proxy had already
 cached it.) The first release was
-**[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** on
+**[v0.10.0](https://github.com/morandeirachema/PAMv1/releases/tag/v0.10.0)** on
 2026-07-28 (digest
 `sha256:ab2a5fa5db27fae805f9096dfdf526497ddff4cc3774b33469ab108b98637b39`). Each
 release publishes its cosign signature, SPDX SBOM attestation and SLSA provenance

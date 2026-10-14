@@ -6799,7 +6799,7 @@ high") more clearly than WebAuthn did. So `internal/saml` delegates the XML
 round-trip validation, the XML-DSig verification, `<EncryptedAssertion>`
 decryption and the assertion condition checks to `github.com/crewjam/saml`
 (+ `russellhaering/goxmldsig`, upgraded to their latest releases,
-`govulncheck` clean) and keeps for itself only the pamv1-specific decisions:
+`govulncheck` clean) and keeps for itself only the PAMv1-specific decisions:
 what enables the feature, how the IdP metadata is sourced (URL fetch or
 inline file — the fetch is the SP's **only** outbound call, ever), which
 attribute is the username, which attributes carry the group claims, and how
@@ -8147,7 +8147,7 @@ scan — an account with no match comes back `"managed":false`, the finding
 this phase exists to surface.
 
 **Every command goes through `guardCommand` first**, the same chokepoint
-every other discrete pamv1-run command passes through (Phase 38's "every
+every other discrete PAMv1-run command passes through (Phase 38's "every
 path where a discrete command is visible obeys one policy") — PAMv1's own
 fixed literal commands are not exempt from an operator-configured deny
 pattern, proven by a dedicated test that configures a deny pattern matching
@@ -13005,7 +13005,7 @@ The flagship: users connect *through* PAMv1, never holding the credential.
 
 ## Phase 0 — Project foundation ✅
 
-- [x] Public open-source repo ([github.com/morandeirachema/pamv1](https://github.com/morandeirachema/pamv1)), Apache-2.0 license
+- [x] Public open-source repo ([github.com/morandeirachema/PAMv1](https://github.com/morandeirachema/PAMv1)), Apache-2.0 license
 - [x] Go module, standard layout (`cmd/`, `internal/`), CI on GitHub Actions (fmt, vet, build, race tests, Docker build)
 
 ## What is left ⬜
