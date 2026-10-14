@@ -121,7 +121,7 @@ func TestReleaseDigestsAgree(t *testing.T) {
 	// The [Unreleased] comparison starts at the newest release; it sat at
 	// v0.58.2 for seventeen releases before this check existed.
 	if newest := changelogSecRe.FindStringSubmatch(changelog); newest != nil {
-		want := "[Unreleased]: https://github.com/morandeirachema/pamv1/compare/v" + newest[1] + "...HEAD"
+		want := "[Unreleased]: https://github.com/morandeirachema/PAMv1/compare/v" + newest[1] + "...HEAD"
 		if !strings.Contains(changelog, want) {
 			t.Errorf("CHANGELOG.md: the [Unreleased] link must compare from v%s, the newest entry: %s", newest[1], want)
 		}

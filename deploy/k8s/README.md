@@ -1,6 +1,6 @@
 # Kubernetes (raw manifests)
 
-Plain manifests for a namespaced pamv1 install. For a parameterised install use
+Plain manifests for a namespaced PAMv1 install. For a parameterised install use
 the Helm chart in [`../helm/pamv1`](../helm/pamv1) instead — it renders the same
 shapes from `values.yaml`.
 

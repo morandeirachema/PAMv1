@@ -12,8 +12,8 @@
 > 🟢 **Documento vivo** — se actualiza en el mismo cambio que el código, sin pedir permiso
 > aparte (ver la política en el [centro de documentación](docs/README.md)).
 
-[![CI](https://github.com/morandeirachema/pamv1/actions/workflows/ci.yml/badge.svg)](https://github.com/morandeirachema/pamv1/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/morandeirachema/pamv1?color=2c6d5c)](https://github.com/morandeirachema/pamv1/releases/latest)
+[![CI](https://github.com/morandeirachema/PAMv1/actions/workflows/ci.yml/badge.svg)](https://github.com/morandeirachema/PAMv1/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/morandeirachema/PAMv1?color=2c6d5c)](https://github.com/morandeirachema/PAMv1/releases/latest)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8.svg?logo=go&logoColor=white)](https://go.dev/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-endurecida-336791.svg?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
@@ -40,7 +40,7 @@ Construido fase a fase con una regla: **cada fase es funcional de principio a fi
 pasa los tests y se despliega como Infraestructura-como-Código. El **[roadmap](ROADMAP.md)**
 abarca de la 0 a la 227 y de la 229 a la 283, **se han entregado todas las fases**, y la release etiquetada y
 firmada con cosign vigente es la
-**[v0.0.79](https://github.com/morandeirachema/pamv1/releases/tag/v0.0.79)** (2026-10-08;
+**[v0.0.79](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.79)** (2026-10-08;
 la primera fue la v0.10.0, el 2026-07-28). Lo que eso suma:
 **intermediación de sesiones JIT** para SSH, PostgreSQL, WinRM y RDP y SSH en el portal;
 **RBAC + perfiles a medida** con login AD/Entra/OIDC y MFA TOTP; **break-glass** con quórum
@@ -225,7 +225,7 @@ Opcional vía `PAM_BROKER_POLICY_FILE`.
 
 - **Almacenamiento PostgreSQL** con [pgx](https://github.com/jackc/pgx) y migraciones embebidas y versionadas; un almacén en memoria para tests y demos; **alta disponibilidad con [CloudNativePG](https://cloudnative-pg.io/)** opcional.
 - **Observabilidad** — un endpoint [Prometheus](https://prometheus.io/) `/metrics` sin dependencias (conteos por estado, volumen de auditoría, uso de break-glass, rotaciones, gauge de sesiones activas), más una separación liveness/readiness (`/healthz`, `/readyz` que comprueba la BD).
-- **Despliegue como código** — [Docker](https://docs.docker.com/) (distroless, sin root), [docker-compose](https://docs.docker.com/compose/) con Postgres endurecida, manifiestos [Kubernetes](https://kubernetes.io/) bajo el PSS restringido, un **[chart de Helm](deploy/helm/pamv1)** y un módulo de [Terraform](https://developer.hashicorp.com/terraform). El pipeline de release construye por digest con **[SBOM](https://www.cisa.gov/sbom), firma keyless [cosign](https://docs.sigstore.dev/) y procedencia SLSA**. *Release vigente: **[v0.0.79](https://github.com/morandeirachema/pamv1/releases/tag/v0.0.79)** (2026-10-08; la primera fue la v0.10.0) — la imagen firmada es pública en `ghcr.io/morandeirachema/pamv1:0.0.79`, que es la que fijan todos los manifiestos, así que las rutas de instalación por artefacto publicado ya funcionan.*
+- **Despliegue como código** — [Docker](https://docs.docker.com/) (distroless, sin root), [docker-compose](https://docs.docker.com/compose/) con Postgres endurecida, manifiestos [Kubernetes](https://kubernetes.io/) bajo el PSS restringido, un **[chart de Helm](deploy/helm/pamv1)** y un módulo de [Terraform](https://developer.hashicorp.com/terraform). El pipeline de release construye por digest con **[SBOM](https://www.cisa.gov/sbom), firma keyless [cosign](https://docs.sigstore.dev/) y procedencia SLSA**. *Release vigente: **[v0.0.79](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.79)** (2026-10-08; la primera fue la v0.10.0) — la imagen firmada es pública en `ghcr.io/morandeirachema/pamv1:0.0.79`, que es la que fijan todos los manifiestos, así que las rutas de instalación por artefacto publicado ya funcionan.*
 - **Secretos cifrados en git** — el manifiesto de Secret de Kubernetes puede sellarse con **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: los valores se cifran mientras `kind`/`metadata` quedan legibles, y se descifra al desplegar (`sops -d | kubectl apply -f -`, el texto plano nunca toca el disco) o de forma nativa con Flux / Argo / helm-secrets — así los secretos viven en el **mismo repo de IaC** sin filtrarse. Ver **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **O aprovisiona los secretos desde CyberArk Conjur** — como alternativa en tiempo de ejecución a SOPS, define `PAM_CONJUR_URL` y PAMv1 obtiene sus secretos de arranque (clave maestra, clave de API, URL de la BD, …) de **[Conjur](https://www.conjur.org/)** al arrancar, autenticándose con una clave de API de host o un token proyectado de Kubernetes (**`authn-jwt`**) — de modo que ningún secreto de arranque vive en Git. Con `PAM_CONJUR_REFRESH_MIN` (Fase 78), los secretos que honestamente pueden cambiar con el servidor en marcha (`PAM_API_KEY`, `PAM_BREAK_GLASS_KEY_HASH`) se **releen periódicamente sin reiniciar**; la KEK, la URL de la base de datos y las claves de la cadena de auditoría quedan ancladas a un reinicio por diseño. Ambos mecanismos se entregan; SOPS sigue siendo el predeterminado sin dependencias. Ver **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
 
@@ -517,17 +517,17 @@ por diseño.
 Todas las fases hasta la 62 están entregadas y las autoauditorías de seguridad de
 2026-07 y 2026-08 están cerradas
 ([docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md)). La
-**[v0.10.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.10.0)** — la
+**[v0.10.0](https://github.com/morandeirachema/PAMv1/releases/tag/v0.10.0)** — la
 primera release firmada — cumplió el 2026-07-28 el último de los cuatro criterios de
 beta, y la
-**[v0.11.0](https://github.com/morandeirachema/pamv1/releases/tag/v0.11.0)**
+**[v0.11.0](https://github.com/morandeirachema/PAMv1/releases/tag/v0.11.0)**
 (2026-08-07) devolvió la imagen fijada al día del árbol —la 0.10.0 se etiquetó dos días
 antes de que aterrizaran las correcciones del barrido del 2026-07-30, así que durante una
 semana todos los manifiestos fijaron una build anterior a ellas— y la
 **todas las releases posteriores** la han mantenido ahí, cada una cortada sin
 dejar que las correcciones se acumularan indefinidamente en un `main` sin
 etiquetar — la última, la
-**[v0.0.79](https://github.com/morandeirachema/pamv1/releases/tag/v0.0.79)**. La lista completa está en
+**[v0.0.79](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.79)**. La lista completa está en
 [CHANGELOG.md](CHANGELOG.md).
 
 Lo que queda está consolidado en
