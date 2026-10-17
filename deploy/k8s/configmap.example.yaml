@@ -302,3 +302,113 @@ data:
   # integration that would call out of the enclave.
   # PAM_OT_AIRGAP: "false"
   # PAM_OT_AIRGAP_ALLOW: "PAM_LDAP_URL"  # names you certify resolve inside it
+
+  # ======================================================================
+  # Knobs added to match .env.example (the 2026-10-17 audit found the pair
+  # had fallen behind it). Descriptions live in .env.example and in
+  # docs/ARCHITECTURE-LOW-LEVEL.md §4.
+  # ======================================================================
+
+  # --- Session controls (Phases 112-244) -----------------------------------
+  # PAM_SESSION_MFA: "false"
+  # PAM_REQUIRE_LIVE_SUPERVISION: "false"
+  # PAM_LIVE_SUPERVISION_TIMEOUT_SEC: "120"
+  # PAM_SESSION_MAX_MIN: "0"
+  # PAM_SESSION_IDLE_MIN: "0"
+  # PAM_SSH_PORT_FORWARD: "true"
+  # PAM_COMMAND_ALLOW_FILE: "/etc/pam/allow.txt"
+  # PAM_SSH_SFTP_CAPTURE: "all"
+  # PAM_SSH_SFTP_CAPTURE_MAX_MB: "256"
+  # PAM_RDP_DRIVE: "false"
+  # PAM_RDP_PRINTER: "false"
+  # PAM_RDP_AUDIO: "true"
+  # PAM_RDP_AUDIO_IN: "false"
+  # PAM_TELNET_ENABLED: "false"
+
+  # --- Login banner and session notice (Phase 276; add _<XX> per language) -
+  # PAM_BANNER_LOGIN: "Authorized use only. Activity is recorded."
+  # PAM_BANNER_SESSION: "This session is recorded and may be reviewed."
+
+  # --- Device posture, on-call, file scanning ------------------------------
+  # PAM_DEVICE_HEADER: "X-Client-Cert-Fingerprint"
+  # PAM_ONCALL_ATTEST_URL: "https://oncall.internal/attest"
+  # PAM_ICAP_URL: "icap://icap.internal:1344/avscan"
+  # PAM_ICAP_DESKTOP: "off"                       # off | files | clipboard | all
+  # PAM_ICAP_DESKTOP_MAX_MB: "25"                 # 1-1024; held in memory while scanned
+
+  # --- ITSM connector (the token goes in the Secret) -----------------------
+  # PAM_TICKET_PROVIDER: "servicenow"             # webhook (default) | servicenow | jira
+  # PAM_TICKET_URL: "https://acme.service-now.com"
+  # PAM_TICKET_USER: "pam-integration"
+  # PAM_TICKET_STATES: "implement,scheduled"      # states that authorise access
+  # PAM_TICKET_ACTOR_FIELDS: "assigned_to,requested_by"
+  # PAM_TICKET_REQUIRE_WINDOW: "true"             # enforce the change's start/end
+  # PAM_TICKET_BIND_ACTOR: "true"                 # the ticket must name the operator
+  # PAM_TICKET_REVALIDATE: "true"
+
+  # --- Approvals and chat-ops (the Slack signing secret goes in the Secret) 
+  # PAM_APPROVAL_INVITE_TTL_MIN: "1440"           # how long an approval-invite link stays redeemable
+  # PAM_APPROVAL_TIMEOUT_MIN: "0"                 # a pending request nobody decided expires (0 = never)
+  # PAM_APPROVAL_COMMENT_REQUIRED: "false"        # every approve/deny/cancel must carry a comment
+  # PAM_SLACK_WEBHOOK_URL: "https://hooks.slack.com/services/..."
+
+  # --- Identity: more OIDC / SAML / Entra / RADIUS / WebAuthn / SCIM knobs -
+  # PAM_OIDC_SCOPES: "openid profile"
+  # Endpoint overrides; unset = taken from the issuer's discovery document:
+  # PAM_OIDC_AUTH_URL: ""
+  # PAM_OIDC_TOKEN_URL: ""
+  # PAM_OIDC_JWKS_URL: ""
+  # PAM_OIDC_ROLE_USER: "pam.user"
+  # PAM_OIDC_ROLE_AUDITOR: "pam.auditor"
+  # PAM_OIDC_ROLE_APPROVER: "pam.approver"
+  # PAM_SAML_IDP_METADATA_FILE: "/etc/pamv1/idp-metadata.xml"  # air-gapped sites (PAM_OT_AIRGAP refuses the URL form)
+  # PAM_SAML_SP_ENTITY_ID: ""                     # default: the metadata URL
+  # PAM_SAML_SP_KEY_FILE: "/etc/pamv1/saml-sp.key"
+  # PAM_SAML_SP_CERT_FILE: "/etc/pamv1/saml-sp.crt"
+  # PAM_SAML_NAME_ATTR: ""                        # username attribute; default: the assertion NameID
+  # PAM_SAML_GROUP_ATTR: ""                       # comma-separated group attribute names; default: groups, memberOf, role, ADFS Group/Role, Entra groups
+  # PAM_SAML_ROLE_AUDITOR: "PAM-Auditors"
+  # PAM_SAML_ROLE_APPROVER: "PAM-Approvers"
+  # PAM_ENTRA_AUTHORITY_HOST: "login.microsoftonline.com"  # or a sovereign cloud host
+  # PAM_ENTRA_SCOPE: ""                           # default "<client-id>/.default"
+  # PAM_ENTRA_ROLE_ADMIN: "pam.admin"
+  # PAM_ENTRA_ROLE_USER: "pam.user"
+  # PAM_ENTRA_ROLE_AUDITOR: "pam.auditor"
+  # PAM_ENTRA_ROLE_APPROVER: "pam.approver"
+  # PAM_LDAP_INSECURE_SKIP_VERIFY: "false"
+  # PAM_RADIUS_ADDR: "radius.internal:1812"
+  # PAM_RADIUS_MODE: "login"                      # login | second_factor
+  # PAM_RADIUS_NAS_ID: "pamv1"
+  # PAM_RADIUS_ROLE: "user"                       # login mode: role when no Class attribute matches
+  # PAM_RADIUS_CLASS_ADMIN: ""                    # Class attribute value -> role
+  # PAM_RADIUS_CLASS_USER: ""
+  # PAM_RADIUS_CLASS_AUDITOR: ""
+  # PAM_RADIUS_CLASS_APPROVER: ""
+  # PAM_WEBAUTHN_RP_ID: "pam.example.com"
+  # PAM_WEBAUTHN_RP_ORIGIN: "https://pam.example.com"
+  # PAM_SCIM_ENABLED: "false"
+  # PAM_CONJUR_AUTHN_LOGIN: "host/pamv1/pam-server"
+
+  # --- Credentials, tokens, sharing ----------------------------------------
+  # PAM_ALLOW_WEAK_API_KEY: "false"
+  # PAM_PASSWORD_MIN_LENGTH: "24"                 # 12-256
+  # PAM_PASSWORD_MIN_LOWER: "1"                   # each class 1-64
+  # PAM_PASSWORD_MIN_UPPER: "1"
+  # PAM_PASSWORD_MIN_DIGIT: "1"
+  # PAM_PASSWORD_MIN_SYMBOL: "1"
+  # PAM_PASSWORD_HISTORY_COUNT: "0"               # refuse reusing the last N rotated passwords (0-50)
+  # PAM_CHECKOUT_MAX_EXTEND_MIN: "240"            # ceiling a checkout lease may be extended to
+  # PAM_CREDENTIAL_FILE_MAX_KB: "1024"            # file credentials over the cap are refused (1-10240)
+  # PAM_DOUBLELOCK_MIN_LENGTH: "0"                # 0 = the built-in floor of 16; can raise it, never lower
+  # PAM_USER_TOKEN_TTL_HOURS: "0"
+  # PAM_EXTENSION_TOKEN_TTL_HOURS: "24"
+  # PAM_SESSION_SHARE_INVITE_TTL_SEC: "900"
+  # PAM_SESSION_SHARE_GUEST_TTL_MIN: "240"
+
+  # --- Analytics, certification, reports, Kubernetes targets ---------------
+  # PAM_ANALYTICS_BASELINE_DAYS: "30"
+  # PAM_ANALYTICS_AUTO_STEPUP: "false"
+  # PAM_CERT_REMIND_DAYS: "7"
+  # PAM_REPORT_DIGEST_TO: "soc@example.com"
+  # PAM_REPORT_DIGEST_HOUR: "6"
+  # PAM_K8S_INSECURE_SKIP_VERIFY: "true"          # demos only: the vaulted token would go to whoever answers

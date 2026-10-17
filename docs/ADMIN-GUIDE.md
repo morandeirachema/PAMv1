@@ -267,6 +267,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 |---|---|---|---|
 | `PAM_KEK_PROVIDER` | | `local` | Vault key backend: `local` (dev/test), `vault-transit`, `aws-kms`, or `pkcs11` (HSM). |
 | `PAM_CONJUR_URL` (+ `PAM_CONJUR_*`) | | (off) | Source bootstrap `PAM_*` secrets from CyberArk Conjur at startup (Phase 18); see [deploy/k8s/conjur](../deploy/k8s/conjur/). |
+| `PAM_SECRETS_PROVIDER` | | "" (env/SOPS) | Selects the bootstrap-secret source explicitly. `conjur` makes `PAM_CONJUR_URL` required, so a misconfigured deployment fails at startup instead of quietly falling back to the environment. |
 | `PAM_MASTER_KEY` | local only | — | Local KEK key (`-genkey`). **Back it up securely.** Dev/test only. |
 | `PAM_KEK_TRANSIT_ADDR` / `_TOKEN` / `_KEY` | transit only | — | HashiCorp Vault Transit KEK (production). |
 | `PAM_KEK_AWS_KEY_ID` / `_AWS_REGION` | aws-kms only | — | AWS KMS KEK (production). |
@@ -312,6 +313,8 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_SESSION_SHARE_INVITE_TTL_SEC` | | `900` | **Session sharing** (Phase 116): how long an approved share invite stays redeemable, **once**, before it expires unused — internal (`join:<token>` over SSH) or external (emailed QR). See §9.4c. |
 | `PAM_SESSION_SHARE_GUEST_TTL_MIN` | | `240` | How long an **external** guest's minted viewing key keeps working *after* they redeem it — a separate window from the invite TTL above. See §9.4c. |
 | `PAM_ANALYTICS_INTERVAL_MIN` | | `0` (off) | Threat-analytics worker interval (Phase 23); `0` leaves the read-only `GET /api/analytics/risk` endpoint on. See §9.7. |
+| `PAM_ANALYTICS_BASELINE_DAYS` | | `30` (`0` off, max `366`) | History read for the `new_target` novelty signal, from before the scored window. An actor with no history raises nothing, so a new joiner is not an anomaly (Phase 86). |
+| `PAM_ANALYTICS_AUTO_STEPUP` | | `false` | Revoke a **high**-risk actor's portal logins so their next action re-authenticates (with a second factor where enrolled); the step below `PAM_ANALYTICS_AUTO_KILL` (Phase 86). |
 | `PAM_ANALYTICS_WINDOW_MIN` / `_AUTO_KILL` / `_BUSINESS_START` / `_BUSINESS_END` | | `60` / `false` / `7` / `20` | Risk-scoring window (also the re-alert cooldown), auto-kill of critical actors' sessions, and business hours for the off-hours signal. |
 | `PAM_ANALYTICS_TIMEZONE` | | (UTC) | IANA timezone the business hours are interpreted in (audit timestamps are UTC). |
 | `PAM_APP_SECRETS_ENABLED` | | `false` | Enable the application-secrets API (Phase 24): Conjur-style secret delivery to non-agent apps. Front it with TLS. See §7. |
@@ -364,6 +367,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_ALERT_SYSLOG` | | (off) | Syslog collector for the same alerts — `udp://host:port` or `tcp://host:port` (a bare `host:port` is treated as UDP). This is per-*alert*; to stream the whole trail use `PAM_AUDIT_FORWARD_ADDR`. |
 | `PAM_ALERT_EMAIL_SMTP` / `_FROM` / `_TO` | | (off) | SMTP server (`host:port`), envelope sender, and comma-separated recipients for email alerts — **all three or none** (validated fail-loud). `PAM_ALERT_EMAIL_USER` / `_PASS` add SMTP auth. |
 | `PAM_REVEAL_DISABLED` | | `false` | Make `reveal` break-glass-only (also forces the broker's `reveal_credential` closed). |
+| `PAM_REQUIRE_TARGET_GRANT` | | `false` | Refuse a connection to a target with **no grants at all** (no direct grant, and not in a safe with members), Phase 203. Off, such a target is reachable by every principal with the connect capability, which is the historical behaviour. |
 | `PAM_AUDIT_HMAC_KEY` | | (off) | base64 32-byte key enabling the **tamper-evident HMAC chain** over the primary audit trail; verify with `GET /api/audit/verify`. See §9.2. |
 | `PAM_AUDIT_SIGN_SEED` | | (off) | base64 32-byte ed25519 seed (needs `PAM_AUDIT_HMAC_KEY`) enabling **signed checkpoints** (`GET /api/audit/head`) so an auditor can detect **tail truncation**. See §9.2. |
 | `PAM_AUDIT_FORWARD_ADDR` | | (off) | host:port of a SIEM collector; **continuously forwards** every audit event (Phase 35). `PAM_AUDIT_FORWARD_PROTO` (`udp`/`tcp`/`tls` — tls verifies the collector's certificate, always), `PAM_AUDIT_FORWARD_FORMAT` (`rfc5424`/`cef`/`leef`), `PAM_AUDIT_FORWARD_CA` (PEM bundle pinning the collector's CA, tls only), `PAM_AUDIT_FORWARD_INTERVAL_SEC` (`10`) tune it. See §9.2. |
@@ -5470,6 +5474,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-10-17 | §4 gains the four variables it never mentioned: `PAM_SECRETS_PROVIDER`, `PAM_ANALYTICS_BASELINE_DAYS`, `PAM_ANALYTICS_AUTO_STEPUP` and `PAM_REQUIRE_TARGET_GRANT`. The `.env.example` it points to for full descriptions now lists every variable, as it claims (53 had been missing), and the Kubernetes ConfigMap/Secret pair matches it (about 90 had been missing). |
 | 2026-10-17 | **Air-gap: `PAM_TICKET_URL` joins the gate, and the documented list catches up.** The ServiceNow/Jira connector egresses like the ITSM webhook but was missing from `airGapConflicts`; it is refused under `PAM_OT_AIRGAP` unless allowed. The list here now matches the code's (posture, on-call, Slack, ICAP and the report digest were missing). |
 | 2026-10-17 | **A route that does not exist.** The PostgreSQL proxy example said to add the credential with `POST /api/targets/{id}/credentials`; it is `POST /api/credentials` with `target_id` in the body. |
 | 2026-10-17 | **Two variable names corrected.** `PAM_REQUIRE_LIVE_SUPERVISION` (the guide said `PAM_REQUIRE_SUPERVISION`) and `PAM_SSH_SFTP=deny` (it said `PAM_SSH_SFTP_MODE`); setting either wrong name did nothing. |

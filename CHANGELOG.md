@@ -152,6 +152,13 @@ Kubernetes provider 3 move (both under **Changed**).
   connector's endpoint, which also calls out on every gated request. It is
   refused now unless named in `PAM_OT_AIRGAP_ALLOW`. **A deployment running
   both will stop at startup** until the URL is allowed or removed.
+- **The configuration examples list every variable again.**
+  `deploy/docker/.env.example` says it lists every `PAM_*` variable; 53
+  from Phase 112 on were missing. The Kubernetes ConfigMap/Secret pair, its
+  twin, was missing about 90, including the ServiceNow/Jira connector and
+  four secrets (`PAM_TICKET_TOKEN`, `PAM_RADIUS_SECRET`,
+  `PAM_SLACK_SIGNING_SECRET`, `PAM_BROKER_TOKEN_SIGN_SEED`). ADMIN-GUIDE §4
+  gains the four it never mentioned.
 - **The appliance build works again.** `deploy/ova/build.sh` pinned Debian
   13.6.0 at `debian-cd/current/`, which Debian moved on to 13.7.0, so the
   download returned 404. It now pins 13.7.0, falls back to Debian's archive
