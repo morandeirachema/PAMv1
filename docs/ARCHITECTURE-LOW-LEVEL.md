@@ -11,10 +11,11 @@
 
 - **Go** (module `github.com/morandeirachema/pamv1`, `go 1.26`).
 - Standard layout: `cmd/` entrypoints, `internal/` non-exported packages.
-- Direct deps: [`jackc/pgx/v5`](https://github.com/jackc/pgx) (Postgres), [`golang.org/x/crypto/ssh`](https://pkg.go.dev/golang.org/x/crypto/ssh) (proxy), [`go-webauthn/webauthn`](https://github.com/go-webauthn/webauthn) (FIDO2 ceremony verification, Phase 124) and [`crewjam/saml`](https://github.com/crewjam/saml) + [`russellhaering/goxmldsig`](https://github.com/russellhaering/goxmldsig) (SAML XML-DSig verification, Phase 151) — the two deliberate crypto-verification library exceptions, reasoned through in ROADMAP.md. Standard library otherwise for every protocol client PAMv1 hand-rolls.
+- Direct deps: [`jackc/pgx/v5`](https://github.com/jackc/pgx) (Postgres), [`golang.org/x/crypto/ssh`](https://pkg.go.dev/golang.org/x/crypto/ssh) (proxy), [`go-webauthn/webauthn`](https://github.com/go-webauthn/webauthn) (FIDO2 ceremony verification, Phase 124) and [`crewjam/saml`](https://github.com/crewjam/saml) + [`russellhaering/goxmldsig`](https://github.com/russellhaering/goxmldsig) (SAML XML-DSig verification, Phase 151) — the two deliberate crypto-verification library exceptions, reasoned through in ROADMAP.md. Also direct, each where a hand-rolled client would be the wrong trade: [`aws-sdk-go-v2`](https://github.com/aws/aws-sdk-go-v2) (the AWS KMS KEK, `vault/awskms.go`), [`go-ldap/ldap/v3`](https://github.com/go-ldap/ldap) (AD/LDAP login, `auth/ldap.go`), [`masterzen/winrm`](https://github.com/masterzen/winrm) (the WinRM runner), [`miekg/pkcs11`](https://github.com/miekg/pkcs11) (the HSM KEK, `-tags pkcs11`), [`coder/websocket`](https://github.com/coder/websocket) (the in-portal viewers and terminal), [`skip2/go-qrcode`](https://github.com/skip2/go-qrcode) (session-share QR codes), [`gopkg.in/yaml.v3`](https://github.com/go-yaml/yaml) (broker policy) and [`golang.org/x/sys`](https://pkg.go.dev/golang.org/x/sys) (the probe's Windows calls); test-only, `beevik/etree` (`saml/samltest`) and `fxamacker/cbor/v2` (WebAuthn fixtures). Standard library otherwise for every protocol client PAMv1 hand-rolls.
 
 ```
-cmd/pam-server/main.go        # wiring, flags (-genkey, -hashkey), lifecycle
+cmd/pam-server/main.go        # wiring, flags (-genkey, -hashkey, -split-key, -rotate-kek, -healthcheck, -version), lifecycle
+cmd/archgen/main.go           # regenerates docs/ARCHITECTURE-DIAGRAMS.md (package graph, store ER, route table); CI fails on drift
 cmd/pam-agent/main.go         # the outbound-only endpoint agent (Phase 153) — runs ON an endpoint, env-configured, -version; PAM_AGENT_MODE=probe makes it the Windows session probe (Phase 266)
 internal/
   endpointagent/ # the agent's client library: dial out, pin host key, hold the reverse tunnel, pipe streams to ONE local address
@@ -28,8 +29,10 @@ internal/
   winrm/       # WinRM command Runner (Windows targets) + real client (basic/NTLM)
   guacd/       # Apache Guacamole protocol client (RDP handshake + JIT injection); transfergate.go holds desktop file and clipboard streams until an ICAP verdict (Phase 280)
   oidc/        # OIDC Authorization Code + PKCE, RS256 JWKS validation
+  jwtutil/     # JWT/JWKS primitives shared by oidc (id_tokens) and agentid (SPIFFE JWT-SVIDs)
   radius/      # RADIUS (RFC 2865) PAP client: Access-Accept/Reject/Challenge, response-authenticator verification — Phase 269; radiustest/ is the in-process server the tests run against
   sessionforensics/ # post-session reconstruction of what a PTY actually ran, from the TARGET's kernel audit records — Phase 157
+  testutil/    # test-only helpers shared across suites (imported only by _test.go files)
   releasedocs/      # test-only: the image digests README, CHANGELOG and ROADMAP record for each release agree — Phase 262; the docs' currency stamps agree — Phase 267; the project is PAMv1 in prose in every tracked file
   k8s/         # narrow Kubernetes API client (get/logs/apply/delete over HTTPS+JSON) — Phase 155
   saml/        # SAML 2.0 Service Provider (SP-initiated Web Browser SSO; XML-DSig via crewjam/saml) — Phase 151
@@ -37,15 +40,25 @@ internal/
   maint/       # offline maintenance (vault KEK rotation)
   rotate/      # credential rotation/verify connectors (SSH chpasswd, ssh_key, WinRM)
   discovery/   # TCP port scan → onboard targets (ssh/winrm/rdp)
+  accountscan/ # parses a fixed read-only account enumeration run on a target PAMv1 holds a credential for: which accounts exist, which are managed (Phase 128)
+  blast/       # read-only identity blast-radius / CIEM engine: AWS IAM effective permissions + escalation paths over an identity graph (Phase 31)
   metrics/     # dependency-free Prometheus /metrics
   session/     # live-session registry + hub + cross-replica kill/live/step-up buses, shared proxy↔api
   shamir/      # Shamir secret sharing (GF(2^8)) for break-glass quorum
   alert/       # real-time alert delivery (webhook, syslog, email), break-glass events
   banner/      # the login banner and the session (recording-consent) notice, per language (Phase 276)
   auditfwd/    # continuous audit→SIEM forwarder (RFC 5424 syslog / CEF, durable cursor)
+  auditfmt/    # formats untrusted values for `key:value` audit details (truncate, quote, escape) so input cannot forge fields
+  ocsf/        # maps the audit trail to OCSF for SIEM export: API Activity 6003, Detection Finding 2004 (Phase 27)
   ratelimit/   # shared per-key fixed-window limiter (API auth, proxies, broker)
   conjur/      # CyberArk Conjur bootstrap-secret sourcing at startup (Phase 18)
   ticket/      # ITSM/ticketing gate — regex + webhook ticket validation (Phase 20)
+  vendor/      # third-party vendor access: live employment attestation before a contract grant is approved (Phase 29)
+  posture/     # device posture (EDR health) re-checked before each privileged session (Phase 133)
+  oncall/      # on-call/shift check before admitting a privileged session (Phase 232)
+  timeframe/   # the recurring weekly window a standing grant may carry, e.g. "Mon-Fri 08:00-18:00 Europe/Madrid" (Phase 240)
+  slack/       # interactive Slack access-request approvals: post the message, verify and decode the button callback (Phase 234)
+  icap/        # minimal RFC 3507 ICAP client: submit a whole object as RESPMOD, report clean or flagged (SFTP and desktop transfer scanning)
   auth/        # roles, capabilities, Principal, Resolver (RBAC), LDAP/Entra/OIDC
   auditchain/  # keyed-HMAC tamper-evident chain + ed25519 signed checkpoints (broker + primary audit)
   # AI-agent access broker (Phase 13):
@@ -1336,6 +1349,7 @@ written to the separate tamper-evident `broker_audit_events` chain.
 
 | Date | Change |
 | --- | --- |
+| 2026-10-17 | **§1 brought up to the tree.** The package tree gains the twelve packages it lacked (`accountscan`, `auditfmt`, `blast`, `icap`, `jwtutil`, `ocsf`, `oncall`, `posture`, `slack`, `testutil`, `timeframe`, `vendor`) and `cmd/archgen`; `pam-server`'s line names all six flags; the direct-dependency line names all of them, not only the crypto-verification exceptions. |
 | 2026-10-17 | **§5 gains three emitted actions it did not list:** `login.challenge` (Phase 269, RADIUS Access-Challenge), `endpoint_agent.refused` (Phase 153, a key asking for a channel its kind does not allow) and `probe.event` (the hub's fallback for an unknown event kind). §2 no longer names a stale newest migration, and the Phase 62 row's ROADMAP link points at the renamed §0 heading. |
 | 2026-10-17 | **Store contract covers every method again.** `storetest` gains the `UpdateUserManager` case (Phase 256 shipped without one, so the backends were never held to one behavior for it), and `store.TestContractCallsEveryStoreMethod` fails on any `Store` method the suite never calls. The test-gaps bullet said 218 methods; there are 243. |
 | 2026-10-17 | **OCSF: six actions become Detection Findings.** `rdp.refused`, `vnc.refused`, `rdp.transfer_blocked` and `vnc.transfer_blocked` were built at runtime (`proto.name+".refused"`), so the literal scan behind `TestRefusalShapedActionsAreClassified` never saw them and they exported as routine API Activity while `winrm.refused` and `sftp.blocked` were findings. `viewerProto` now carries them as literals (`refusedAction`, `transferBlockedAction`) and `findingExact` classifies them, with `sftp.icap_flagged` (an infection verdict) and `restriction.killed` (peer of `probe.process_killed`). Pinned by `ocsf.TestViewerRefusalsAndEnforcementsAreFindings`. |

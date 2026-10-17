@@ -647,7 +647,7 @@ las de arranque y transporte de abajo permanecen solo en el entorno.
 
 ### Flags de utilidad
 
-`pam-server` arranca como servidor por defecto; cinco flags le hacen una sola cosa y salir.
+`pam-server` arranca como servidor por defecto; seis flags le hacen una sola cosa y salir.
 
 | Flag | Qué hace |
 |---|---|
@@ -656,6 +656,7 @@ las de arranque y transporte de abajo permanecen solo en el entorno.
 | `-split-key` | Lee una clave de emergencia por stdin e imprime N fragmentos de Shamir |
 | `-rotate-kek` | Vuelve a cifrar todo secreto del vault bajo una KEK nueva — credenciales, altas MFA, ajustes secretos **y** las claves compartidas de host SSH y CA. Funciona entre proveedores (local ⇄ Vault-Transit ⇄ KMS ⇄ HSM), así que es también la vía de migración. Avisa si quedan grabaciones selladas que aún necesitan la clave antigua |
 | `-healthcheck` | Sondea el `/healthz` local y sale con 0 si está sano (lo que usa el HEALTHCHECK del contenedor) |
+| `-version` | Imprime la versión y el commit del build |
 
 ## Procedimiento break-glass
 

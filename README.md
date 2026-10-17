@@ -741,7 +741,7 @@ bootstrap and transport keys below stay environment-only.
 
 ### Utility flags
 
-`pam-server` runs as a server by default; five flags make it do one job and exit.
+`pam-server` runs as a server by default; six flags make it do one job and exit.
 
 | Flag | What it does |
 |---|---|
@@ -750,6 +750,7 @@ bootstrap and transport keys below stay environment-only.
 | `-split-key` | Read an emergency key on stdin, print N Shamir shares |
 | `-rotate-kek` | Re-encrypt every vaulted secret under a new KEK — credentials, MFA enrollments, secret settings **and** the shared SSH host/CA keys. Works across providers (local ⇄ Vault-Transit ⇄ KMS ⇄ HSM), so it is also how you migrate. Warns if sealed recordings still need the old key |
 | `-healthcheck` | Probe the local `/healthz` and exit 0 if healthy (what the container HEALTHCHECK uses) |
+| `-version` | Print the build version and commit (what [Verifying a release](#verifying-a-release) checks a running image against) |
 
 ## Verifying a release
 

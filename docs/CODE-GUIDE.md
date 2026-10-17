@@ -127,7 +127,8 @@ It is a **single Go binary** (`cmd/pam-server`) that runs several listeners:
 
 - an **HTTP server** (`:8080`) serving the REST API and the embedded 5250-style portal,
 - an **SSH proxy** (`:2222`) — the session gateway,
-- optionally a **PostgreSQL proxy** (`:5433`) for database sessions.
+- optionally a **PostgreSQL proxy** (`:5433`, `PAM_DB_ADDR`) and a **SQL Server
+  proxy** (`:1433`, `PAM_MSSQL_ADDR`) for database sessions, both off by default.
 
 Everything under `internal/` is a focused package the binary wires together.
 Since Phase 153 there is a second, much smaller deployable — `cmd/pam-agent`,
@@ -169,6 +170,7 @@ flowchart TB
     rotate["rotate — SSH/WinRM connectors"]
     discovery["discovery"]
     maint["maint — KEK rotation"]
+    accountscan["accountscan — authenticated account enumeration (Phase 128)"]
   end
   subgraph agents["AI-agent broker"]
     policy["policy"]
@@ -206,6 +208,15 @@ flowchart TB
     icap["icap — ICAP AV/DLP scan client (RFC 3507)"]
     k8sc["k8s — Kubernetes API client (brokered kubectl ops)"]
     sforensics["sessionforensics — post-session exec reconstruction (parsing)"]
+    timeframe["timeframe — weekly grant windows (Phase 240)"]
+    restrict["restrict — per-subject restriction rules (Phase 275)"]
+    banner["banner — login banner + session notice (Phase 276)"]
+    report["report — audit-trail reports (Phase 277)"]
+    inventorycsv["inventorycsv — bulk inventory CSV format (Phase 278)"]
+    csvcell["csvcell — CSV formula-injection guard"]
+    telnet["telnet — TELNET client for telnet targets (Phase 279)"]
+    expect["expect — SEND/EXPECT startup scenarios (Phase 279)"]
+    recarchive["recarchive — portable recording archives (Phase 283)"]
     metrics["metrics"]
     config["config"]
     logging["logging"]
@@ -230,7 +241,7 @@ The two most load-bearing cross-package couplings — memorize these:
 ## 2. Bootstrapping — `cmd/pam-server/main.go`
 
 `main()` is a small dispatcher over utility flags (`-genkey`, `-hashkey`,
-`-rotate-kek`, `-split-key`, `-healthcheck`); the default path is `run()`, which
+`-rotate-kek`, `-split-key`, `-healthcheck`, `-version`); the default path is `run()`, which
 builds and starts the server. The startup order matters — later steps depend on
 earlier ones:
 
@@ -1232,6 +1243,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-10-17 | §1: the package map gains the ten packages that were only in this change log (`accountscan`, `timeframe`, `restrict`, `banner`, `report`, `inventorycsv`, `csvcell`, `telnet`, `expect`, `recarchive`); the listeners include the SQL Server proxy; §2's flag list includes `-version`. |
 | 2026-10-17 | §3.3 no longer names a newest migration (it said `0060`; the directory holds `0068`). |
 | 2026-10-17 | §3.3: the store contract suite covers all 243 methods again (`UpdateUserManager`, Phase 256, had no case), and `store.TestContractCallsEveryStoreMethod` now fails on any method the suite never calls; the count is no longer written as a number that goes stale. |
 | 2026-10-17 | **Upstream SSH host keys, described as they work since Phase 272.** Without `PAM_SSH_KNOWN_HOSTS`, sessions pin each target's key on first contact (`PAM_SSH_HOST_KEY_CHECK=tofu`; `strict`/`off`); only the rotation connector and the jump host still trust any key. The doc had said unset meant trust-any. |
