@@ -64,6 +64,11 @@ the next release to carry.
   service account. `policy.yaml` now grants the secrets to a `readers`
   layer, and both hosts are members of it. The README shows how to load it
   and set the authenticator's variables.
+- **The Conjur policy prefix default is defined once.** Startup sourcing
+  and runtime refresh each hard-coded `pamv1`, so changing one would have
+  left them reading different variables. Both now call
+  `conjur.PolicyPrefix()`. The low-level doc had listed the default as
+  `PAMv1`; it is the identifier `pamv1`.
 
 **Repository history.** On 2026-10-14 the git history was rewritten to
 normalize commit authorship. No file changed: every tag points at a tree

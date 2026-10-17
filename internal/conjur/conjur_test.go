@@ -153,6 +153,20 @@ func TestSourceTrimsLikeRefresh(t *testing.T) {
 	}
 }
 
+// TestPolicyPrefix proves the prefix defaults to the id policy.yaml declares
+// and that PAM_CONJUR_POLICY_PREFIX overrides it.
+func TestPolicyPrefix(t *testing.T) {
+	t.Setenv("PAM_CONJUR_POLICY_PREFIX", "")
+	// The literal, not the constant: the README and policy.yaml document pamv1.
+	if got := conjur.PolicyPrefix(); got != "pamv1" {
+		t.Fatalf("default prefix = %q, want pamv1", got)
+	}
+	t.Setenv("PAM_CONJUR_POLICY_PREFIX", "prod/pam")
+	if got := conjur.PolicyPrefix(); got != "prod/pam" {
+		t.Fatalf("prefix = %q, want the env override", got)
+	}
+}
+
 // TestSourceEnvDisabled proves SourceEnv is a no-op when Conjur is not configured.
 func TestSourceEnvDisabled(t *testing.T) {
 	t.Setenv("PAM_CONJUR_URL", "")
