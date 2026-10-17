@@ -33,6 +33,11 @@ the next release to carry.
   release on a refreshed base.
 - **Release workflow** (#451). `anchore/sbom-action` 0.24.2 → 0.24.3, the step
   that generates each release's SPDX SBOM.
+- **`masterzen/winrm`** 2026-04-07 → 2026-10-04 (untagged upstream). NTLM
+  now runs on `Azure/go-ntlmssp`, with message sealing kept, and five
+  indirect modules drop out of the build (`bodgit/ntlmssp`,
+  `bodgit/windows`, `go-logr/logr`, `hashicorp/go-cleanhttp`,
+  `tidwall/transform`).
 - **Terraform: AWS provider 6.** The `cloud-postgres` example module moves
   from `hashicorp/aws ~> 5.0` to `~> 6.0`, the maintained major; it
   validates unchanged. Both modules are now `terraform fmt`-clean, which
