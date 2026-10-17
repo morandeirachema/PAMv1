@@ -53,6 +53,9 @@ the next release to carry.
   Every value is piped in with `conjur variable set -f -`, so no secret
   appears in the process list, and a table shows what a restart does to each
   of the four secrets that are not refreshed.
+- **`deploy/k8s/conjur/policy.yaml` no longer copies the setup commands.**
+  Its copy had drifted from the README (it set no sign seed); it now points
+  to the README, and names the project PAMv1 in its comments.
 
 **Repository history.** On 2026-10-14 the git history was rewritten to
 normalize commit authorship. No file changed: every tag points at a tree
