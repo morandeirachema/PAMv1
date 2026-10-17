@@ -120,6 +120,13 @@ the next release to carry.
   including a local temp path. It now has the file's SHA-256, and the
   Guacamole client's entry gains one too; both vendored files were checked
   byte for byte against their published npm builds.
+- **RDP/VNC refusals reach a SIEM as findings.** The OCSF export classified
+  `rdp.refused`, `vnc.refused` and the two `*.transfer_blocked` actions as
+  routine API activity, while their SSH, WinRM and SFTP twins were
+  Detection Findings: they were built at runtime, where the coverage test
+  could not see them. They are findings now, and so are
+  `sftp.icap_flagged` (an infected file) and `restriction.killed` (a session
+  a restriction rule ended).
 - **The appliance build works again.** `deploy/ova/build.sh` pinned Debian
   13.6.0 at `debian-cd/current/`, which Debian moved on to 13.7.0, so the
   download returned 404. It now pins 13.7.0, falls back to Debian's archive

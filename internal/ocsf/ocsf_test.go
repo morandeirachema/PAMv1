@@ -160,3 +160,23 @@ func TestBrokerToolCallOutcomesClassified(t *testing.T) {
 		t.Errorf("%s has a findingExact entry that duplicates the .failed suffix rule; keep one mechanism, not two", broker.ActionToolCallFailed)
 	}
 }
+
+// TestViewerRefusalsAndEnforcementsAreFindings pins the classification the
+// 2026-10-17 audit added: the RDP/VNC viewers' refusals and transfer blocks
+// (built at runtime until then, so no literal scan saw them), an ICAP
+// infection verdict on SFTP, and a restriction rule's kill. A notify rule
+// only reports, so it stays routine.
+func TestViewerRefusalsAndEnforcementsAreFindings(t *testing.T) {
+	for _, action := range []string{
+		"rdp.refused", "vnc.refused", "rdp.transfer_blocked", "vnc.transfer_blocked",
+		"sftp.icap_flagged", "restriction.killed",
+	} {
+		ev := FromAudit(store.AuditEvent{ID: 1, Actor: "alice", Action: action})
+		if ev["class_uid"] != ClassDetectionFinding {
+			t.Errorf("%s: class_uid = %v, want a Detection Finding", action, ev["class_uid"])
+		}
+	}
+	if ev := FromAudit(store.AuditEvent{ID: 1, Actor: "alice", Action: "restriction.notified"}); ev["class_uid"] != ClassAPIActivity {
+		t.Errorf("restriction.notified: class_uid = %v, want API Activity", ev["class_uid"])
+	}
+}
