@@ -18,8 +18,9 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
-Three dependency updates merged on 2026-10-14, for the next release to carry.
-No PAMv1 code changed, and CI passed on each.
+Three dependency updates merged on 2026-10-14 (no PAMv1 code changed, and CI
+passed on each), and the fixes from a review of the Conjur deploy docs, for
+the next release to carry.
 
 **Changed.**
 
@@ -32,6 +33,15 @@ No PAMv1 code changed, and CI passed on each.
   release on a refreshed base.
 - **Release workflow** (#451). `anchore/sbom-action` 0.24.2 → 0.24.3, the step
   that generates each release's SPDX SBOM.
+
+**Fixed.**
+
+- **Conjur values are trimmed at startup too.** The refresher trimmed what
+  Conjur returned, but startup did not, so a value stored with a trailing
+  newline booted as part of the key: `pamv1/api-key` set from a file left
+  the real admin key rejected. Refresh never corrected it, because it
+  compares against the trimmed environment and saw no change. Startup now
+  trims the same way, and an all-whitespace value counts as not managed.
 
 **Repository history.** On 2026-10-14 the git history was rewritten to
 normalize commit authorship. No file changed: every tag points at a tree

@@ -273,8 +273,12 @@ func (c *Client) populateEnv(ctx context.Context) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !ok {
-			continue // not managed in Conjur
+		// Trim exactly as the refresher does. It seeds its last-applied digest
+		// from the trimmed environment, so an untrimmed value here would boot
+		// with the trailing newline and never be corrected by a refresh tick.
+		val = strings.TrimSpace(val)
+		if !ok || val == "" {
+			continue // not managed in Conjur; config validation fails loud if required
 		}
 		if err := os.Setenv(s.env, val); err != nil {
 			return nil, err

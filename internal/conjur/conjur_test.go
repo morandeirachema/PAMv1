@@ -123,6 +123,36 @@ func TestSourceEnvFillsEmptyOnly(t *testing.T) {
 	}
 }
 
+// TestSourceTrimsLikeRefresh proves startup trims a Conjur value the same way
+// the refresher does: a trailing newline from `conjur variable set` must not
+// become part of the key, and an all-whitespace value counts as not managed.
+func TestSourceTrimsLikeRefresh(t *testing.T) {
+	srv := fakeConjur(t, map[string]string{
+		"pamv1/api-key":    "conjur-api\n",
+		"pamv1/master-key": " \n",
+	})
+	t.Setenv("PAM_CONJUR_URL", srv.URL)
+	t.Setenv("PAM_CONJUR_ACCOUNT", "default")
+	t.Setenv("PAM_CONJUR_AUTHN_LOGIN", "host/pamv1")
+	t.Setenv("PAM_CONJUR_API_KEY", "k")
+	t.Setenv("PAM_API_KEY", "")
+	t.Setenv("PAM_MASTER_KEY", "")
+
+	_, filled, err := conjur.Source(context.Background())
+	if err != nil {
+		t.Fatalf("Source: %v", err)
+	}
+	if got := os.Getenv("PAM_API_KEY"); got != "conjur-api" {
+		t.Fatalf("PAM_API_KEY = %q, want the trimmed Conjur value", got)
+	}
+	if got := os.Getenv("PAM_MASTER_KEY"); got != "" {
+		t.Fatalf("PAM_MASTER_KEY = %q, an all-whitespace value must not be sourced", got)
+	}
+	if strings.Join(filled, ",") != "PAM_API_KEY" {
+		t.Fatalf("filled = %v, want only PAM_API_KEY", filled)
+	}
+}
+
 // TestSourceEnvDisabled proves SourceEnv is a no-op when Conjur is not configured.
 func TestSourceEnvDisabled(t *testing.T) {
 	t.Setenv("PAM_CONJUR_URL", "")
