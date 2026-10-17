@@ -15,7 +15,21 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # Dockerfiles: the two images, and the throwaway RDP/VNC demo targets, which
+  # sit in their own directories (one `directory` covers only its own files).
+  # Dependabot raises a digest or tag within a line; moving to the next Debian
+  # release (the distroless debian12 -> debian13 move) stays a deliberate edit.
   - package-ecosystem: docker
+    directories:
+      - /deploy/docker
+      - /deploy/docker/rdp-target
+      - /deploy/docker/vnc-target
+    schedule:
+      interval: weekly
+  # The compose files' images (postgres, guacd, busybox, the demo seed's curl)
+  # are a separate ecosystem: the docker one never reads compose files, which
+  # is how the seed's curl pin fell eleven releases behind.
+  - package-ecosystem: docker-compose
     directory: /deploy/docker
     schedule:
       interval: weekly
