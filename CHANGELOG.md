@@ -42,6 +42,17 @@ the next release to carry.
   the real admin key rejected. Refresh never corrected it, because it
   compares against the trimmed environment and saw no change. Startup now
   trims the same way, and an all-whitespace value counts as not managed.
+- **The Conjur deploy README matches what the code does.** It said an
+  environment value always wins and that values are read only at startup;
+  with refresh on, as the shipped deployment has it, Conjur wins for the two
+  refreshable secrets. Its setup set fresh broker audit keys as if they were
+  required, which stops a server whose cluster already holds them in shared
+  custody; they are optional now, and the README says when setting them is
+  safe. The break-glass hash now comes from `pam-server -hashkey`, because a
+  hash taken with `echo | sha256sum` includes the newline and never matches.
+  Every value is piped in with `conjur variable set -f -`, so no secret
+  appears in the process list, and a table shows what a restart does to each
+  of the four secrets that are not refreshed.
 
 **Repository history.** On 2026-10-14 the git history was rewritten to
 normalize commit authorship. No file changed: every tag points at a tree

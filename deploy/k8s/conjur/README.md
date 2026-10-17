@@ -26,13 +26,18 @@ At boot, when `PAM_CONJUR_URL` is set, PAMv1 authenticates to Conjur and fills
 | `PAM_BROKER_AUDIT_KEY` | `pamv1/broker-audit-key` |
 | `PAM_BROKER_AUDIT_SIGN_SEED` | `pamv1/broker-audit-sign-seed` |
 
-An **explicit environment value always wins** (Conjur only fills gaps), and a
+At startup an **explicit environment value wins** (Conjur only fills gaps), and a
 variable that isn't defined in Conjur (HTTP 404) is simply skipped — provide it
 via env/SOPS instead. A configured-but-unreachable Conjur is **fail-loud**: the
-server refuses to start rather than come up with empty secrets.
+server refuses to start rather than come up with empty secrets. Values are
+trimmed, so a trailing newline from a file or a pipe never becomes part of a key.
 
-The retrieval is one-shot at startup (like SOPS is one-shot at apply); rotating a
-value in Conjur takes effect on the next restart.
+After startup it depends on the secret. `PAM_API_KEY` and
+`PAM_BREAK_GLASS_KEY_HASH` are **refreshed in place** when
+`PAM_CONJUR_REFRESH_MIN` is set, as the shipped `deployment.yaml` does (every 60
+minutes) — and then **Conjur wins** even over a value pinned in the environment.
+The other four are read only at startup, and for three of them a restart is not
+a rotation at all. See [Rotating without a restart](#rotating-without-a-restart).
 
 ## Setup
 
@@ -40,14 +45,37 @@ value in Conjur takes effect on the next restart.
 
    ```bash
    conjur policy load -b root -f policy.yaml
-   conjur variable set -i pamv1/master-key           -v "$(./pam-server -genkey)"
-   conjur variable set -i pamv1/api-key              -v "$(openssl rand -hex 24)"
-   conjur variable set -i pamv1/database-url         -v 'postgres://pam:...@postgres:5432/pam?sslmode=verify-full'
-   conjur variable set -i pamv1/break-glass-key-hash -v '<sha256-hex>'
-   # Only if the AI-agent broker is enabled (PAM_BROKER_POLICY_FILE) — the policy
-   # declares both, and PAMv1 fetches them at startup like the four above.
-   conjur variable set -i pamv1/broker-audit-key       -v "$(openssl rand -base64 32)"
-   conjur variable set -i pamv1/broker-audit-sign-seed -v "$(openssl rand -base64 32)"
+
+   # Every value is piped in with `-f -` (Conjur CLI 8.1.3 or later), never
+   # passed as `-v <value>`: an argument is visible to every local user in `ps`.
+   # `read` and `printf` are shell builtins, so they start no process either.
+   ./pam-server -genkey | conjur variable set -i pamv1/master-key -f -
+   openssl rand -hex 24 | conjur variable set -i pamv1/api-key    -f -
+
+   read -rs DB_URL      # postgres://pam:...@postgres:5432/pam?sslmode=verify-full
+   printf '%s' "$DB_URL" | conjur variable set -i pamv1/database-url -f -
+
+   # The break-glass hash must come from -hashkey, which hashes exactly what the
+   # server compares. `echo "$KEY" | sha256sum` hashes the newline too: the
+   # result is valid hex, so startup accepts it, and the key never matches.
+   read -rs BREAK_GLASS_KEY
+   printf '%s' "$BREAK_GLASS_KEY" | ./pam-server -hashkey \
+     | conjur variable set -i pamv1/break-glass-key-hash -f -
+   unset DB_URL BREAK_GLASS_KEY
+   ```
+
+   The AI-agent broker's two audit-chain keys are **optional**, and leaving them
+   out is the default: PAMv1 generates each once and holds it in shared custody,
+   sealed by the KEK. Set them in Conjur only to hold the keys yourself, and
+   only **before the broker first runs**. On a cluster that already runs it, a
+   `pamv1/broker-audit-key` that differs from the custody key stops the server
+   (it refuses to fork the audit chain), and a new sign seed rotates the head
+   signer, so earlier checkpoints verify only through
+   `PAM_BROKER_AUDIT_SIGN_PREV`:
+
+   ```bash
+   openssl rand -base64 32 | conjur variable set -i pamv1/broker-audit-key       -f -
+   openssl rand -base64 32 | conjur variable set -i pamv1/broker-audit-sign-seed -f -
    ```
 
 2. Point pam-server at Conjur and pick an authenticator:
@@ -127,10 +155,24 @@ Two things worth knowing before you rely on it:
 - **A variable you delete is not a revocation.** Removing or emptying it keeps
   the running value — a policy edit must never disable break-glass — and logs a
   warning. To retire a key, set a new value.
+- **Refresh takes over a value pinned in the environment.** If `PAM_API_KEY` is
+  set in the Deployment *and* `pamv1/api-key` exists, Conjur's value replaces
+  the environment one on the first tick, and startup logs a warning naming it.
+  Without refresh the environment value still wins.
 
-On this authn-jwt deployment the projected token below expires every 10 minutes
-and the kubelet rewrites the file; the client re-reads it on every authenticate,
-so refresh keeps working past the first expiry.
+The four pinned secrets change only on a restart, and only one of them is
+safe to change that way:
+
+| Changed in Conjur, then restarted | What happens |
+|---|---|
+| `pamv1/database-url` | the new URL is used |
+| `pamv1/master-key` | every stored secret is undecryptable — rotate with `pam-server -rotate-kek`, offline, instead |
+| `pamv1/broker-audit-key` | the server refuses to start: the key differs from the chain key in shared custody |
+| `pamv1/broker-audit-sign-seed` | the head signer rotates; set `PAM_BROKER_AUDIT_SIGN_PREV` to the old public key first, or earlier checkpoints stop verifying |
+
+On the authn-jwt deployment in `deployment.yaml`, the projected token expires
+every 10 minutes and the kubelet rewrites the file; the client re-reads it on
+every authenticate, so refresh keeps working past the first expiry.
 
 ## Deferred
 
