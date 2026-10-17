@@ -638,7 +638,7 @@ root, VirtualBox or Packer required:
 
 ```bash
 cd deploy/ova && ./build.sh          # ~15 min; → ~/.cache/pamv1-ova/*.ova
-VBoxManage import ~/.cache/pamv1-ova/pamv1-appliance-13.6.0.ova
+VBoxManage import ~/.cache/pamv1-ova/pamv1-appliance-13.7.0.ova
 VBoxManage modifyvm pamv1-appliance --natpf1 "portal,tcp,127.0.0.1,8080,,8080"
 VBoxManage startvm pamv1-appliance --type headless
 # → http://127.0.0.1:8080 — the admin key is generated on first boot and

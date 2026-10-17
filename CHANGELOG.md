@@ -80,6 +80,11 @@ the next release to carry.
   time (#463, #464), and each sweep missed files. `TestProjectNameCasing`
   scans every tracked file and fails on a lowercase `pamv1` that is prose
   rather than an identifier, naming the file and line.
+- **The appliance build works again.** `deploy/ova/build.sh` pinned Debian
+  13.6.0 at `debian-cd/current/`, which Debian moved on to 13.7.0, so the
+  download returned 404. It now pins 13.7.0, falls back to Debian's archive
+  so the next point release cannot break it the same way, and downloads to a
+  `.part` file so an interrupted download is not mistaken for the ISO.
 
 **Security.**
 
