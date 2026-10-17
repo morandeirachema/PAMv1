@@ -2,8 +2,9 @@
 
 PAMv1 can fetch its **own** bootstrap secrets — `PAM_MASTER_KEY`, `PAM_API_KEY`,
 `PAM_DATABASE_URL`, the break-glass hash, and the broker audit keys — from a
-[CyberArk Conjur](https://www.conjur.org/) instance at startup, instead of from a
-Kubernetes Secret. This is the **runtime-broker** alternative to the
+[CyberArk Conjur](https://github.com/cyberark/conjur) instance at startup, instead of from a
+Kubernetes Secret. Conjur Open Source works, and so does its commercial
+edition, CyberArk Secrets Manager, Self-Hosted, which serves the same REST API. This is the **runtime-broker** alternative to the
 [SOPS GitOps sealing](../sops/) (Phase 14).
 
 **Both mechanisms ship; neither is mandatory.** SOPS stays the zero-dependency
@@ -82,7 +83,7 @@ a rotation at all. See [Rotating without a restart](#rotating-without-a-restart)
 
    **authn-jwt (recommended, Kubernetes-native — no bootstrap secret in Git).**
    The pod presents a projected service-account token; Conjur's
-   [`authn-jwt`](https://docs.conjur.org/) verifies it against the cluster's JWKS.
+   [`authn-jwt`](https://github.com/cyberark/conjur#authenticators) verifies it against the cluster's JWKS.
    [`authn-jwt.yaml`](authn-jwt.yaml) is the Conjur side: the authenticator, and
    a host for the pod's service account that may read the bootstrap secrets.
    Load it after `policy.yaml`, and set the authenticator's variables. These are

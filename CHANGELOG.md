@@ -164,6 +164,12 @@ Kubernetes provider 3 move (both under **Changed**).
   download returned 404. It now pins 13.7.0, falls back to Debian's archive
   so the next point release cannot break it the same way, and downloads to a
   `.part` file so an interrupted download is not mistaken for the ISO.
+- **Conjur links and license.** `conjur.org` now redirects to Palo Alto
+  Networks' commercial page and `docs.conjur.org` to a page that no longer
+  exists, so the links point to the GitHub project. Conjur Open Source is
+  LGPL-3.0, not Apache-2.0 as `docs/RELATED-PROJECTS.md` said. It is still
+  released and supported, and PAMv1's client is unaffected by its v1.27.0
+  changes, which touched endpoints PAMv1 does not call.
 
 **Security.**
 

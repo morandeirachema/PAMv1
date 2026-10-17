@@ -9,7 +9,7 @@
 > comparison lives in the README's
 > [coverage section](../README.md#coverage-vs-commercial-pam-cyberark-wallix-).
 >
-> Last updated: 2026-07-23 · Reflects: the PAM landscape as of mid-2026.
+> Last updated: 2026-10-17 · Reflects: the PAM landscape as of mid-2026.
 >
 > **Two caveats.** (1) *Licenses change* — several formerly-OSI-open projects moved
 > to *source-available* terms (HashiCorp **Vault**/**Boundary** → BUSL;
@@ -74,7 +74,7 @@ flowchart TB
 |---|---|---|---|
 | [HashiCorp Vault](https://www.vaultproject.io/) | BUSL | Dynamic secrets, database credentials, and an **SSH secrets engine that signs certificates** | PAMv1's vault + KEK + SSH-CA cover a small, opinionated subset |
 | [OpenBao](https://openbao.org/) | MPL-2.0 | The Linux-Foundation, fully-open fork of Vault after its relicensing | The OSI-open alternative if licensing matters |
-| [CyberArk Conjur (OSS)](https://www.conjur.org/) | Apache-2.0 | Machine-identity secrets for apps/DevOps | PAMv1 can **source its own bootstrap secrets** from Conjur (Phase 18), and its Tier-4 **application-secrets API** (Phase 24) is "Conjur-style" |
+| [CyberArk Conjur (OSS)](https://github.com/cyberark/conjur) | LGPL-3.0 | Machine-identity secrets for apps/DevOps | PAMv1 can **source its own bootstrap secrets** from Conjur (Phase 18), and its Tier-4 **application-secrets API** (Phase 24) is "Conjur-style" |
 | [Infisical](https://github.com/Infisical/infisical) · [Passbolt](https://www.passbolt.com/) | MIT core / AGPL | Secrets & team-password vaulting | Vault-only; no session brokering |
 
 ### Ephemeral credentials / SSH certificate authorities (Zero Standing Privilege)
@@ -138,7 +138,7 @@ flowchart TB
 
 | Vendor / product | What it is | Notable pieces |
 |---|---|---|
-| [CyberArk](https://www.cyberark.com/products/privileged-access-manager/) — Privileged Access Manager (self-hosted / Privilege Cloud) | The market leader | Digital Vault, **PSM** (session manager), **CPM** (rotation), **PTA** (threat analytics), **Secrets Manager** + **Secrets Hub**, **Dynamic Privileged Access** (JIT/ZSP). Also owns **[Conjur](https://www.conjur.org/)** (OSS) and machine identity via Venafi |
+| [CyberArk](https://www.cyberark.com/products/privileged-access-manager/) — Privileged Access Manager (self-hosted / Privilege Cloud) | The market leader | Digital Vault, **PSM** (session manager), **CPM** (rotation), **PTA** (threat analytics), **Secrets Manager** + **Secrets Hub**, **Dynamic Privileged Access** (JIT/ZSP). Also owns **[Conjur](https://github.com/cyberark/conjur)** (OSS); part of Palo Alto Networks since 2026 and machine identity via Venafi |
 | [BeyondTrust](https://www.beyondtrust.com/products/privileged-remote-access) | Session/password + endpoint | **Privileged Remote Access**, **Password Safe**, **Endpoint Privilege Management (EPM)**; acquired **Entitle** for cloud JIT |
 | [Delinea](https://delinea.com/products/secret-server) | Secrets + session (ex-Thycotic + Centrify) | **Secret Server**, Privileged Access Service, **Privilege Manager** (EPM), DevOps Secrets Vault |
 | [Wallix](https://www.wallix.com/privileged-access-management/) | Session-centric bastion (EU) | **WALLIX Bastion** (session mgmt + recording), Access Manager, Password Manager, PEDM |
@@ -163,7 +163,7 @@ built directly on top of, one of the open-source projects in Part 1.
 |---|---|---|
 | **Teleport Enterprise / Cloud** | [Teleport OSS](https://github.com/gravitational/teleport) (Apache-2.0) | Open core — governance/compliance features in the paid tier |
 | **HashiCorp Vault Enterprise / HCP Vault**, **Boundary Enterprise / HCP** | [Vault](https://www.vaultproject.io/) · [Boundary](https://www.boundaryproject.io/) (BUSL, source-available) | Open(-ish) core; the fully-open fork is [OpenBao](https://openbao.org/) |
-| **CyberArk Conjur Enterprise** | [Conjur OSS](https://www.conjur.org/) (Apache-2.0) | Open core (secrets for machines) |
+| **CyberArk Secrets Manager, Self-Hosted** (formerly Conjur Enterprise; Palo Alto Networks since its 2026 acquisition of CyberArk) | [Conjur OSS](https://github.com/cyberark/conjur) (LGPL-3.0) | Open core (secrets for machines) |
 | **JumpServer** commercial edition (FIT2CLOUD) | [JumpServer OSS](https://github.com/jumpserver/jumpserver) (GPLv3) | Open core PAM/bastion |
 | **[Keeper Connection Manager](https://www.keepersecurity.com/connection-manager.html)** | [Apache Guacamole](https://guacamole.apache.org/) | Commercial packaging of the clientless RDP/SSH/VNC gateway |
 | **Infisical Cloud** | [Infisical OSS](https://github.com/Infisical/infisical) | Open core secrets management |
@@ -197,5 +197,6 @@ needs a real account or host to build.
 
 | Date | Change |
 |---|---|
+| 2026-10-17 | **Conjur.** Conjur Open Source is LGPL-3.0, not Apache-2.0; it is still released (v1.27.0, 2026-05) and community-supported. Its commercial edition is CyberArk Secrets Manager, Self-Hosted, owned by Palo Alto Networks since 2026. Links point to the GitHub project: conjur.org now redirects to Palo Alto's commercial page, and docs.conjur.org to a page that no longer exists. |
 | 2026-07-22 | Merged the commercial-product landscape (Part 2 — traditional leaders, cloud-native/CIEM, and commercial products built on open-source cores) into this doc alongside the open-source landscape (Part 1). |
 | 2026-07-21 | Initial landscape of related open-source PAM / bastion / secrets / SSH-CA / gateway projects and where PAMv1 fits. |
