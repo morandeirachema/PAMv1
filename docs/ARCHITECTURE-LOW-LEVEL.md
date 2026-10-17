@@ -503,7 +503,7 @@ endpoints arrive with the OT/approval phase).
   target's set; grants that narrow to nothing the target allows yield the
   explicit `"none"`, never `""`). Deployment switches stay ceilings: a right
   listed on a row cannot turn on what `PAM_SSH_PORT_FORWARD`,
-  `PAM_SSH_SFTP_MODE=deny` or `PAM_RDP_DRIVE`/`_PRINTER`/`_AUDIO`/`_AUDIO_IN`
+  `PAM_SSH_SFTP=deny` or `PAM_RDP_DRIVE`/`_PRINTER`/`_AUDIO`/`_AUDIO_IN`
   turn off. Folded safe memberships and label rules carry no set.
 - **Label rules** (Phase 250): a target carries a canonical label set
   (`targets.labels`, `"env=prod,tier=db"`; `store.NormalizeLabels` /
@@ -1336,6 +1336,7 @@ written to the separate tamper-evident `broker_audit_events` chain.
 
 | Date | Change |
 | --- | --- |
+| 2026-10-17 | **`PAM_SSH_SFTP=deny`**, not `PAM_SSH_SFTP_MODE`, in the sub-protocol rights paragraph: the code reads `PAM_SSH_SFTP`. |
 | 2026-10-17 | **xterm.js 6.0.0.** The in-portal terminal's vendored renderer moves from 5.5.0 to 6.0.0 (the UMD `lib/xterm.js` and its stylesheet, inlined in `index.html`), both verbatim; NOTICE carries the new SHA-256. The calls the portal makes (constructor options, `open`, `write`, `onData`, `onResize`, `attachCustomKeyEventHandler`, `resize`, `focus`, `dispose`) are unchanged in 6.0; it uses none of the removed options (`windowsMode`, `fastScrollModifier`, `overviewRulerWidth`). |
 | 2026-10-17 | **The name casing is a test.** `internal/releasedocs` gains `TestProjectNameCasing`: every file `git ls-files` lists (bar `go.mod`, `go.sum` and the applied migrations) is scanned for a lowercase `pamv1` that is prose rather than an identifier — not glued to a path, flag, key or quote, not a flag or Helm/systemd argument, not a YAML or preseed value, not in Markdown code. `TestProseUseHeuristic` pins both sides of that line. It skips without a git checkout. |
 | 2026-10-17 | **Conjur: one policy prefix, and trimmed values at startup.** `conjur.DefaultPolicyPrefix` (`pamv1`) and `conjur.PolicyPrefix()` replace the two hard-coded defaults, in `populateEnv` and in the refresher wiring in `cmd/pam-server`, so startup sourcing and refresh cannot resolve different variable ids under the same config. `populateEnv` now trims each value as the refresher does, and an all-whitespace value counts as not managed. The env table listed the prefix default as `PAMv1`: it is the identifier `pamv1`. No schema, env-var or audit-vocabulary change. |

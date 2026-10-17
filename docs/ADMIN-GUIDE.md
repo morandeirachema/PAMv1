@@ -1516,7 +1516,7 @@ when the session opens.
   the secret, and `send echo ${password}` would print it.
 - A telnet session is a shell: it needs the `ssh_shell` right where a
   target's or grant's sub-protocol set is narrowed, and it waits for a
-  supervisor under `PAM_REQUIRE_SUPERVISION`.
+  supervisor under `PAM_REQUIRE_LIVE_SUPERVISION`.
 - `outcome:ok` means every step of the scenario ran. The default login ends
   with sending the password, so a wrong password still shows `ok`; end a
   scenario with an `expect` for the device's prompt to make a failed login
@@ -2274,7 +2274,7 @@ sub-protocol lists do. Nine names:
   target's set as it is. A grant that narrows to nothing the target allows
   admits the session to nothing (an explicit refusal, never "everything").
 - **The deployment's switches are ceilings.** `PAM_SSH_PORT_FORWARD=false`,
-  `PAM_SSH_SFTP_MODE=deny` and the four new desktop ceilings —
+  `PAM_SSH_SFTP=deny` and the four new desktop ceilings —
   `PAM_RDP_DRIVE`, `PAM_RDP_PRINTER` (both default `false`, as drive
   redirection always was: a file through a redirected drive leaves no
   record, SFTP is the audited path), `PAM_RDP_AUDIO` (`true`),
@@ -5470,6 +5470,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-10-17 | **Two variable names corrected.** `PAM_REQUIRE_LIVE_SUPERVISION` (the guide said `PAM_REQUIRE_SUPERVISION`) and `PAM_SSH_SFTP=deny` (it said `PAM_SSH_SFTP_MODE`); setting either wrong name did nothing. |
 | 2026-10-17 | **PostgreSQL 18.** The docker-compose stack bundles PostgreSQL 18 (was 17); 17 and 18 are the recommended versions, 14+ still works. **Terraform `hashicorp/kubernetes` 3.x.** §3.5: the module needs Terraform 1.8+, uses the provider's `_v1` resource types, and state from an earlier version is migrated once (the namespace by a `moved` block, the Secret, Deployment and Service by `state rm` + `import`). |
 | 2026-10-08 | **Phase 283 (recording archives).** §9.3 *Portable recording archives*: export by user/target/protocol/window, the manifest, import and its imported verdict, purge from the exporting deployment only. |
 | 2026-10-08 | **Phase 281 (review of 274–280).** "Since the review" notes in §5.1, the telnet section, the approval-depth section, §9.1a, §9.2c, §9.3c and §9.4a: what changed in behaviour and why. |

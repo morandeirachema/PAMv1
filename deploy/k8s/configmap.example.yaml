@@ -128,7 +128,8 @@ data:
   # PAM_PROXY_WINRM: "false"             # interactive WinRM loop over the SSH proxy
 
   # --- SSH upstream: host pinning, jump host, Zero Standing Privilege ------
-  # PAM_SSH_KNOWN_HOSTS: "/etc/pamv1/known_hosts"   # unset = trust-any + warn
+  # PAM_SSH_KNOWN_HOSTS: "/etc/pamv1/known_hosts"   # authoritative when set; unset = sessions use the check below, rotation/jump trust any
+  # PAM_SSH_HOST_KEY_CHECK: "tofu"   # without known_hosts: tofu (pin on first contact) | strict (refuse unpinned) | off (trust any)
   # PAM_SSH_JUMP_HOST: "bastion.internal:22"
   # PAM_SSH_JUMP_USER: "jump"
   # PAM_SSH_JUMP_KEY: "/etc/pamv1/jump_key"

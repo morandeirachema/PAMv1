@@ -641,7 +641,7 @@ las de arranque y transporte de abajo permanecen solo en el entorno.
 | `PAM_LISTEN_ADDR` | no | Dirección HTTP, por defecto `:8080` |
 | `PAM_SSH_ADDR` | no | Dirección del proxy SSH, por defecto `:2222`; `off` lo desactiva |
 | `PAM_SSH_HOST_KEY` | no | Ruta para persistir la host key del proxy (PEM); vacío = efímera |
-| `PAM_SSH_KNOWN_HOSTS` | no | Fija las host keys de los objetivos (fichero known_hosts); vacío = confiar en cualquiera (logueado) |
+| `PAM_SSH_KNOWN_HOSTS` | no | Fija las host keys de los objetivos (fichero known_hosts), y manda cuando está definido. Sin él, las sesiones fijan la clave de cada objetivo en el primer contacto (`PAM_SSH_HOST_KEY_CHECK=tofu`; `strict` rechaza un objetivo sin clave fijada, `off` confía en cualquiera); la rotación y el jump host siguen confiando en cualquier clave sin este fichero |
 | `PAM_RECORDING_DIR` | no | Dónde se escriben las grabaciones, por defecto `recordings` |
 | `PAM_BROKER_POLICY_FILE` | no | Política YAML del bróker de agentes; ponerla activa el bróker de IA |
 

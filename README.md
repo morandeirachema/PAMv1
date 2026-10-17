@@ -732,7 +732,7 @@ bootstrap and transport keys below stay environment-only.
 | `PAM_LISTEN_ADDR` | no | HTTP listen address, default `:8080` |
 | `PAM_SSH_ADDR` | no | SSH proxy address, default `:2222`; `off` disables it |
 | `PAM_SSH_HOST_KEY` | no | Path to persist the proxy host key (PEM); empty = ephemeral |
-| `PAM_SSH_KNOWN_HOSTS` | no | Pin upstream target host keys (known_hosts file); empty = trust-any (logged) |
+| `PAM_SSH_KNOWN_HOSTS` | no | Pin upstream target host keys (known_hosts file), authoritative when set. Unset: sessions pin each target's key on first contact (`PAM_SSH_HOST_KEY_CHECK=tofu`; `strict` refuses an unpinned target, `off` trusts any); rotation and the jump host still trust any key without this file |
 | `PAM_RECORDING_DIR` | no | Where session recordings are written, default `recordings` |
 | `PAM_REQUIRE_RECORDING` | no | Refuse any session that cannot be recorded — the fail-closed knob; covers every path to a target |
 | `PAM_DB_ADDR` | no | PostgreSQL session proxy listen address, default `off` |

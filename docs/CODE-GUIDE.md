@@ -597,7 +597,11 @@ makes a session that can't be recorded fail closed.
 - **Jump host** (`PAM_SSH_JUMP_*`) — reaches targets only accessible via an SSH
   bastion by tunneling a `direct-tcpip` channel (`jumpDial`).
 - **Upstream host-key pinning** (`PAM_SSH_KNOWN_HOSTS`) — the proxy verifies the
-  target's host key against a known_hosts file (unset ⇒ trust-any + loud warning).
+  target's host key against a known_hosts file when one is set. Unset, a session
+  follows `PAM_SSH_HOST_KEY_CHECK` (Phase 272, `hostKeyCallbackFor`): `tofu`, the
+  default, pins each target's key on first contact; `strict` refuses an unpinned
+  target; `off` trusts any. The rotation connector and the jump host take only the
+  known_hosts callback, so without the file they trust any key.
 - **Outbound-only endpoint agents** (Phase 153, `endpointagent.go` +
   `internal/endpointagent`, `PAM_ENDPOINT_AGENTS_ENABLED`) — the inverse of the
   jump host: for a target PAMv1 cannot dial at all, a `pam-agent` process ON
@@ -1227,6 +1231,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-10-17 | **Upstream SSH host keys, described as they work since Phase 272.** Without `PAM_SSH_KNOWN_HOSTS`, sessions pin each target's key on first contact (`PAM_SSH_HOST_KEY_CHECK=tofu`; `strict`/`off`); only the rotation connector and the jump host still trust any key. The doc had said unset meant trust-any. |
 | 2026-10-17 | §14 CI list gains the `terraform` job: `fmt -check`, then `init -backend=false` + `validate` of both Terraform modules, which nothing ran before. |
 | 2026-09-16 | Phase 248 (the review of 240–247): `store.SafePermissionsCover` + `SafePermissionOrder` beside `GrantPermits`, and a single-pass `ParseSafePermissions`; `api.safeManagement` replacing `canManageSafe` where the caller's own permission set matters (`canManageSafe` stays as its boolean wrapper), the `Covers` guard in `api.rotateUserToken`, `api.operatorInput` in the viewer bridge, `api.grantDeadline` deleted (the tunnel uses the grants it was admitted under); `auth.ReasonSessionMFAExtension`; `session.entry.swept`; `pgstore.SweepExpiredGrants` on one transaction; `timeframe.Frame.End` building wall-clock edges. |
 | 2026-10-08 | Phase 283 (recording archives): `internal/recarchive`, `api.selectRecordings`, `recordingProtocol`, `exportRecordingArchive`, `importRecordingArchive`, `purgeRecordingArchive`, the imported-provenance check in `playRecording`. |
