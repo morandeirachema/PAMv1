@@ -273,7 +273,7 @@ jobs:
         # are skipped like the CloudNativePG Cluster, but the plain Secret beside
         # them is validated, which is the part that can actually be malformed.
         run: |
-          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
+          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
           "$(go env GOPATH)/bin/kubeconform" -summary -ignore-missing-schemas \
             deploy/k8s/*.yaml deploy/k8s/conjur/deployment.yaml deploy/k8s/flux/*.yaml \
             deploy/k8s/eso/*.yaml \
@@ -285,7 +285,7 @@ jobs:
         # material: it exists precisely so the wholesale apply cannot sweep up
         # secret.example.yaml's CHANGE_ME values.
         run: |
-          go install sigs.k8s.io/kustomize/kustomize/v5@v5.4.3
+          go install sigs.k8s.io/kustomize/kustomize/v5@v5.8.3
           KUSTOMIZE="$(go env GOPATH)/bin/kustomize"
           "$KUSTOMIZE" build deploy/k8s/ > /tmp/base.yaml
           "$KUSTOMIZE" build deploy/k8s/sops/ > /tmp/sealed.yaml
@@ -308,8 +308,8 @@ jobs:
           check-latest: true
       - name: install sops + age
         run: |
-          go install github.com/getsops/sops/v3/cmd/sops@v3.13.2
-          go install filippo.io/age/cmd/age@v1.3.1
+          go install github.com/getsops/sops/v3/cmd/sops@v3.13.3
+          go install filippo.io/age/cmd/age@v1.3.2
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: verify SOPS example
         run: ./deploy/k8s/sops/verify.sh
