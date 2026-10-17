@@ -120,7 +120,7 @@
 |---|---|
 | Build toolchain | Go **1.26+** (only to build from source) |
 | Container image | `gcr.io/distroless/static-debian13:nonroot` — runs as non-root UID **65532**, read-only root FS, no shell. (HSM/PKCS#11 KEK uses `Dockerfile.pkcs11`: cgo + glibc `distroless/base-debian13`, still non-root.) |
-| Database | **PostgreSQL 14+** (compose ships **17**); TLS strongly recommended (`sslmode=verify-full`) |
+| Database | **PostgreSQL 14+** (compose ships **18**); TLS strongly recommended (`sslmode=verify-full`) |
 | Ports | **8080** portal + REST API (HTTP or native HTTPS) · **2222** SSH session proxy · **5433** PostgreSQL session proxy (off by default) · **1433** SQL Server session proxy (off by default) |
 | Docker | Engine **24+**, Compose **v2** |
 | Kubernetes | **1.25+** (restricted Pod Security Standard); optional Prometheus Operator for the ServiceMonitor |
@@ -166,7 +166,7 @@ OVA never clones a root of trust.
 ## Docker / docker-compose
 
 Minimums: Docker Engine 24+, Compose v2. The bundled `deploy/docker/docker-compose.yml`
-runs **four** services: a hardened PostgreSQL 17 (scram-sha-256), a `pam-init`
+runs **four** services: a hardened PostgreSQL 18 (scram-sha-256), a `pam-init`
 one-shot that takes ownership of `/data` for UID 65532, an internal-only `guacd`
 (so RDP brokering works out of the box), and pam-server. Budget for guacd as well
 as pam-server when sizing.
@@ -194,7 +194,7 @@ Volumes:
   `/data`, and genuinely write-once if the archive is to mean anything. The
   retention sweep moves aged recordings there and writes aged audit rows as
   digest-stamped JSON Lines; a backup scoped only to `/data` loses them.
-- PostgreSQL `/var/lib/postgresql/data` — the database (a named volume/PVC).
+- PostgreSQL `/var/lib/postgresql` — the database (a named volume/PVC; PostgreSQL 18 images keep the cluster in `18/docker` beneath it).
 
 The image has **no shell** and runs read-only as non-root; write paths are limited
 to the mounted `/data` volume.
@@ -293,5 +293,5 @@ and rotate/archive it per your retention policy (see [NIS2-COMPLIANCE.md](NIS2-C
 
 | Date | Change |
 |---|---|
-| 2026-10-17 | **Container base images on Debian 13.** distroless stopped updating its debian12 images; both Dockerfiles now pin `static-debian13`/`base-debian13`, and the PKCS#11 build stage moves to `golang:1.27-trixie` with them. This doc also gains the change-log table it lacked: the Phase 192 row below had landed inside the Sizing table. |
+| 2026-10-17 | **Container base images on Debian 13.** distroless stopped updating its debian12 images; both Dockerfiles now pin `static-debian13`/`base-debian13`, and the PKCS#11 build stage moves to `golang:1.27-trixie` with them. This doc also gains the change-log table it lacked: the Phase 192 row below had landed inside the Sizing table. **PostgreSQL 18.** Compose ships 18, and its data volume mounts at `/var/lib/postgresql` (the 18 image's layout). |
 | 2026-08-25 | Phase 192: the build/test toolchain is Go **1.27** (CI and `release.yml`); `go.mod`'s `go 1.26` stays as the minimum a consumer of the module needs, so "Go 1.26+" above is still the requirement to build from source |

@@ -7,7 +7,7 @@ root) to keep the root uncluttered; the build context is still the **repo root**
 |---|---|
 | `Dockerfile` | The default image — `CGO_ENABLED=0`, static, `distroless/static`, non-root. The read-only root filesystem is applied at *run* time by compose (`read_only: true`), not baked into the image |
 | `Dockerfile.pkcs11` | Optional image with the PKCS#11 **HSM KEK** provider (needs cgo + a glibc base) |
-| `docker-compose.yml` | Local full stack: hardened PostgreSQL 17 (scram-sha-256), a `pam-init` volume-ownership one-shot, an internal-only `guacd` (so **RDP brokering works here too**) and pam-server |
+| `docker-compose.yml` | Local full stack: hardened PostgreSQL 18 (scram-sha-256), a `pam-init` volume-ownership one-shot, an internal-only `guacd` (so **RDP brokering works here too**) and pam-server |
 | `.env.example` | **The env example.** Copy to `.env` and fill the keys before `docker compose up`. Every `PAM_*` variable, grouped and commented; the Kubernetes twin is [`../k8s/configmap.example.yaml`](../k8s/configmap.example.yaml) + [`secret.example.yaml`](../k8s/secret.example.yaml) |
 | `docker-compose.rdp-demo.yml` | End-to-end **RDP viewer demo** — a real xrdp desktop + guacd + pam-server, target auto-seeded (see below) |
 | `rdp-target/` | The demo's throwaway RDP target image (XFCE over xrdp). Demo only — never deploy |
@@ -30,6 +30,33 @@ fast if they are missing, but it cannot tell you they are *wrong*:
 go run ./cmd/pam-server -genkey      # PAM_MASTER_KEY (32-byte urlsafe base64)
 openssl rand -base64 24              # PAM_API_KEY — must be ≥16 chars on a real database
 ```
+
+### Upgrading from PostgreSQL 17
+
+The stack moved from PostgreSQL 17 to 18. A major version cannot read the
+other's data directory, and the 18 image also stores its cluster at a new path,
+so an existing `pgdata` volume is **refused** on start (the image says why)
+rather than silently replaced by an empty database. Move the data across with a
+dump, the same way [BACKUP-AND-RESTORE.md](../../docs/BACKUP-AND-RESTORE.md)
+does it:
+
+```bash
+set -a; . ./.env; set +a                 # POSTGRES_PASSWORD, for the commands below
+# 1. With the PostgreSQL 17 stack still running, before updating this directory:
+docker compose exec -T -e PGPASSWORD="$POSTGRES_PASSWORD" db \
+  pg_dump --format=custom --no-owner -U pam -d pam > pam-17.dump
+docker compose down
+docker volume rm "$(basename "$PWD")_pgdata"     # docker_pgdata, from deploy/docker
+# 2. With this version of docker-compose.yml: start the database alone, restore, start the rest.
+docker compose up -d db
+docker compose exec -T -e PGPASSWORD="$POSTGRES_PASSWORD" db \
+  pg_restore --no-owner -U pam -d pam < pam-17.dump
+docker compose up -d
+```
+
+Keep `pam-17.dump` until the portal shows your inventory, then delete it: it
+holds the vault's ciphertext and every user's token hash. `PAM_MASTER_KEY` does
+not change, so the restored secrets decrypt as before.
 
 The PostgreSQL session proxy (`PAM_DB_ADDR`, `:5433`) is **not** enabled in this
 compose file, so nothing listens there even though `.env.example` documents the

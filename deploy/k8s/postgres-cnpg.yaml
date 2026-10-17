@@ -21,7 +21,7 @@ metadata:
     app.kubernetes.io/name: pamv1
 spec:
   instances: 3
-  imageName: ghcr.io/cloudnative-pg/postgresql:17
+  imageName: ghcr.io/cloudnative-pg/postgresql:18
   primaryUpdateStrategy: unsupervised
 
   bootstrap:

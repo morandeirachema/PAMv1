@@ -38,6 +38,13 @@ the next release to carry.
   indirect modules drop out of the build (`bodgit/ntlmssp`,
   `bodgit/windows`, `go-logr/logr`, `hashicorp/go-cleanhttp`,
   `tidwall/transform`).
+- **PostgreSQL 18.** docker-compose (`postgres:18-alpine`), the CI store
+  suite and the CloudNativePG example move from 17 to 18. **Upgrade note
+  for compose users:** 18 cannot read a 17 data directory and stores its
+  cluster at a new path, so the volume now mounts at `/var/lib/postgresql`
+  and an existing `pgdata` volume is refused on start rather than replaced
+  by an empty database. `deploy/docker/README.md` has the dump-and-restore
+  steps. The appliance keeps Debian 13's packaged PostgreSQL 17.
 - **Demo seed image.** The RDP and VNC demo compose files' seed job moves from
   `curlimages/curl:8.11.1` to `8.23.0`.
 - **Terraform: AWS provider 6.** The `cloud-postgres` example module moves
