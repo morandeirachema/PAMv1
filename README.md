@@ -147,7 +147,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–227 and 229–265, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–227 and 229–283, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 
@@ -224,6 +224,17 @@ PAM for AI agents — the same chokepoint, extended to autonomous tools. Opt-in 
 - **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. The release pipeline builds by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance** — see [Verifying a release](#verifying-a-release). *Current release: **[v0.0.79](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.79)** (2026-10-08; first was v0.10.0) — the signed image is public at `ghcr.io/morandeirachema/pamv1:0.0.79`, which is what every manifest here pins, so the published-artifact paths below work.*
 - **Encrypted secrets in git** — the Kubernetes secret manifest can be sealed with **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: values are encrypted while `kind`/`metadata` stay reviewable, decrypted at deploy time (`sops -d | kubectl apply -f -`, plaintext never on disk) or natively by Flux / Argo / helm-secrets — so secrets live in the **same IaC repo** without leaking. See **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **Or source secrets from CyberArk Conjur** — as a runtime alternative to SOPS, set `PAM_CONJUR_URL` and PAMv1 fetches its own bootstrap secrets (master key, API key, DB URL, …) from **[Conjur](https://www.conjur.org/)** at startup, authenticating with a host API key or a **Kubernetes `authn-jwt`** projected token — so no bootstrap secret lives in Git at all. With `PAM_CONJUR_REFRESH_MIN` (Phase 78), the secrets that can honestly change on a running server (`PAM_API_KEY`, `PAM_BREAK_GLASS_KEY_HASH`) are **re-read periodically without a restart**; the KEK, database URL and audit-chain keys stay pinned to a restart by design. Both mechanisms ship; SOPS stays the zero-dependency default. See **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
+
+### WALLIX-parity pass (Phases 266–283)
+
+- **Session probe** (266, 271) — `pam-agent` in probe mode inside a brokered Windows desktop: process, window and connection events as a sealed, hash-chained artifact beside the recording, and block or notify rules enforced in the session.
+- **RADIUS** (269) — a login source behind the directory, or the second factor a directory user's code is checked against, with Access-Challenge answered from the sign-on screen.
+- **Sub-protocol rights** (270) — per target and per grant: shell, exec, SFTP, port forwarding, X11, and RDP drive, printer and audio, under deployment-wide ceilings.
+- **Host keys pinned on first contact** (272) — each SSH target's key stored on first use and checked after (`PAM_SSH_HOST_KEY_CHECK`).
+- **Approval depth** (274) — approver comments, a shorter granted duration, request timeouts, and cancelling an approved request mid-session.
+- **Restriction rules** (275) — per user or role, a regex over the command on each sub-protocol and SFTP size rules, to kill or notify.
+- **Login banner and recording consent** (276), **reports** (277: unused users and targets, connection statistics, critical targets, a daily digest) and **bulk inventory CSV** import and export (278).
+- **Telnet targets** with SEND/EXPECT startup scenarios (279), **ICAP scanning** of desktop transfers and the clipboard (280), and **portable recording archives** (283).
 
 ## Roles, users & profiles
 
@@ -345,7 +356,7 @@ Every phase (0–94) has shipped — full per-phase detail in **[ROADMAP.md](ROA
 | 60 | The ticket gate holds at connect time (the change ticket is re-checked when access is used, at all five gates) | ✅ shipped |
 | 61 | A dependent account names the credential that manages it (propagation stops logging in as the account it rotates) | ✅ shipped |
 
-The table stops at 61 to stay readable; **phases 62–94 shipped just as
+The table stops at 61 to stay readable; **phases 62–283 shipped just as
 completely** (each has its own section in [ROADMAP.md](ROADMAP.md)): the first
 release wave and its reviews (62–66), the token-exchange console screen (67),
 certification-campaign depth — scoping, scheduling, per-item reviewers,
@@ -359,7 +370,9 @@ first-class ServiceNow/Jira ticket connectors (84), history-aware analytics
 with a revoke-logins response rung (86–87), the open-findings backlog closed
 (89), and an adversarial review of the crown jewels (91–93) that fixed one
 SFTP read-only containment gap and confirmed the vault, database proxies and
-broker four-eyes sound — released steadily as **v0.10.0 → v0.0.79** (the numbering moved to 0.0.x at v0.0.77). Releases
+broker four-eyes sound; then a refactor and hardening arc (96–108), the
+feature passes of Tiers 5–10 (from content-searchable recordings, 110, to
+portable recording archives, 283) and their reviews — released steadily as **v0.10.0 → v0.0.79** (the numbering moved to 0.0.x at v0.0.77). Releases
 are recorded in **[CHANGELOG.md](CHANGELOG.md)**; the honest remainder lives in
 **[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**.
 
@@ -599,7 +612,8 @@ vault + proxy chokepoint, and is **out of scope** by design.
 
 ### Where it stands, and what's next
 
-Every phase through 62 has shipped and the 2026-07 and 2026-08 security self-audits
+Every phase through 283 has shipped (228 recorded an investigation, not a
+feature; see ROADMAP §3d) and the 2026-07 and 2026-08 security self-audits
 are closed ([docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md)).
 **[v0.10.0](https://github.com/morandeirachema/PAMv1/releases/tag/v0.10.0)** — the
 first signed release — met the last of the four beta criteria on 2026-07-28, and

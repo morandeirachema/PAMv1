@@ -151,7 +151,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–227 y 229–265, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–227 y 229–283, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -228,6 +228,17 @@ Opcional vía `PAM_BROKER_POLICY_FILE`.
 - **Despliegue como código** — [Docker](https://docs.docker.com/) (distroless, sin root), [docker-compose](https://docs.docker.com/compose/) con Postgres endurecida, manifiestos [Kubernetes](https://kubernetes.io/) bajo el PSS restringido, un **[chart de Helm](deploy/helm/pamv1)** y un módulo de [Terraform](https://developer.hashicorp.com/terraform). El pipeline de release construye por digest con **[SBOM](https://www.cisa.gov/sbom), firma keyless [cosign](https://docs.sigstore.dev/) y procedencia SLSA**. *Release vigente: **[v0.0.79](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.79)** (2026-10-08; la primera fue la v0.10.0) — la imagen firmada es pública en `ghcr.io/morandeirachema/pamv1:0.0.79`, que es la que fijan todos los manifiestos, así que las rutas de instalación por artefacto publicado ya funcionan.*
 - **Secretos cifrados en git** — el manifiesto de Secret de Kubernetes puede sellarse con **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: los valores se cifran mientras `kind`/`metadata` quedan legibles, y se descifra al desplegar (`sops -d | kubectl apply -f -`, el texto plano nunca toca el disco) o de forma nativa con Flux / Argo / helm-secrets — así los secretos viven en el **mismo repo de IaC** sin filtrarse. Ver **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **O aprovisiona los secretos desde CyberArk Conjur** — como alternativa en tiempo de ejecución a SOPS, define `PAM_CONJUR_URL` y PAMv1 obtiene sus secretos de arranque (clave maestra, clave de API, URL de la BD, …) de **[Conjur](https://www.conjur.org/)** al arrancar, autenticándose con una clave de API de host o un token proyectado de Kubernetes (**`authn-jwt`**) — de modo que ningún secreto de arranque vive en Git. Con `PAM_CONJUR_REFRESH_MIN` (Fase 78), los secretos que honestamente pueden cambiar con el servidor en marcha (`PAM_API_KEY`, `PAM_BREAK_GLASS_KEY_HASH`) se **releen periódicamente sin reiniciar**; la KEK, la URL de la base de datos y las claves de la cadena de auditoría quedan ancladas a un reinicio por diseño. Ambos mecanismos se entregan; SOPS sigue siendo el predeterminado sin dependencias. Ver **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
+
+### Pasada de paridad con WALLIX (Fases 266–283)
+
+- **Sonda de sesión** (266, 271) — `pam-agent` en modo sonda dentro de un escritorio Windows intermediado: eventos de procesos, ventanas y conexiones como un artefacto sellado y encadenado por hash junto a la grabación, y reglas de bloqueo o aviso aplicadas dentro de la sesión.
+- **RADIUS** (269) — una fuente de inicio de sesión tras el directorio, o el segundo factor contra el que se comprueba el código de un usuario del directorio, con el Access-Challenge respondido desde la pantalla de inicio de sesión.
+- **Derechos por subprotocolo** (270) — por objetivo y por concesión: shell, exec, SFTP, reenvío de puertos, X11, y unidad, impresora y audio en RDP, bajo techos de despliegue.
+- **Host keys fijadas en el primer contacto** (272) — la clave de cada objetivo SSH se guarda en el primer uso y se comprueba después (`PAM_SSH_HOST_KEY_CHECK`).
+- **Profundidad de aprobación** (274) — comentarios del aprobador, una duración concedida más corta, caducidad de solicitudes y cancelación de una solicitud aprobada en mitad de la sesión.
+- **Reglas de restricción** (275) — por usuario o rol, una regex sobre el comando en cada subprotocolo y reglas de tamaño en SFTP, para cortar o avisar.
+- **Banner de inicio y consentimiento de grabación** (276), **informes** (277: usuarios y objetivos sin uso, estadísticas de conexión, objetivos críticos, un resumen diario) e **importación y exportación masiva de inventario en CSV** (278).
+- **Objetivos telnet** con escenarios de arranque SEND/EXPECT (279), **escaneo ICAP** de transferencias y portapapeles de escritorio (280) y **archivos portables de grabaciones** (283).
 
 ## Roles, usuarios y perfiles
 
@@ -349,7 +360,7 @@ Se han entregado todas las fases (0–94) — detalle por fase en **[ROADMAP.md]
 | 60 | La puerta de tickets aguanta al conectar (el ticket de cambio se re-comprueba al usar el acceso, en las cinco puertas) | ✅ entregada |
 | 61 | Una cuenta dependiente nombra la credencial que la gestiona (la propagación deja de iniciar sesión como la cuenta que rota) | ✅ entregada |
 
-La tabla se detiene en la 61 para seguir siendo legible; **las fases 62–94 se
+La tabla se detiene en la 61 para seguir siendo legible; **las fases 62–283 se
 entregaron igual de completas** (cada una tiene su sección en
 [ROADMAP.md](ROADMAP.md)): la primera ola de releases y sus revisiones (62–66),
 la pantalla de consola del intercambio de tokens (67), profundidad en las
@@ -367,7 +378,10 @@ con un peldaño de respuesta que revoca inicios de sesión (86–87), el cierre
 del backlog de hallazgos abiertos (89), y una revisión adversarial de las
 joyas de la corona (91–93) que corrigió una brecha de contención en el SFTP de
 solo lectura y confirmó sólidos el vault, los proxies de base de datos y los
-cuatro ojos del bróker — publicado de forma continua como **v0.10.0 →
+cuatro ojos del bróker; después, un arco de refactorización y endurecimiento
+(96–108), las pasadas de funcionalidad de los Niveles 5–10 (de las grabaciones
+buscables por contenido, 110, a los archivos portables de grabaciones, 283) y
+sus revisiones — publicado de forma continua como **v0.10.0 →
 v0.0.79** (la numeración pasó a 0.0.x en la v0.0.77). Las releases quedan registradas en **[CHANGELOG.md](CHANGELOG.md)**;
 el resto honesto vive en
 **[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**.
@@ -514,7 +528,8 @@ por diseño.
 
 ### Dónde está, y qué viene después
 
-Todas las fases hasta la 62 están entregadas y las autoauditorías de seguridad de
+Todas las fases hasta la 283 están entregadas (la 228 registró una investigación,
+no una funcionalidad; ver ROADMAP §3d) y las autoauditorías de seguridad de
 2026-07 y 2026-08 están cerradas
 ([docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md)). La
 **[v0.10.0](https://github.com/morandeirachema/PAMv1/releases/tag/v0.10.0)** — la
