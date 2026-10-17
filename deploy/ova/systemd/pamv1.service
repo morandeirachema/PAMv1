@@ -20,7 +20,7 @@ Restart=on-failure
 RestartSec=5s
 
 # --- Sandboxing --------------------------------------------------------------
-# pamv1 needs: its state dir, the loopback network, and outbound access to
+# PAMv1 needs: its state dir, the loopback network, and outbound access to
 # targets. It never needs root, devices, kernel tunables or anything under /home.
 NoNewPrivileges=yes
 PrivateTmp=yes

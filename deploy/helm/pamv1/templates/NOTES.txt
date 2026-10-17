@@ -1,4 +1,4 @@
-pamv1 {{ .Chart.AppVersion }} deployed as release {{ .Release.Name }}.
+PAMv1 {{ .Chart.AppVersion }} deployed as release {{ .Release.Name }}.
 
   ALPHA — for learning purposes. Not production, not audited.
 

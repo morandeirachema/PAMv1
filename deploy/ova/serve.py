@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build-time payload server for the pamv1 appliance build.
+"""Build-time payload server for the PAMv1 appliance build.
 
 Three jobs, all on one port that only the guest can reach (10.0.2.2 under QEMU
 user-mode networking):

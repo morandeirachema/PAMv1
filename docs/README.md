@@ -1,6 +1,6 @@
 # PAMv1 — documentation
 
-> Last updated: 2026-10-14 · Reflects: Phases 0–227 and 229–283, and release v0.0.79 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-10-17 · Reflects: Phases 0–227 and 229–283, and release v0.0.79 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -81,7 +81,7 @@ Keep the set reading as one product:
 5. **Change-log table** at the foot of any doc that evolves — `| Date | Change |`, newest first, ISO dates. Bump the `Last updated` line to the newest change-log date.
 6. **Diagrams are [Mermaid](https://mermaid.js.org/), never ASCII** (repo hard rule); wrap wide diagrams so they scroll, not the page.
 7. **Cross-links are relative paths**: bare `FILE.md` for siblings here, `../ROADMAP.md` / `../README.md` / `../deploy/…` for repo-root and code; deep-link a section with `#anchor`. No absolute GitHub URLs for in-repo files.
-8. **Fixed vocabulary**: *target* (an onboarded machine/database), *credential* (the vaulted object) vs *secret* (its plaintext), *operator* (a human using the proxy) vs *user* (the RBAC role), *portal* (the web app) vs *console* (its 5250 UI), **PAM token** (a per-user/session token) vs **bootstrap API key** (`PAM_API_KEY`), and **PAMv1** (the project, in prose and in GitHub links) vs `pamv1` (an identifier that must stay lowercase — the Go module path `github.com/morandeirachema/pamv1`, the image `ghcr.io/morandeirachema/pamv1`, Kubernetes and Helm names, file paths).
+8. **Fixed vocabulary**: *target* (an onboarded machine/database), *credential* (the vaulted object) vs *secret* (its plaintext), *operator* (a human using the proxy) vs *user* (the RBAC role), *portal* (the web app) vs *console* (its 5250 UI), **PAM token** (a per-user/session token) vs **bootstrap API key** (`PAM_API_KEY`), and **PAMv1** (the project, in prose and in GitHub links) vs `pamv1` (an identifier that must stay lowercase — the Go module path `github.com/morandeirachema/pamv1`, the image `ghcr.io/morandeirachema/pamv1`, Kubernetes and Helm names, file paths). `TestProjectNameCasing` in `internal/releasedocs` enforces the casing across every tracked file; when it fails, write PAMv1, or put the identifier in backticks.
 9. **No doc is a dead end** — every reader-facing doc links onward, back to this hub or the [README](../README.md), or to the next doc in its path. Reference docs that are always reached *from* somewhere may rely on their inbound links instead.
 10. **Update the doc in the same commit as the code it describes** — that is what keeps this set trustworthy.
 
@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-10-17 | **Name casing, enforced.** House style §8 names its gate: `TestProjectNameCasing` (`internal/releasedocs`) fails on a prose use of lowercase `pamv1` in any tracked file, so the rule no longer depends on the next hand sweep. |
 | 2026-10-14 | **Name casing.** House style §8 gains **PAMv1** vs `pamv1`: the project's name in prose and GitHub links, lowercase only where it is an identifier. Applied across the repo's docs in the same change. |
 | 2026-10-08 | Phase 283 (recording archives) documented: ARCHITECTURE-LOW-LEVEL (package tree, audit vocabulary, change log), ARCHITECTURE-HIGH-LEVEL, ADMIN-GUIDE §9.3, USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE, README Tier 10 row 12. |
 | 2026-10-08 | Phase 282 (v0.0.79): every `Reflects:` header, both READMEs' ranges and the banner through 282; the release token above. |

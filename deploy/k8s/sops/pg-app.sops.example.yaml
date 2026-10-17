@@ -3,11 +3,11 @@
 # Why this file exists: deploy/k8s/postgres-cnpg.yaml lets CNPG GENERATE the app
 # password into a secret it manages. That works, and it puts a manual step in the
 # middle of a deployment that is otherwise IaC end to end -- somebody has to read
-# the generated password out of the running cluster and paste it into pamv1's own
+# the generated password out of the running cluster and paste it into PAMv1's own
 # PAM_DATABASE_URL. Two copies of one password, kept in step by hand.
 #
 # Supplying the secret instead makes the password an input rather than an output:
-# it is sealed here, CNPG is pointed at it (see postgres-cnpg.yaml), and pamv1's
+# it is sealed here, CNPG is pointed at it (see postgres-cnpg.yaml), and PAMv1's
 # PAM_DATABASE_URL uses the same value. Nothing is read back out of the cluster.
 #
 # The `username` and `password` keys are the shape CNPG's bootstrap.initdb.secret

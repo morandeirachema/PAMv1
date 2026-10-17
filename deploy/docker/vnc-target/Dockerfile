@@ -1,4 +1,4 @@
-# VNC test target for the pamv1 in-portal VNC viewer demo: a throwaway Linux
+# VNC test target for the PAMv1 in-portal VNC viewer demo: a throwaway Linux
 # desktop (XFCE) served over TigerVNC, so the rendered-pixels path can be
 # verified end to end without any proprietary server.
 #
@@ -13,7 +13,7 @@ RUN apt-get update \
       xfce4 xfce4-terminal dbus-x11 dbus iproute2 \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Demo password — MUST match the credential the compose file seeds into pamv1.
+# Demo password — MUST match the credential the compose file seeds into PAMv1.
 #
 # Eight characters, and that is not a coincidence: classic VNC authentication
 # (RFB security type 2) uses the password as a DES key, which is 56 bits, so

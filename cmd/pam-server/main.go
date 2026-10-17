@@ -11,7 +11,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -1981,7 +1980,7 @@ func startSecretRefresh(ctx context.Context, cfg *config.Config, client *conjur.
 	}
 
 	refresher, err := conjur.NewRefresher(ctx, client, conjur.RefreshOptions{
-		Prefix:    cmp.Or(os.Getenv("PAM_CONJUR_POLICY_PREFIX"), "pamv1"),
+		Prefix:    conjur.PolicyPrefix(),
 		Overrides: overrides,
 		Appliers:  appliers,
 		Audit: func(actx context.Context, action, detail string) error {

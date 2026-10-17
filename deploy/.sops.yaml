@@ -1,4 +1,4 @@
-# SOPS (https://github.com/getsops/sops) creation rules for pamv1 (Phase 14).
+# SOPS (https://github.com/getsops/sops) creation rules for PAMv1 (Phase 14).
 #
 # This config lives at deploy/.sops.yaml (not the repo root), so its path_regex is
 # relative to deploy/ and you must pass it explicitly when encrypting:

@@ -18,8 +18,9 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
-Three dependency updates merged on 2026-10-14, for the next release to carry.
-No PAMv1 code changed, and CI passed on each.
+Three dependency updates merged on 2026-10-14 (no PAMv1 code changed, and CI
+passed on each), and the fixes from a review of the Conjur deploy docs, for
+the next release to carry.
 
 **Changed.**
 
@@ -32,6 +33,53 @@ No PAMv1 code changed, and CI passed on each.
   release on a refreshed base.
 - **Release workflow** (#451). `anchore/sbom-action` 0.24.2 → 0.24.3, the step
   that generates each release's SPDX SBOM.
+
+**Fixed.**
+
+- **Conjur values are trimmed at startup too.** The refresher trimmed what
+  Conjur returned, but startup did not, so a value stored with a trailing
+  newline booted as part of the key: `pamv1/api-key` set from a file left
+  the real admin key rejected. Refresh never corrected it, because it
+  compares against the trimmed environment and saw no change. Startup now
+  trims the same way, and an all-whitespace value counts as not managed.
+- **The Conjur deploy README matches what the code does.** It said an
+  environment value always wins and that values are read only at startup;
+  with refresh on, as the shipped deployment has it, Conjur wins for the two
+  refreshable secrets. Its setup set fresh broker audit keys as if they were
+  required, which stops a server whose cluster already holds them in shared
+  custody; they are optional now, and the README says when setting them is
+  safe. The break-glass hash now comes from `pam-server -hashkey`, because a
+  hash taken with `echo | sha256sum` includes the newline and never matches.
+  Every value is piped in with `conjur variable set -f -`, so no secret
+  appears in the process list, and a table shows what a restart does to each
+  of the four secrets that are not refreshed.
+- **`deploy/k8s/conjur/policy.yaml` no longer copies the setup commands.**
+  Its copy had drifted from the README (it set no sign seed); it now points
+  to the README, and names the project PAMv1 in its comments.
+- **The default Conjur deployment has the Conjur policy it needs.**
+  `deploy/k8s/conjur/deployment.yaml` authenticates with authn-jwt and
+  pointed to "the matching policy" in the README, which had none, so
+  following the README left the pod failing to authenticate. The new
+  `authn-jwt.yaml` declares the authenticator and a host for the pod's
+  service account. `policy.yaml` now grants the secrets to a `readers`
+  layer, and both hosts are members of it. The README shows how to load it
+  and set the authenticator's variables.
+- **The Conjur policy prefix default is defined once.** Startup sourcing
+  and runtime refresh each hard-coded `pamv1`, so changing one would have
+  left them reading different variables. Both now call
+  `conjur.PolicyPrefix()`. The low-level doc had listed the default as
+  `PAMv1`; it is the identifier `pamv1`.
+- **PAMv1 in the deploy files too.** #463 covered the docs; 94 prose uses of
+  `pamv1` remained in deploy comments and display strings, and some of
+  those are user-visible: the browser extension's name (`PAMv1 Autofill`,
+  as its own settings page already said), the Helm chart description and
+  install notes, the appliance's console banner, motd and OVF annotation,
+  and `NOTICE`. Identifiers are unchanged: namespaces, release names, the
+  appliance's service and system user, its hostname, and applied migrations.
+- **The casing rule is a test now.** It was fixed by hand, one sweep at a
+  time (#463, #464), and each sweep missed files. `TestProjectNameCasing`
+  scans every tracked file and fails on a lowercase `pamv1` that is prose
+  rather than an identifier, naming the file and line.
 
 **Repository history.** On 2026-10-14 the git history was rewritten to
 normalize commit authorship. No file changed: every tag points at a tree

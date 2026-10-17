@@ -1,5 +1,5 @@
 # End-to-end demo of the in-portal VNC viewer: a real TigerVNC Linux desktop,
-# guacd, and pam-server, with a pamv1 VNC target auto-seeded. This proves the
+# guacd, and pam-server, with a PAMv1 VNC target auto-seeded. This proves the
 # rendered pixels — and that the operator never learns the VNC password.
 #
 #   cd deploy/docker

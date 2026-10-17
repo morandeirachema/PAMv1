@@ -19,4 +19,4 @@ resources:
   - deployment.yaml
   # Optional, uncomment as needed:
   # - guacd.yaml            # RDP/VNC viewer backend
-  # - networkpolicy.yaml    # default-deny + the flows pamv1 needs
+  # - networkpolicy.yaml    # default-deny + the flows PAMv1 needs

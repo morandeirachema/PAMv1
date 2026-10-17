@@ -255,7 +255,7 @@ func Source(ctx context.Context) (*Client, []string, error) {
 // populateEnv authenticates once and fills empty bootstrap secrets from Conjur,
 // returning the env-var names it filled.
 func (c *Client) populateEnv(ctx context.Context) ([]string, error) {
-	prefix := getenv("PAM_CONJUR_POLICY_PREFIX", "pamv1")
+	prefix := PolicyPrefix()
 	overrides, err := ParseVarOverrides(os.Getenv("PAM_CONJUR_VARS"))
 	if err != nil {
 		return nil, err
@@ -273,8 +273,12 @@ func (c *Client) populateEnv(ctx context.Context) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !ok {
-			continue // not managed in Conjur
+		// Trim exactly as the refresher does. It seeds its last-applied digest
+		// from the trimmed environment, so an untrimmed value here would boot
+		// with the trailing newline and never be corrected by a refresh tick.
+		val = strings.TrimSpace(val)
+		if !ok || val == "" {
+			continue // not managed in Conjur; config validation fails loud if required
 		}
 		if err := os.Setenv(s.env, val); err != nil {
 			return nil, err
@@ -298,6 +302,18 @@ func readFileEnv(key string) (string, error) {
 		return "", fmt.Errorf("%s %q: %w", key, path, err)
 	}
 	return string(b), nil
+}
+
+// DefaultPolicyPrefix is the Conjur policy the bootstrap variables live under
+// when PAM_CONJUR_POLICY_PREFIX is unset: the id deploy/k8s/conjur/policy.yaml
+// declares.
+const DefaultPolicyPrefix = "pamv1"
+
+// PolicyPrefix is the prefix that startup sourcing and the refresher both
+// resolve variable ids under. Both call it, so they cannot drift apart onto
+// different variables under the same configuration.
+func PolicyPrefix() string {
+	return getenv("PAM_CONJUR_POLICY_PREFIX", DefaultPolicyPrefix)
 }
 
 // getenv returns the env var value or a default.
