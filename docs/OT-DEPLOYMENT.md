@@ -146,7 +146,8 @@ PAM_OT_AIRGAP=true
   used to be read in exactly one place — choosing the alerter — so it silenced
   alerts and nothing else while the ITSM webhook, the vendor-attestation webhook,
   the SIEM forwarder, Conjur, a cloud KEK and a cloud identity provider all still
-  reached the network. It now enforces its own name.
+  reached the network. It now enforces its own name. Today the list is the ITSM webhook (`PAM_TICKET_VALIDATE_URL`) and the ServiceNow/Jira connector (`PAM_TICKET_URL`), vendor, posture and on-call attestation, the Slack webhook, the ICAP scanner, the SIEM forwarder, `PAM_OIDC_ISSUER`, `PAM_SAML_IDP_METADATA_URL`, Conjur, the alert webhook and the report digest,
+  and a cloud KEK (`aws-kms`) or Entra ID is refused with no escape hatch.
 - **The rule is default-deny with a per-variable escape hatch**, because
   "air-gapped" rarely means "no network" — it usually means *nothing leaves this
   enclave*. A local Conjur, an in-DMZ SIEM collector or a self-hosted Keycloak

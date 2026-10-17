@@ -147,6 +147,11 @@ Kubernetes provider 3 move (both under **Changed**).
   (Phase 256) had no case in the suite both backends run, so memstore and
   PostgreSQL were never checked to agree on it. It has one, and a new test
   fails on any `Store` method the suite does not call.
+- **Air-gap mode refuses the ServiceNow/Jira connector too.** `PAM_OT_AIRGAP`
+  refused the ITSM webhook but not `PAM_TICKET_URL`, the first-class
+  connector's endpoint, which also calls out on every gated request. It is
+  refused now unless named in `PAM_OT_AIRGAP_ALLOW`. **A deployment running
+  both will stop at startup** until the URL is allowed or removed.
 - **The appliance build works again.** `deploy/ova/build.sh` pinned Debian
   13.6.0 at `debian-cd/current/`, which Debian moved on to 13.7.0, so the
   download returned 404. It now pins 13.7.0, falls back to Debian's archive
