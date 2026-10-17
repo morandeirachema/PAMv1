@@ -38,6 +38,8 @@ the next release to carry.
   indirect modules drop out of the build (`bodgit/ntlmssp`,
   `bodgit/windows`, `go-logr/logr`, `hashicorp/go-cleanhttp`,
   `tidwall/transform`).
+- **Demo seed image.** The RDP and VNC demo compose files' seed job moves from
+  `curlimages/curl:8.11.1` to `8.23.0`.
 - **Terraform: AWS provider 6.** The `cloud-postgres` example module moves
   from `hashicorp/aws ~> 5.0` to `~> 6.0`, the maintained major; it
   validates unchanged. Both modules are now `terraform fmt`-clean, which

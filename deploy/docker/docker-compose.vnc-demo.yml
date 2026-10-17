@@ -59,7 +59,7 @@ services:
 
   # One-shot: wait for pam, then create the VNC target + its credential.
   seed:
-    image: curlimages/curl:8.11.1
+    image: curlimages/curl:8.23.0
     depends_on:
       pam:
         condition: service_started
