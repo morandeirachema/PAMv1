@@ -296,6 +296,27 @@ jobs:
             echo "FAIL: the secrets base built without sealed values"; exit 1; }
           "$(go env GOPATH)/bin/kubeconform" -summary -ignore-missing-schemas /tmp/base.yaml
 
+  # The Terraform modules are IaC like the manifests above, and until this job
+  # nothing ran them: neither module was fmt-clean, and a provider major bump
+  # could only be checked by hand. fmt, then init (no backend, so no state and
+  # no credentials) and validate against the providers the constraints resolve.
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.16.6"
+          terraform_wrapper: false
+      - name: terraform fmt
+        run: terraform fmt -check -recursive deploy/terraform
+      - name: terraform validate
+        run: |
+          for m in deploy/terraform deploy/terraform/cloud-postgres; do
+            terraform -chdir="$m" init -backend=false -input=false
+            terraform -chdir="$m" validate
+          done
+
   # Phase 14: prove the committed SOPS example is really encrypted and round-trips
   # with the throwaway demo key (guards against an accidental plaintext commit).
   sops:

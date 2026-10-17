@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-10-08 · Reflects: Phases 0–227 and 229–283 + the 2026-07 hardening passes.
+> Last updated: 2026-10-17 · Reflects: Phases 0–227 and 229–283 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -1172,7 +1172,8 @@ Tests exercise **real behavior on the security-critical path**, not mocks of it:
   fuzzes the TDS and SFTP wire parsers ~20s each (their seed corpus also runs as
   a normal test), `go test -race`, a Docker image build, the live-Postgres store
   contract, the PKCS#11/SoftHSM2 build, a manifests job (`helm lint`, a default
-  **and** everything-on chart render, `kubeconform`), and the `sops` round-trip.
+  **and** everything-on chart render, `kubeconform`), a `terraform` job (`fmt -check`,
+  then `init` + `validate` of both modules), and the `sops` round-trip.
   `cmd/archgen` regenerates the architecture diagrams and CI fails if they drift.
 
 ---
@@ -1226,6 +1227,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-10-17 | §14 CI list gains the `terraform` job: `fmt -check`, then `init -backend=false` + `validate` of both Terraform modules, which nothing ran before. |
 | 2026-09-16 | Phase 248 (the review of 240–247): `store.SafePermissionsCover` + `SafePermissionOrder` beside `GrantPermits`, and a single-pass `ParseSafePermissions`; `api.safeManagement` replacing `canManageSafe` where the caller's own permission set matters (`canManageSafe` stays as its boolean wrapper), the `Covers` guard in `api.rotateUserToken`, `api.operatorInput` in the viewer bridge, `api.grantDeadline` deleted (the tunnel uses the grants it was admitted under); `auth.ReasonSessionMFAExtension`; `session.entry.swept`; `pgstore.SweepExpiredGrants` on one transaction; `timeframe.Frame.End` building wall-clock edges. |
 | 2026-10-08 | Phase 283 (recording archives): `internal/recarchive`, `api.selectRecordings`, `recordingProtocol`, `exportRecordingArchive`, `importRecordingArchive`, `purgeRecordingArchive`, the imported-provenance check in `playRecording`. |
 | 2026-10-08 | Phase 281 (review of 274–280): `restrict.Set.SizeRules`, `Match.AuditAction`, `sqlBlockedStatement`'s kill verdict, `AuditStore.ExportAuditActions`, `report.Actions`, `inventorycsv.Class.Raw`, `GateOut.Abort`, `api.mayTypePassword`, `expect.Stream.Close`. |

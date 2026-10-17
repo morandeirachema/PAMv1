@@ -36,7 +36,8 @@ the next release to carry.
 - **Terraform: AWS provider 6.** The `cloud-postgres` example module moves
   from `hashicorp/aws ~> 5.0` to `~> 6.0`, the maintained major; it
   validates unchanged. Both modules are now `terraform fmt`-clean, which
-  neither was.
+  neither was, and a new CI job keeps them so: `terraform fmt -check`, then
+  `init -backend=false` + `validate` of each module.
 
 **Fixed.**
 
