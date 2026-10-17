@@ -1,5 +1,5 @@
 #!/bin/sh
-# pamv1 itself: the binary, the source tree, and the service unit.
+# PAMv1 itself: the binary, the source tree, and the service unit.
 #
 # The binary is built on the BUILD HOST (CGO_ENABLED=0, static) and injected, so
 # the appliance carries no Go toolchain and no build dependencies. The full source

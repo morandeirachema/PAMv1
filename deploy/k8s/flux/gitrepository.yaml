@@ -1,4 +1,4 @@
-# The git source Flux reconciles pamv1 from.
+# The git source Flux reconciles PAMv1 from.
 #
 # Point `url` at YOUR fork/clone. For a private repo, add a secretRef with
 # credentials (see https://fluxcd.io/flux/components/source/gitrepositories/).

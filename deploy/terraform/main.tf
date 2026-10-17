@@ -1,4 +1,4 @@
-# pamv1 on Kubernetes, as code. Applies the same topology as deploy/k8s
+# PAMv1 on Kubernetes, as code. Applies the same topology as deploy/k8s
 # but parameterized and state-managed (Terraform >= 1.6 / OpenTofu).
 #
 #   terraform init

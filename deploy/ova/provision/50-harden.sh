@@ -19,7 +19,7 @@ chage -d 0 pam
 # --- SSH: keys over passwords, no root ---------------------------------------
 mkdir -p /etc/ssh/sshd_config.d
 cat > /etc/ssh/sshd_config.d/10-pamv1.conf <<'EOF'
-# Administration of the appliance itself. This is NOT the pamv1 session proxy,
+# Administration of the appliance itself. This is NOT the PAMv1 session proxy,
 # which is a separate listener on 2222 and is where privileged sessions go.
 PermitRootLogin no
 X11Forwarding no

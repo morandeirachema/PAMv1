@@ -1,5 +1,5 @@
 # End-to-end demo of the in-portal RDP viewer: a real xrdp Linux desktop, guacd,
-# and pam-server, with a pamv1 RDP target auto-seeded. This proves the rendered
+# and pam-server, with a PAMv1 RDP target auto-seeded. This proves the rendered
 # pixels without needing a Windows host.
 #
 #   cd deploy/docker

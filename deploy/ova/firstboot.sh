@@ -1,5 +1,5 @@
 #!/bin/sh
-# pamv1 appliance — first boot.
+# PAMv1 appliance — first boot.
 #
 # Runs once, before pamv1.service, as root. It creates everything that must be
 # unique to THIS copy of the appliance:
@@ -30,9 +30,9 @@ if [ -z "$(ls -A /etc/ssh/ssh_host_*_key 2>/dev/null || true)" ]; then
 	systemctl restart ssh || true
 fi
 
-# --- 1/2/3. pamv1 + database secrets ----------------------------------------
+# --- 1/2/3. PAMv1 + database secrets ----------------------------------------
 MASTER_KEY="$(/usr/local/bin/pam-server -genkey)"
-# 32 urlsafe-base64 bytes: comfortably past the 16-character floor pamv1 enforces
+# 32 urlsafe-base64 bytes: comfortably past the 16-character floor PAMv1 enforces
 # against a real database.
 API_KEY="pamk_$(head -c 24 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=')"
 DB_PASS="$(head -c 24 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=')"
@@ -59,7 +59,7 @@ umask 027
 cat > "$ENV_FILE" <<EOF
 # Generated on first boot by pamv1-firstboot. Unique to this appliance.
 #
-# Every other knob pamv1 reads is documented in
+# Every other knob PAMv1 reads is documented in
 #   /opt/pamv1/src/deploy/docker/.env.example
 # and its Kubernetes twin under /opt/pamv1/src/deploy/k8s/. Add what you need
 # below, then: systemctl restart pamv1
@@ -77,7 +77,7 @@ chown root:pamv1 "$ENV_FILE"
 chmod 0640 "$ENV_FILE"
 
 cat > "$CRED_FILE" <<EOF
-pamv1 appliance — generated $(date -u +%Y-%m-%dT%H:%M:%SZ)
+PAMv1 appliance — generated $(date -u +%Y-%m-%dT%H:%M:%SZ)
 
   Portal / REST API : http://<this-vm>:8080
   SSH session proxy : <this-vm>:2222
@@ -90,7 +90,8 @@ when connecting through the proxy:
   ssh -p 2222 <credential-user>@<target-name>@<this-vm>
 
 It is a root-equivalent credential for this appliance. Rotate it by editing
-PAM_API_KEY in /etc/pamv1/pamv1.env and restarting pamv1, then DELETE this file:
+PAM_API_KEY in /etc/pamv1/pamv1.env and running systemctl restart pamv1, then
+DELETE this file:
 
   shred -u ${CRED_FILE}
 
@@ -104,7 +105,7 @@ chmod 0600 "$CRED_FILE"
 # Also put it where a console operator will actually see it.
 cat > /etc/motd <<EOF
 
-  pamv1 appliance. Admin API key (also in ${CRED_FILE}):
+  PAMv1 appliance. Admin API key (also in ${CRED_FILE}):
 
       ${API_KEY}
 

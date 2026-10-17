@@ -157,7 +157,7 @@ func TestSourceTrimsLikeRefresh(t *testing.T) {
 // and that PAM_CONJUR_POLICY_PREFIX overrides it.
 func TestPolicyPrefix(t *testing.T) {
 	t.Setenv("PAM_CONJUR_POLICY_PREFIX", "")
-	// The literal, not the constant: the README and policy.yaml document pamv1.
+	// The literal, not the constant: the README and policy.yaml document `pamv1`.
 	if got := conjur.PolicyPrefix(); got != "pamv1" {
 		t.Fatalf("default prefix = %q, want pamv1", got)
 	}

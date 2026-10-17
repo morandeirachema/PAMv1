@@ -1,4 +1,4 @@
-# RDP test target for the pamv1 in-portal RDP viewer demo: a throwaway Linux
+# RDP test target for the PAMv1 in-portal RDP viewer demo: a throwaway Linux
 # desktop (XFCE) served over xrdp, so the rendered-pixels path can be verified
 # end to end without a Windows host.
 #
@@ -12,7 +12,7 @@ RUN apt-get update \
       xrdp xorgxrdp xfce4 xfce4-terminal dbus-x11 dbus iproute2 \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Demo login — MUST match the credential the compose file seeds into pamv1.
+# Demo login — MUST match the credential the compose file seeds into PAMv1.
 ARG RDP_USER=demo
 ARG RDP_PASS=Demo-RDP-Pass1!
 RUN useradd -m -s /bin/bash "$RDP_USER" && echo "$RDP_USER:$RDP_PASS" | chpasswd

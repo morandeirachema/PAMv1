@@ -58,7 +58,7 @@ rules:
   # Since Phase 169 both inventory tools answer only for the targets THIS agent
   # has a grant on (direct grants unioned with safe membership), so an allow rule
   # here does not hand out the estate. A target with no grants and no safe stays
-  # open to everyone, exactly as it is on every other pamv1 path — grant the
+  # open to everyone, exactly as it is on every other PAMv1 path — grant the
   # targets an agent should reach and the rest gate themselves.
   - id: read-inventory
     tool: list_targets

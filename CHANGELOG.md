@@ -69,6 +69,13 @@ the next release to carry.
   left them reading different variables. Both now call
   `conjur.PolicyPrefix()`. The low-level doc had listed the default as
   `PAMv1`; it is the identifier `pamv1`.
+- **PAMv1 in the deploy files too.** #463 covered the docs; 94 prose uses of
+  `pamv1` remained in deploy comments and display strings, and some of
+  those are user-visible: the browser extension's name (`PAMv1 Autofill`,
+  as its own settings page already said), the Helm chart description and
+  install notes, the appliance's console banner, motd and OVF annotation,
+  and `NOTICE`. Identifiers are unchanged: namespaces, release names, the
+  appliance's service and system user, its hostname, and applied migrations.
 
 **Repository history.** On 2026-10-14 the git history was rewritten to
 normalize commit authorship. No file changed: every tag points at a tree
