@@ -92,6 +92,11 @@ the next release to carry.
   time (#463, #464), and each sweep missed files. `TestProjectNameCasing`
   scans every tracked file and fails on a lowercase `pamv1` that is prose
   rather than an identifier, naming the file and line.
+- **`NOTICE` lists checksums, not a script.** Since Phase 254 the xterm.js
+  entry's checksum line held 26 lines of the Python that vendored it,
+  including a local temp path. It now has the file's SHA-256, and the
+  Guacamole client's entry gains one too; both vendored files were checked
+  byte for byte against their published npm builds.
 - **The appliance build works again.** `deploy/ova/build.sh` pinned Debian
   13.6.0 at `debian-cd/current/`, which Debian moved on to 13.7.0, so the
   download returned 404. It now pins 13.7.0, falls back to Debian's archive
