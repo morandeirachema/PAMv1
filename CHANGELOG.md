@@ -45,6 +45,11 @@ the next release to carry.
   and an existing `pgdata` volume is refused on start rather than replaced
   by an empty database. `deploy/docker/README.md` has the dump-and-restore
   steps. The appliance keeps Debian 13's packaged PostgreSQL 17.
+- **guacd 1.6.0** (was 1.5.5) in compose, the Kubernetes manifest and the
+  Helm chart: FreeRDP 3 support and new VNC/RDP options. The protocol
+  version is unchanged, every parameter name PAMv1 answers exists in both
+  releases, the image still runs as UID 1000, and the vendored JavaScript
+  client already reads `sync`'s new frame-count argument.
 - **Demo seed image.** The RDP and VNC demo compose files' seed job moves from
   `curlimages/curl:8.11.1` to `8.23.0`.
 - **Terraform: AWS provider 6.** The `cloud-postgres` example module moves

@@ -19,7 +19,7 @@ import (
 )
 
 // fakeVNCGuacd plays guacd for a VNC connection: it advertises the parameter
-// names guacd 1.5.5 really advertises for VNC (note "enable-sftp" instead of
+// names guacd really advertises for VNC (note "enable-sftp" instead of
 // RDP's "enable-drive", and no "security"/"ignore-cert"), reports the protocol
 // it was asked to select, and hands back the connect arguments.
 func fakeVNCGuacd(t *testing.T, selectCh chan<- string, connectCh chan<- []string, argNames []string) string {
@@ -60,8 +60,10 @@ func fakeVNCGuacd(t *testing.T, selectCh chan<- string, connectCh chan<- []strin
 	return ln.Addr().String()
 }
 
-// vncArgNames is what guacd 1.5.5 advertises for VNC, trimmed to what this
-// connector uses (taken from guacamole-server's GUAC_VNC_CLIENT_ARGS).
+// vncArgNames is what guacd advertises for VNC, trimmed to what this connector
+// uses (taken from guacamole-server's GUAC_VNC_CLIENT_ARGS, unchanged for these
+// names from 1.5.5 to 1.6.0, which only adds new ones the handshake answers
+// with defaults).
 var vncArgNames = []string{"hostname", "port", "username", "password", "disable-copy", "disable-paste", "enable-sftp"}
 
 // seedVNCTarget creates a vnc target plus its credential and returns the id.
