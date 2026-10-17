@@ -517,6 +517,38 @@ que cada fase se entrega, no se predeclaran en bloque.
 | ~~**SSO SAML 2.0**~~ **✅ entregado (Fase 151)** | SAML 2.0 como Service Provider — Okta/OneLogin/Azure AD y, en particular, AD FS on-prem sin endpoint OIDC (Delinea) | PAMv1 como SP SAML en el perfil Web Browser SSO iniciado por el SP: `GET /api/auth/saml/start` (AuthnRequest, HTTP-Redirect), `POST /api/auth/saml/acs` (la Response firmada del IdP, HTTP-POST), `GET /api/auth/saml/metadata` (el descriptor del SP que importa el administrador del IdP). Cableado exactamente como OIDC — `PAM_SAML_SP_URL` lo activa por presencia, `PAM_SAML_ROLE_*` mapea un atributo de grupo/rol a roles, intercambiable en caliente, mismo aterrizaje en el portal — y el ID de la AuthnRequest reutiliza la tabla de estado OIDC de un solo uso ya existente, así que **sin migración**. **La segunda excepción deliberada de biblioteca para verificación criptográfica tras WebAuthn**, razonada en ROADMAP.md: XML-DSig sobre XML canonicalizado es exactamente donde vive la clase de vulnerabilidad de *signature wrapping*, no "un JWT con más pasos" — la verificación se delega en `crewjam/saml`+`goxmldsig` y PAMv1 se queda solo con la política (solo iniciado por el SP, sin logins iniciados por el IdP, sin SLO). Un par de claves opcional del SP firma las AuthnRequests y acepta aserciones cifradas. Demostrado contra un **IdP SAML real en proceso**: aserciones firmadas y cifradas aceptadas; atributo/sujeto manipulados, firmas eliminadas, audiencia/emisor incorrectos, condiciones caducadas y ambas formas de *signature wrapping* rechazadas, y también la reproducción y los POST desde otro navegador. Interoperabilidad con un tenant real de AD FS/Okta no verificada en este entorno |
 | ~~**Aprovisionamiento de usuarios SCIM 2.0**~~ **✅ entregado (Fase 149)** | Ciclo de vida de usuarios por empuje desde el IdP (StrongDM) | Una nueva `/scim/v2/Users` (RFC 7643/7644), autenticada con una identidad de portador `ScimKey` no humana que refleja `AgentKey`/`AppKey` — nunca un principal humano, así que todo usuario aprovisionado por SCIM recibe el rol fijo y de menor privilegio `user`. Complementa la reconciliación de identidad ya existente, `POST /api/identity/reconcile`, de tipo pull. `store.User` gana `ExternalID` y `Active`; desactivar (`PATCH`/`DELETE`, un borrado suave) ahora bloquea de verdad el token local de ese usuario — `auth.Resolver.Resolve()` falla de forma cerrada, demostrado de extremo a extremo, no solo afirmado en la capa de almacenamiento. `CreateUser` en ambos backends ahora siempre crea un usuario activo sin importar el struct de entrada, cerrando toda una clase de fallos por construcción — de paso detectó y corrigió una regresión real en los propios fixtures de test preexistentes de `internal/auth`. `PATCH` admite tanto la forma basada en `path` de RFC 7644 como la variante documentada de Azure AD sin `path`. No verificado interactivamente contra un IdP real en este entorno |
 
+### Niveles 7–10 — Boundary/Britive, CyberArk/WALLIX/Teleport y WALLIX Bastion 12
+
+Cuatro pasadas de investigación más, con sus tablas fila a fila en el README en
+inglés. Aquí, lo que cerró cada una y lo que queda abierto:
+
+- **[Nivel 7](README.md#tier-7--hashicorp-boundary--britive-gap-research-2026-08-31)** (Boundary, Britive): ambas filas entregadas —
+  acceso condicionado a estar de guardia (Fase 232) y aprobaciones interactivas
+  desde Slack (234).
+- **[Nivel 8](README.md#tier-8--cyberark-pam--wallix-bastion--teleport-rbac-and-feature-research-2026-09-03)** (CyberArk, WALLIX, Teleport: RBAC y
+  funcionalidad): duración máxima e inactividad de sesión, caducidad y franjas
+  horarias en concesiones (240); tokens de usuario que caducan y se rotan, y
+  bloqueo de una identidad (242); MFA por sesión (244); permisos por caja fuerte
+  (246); concesiones y denegaciones por etiquetas (250); concesiones a una sola
+  credencial (252); terminal SSH en el portal (254); aprobación por niveles y por
+  responsable directo (256); RADIUS (269). Abiertos: un modo de build FIPS y la
+  multitenencia, esta última una decisión de alcance.
+- **[Nivel 9](README.md#tier-9--wallix-bastion--access-manager--one-idaas-research-2026-09-15)** (WALLIX Bastion, Access Manager, One IDaaS):
+  ver y reproducir sesiones RDP/VNC en el portal (258) y compartirlas en vivo
+  (260), derechos por subprotocolo (270), profundidad de aprobación (274),
+  objetivos telnet (279), objetivos críticos y el informe de usuarios y
+  objetivos sin uso (277). Abiertos: autorización por grupos del directorio,
+  recuperación de MFA asistida, búsqueda de sesiones por metadatos, acceso al
+  proxy con clave pública SSH o FIDO2 y con certificado X.509, una credencial
+  compartida por muchos objetivos, el descubrimiento programado desde el
+  directorio, la duración e inactividad de la sesión del portal, una ventana
+  de re-solicitud de MFA, avisar a todos los aprobadores y rlogin.
+- **[Nivel 10](README.md#tier-10--wallix-bastion-12--access-manager-training-material-pass-2026-09-22)** (material de formación de WALLIX Bastion 12):
+  las doce primeras filas entregadas (269–283, ver la sección *Pasada de
+  paridad con WALLIX* más arriba). Abiertos: el **depósito cifrado de
+  credenciales** (*credential escrow*), los **objetivos de túnel TCP** con
+  captura, TACACS+ y rlogin; la captura de pulsaciones queda fuera a propósito.
+
 ### No-objetivo deliberado
 
 La [gestión de privilegios en el endpoint (EPM)](https://www.beyondtrust.com/privilege-management)
@@ -688,6 +720,51 @@ las de arranque y transporte de abajo permanecen solo en el entorno.
 | `-rotate-kek` | Vuelve a cifrar todo secreto del vault bajo una KEK nueva — credenciales, altas MFA, ajustes secretos **y** las claves compartidas de host SSH y CA. Funciona entre proveedores (local ⇄ Vault-Transit ⇄ KMS ⇄ HSM), así que es también la vía de migración. Avisa si quedan grabaciones selladas que aún necesitan la clave antigua |
 | `-healthcheck` | Sondea el `/healthz` local y sale con 0 si está sano (lo que usa el HEALTHCHECK del contenedor) |
 | `-version` | Imprime la versión y el commit del build |
+
+## Verificar una release
+
+Cada artefacto de una release es verificable, y estos son los comandos para
+hacerlo: una firma que nadie puede comprobar es decoración.
+
+```bash
+TAG=vX.Y.Z                        # la versión publicada (la más reciente está en CHANGELOG.md)
+IMAGE=ghcr.io/morandeirachema/pamv1
+
+# (Si tu ~/.docker/config.json nombra un credential helper que no tienes, estas
+#  descargas de solo lectura fallan antes de empezar: DOCKER_CONFIG=$(mktemp -d).)
+# 1. La imagen la construyó el workflow de release de este repositorio, no otro.
+#    (?i): la identidad del certificado lleva la grafía del propio repositorio
+#    (`PAMv1` desde la v0.58.1, `pamv1` antes), mientras que el nombre de la
+#    imagen va siempre en minúsculas, como exige una referencia OCI.
+cosign verify \
+  --certificate-identity-regexp "(?i)^https://github.com/morandeirachema/PAMv1/.github/workflows/release.yml@refs/tags/" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "$IMAGE:${TAG#v}"
+
+# 2. El SBOM adjunto es el que produjo ese build.
+cosign verify-attestation --type spdxjson \
+  --certificate-identity-regexp "(?i)^https://github.com/morandeirachema/PAMv1/.github/workflows/release.yml@refs/tags/" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "$IMAGE:${TAG#v}"
+
+# 3. Procedencia de build SLSA.
+gh attestation verify "oci://$IMAGE:${TAG#v}" --repo morandeirachema/PAMv1
+```
+
+Y para confirmar qué estás ejecutando de verdad:
+
+```bash
+kubectl -n pamv1 exec deploy/pamv1 -- /pam-server -version   # → pam-server X.Y.Z (<sha completo del commit>)
+curl -s http://pamv1:8080/metrics | grep pam_build_info      # lo mismo, para monitorización
+```
+
+Una etiqueta se puede volver a publicar y un digest no, así que en producción
+fija el digest: `image.digest` en el chart de Helm, o
+`ghcr.io/morandeirachema/pamv1@sha256:…` en un manifiesto. El digest de cada
+release está en [CHANGELOG.md](CHANGELOG.md) y al principio de sus notas de
+release, con la línea `cosign verify` para esa imagen exacta. Cada release
+publica junto a la imagen en GHCR su firma de cosign, la atestación SBOM en SPDX
+y la procedencia SLSA; los comandos de arriba funcionan con cualquiera de ellas.
 
 ## Procedimiento break-glass
 
