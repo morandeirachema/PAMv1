@@ -29,7 +29,10 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     -o /out/pam-server ./cmd/pam-server
 
 # Distroless, static, non-root: minimal attack surface for a credential vault.
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+# Debian 13: distroless updates only its debian13 images, and stopped updating
+# the debian12 tags this used to pin. Dependabot raises the digest within a tag,
+# never the Debian release, so moving to the next one is a deliberate edit here.
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
 COPY --from=build /out/pam-server /pam-server
 # Every listener the server can open, at its default address: the portal/API,
 # the SSH session proxy, the PostgreSQL proxy and the SQL Server proxy. EXPOSE is

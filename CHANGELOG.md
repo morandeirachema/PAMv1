@@ -81,6 +81,17 @@ the next release to carry.
   scans every tracked file and fails on a lowercase `pamv1` that is prose
   rather than an identifier, naming the file and line.
 
+**Security.**
+
+- **Container base images on Debian 13.** distroless updates only its
+  debian13 images now; the `static-debian12` and `base-debian12` tags both
+  Dockerfiles pinned no longer receive security updates. The default image
+  moves to `static-debian13:nonroot` and the PKCS#11 image to
+  `base-debian13:nonroot`, with its cgo build stage on `golang:1.27-trixie`
+  so the binary runs on the glibc it was linked against. Dependabot raises
+  digests within a tag but never the Debian release, which is how the
+  pin went stale.
+
 **Repository history.** On 2026-10-14 the git history was rewritten to
 normalize commit authorship. No file changed: every tag points at a tree
 identical to the one it pointed at before. But every commit from PR #1

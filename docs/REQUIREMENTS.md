@@ -2,7 +2,7 @@
 
 > **Living document.** Update when a version floor, port, or resource spec changes.
 >
-> Last updated: 2026-10-08 · Reflects: Phases 0–227 and 229–283. Phases 217–222 add no requirement: two additive migrations applied at startup on the PostgreSQL already required (`0050`, a small self-purging table for the agent-budget reservation; `0051`, one defaulted column on `broker_tokens`) and no knob, dependency, listener or external service. Phase 189 adds no requirement either: one additive index-only migrations (`0047`, two plain indexes on grant tables the schema already has, `0048`, one additive nullable column, and `0049`, Phase 212's partial unique index on active agent-key names) and one new knob defaulted to today's behaviour, dependency, listener or external service. Phases 161–183 add no requirement: three additive migrations applied at startup (`0044`, `0045`, `0046`) on the PostgreSQL instance already required, five optional knobs (`PAM_BROKER_MAX_RESULT_BYTES` 165, `PAM_BROKER_BUDGET_PER_DAY` 167, `PAM_BROKER_REQUIRE_ENROLLED_SVID` 174, `PAM_BROKER_REQUIRE_KNOWN_OWNER` 176, `PAM_BROKER_POSTURE_REQUIRED` 180 — the last needing the posture webhook this deployment may already run for human operators, never a new system), and no new dependency, listener or external service. Phases 66–70 add one more
+> Last updated: 2026-10-17 · Reflects: Phases 0–227 and 229–283. Phases 217–222 add no requirement: two additive migrations applied at startup on the PostgreSQL already required (`0050`, a small self-purging table for the agent-budget reservation; `0051`, one defaulted column on `broker_tokens`) and no knob, dependency, listener or external service. Phase 189 adds no requirement either: one additive index-only migrations (`0047`, two plain indexes on grant tables the schema already has, `0048`, one additive nullable column, and `0049`, Phase 212's partial unique index on active agent-key names) and one new knob defaulted to today's behaviour, dependency, listener or external service. Phases 161–183 add no requirement: three additive migrations applied at startup (`0044`, `0045`, `0046`) on the PostgreSQL instance already required, five optional knobs (`PAM_BROKER_MAX_RESULT_BYTES` 165, `PAM_BROKER_BUDGET_PER_DAY` 167, `PAM_BROKER_REQUIRE_ENROLLED_SVID` 174, `PAM_BROKER_REQUIRE_KNOWN_OWNER` 176, `PAM_BROKER_POSTURE_REQUIRED` 180 — the last needing the posture webhook this deployment may already run for human operators, never a new system), and no new dependency, listener or external service. Phases 66–70 add one more
 > background worker (the hourly, leader-locked certification scheduler); Phase 78
 > adds an optional per-replica Conjur refresh worker (off unless
 > `PAM_CONJUR_REFRESH_MIN` is set); 71–94 add no port, resource floor or
@@ -119,7 +119,7 @@
 | Component | Requirement |
 |---|---|
 | Build toolchain | Go **1.26+** (only to build from source) |
-| Container image | `gcr.io/distroless/static-debian12:nonroot` — runs as non-root UID **65532**, read-only root FS, no shell. (HSM/PKCS#11 KEK uses `Dockerfile.pkcs11`: cgo + glibc `distroless/base`, still non-root.) |
+| Container image | `gcr.io/distroless/static-debian13:nonroot` — runs as non-root UID **65532**, read-only root FS, no shell. (HSM/PKCS#11 KEK uses `Dockerfile.pkcs11`: cgo + glibc `distroless/base-debian13`, still non-root.) |
 | Database | **PostgreSQL 14+** (compose ships **17**); TLS strongly recommended (`sslmode=verify-full`) |
 | Ports | **8080** portal + REST API (HTTP or native HTTPS) · **2222** SSH session proxy · **5433** PostgreSQL session proxy (off by default) · **1433** SQL Server session proxy (off by default) |
 | Docker | Engine **24+**, Compose **v2** |
@@ -278,7 +278,6 @@ checkout) are safe across replicas.
 
 | Scale | pam-server | PostgreSQL |
 |---|---|---|
-| 2026-08-25 | Phase 192: the build/test toolchain is Go **1.27** (CI and `release.yml`); `go.mod`'s `go 1.26` stays as the minimum a consumer of the module needs, so "Go 1.26+" above is still the requirement to build from source |
 | Demo / lab | 1 replica, 64–128 MiB | `memory` store or 1 small instance |
 | Small team | 1–2 replicas, 256 MiB, 250m | 1 vCPU / 1–2 GiB, 10–20 GiB disk |
 | Recording-heavy | add disk for `/data` (asciicast files grow with session volume) | — |
@@ -289,3 +288,10 @@ and rotate/archive it per your retention policy (see [NIS2-COMPLIANCE.md](NIS2-C
 ---
 
 *See also: [ADMIN-GUIDE.md](ADMIN-GUIDE.md), [PORTS-AND-FLOWS.md](PORTS-AND-FLOWS.md), [ARCHITECTURE-HIGH-LEVEL.md](ARCHITECTURE-HIGH-LEVEL.md).*
+
+## Change log
+
+| Date | Change |
+|---|---|
+| 2026-10-17 | **Container base images on Debian 13.** distroless stopped updating its debian12 images; both Dockerfiles now pin `static-debian13`/`base-debian13`, and the PKCS#11 build stage moves to `golang:1.27-trixie` with them. This doc also gains the change-log table it lacked: the Phase 192 row below had landed inside the Sizing table. |
+| 2026-08-25 | Phase 192: the build/test toolchain is Go **1.27** (CI and `release.yml`); `go.mod`'s `go 1.26` stays as the minimum a consumer of the module needs, so "Go 1.26+" above is still the requirement to build from source |

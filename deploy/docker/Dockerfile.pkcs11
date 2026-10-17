@@ -11,9 +11,10 @@
 # because the vendor module may need to load — mount just the module read-only.
 #
 # Base images are pinned by digest for the same reason as the default image; see
-# the comment there.
+# the comment there. Both stages are Debian 13 (trixie): the cgo binary links
+# against the build stage's glibc and must run on the same one.
 
-FROM golang:1.27-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS build
+FROM golang:1.27-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e AS build
 # Stamped exactly as the default image stamps them. Without these the PKCS#11
 # build reported `pam-server dev (none)` from `-version`, from the startup log
 # and from the pam_build_info metric — so the one deployment flavour used with an
@@ -36,7 +37,7 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
     -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
     -o /out/pam-server ./cmd/pam-server
 
-FROM gcr.io/distroless/base-debian12:nonroot@sha256:7f0c72cd138b442ae0deeb69c08b1acf5525439ba251a49ad93c320a061567e5
+FROM gcr.io/distroless/base-debian13:nonroot@sha256:a0d70d6a97cd697d9362bc2aae4a6560dd65817e365d0043b07325a97975dc91
 COPY --from=build /out/pam-server /pam-server
 # The portal/API, the SSH proxy, and the PostgreSQL and SQL Server proxies —
 # the last two only when PAM_DB_ADDR / PAM_MSSQL_ADDR are set (both default off).
