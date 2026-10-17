@@ -91,6 +91,19 @@ var findingExact = map[string]bool{
 	"k8s.refused":          true,
 	"winrm.refused":        true,
 	"sftp.blocked":         true,
+	// The graphical viewers' refusals and transfer blocks (Phases 52c, 280),
+	// the RDP/VNC twins of terminal.refused and sftp.blocked. Until the
+	// 2026-10-17 audit both were built as name+".refused" at runtime, which
+	// the literal scan behind TestRefusalShapedActionsAreClassified cannot
+	// see, so they exported as routine activity.
+	"rdp.refused": true, "vnc.refused": true,
+	"rdp.transfer_blocked": true, "vnc.transfer_blocked": true,
+	// A file an ICAP server judged infected (sftp.icap_flagged, the SFTP leg of
+	// Phase 280's scanning) and a session a restriction rule ended
+	// (restriction.killed, Phase 275, the peer of probe.process_killed):
+	// enforcement verdicts a detection rule wants. restriction.notified stays
+	// routine, because a notify rule only reports.
+	"sftp.icap_flagged": true, "restriction.killed": true,
 	// Endpoint agents and session probes (Phases 153, 266). The two kinds
 	// refusing each other's request (`endpoint_agent.refused`, `probe.refused`)
 	// is an authenticated agent-class key asking for what its row does not

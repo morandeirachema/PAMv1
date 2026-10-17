@@ -20,10 +20,16 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "${here}/../.." && pwd)"
 
 # --- Tunables ----------------------------------------------------------------
-DEBIAN_VERSION="${DEBIAN_VERSION:-13.6.0}"
-ISO_URL="${ISO_URL:-https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-${DEBIAN_VERSION}-amd64-netinst.iso}"
+DEBIAN_VERSION="${DEBIAN_VERSION:-13.7.0}"
+# Debian keeps only the newest point release under current/ and moves the
+# rest to the archive, so a pin that was current goes 404 there on the next
+# point release. The archive URL is tried second; the pinned checksum is what
+# makes either source safe to use.
+iso_name="debian-${DEBIAN_VERSION}-amd64-netinst.iso"
+ISO_URL="${ISO_URL:-https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/${iso_name}}"
+ISO_ARCHIVE_URL="${ISO_ARCHIVE_URL:-https://cdimage.debian.org/cdimage/archive/${DEBIAN_VERSION}/amd64/iso-cd/${iso_name}}"
 # Pinned: the build must fail rather than install an unverified base image.
-ISO_SHA256="${ISO_SHA256:-65273beed27b2df543b68b65630ba525cfbad8df2b12035732b2dff87d6664e7}"
+ISO_SHA256="${ISO_SHA256:-a7ef94ac2fb9a7fec454552abd629b7cc9d5155c886165a45649f5ce6167e355}"
 DISK_SIZE="${DISK_SIZE:-20G}"      # sparse; the OVA only carries written blocks
 VM_MEM="${VM_MEM:-2048}"
 VM_CPUS="${VM_CPUS:-2}"
@@ -61,9 +67,14 @@ trap cleanup EXIT
 
 # --- 1. Base image -----------------------------------------------------------
 say "Debian ${DEBIAN_VERSION} netinst ISO"
-iso="${CACHE}/debian-${DEBIAN_VERSION}-amd64-netinst.iso"
+iso="${CACHE}/${iso_name}"
 if [[ ! -f "$iso" ]]; then
-	curl -fSL --progress-bar -o "$iso" "$ISO_URL"
+	# Into .part first: a download cut short must not sit in the cache looking
+	# like the ISO, where the next run would skip it and fail the checksum.
+	curl -fSL --progress-bar -o "${iso}.part" "$ISO_URL" ||
+		curl -fSL --progress-bar -o "${iso}.part" "$ISO_ARCHIVE_URL" ||
+		{ rm -f "${iso}.part"; die "could not download ${iso_name} from ${ISO_URL} or ${ISO_ARCHIVE_URL}"; }
+	mv "${iso}.part" "$iso"
 fi
 echo "${ISO_SHA256}  ${iso}" | sha256sum -c - || die "ISO checksum mismatch — refusing to build on an unverified base image"
 

@@ -8,7 +8,7 @@ procedure, and read the logs and audit trail.
 > admin-facing behavior changes (config, deployment, management, logging). Add a
 > row to the [change log](#12-change-log) with each update.
 >
-> Last updated: 2026-10-08 · Reflects: Phases 0–227 and 229–283 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
+> Last updated: 2026-10-17 · Reflects: Phases 0–227 and 229–283 + the 2026-07 hardening passes — through the AI-agent access broker (13, completed in 27), the PostgreSQL database session proxy (15), live monitoring + command control (16), safes + dependent-account propagation (17), optional CyberArk Conjur secret sourcing (18), access certification campaigns (19), the ITSM/ticketing gate (20), richer approval workflows (21), Zero Standing Privilege via ephemeral SSH certificates (22, extended to operator-issued certs in 28), privileged threat analytics (23), the Conjur-style application-secrets API (24), console parity (25: 5250 screens for safes, campaigns, risk analytics, and a live session viewer), recording playback + one-time access (26), the third-party vendor access gate (29, §7), in-session step-up (30, §9.4), the identity blast-radius / CIEM engine (31, §9.8), SFTP and RDP clipboard control (32–33, with per-file SFTP content capture in 59), the cluster-wide kill-switch (34), audit→SIEM forwarding (35), retention (36), the SQL Server and VNC connectors (53–54), cluster-wide live monitoring (55), searchable session recordings (110), mandatory live supervision (112, §9.4b), a live NIS2 compliance report (114, §9.2b), live session-sharing (116, §9.4c), a per-user CIDR source-address allowlist (118, §7), recurring access requests + configurable password policy + checkout extension (120, §7 and §9.6c), suspend/resume for a live session (122, §9.4d) FIDO2/WebAuthn as a second MFA factor (124, alongside the existing TOTP section), selectable console color themes (126, keyboard-first, client-only — **F2** cycles green/amber/slate), authenticated post-login account discovery (128, returning to the original CyberArk/Wallix research backlog now that the Wallix-weighted plan is closed), and Zero Standing Privilege extended to PostgreSQL via ephemeral roles (129 — RDP has no equivalent, a confirmed guacd/FreeRDP protocol limitation; SQL Server deferred, needs a new TDS client-response reader), and an optional command allow-list narrowing every command-control path to a named set (131, §9.4), and device-aware access control — a live EDR-posture webhook plus an optional reverse-proxy client-certificate binding, both re-checked on every connect and every authenticated call (133, §7), and DoubleLock — a second, named-holder password additionally required to reveal or check out a credential, kept deliberately outside the KEK so `-rotate-kek` needs no special case for it (135, §6), and magic-link access-request approval plus session watermarking (137, §9.4e and §9.6d), and personal/private safes — a safe marked personal replaces `CanConnectTarget`'s unconditional admin bypass with a narrow, named `unlimited_vault_access` capability, loudly audited when used (139, §6), and same-target-only raw TCP port-forwarding — a client `ssh -L` request is admitted only to the connected target's own host, any port, closing what would otherwise be an SSRF pivot (141, §9.4), and ICAP-based scanning of SFTP transfers — a finalized upload/download is submitted whole to an AV/DLP gateway, detection only since the file has already reached its destination by the time a whole-object scan can complete (143, §9.4), and generic file-attachment secrets — a `file` secret type for license keys, cert bundles and short documents, size-capped before it is ever vaulted (145, §6), and browser-extension password autofill — a real Manifest V3 extension calling the existing reveal route with a narrowly-scoped token refused everywhere else (147, §6), and SCIM 2.0 push-based user provisioning — `/scim/v2/Users`, authenticated by a new non-human SCIM client key, deactivation that actually cuts the user's own local token, complementing the existing pull-based identity reconcile (149, §7) — and the AI-agent broker's own lifecycle and visibility work — an agent identity that can be suspended, expired or quarantined (159, §7a), and agent behaviour that is finally scored by the risk engine and reconstructible as a run (161, §7a and §9.7) — plus the hardening passes: an HMAC-chained audit trail with signed checkpoints (§9.2), revocation that terminates live sessions (§7), verified upstream-DB TLS, and per-IP auth throttling on every surface (§4). The console is keyboard-first. See the [ROADMAP](../ROADMAP.md).
 
 > ⚠️ **Educational / pre-production.** PAMv1 is a learning project and is
 > currently intended for **pre-production** use. It has not been security-audited.
@@ -54,7 +54,7 @@ flowchart LR
 ## 2. Prerequisites
 
 - [Go 1.26+](https://go.dev/dl/) (to build from source), or [Docker](https://docs.docker.com/) / [Kubernetes](https://kubernetes.io/) to run the image.
-- A PostgreSQL 14+ database (16/17 recommended; bundled in docker-compose), or `memory` mode for a throwaway demo.
+- A PostgreSQL 14+ database (17/18 recommended; 18 bundled in docker-compose), or `memory` mode for a throwaway demo.
 - `openssl` (to generate keys), an SSH client for operators.
 
 Full run specs — ports, resource requests/limits, Docker/Kubernetes versions,
@@ -237,6 +237,14 @@ terraform init
 terraform apply -var master_key=... -var api_key=... -var database_url=postgres://...
 ```
 
+The module needs Terraform 1.8+ and `hashicorp/kubernetes` 3.x, and uses the
+provider's `_v1` resource types. **State created by an earlier version** names
+the old types: the namespace moves itself (a `moved` block), and the Secret,
+Deployment and Service are re-adopted once, without touching the live objects,
+with the `terraform state rm` + `terraform import` commands in the header of
+`deploy/terraform/main.tf`. Run them before the first plan on this version, or
+the plan will destroy and recreate those three.
+
 ### 3.6 Put it behind TLS
 
 Operators must reach the portal/API over **HTTPS** and the proxy over SSH only.
@@ -259,6 +267,7 @@ All configuration is environment variables (12-factor). Full descriptions in
 |---|---|---|---|
 | `PAM_KEK_PROVIDER` | | `local` | Vault key backend: `local` (dev/test), `vault-transit`, `aws-kms`, or `pkcs11` (HSM). |
 | `PAM_CONJUR_URL` (+ `PAM_CONJUR_*`) | | (off) | Source bootstrap `PAM_*` secrets from CyberArk Conjur at startup (Phase 18); see [deploy/k8s/conjur](../deploy/k8s/conjur/). |
+| `PAM_SECRETS_PROVIDER` | | "" (env/SOPS) | Selects the bootstrap-secret source explicitly. `conjur` makes `PAM_CONJUR_URL` required, so a misconfigured deployment fails at startup instead of quietly falling back to the environment. |
 | `PAM_MASTER_KEY` | local only | — | Local KEK key (`-genkey`). **Back it up securely.** Dev/test only. |
 | `PAM_KEK_TRANSIT_ADDR` / `_TOKEN` / `_KEY` | transit only | — | HashiCorp Vault Transit KEK (production). |
 | `PAM_KEK_AWS_KEY_ID` / `_AWS_REGION` | aws-kms only | — | AWS KMS KEK (production). |
@@ -304,6 +313,8 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_SESSION_SHARE_INVITE_TTL_SEC` | | `900` | **Session sharing** (Phase 116): how long an approved share invite stays redeemable, **once**, before it expires unused — internal (`join:<token>` over SSH) or external (emailed QR). See §9.4c. |
 | `PAM_SESSION_SHARE_GUEST_TTL_MIN` | | `240` | How long an **external** guest's minted viewing key keeps working *after* they redeem it — a separate window from the invite TTL above. See §9.4c. |
 | `PAM_ANALYTICS_INTERVAL_MIN` | | `0` (off) | Threat-analytics worker interval (Phase 23); `0` leaves the read-only `GET /api/analytics/risk` endpoint on. See §9.7. |
+| `PAM_ANALYTICS_BASELINE_DAYS` | | `30` (`0` off, max `366`) | History read for the `new_target` novelty signal, from before the scored window. An actor with no history raises nothing, so a new joiner is not an anomaly (Phase 86). |
+| `PAM_ANALYTICS_AUTO_STEPUP` | | `false` | Revoke a **high**-risk actor's portal logins so their next action re-authenticates (with a second factor where enrolled); the step below `PAM_ANALYTICS_AUTO_KILL` (Phase 86). |
 | `PAM_ANALYTICS_WINDOW_MIN` / `_AUTO_KILL` / `_BUSINESS_START` / `_BUSINESS_END` | | `60` / `false` / `7` / `20` | Risk-scoring window (also the re-alert cooldown), auto-kill of critical actors' sessions, and business hours for the off-hours signal. |
 | `PAM_ANALYTICS_TIMEZONE` | | (UTC) | IANA timezone the business hours are interpreted in (audit timestamps are UTC). |
 | `PAM_APP_SECRETS_ENABLED` | | `false` | Enable the application-secrets API (Phase 24): Conjur-style secret delivery to non-agent apps. Front it with TLS. See §7. |
@@ -350,12 +361,13 @@ All configuration is environment variables (12-factor). Full descriptions in
 | `PAM_SLACK_SIGNING_SECRET` | | (off) | Verifies a Slack interactivity callback really came from Slack (v0 request signing) — the only authentication `POST /api/slack/interactivity` has (Phase 234). See §7. |
 | `PAM_DEVICE_HEADER` | | (off) | Name of an HTTP header a trusted reverse proxy injects with a terminated client certificate's fingerprint; once set, a user with an enrolled `device_fingerprint` must present a matching value (Phase 133). See §7. |
 | `PAM_VENDOR_SWEEP_INTERVAL_MIN` | | `0` (off) | How often the sweeper cuts a vendor's **live** session once its contract grant's window closes (`vendor.session_expired`), so access ends with the contract rather than at the next connect. |
-| `PAM_OT_AIRGAP` | | `false` | Air-gapped sites. Forces the no-op alerter **and refuses to start** alongside anything that would call out of the enclave — the ITSM webhook, vendor attestation, the SIEM forwarder, Conjur, the alert webhook, `PAM_OIDC_ISSUER` and `PAM_SAML_IDP_METADATA_URL` (use `PAM_SAML_IDP_METADATA_FILE` inside the enclave) — and rejects `PAM_KEK_PROVIDER=aws-kms` and `PAM_ENTRA_TENANT_ID` outright. It is a fail-closed startup gate, not a mute switch. |
+| `PAM_OT_AIRGAP` | | `false` | Air-gapped sites. Forces the no-op alerter **and refuses to start** alongside anything that would call out of the enclave — the ITSM webhook (`PAM_TICKET_VALIDATE_URL`) and the ServiceNow/Jira connector (`PAM_TICKET_URL`), vendor, posture and on-call attestation, the Slack webhook, the ICAP scanner, the SIEM forwarder, `PAM_OIDC_ISSUER`, `PAM_SAML_IDP_METADATA_URL`, Conjur, the alert webhook and the report digest (for SAML, use `PAM_SAML_IDP_METADATA_FILE` inside the enclave), each unless named in `PAM_OT_AIRGAP_ALLOW` — and rejects `PAM_KEK_PROVIDER=aws-kms` and `PAM_ENTRA_TENANT_ID` outright. It is a fail-closed startup gate, not a mute switch. |
 | `PAM_OT_AIRGAP_ALLOW` | | — | Comma-separated variable names you certify resolve **inside** the enclave, re-permitting them under air-gap. Without this the gate has no escape hatch, which is why an air-gapped site with an internal SIEM could not start. |
 | `PAM_ALERT_WEBHOOK` | | (off) | HTTP endpoint POSTed a JSON alert on break-glass access/unseal and newly flagged risk (Slack/PagerDuty/…). Use HTTPS — a plaintext or non-loopback `http://` URL is warned about at startup. |
 | `PAM_ALERT_SYSLOG` | | (off) | Syslog collector for the same alerts — `udp://host:port` or `tcp://host:port` (a bare `host:port` is treated as UDP). This is per-*alert*; to stream the whole trail use `PAM_AUDIT_FORWARD_ADDR`. |
 | `PAM_ALERT_EMAIL_SMTP` / `_FROM` / `_TO` | | (off) | SMTP server (`host:port`), envelope sender, and comma-separated recipients for email alerts — **all three or none** (validated fail-loud). `PAM_ALERT_EMAIL_USER` / `_PASS` add SMTP auth. |
 | `PAM_REVEAL_DISABLED` | | `false` | Make `reveal` break-glass-only (also forces the broker's `reveal_credential` closed). |
+| `PAM_REQUIRE_TARGET_GRANT` | | `false` | Refuse a connection to a target with **no grants at all** (no direct grant, and not in a safe with members), Phase 203. Off, such a target is reachable by every principal with the connect capability, which is the historical behaviour. |
 | `PAM_AUDIT_HMAC_KEY` | | (off) | base64 32-byte key enabling the **tamper-evident HMAC chain** over the primary audit trail; verify with `GET /api/audit/verify`. See §9.2. |
 | `PAM_AUDIT_SIGN_SEED` | | (off) | base64 32-byte ed25519 seed (needs `PAM_AUDIT_HMAC_KEY`) enabling **signed checkpoints** (`GET /api/audit/head`) so an auditor can detect **tail truncation**. See §9.2. |
 | `PAM_AUDIT_FORWARD_ADDR` | | (off) | host:port of a SIEM collector; **continuously forwards** every audit event (Phase 35). `PAM_AUDIT_FORWARD_PROTO` (`udp`/`tcp`/`tls` — tls verifies the collector's certificate, always), `PAM_AUDIT_FORWARD_FORMAT` (`rfc5424`/`cef`/`leef`), `PAM_AUDIT_FORWARD_CA` (PEM bundle pinning the collector's CA, tls only), `PAM_AUDIT_FORWARD_INTERVAL_SEC` (`10`) tune it. See §9.2. |
@@ -1356,7 +1368,7 @@ Create a `postgres` target and a credential for the database login:
 ```bash
 curl -sX POST https://pam.example/api/targets -H "X-API-Key: $PAM_API_KEY" \
   -d '{"name":"appdb","host":"10.0.0.20","port":5432,"os_type":"linux","protocol":"postgres"}'
-# then POST /api/targets/{id}/credentials with the DB username + password
+# then POST /api/credentials with its target_id and the DB username + password
 ```
 
 Operators then connect through the proxy — the username selects the credential
@@ -1508,7 +1520,7 @@ when the session opens.
   the secret, and `send echo ${password}` would print it.
 - A telnet session is a shell: it needs the `ssh_shell` right where a
   target's or grant's sub-protocol set is narrowed, and it waits for a
-  supervisor under `PAM_REQUIRE_SUPERVISION`.
+  supervisor under `PAM_REQUIRE_LIVE_SUPERVISION`.
 - `outcome:ok` means every step of the scenario ran. The default login ends
   with sending the password, so a wrong password still shows `ok`; end a
   scenario with an `expect` for the device's prompt to make a failed login
@@ -2266,7 +2278,7 @@ sub-protocol lists do. Nine names:
   target's set as it is. A grant that narrows to nothing the target allows
   admits the session to nothing (an explicit refusal, never "everything").
 - **The deployment's switches are ceilings.** `PAM_SSH_PORT_FORWARD=false`,
-  `PAM_SSH_SFTP_MODE=deny` and the four new desktop ceilings —
+  `PAM_SSH_SFTP=deny` and the four new desktop ceilings —
   `PAM_RDP_DRIVE`, `PAM_RDP_PRINTER` (both default `false`, as drive
   redirection always was: a file through a redirected drive leaves no
   record, SFTP is the audited path), `PAM_RDP_AUDIO` (`true`),
@@ -2482,6 +2494,10 @@ curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/credentials/
   -d '{"kind":"windows_service","host":"app-01","name":"MyAppSvc","management_credential_id":7}'
 # kinds: windows_service | scheduled_task | iis_apppool ; port defaults to 5985 (WinRM)
 ```
+
+`GET /api/credentials/3/dependencies` lists a credential's dependents (read
+inventory), and `DELETE /api/credentials/3/dependencies/{did}` removes one
+(manage credentials).
 
 On the next rotation of credential 3, PAMv1 sets the new password on the target,
 re-vaults it, then runs the appropriate WinRM command on each consumer's host
@@ -4591,7 +4607,9 @@ Command control (`PAM_COMMAND_DENY_FILE` / `_ALLOW_FILE`) is one policy for
 everyone. A **restriction rule** belongs to a subject — a user, or a role
 everyone holding it — and says what *they* may not do inside a session, the
 way WALLIX's user-group Restrictions tab does. Menu **35** (*Work with
-restriction rules*), or `POST /api/restriction-rules`:
+restriction rules*), or `POST /api/restriction-rules` (manage users;
+`GET /api/restriction-rules` lists them for anyone who can read the audit, and
+`DELETE /api/restriction-rules/{id}` removes one):
 
 | Field | Values |
 |---|---|
@@ -5462,6 +5480,12 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-10-17 | The dependent-account and restriction-rule sections name their list and delete routes (`GET`/`DELETE /api/credentials/{id}/dependencies`, `GET`/`DELETE /api/restriction-rules`), which only the generated diagrams doc listed. |
+| 2026-10-17 | §4 gains the four variables it never mentioned: `PAM_SECRETS_PROVIDER`, `PAM_ANALYTICS_BASELINE_DAYS`, `PAM_ANALYTICS_AUTO_STEPUP` and `PAM_REQUIRE_TARGET_GRANT`. The `.env.example` it points to for full descriptions now lists every variable, as it claims (53 had been missing), and the Kubernetes ConfigMap/Secret pair matches it (about 90 had been missing). |
+| 2026-10-17 | **Air-gap: `PAM_TICKET_URL` joins the gate, and the documented list catches up.** The ServiceNow/Jira connector egresses like the ITSM webhook but was missing from `airGapConflicts`; it is refused under `PAM_OT_AIRGAP` unless allowed. The list here now matches the code's (posture, on-call, Slack, ICAP and the report digest were missing). |
+| 2026-10-17 | **A route that does not exist.** The PostgreSQL proxy example said to add the credential with `POST /api/targets/{id}/credentials`; it is `POST /api/credentials` with `target_id` in the body. |
+| 2026-10-17 | **Two variable names corrected.** `PAM_REQUIRE_LIVE_SUPERVISION` (the guide said `PAM_REQUIRE_SUPERVISION`) and `PAM_SSH_SFTP=deny` (it said `PAM_SSH_SFTP_MODE`); setting either wrong name did nothing. |
+| 2026-10-17 | **PostgreSQL 18.** The docker-compose stack bundles PostgreSQL 18 (was 17); 17 and 18 are the recommended versions, 14+ still works. **Terraform `hashicorp/kubernetes` 3.x.** §3.5: the module needs Terraform 1.8+, uses the provider's `_v1` resource types, and state from an earlier version is migrated once (the namespace by a `moved` block, the Secret, Deployment and Service by `state rm` + `import`). |
 | 2026-10-08 | **Phase 283 (recording archives).** §9.3 *Portable recording archives*: export by user/target/protocol/window, the manifest, import and its imported verdict, purge from the exporting deployment only. |
 | 2026-10-08 | **Phase 281 (review of 274–280).** "Since the review" notes in §5.1, the telnet section, the approval-depth section, §9.1a, §9.2c, §9.3c and §9.4a: what changed in behaviour and why. |
 | 2026-10-07 | **Phase 280 (desktop ICAP).** §9.3c *Scanning desktop transfers*: holding file and clipboard streams for ICAP, outcomes, audit and alerts, the viewer's Ctrl+Alt+V and Ctrl+Alt+U; the SFTP ICAP note no longer says desktops are unscanned; env row. |

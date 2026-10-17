@@ -3,13 +3,25 @@
 #
 #   terraform init
 #   terraform apply -var master_key=... -var api_key=... -var database_url=...
+#
+# Upgrading state created before the hashicorp/kubernetes 3.x move. Provider 3.0
+# deprecated the unversioned resource types this module used, so it now uses the
+# _v1 ones. The namespace moves itself (the moved block below); the provider
+# cannot move the other three, so re-adopt them once, without touching the live
+# objects, before the first plan on this version (namespace "pamv1" shown):
+#
+#   terraform state rm kubernetes_secret.pam kubernetes_deployment.pam kubernetes_service.pam
+#   terraform import kubernetes_secret_v1.pam     pamv1/pam-secrets
+#   terraform import kubernetes_deployment_v1.pam pamv1/pam-server
+#   terraform import kubernetes_service_v1.pam    pamv1/pam-server
 
 terraform {
-  required_version = ">= 1.6"
+  # 1.8 for the moved block across resource types below.
+  required_version = ">= 1.8"
   required_providers {
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = ">= 2.30, < 3.0" # bounded so a provider major bump can't land unreviewed
+      version = ">= 3.0, < 4.0" # bounded so a provider major bump can't land unreviewed
     }
   }
 
@@ -32,20 +44,27 @@ provider "kubernetes" {
   config_context = var.kube_context
 }
 
-resource "kubernetes_namespace" "pam" {
+# State from before the 3.x move named this kubernetes_namespace; the provider
+# supports moving it to the _v1 type in place.
+moved {
+  from = kubernetes_namespace.pam
+  to   = kubernetes_namespace_v1.pam
+}
+
+resource "kubernetes_namespace_v1" "pam" {
   metadata {
     name = var.namespace
     labels = {
-      "app.kubernetes.io/name"                 = "pamv1"
-      "pod-security.kubernetes.io/enforce"     = "restricted"
+      "app.kubernetes.io/name"             = "pamv1"
+      "pod-security.kubernetes.io/enforce" = "restricted"
     }
   }
 }
 
-resource "kubernetes_secret" "pam" {
+resource "kubernetes_secret_v1" "pam" {
   metadata {
     name      = "pam-secrets"
-    namespace = kubernetes_namespace.pam.metadata[0].name
+    namespace = kubernetes_namespace_v1.pam.metadata[0].name
   }
   data = {
     PAM_MASTER_KEY           = var.master_key
@@ -55,10 +74,10 @@ resource "kubernetes_secret" "pam" {
   }
 }
 
-resource "kubernetes_deployment" "pam" {
+resource "kubernetes_deployment_v1" "pam" {
   metadata {
     name      = "pam-server"
-    namespace = kubernetes_namespace.pam.metadata[0].name
+    namespace = kubernetes_namespace_v1.pam.metadata[0].name
     labels    = { "app.kubernetes.io/name" = "pamv1" }
   }
   spec {
@@ -98,7 +117,7 @@ resource "kubernetes_deployment" "pam" {
           }
           env_from {
             secret_ref {
-              name = kubernetes_secret.pam.metadata[0].name
+              name = kubernetes_secret_v1.pam.metadata[0].name
             }
           }
           env {
@@ -150,10 +169,10 @@ resource "kubernetes_deployment" "pam" {
   }
 }
 
-resource "kubernetes_service" "pam" {
+resource "kubernetes_service_v1" "pam" {
   metadata {
     name      = "pam-server"
-    namespace = kubernetes_namespace.pam.metadata[0].name
+    namespace = kubernetes_namespace_v1.pam.metadata[0].name
     labels    = { "app.kubernetes.io/name" = "pamv1" }
   }
   spec {

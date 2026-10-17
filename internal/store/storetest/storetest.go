@@ -2109,6 +2109,27 @@ func RunStoreContract(t *testing.T, st store.Store) {
 	if err := st.UpdateUserDeviceFingerprint(ctx, 999999, "aa:bb:cc:dd"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("UpdateUserDeviceFingerprint missing: want ErrNotFound, got %v", err)
 	}
+	// UpdateUserManager (Phase 256): the one Store method the contract did
+	// not call until the 2026-10-17 audit. A fresh user has no manager; it
+	// sets, round-trips, clears with "", and ErrNotFound for a missing user.
+	if u.Manager != "" {
+		t.Fatalf("new user's Manager = %q, want empty", u.Manager)
+	}
+	if err := st.UpdateUserManager(ctx, u.ID, "boss"); err != nil {
+		t.Fatalf("UpdateUserManager: %v", err)
+	}
+	if by, err := st.GetUser(ctx, u.ID); err != nil || by.Manager != "boss" {
+		t.Fatalf("after UpdateUserManager: %+v err %v", by, err)
+	}
+	if err := st.UpdateUserManager(ctx, u.ID, ""); err != nil {
+		t.Fatalf("UpdateUserManager clear: %v", err)
+	}
+	if by, err := st.GetUser(ctx, u.ID); err != nil || by.Manager != "" {
+		t.Fatalf("after clearing the manager: %+v err %v", by, err)
+	}
+	if err := st.UpdateUserManager(ctx, 999999, "boss"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UpdateUserManager missing: want ErrNotFound, got %v", err)
+	}
 	// GetUserByUsername / GetUserByExternalID (Phase 149): the two lookups
 	// SCIM's idempotent-provisioning filter depends on.
 	if by, err := st.GetUserByUsername(ctx, "u1"); err != nil || by.ID != u.ID {

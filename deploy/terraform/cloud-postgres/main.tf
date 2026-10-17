@@ -15,7 +15,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.0"
     }
   }
 }
@@ -46,7 +46,7 @@ resource "aws_db_instance" "pamv1" {
   db_subnet_group_name   = var.subnet_group_name
   vpc_security_group_ids = var.security_group_ids
 
-  skip_final_snapshot = false
+  skip_final_snapshot       = false
   final_snapshot_identifier = "${var.name}-final"
 }
 

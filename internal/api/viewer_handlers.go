@@ -47,11 +47,20 @@ type viewerProto struct {
 	// policy through. If guacd does not advertise them, the policy cannot be
 	// applied and a non-permissive one must refuse rather than run ungated.
 	gateArgs []string
+	// refusedAction and transferBlockedAction are the audit actions for a
+	// refused session and a blocked desktop transfer. They are spelled out, not
+	// built as name+".refused", because the OCSF classifier's coverage test
+	// finds actions by their literals: built at runtime, both exported to a
+	// SIEM as routine activity while winrm.refused and sftp.blocked were
+	// findings.
+	refusedAction         string
+	transferBlockedAction string
 }
 
 var (
 	protoRDP = viewerProto{
 		name: "rdp", label: "RDP", defaultPort: 3389, scope: auth.SessionScopeRDP,
+		refusedAction: "rdp.refused", transferBlockedAction: "rdp.transfer_blocked",
 		extra: func(s *Server, clipboard, rights string) map[string]string {
 			return rdpExtra(s.guacdRDPSecurity, s.guacdIgnoreCert, clipboard, rdpRedirections{
 				drive: s.rdpDrive, printer: s.rdpPrinter, audio: s.rdpAudio, audioIn: s.rdpAudioIn}, rights)
@@ -60,6 +69,7 @@ var (
 	}
 	protoVNC = viewerProto{
 		name: "vnc", label: "VNC", defaultPort: 5900, scope: auth.SessionScopeVNC,
+		refusedAction: "vnc.refused", transferBlockedAction: "vnc.transfer_blocked",
 		extra: func(_ *Server, clipboard, _ string) map[string]string {
 			return vncExtra(clipboard)
 		},
@@ -316,7 +326,7 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 		return
 	}
 	if why != "" {
-		s.refuseSessionMFA(r.Context(), w, target, proto.name+".refused", why, false)
+		s.refuseSessionMFA(r.Context(), w, target, proto.refusedAction, why, false)
 		return
 	}
 	if factor != "" {
@@ -392,7 +402,7 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 		recordable = s.guacdRecordingPath
 	}
 	if s.recordingRequired(recordable) {
-		s.audit(ctx, proto.name+".refused", "target:"+target.Name+" reason:recording-required")
+		s.audit(ctx, proto.refusedAction, "target:"+target.Name+" reason:recording-required")
 		writeError(w, http.StatusServiceUnavailable, "recording is required but not configured for "+proto.label)
 		return
 	}
@@ -440,7 +450,7 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 			}
 			s.log.Error("viewer session refused: guacd cannot enforce the clipboard policy",
 				"protocol", proto.name, "target", target.Name, "missing_param", arg, "policy", clipMode)
-			s.audit(ctx, proto.name+".refused",
+			s.audit(ctx, proto.refusedAction,
 				"target:"+target.Name+" reason:clipboard-unenforceable clipboard:"+clipMode+" missing:"+arg)
 			writeError(w, http.StatusBadGateway,
 				"guacd cannot enforce the configured clipboard policy for "+proto.label)
@@ -479,7 +489,7 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 	if rerr != nil {
 		s.log.Error("viewer recording", "protocol", proto.name, "target", target.Name, "err", rerr)
 		if s.requireRecording {
-			s.audit(ctx, proto.name+".refused", "target:"+target.Name+" reason:recording-failed")
+			s.audit(ctx, proto.refusedAction, "target:"+target.Name+" reason:recording-failed")
 			ws.Close(websocket.StatusInternalError, "recording unavailable")
 			return
 		}
@@ -565,15 +575,15 @@ func (s *Server) viewerTunnel(w http.ResponseWriter, r *http.Request, proto view
 			s.audit(auditCtx, proto.name+".transfer_scanned", detail)
 			return
 		}
-		s.audit(auditCtx, proto.name+".transfer_blocked", detail)
-		s.alerter.Notify(auditCtx, alert.Event{Type: proto.name + ".transfer_blocked", Actor: principal.Name, Detail: detail, Time: time.Now()})
+		s.audit(auditCtx, proto.transferBlockedAction, detail)
+		s.alerter.Notify(auditCtx, alert.Event{Type: proto.transferBlockedAction, Actor: principal.Name, Detail: detail, Time: time.Now()})
 	}
 	bridgeGuacd(ctx, ws, gconn, clip, touch, record, suspended, func(t guacd.ClipTransfer) {
 		s.audit(auditCtx, proto.name+".clipboard", "target:"+target.Name+" "+t.Detail())
 	}, gate, onVerdict, func(direction string) {
 		// The gate could not frame a message: the session ends rather than
 		// forward bytes it could not fully read (review of 274-280).
-		s.audit(auditCtx, proto.name+".refused", "target:"+target.Name+" reason:unframeable-instruction direction:"+direction)
+		s.audit(auditCtx, proto.refusedAction, "target:"+target.Name+" reason:unframeable-instruction direction:"+direction)
 	})
 }
 

@@ -19,7 +19,7 @@ descriptor, a SHA-256 manifest and a disk image.
 ```bash
 cd deploy/ova
 ./build.sh
-# → ~/.cache/pamv1-ova/pamv1-appliance-13.6.0.ova  (+ .sha256)
+# → ~/.cache/pamv1-ova/pamv1-appliance-13.7.0.ova  (+ .sha256)
 ```
 
 10–20 minutes with KVM; considerably longer without (the script says which one it
@@ -50,14 +50,17 @@ constructed to spec and validated as XML, and the disk is boot-tested under QEMU
 but the import path into VirtualBox, VMware or ESXi has not been exercised. Treat
 that step as the one to try first.
 
-The base image is pinned by SHA-256. If Debian moves `current/` on to a new point
-release the checksum stops matching and the build **fails** rather than quietly
-installing an unverified base — bump `DEBIAN_VERSION` and `ISO_SHA256` together.
+The base image is pinned by version and SHA-256. Debian keeps only the newest
+point release under `current/` and moves older ones to its archive, so the
+build tries `current/` first and the archive second: a pin keeps building after
+the next point release. Whichever source answers, a checksum that does not
+match **fails** the build rather than installing an unverified base. To move to
+a newer point release, bump `DEBIAN_VERSION` and `ISO_SHA256` together.
 
 ## Import and first boot
 
 ```bash
-VBoxManage import ~/.cache/pamv1-ova/pamv1-appliance-13.6.0.ova
+VBoxManage import ~/.cache/pamv1-ova/pamv1-appliance-13.7.0.ova
 # or: VirtualBox → File → Import Appliance
 ```
 

@@ -39,7 +39,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: guacd
-          image: guacamole/guacd:1.5.5   # pin a released version (or a digest)
+          image: guacamole/guacd:1.6.0   # pin a released version (or a digest)
           ports:
             - containerPort: 4822
               name: guacd

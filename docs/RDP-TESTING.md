@@ -89,7 +89,7 @@ guacd dial.
 ```bash
 # 1. Bring up guacd next to the server (guacd ships in the compose file):
 #    from deploy/docker/  ->  docker compose up --build
-#    or run guacd alone:   docker run --rm -p 4822:4822 guacamole/guacd:1.5.5
+#    or run guacd alone:   docker run --rm -p 4822:4822 guacamole/guacd:1.6.0
 
 # 2. Run pam-server pointed at it (in-memory demo store):
 go build -o pam-server ./cmd/pam-server

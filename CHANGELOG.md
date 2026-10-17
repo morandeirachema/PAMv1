@@ -18,9 +18,24 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
-Three dependency updates merged on 2026-10-14 (no PAMv1 code changed, and CI
-passed on each), and the fixes from a review of the Conjur deploy docs, for
-the next release to carry.
+Since v0.0.79: Phase 283 (portable recording archives), the dependency and
+base-image updates of 2026-10-14 and 2026-10-17, the fixes from a review of
+the Conjur deploy docs, and the fixes from a repository-wide audit of
+versions and documentation. Two changes need an operator step on upgrade:
+PostgreSQL 18 under docker-compose, and Terraform state from before the
+Kubernetes provider 3 move (both under **Changed**).
+
+**Added.**
+
+- **Portable recording archives** (Phase 283, Tier 10 row 12).
+  `GET /api/recordings/archive` exports the recordings a filter selects
+  (actor, target, protocol, window) as a tar: `MANIFEST.json`, then each
+  recording as stored, sealed ones still sealed. The manifest names each
+  file's stamping audit row and whether the bytes still match it, and its
+  SHA-256 is audited before a byte leaves. `POST /api/recordings/archive`
+  re-imports (verified first, never overwriting a different file; replays as
+  *imported*), and `POST /api/recordings/purge` deletes only unchanged files
+  of an archive exported here. Console: *Session Recordings* → F7.
 
 **Changed.**
 
@@ -30,9 +45,45 @@ the next release to carry.
   `golang.org/x/sys` 0.48.0 → 0.49.0. Patch and minor versions only.
 - **Build images** (#461). Both Dockerfiles move to the current
   `golang:1.27-alpine` and `golang:1.27-bookworm` digests: the same Go
-  release on a refreshed base.
+  release on a refreshed base. (The PKCS#11 build later moves to
+  `golang:1.27-trixie`, under **Security**.)
 - **Release workflow** (#451). `anchore/sbom-action` 0.24.2 → 0.24.3, the step
   that generates each release's SPDX SBOM.
+- **`masterzen/winrm`** 2026-04-07 → 2026-10-04 (untagged upstream). NTLM
+  now runs on `Azure/go-ntlmssp`, with message sealing kept, and five
+  indirect modules drop out of the build (`bodgit/ntlmssp`,
+  `bodgit/windows`, `go-logr/logr`, `hashicorp/go-cleanhttp`,
+  `tidwall/transform`).
+- **PostgreSQL 18.** docker-compose (`postgres:18-alpine`), the CI store
+  suite and the CloudNativePG example move from 17 to 18. **Upgrade note
+  for compose users:** 18 cannot read a 17 data directory and stores its
+  cluster at a new path, so the volume now mounts at `/var/lib/postgresql`
+  and an existing `pgdata` volume is refused on start rather than replaced
+  by an empty database. `deploy/docker/README.md` has the dump-and-restore
+  steps. The appliance keeps Debian 13's packaged PostgreSQL 17.
+- **guacd 1.6.0** (was 1.5.5) in compose, the Kubernetes manifest and the
+  Helm chart: FreeRDP 3 support and new VNC/RDP options. The protocol
+  version is unchanged, every parameter name PAMv1 answers exists in both
+  releases, the image still runs as UID 1000, and the vendored JavaScript
+  client already reads `sync`'s new frame-count argument.
+- **Terraform: Kubernetes provider 3.** `deploy/terraform` moves from
+  `hashicorp/kubernetes` 2.x to 3.x and to its `_v1` resource types, which
+  3.0 made the non-deprecated names; it now needs Terraform 1.8+. **Upgrade
+  note:** state from an earlier version migrates once. The namespace moves
+  itself (a `moved` block); the Secret, Deployment and Service are
+  re-adopted with the `state rm` + `import` commands in `main.tf`'s header,
+  before the first plan, or that plan replaces them.
+- **xterm.js 6.0.0** (was 5.5.0) for the in-portal SSH terminal, vendored
+  verbatim with its stylesheet. 6.0 reworks the viewport and scroll bar, and
+  no longer maps Alt+arrow to Ctrl+arrow: word-wise cursor movement in a
+  remote shell is Ctrl+arrow, or whatever the remote readline binds.
+- **Demo seed image.** The RDP and VNC demo compose files' seed job moves from
+  `curlimages/curl:8.11.1` to `8.23.0`.
+- **Terraform: AWS provider 6.** The `cloud-postgres` example module moves
+  from `hashicorp/aws ~> 5.0` to `~> 6.0`, the maintained major; it
+  validates unchanged. Both modules are now `terraform fmt`-clean, which
+  neither was, and a new CI job keeps them so: `terraform fmt -check`, then
+  `init -backend=false` + `validate` of each module.
 
 **Fixed.**
 
@@ -80,6 +131,50 @@ the next release to carry.
   time (#463, #464), and each sweep missed files. `TestProjectNameCasing`
   scans every tracked file and fails on a lowercase `pamv1` that is prose
   rather than an identifier, naming the file and line.
+- **`NOTICE` lists checksums, not a script.** Since Phase 254 the xterm.js
+  entry's checksum line held 26 lines of the Python that vendored it,
+  including a local temp path. It now has the file's SHA-256, and the
+  Guacamole client's entry gains one too; both vendored files were checked
+  byte for byte against their published npm builds.
+- **RDP/VNC refusals reach a SIEM as findings.** The OCSF export classified
+  `rdp.refused`, `vnc.refused` and the two `*.transfer_blocked` actions as
+  routine API activity, while their SSH, WinRM and SFTP twins were
+  Detection Findings: they were built at runtime, where the coverage test
+  could not see them. They are findings now, and so are
+  `sftp.icap_flagged` (an infected file) and `restriction.killed` (a session
+  a restriction rule ended).
+- **The store contract covers every method again.** `UpdateUserManager`
+  (Phase 256) had no case in the suite both backends run, so memstore and
+  PostgreSQL were never checked to agree on it. It has one, and a new test
+  fails on any `Store` method the suite does not call.
+- **Air-gap mode refuses the ServiceNow/Jira connector too.** `PAM_OT_AIRGAP`
+  refused the ITSM webhook but not `PAM_TICKET_URL`, the first-class
+  connector's endpoint, which also calls out on every gated request. It is
+  refused now unless named in `PAM_OT_AIRGAP_ALLOW`. **A deployment running
+  both will stop at startup** until the URL is allowed or removed.
+- **The configuration examples list every variable again.**
+  `deploy/docker/.env.example` says it lists every `PAM_*` variable; 53
+  from Phase 112 on were missing. The Kubernetes ConfigMap/Secret pair, its
+  twin, was missing about 90, including the ServiceNow/Jira connector and
+  four secrets (`PAM_TICKET_TOKEN`, `PAM_RADIUS_SECRET`,
+  `PAM_SLACK_SIGNING_SECRET`, `PAM_BROKER_TOKEN_SIGN_SEED`). ADMIN-GUIDE §4
+  gains the four it never mentioned.
+- **The appliance build works again.** `deploy/ova/build.sh` pinned Debian
+  13.6.0 at `debian-cd/current/`, which Debian moved on to 13.7.0, so the
+  download returned 404. It now pins 13.7.0, falls back to Debian's archive
+  so the next point release cannot break it the same way, and downloads to a
+  `.part` file so an interrupted download is not mistaken for the ISO.
+
+**Security.**
+
+- **Container base images on Debian 13.** distroless updates only its
+  debian13 images now; the `static-debian12` and `base-debian12` tags both
+  Dockerfiles pinned no longer receive security updates. The default image
+  moves to `static-debian13:nonroot` and the PKCS#11 image to
+  `base-debian13:nonroot`, with its cgo build stage on `golang:1.27-trixie`
+  so the binary runs on the glibc it was linked against. Dependabot raises
+  digests within a tag but never the Debian release, which is how the
+  pin went stale.
 
 **Repository history.** On 2026-10-14 the git history was rewritten to
 normalize commit authorship. No file changed: every tag points at a tree

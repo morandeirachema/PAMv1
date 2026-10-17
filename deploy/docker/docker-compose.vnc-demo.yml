@@ -21,7 +21,7 @@ services:
 
   # The Guacamole proxy daemon that makes the actual VNC connection.
   guacd:
-    image: guacamole/guacd:1.5.5
+    image: guacamole/guacd:1.6.0
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -59,7 +59,7 @@ services:
 
   # One-shot: wait for pam, then create the VNC target + its credential.
   seed:
-    image: curlimages/curl:8.11.1
+    image: curlimages/curl:8.23.0
     depends_on:
       pam:
         condition: service_started

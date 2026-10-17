@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: pam
@@ -19,8 +19,13 @@ services:
       - log_statement=ddl
       # Production: terminate TLS (ssl=on with certs) and use sslmode=verify-full
       # in PAM_DATABASE_URL; add pgAudit via an image that bundles the extension.
+    # PostgreSQL 18 images keep the cluster in /var/lib/postgresql/18/docker and
+    # declare the volume one level up. The image refuses to start with anything
+    # still mounted at the old /var/lib/postgresql/data, and a volume holding a
+    # 17 cluster is refused too, rather than silently starting an empty one; the
+    # README's "Upgrading from PostgreSQL 17" moves the data across.
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
     # No cap_drop / no-new-privileges here: the postgres entrypoint starts as root
     # and drops to the postgres user (needs setuid), which those would break.
     mem_limit: 1g
@@ -48,7 +53,7 @@ services:
   # pam-server on the internal bridge can reach it. guacd itself connects out to
   # the RDP targets (:3389).
   guacd:
-    image: guacamole/guacd:1.5.5
+    image: guacamole/guacd:1.6.0
     restart: unless-stopped
     read_only: true                        # only /tmp (tmpfs) is writable
     tmpfs:

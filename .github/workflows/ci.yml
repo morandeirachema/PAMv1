@@ -168,7 +168,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17
+        image: postgres:18
         env:
           POSTGRES_USER: pam
           POSTGRES_PASSWORD: pam
@@ -273,7 +273,7 @@ jobs:
         # are skipped like the CloudNativePG Cluster, but the plain Secret beside
         # them is validated, which is the part that can actually be malformed.
         run: |
-          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.7.0
+          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.8.0
           "$(go env GOPATH)/bin/kubeconform" -summary -ignore-missing-schemas \
             deploy/k8s/*.yaml deploy/k8s/conjur/deployment.yaml deploy/k8s/flux/*.yaml \
             deploy/k8s/eso/*.yaml \
@@ -285,7 +285,7 @@ jobs:
         # material: it exists precisely so the wholesale apply cannot sweep up
         # secret.example.yaml's CHANGE_ME values.
         run: |
-          go install sigs.k8s.io/kustomize/kustomize/v5@v5.4.3
+          go install sigs.k8s.io/kustomize/kustomize/v5@v5.8.3
           KUSTOMIZE="$(go env GOPATH)/bin/kustomize"
           "$KUSTOMIZE" build deploy/k8s/ > /tmp/base.yaml
           "$KUSTOMIZE" build deploy/k8s/sops/ > /tmp/sealed.yaml
@@ -295,6 +295,27 @@ jobs:
           grep -q 'ENC\[AES256_GCM' /tmp/sealed.yaml || {
             echo "FAIL: the secrets base built without sealed values"; exit 1; }
           "$(go env GOPATH)/bin/kubeconform" -summary -ignore-missing-schemas /tmp/base.yaml
+
+  # The Terraform modules are IaC like the manifests above, and until this job
+  # nothing ran them: neither module was fmt-clean, and a provider major bump
+  # could only be checked by hand. fmt, then init (no backend, so no state and
+  # no credentials) and validate against the providers the constraints resolve.
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.16.6"
+          terraform_wrapper: false
+      - name: terraform fmt
+        run: terraform fmt -check -recursive deploy/terraform
+      - name: terraform validate
+        run: |
+          for m in deploy/terraform deploy/terraform/cloud-postgres; do
+            terraform -chdir="$m" init -backend=false -input=false
+            terraform -chdir="$m" validate
+          done
 
   # Phase 14: prove the committed SOPS example is really encrypted and round-trips
   # with the throwaway demo key (guards against an accidental plaintext commit).
@@ -308,8 +329,8 @@ jobs:
           check-latest: true
       - name: install sops + age
         run: |
-          go install github.com/getsops/sops/v3/cmd/sops@v3.13.2
-          go install filippo.io/age/cmd/age@v1.3.1
+          go install github.com/getsops/sops/v3/cmd/sops@v3.13.3
+          go install filippo.io/age/cmd/age@v1.3.2
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: verify SOPS example
         run: ./deploy/k8s/sops/verify.sh

@@ -147,7 +147,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–227 and 229–265, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–227 and 229–283, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 
@@ -224,6 +224,17 @@ PAM for AI agents — the same chokepoint, extended to autonomous tools. Opt-in 
 - **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. The release pipeline builds by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance** — see [Verifying a release](#verifying-a-release). *Current release: **[v0.0.79](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.79)** (2026-10-08; first was v0.10.0) — the signed image is public at `ghcr.io/morandeirachema/pamv1:0.0.79`, which is what every manifest here pins, so the published-artifact paths below work.*
 - **Encrypted secrets in git** — the Kubernetes secret manifest can be sealed with **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: values are encrypted while `kind`/`metadata` stay reviewable, decrypted at deploy time (`sops -d | kubectl apply -f -`, plaintext never on disk) or natively by Flux / Argo / helm-secrets — so secrets live in the **same IaC repo** without leaking. See **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **Or source secrets from CyberArk Conjur** — as a runtime alternative to SOPS, set `PAM_CONJUR_URL` and PAMv1 fetches its own bootstrap secrets (master key, API key, DB URL, …) from **[Conjur](https://www.conjur.org/)** at startup, authenticating with a host API key or a **Kubernetes `authn-jwt`** projected token — so no bootstrap secret lives in Git at all. With `PAM_CONJUR_REFRESH_MIN` (Phase 78), the secrets that can honestly change on a running server (`PAM_API_KEY`, `PAM_BREAK_GLASS_KEY_HASH`) are **re-read periodically without a restart**; the KEK, database URL and audit-chain keys stay pinned to a restart by design. Both mechanisms ship; SOPS stays the zero-dependency default. See **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
+
+### WALLIX-parity pass (Phases 266–283)
+
+- **Session probe** (266, 271) — `pam-agent` in probe mode inside a brokered Windows desktop: process, window and connection events as a sealed, hash-chained artifact beside the recording, and block or notify rules enforced in the session.
+- **RADIUS** (269) — a login source behind the directory, or the second factor a directory user's code is checked against, with Access-Challenge answered from the sign-on screen.
+- **Sub-protocol rights** (270) — per target and per grant: shell, exec, SFTP, port forwarding, X11, and RDP drive, printer and audio, under deployment-wide ceilings.
+- **Host keys pinned on first contact** (272) — each SSH target's key stored on first use and checked after (`PAM_SSH_HOST_KEY_CHECK`).
+- **Approval depth** (274) — approver comments, a shorter granted duration, request timeouts, and cancelling an approved request mid-session.
+- **Restriction rules** (275) — per user or role, a regex over the command on each sub-protocol and SFTP size rules, to kill or notify.
+- **Login banner and recording consent** (276), **reports** (277: unused users and targets, connection statistics, critical targets, a daily digest) and **bulk inventory CSV** import and export (278).
+- **Telnet targets** with SEND/EXPECT startup scenarios (279), **ICAP scanning** of desktop transfers and the clipboard (280), and **portable recording archives** (283).
 
 ## Roles, users & profiles
 
@@ -345,7 +356,7 @@ Every phase (0–94) has shipped — full per-phase detail in **[ROADMAP.md](ROA
 | 60 | The ticket gate holds at connect time (the change ticket is re-checked when access is used, at all five gates) | ✅ shipped |
 | 61 | A dependent account names the credential that manages it (propagation stops logging in as the account it rotates) | ✅ shipped |
 
-The table stops at 61 to stay readable; **phases 62–94 shipped just as
+The table stops at 61 to stay readable; **phases 62–283 shipped just as
 completely** (each has its own section in [ROADMAP.md](ROADMAP.md)): the first
 release wave and its reviews (62–66), the token-exchange console screen (67),
 certification-campaign depth — scoping, scheduling, per-item reviewers,
@@ -359,7 +370,9 @@ first-class ServiceNow/Jira ticket connectors (84), history-aware analytics
 with a revoke-logins response rung (86–87), the open-findings backlog closed
 (89), and an adversarial review of the crown jewels (91–93) that fixed one
 SFTP read-only containment gap and confirmed the vault, database proxies and
-broker four-eyes sound — released steadily as **v0.10.0 → v0.0.79** (the numbering moved to 0.0.x at v0.0.77). Releases
+broker four-eyes sound; then a refactor and hardening arc (96–108), the
+feature passes of Tiers 5–10 (from content-searchable recordings, 110, to
+portable recording archives, 283) and their reviews — released steadily as **v0.10.0 → v0.0.79** (the numbering moved to 0.0.x at v0.0.77). Releases
 are recorded in **[CHANGELOG.md](CHANGELOG.md)**; the honest remainder lives in
 **[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**.
 
@@ -546,8 +559,8 @@ added as each phase ships.
 | ~~**Live watching and in-portal replay of RDP/VNC sessions**~~ **✅ shipped (Phase 258)** | Bastion sessions audit guide §6–7; Access Manager replay | the portal records every desktop itself — the Guacamole instruction stream, sealed, hashed and audited (`rdp.record`/`vnc.record`) — and *Session Recordings* replays it in a desktop player; *Work with Active Sessions* → **5** joins a live desktop through guacd as a **read-only** user (current screen first, no input but keep-alive, no clipboard), behind a 60-second single-use watch token |
 | ~~**Share a live RDP/VNC session** (view, or view and control)~~ **✅ shipped (Phase 260)** | Access Manager *Session invite* | Phase 116's four-eyes invite now shares a desktop: an internal invitee redeems it in the portal (main menu **33**), an external guest from the emailed link, and both join the owner's guacd connection — read-only, or with keyboard and mouse only; the clipboard and files are never shared, a kick or the session ending closes the join |
 | **Group-based authorization** — directory groups as grant subjects | Bastion user groups ↔ target groups | a grant names a user or a built-in role; directory groups map onto the four roles only |
-| **Per-grant sub-protocol rights** (shell, exec, SFTP, port forwarding; clipboard, drive, printer) | Bastion authorizations (admin guide §13.2) | deployment-wide switches (`PAM_SSH_SFTP`, `PAM_SSH_PORT_FORWARD`, `PAM_RDP_CLIPBOARD`) plus a per-target clipboard override |
-| **Approval workflow depth** — approver comment and shortened duration, cancel an approved request, notify every approver | Bastion users and approvers guide §7 | approve, deny, stop recurrence; the decision takes no body; approvers are reached by Slack or magic link |
+| ~~**Per-grant sub-protocol rights** (shell, exec, SFTP, port forwarding; clipboard, drive, printer)~~ **✅ shipped (Phase 270)** — see Tier 10 | Bastion authorizations (admin guide §13.2) | `rights` on a target and on a grant (`ssh_shell`, `ssh_exec`, `ssh_sftp`, `ssh_forward`, `ssh_x11`, `rdp_drive`, `rdp_printer`, `rdp_audio`, `rdp_audio_in`), under the deployment switches; the clipboard stays a per-target policy |
+| ~~**Approval workflow depth** — approver comment and shortened duration, cancel an approved request~~ **✅ shipped (Phase 274)** — *notify every approver open* | Bastion users and approvers guide §7 | approve and deny take a comment (or require one) and a shorter granted duration; `POST /api/access-requests/{id}/cancel` ends an approved request and its live sessions; a pending request expires after `PAM_APPROVAL_TIMEOUT_MIN`. Approvers are still reached by Slack or magic link, not all notified |
 | **Admin-assisted MFA recovery** — a one-time rescue code after an identity check | IDaaS [loss of a second factor](https://trustelem-doc.wallix.com/books/trustelem-administration/page/loss-of-a-second-factor) | removing a factor needs the factor; an administrator cannot reset one — sharper now that sessions can demand it (Phase 244) |
 | **Search past sessions by metadata** (user, target, protocol, window, outcome) | Access Manager / Bastion audit search | content search over SSH recordings; the live session list; an audit list that takes only a limit |
 | **SSH public-key and FIDO2 (`sk-`) login to the proxy** | Bastion 12.2 release notes (WAB-13752) | the proxy takes a password (the token) only |
@@ -599,7 +612,8 @@ vault + proxy chokepoint, and is **out of scope** by design.
 
 ### Where it stands, and what's next
 
-Every phase through 62 has shipped and the 2026-07 and 2026-08 security self-audits
+Every phase through 283 has shipped (228 recorded an investigation, not a
+feature; see ROADMAP §3d) and the 2026-07 and 2026-08 security self-audits
 are closed ([docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md)).
 **[v0.10.0](https://github.com/morandeirachema/PAMv1/releases/tag/v0.10.0)** — the
 first signed release — met the last of the four beta criteria on 2026-07-28, and
@@ -638,7 +652,7 @@ root, VirtualBox or Packer required:
 
 ```bash
 cd deploy/ova && ./build.sh          # ~15 min; → ~/.cache/pamv1-ova/*.ova
-VBoxManage import ~/.cache/pamv1-ova/pamv1-appliance-13.6.0.ova
+VBoxManage import ~/.cache/pamv1-ova/pamv1-appliance-13.7.0.ova
 VBoxManage modifyvm pamv1-appliance --natpf1 "portal,tcp,127.0.0.1,8080,,8080"
 VBoxManage startvm pamv1-appliance --type headless
 # → http://127.0.0.1:8080 — the admin key is generated on first boot and
@@ -732,7 +746,7 @@ bootstrap and transport keys below stay environment-only.
 | `PAM_LISTEN_ADDR` | no | HTTP listen address, default `:8080` |
 | `PAM_SSH_ADDR` | no | SSH proxy address, default `:2222`; `off` disables it |
 | `PAM_SSH_HOST_KEY` | no | Path to persist the proxy host key (PEM); empty = ephemeral |
-| `PAM_SSH_KNOWN_HOSTS` | no | Pin upstream target host keys (known_hosts file); empty = trust-any (logged) |
+| `PAM_SSH_KNOWN_HOSTS` | no | Pin upstream target host keys (known_hosts file), authoritative when set. Unset: sessions pin each target's key on first contact (`PAM_SSH_HOST_KEY_CHECK=tofu`; `strict` refuses an unpinned target, `off` trusts any); rotation and the jump host still trust any key without this file |
 | `PAM_RECORDING_DIR` | no | Where session recordings are written, default `recordings` |
 | `PAM_REQUIRE_RECORDING` | no | Refuse any session that cannot be recorded — the fail-closed knob; covers every path to a target |
 | `PAM_DB_ADDR` | no | PostgreSQL session proxy listen address, default `off` |
@@ -741,7 +755,7 @@ bootstrap and transport keys below stay environment-only.
 
 ### Utility flags
 
-`pam-server` runs as a server by default; five flags make it do one job and exit.
+`pam-server` runs as a server by default; six flags make it do one job and exit.
 
 | Flag | What it does |
 |---|---|
@@ -750,6 +764,7 @@ bootstrap and transport keys below stay environment-only.
 | `-split-key` | Read an emergency key on stdin, print N Shamir shares |
 | `-rotate-kek` | Re-encrypt every vaulted secret under a new KEK — credentials, MFA enrollments, secret settings **and** the shared SSH host/CA keys. Works across providers (local ⇄ Vault-Transit ⇄ KMS ⇄ HSM), so it is also how you migrate. Warns if sealed recordings still need the old key |
 | `-healthcheck` | Probe the local `/healthz` and exit 0 if healthy (what the container HEALTHCHECK uses) |
+| `-version` | Print the build version and commit (what [Verifying a release](#verifying-a-release) checks a running image against) |
 
 ## Verifying a release
 
@@ -853,9 +868,11 @@ go vet ./... && gofmt -l . # gofmt must print nothing
 
 CI additionally runs **`staticcheck`, `govulncheck` and `gosec`**, a live-PostgreSQL
 store contract, a `pkcs11`-tagged build against
-[SoftHSM2](https://www.opendnssec.org/softhsm/), a Docker image build, a check that the
-committed SOPS example really is encrypted, and a check that the
-**code-derived architecture diagrams** are current. The
+[SoftHSM2](https://www.opendnssec.org/softhsm/), a Docker image build of both images,
+Helm lint and chart renders with `kubeconform` over every manifest, Terraform
+`fmt`/`validate` of both modules, a check that the committed SOPS examples really
+are encrypted, and a check that the **code-derived architecture diagrams** are
+current. The
 [architecture low-level doc](docs/ARCHITECTURE-LOW-LEVEL.md) is the fullest map of the
 codebase — read it first.
 

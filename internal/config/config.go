@@ -1545,6 +1545,10 @@ func airGapConflicts(cfg *Config) []string {
 	// Endpoint-shaped: allowed if declared internal.
 	for _, c := range []struct{ name, value string }{
 		{"PAM_TICKET_VALIDATE_URL", cfg.TicketValidateURL},
+		// The first-class ServiceNow/Jira connector (PAM_TICKET_PROVIDER) calls
+		// this URL on every gated request, as the webhook above does; it was
+		// missing from this list until the 2026-10-17 audit.
+		{"PAM_TICKET_URL", cfg.TicketURL},
 		{"PAM_VENDOR_ATTEST_URL", cfg.VendorAttestURL},
 		{"PAM_POSTURE_ATTEST_URL", cfg.PostureAttestURL},
 		{"PAM_ONCALL_ATTEST_URL", cfg.OnCallAttestURL},

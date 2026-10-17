@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-10-08 · Reflects: Phases 0–227 and 229–283 + the 2026-07 hardening passes.
+> Last updated: 2026-10-17 · Reflects: Phases 0–227 and 229–283 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -127,7 +127,8 @@ It is a **single Go binary** (`cmd/pam-server`) that runs several listeners:
 
 - an **HTTP server** (`:8080`) serving the REST API and the embedded 5250-style portal,
 - an **SSH proxy** (`:2222`) — the session gateway,
-- optionally a **PostgreSQL proxy** (`:5433`) for database sessions.
+- optionally a **PostgreSQL proxy** (`:5433`, `PAM_DB_ADDR`) and a **SQL Server
+  proxy** (`:1433`, `PAM_MSSQL_ADDR`) for database sessions, both off by default.
 
 Everything under `internal/` is a focused package the binary wires together.
 Since Phase 153 there is a second, much smaller deployable — `cmd/pam-agent`,
@@ -169,6 +170,7 @@ flowchart TB
     rotate["rotate — SSH/WinRM connectors"]
     discovery["discovery"]
     maint["maint — KEK rotation"]
+    accountscan["accountscan — authenticated account enumeration (Phase 128)"]
   end
   subgraph agents["AI-agent broker"]
     policy["policy"]
@@ -206,6 +208,15 @@ flowchart TB
     icap["icap — ICAP AV/DLP scan client (RFC 3507)"]
     k8sc["k8s — Kubernetes API client (brokered kubectl ops)"]
     sforensics["sessionforensics — post-session exec reconstruction (parsing)"]
+    timeframe["timeframe — weekly grant windows (Phase 240)"]
+    restrict["restrict — per-subject restriction rules (Phase 275)"]
+    banner["banner — login banner + session notice (Phase 276)"]
+    report["report — audit-trail reports (Phase 277)"]
+    inventorycsv["inventorycsv — bulk inventory CSV format (Phase 278)"]
+    csvcell["csvcell — CSV formula-injection guard"]
+    telnet["telnet — TELNET client for telnet targets (Phase 279)"]
+    expect["expect — SEND/EXPECT startup scenarios (Phase 279)"]
+    recarchive["recarchive — portable recording archives (Phase 283)"]
     metrics["metrics"]
     config["config"]
     logging["logging"]
@@ -230,7 +241,7 @@ The two most load-bearing cross-package couplings — memorize these:
 ## 2. Bootstrapping — `cmd/pam-server/main.go`
 
 `main()` is a small dispatcher over utility flags (`-genkey`, `-hashkey`,
-`-rotate-kek`, `-split-key`, `-healthcheck`); the default path is `run()`, which
+`-rotate-kek`, `-split-key`, `-healthcheck`, `-version`); the default path is `run()`, which
 builds and starts the server. The startup order matters — later steps depend on
 earlier ones:
 
@@ -333,7 +344,7 @@ Sentinel errors `ErrNotFound` / `ErrConflict` map to HTTP/SSH errors upstream.
   `migrations/*.sql` files, each run once inside its own transaction, tracked in a
   `schema_migrations` table, under a session-level `pg_advisory_lock` so concurrent
   replicas booting together don't race. `0001_init.sql` is the idempotent baseline;
-  every later change is a new numbered file (through `0060_approved_as.sql` at time of writing).
+  every later change is a new numbered file (the highest number in the directory is the newest).
 
   Two implementation details are load-bearing:
   - **Error mapping is the contract.** A pgx `PgError` SQLSTATE is translated to
@@ -362,7 +373,8 @@ Sentinel errors `ErrNotFound` / `ErrConflict` map to HTTP/SSH errors upstream.
     `hashtext` collision with either of the others is not possible.
 
 The shared conformance suite `storetest.RunStoreContract` exercises the whole
-interface — every one of its 220 methods since Phase 217 — against both
+interface — every one of its methods (243 today), which
+`store.TestContractCallsEveryStoreMethod` keeps true — against both
 implementations (and, in CI, against a live PostgreSQL via
 `PAM_TEST_DATABASE_URL`), so the pgstore SQL is verified, not just assumed. Its
 assertions are written from the interface's doc comments, not from either
@@ -597,7 +609,11 @@ makes a session that can't be recorded fail closed.
 - **Jump host** (`PAM_SSH_JUMP_*`) — reaches targets only accessible via an SSH
   bastion by tunneling a `direct-tcpip` channel (`jumpDial`).
 - **Upstream host-key pinning** (`PAM_SSH_KNOWN_HOSTS`) — the proxy verifies the
-  target's host key against a known_hosts file (unset ⇒ trust-any + loud warning).
+  target's host key against a known_hosts file when one is set. Unset, a session
+  follows `PAM_SSH_HOST_KEY_CHECK` (Phase 272, `hostKeyCallbackFor`): `tofu`, the
+  default, pins each target's key on first contact; `strict` refuses an unpinned
+  target; `off` trusts any. The rotation connector and the jump host take only the
+  known_hosts callback, so without the file they trust any key.
 - **Outbound-only endpoint agents** (Phase 153, `endpointagent.go` +
   `internal/endpointagent`, `PAM_ENDPOINT_AGENTS_ENABLED`) — the inverse of the
   jump host: for a target PAMv1 cannot dial at all, a `pam-agent` process ON
@@ -1172,7 +1188,8 @@ Tests exercise **real behavior on the security-critical path**, not mocks of it:
   fuzzes the TDS and SFTP wire parsers ~20s each (their seed corpus also runs as
   a normal test), `go test -race`, a Docker image build, the live-Postgres store
   contract, the PKCS#11/SoftHSM2 build, a manifests job (`helm lint`, a default
-  **and** everything-on chart render, `kubeconform`), and the `sops` round-trip.
+  **and** everything-on chart render, `kubeconform`), a `terraform` job (`fmt -check`,
+  then `init` + `validate` of both modules), and the `sops` round-trip.
   `cmd/archgen` regenerates the architecture diagrams and CI fails if they drift.
 
 ---
@@ -1226,6 +1243,11 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-10-17 | §1: the package map gains the ten packages that were only in this change log (`accountscan`, `timeframe`, `restrict`, `banner`, `report`, `inventorycsv`, `csvcell`, `telnet`, `expect`, `recarchive`); the listeners include the SQL Server proxy; §2's flag list includes `-version`. |
+| 2026-10-17 | §3.3 no longer names a newest migration (it said `0060`; the directory holds `0068`). |
+| 2026-10-17 | §3.3: the store contract suite covers all 243 methods again (`UpdateUserManager`, Phase 256, had no case), and `store.TestContractCallsEveryStoreMethod` now fails on any method the suite never calls; the count is no longer written as a number that goes stale. |
+| 2026-10-17 | **Upstream SSH host keys, described as they work since Phase 272.** Without `PAM_SSH_KNOWN_HOSTS`, sessions pin each target's key on first contact (`PAM_SSH_HOST_KEY_CHECK=tofu`; `strict`/`off`); only the rotation connector and the jump host still trust any key. The doc had said unset meant trust-any. |
+| 2026-10-17 | §14 CI list gains the `terraform` job: `fmt -check`, then `init -backend=false` + `validate` of both Terraform modules, which nothing ran before. |
 | 2026-09-16 | Phase 248 (the review of 240–247): `store.SafePermissionsCover` + `SafePermissionOrder` beside `GrantPermits`, and a single-pass `ParseSafePermissions`; `api.safeManagement` replacing `canManageSafe` where the caller's own permission set matters (`canManageSafe` stays as its boolean wrapper), the `Covers` guard in `api.rotateUserToken`, `api.operatorInput` in the viewer bridge, `api.grantDeadline` deleted (the tunnel uses the grants it was admitted under); `auth.ReasonSessionMFAExtension`; `session.entry.swept`; `pgstore.SweepExpiredGrants` on one transaction; `timeframe.Frame.End` building wall-clock edges. |
 | 2026-10-08 | Phase 283 (recording archives): `internal/recarchive`, `api.selectRecordings`, `recordingProtocol`, `exportRecordingArchive`, `importRecordingArchive`, `purgeRecordingArchive`, the imported-provenance check in `playRecording`. |
 | 2026-10-08 | Phase 281 (review of 274–280): `restrict.Set.SizeRules`, `Match.AuditAction`, `sqlBlockedStatement`'s kill verdict, `AuditStore.ExportAuditActions`, `report.Actions`, `inventorycsv.Class.Raw`, `GateOut.Abort`, `api.mayTypePassword`, `expect.Stream.Close`. |

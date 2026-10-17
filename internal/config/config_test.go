@@ -355,6 +355,7 @@ func TestLoadOffCaseInsensitive(t *testing.T) {
 func TestAirGapRefusesEgressingIntegrations(t *testing.T) {
 	for _, tc := range []struct{ name, key, value, wantIn string }{
 		{"ITSM webhook", "PAM_TICKET_VALIDATE_URL", "https://itsm.example/api", "PAM_TICKET_VALIDATE_URL"},
+		{"ITSM connector", "PAM_TICKET_URL", "https://acme.service-now.com", "PAM_TICKET_URL"},
 		{"vendor attestation", "PAM_VENDOR_ATTEST_URL", "https://vendor.example/attest", "PAM_VENDOR_ATTEST_URL"},
 		{"posture attestation", "PAM_POSTURE_ATTEST_URL", "https://edr.example/posture", "PAM_POSTURE_ATTEST_URL"},
 		{"on-call attestation", "PAM_ONCALL_ATTEST_URL", "https://oncall.example/attest", "PAM_ONCALL_ATTEST_URL"},

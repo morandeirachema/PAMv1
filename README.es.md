@@ -151,7 +151,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–227 y 229–265, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–227 y 229–283, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -171,8 +171,7 @@ Fases 0–227 y 229–265, agrupadas por área. Cada capacidad está cubierta po
 - **Sesiones supervisadas (monitorización en vivo + control de comandos)** — un supervisor puede **ver en vivo una sesión SSH, PostgreSQL o WinRM** — y las ejecuciones `ssh_exec`/`winrm_exec` del bróker de agentes — por `GET /api/sessions/{id}/stream` (Server-Sent Events, `CapReadAudit`); el stream **termina en el momento en que termina la sesión**, así que un panel en silencio es una sesión tranquila, no una muerta. En un despliegue HA tanto el **listado como la visualización abarcan todo el clúster** (Fase 55): la petición puede caer en cualquier réplica, y la réplica que aloja la sesión retransmite su salida a través del almacén — solo mientras alguien la está viendo de verdad. Una lista de denegación por regex (`PAM_COMMAND_DENY_FILE`) **bloquea un comando peligroso antes de que llegue al objetivo** en las rutas de exec, WinRM y SQL — rechazado y auditado (`command.blocked`). Para las shells SSH interactivas se usa el modo observador de solo lectura. Un fichero de denegación que no produzca ningún patrón utilizable es un **error fatal en el arranque**, no un control silenciosamente desactivado.
 - **Elevación dentro de la sesión** — donde el control de comandos es un bloqueo duro, `PAM_DB_STEPUP_FILE` marca sentencias que **se pausan a la espera de una decisión humana en vivo** en lugar de matar la sesión: la sentencia espera (auditada, visible en el monitor en vivo), un aprobador la permite o la rechaza desde la consola, y la sesión sobrevive en cualquier caso. Nadie puede aprobar la elevación de su propia sesión.
 - **Interruptor de corte para todo el clúster** — una terminación emitida en cualquier réplica corta la sesión **allí donde esté alojada** (publicada por Postgres LISTEN/NOTIFY), de modo que el interruptor, la cascada de revocación, el barrido de proveedores y la respuesta automática de analítica funcionan en HA. Toda ejecución intermediada — el endpoint WinRM REST y las herramientas exec del bróker incluidas — es una sesión registrada, contable y terminable, no solo los proxies interactivos.
-- **Control de transferencia de ficheros SFTP** — SFTP viaja sobre un subsistema SSH con un protocolo binario que el control de comandos nunca veía. El proxy **analiza ese flujo** para auditar cada operación (`sftp.open`/`sftp.modify`), y `PAM_SSH_SFTP` fija la política: `allow` (reenviar + auditar), `readonly` (**rechazar subidas, borrados y renombrados** con un permiso denegado sintetizado — el objetivo nunca se contacta; las descargas siguen funcionando) o `deny` (rechazar el subsistema entero). `PAM_SSH_SFTP_DENY_FILE` añade la otra dimensión — una **lista de denegación por regex sobre rutas** (el mismo motor que el control de comandos), rechazada en *todos* los modos incluidas las descargas y en ambos lados de un renombrado, porque una ruta que deniegas y aun así se puede descargar no está denegada. Cierra una vía de exfiltración de ficheros que de otro modo no se auditaría.
-- **Control de transferencia de archivos (SFTP)** — SFTP viaja sobre un subsistema SSH con un protocolo binario que el control de comandos no veía. Ahora el proxy **analiza ese flujo** para auditar cada operación de archivo (`sftp.open`/`sftp.modify`), y `PAM_SSH_SFTP` fija la política: `allow` (reenviar + auditar), `readonly` (**rechaza subidas, borrados y renombrados** con un permiso denegado sintetizado — el objetivo nunca es contactado; las descargas siguen funcionando) o `deny` (rechaza el subsistema por completo). Cierra una vía de exfiltración de archivos que antes no se auditaba. Probado de extremo a extremo con un cliente y servidor SFTP reales intercambiando paquetes genuinos a través del proxy.
+- **Control de transferencia de ficheros SFTP** — SFTP viaja sobre un subsistema SSH con un protocolo binario que el control de comandos nunca veía. El proxy **analiza ese flujo** para auditar cada operación de fichero (`sftp.open`/`sftp.modify`), y `PAM_SSH_SFTP` fija la política: `allow` (reenviar + auditar), `readonly` (**rechaza subidas, borrados y renombrados** con un permiso denegado sintetizado — el objetivo nunca se contacta; las descargas siguen funcionando) o `deny` (rechaza el subsistema entero). `PAM_SSH_SFTP_DENY_FILE` añade la otra dimensión — una **lista de denegación por regex sobre rutas** (el mismo motor que el control de comandos), rechazada en *todos* los modos incluidas las descargas y en ambos lados de un renombrado (el paquete clásico *y* las operaciones `SSH_FXP_EXTENDED` de OpenSSH que envía un cliente moderno — `posix-rename`, `hardlink`, `lsetstat`), porque una ruta que deniegas y aun así se puede descargar no está denegada. Y con `PAM_SSH_SFTP_CAPTURE` **se graba el propio contenido** (Fase 59): cada fichero transferido deja un artefacto de chunk-log junto a las grabaciones de sesión — sellado bajo la KEK del vault, encadenado por SHA-256, atribuido en la auditoría y reproducible desde la consola como los bytes reconstruidos; un límite por fichero rechaza (no solo deja de grabar) lo que lo supere, y un flujo que no se puede analizar falla cerrado mientras la captura está activa. Cierra una vía de exfiltración de ficheros que de otro modo no se auditaría. Probado de extremo a extremo con un cliente y un servidor SFTP reales intercambiando paquetes genuinos a través del proxy.
 
 ### Vault y ciclo de vida de credenciales
 
@@ -228,6 +227,17 @@ Opcional vía `PAM_BROKER_POLICY_FILE`.
 - **Despliegue como código** — [Docker](https://docs.docker.com/) (distroless, sin root), [docker-compose](https://docs.docker.com/compose/) con Postgres endurecida, manifiestos [Kubernetes](https://kubernetes.io/) bajo el PSS restringido, un **[chart de Helm](deploy/helm/pamv1)** y un módulo de [Terraform](https://developer.hashicorp.com/terraform). El pipeline de release construye por digest con **[SBOM](https://www.cisa.gov/sbom), firma keyless [cosign](https://docs.sigstore.dev/) y procedencia SLSA**. *Release vigente: **[v0.0.79](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.79)** (2026-10-08; la primera fue la v0.10.0) — la imagen firmada es pública en `ghcr.io/morandeirachema/pamv1:0.0.79`, que es la que fijan todos los manifiestos, así que las rutas de instalación por artefacto publicado ya funcionan.*
 - **Secretos cifrados en git** — el manifiesto de Secret de Kubernetes puede sellarse con **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: los valores se cifran mientras `kind`/`metadata` quedan legibles, y se descifra al desplegar (`sops -d | kubectl apply -f -`, el texto plano nunca toca el disco) o de forma nativa con Flux / Argo / helm-secrets — así los secretos viven en el **mismo repo de IaC** sin filtrarse. Ver **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **O aprovisiona los secretos desde CyberArk Conjur** — como alternativa en tiempo de ejecución a SOPS, define `PAM_CONJUR_URL` y PAMv1 obtiene sus secretos de arranque (clave maestra, clave de API, URL de la BD, …) de **[Conjur](https://www.conjur.org/)** al arrancar, autenticándose con una clave de API de host o un token proyectado de Kubernetes (**`authn-jwt`**) — de modo que ningún secreto de arranque vive en Git. Con `PAM_CONJUR_REFRESH_MIN` (Fase 78), los secretos que honestamente pueden cambiar con el servidor en marcha (`PAM_API_KEY`, `PAM_BREAK_GLASS_KEY_HASH`) se **releen periódicamente sin reiniciar**; la KEK, la URL de la base de datos y las claves de la cadena de auditoría quedan ancladas a un reinicio por diseño. Ambos mecanismos se entregan; SOPS sigue siendo el predeterminado sin dependencias. Ver **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
+
+### Pasada de paridad con WALLIX (Fases 266–283)
+
+- **Sonda de sesión** (266, 271) — `pam-agent` en modo sonda dentro de un escritorio Windows intermediado: eventos de procesos, ventanas y conexiones como un artefacto sellado y encadenado por hash junto a la grabación, y reglas de bloqueo o aviso aplicadas dentro de la sesión.
+- **RADIUS** (269) — una fuente de inicio de sesión tras el directorio, o el segundo factor contra el que se comprueba el código de un usuario del directorio, con el Access-Challenge respondido desde la pantalla de inicio de sesión.
+- **Derechos por subprotocolo** (270) — por objetivo y por concesión: shell, exec, SFTP, reenvío de puertos, X11, y unidad, impresora y audio en RDP, bajo techos de despliegue.
+- **Host keys fijadas en el primer contacto** (272) — la clave de cada objetivo SSH se guarda en el primer uso y se comprueba después (`PAM_SSH_HOST_KEY_CHECK`).
+- **Profundidad de aprobación** (274) — comentarios del aprobador, una duración concedida más corta, caducidad de solicitudes y cancelación de una solicitud aprobada en mitad de la sesión.
+- **Reglas de restricción** (275) — por usuario o rol, una regex sobre el comando en cada subprotocolo y reglas de tamaño en SFTP, para cortar o avisar.
+- **Banner de inicio y consentimiento de grabación** (276), **informes** (277: usuarios y objetivos sin uso, estadísticas de conexión, objetivos críticos, un resumen diario) e **importación y exportación masiva de inventario en CSV** (278).
+- **Objetivos telnet** con escenarios de arranque SEND/EXPECT (279), **escaneo ICAP** de transferencias y portapapeles de escritorio (280) y **archivos portables de grabaciones** (283).
 
 ## Roles, usuarios y perfiles
 
@@ -349,7 +359,7 @@ Se han entregado todas las fases (0–94) — detalle por fase en **[ROADMAP.md]
 | 60 | La puerta de tickets aguanta al conectar (el ticket de cambio se re-comprueba al usar el acceso, en las cinco puertas) | ✅ entregada |
 | 61 | Una cuenta dependiente nombra la credencial que la gestiona (la propagación deja de iniciar sesión como la cuenta que rota) | ✅ entregada |
 
-La tabla se detiene en la 61 para seguir siendo legible; **las fases 62–94 se
+La tabla se detiene en la 61 para seguir siendo legible; **las fases 62–283 se
 entregaron igual de completas** (cada una tiene su sección en
 [ROADMAP.md](ROADMAP.md)): la primera ola de releases y sus revisiones (62–66),
 la pantalla de consola del intercambio de tokens (67), profundidad en las
@@ -367,7 +377,10 @@ con un peldaño de respuesta que revoca inicios de sesión (86–87), el cierre
 del backlog de hallazgos abiertos (89), y una revisión adversarial de las
 joyas de la corona (91–93) que corrigió una brecha de contención en el SFTP de
 solo lectura y confirmó sólidos el vault, los proxies de base de datos y los
-cuatro ojos del bróker — publicado de forma continua como **v0.10.0 →
+cuatro ojos del bróker; después, un arco de refactorización y endurecimiento
+(96–108), las pasadas de funcionalidad de los Niveles 5–10 (de las grabaciones
+buscables por contenido, 110, a los archivos portables de grabaciones, 283) y
+sus revisiones — publicado de forma continua como **v0.10.0 →
 v0.0.79** (la numeración pasó a 0.0.x en la v0.0.77). Las releases quedan registradas en **[CHANGELOG.md](CHANGELOG.md)**;
 el resto honesto vive en
 **[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**.
@@ -504,6 +517,38 @@ que cada fase se entrega, no se predeclaran en bloque.
 | ~~**SSO SAML 2.0**~~ **✅ entregado (Fase 151)** | SAML 2.0 como Service Provider — Okta/OneLogin/Azure AD y, en particular, AD FS on-prem sin endpoint OIDC (Delinea) | PAMv1 como SP SAML en el perfil Web Browser SSO iniciado por el SP: `GET /api/auth/saml/start` (AuthnRequest, HTTP-Redirect), `POST /api/auth/saml/acs` (la Response firmada del IdP, HTTP-POST), `GET /api/auth/saml/metadata` (el descriptor del SP que importa el administrador del IdP). Cableado exactamente como OIDC — `PAM_SAML_SP_URL` lo activa por presencia, `PAM_SAML_ROLE_*` mapea un atributo de grupo/rol a roles, intercambiable en caliente, mismo aterrizaje en el portal — y el ID de la AuthnRequest reutiliza la tabla de estado OIDC de un solo uso ya existente, así que **sin migración**. **La segunda excepción deliberada de biblioteca para verificación criptográfica tras WebAuthn**, razonada en ROADMAP.md: XML-DSig sobre XML canonicalizado es exactamente donde vive la clase de vulnerabilidad de *signature wrapping*, no "un JWT con más pasos" — la verificación se delega en `crewjam/saml`+`goxmldsig` y PAMv1 se queda solo con la política (solo iniciado por el SP, sin logins iniciados por el IdP, sin SLO). Un par de claves opcional del SP firma las AuthnRequests y acepta aserciones cifradas. Demostrado contra un **IdP SAML real en proceso**: aserciones firmadas y cifradas aceptadas; atributo/sujeto manipulados, firmas eliminadas, audiencia/emisor incorrectos, condiciones caducadas y ambas formas de *signature wrapping* rechazadas, y también la reproducción y los POST desde otro navegador. Interoperabilidad con un tenant real de AD FS/Okta no verificada en este entorno |
 | ~~**Aprovisionamiento de usuarios SCIM 2.0**~~ **✅ entregado (Fase 149)** | Ciclo de vida de usuarios por empuje desde el IdP (StrongDM) | Una nueva `/scim/v2/Users` (RFC 7643/7644), autenticada con una identidad de portador `ScimKey` no humana que refleja `AgentKey`/`AppKey` — nunca un principal humano, así que todo usuario aprovisionado por SCIM recibe el rol fijo y de menor privilegio `user`. Complementa la reconciliación de identidad ya existente, `POST /api/identity/reconcile`, de tipo pull. `store.User` gana `ExternalID` y `Active`; desactivar (`PATCH`/`DELETE`, un borrado suave) ahora bloquea de verdad el token local de ese usuario — `auth.Resolver.Resolve()` falla de forma cerrada, demostrado de extremo a extremo, no solo afirmado en la capa de almacenamiento. `CreateUser` en ambos backends ahora siempre crea un usuario activo sin importar el struct de entrada, cerrando toda una clase de fallos por construcción — de paso detectó y corrigió una regresión real en los propios fixtures de test preexistentes de `internal/auth`. `PATCH` admite tanto la forma basada en `path` de RFC 7644 como la variante documentada de Azure AD sin `path`. No verificado interactivamente contra un IdP real en este entorno |
 
+### Niveles 7–10 — Boundary/Britive, CyberArk/WALLIX/Teleport y WALLIX Bastion 12
+
+Cuatro pasadas de investigación más, con sus tablas fila a fila en el README en
+inglés. Aquí, lo que cerró cada una y lo que queda abierto:
+
+- **[Nivel 7](README.md#tier-7--hashicorp-boundary--britive-gap-research-2026-08-31)** (Boundary, Britive): ambas filas entregadas —
+  acceso condicionado a estar de guardia (Fase 232) y aprobaciones interactivas
+  desde Slack (234).
+- **[Nivel 8](README.md#tier-8--cyberark-pam--wallix-bastion--teleport-rbac-and-feature-research-2026-09-03)** (CyberArk, WALLIX, Teleport: RBAC y
+  funcionalidad): duración máxima e inactividad de sesión, caducidad y franjas
+  horarias en concesiones (240); tokens de usuario que caducan y se rotan, y
+  bloqueo de una identidad (242); MFA por sesión (244); permisos por caja fuerte
+  (246); concesiones y denegaciones por etiquetas (250); concesiones a una sola
+  credencial (252); terminal SSH en el portal (254); aprobación por niveles y por
+  responsable directo (256); RADIUS (269). Abiertos: un modo de build FIPS y la
+  multitenencia, esta última una decisión de alcance.
+- **[Nivel 9](README.md#tier-9--wallix-bastion--access-manager--one-idaas-research-2026-09-15)** (WALLIX Bastion, Access Manager, One IDaaS):
+  ver y reproducir sesiones RDP/VNC en el portal (258) y compartirlas en vivo
+  (260), derechos por subprotocolo (270), profundidad de aprobación (274),
+  objetivos telnet (279), objetivos críticos y el informe de usuarios y
+  objetivos sin uso (277). Abiertos: autorización por grupos del directorio,
+  recuperación de MFA asistida, búsqueda de sesiones por metadatos, acceso al
+  proxy con clave pública SSH o FIDO2 y con certificado X.509, una credencial
+  compartida por muchos objetivos, el descubrimiento programado desde el
+  directorio, la duración e inactividad de la sesión del portal, una ventana
+  de re-solicitud de MFA, avisar a todos los aprobadores y rlogin.
+- **[Nivel 10](README.md#tier-10--wallix-bastion-12--access-manager-training-material-pass-2026-09-22)** (material de formación de WALLIX Bastion 12):
+  las doce primeras filas entregadas (269–283, ver la sección *Pasada de
+  paridad con WALLIX* más arriba). Abiertos: el **depósito cifrado de
+  credenciales** (*credential escrow*), los **objetivos de túnel TCP** con
+  captura, TACACS+ y rlogin; la captura de pulsaciones queda fuera a propósito.
+
 ### No-objetivo deliberado
 
 La [gestión de privilegios en el endpoint (EPM)](https://www.beyondtrust.com/privilege-management)
@@ -514,7 +559,8 @@ por diseño.
 
 ### Dónde está, y qué viene después
 
-Todas las fases hasta la 62 están entregadas y las autoauditorías de seguridad de
+Todas las fases hasta la 283 están entregadas (la 228 registró una investigación,
+no una funcionalidad; ver ROADMAP §3d) y las autoauditorías de seguridad de
 2026-07 y 2026-08 están cerradas
 ([docs/SECURITY-GAPS.md](docs/SECURITY-GAPS.md)). La
 **[v0.10.0](https://github.com/morandeirachema/PAMv1/releases/tag/v0.10.0)** — la
@@ -524,6 +570,7 @@ beta, y la
 (2026-08-07) devolvió la imagen fijada al día del árbol —la 0.10.0 se etiquetó dos días
 antes de que aterrizaran las correcciones del barrido del 2026-07-30, así que durante una
 semana todos los manifiestos fijaron una build anterior a ellas— y la
+**[v0.11.2](https://github.com/morandeirachema/PAMv1/releases/tag/v0.11.2)** y
 **todas las releases posteriores** la han mantenido ahí, cada una cortada sin
 dejar que las correcciones se acumularan indefinidamente en un `main` sin
 etiquetar — la última, la
@@ -531,15 +578,15 @@ etiquetar — la última, la
 [CHANGELOG.md](CHANGELOG.md).
 
 Lo que queda está consolidado en
-**[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)** — mejoras en curso, la
-mayor la **grabación del contenido de cada fichero SFTP**, junto a política por
-caja fuerte, profundidad de campañas / pasarela de tickets / configuración /
-analítica, las pantallas de consola de proveedores, más ejemplos de despliegue y
-las **decisiones de elevación entre réplicas** (la *monitorización* en vivo entre
-réplicas se entregó en la Fase 55: listado de sesiones de todo el clúster y
-visualización SSE mediante un relé sobre el almacén activado por interés; una
-elevación en pausa aún se decide en la réplica que aloja la sesión). Todo
-lo que depende de infraestructura externa o de una cuenta de pago queda catalogado con
+**[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)** — mejoras en curso:
+profundidad de campañas / pasarela de tickets / configuración / analítica, una
+credencial de gestión por consumidor para la propagación a cuentas dependientes,
+una pantalla de consola para el intercambio de tokens de la Fase 57 y ejemplos de
+despliegue más completos. Los elementos mayores que estaban ahí — la
+monitorización en vivo entre réplicas (55) y las decisiones de elevación entre
+réplicas (56), la política por caja fuerte (58) y la grabación del contenido de
+cada fichero SFTP (59) — se han entregado ya cada uno como su propia fase. Lo que
+necesita infraestructura externa o una cuenta de pago queda catalogado con
 honestidad en [EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md) en lugar de
 simularse.
 
@@ -558,7 +605,7 @@ VirtualBox ni de Packer:
 
 ```bash
 cd deploy/ova && ./build.sh          # ~15 min; → ~/.cache/pamv1-ova/*.ova
-VBoxManage import ~/.cache/pamv1-ova/pamv1-appliance-13.6.0.ova
+VBoxManage import ~/.cache/pamv1-ova/pamv1-appliance-13.7.0.ova
 VBoxManage modifyvm pamv1-appliance --natpf1 "portal,tcp,127.0.0.1,8080,,8080"
 VBoxManage startvm pamv1-appliance --type headless
 # → http://127.0.0.1:8080 — la clave de administración se genera en el primer
@@ -596,6 +643,17 @@ docker compose up --build
 
 ### Kubernetes
 
+> ⚠️ **Una cosa que saber antes de ejecutar esto:**
+> `deploy/k8s/postgres-cnpg.yaml` declara un `Cluster` de **CloudNativePG**, así
+> que `kubectl apply -k deploy/k8s/` falla con un tipo desconocido salvo que el
+> [operador de CloudNativePG](https://cloudnative-pg.io/) esté instalado antes.
+> Instálalo, o aplica los manifiestos que quieras uno a uno y trae tu propio
+> PostgreSQL. Usa **`-k`**, no `-f`: `-f` sobre el directorio arrastra
+> `secret.example.yaml`, que declara `pam-secrets` con valores `CHANGE_ME` y
+> sobrescribiría el secreto que acabas de crear. (La imagen que fijan los
+> manifiestos, `ghcr.io/morandeirachema/pamv1:0.0.79`, está publicada y es
+> pública.)
+
 ```bash
 kubectl apply -f deploy/k8s/namespace.yaml
 kubectl -n pamv1 create secret generic pam-secrets \
@@ -610,9 +668,11 @@ O con Helm (readiness/métricas cableadas, réplicas configurables, ServiceMonit
 
 ```bash
 helm install pamv1 deploy/helm/pamv1 \
+  --set secret.create=true \
   --set secret.data.PAM_MASTER_KEY=... \
   --set secret.data.PAM_API_KEY=... \
-  --set secret.data.PAM_DATABASE_URL=postgres://...
+  --set secret.data.PAM_DATABASE_URL=postgres://... \
+  --set image.digest=sha256:...   # fija la imagen: el digest de esta release, en CHANGELOG.md o en sus notas
 ```
 
 ### Terraform (IaC)
@@ -641,13 +701,16 @@ las de arranque y transporte de abajo permanecen solo en el entorno.
 | `PAM_LISTEN_ADDR` | no | Dirección HTTP, por defecto `:8080` |
 | `PAM_SSH_ADDR` | no | Dirección del proxy SSH, por defecto `:2222`; `off` lo desactiva |
 | `PAM_SSH_HOST_KEY` | no | Ruta para persistir la host key del proxy (PEM); vacío = efímera |
-| `PAM_SSH_KNOWN_HOSTS` | no | Fija las host keys de los objetivos (fichero known_hosts); vacío = confiar en cualquiera (logueado) |
+| `PAM_SSH_KNOWN_HOSTS` | no | Fija las host keys de los objetivos (fichero known_hosts), y manda cuando está definido. Sin él, las sesiones fijan la clave de cada objetivo en el primer contacto (`PAM_SSH_HOST_KEY_CHECK=tofu`; `strict` rechaza un objetivo sin clave fijada, `off` confía en cualquiera); la rotación y el jump host siguen confiando en cualquier clave sin este fichero |
 | `PAM_RECORDING_DIR` | no | Dónde se escriben las grabaciones, por defecto `recordings` |
+| `PAM_REQUIRE_RECORDING` | no | Rechaza cualquier sesión que no se pueda grabar — el ajuste de fallo cerrado; cubre todas las vías hacia un objetivo |
+| `PAM_DB_ADDR` | no | Dirección de escucha del proxy de sesiones PostgreSQL, por defecto `off` |
+| `PAM_MSSQL_ADDR` | no | Dirección de escucha del proxy de sesiones SQL Server, por defecto `off` |
 | `PAM_BROKER_POLICY_FILE` | no | Política YAML del bróker de agentes; ponerla activa el bróker de IA |
 
 ### Flags de utilidad
 
-`pam-server` arranca como servidor por defecto; cinco flags le hacen una sola cosa y salir.
+`pam-server` arranca como servidor por defecto; seis flags le hacen una sola cosa y salir.
 
 | Flag | Qué hace |
 |---|---|
@@ -656,6 +719,52 @@ las de arranque y transporte de abajo permanecen solo en el entorno.
 | `-split-key` | Lee una clave de emergencia por stdin e imprime N fragmentos de Shamir |
 | `-rotate-kek` | Vuelve a cifrar todo secreto del vault bajo una KEK nueva — credenciales, altas MFA, ajustes secretos **y** las claves compartidas de host SSH y CA. Funciona entre proveedores (local ⇄ Vault-Transit ⇄ KMS ⇄ HSM), así que es también la vía de migración. Avisa si quedan grabaciones selladas que aún necesitan la clave antigua |
 | `-healthcheck` | Sondea el `/healthz` local y sale con 0 si está sano (lo que usa el HEALTHCHECK del contenedor) |
+| `-version` | Imprime la versión y el commit del build |
+
+## Verificar una release
+
+Cada artefacto de una release es verificable, y estos son los comandos para
+hacerlo: una firma que nadie puede comprobar es decoración.
+
+```bash
+TAG=vX.Y.Z                        # la versión publicada (la más reciente está en CHANGELOG.md)
+IMAGE=ghcr.io/morandeirachema/pamv1
+
+# (Si tu ~/.docker/config.json nombra un credential helper que no tienes, estas
+#  descargas de solo lectura fallan antes de empezar: DOCKER_CONFIG=$(mktemp -d).)
+# 1. La imagen la construyó el workflow de release de este repositorio, no otro.
+#    (?i): la identidad del certificado lleva la grafía del propio repositorio
+#    (`PAMv1` desde la v0.58.1, `pamv1` antes), mientras que el nombre de la
+#    imagen va siempre en minúsculas, como exige una referencia OCI.
+cosign verify \
+  --certificate-identity-regexp "(?i)^https://github.com/morandeirachema/PAMv1/.github/workflows/release.yml@refs/tags/" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "$IMAGE:${TAG#v}"
+
+# 2. El SBOM adjunto es el que produjo ese build.
+cosign verify-attestation --type spdxjson \
+  --certificate-identity-regexp "(?i)^https://github.com/morandeirachema/PAMv1/.github/workflows/release.yml@refs/tags/" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "$IMAGE:${TAG#v}"
+
+# 3. Procedencia de build SLSA.
+gh attestation verify "oci://$IMAGE:${TAG#v}" --repo morandeirachema/PAMv1
+```
+
+Y para confirmar qué estás ejecutando de verdad:
+
+```bash
+kubectl -n pamv1 exec deploy/pamv1 -- /pam-server -version   # → pam-server X.Y.Z (<sha completo del commit>)
+curl -s http://pamv1:8080/metrics | grep pam_build_info      # lo mismo, para monitorización
+```
+
+Una etiqueta se puede volver a publicar y un digest no, así que en producción
+fija el digest: `image.digest` en el chart de Helm, o
+`ghcr.io/morandeirachema/pamv1@sha256:…` en un manifiesto. El digest de cada
+release está en [CHANGELOG.md](CHANGELOG.md) y al principio de sus notas de
+release, con la línea `cosign verify` para esa imagen exacta. Cada release
+publica junto a la imagen en GHCR su firma de cosign, la atestación SBOM en SPDX
+y la procedencia SLSA; los comandos de arriba funcionan con cualquiera de ellas.
 
 ## Procedimiento break-glass
 
@@ -703,9 +812,12 @@ go test -race ./...        # tests unitarios + API + proxy (store en memoria) �
 go vet ./... && gofmt -l . # gofmt no debe imprimir nada
 ```
 
-CI además corre un contrato del store contra PostgreSQL real, un build con tag `pkcs11` contra
-[SoftHSM2](https://www.opendnssec.org/softhsm/), un build de imagen Docker y una comprobación de
-que los **diagramas de arquitectura derivados del código** están al día. El
+CI además corre **`staticcheck`, `govulncheck` y `gosec`**, un contrato del store contra
+PostgreSQL real, un build con tag `pkcs11` contra
+[SoftHSM2](https://www.opendnssec.org/softhsm/), el build de las dos imágenes Docker, Helm
+lint y renderizados del chart con `kubeconform` sobre todos los manifiestos, `fmt`/`validate`
+de Terraform sobre los dos módulos, una comprobación de que los ejemplos SOPS están de verdad
+cifrados y otra de que los **diagramas de arquitectura derivados del código** están al día. El
 [doc de arquitectura de bajo nivel](docs/ARCHITECTURE-LOW-LEVEL.md) es el mapa más completo del
 código — léelo primero.
 
