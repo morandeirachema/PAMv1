@@ -36,8 +36,8 @@ resource "kubernetes_namespace" "pam" {
   metadata {
     name = var.namespace
     labels = {
-      "app.kubernetes.io/name"                 = "pamv1"
-      "pod-security.kubernetes.io/enforce"     = "restricted"
+      "app.kubernetes.io/name"             = "pamv1"
+      "pod-security.kubernetes.io/enforce" = "restricted"
     }
   }
 }

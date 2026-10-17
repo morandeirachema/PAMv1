@@ -33,6 +33,10 @@ the next release to carry.
   release on a refreshed base.
 - **Release workflow** (#451). `anchore/sbom-action` 0.24.2 → 0.24.3, the step
   that generates each release's SPDX SBOM.
+- **Terraform: AWS provider 6.** The `cloud-postgres` example module moves
+  from `hashicorp/aws ~> 5.0` to `~> 6.0`, the maintained major; it
+  validates unchanged. Both modules are now `terraform fmt`-clean, which
+  neither was.
 
 **Fixed.**
 
