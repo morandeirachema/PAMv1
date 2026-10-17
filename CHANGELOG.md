@@ -50,6 +50,13 @@ the next release to carry.
   version is unchanged, every parameter name PAMv1 answers exists in both
   releases, the image still runs as UID 1000, and the vendored JavaScript
   client already reads `sync`'s new frame-count argument.
+- **Terraform: Kubernetes provider 3.** `deploy/terraform` moves from
+  `hashicorp/kubernetes` 2.x to 3.x and to its `_v1` resource types, which
+  3.0 made the non-deprecated names; it now needs Terraform 1.8+. **Upgrade
+  note:** state from an earlier version migrates once. The namespace moves
+  itself (a `moved` block); the Secret, Deployment and Service are
+  re-adopted with the `state rm` + `import` commands in `main.tf`'s header,
+  before the first plan, or that plan replaces them.
 - **Demo seed image.** The RDP and VNC demo compose files' seed job moves from
   `curlimages/curl:8.11.1` to `8.23.0`.
 - **Terraform: AWS provider 6.** The `cloud-postgres` example module moves

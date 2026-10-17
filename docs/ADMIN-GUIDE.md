@@ -237,6 +237,14 @@ terraform init
 terraform apply -var master_key=... -var api_key=... -var database_url=postgres://...
 ```
 
+The module needs Terraform 1.8+ and `hashicorp/kubernetes` 3.x, and uses the
+provider's `_v1` resource types. **State created by an earlier version** names
+the old types: the namespace moves itself (a `moved` block), and the Secret,
+Deployment and Service are re-adopted once, without touching the live objects,
+with the `terraform state rm` + `terraform import` commands in the header of
+`deploy/terraform/main.tf`. Run them before the first plan on this version, or
+the plan will destroy and recreate those three.
+
 ### 3.6 Put it behind TLS
 
 Operators must reach the portal/API over **HTTPS** and the proxy over SSH only.
@@ -5462,7 +5470,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
-| 2026-10-17 | **PostgreSQL 18.** The docker-compose stack bundles PostgreSQL 18 (was 17); 17 and 18 are the recommended versions, 14+ still works. |
+| 2026-10-17 | **PostgreSQL 18.** The docker-compose stack bundles PostgreSQL 18 (was 17); 17 and 18 are the recommended versions, 14+ still works. **Terraform `hashicorp/kubernetes` 3.x.** §3.5: the module needs Terraform 1.8+, uses the provider's `_v1` resource types, and state from an earlier version is migrated once (the namespace by a `moved` block, the Secret, Deployment and Service by `state rm` + `import`). |
 | 2026-10-08 | **Phase 283 (recording archives).** §9.3 *Portable recording archives*: export by user/target/protocol/window, the manifest, import and its imported verdict, purge from the exporting deployment only. |
 | 2026-10-08 | **Phase 281 (review of 274–280).** "Since the review" notes in §5.1, the telnet section, the approval-depth section, §9.1a, §9.2c, §9.3c and §9.4a: what changed in behaviour and why. |
 | 2026-10-07 | **Phase 280 (desktop ICAP).** §9.3c *Scanning desktop transfers*: holding file and clipboard streams for ICAP, outcomes, audit and alerts, the viewer's Ctrl+Alt+V and Ctrl+Alt+U; the SFTP ICAP note no longer says desktops are unscanned; env row. |
