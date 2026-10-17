@@ -76,6 +76,10 @@ the next release to carry.
   install notes, the appliance's console banner, motd and OVF annotation,
   and `NOTICE`. Identifiers are unchanged: namespaces, release names, the
   appliance's service and system user, its hostname, and applied migrations.
+- **The casing rule is a test now.** It was fixed by hand, one sweep at a
+  time (#463, #464), and each sweep missed files. `TestProjectNameCasing`
+  scans every tracked file and fails on a lowercase `pamv1` that is prose
+  rather than an identifier, naming the file and line.
 
 **Repository history.** On 2026-10-14 the git history was rewritten to
 normalize commit authorship. No file changed: every tag points at a tree
