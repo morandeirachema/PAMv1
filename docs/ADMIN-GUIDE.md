@@ -1364,7 +1364,7 @@ Create a `postgres` target and a credential for the database login:
 ```bash
 curl -sX POST https://pam.example/api/targets -H "X-API-Key: $PAM_API_KEY" \
   -d '{"name":"appdb","host":"10.0.0.20","port":5432,"os_type":"linux","protocol":"postgres"}'
-# then POST /api/targets/{id}/credentials with the DB username + password
+# then POST /api/credentials with its target_id and the DB username + password
 ```
 
 Operators then connect through the proxy — the username selects the credential
@@ -5470,6 +5470,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-10-17 | **A route that does not exist.** The PostgreSQL proxy example said to add the credential with `POST /api/targets/{id}/credentials`; it is `POST /api/credentials` with `target_id` in the body. |
 | 2026-10-17 | **Two variable names corrected.** `PAM_REQUIRE_LIVE_SUPERVISION` (the guide said `PAM_REQUIRE_SUPERVISION`) and `PAM_SSH_SFTP=deny` (it said `PAM_SSH_SFTP_MODE`); setting either wrong name did nothing. |
 | 2026-10-17 | **PostgreSQL 18.** The docker-compose stack bundles PostgreSQL 18 (was 17); 17 and 18 are the recommended versions, 14+ still works. **Terraform `hashicorp/kubernetes` 3.x.** §3.5: the module needs Terraform 1.8+, uses the provider's `_v1` resource types, and state from an earlier version is migrated once (the namespace by a `moved` block, the Secret, Deployment and Service by `state rm` + `import`). |
 | 2026-10-08 | **Phase 283 (recording archives).** §9.3 *Portable recording archives*: export by user/target/protocol/window, the manifest, import and its imported verdict, purge from the exporting deployment only. |

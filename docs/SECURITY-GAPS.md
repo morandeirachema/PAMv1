@@ -579,7 +579,7 @@ interpolation site, so no attacker-influenced id reaches generated HCL unescaped
 Nine findings. **All are now closed** — AM/AN in Phase 62, AO–AU across Phases
 62–63, and AO's residual in Phase 89. These Status cells lagged that reality: the
 closures were tracked in
-[ROADMAP §0](../ROADMAP.md#0-open-findings-from-the-2026-08-07-sweep) and here they
+[ROADMAP §0](../ROADMAP.md#0-the-2026-08-07-sweep--closed) and here they
 sat marked "Open", which is **finding AT recurring** — the self-audit of record
 asserting open defects that were fixed. Phase 89 reconciled the table.
 

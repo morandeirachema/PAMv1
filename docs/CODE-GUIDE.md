@@ -333,7 +333,7 @@ Sentinel errors `ErrNotFound` / `ErrConflict` map to HTTP/SSH errors upstream.
   `migrations/*.sql` files, each run once inside its own transaction, tracked in a
   `schema_migrations` table, under a session-level `pg_advisory_lock` so concurrent
   replicas booting together don't race. `0001_init.sql` is the idempotent baseline;
-  every later change is a new numbered file (through `0060_approved_as.sql` at time of writing).
+  every later change is a new numbered file (the highest number in the directory is the newest).
 
   Two implementation details are load-bearing:
   - **Error mapping is the contract.** A pgx `PgError` SQLSTATE is translated to
@@ -1232,6 +1232,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-10-17 | §3.3 no longer names a newest migration (it said `0060`; the directory holds `0068`). |
 | 2026-10-17 | §3.3: the store contract suite covers all 243 methods again (`UpdateUserManager`, Phase 256, had no case), and `store.TestContractCallsEveryStoreMethod` now fails on any method the suite never calls; the count is no longer written as a number that goes stale. |
 | 2026-10-17 | **Upstream SSH host keys, described as they work since Phase 272.** Without `PAM_SSH_KNOWN_HOSTS`, sessions pin each target's key on first contact (`PAM_SSH_HOST_KEY_CHECK=tofu`; `strict`/`off`); only the rotation connector and the jump host still trust any key. The doc had said unset meant trust-any. |
 | 2026-10-17 | §14 CI list gains the `terraform` job: `fmt -check`, then `init -backend=false` + `validate` of both Terraform modules, which nothing ran before. |
