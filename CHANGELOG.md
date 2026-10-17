@@ -57,6 +57,10 @@ the next release to carry.
   itself (a `moved` block); the Secret, Deployment and Service are
   re-adopted with the `state rm` + `import` commands in `main.tf`'s header,
   before the first plan, or that plan replaces them.
+- **xterm.js 6.0.0** (was 5.5.0) for the in-portal SSH terminal, vendored
+  verbatim with its stylesheet. 6.0 reworks the viewport and scroll bar, and
+  no longer maps Alt+arrow to Ctrl+arrow: word-wise cursor movement in a
+  remote shell is Ctrl+arrow, or whatever the remote readline binds.
 - **Demo seed image.** The RDP and VNC demo compose files' seed job moves from
   `curlimages/curl:8.11.1` to `8.23.0`.
 - **Terraform: AWS provider 6.** The `cloud-postgres` example module moves

@@ -7,7 +7,7 @@ This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 Third-party components bundled in this repository
 --------------------------------------------------------------------------------
 
-xterm.js (@xterm/xterm), version 5.5.0
+xterm.js (@xterm/xterm), version 6.0.0
   - Vendored, unmodified, as: internal/web/static/xterm.js (the UMD build from
     the npm package's lib/xterm.js) and its stylesheet, inlined into
     internal/web/static/index.html (css/xterm.css).
@@ -18,7 +18,7 @@ xterm.js (@xterm/xterm), version 5.5.0
     (c) 2014-2016, SourceLair Private Company; (c) 2012-2013, Christopher
     Jeffrey. https://github.com/xtermjs/xterm.js
   - sha256 of the vendored file:
-    1f991ac3b4b283ebf96e60ae23a00a52765dd3a2e46fa6fdda9f1aab032f7495
+    14903579ff54664cd72f8e8699e6961a6272c21863ec1c3b118cdc8af5d4a972
 
 Apache Guacamole JavaScript client (guacamole-common-js), version 1.5.0
   - Vendored, unmodified, as: internal/web/static/guacamole-common.min.js
