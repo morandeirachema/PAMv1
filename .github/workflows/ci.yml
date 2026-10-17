@@ -266,8 +266,9 @@ jobs:
             echo "FAIL: a malformed image.digest rendered"; exit 1
           fi
       - name: kubeconform
-        # conjur/policy.yaml is a Conjur policy document, not a K8s manifest,
-        # and sops/ holds encrypted material — both stay out of scope. eso/ holds
+        # conjur/policy.yaml and conjur/authn-jwt.yaml are Conjur policy
+        # documents, not K8s manifests, and sops/ holds encrypted material —
+        # both stay out of scope. eso/ holds
         # External Secrets CRD instances: their kinds have no upstream schema and
         # are skipped like the CloudNativePG Cluster, but the plain Secret beside
         # them is validated, which is the part that can actually be malformed.

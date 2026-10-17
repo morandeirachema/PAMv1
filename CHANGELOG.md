@@ -56,6 +56,14 @@ the next release to carry.
 - **`deploy/k8s/conjur/policy.yaml` no longer copies the setup commands.**
   Its copy had drifted from the README (it set no sign seed); it now points
   to the README, and names the project PAMv1 in its comments.
+- **The default Conjur deployment has the Conjur policy it needs.**
+  `deploy/k8s/conjur/deployment.yaml` authenticates with authn-jwt and
+  pointed to "the matching policy" in the README, which had none, so
+  following the README left the pod failing to authenticate. The new
+  `authn-jwt.yaml` declares the authenticator and a host for the pod's
+  service account. `policy.yaml` now grants the secrets to a `readers`
+  layer, and both hosts are members of it. The README shows how to load it
+  and set the authenticator's variables.
 
 **Repository history.** On 2026-10-14 the git history was rewritten to
 normalize commit authorship. No file changed: every tag points at a tree

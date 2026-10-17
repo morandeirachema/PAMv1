@@ -1,0 +1,57 @@
+# PAMv1 Conjur authn-jwt policy (Phase 18) — the Kubernetes-native path that
+# deployment.yaml uses by default: the pod presents its projected
+# service-account token, and no bootstrap secret lives in Git at all.
+#
+# Load it after policy.yaml (as a Conjur admin), then set the authenticator's
+# variables as the README's Setup section shows:
+#   conjur policy load -b root -f authn-jwt.yaml
+#
+# The service id `kubernetes` is PAM_CONJUR_AUTHN_JWT_SERVICE_ID in
+# deployment.yaml, and the audience the README sets is the projected token's
+# `audience: conjur` there. Change one and you must change the other.
+
+# The authenticator itself.
+- !policy
+  id: conjur/authn-jwt/kubernetes
+  body:
+    - !webservice
+
+    # The cluster's service-account signing keys, as a JWKS. If Conjur can
+    # reach the cluster's OIDC discovery endpoint, declare `jwks-uri` instead.
+    - !variable public-keys
+    - !variable issuer
+    # `sub` and `pamv1/k8s`: the token's subject names a host under pamv1/k8s.
+    - !variable token-app-property
+    - !variable identity-path
+    - !variable audience
+
+    # Who may authenticate through it.
+    - !group apps
+    - !permit
+      role: !group apps
+      privilege: [read, authenticate]
+      resource: !webservice
+
+# The pam-server pod, by its Kubernetes service account. A projected token's
+# subject is system:serviceaccount:<namespace>:<name>, which with the
+# identity-path above resolves to this host. The annotations pin the same two
+# claims, so a token from another namespace or account is refused.
+- !policy
+  id: pamv1/k8s
+  body:
+    - !host
+      id: system:serviceaccount:pamv1:pam-server
+      annotations:
+        description: The PAMv1 server pod, by its Kubernetes service account.
+        authn-jwt/kubernetes/kubernetes.io/namespace: pamv1
+        authn-jwt/kubernetes/kubernetes.io/serviceaccount/name: pam-server
+
+# It may authenticate through the authenticator, and read the bootstrap
+# secrets through policy.yaml's readers layer — nothing else.
+- !grant
+  role: !group conjur/authn-jwt/kubernetes/apps
+  member: !host pamv1/k8s/system:serviceaccount:pamv1:pam-server
+
+- !grant
+  role: !layer pamv1/readers
+  member: !host pamv1/k8s/system:serviceaccount:pamv1:pam-server

@@ -26,16 +26,25 @@
       - !variable broker-audit-key
       - !variable broker-audit-sign-seed
 
+    # Whoever may read those secrets: the pam-server workload, under whichever
+    # authenticator it uses. authn-jwt.yaml adds the pod's service-account host
+    # to this layer; nothing else is ever a member.
+    - !layer readers
+
     # A machine identity for the pam-server workload (authn-api-key). For the
-    # Kubernetes-native, no-bootstrap-secret path use authn-jwt instead — see the
-    # README; the host is then annotated with its service-account identity.
+    # Kubernetes-native, no-bootstrap-secret path that deployment.yaml uses,
+    # load authn-jwt.yaml as well — see the README.
     - !host
       id: pam-server
       annotations:
         description: The PAMv1 server process; reads its own bootstrap secrets.
 
-    # pam-server may read (and fetch the value of) those secrets — nothing else.
+    - !grant
+      role: !layer readers
+      member: !host pam-server
+
+    # The layer may read (and fetch the value of) those secrets — nothing else.
     - !permit
-      role: !host pam-server
+      role: !layer readers
       privileges: [read, execute]
       resources: *secrets

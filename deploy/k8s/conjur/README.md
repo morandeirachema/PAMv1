@@ -83,6 +83,23 @@ a rotation at all. See [Rotating without a restart](#rotating-without-a-restart)
    **authn-jwt (recommended, Kubernetes-native — no bootstrap secret in Git).**
    The pod presents a projected service-account token; Conjur's
    [`authn-jwt`](https://docs.conjur.org/) verifies it against the cluster's JWKS.
+   [`authn-jwt.yaml`](authn-jwt.yaml) is the Conjur side: the authenticator, and
+   a host for the pod's service account that may read the bootstrap secrets.
+   Load it after `policy.yaml`, and set the authenticator's variables. These are
+   public values, not secrets, so `-v` is fine here:
+
+   ```bash
+   conjur policy load -b root -f authn-jwt.yaml
+   A=conjur/authn-jwt/kubernetes
+   conjur variable set -i $A/public-keys -v "{\"type\":\"jwks\",\"value\":$(kubectl get --raw /openid/v1/jwks)}"
+   conjur variable set -i $A/issuer -v "$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)"
+   conjur variable set -i $A/token-app-property -v sub
+   conjur variable set -i $A/identity-path      -v pamv1/k8s
+   conjur variable set -i $A/audience           -v conjur
+   ```
+
+   Then enable the authenticator on the Conjur server (for Conjur Open Source,
+   add `authn-jwt/kubernetes` to `CONJUR_AUTHENTICATORS`).
    `deployment.yaml` shows the projected-token volume and the env:
 
    ```
@@ -101,8 +118,9 @@ a rotation at all. See [Rotating without a restart](#rotating-without-a-restart)
    PAM_CONJUR_API_KEY=<host api key>
    ```
 
-3. Deploy: `kubectl apply -f deployment.yaml` (adjust the Conjur URL, CA, and the
-   authn-jwt policy on the Conjur side).
+3. Deploy: `kubectl apply -f deployment.yaml` (adjust the Conjur URL and CA; if
+   you change the namespace or service account, change the host in
+   `authn-jwt.yaml` to match).
 
 ## SOPS vs Conjur — when to use which
 

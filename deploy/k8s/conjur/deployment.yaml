@@ -6,8 +6,8 @@
 #   • authn-api-key — a host API key in a small Secret (uncomment the env below).
 #   • authn-jwt     — the pod proves its Kubernetes identity with a projected
 #                     service-account token; NO bootstrap secret in Git at all
-#                     (the default in this manifest). See the README for the
-#                     matching Conjur authn-jwt policy.
+#                     (the default in this manifest). authn-jwt.yaml is the
+#                     matching Conjur policy; the README shows how to load it.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
