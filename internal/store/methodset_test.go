@@ -1,7 +1,10 @@
 package store_test
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -95,5 +98,36 @@ func TestStoreMethodSetIsUnchanged(t *testing.T) {
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)
+	}
+}
+
+// TestContractCallsEveryStoreMethod keeps the docs' "the contract suite
+// exercises every Store method" true. Phase 217 made it true; by the
+// 2026-10-17 audit one method (UpdateUserManager, Phase 256) had been added
+// without a contract case, so memstore and pgstore were never held to the same
+// behavior for it. A method counts as exercised when storetest calls it.
+func TestContractCallsEveryStoreMethod(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("storetest", "*.go"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("storetest sources: %v", err)
+	}
+	var src strings.Builder
+	for _, f := range files {
+		b, err := os.ReadFile(f) // #nosec G304 -- the package's own test sources, enumerated by glob
+		if err != nil {
+			t.Fatal(err)
+		}
+		src.Write(b)
+	}
+	ty := reflect.TypeOf((*store.Store)(nil)).Elem()
+	var missing []string
+	for i := 0; i < ty.NumMethod(); i++ {
+		if name := ty.Method(i).Name; !strings.Contains(src.String(), "."+name+"(") {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		t.Fatalf("%d Store method(s) the storetest contract never calls, so the two backends are not held to one behavior for them: %s",
+			len(missing), strings.Join(missing, ", "))
 	}
 }

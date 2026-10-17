@@ -362,7 +362,8 @@ Sentinel errors `ErrNotFound` / `ErrConflict` map to HTTP/SSH errors upstream.
     `hashtext` collision with either of the others is not possible.
 
 The shared conformance suite `storetest.RunStoreContract` exercises the whole
-interface — every one of its 220 methods since Phase 217 — against both
+interface — every one of its methods (243 today), which
+`store.TestContractCallsEveryStoreMethod` keeps true — against both
 implementations (and, in CI, against a live PostgreSQL via
 `PAM_TEST_DATABASE_URL`), so the pgstore SQL is verified, not just assumed. Its
 assertions are written from the interface's doc comments, not from either
@@ -1231,6 +1232,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-10-17 | §3.3: the store contract suite covers all 243 methods again (`UpdateUserManager`, Phase 256, had no case), and `store.TestContractCallsEveryStoreMethod` now fails on any method the suite never calls; the count is no longer written as a number that goes stale. |
 | 2026-10-17 | **Upstream SSH host keys, described as they work since Phase 272.** Without `PAM_SSH_KNOWN_HOSTS`, sessions pin each target's key on first contact (`PAM_SSH_HOST_KEY_CHECK=tofu`; `strict`/`off`); only the rotation connector and the jump host still trust any key. The doc had said unset meant trust-any. |
 | 2026-10-17 | §14 CI list gains the `terraform` job: `fmt -check`, then `init -backend=false` + `validate` of both Terraform modules, which nothing ran before. |
 | 2026-09-16 | Phase 248 (the review of 240–247): `store.SafePermissionsCover` + `SafePermissionOrder` beside `GrantPermits`, and a single-pass `ParseSafePermissions`; `api.safeManagement` replacing `canManageSafe` where the caller's own permission set matters (`canManageSafe` stays as its boolean wrapper), the `Covers` guard in `api.rotateUserToken`, `api.operatorInput` in the viewer bridge, `api.grantDeadline` deleted (the tunnel uses the grants it was admitted under); `auth.ReasonSessionMFAExtension`; `session.entry.swept`; `pgstore.SweepExpiredGrants` on one transaction; `timeframe.Frame.End` building wall-clock edges. |

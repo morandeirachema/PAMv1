@@ -127,6 +127,10 @@ the next release to carry.
   could not see them. They are findings now, and so are
   `sftp.icap_flagged` (an infected file) and `restriction.killed` (a session
   a restriction rule ended).
+- **The store contract covers every method again.** `UpdateUserManager`
+  (Phase 256) had no case in the suite both backends run, so memstore and
+  PostgreSQL were never checked to agree on it. It has one, and a new test
+  fails on any `Store` method the suite does not call.
 - **The appliance build works again.** `deploy/ova/build.sh` pinned Debian
   13.6.0 at `debian-cd/current/`, which Debian moved on to 13.7.0, so the
   download returned 404. It now pins 13.7.0, falls back to Debian's archive
