@@ -18,9 +18,24 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
-Three dependency updates merged on 2026-10-14 (no PAMv1 code changed, and CI
-passed on each), and the fixes from a review of the Conjur deploy docs, for
-the next release to carry.
+Since v0.0.79: Phase 283 (portable recording archives), the dependency and
+base-image updates of 2026-10-14 and 2026-10-17, the fixes from a review of
+the Conjur deploy docs, and the fixes from a repository-wide audit of
+versions and documentation. Two changes need an operator step on upgrade:
+PostgreSQL 18 under docker-compose, and Terraform state from before the
+Kubernetes provider 3 move (both under **Changed**).
+
+**Added.**
+
+- **Portable recording archives** (Phase 283, Tier 10 row 12).
+  `GET /api/recordings/archive` exports the recordings a filter selects
+  (actor, target, protocol, window) as a tar: `MANIFEST.json`, then each
+  recording as stored, sealed ones still sealed. The manifest names each
+  file's stamping audit row and whether the bytes still match it, and its
+  SHA-256 is audited before a byte leaves. `POST /api/recordings/archive`
+  re-imports (verified first, never overwriting a different file; replays as
+  *imported*), and `POST /api/recordings/purge` deletes only unchanged files
+  of an archive exported here. Console: *Session Recordings* → F7.
 
 **Changed.**
 
@@ -30,7 +45,8 @@ the next release to carry.
   `golang.org/x/sys` 0.48.0 → 0.49.0. Patch and minor versions only.
 - **Build images** (#461). Both Dockerfiles move to the current
   `golang:1.27-alpine` and `golang:1.27-bookworm` digests: the same Go
-  release on a refreshed base.
+  release on a refreshed base. (The PKCS#11 build later moves to
+  `golang:1.27-trixie`, under **Security**.)
 - **Release workflow** (#451). `anchore/sbom-action` 0.24.2 → 0.24.3, the step
   that generates each release's SPDX SBOM.
 - **`masterzen/winrm`** 2026-04-07 → 2026-10-04 (untagged upstream). NTLM
