@@ -2495,6 +2495,10 @@ curl -H "X-API-Key: $PAM_API_KEY" -X POST http://localhost:8080/api/credentials/
 # kinds: windows_service | scheduled_task | iis_apppool ; port defaults to 5985 (WinRM)
 ```
 
+`GET /api/credentials/3/dependencies` lists a credential's dependents (read
+inventory), and `DELETE /api/credentials/3/dependencies/{did}` removes one
+(manage credentials).
+
 On the next rotation of credential 3, PAMv1 sets the new password on the target,
 re-vaults it, then runs the appropriate WinRM command on each consumer's host
 (`sc.exe config` / `schtasks /Change /RP` / `appcmd …processModel.password`) with
@@ -4603,7 +4607,9 @@ Command control (`PAM_COMMAND_DENY_FILE` / `_ALLOW_FILE`) is one policy for
 everyone. A **restriction rule** belongs to a subject — a user, or a role
 everyone holding it — and says what *they* may not do inside a session, the
 way WALLIX's user-group Restrictions tab does. Menu **35** (*Work with
-restriction rules*), or `POST /api/restriction-rules`:
+restriction rules*), or `POST /api/restriction-rules` (manage users;
+`GET /api/restriction-rules` lists them for anyone who can read the audit, and
+`DELETE /api/restriction-rules/{id}` removes one):
 
 | Field | Values |
 |---|---|
@@ -5474,6 +5480,7 @@ entitlement.
 
 | Date | Change |
 |---|---|
+| 2026-10-17 | The dependent-account and restriction-rule sections name their list and delete routes (`GET`/`DELETE /api/credentials/{id}/dependencies`, `GET`/`DELETE /api/restriction-rules`), which only the generated diagrams doc listed. |
 | 2026-10-17 | §4 gains the four variables it never mentioned: `PAM_SECRETS_PROVIDER`, `PAM_ANALYTICS_BASELINE_DAYS`, `PAM_ANALYTICS_AUTO_STEPUP` and `PAM_REQUIRE_TARGET_GRANT`. The `.env.example` it points to for full descriptions now lists every variable, as it claims (53 had been missing), and the Kubernetes ConfigMap/Secret pair matches it (about 90 had been missing). |
 | 2026-10-17 | **Air-gap: `PAM_TICKET_URL` joins the gate, and the documented list catches up.** The ServiceNow/Jira connector egresses like the ITSM webhook but was missing from `airGapConflicts`; it is refused under `PAM_OT_AIRGAP` unless allowed. The list here now matches the code's (posture, on-call, Slack, ICAP and the report digest were missing). |
 | 2026-10-17 | **A route that does not exist.** The PostgreSQL proxy example said to add the credential with `POST /api/targets/{id}/credentials`; it is `POST /api/credentials` with `target_id` in the body. |
