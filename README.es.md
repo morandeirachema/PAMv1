@@ -171,8 +171,7 @@ Fases 0–227 y 229–283, agrupadas por área. Cada capacidad está cubierta po
 - **Sesiones supervisadas (monitorización en vivo + control de comandos)** — un supervisor puede **ver en vivo una sesión SSH, PostgreSQL o WinRM** — y las ejecuciones `ssh_exec`/`winrm_exec` del bróker de agentes — por `GET /api/sessions/{id}/stream` (Server-Sent Events, `CapReadAudit`); el stream **termina en el momento en que termina la sesión**, así que un panel en silencio es una sesión tranquila, no una muerta. En un despliegue HA tanto el **listado como la visualización abarcan todo el clúster** (Fase 55): la petición puede caer en cualquier réplica, y la réplica que aloja la sesión retransmite su salida a través del almacén — solo mientras alguien la está viendo de verdad. Una lista de denegación por regex (`PAM_COMMAND_DENY_FILE`) **bloquea un comando peligroso antes de que llegue al objetivo** en las rutas de exec, WinRM y SQL — rechazado y auditado (`command.blocked`). Para las shells SSH interactivas se usa el modo observador de solo lectura. Un fichero de denegación que no produzca ningún patrón utilizable es un **error fatal en el arranque**, no un control silenciosamente desactivado.
 - **Elevación dentro de la sesión** — donde el control de comandos es un bloqueo duro, `PAM_DB_STEPUP_FILE` marca sentencias que **se pausan a la espera de una decisión humana en vivo** en lugar de matar la sesión: la sentencia espera (auditada, visible en el monitor en vivo), un aprobador la permite o la rechaza desde la consola, y la sesión sobrevive en cualquier caso. Nadie puede aprobar la elevación de su propia sesión.
 - **Interruptor de corte para todo el clúster** — una terminación emitida en cualquier réplica corta la sesión **allí donde esté alojada** (publicada por Postgres LISTEN/NOTIFY), de modo que el interruptor, la cascada de revocación, el barrido de proveedores y la respuesta automática de analítica funcionan en HA. Toda ejecución intermediada — el endpoint WinRM REST y las herramientas exec del bróker incluidas — es una sesión registrada, contable y terminable, no solo los proxies interactivos.
-- **Control de transferencia de ficheros SFTP** — SFTP viaja sobre un subsistema SSH con un protocolo binario que el control de comandos nunca veía. El proxy **analiza ese flujo** para auditar cada operación (`sftp.open`/`sftp.modify`), y `PAM_SSH_SFTP` fija la política: `allow` (reenviar + auditar), `readonly` (**rechazar subidas, borrados y renombrados** con un permiso denegado sintetizado — el objetivo nunca se contacta; las descargas siguen funcionando) o `deny` (rechazar el subsistema entero). `PAM_SSH_SFTP_DENY_FILE` añade la otra dimensión — una **lista de denegación por regex sobre rutas** (el mismo motor que el control de comandos), rechazada en *todos* los modos incluidas las descargas y en ambos lados de un renombrado, porque una ruta que deniegas y aun así se puede descargar no está denegada. Cierra una vía de exfiltración de ficheros que de otro modo no se auditaría.
-- **Control de transferencia de archivos (SFTP)** — SFTP viaja sobre un subsistema SSH con un protocolo binario que el control de comandos no veía. Ahora el proxy **analiza ese flujo** para auditar cada operación de archivo (`sftp.open`/`sftp.modify`), y `PAM_SSH_SFTP` fija la política: `allow` (reenviar + auditar), `readonly` (**rechaza subidas, borrados y renombrados** con un permiso denegado sintetizado — el objetivo nunca es contactado; las descargas siguen funcionando) o `deny` (rechaza el subsistema por completo). Cierra una vía de exfiltración de archivos que antes no se auditaba. Probado de extremo a extremo con un cliente y servidor SFTP reales intercambiando paquetes genuinos a través del proxy.
+- **Control de transferencia de ficheros SFTP** — SFTP viaja sobre un subsistema SSH con un protocolo binario que el control de comandos nunca veía. El proxy **analiza ese flujo** para auditar cada operación de fichero (`sftp.open`/`sftp.modify`), y `PAM_SSH_SFTP` fija la política: `allow` (reenviar + auditar), `readonly` (**rechaza subidas, borrados y renombrados** con un permiso denegado sintetizado — el objetivo nunca se contacta; las descargas siguen funcionando) o `deny` (rechaza el subsistema entero). `PAM_SSH_SFTP_DENY_FILE` añade la otra dimensión — una **lista de denegación por regex sobre rutas** (el mismo motor que el control de comandos), rechazada en *todos* los modos incluidas las descargas y en ambos lados de un renombrado (el paquete clásico *y* las operaciones `SSH_FXP_EXTENDED` de OpenSSH que envía un cliente moderno — `posix-rename`, `hardlink`, `lsetstat`), porque una ruta que deniegas y aun así se puede descargar no está denegada. Y con `PAM_SSH_SFTP_CAPTURE` **se graba el propio contenido** (Fase 59): cada fichero transferido deja un artefacto de chunk-log junto a las grabaciones de sesión — sellado bajo la KEK del vault, encadenado por SHA-256, atribuido en la auditoría y reproducible desde la consola como los bytes reconstruidos; un límite por fichero rechaza (no solo deja de grabar) lo que lo supere, y un flujo que no se puede analizar falla cerrado mientras la captura está activa. Cierra una vía de exfiltración de ficheros que de otro modo no se auditaría. Probado de extremo a extremo con un cliente y un servidor SFTP reales intercambiando paquetes genuinos a través del proxy.
 
 ### Vault y ciclo de vida de credenciales
 
@@ -539,6 +538,7 @@ beta, y la
 (2026-08-07) devolvió la imagen fijada al día del árbol —la 0.10.0 se etiquetó dos días
 antes de que aterrizaran las correcciones del barrido del 2026-07-30, así que durante una
 semana todos los manifiestos fijaron una build anterior a ellas— y la
+**[v0.11.2](https://github.com/morandeirachema/PAMv1/releases/tag/v0.11.2)** y
 **todas las releases posteriores** la han mantenido ahí, cada una cortada sin
 dejar que las correcciones se acumularan indefinidamente en un `main` sin
 etiquetar — la última, la
@@ -546,15 +546,15 @@ etiquetar — la última, la
 [CHANGELOG.md](CHANGELOG.md).
 
 Lo que queda está consolidado en
-**[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)** — mejoras en curso, la
-mayor la **grabación del contenido de cada fichero SFTP**, junto a política por
-caja fuerte, profundidad de campañas / pasarela de tickets / configuración /
-analítica, las pantallas de consola de proveedores, más ejemplos de despliegue y
-las **decisiones de elevación entre réplicas** (la *monitorización* en vivo entre
-réplicas se entregó en la Fase 55: listado de sesiones de todo el clúster y
-visualización SSE mediante un relé sobre el almacén activado por interés; una
-elevación en pausa aún se decide en la réplica que aloja la sesión). Todo
-lo que depende de infraestructura externa o de una cuenta de pago queda catalogado con
+**[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)** — mejoras en curso:
+profundidad de campañas / pasarela de tickets / configuración / analítica, una
+credencial de gestión por consumidor para la propagación a cuentas dependientes,
+una pantalla de consola para el intercambio de tokens de la Fase 57 y ejemplos de
+despliegue más completos. Los elementos mayores que estaban ahí — la
+monitorización en vivo entre réplicas (55) y las decisiones de elevación entre
+réplicas (56), la política por caja fuerte (58) y la grabación del contenido de
+cada fichero SFTP (59) — se han entregado ya cada uno como su propia fase. Lo que
+necesita infraestructura externa o una cuenta de pago queda catalogado con
 honestidad en [EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md) en lugar de
 simularse.
 
@@ -611,6 +611,17 @@ docker compose up --build
 
 ### Kubernetes
 
+> ⚠️ **Una cosa que saber antes de ejecutar esto:**
+> `deploy/k8s/postgres-cnpg.yaml` declara un `Cluster` de **CloudNativePG**, así
+> que `kubectl apply -k deploy/k8s/` falla con un tipo desconocido salvo que el
+> [operador de CloudNativePG](https://cloudnative-pg.io/) esté instalado antes.
+> Instálalo, o aplica los manifiestos que quieras uno a uno y trae tu propio
+> PostgreSQL. Usa **`-k`**, no `-f`: `-f` sobre el directorio arrastra
+> `secret.example.yaml`, que declara `pam-secrets` con valores `CHANGE_ME` y
+> sobrescribiría el secreto que acabas de crear. (La imagen que fijan los
+> manifiestos, `ghcr.io/morandeirachema/pamv1:0.0.79`, está publicada y es
+> pública.)
+
 ```bash
 kubectl apply -f deploy/k8s/namespace.yaml
 kubectl -n pamv1 create secret generic pam-secrets \
@@ -625,9 +636,11 @@ O con Helm (readiness/métricas cableadas, réplicas configurables, ServiceMonit
 
 ```bash
 helm install pamv1 deploy/helm/pamv1 \
+  --set secret.create=true \
   --set secret.data.PAM_MASTER_KEY=... \
   --set secret.data.PAM_API_KEY=... \
-  --set secret.data.PAM_DATABASE_URL=postgres://...
+  --set secret.data.PAM_DATABASE_URL=postgres://... \
+  --set image.digest=sha256:...   # fija la imagen: el digest de esta release, en CHANGELOG.md o en sus notas
 ```
 
 ### Terraform (IaC)
@@ -658,6 +671,9 @@ las de arranque y transporte de abajo permanecen solo en el entorno.
 | `PAM_SSH_HOST_KEY` | no | Ruta para persistir la host key del proxy (PEM); vacío = efímera |
 | `PAM_SSH_KNOWN_HOSTS` | no | Fija las host keys de los objetivos (fichero known_hosts), y manda cuando está definido. Sin él, las sesiones fijan la clave de cada objetivo en el primer contacto (`PAM_SSH_HOST_KEY_CHECK=tofu`; `strict` rechaza un objetivo sin clave fijada, `off` confía en cualquiera); la rotación y el jump host siguen confiando en cualquier clave sin este fichero |
 | `PAM_RECORDING_DIR` | no | Dónde se escriben las grabaciones, por defecto `recordings` |
+| `PAM_REQUIRE_RECORDING` | no | Rechaza cualquier sesión que no se pueda grabar — el ajuste de fallo cerrado; cubre todas las vías hacia un objetivo |
+| `PAM_DB_ADDR` | no | Dirección de escucha del proxy de sesiones PostgreSQL, por defecto `off` |
+| `PAM_MSSQL_ADDR` | no | Dirección de escucha del proxy de sesiones SQL Server, por defecto `off` |
 | `PAM_BROKER_POLICY_FILE` | no | Política YAML del bróker de agentes; ponerla activa el bróker de IA |
 
 ### Flags de utilidad
@@ -719,9 +735,12 @@ go test -race ./...        # tests unitarios + API + proxy (store en memoria) �
 go vet ./... && gofmt -l . # gofmt no debe imprimir nada
 ```
 
-CI además corre un contrato del store contra PostgreSQL real, un build con tag `pkcs11` contra
-[SoftHSM2](https://www.opendnssec.org/softhsm/), un build de imagen Docker y una comprobación de
-que los **diagramas de arquitectura derivados del código** están al día. El
+CI además corre **`staticcheck`, `govulncheck` y `gosec`**, un contrato del store contra
+PostgreSQL real, un build con tag `pkcs11` contra
+[SoftHSM2](https://www.opendnssec.org/softhsm/), el build de las dos imágenes Docker, Helm
+lint y renderizados del chart con `kubeconform` sobre todos los manifiestos, `fmt`/`validate`
+de Terraform sobre los dos módulos, una comprobación de que los ejemplos SOPS están de verdad
+cifrados y otra de que los **diagramas de arquitectura derivados del código** están al día. El
 [doc de arquitectura de bajo nivel](docs/ARCHITECTURE-LOW-LEVEL.md) es el mapa más completo del
 código — léelo primero.
 

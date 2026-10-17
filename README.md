@@ -868,9 +868,11 @@ go vet ./... && gofmt -l . # gofmt must print nothing
 
 CI additionally runs **`staticcheck`, `govulncheck` and `gosec`**, a live-PostgreSQL
 store contract, a `pkcs11`-tagged build against
-[SoftHSM2](https://www.opendnssec.org/softhsm/), a Docker image build, a check that the
-committed SOPS example really is encrypted, and a check that the
-**code-derived architecture diagrams** are current. The
+[SoftHSM2](https://www.opendnssec.org/softhsm/), a Docker image build of both images,
+Helm lint and chart renders with `kubeconform` over every manifest, Terraform
+`fmt`/`validate` of both modules, a check that the committed SOPS examples really
+are encrypted, and a check that the **code-derived architecture diagrams** are
+current. The
 [architecture low-level doc](docs/ARCHITECTURE-LOW-LEVEL.md) is the fullest map of the
 codebase — read it first.
 
