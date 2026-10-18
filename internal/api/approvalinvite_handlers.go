@@ -100,21 +100,6 @@ func (s *Server) createApprovalInvite(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, inv)
 }
 
-// listApprovalInvites lists the access request named in the {id} path
-// value's magic-link invites (outstanding, consumed and revoked).
-func (s *Server) listApprovalInvites(w http.ResponseWriter, r *http.Request) {
-	id, ok := idParam(w, r)
-	if !ok {
-		return
-	}
-	invs, err := s.store.ListApprovalInvitesForRequest(r.Context(), id)
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, invs)
-}
-
 // revokeApprovalInvite marks the invite named in the {id} path value
 // revoked, so a later redemption attempt fails even if the link is still
 // within its TTL.

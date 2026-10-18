@@ -254,20 +254,6 @@ func (s *Server) addSafeMember(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, m)
 }
 
-// listSafeMembers returns a safe's members (CapReadInventory).
-func (s *Server) listSafeMembers(w http.ResponseWriter, r *http.Request) {
-	id, ok := idParam(w, r)
-	if !ok {
-		return
-	}
-	members, err := s.store.ListSafeMembers(r.Context(), id)
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, members)
-}
-
 // deleteSafeMember removes a member from a safe (target manager or a can_manage
 // member of that safe).
 func (s *Server) deleteSafeMember(w http.ResponseWriter, r *http.Request) {

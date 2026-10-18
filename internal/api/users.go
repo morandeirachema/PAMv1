@@ -488,18 +488,6 @@ func (s *Server) suspendOwnedAgents(ctx context.Context, username string) {
 	}
 }
 
-// listLoginSessions returns all active password/SSO login sessions (never their
-// token hashes), so an admin can see who is logged in and revoke them. This is
-// distinct from GET /api/sessions, which lists live proxied target sessions.
-func (s *Server) listLoginSessions(w http.ResponseWriter, r *http.Request) {
-	sessions, err := s.store.ListSessions(r.Context())
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, sessions)
-}
-
 // revokeLoginSessions force-invalidates every active login session for a username
 // — the admin control missing for directory (AD/SSO) logins, which create session
 // rows rather than user rows and so survive a directory disable until they expire.

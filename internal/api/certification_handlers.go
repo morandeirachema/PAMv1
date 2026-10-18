@@ -421,16 +421,6 @@ func itemDetail(base, grantedBy string) string {
 	return fmt.Sprintf("%s, granted by %s", base, grantedBy)
 }
 
-// listCampaigns returns all campaigns (CapReadAudit).
-func (s *Server) listCampaigns(w http.ResponseWriter, r *http.Request) {
-	cs, err := s.store.ListCampaigns(r.Context())
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, cs)
-}
-
 // getCampaign returns a campaign with its items (CapReadAudit).
 func (s *Server) getCampaign(w http.ResponseWriter, r *http.Request) {
 	id, ok := idParam(w, r)

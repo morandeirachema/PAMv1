@@ -450,20 +450,6 @@ func (s *Server) createTargetGrant(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, g)
 }
 
-// listTargetGrants returns the access grants for a target.
-func (s *Server) listTargetGrants(w http.ResponseWriter, r *http.Request) {
-	id, ok := idParam(w, r)
-	if !ok {
-		return
-	}
-	grants, err := s.store.ListTargetGrants(r.Context(), id)
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, grants)
-}
-
 // deleteTargetGrant removes a target access grant by its {gid} path value and
 // audits it.
 func (s *Server) deleteTargetGrant(w http.ResponseWriter, r *http.Request) {

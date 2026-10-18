@@ -223,10 +223,42 @@ func listWindow(r *http.Request) (limit int, after int64) {
 // the page as JSON. A free function, not a method, because Go does not allow type
 // parameters on methods. Handlers whose store method takes a filter (a target id,
 // a status, an active flag) keep their own bodies.
-func pagedList[T any](s *Server, list func(context.Context, int, int64) ([]T, error)) http.HandlerFunc {
+func pagedList[T any](list func(context.Context, int, int64) ([]T, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		limit, after := listWindow(r)
 		items, err := list(r.Context(), limit, after)
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, items)
+	}
+}
+
+// listAll is pagedList's sibling for a store list method with no window at
+// all: it returns the whole (small, admin-scale) set, mapping a store error to
+// its status.
+func listAll[T any](list func(context.Context) ([]T, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		items, err := list(r.Context())
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, items)
+	}
+}
+
+// listByParent is listAll for a child collection: the parent's {id} path value
+// (validated by idParam) is the store method's one argument — a target's
+// grants, a safe's members, a vendor's contract grants.
+func listByParent[T any](list func(context.Context, int64) ([]T, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := idParam(w, r)
+		if !ok {
+			return
+		}
+		items, err := list(r.Context(), id)
 		if err != nil {
 			storeError(w, err)
 			return

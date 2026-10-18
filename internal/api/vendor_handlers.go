@@ -192,20 +192,6 @@ func (s *Server) createVendorGrant(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, g)
 }
 
-// listVendorGrants lists a vendor's contract grants. Requires CapReadInventory.
-func (s *Server) listVendorGrants(w http.ResponseWriter, r *http.Request) {
-	id, ok := idParam(w, r)
-	if !ok {
-		return
-	}
-	grants, err := s.store.ListVendorGrants(r.Context(), id)
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, grants)
-}
-
 // approveVendorGrant is the customer's approval of a contract grant: the approver
 // must be a different principal than the vendor (four eyes) and the vendor's live
 // employment attestation must pass. On success the grant becomes active for its

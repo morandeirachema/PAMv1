@@ -104,18 +104,6 @@ func (s *Server) createLabelRule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, rule)
 }
 
-// listLabelRules returns every label rule. It is read-inventory rather than
-// manage-targets: a rule decides who reaches what, so an auditor has to be
-// able to read the policy without being able to write it.
-func (s *Server) listLabelRules(w http.ResponseWriter, r *http.Request) {
-	rules, err := s.store.ListLabelRules(r.Context())
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, rules)
-}
-
 // deleteLabelRule removes a label rule. Deleting a DENY rule widens access
 // across every target its selector matched, which is why the audit detail
 // carries the selector and the effect rather than just the id.

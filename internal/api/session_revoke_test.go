@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,7 +28,19 @@ func TestRevokeLoginSessions(t *testing.T) {
 		}
 	}
 
-	status, data := do(t, srv, http.MethodPost, "/api/login-sessions/revoke", testAPIKey, map[string]any{
+	// The admin's view of who is logged in: all three, and never a token hash.
+	status, data := do(t, srv, http.MethodGet, "/api/login-sessions", testAPIKey, nil)
+	if status != http.StatusOK {
+		t.Fatalf("list: want 200, got %d (%s)", status, data)
+	}
+	if n := len(jsonArray(t, data)); n != 3 {
+		t.Fatalf("listed %d login sessions, want 3 (%s)", n, data)
+	}
+	if strings.Contains(string(data), "hash-a1") {
+		t.Fatalf("the listing leaked a token hash: %s", data)
+	}
+
+	status, data = do(t, srv, http.MethodPost, "/api/login-sessions/revoke", testAPIKey, map[string]any{
 		"username": "alice",
 	})
 	if status != http.StatusOK {

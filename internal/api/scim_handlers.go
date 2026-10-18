@@ -76,16 +76,6 @@ func (s *Server) createScimKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// listScimKeys returns the registered SCIM client identities (never a token hash).
-func (s *Server) listScimKeys(w http.ResponseWriter, r *http.Request) {
-	keys, err := s.store.ListScimKeys(r.Context())
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, keys)
-}
-
 // deleteScimKey revokes a SCIM client so its bearer token stops resolving.
 func (s *Server) deleteScimKey(w http.ResponseWriter, r *http.Request) {
 	id, ok := idParam(w, r)

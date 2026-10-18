@@ -209,20 +209,6 @@ func (s *Server) gateManagementCredential(w http.ResponseWriter, r *http.Request
 	return s.vendorGate(w, r, mt, mc.Username, "dependency.create_denied")
 }
 
-// listDependencies returns a credential's declared consumers (CapReadInventory).
-func (s *Server) listDependencies(w http.ResponseWriter, r *http.Request) {
-	id, ok := idParam(w, r)
-	if !ok {
-		return
-	}
-	deps, err := s.store.ListCredentialDependencies(r.Context(), id)
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, deps)
-}
-
 // deleteDependency removes a declared consumer (CapManageCredentials).
 func (s *Server) deleteDependency(w http.ResponseWriter, r *http.Request) {
 	cid, ok := idParam(w, r)

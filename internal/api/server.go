@@ -1137,7 +1137,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/session-mfa/webauthn/finish", s.rateLimit(s.authenticated(s.sessionMFAWebAuthnFinish)))
 
 	s.mux.Handle("POST /api/targets", s.authz(auth.CapManageTargets, s.createTarget))
-	s.mux.Handle("GET /api/targets", s.authz(auth.CapReadInventory, pagedList(s, s.store.ListTargets)))
+	s.mux.Handle("GET /api/targets", s.authz(auth.CapReadInventory, pagedList(s.store.ListTargets)))
 	s.mux.Handle("GET /api/targets/{id}", s.authz(auth.CapReadInventory, s.getTarget))
 	s.mux.Handle("PUT /api/targets/{id}", s.authz(auth.CapManageTargets, s.updateTarget))
 	s.mux.Handle("DELETE /api/targets/{id}", s.authz(auth.CapManageTargets, s.deleteTarget))
@@ -1147,10 +1147,10 @@ func (s *Server) routes() {
 	// the capability that labels the targets; reading the policy is inventory,
 	// so an auditor can review what denies whom without being able to change it.
 	s.mux.Handle("POST /api/label-rules", s.authz(auth.CapManageTargets, s.createLabelRule))
-	s.mux.Handle("GET /api/label-rules", s.authz(auth.CapReadInventory, s.listLabelRules))
+	s.mux.Handle("GET /api/label-rules", s.authz(auth.CapReadInventory, listAll(s.store.ListLabelRules)))
 	s.mux.Handle("DELETE /api/label-rules/{id}", s.authz(auth.CapManageTargets, s.deleteLabelRule))
 	s.mux.Handle("POST /api/targets/{id}/grants", s.authz(auth.CapManageTargets, s.createTargetGrant))
-	s.mux.Handle("GET /api/targets/{id}/grants", s.authz(auth.CapManageTargets, s.listTargetGrants))
+	s.mux.Handle("GET /api/targets/{id}/grants", s.authz(auth.CapManageTargets, listByParent(s.store.ListTargetGrants)))
 	s.mux.Handle("DELETE /api/targets/{id}/grants/{gid}", s.authz(auth.CapManageTargets, s.deleteTargetGrant))
 	s.mux.Handle("PUT /api/targets/{id}/safe", s.authz(auth.CapManageTargets, s.setTargetSafe))
 	// Authenticated post-login account discovery (Phase 128): enumerate local/
@@ -1163,10 +1163,10 @@ func (s *Server) routes() {
 	// Membership management is open to inventory readers so a delegated can_manage
 	// member can grant access to their own safe (canManageSafe enforces it).
 	s.mux.Handle("POST /api/safes", s.authz(auth.CapManageTargets, s.createSafe))
-	s.mux.Handle("GET /api/safes", s.authz(auth.CapReadInventory, pagedList(s, s.store.ListSafes)))
+	s.mux.Handle("GET /api/safes", s.authz(auth.CapReadInventory, pagedList(s.store.ListSafes)))
 	s.mux.Handle("PUT /api/safes/{id}", s.authz(auth.CapManageTargets, s.updateSafe))
 	s.mux.Handle("DELETE /api/safes/{id}", s.authz(auth.CapManageTargets, s.deleteSafe))
-	s.mux.Handle("GET /api/safes/{id}/members", s.authz(auth.CapReadInventory, s.listSafeMembers))
+	s.mux.Handle("GET /api/safes/{id}/members", s.authz(auth.CapReadInventory, listByParent(s.store.ListSafeMembers)))
 	s.mux.Handle("POST /api/safes/{id}/members", s.authz(auth.CapReadInventory, s.addSafeMember))
 	s.mux.Handle("DELETE /api/safes/{id}/members/{mid}", s.authz(auth.CapReadInventory, s.deleteSafeMember))
 
@@ -1213,7 +1213,7 @@ func (s *Server) routes() {
 	// Dependent accounts (Phase 17): a credential's consumers, updated over WinRM
 	// on rotation so it does not break production.
 	s.mux.Handle("POST /api/credentials/{id}/dependencies", s.authz(auth.CapManageCredentials, s.createDependency))
-	s.mux.Handle("GET /api/credentials/{id}/dependencies", s.authz(auth.CapReadInventory, s.listDependencies))
+	s.mux.Handle("GET /api/credentials/{id}/dependencies", s.authz(auth.CapReadInventory, listByParent(s.store.ListCredentialDependencies)))
 	s.mux.Handle("DELETE /api/credentials/{id}/dependencies/{did}", s.authz(auth.CapManageCredentials, s.deleteDependency))
 
 	// Access-request approval workflow (4-eyes). A connect-capable user files a
@@ -1236,7 +1236,7 @@ func (s *Server) routes() {
 	// approve.html guest page, the same way the session-share guest routes
 	// and RDP/VNC viewer tunnels are.
 	s.mux.Handle("POST /api/access-requests/{id}/invite", s.authz(auth.CapApprove, s.createApprovalInvite))
-	s.mux.Handle("GET /api/access-requests/{id}/invites", s.authz(auth.CapApprove, s.listApprovalInvites))
+	s.mux.Handle("GET /api/access-requests/{id}/invites", s.authz(auth.CapApprove, listByParent(s.store.ListApprovalInvitesForRequest)))
 	s.mux.Handle("POST /api/approval-invites/{id}/revoke", s.authz(auth.CapApprove, s.revokeApprovalInvite))
 	s.mux.HandleFunc("GET /api/approval/preview/{token}", s.previewApprovalInvite)
 	s.mux.HandleFunc("POST /api/approval/redeem/{token}", s.redeemApprovalInvite)
@@ -1365,9 +1365,9 @@ func (s *Server) routes() {
 		s.mux.HandleFunc("GET /v1/app-secrets/by-alias/{alias}", s.appAuth(s.fetchAppSecretByAlias))
 		s.mux.Handle("POST /v1/apps/{id}/grants/{gid}/alias", s.authz(auth.CapRevealSecret, s.setAppGrantAlias))
 		s.mux.Handle("POST /v1/apps", s.authz(auth.CapManageUsers, s.createAppKey))
-		s.mux.Handle("GET /v1/apps", s.authz(auth.CapManageUsers, s.listAppKeys))
+		s.mux.Handle("GET /v1/apps", s.authz(auth.CapManageUsers, listAll(s.store.ListAppKeys)))
 		s.mux.Handle("DELETE /v1/apps/{id}", s.authz(auth.CapManageUsers, s.deleteAppKey))
-		s.mux.Handle("GET /v1/apps/{id}/grants", s.authz(auth.CapManageUsers, s.listAppSecretGrants))
+		s.mux.Handle("GET /v1/apps/{id}/grants", s.authz(auth.CapManageUsers, listByParent(s.store.ListAppSecretGrants)))
 		s.mux.Handle("POST /v1/apps/{id}/grants", s.authz(auth.CapRevealSecret, s.grantAppSecret))
 		s.mux.Handle("DELETE /v1/apps/{id}/grants/{gid}", s.authz(auth.CapRevealSecret, s.deleteAppSecretGrant))
 	}
@@ -1411,7 +1411,7 @@ func (s *Server) routes() {
 	}
 	if s.scimEnabled {
 		s.mux.Handle("POST /v1/scim-keys", s.authz(auth.CapManageUsers, s.createScimKey))
-		s.mux.Handle("GET /v1/scim-keys", s.authz(auth.CapManageUsers, s.listScimKeys))
+		s.mux.Handle("GET /v1/scim-keys", s.authz(auth.CapManageUsers, listAll(s.store.ListScimKeys)))
 		s.mux.Handle("DELETE /v1/scim-keys/{id}", s.authz(auth.CapManageUsers, s.deleteScimKey))
 		s.mux.HandleFunc("GET /scim/v2/ServiceProviderConfig", s.scimAuth(s.scimServiceProviderConfig))
 		s.mux.HandleFunc("GET /scim/v2/Users", s.scimAuth(s.listScimUsers))
@@ -1423,24 +1423,27 @@ func (s *Server) routes() {
 	}
 
 	s.mux.Handle("POST /api/users", s.authz(auth.CapManageUsers, s.createUser))
-	s.mux.Handle("GET /api/users", s.authz(auth.CapManageUsers, pagedList(s, s.store.ListUsers)))
+	s.mux.Handle("GET /api/users", s.authz(auth.CapManageUsers, pagedList(s.store.ListUsers)))
 	s.mux.Handle("PUT /api/users/{id}", s.authz(auth.CapManageUsers, s.updateUser))
 	s.mux.Handle("DELETE /api/users/{id}", s.authz(auth.CapManageUsers, s.deleteUser))
 	// Identity lock and token rotation (Phase 242).
 	s.mux.Handle("POST /api/users/{id}/lock", s.authz(auth.CapManageUsers, s.lockUser))
 	s.mux.Handle("DELETE /api/users/{id}/lock", s.authz(auth.CapManageUsers, s.unlockUser))
 	s.mux.Handle("POST /api/users/{id}/token", s.authz(auth.CapManageUsers, s.rotateUserToken))
-	s.mux.Handle("GET /api/login-sessions", s.authz(auth.CapManageUsers, s.listLoginSessions))
+	// Password/SSO login sessions (never their token hashes), so an admin can
+	// see who is logged in and revoke them — not GET /api/sessions, which lists
+	// live proxied target sessions.
+	s.mux.Handle("GET /api/login-sessions", s.authz(auth.CapManageUsers, listAll(s.store.ListSessions)))
 	s.mux.Handle("POST /api/login-sessions/revoke", s.authz(auth.CapManageUsers, s.revokeLoginSessions))
 	s.mux.Handle("POST /api/identity/reconcile", s.authz(auth.CapManageUsers, s.reconcileIdentities))
 
 	// Third-party vendor access gate (Phase 29).
 	s.mux.Handle("POST /api/vendors", s.authz(auth.CapManageUsers, s.createVendor))
-	s.mux.Handle("GET /api/vendors", s.authz(auth.CapReadInventory, pagedList(s, s.store.ListVendors)))
+	s.mux.Handle("GET /api/vendors", s.authz(auth.CapReadInventory, pagedList(s.store.ListVendors)))
 	s.mux.Handle("PUT /api/vendors/{id}", s.authz(auth.CapManageUsers, s.updateVendor))
 	s.mux.Handle("POST /api/vendors/{id}/offboard", s.authz(auth.CapManageUsers, s.offboardVendor))
 	s.mux.Handle("POST /api/vendors/{id}/grants", s.authz(auth.CapManageTargets, s.createVendorGrant))
-	s.mux.Handle("GET /api/vendors/{id}/grants", s.authz(auth.CapReadInventory, s.listVendorGrants))
+	s.mux.Handle("GET /api/vendors/{id}/grants", s.authz(auth.CapReadInventory, listByParent(s.store.ListVendorGrants)))
 	s.mux.Handle("GET /api/vendors/{id}/evidence", s.authz(auth.CapReadAudit, s.vendorEvidence))
 	s.mux.Handle("POST /api/vendor-grants/{gid}/approve", s.authz(auth.CapApprove, s.approveVendorGrant))
 	s.mux.Handle("POST /api/vendor-grants/{gid}/revoke", s.authz(auth.CapManageTargets, s.revokeVendorGrant))
@@ -1448,7 +1451,7 @@ func (s *Server) routes() {
 	// Access certification / attestation campaigns (Phase 19): a periodic review
 	// of who has access to what; a revoke decision removes the underlying grant.
 	s.mux.Handle("POST /api/campaigns", s.authz(auth.CapManageUsers, s.createCampaign))
-	s.mux.Handle("GET /api/campaigns", s.authz(auth.CapReadAudit, s.listCampaigns))
+	s.mux.Handle("GET /api/campaigns", s.authz(auth.CapReadAudit, listAll(s.store.ListCampaigns)))
 	s.mux.Handle("GET /api/campaigns/{id}", s.authz(auth.CapReadAudit, s.getCampaign))
 	// Certifying or revoking an item is a review decision, not user administration:
 	// CapApprove lets a dedicated reviewer run the campaign without holding the
@@ -1464,7 +1467,7 @@ func (s *Server) routes() {
 
 	// Custom permission profiles (Phase 12): named capability sets for users.
 	s.mux.Handle("POST /api/profiles", s.authz(auth.CapManageUsers, s.createProfile))
-	s.mux.Handle("GET /api/profiles", s.authz(auth.CapManageUsers, s.listProfiles))
+	s.mux.Handle("GET /api/profiles", s.authz(auth.CapManageUsers, listAll(s.store.ListProfiles)))
 	s.mux.Handle("DELETE /api/profiles/{id}", s.authz(auth.CapManageUsers, s.deleteProfile))
 
 	// System configuration overrides (Phase 12): DB-persisted PAM_* settings.
@@ -1493,7 +1496,7 @@ func (s *Server) routes() {
 		// "quarantine" segment is registered before "{id}" only for readability —
 		// ServeMux prefers the more specific pattern regardless of order.
 		s.mux.Handle("POST /v1/agents/quarantine", s.authz(auth.CapManageUsers, s.quarantineAgent))
-		s.mux.Handle("GET /v1/agents/quarantine", s.authz(auth.CapManageUsers, s.listAgentQuarantine))
+		s.mux.Handle("GET /v1/agents/quarantine", s.authz(auth.CapManageUsers, listAll(s.store.ListAgentQuarantine)))
 		s.mux.Handle("DELETE /v1/agents/quarantine/{id}", s.authz(auth.CapManageUsers, s.releaseAgentQuarantine))
 		// Accountability for the identity kind PAMv1 never issued a key to
 		// (Phase 170): who owns a SPIFFE-attested agent. Read by the broker's

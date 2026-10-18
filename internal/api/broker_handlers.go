@@ -879,16 +879,6 @@ func (s *Server) quarantineAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, q)
 }
 
-// listAgentQuarantine returns every agent identity currently quarantined.
-func (s *Server) listAgentQuarantine(w http.ResponseWriter, r *http.Request) {
-	list, err := s.store.ListAgentQuarantine(r.Context())
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, list)
-}
-
 // releaseAgentQuarantine lifts one quarantine so the agent can act again. It is
 // audited as loudly as imposing it: releasing a stop button is the more
 // dangerous of the two decisions.

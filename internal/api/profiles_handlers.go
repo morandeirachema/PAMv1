@@ -48,16 +48,6 @@ func (s *Server) createProfile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, p)
 }
 
-// listProfiles returns all custom profiles.
-func (s *Server) listProfiles(w http.ResponseWriter, r *http.Request) {
-	profiles, err := s.store.ListProfiles(r.Context())
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, profiles)
-}
-
 // deleteProfile removes a custom profile by ID.
 func (s *Server) deleteProfile(w http.ResponseWriter, r *http.Request) {
 	id, ok := idParam(w, r)

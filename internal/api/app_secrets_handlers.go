@@ -202,16 +202,6 @@ func (s *Server) createAppKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// listAppKeys returns the registered application identities (never a token hash).
-func (s *Server) listAppKeys(w http.ResponseWriter, r *http.Request) {
-	keys, err := s.store.ListAppKeys(r.Context())
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, keys)
-}
-
 // deleteAppKey revokes an application so its bearer token stops resolving (its
 // secret grants cascade away).
 func (s *Server) deleteAppKey(w http.ResponseWriter, r *http.Request) {
@@ -269,20 +259,6 @@ func (s *Server) grantAppSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r.Context(), "app.grant", fmt.Sprintf("app:%d credential:%d", appID, in.CredentialID))
 	writeJSON(w, http.StatusCreated, g)
-}
-
-// listAppSecretGrants returns the credentials an application may retrieve.
-func (s *Server) listAppSecretGrants(w http.ResponseWriter, r *http.Request) {
-	appID, ok := idParam(w, r)
-	if !ok {
-		return
-	}
-	grants, err := s.store.ListAppSecretGrants(r.Context(), appID)
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, grants)
 }
 
 // ownedAppGrant resolves the {id}/{gid} pair of a grant route and refuses a
