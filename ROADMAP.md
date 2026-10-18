@@ -8,7 +8,7 @@ Phases are listed **newest first**, from the latest release down to Phase 0; wha
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–284 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–285 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -148,6 +148,42 @@ the headline deferrals are:
 - **The remaining three Tier-3 gaps** — connector/plugin breadth, cloud CIEM, and web/SaaS session proxying — each need a real device, cloud account, or browser/SaaS console to build honestly.
 
 ---
+
+## Phase 285 — The SQL refusal contract, and one table for it ✅
+
+*Phase 284 left the PostgreSQL and SQL Server `refuse()` tables as a
+finding. They matched gate for gate, but most of their rows had no test on
+either listener, so merging them had to wait for a test of every gate.
+This phase writes that test, merges the tables, and fixes the one wrong
+row the test-first pass turned up.*
+
+- [x] **The contract, every gate on both listeners.**
+  `TestSQLRefusalContract` drives each `admit()` gate through each
+  listener's `refuse`: 81 cases, with SQL Server both with and without
+  TDS 7.2. It checks the PostgreSQL SQLSTATE and message, the SQL Server
+  login-failed token byte for byte, the `db.session.denied` row or its
+  absence, and the error log for a gate neither listener maps. It is
+  written from the tables, not the code. Before it, the session limit,
+  the protocol mismatch, vendor, the check failures, audit and decrypt
+  had no test on either listener. A gate added to `admit()` fails it
+  until its row is pinned (`numGates`).
+- [x] **One table.** `sqlRefuse` (`sqlproxy.go`) replaces two switches
+  of 22 cases and a default. Each listener supplies only its encoding:
+  PostgreSQL's SQLSTATE per kind of failure (`sqlFailKind`), and SQL
+  Server's one login-failed error. Every message, code and audit row is unchanged;
+  the contract passes on both sides of the merge.
+- [x] **A terminal or watch token is no longer audited as an extension
+  token.** `admit()` sent every narrow scope it did not name to
+  `gateExtensionOnly`, a branch written when the browser-extension token
+  was the only one left. The terminal token (Phase 254) and the watch
+  token came later, so a SQL listener audited them as
+  `reason:extension-scoped-token`. Access was refused all the same; the
+  record named the wrong credential. They are now `gateNarrowScope`:
+  `db.session.denied reason:narrow-scoped-token`, the generic name the
+  SSH proxy and the desktop viewer already use. The SSH proxy refuses
+  them at authentication and is unchanged.
+- [x] **Living docs**: low-level §5 (the new reason) and change log,
+  high-level, CODE-GUIDE §5.4, and every `Reflects:` header.
 
 ## Phase 284 — Refactor pass: one definition where there were copies ✅
 

@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-10-18 · Reflects: Phases 0–227 and 229–284 + the 2026-07 hardening passes.
+> Last updated: 2026-10-18 · Reflects: Phases 0–227 and 229–285 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -678,7 +678,10 @@ the session stays usable, but a blocked extended-protocol `Parse` is fatal
 (fail-closed). The shared resolve/decrypt/audit helpers (`lookupTargetCred`,
 `jitDecrypt`, `appendAudit`, `recoverPanicLog`) are factored out so both listeners
 reuse the security-critical path. It warns loudly at startup if the operator leg
-has no TLS (the PAM key would travel cleartext).
+has no TLS (the PAM key would travel cleartext). A refused admission is written
+through `sqlRefuse` (`sqlproxy.go`), the one gate → audit → wire table both SQL
+listeners share; each supplies only its encoding, and `TestSQLRefusalContract`
+pins every row on both.
 
 ### 5.5 Live monitoring + command control (Phase 16)
 
@@ -1256,6 +1259,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-10-18 | Phase 285: §5.4 names `sqlRefuse`, the refusal table both SQL listeners share. |
 | 2026-10-18 | Phase 284 (refactor pass): §4.5 names the route-table handler builders (`pagedList`, `listAll`, `listByParent`, `deleteByID`); §4.2 says `routes()` is in `routes.go`; §5.2 the shared recording open/close; §5.5 `cmdguard.Check`. |
 | 2026-10-17 | §1: the package map gains the ten packages that were only in this change log (`accountscan`, `timeframe`, `restrict`, `banner`, `report`, `inventorycsv`, `csvcell`, `telnet`, `expect`, `recarchive`); the listeners include the SQL Server proxy; §2's flag list includes `-version`. |
 | 2026-10-17 | §3.3 no longer names a newest migration (it said `0060`; the directory holds `0068`). |

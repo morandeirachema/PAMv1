@@ -19,7 +19,8 @@ file records **releases**: the tagged, signed points you can actually deploy.
 ## [Unreleased]
 
 Since v0.0.79: Phase 283 (portable recording archives), Phase 284 (an
-internal refactor with no user-visible change), the dependency and
+internal refactor with no user-visible change), Phase 285 (the SQL
+refusal contract), the dependency and
 base-image updates of 2026-10-14 and 2026-10-17, the fixes from a review of
 the Conjur deploy docs, and the fixes from a repository-wide audit of
 versions and documentation. Two changes need an operator step on upgrade:
@@ -88,6 +89,15 @@ Kubernetes provider 3 move (both under **Changed**).
 
 **Fixed.**
 
+- **A terminal or watch token refused by a database proxy is recorded as
+  what it is** (Phase 285). The PostgreSQL and SQL Server proxies audited
+  either one as `db.session.denied reason:extension-scoped-token` and told
+  the client "a browser-extension token cannot open a database session".
+  They now record `reason:narrow-scoped-token` and say "this token cannot
+  open a database session", the generic name the SSH proxy and the desktop
+  viewer already use. The session was refused before and is refused now; a
+  SIEM rule keyed on `extension-scoped-token` stops seeing these two token
+  kinds.
 - **Recordings say PAMv1.** Five lines the session proxy writes into a
   recording (a refused sub-protocol right, a command blocked by policy, a
   session ended by a restriction rule, and the two startup-scenario notes)
