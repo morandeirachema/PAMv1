@@ -58,6 +58,9 @@ var sqlRefusalCases = []sqlRefusalCase{
 	{name: "extension token", gate: gateExtensionOnly, pgCode: "28000",
 		msg:   "PAMv1: a browser-extension token cannot open a database session",
 		audit: sqlLoginField + " reason:extension-scoped-token"},
+	{name: "other narrow-scope token", gate: gateNarrowScope, pgCode: "28000",
+		msg:   "PAMv1: this token cannot open a database session",
+		audit: sqlLoginField + " reason:narrow-scoped-token"},
 	{name: "webauthn pending", gate: gateMFAPending, pgCode: "28000",
 		msg:   "PAMv1: complete WebAuthn sign-in first",
 		audit: sqlLoginField + " reason:mfa-webauthn-pending"},
@@ -129,7 +132,7 @@ func TestSQLRefusalContract(t *testing.T) {
 	for _, c := range sqlRefusalCases {
 		covered[c.gate] = true
 	}
-	for g := gateTunnelOnly; g <= gateTerminalTarget; g++ {
+	for g := gateTunnelOnly; g < numGates; g++ {
 		if !covered[g] {
 			t.Errorf("gate %d has no row in sqlRefusalCases: a gate added to admit() needs its SQL refusal pinned here", g)
 		}

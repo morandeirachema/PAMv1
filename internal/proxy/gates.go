@@ -87,6 +87,8 @@ const (
 	gateAudit                       // the fail-closed session-start audit could not be written
 	gateDecrypt                     // JIT decryption failed
 	gateTerminalTarget              // a terminal token (Phase 254) presented for a target other than the one it was minted for
+	gateNarrowScope                 // any other narrow-scope token (a terminal token off its door, a watch token): refused under the generic name
+	numGates                        // not a gate: one past the last, so a test can walk every gate
 )
 
 // admitResult is what admit() returns. On success outcome is admitOK, gate is
@@ -282,10 +284,17 @@ func (g *gates) admit(ctx context.Context, req admitRequest) admitResult {
 			return admitResult{outcome: admitDenied, gate: gateEnrollOnly}
 		case auth.ScopeMFAPending:
 			return admitResult{outcome: admitDenied, gate: gateMFAPending}
-		default:
-			// ScopeExtensionOnly today; any scope added later lands here rather
-			// than being silently admitted, which is the whole point.
+		case auth.ScopeExtensionOnly:
 			return admitResult{outcome: admitDenied, gate: gateExtensionOnly}
+		default:
+			// Every other narrow scope — a terminal token anywhere but the SSH
+			// proxy's loopback door, a watch token — and any scope added later
+			// lands here rather than being silently admitted, which is the whole
+			// point. It is refused under the generic name the SSH proxy and the
+			// desktop viewer already use: until Phase 285 this branch returned
+			// gateExtensionOnly, so the SQL listeners audited a terminal or
+			// watch token as a browser-extension token.
+			return admitResult{outcome: admitDenied, gate: gateNarrowScope}
 		}
 	}
 	// 4. The role (or custom profile) must carry the connect capability.

@@ -161,6 +161,37 @@ func TestAdmitDeniesEachGate(t *testing.T) {
 			wantKind: admitDenied, wantGate: gateEnrollOnly,
 		},
 		{
+			name: "browser-extension token",
+			build: func(t *testing.T, env *testEnv) (*auth.Principal, admitRequest) {
+				p := gatesUser("alice")
+				p.ExtensionOnly = true
+				return p, baseReq(p)
+			},
+			wantKind: admitDenied, wantGate: gateExtensionOnly,
+		},
+		{
+			// A terminal token anywhere but the SSH proxy's loopback door, and a
+			// watch token, are narrow-scoped but not extension tokens: until
+			// Phase 285 they were refused as gateExtensionOnly and so audited
+			// reason:extension-scoped-token on the SQL listeners.
+			name: "terminal token off its door",
+			build: func(t *testing.T, env *testEnv) (*auth.Principal, admitRequest) {
+				p := gatesUser("alice")
+				p.TerminalOnly = true
+				return p, baseReq(p)
+			},
+			wantKind: admitDenied, wantGate: gateNarrowScope,
+		},
+		{
+			name: "watch-only token",
+			build: func(t *testing.T, env *testEnv) (*auth.Principal, admitRequest) {
+				p := gatesUser("alice")
+				p.WatchOnly = true
+				return p, baseReq(p)
+			},
+			wantKind: admitDenied, wantGate: gateNarrowScope,
+		},
+		{
 			name: "role lacks CapConnect",
 			build: func(t *testing.T, env *testEnv) (*auth.Principal, admitRequest) {
 				p := &auth.Principal{Name: "otto", Role: auth.RoleAuditor}

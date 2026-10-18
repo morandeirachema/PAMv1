@@ -251,7 +251,7 @@ func (k sqlFailKind) sqlstate() string {
 // credential.decrypt_failed) and the shared check-failed error logs; this adds
 // only what is specific to the SQL listeners. gateProtocolProxyable is an
 // SSH-only gate and gateTerminalTarget needs a terminal token, which a SQL
-// listener refuses earlier as narrow-scoped; both fall to the default.
+// listener refuses earlier (gateNarrowScope); both fall to the default.
 // TestSQLRefusalContract pins every row on both listeners.
 func sqlRefuse(ctx context.Context, l *listener, res admitResult, actor, login, proto, name string, deny func(reason string), fail func(kind sqlFailKind, msg string)) {
 	// audited refuses with a db.session.denied row of its own, for the gates
@@ -273,6 +273,8 @@ func sqlRefuse(ctx context.Context, l *listener, res admitResult, actor, login, 
 		audited("login:"+auditField(login, 64)+" reason:extension-scoped-token", sqlFailAuth, "PAMv1: a browser-extension token cannot open a database session")
 	case gateMFAPending:
 		audited("login:"+auditField(login, 64)+" reason:mfa-webauthn-pending", sqlFailAuth, "PAMv1: complete WebAuthn sign-in first")
+	case gateNarrowScope:
+		audited("login:"+auditField(login, 64)+" reason:narrow-scoped-token", sqlFailAuth, "PAMv1: this token cannot open a database session")
 	case gateRoleConnect:
 		deny("your role may not open sessions")
 	case gateIPAllowlist:

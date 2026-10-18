@@ -1161,9 +1161,10 @@ func (p *Proxy) loadPrincipal(token string) (*auth.Principal, bool) {
 // proxies (access.denied for the approval and vendor denials, and
 // credential.decrypt_failed) and the shared check-failed error logs; this adds
 // only the SSH-transport-specific wording. The switch is exhaustive over the
-// gates reachable on the SSH path; gateTunnelOnly and gateExtensionOnly (both
-// refused at authentication) and gateProtocolMatch (a DB-only gate) fall to
-// the fail-closed default in practice, and each still rejects if reached.
+// gates reachable on the SSH path; gateTunnelOnly, gateExtensionOnly and
+// gateNarrowScope (all refused at authentication) and gateProtocolMatch (a
+// DB-only gate) fall to the fail-closed default in practice, and each still
+// rejects if reached.
 func (p *Proxy) refuse(ctx context.Context, chans <-chan ssh.NewChannel, res admitResult, actor, login string, role auth.Role, remote string) {
 	switch res.gate {
 	case gateEnrollOnly:
