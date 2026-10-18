@@ -38,7 +38,7 @@ de fósforo verde** sin concesiones, porque tocar un PAM debe *sentirse* serio.
 
 Construido fase a fase con una regla: **cada fase es funcional de principio a fin** — arranca,
 pasa los tests y se despliega como Infraestructura-como-Código. El **[roadmap](ROADMAP.md)**
-abarca de la 0 a la 227 y de la 229 a la 283, **se han entregado todas las fases**, y la release etiquetada y
+abarca de la 0 a la 227 y de la 229 a la 284, **se han entregado todas las fases**, y la release etiquetada y
 firmada con cosign vigente es la
 **[v0.0.79](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.79)** (2026-10-08;
 la primera fue la v0.10.0, el 2026-07-28). Lo que eso suma:
@@ -151,7 +151,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–227 y 229–283, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–227 y 229–284, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 

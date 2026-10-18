@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-10-17 · Reflects: Phases 0–227 and 229–283 + the 2026-07 hardening passes.
+> Last updated: 2026-10-18 · Reflects: Phases 0–227 and 229–284 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -541,6 +541,13 @@ store errors to HTTP codes (`storeError`), and appends an audit event:
 - **broker** (`broker_*.go`, `mcp_handlers.go`) — the AI-agent access broker (§10),
   served only when a policy file is configured.
 
+The plainest handler shapes are not hand-typed: they are built in the route
+table by `handlers.go`'s `pagedList` (a `(limit, after)` window), `listAll`
+(the whole set), `listByParent` (the `{id}` parent's children) and
+`deleteByID` (validate, delete, audit `<field>:<id>`, 204). A handler with
+anything more to it — a filter, a guard, a scope check, a policy refresh —
+keeps its own body.
+
 ---
 
 ## 5. The session proxy — the heart of the system (`internal/proxy`)
@@ -597,7 +604,11 @@ concurrency-safe). On close the audit stores the path, byte count, file hash, an
 a **chain hash** — `recordChain.append` computes `SHA-256(prevChainHash ‖
 fileHash)` and persists the head to a `.chain` file — so recordings are
 tamper-evident as a *sequence*, not just individually. `PAM_REQUIRE_RECORDING`
-makes a session that can't be recorded fail closed.
+makes a session that can't be recorded fail closed. SSH, WinRM and telnet open
+and close their recordings through `openSessionRecording` /
+`closeSessionRecording` (`proxy.go`), so `session.record_failed` and
+`session.record` have one definition each; what a refused recording does
+to the session stays with each path.
 
 ### 5.3 Other proxy modes
 
@@ -691,6 +702,8 @@ has no TLS (the PAM key would travel cleartext).
   `PAM_COMMAND_DENY_FILE`) blocks a dangerous command **before it reaches the
   target**: SSH `exec` (the request is vetoed in `pumpRequests`' `onExec`), each
   WinRM line, and each PostgreSQL `Query`/`Parse`. Blocks audit `command.blocked`.
+  The decision — deny wins, then the allow-list (`PAM_COMMAND_ALLOW_FILE`) only
+  when one is configured — is `cmdguard.Check`, the one call every path makes.
 
 The live-session **registry** (`session/registry.go`) tracks active sessions for
 `GET /api/sessions` (list) and `DELETE /api/sessions/{id}` (kill); Phase 23 added
@@ -1243,6 +1256,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-10-18 | Phase 284 (refactor pass): §4.5 names the route-table handler builders (`pagedList`, `listAll`, `listByParent`, `deleteByID`); §4.2 says `routes()` is in `routes.go`; §5.2 the shared recording open/close; §5.5 `cmdguard.Check`. |
 | 2026-10-17 | §1: the package map gains the ten packages that were only in this change log (`accountscan`, `timeframe`, `restrict`, `banner`, `report`, `inventorycsv`, `csvcell`, `telnet`, `expect`, `recarchive`); the listeners include the SQL Server proxy; §2's flag list includes `-version`. |
 | 2026-10-17 | §3.3 no longer names a newest migration (it said `0060`; the directory holds `0068`). |
 | 2026-10-17 | §3.3: the store contract suite covers all 243 methods again (`UpdateUserManager`, Phase 256, had no case), and `store.TestContractCallsEveryStoreMethod` now fails on any method the suite never calls; the count is no longer written as a number that goes stale. |

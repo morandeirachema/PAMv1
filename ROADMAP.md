@@ -8,7 +8,7 @@ Phases are listed **newest first**, from the latest release down to Phase 0; wha
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–283 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–284 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -148,6 +148,65 @@ the headline deferrals are:
 - **The remaining three Tier-3 gaps** — connector/plugin breadth, cloud CIEM, and web/SaaS session proxying — each need a real device, cloud account, or browser/SaaS console to build honestly.
 
 ---
+
+## Phase 284 — Refactor pass: one definition where there were copies ✅
+
+*A structural review in the tradition of 96–100, acting on what it found:
+a control or a contract typed out in two or more places, where the copies
+could drift. Phase 281 had left one such finding, the telnet and WinRM
+session plumbing. Nothing here changes a route, wire format, environment
+variable, schema or audit row. Where no test pinned the behaviour being
+moved, one was written first, and it passes on both sides of the change.*
+
+- [x] **Command control decides in one place.** `cmdguard.Check` (deny
+  wins, then the allow-list, only when one is configured) replaces four
+  copies: SSH exec, the WinRM command loop, SQL statements and the
+  REST/broker `guardCommand`. The nil-allow check is the part worth one
+  definition: a copy without it refuses every command on a deployment
+  with no `PAM_COMMAND_ALLOW_FILE`.
+- [x] **The Phase 281 finding.** Telnet and WinRM share
+  `serveSessionChannels` (register, serve, `session.end`, rotate). SSH
+  joins them in `openSessionRecording` / `closeSessionRecording`, SSH and
+  telnet in `printSessionNotice` and `supervised`, all three in
+  `auditRecordLimit`. What differs on purpose stays at the call site:
+  WinRM has no supervision or notice, telnet ends a refusal with exit
+  status 1, and each path refuses a failed recording on its own stream.
+- [x] **The read-only pump is the pump.** `pumpRequestsObserver` was
+  `pumpRequests` with two refusing hooks. It is `observerHooks` now.
+- [x] **API.** `ownedAppGrant`: the app-grant scope check, which had
+  drifted once. `listAll` / `listByParent` (13 handlers) and `deleteByID`
+  (6) beside Phase 99's `pagedList`, and `queryLimit` for four `?limit=`
+  clamps. The route table moves to `routes.go`; archgen and the
+  extension-token test follow it, and the diagrams regenerate
+  byte-identical.
+- [x] **pam-server.** `loadGuardFile` for the four pattern-file controls,
+  one rotation hook, and `serveProxy` for the three listener goroutines.
+  One SQL-proxy config, converted to `MSSQLConfig`, so a setting cannot
+  reach one listener and not the other.
+- [x] **config.** `validate(cfg)` comes out of a 680-line `Load`, whose doc
+  comment had been attached to two other declarations.
+- [x] **memstore.** Phase 99's `getRow` / `deleteRow` where ten methods
+  re-typed them, and `listRows` for nineteen list methods.
+- [x] **Tests written before the code moved.** `TestCheck`,
+  `TestObserverSessionRefusesSubsystem`, the exact `session.end` and
+  `session.record` rows for telnet and WinRM, a cross-app revoke,
+  `GET /api/login-sessions` (no test before), `TestDeleteByIDRoutes`
+  (`DELETE /api/profiles/{id}` and `/v1/apps/{id}` had none),
+  `TestQueryLimit`, `TestLoadGuardFile` and the allow-file cases of
+  `TestRunErrors`, and telnet's notice and supervision, which had no test
+  (SSH's did).
+- [x] **Living docs**: low-level (package tree, change log), high-level,
+  CODE-GUIDE §4.5, §5.2 and §5.5, and every `Reflects:` header.
+
+Left as findings, on purpose. The PostgreSQL and SQL Server `refuse()`
+tables match gate for gate, but most rows have no test on either
+listener, so merging them waits for a test of every gate. pgstore
+re-types `getOne` and `execExpectingRow` in seven places and duplicates
+four scanners. Only one copy of the `MFAEnrollment` scanner carries the
+`last_totp_step` anti-replay warning. That work needs the live-PostgreSQL
+suite, which only CI runs. `run()` in `main.go` is about 900 lines again;
+its standalone blocks (SVID verifier, Kubernetes config, DB TLS, SSH CA)
+would become builders, as Phase 100's did.
 
 ## Phase 283 — Portable recording archives (Tier 10, row 12) ✅
 

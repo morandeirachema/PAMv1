@@ -1,6 +1,6 @@
 # PAMv1 — documentation
 
-> Last updated: 2026-10-17 · Reflects: Phases 0–227 and 229–283, and release v0.0.79 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-10-18 · Reflects: Phases 0–227 and 229–284, and release v0.0.79 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-10-18 | Phase 284 (refactor pass) documented: ARCHITECTURE-LOW-LEVEL (package tree, change log), ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE §4.5, §5.2 and §5.5; every `Reflects:` header and both READMEs' ranges to 284. |
 | 2026-10-17 | **Name casing, enforced.** House style §8 names its gate: `TestProjectNameCasing` (`internal/releasedocs`) fails on a prose use of lowercase `pamv1` in any tracked file, so the rule no longer depends on the next hand sweep. |
 | 2026-10-14 | **Name casing.** House style §8 gains **PAMv1** vs `pamv1`: the project's name in prose and GitHub links, lowercase only where it is an identifier. Applied across the repo's docs in the same change. |
 | 2026-10-08 | Phase 283 (recording archives) documented: ARCHITECTURE-LOW-LEVEL (package tree, audit vocabulary, change log), ARCHITECTURE-HIGH-LEVEL, ADMIN-GUIDE §9.3, USER-GUIDE, CODE-GUIDE, BACKUP-AND-RESTORE, README Tier 10 row 12. |
