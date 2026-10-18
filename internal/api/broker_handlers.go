@@ -911,19 +911,9 @@ func checkBoundedText(w http.ResponseWriter, field, value string, max int, requi
 
 // listBrokerAudit returns recent broker audit events (oldest-first, chain order).
 func (s *Server) listBrokerAudit(w http.ResponseWriter, r *http.Request) {
-	limit := 100
-	if q := r.URL.Query().Get("limit"); q != "" {
-		if n, err := strconv.Atoi(q); err == nil {
-			limit = n
-		}
-	}
-	// Clamp so the HTTP listing can't request the entire chain in one response
-	// (limit<=0 makes the store return everything); chain verification has its own
-	// endpoints (/v1/audit/verify, /v1/audit/head).
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-	events, err := s.store.ListBrokerAudit(r.Context(), limit)
+	// Clamped so the HTTP listing can't request the entire chain in one response;
+	// chain verification has its own endpoints (/v1/audit/verify, /v1/audit/head).
+	events, err := s.store.ListBrokerAudit(r.Context(), queryLimit(r, 100, 500))
 	if err != nil {
 		storeError(w, err)
 		return

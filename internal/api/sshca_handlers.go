@@ -42,16 +42,7 @@ func (s *Server) sshCAPublicKey(w http.ResponseWriter, r *http.Request) {
 // the audit trail. Requires CapReadInventory (metadata only — key IDs,
 // principals, validity, revocation state; never key material).
 func (s *Server) listSSHCertsHandler(w http.ResponseWriter, r *http.Request) {
-	limit := 100
-	if q := r.URL.Query().Get("limit"); q != "" {
-		if n, err := strconv.Atoi(q); err == nil {
-			limit = n
-		}
-	}
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
-	certs, err := s.store.ListSSHCerts(r.Context(), limit)
+	certs, err := s.store.ListSSHCerts(r.Context(), queryLimit(r, 100, 500))
 	if err != nil {
 		storeError(w, err)
 		return

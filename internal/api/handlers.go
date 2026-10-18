@@ -193,28 +193,30 @@ func (s *Server) killSession(w http.ResponseWriter, r *http.Request) {
 
 // --- audit ---
 
-// listAudit returns recent audit events, capped by ?limit= (default 100).
 // listWindow parses the shared ?limit=&after= cursor of the inventory list
 // endpoints (Phase 44): limit defaults to 100 and is clamped to 1..500 — the
 // same bound listAudit uses — so an authenticated client can never pull an
 // unbounded result set; after is the last id of the previous page (rows with
 // id > after are returned, ascending). Page until a short page comes back.
 func listWindow(r *http.Request) (limit int, after int64) {
-	limit = 100
-	if q := r.URL.Query().Get("limit"); q != "" {
-		if n, err := strconv.Atoi(q); err == nil {
-			limit = n
-		}
-	}
-	if limit <= 0 || limit > 500 {
-		limit = 100
-	}
+	limit = queryLimit(r, 100, 500)
 	if q := r.URL.Query().Get("after"); q != "" {
 		if n, err := strconv.ParseInt(q, 10, 64); err == nil && n > 0 {
 			after = n
 		}
 	}
 	return limit, after
+}
+
+// queryLimit reads ?limit=, falling back to def when it is absent, not a
+// number, not positive, or above max — so a client can never ask for an
+// unbounded page (a limit <= 0 makes several store list methods return every
+// row).
+func queryLimit(r *http.Request, def, max int) int {
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= max {
+		return n
+	}
+	return def
 }
 
 // pagedList builds a GET handler for a store list method that takes only the
@@ -303,16 +305,7 @@ const maxAuditResponsePage = 500
 // to differ — the store permits far more for internal jobs such as retention
 // archiving than any HTTP response should carry.
 func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
-	limit := store.DefaultAuditPage
-	if q := r.URL.Query().Get("limit"); q != "" {
-		if n, err := strconv.Atoi(q); err == nil {
-			limit = n
-		}
-	}
-	if limit <= 0 || limit > maxAuditResponsePage {
-		limit = store.DefaultAuditPage
-	}
-	events, err := s.store.ListAudit(r.Context(), limit)
+	events, err := s.store.ListAudit(r.Context(), queryLimit(r, store.DefaultAuditPage, maxAuditResponsePage))
 	if err != nil {
 		storeError(w, err)
 		return
