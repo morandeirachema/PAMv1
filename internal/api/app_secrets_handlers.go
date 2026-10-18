@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -284,32 +285,41 @@ func (s *Server) listAppSecretGrants(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, grants)
 }
 
-// deleteAppSecretGrant revokes one of an application's secret grants. The route
-// is scoped to the app, so a grant belonging to a different app is not removed.
-func (s *Server) deleteAppSecretGrant(w http.ResponseWriter, r *http.Request) {
-	appID, ok := idParam(w, r)
+// ownedAppGrant resolves the {id}/{gid} pair of a grant route and refuses a
+// grant that is not the named application's, writing the error itself. The
+// route names an application, so the grant must be that application's:
+// without this the {id} segment is decorative. setAppGrantAlias once lacked it
+// while deleteAppSecretGrant had it — naming grant 14 under app 7 renamed app
+// 12's grant and answered 200, handing a DIFFERENT application a stable,
+// git-committable name for a credential nobody meant to expose — which is why
+// both now resolve the grant here.
+func (s *Server) ownedAppGrant(w http.ResponseWriter, r *http.Request) (appID, gid int64, ok bool) {
+	appID, ok = idParam(w, r)
 	if !ok {
-		return
+		return 0, 0, false
 	}
 	gid, err := strconv.ParseInt(r.PathValue("gid"), 10, 64)
 	if err != nil || gid < 1 {
 		writeError(w, http.StatusUnprocessableEntity, "invalid grant id")
-		return
+		return 0, 0, false
 	}
 	grants, err := s.store.ListAppSecretGrants(r.Context(), appID)
 	if err != nil {
 		storeError(w, err)
-		return
+		return 0, 0, false
 	}
-	found := false
-	for _, g := range grants {
-		if g.ID == gid {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !slices.ContainsFunc(grants, func(g store.AppSecretGrant) bool { return g.ID == gid }) {
 		writeError(w, http.StatusNotFound, "grant not found for this application")
+		return 0, 0, false
+	}
+	return appID, gid, true
+}
+
+// deleteAppSecretGrant revokes one of an application's secret grants. The route
+// is scoped to the app, so a grant belonging to a different app is not removed.
+func (s *Server) deleteAppSecretGrant(w http.ResponseWriter, r *http.Request) {
+	appID, gid, ok := s.ownedAppGrant(w, r)
+	if !ok {
 		return
 	}
 	if err := s.store.DeleteAppSecretGrant(r.Context(), gid); err != nil {
@@ -325,35 +335,8 @@ func (s *Server) deleteAppSecretGrant(w http.ResponseWriter, r *http.Request) {
 // a grant is part of deciding what an application may fetch, not part of managing
 // identities — the same reasoning that put granting and revoking there.
 func (s *Server) setAppGrantAlias(w http.ResponseWriter, r *http.Request) {
-	appID, ok := idParam(w, r)
+	appID, gid, ok := s.ownedAppGrant(w, r)
 	if !ok {
-		return
-	}
-	gid, err := strconv.ParseInt(r.PathValue("gid"), 10, 64)
-	if err != nil || gid < 1 {
-		writeError(w, http.StatusUnprocessableEntity, "invalid grant id")
-		return
-	}
-	// The route names an application, so the grant must be that application's.
-	// Without this the {id} segment was decorative: naming grant 14 under app 7
-	// renamed app 12's grant and answered 200, so a mistyped or stale id handed a
-	// DIFFERENT application a stable, git-committable name for a credential
-	// nobody meant to expose — while the operator read success. deleteAppSecretGrant
-	// scopes exactly this way; this handler simply did not.
-	grants, err := s.store.ListAppSecretGrants(r.Context(), appID)
-	if err != nil {
-		storeError(w, err)
-		return
-	}
-	owned := false
-	for _, g := range grants {
-		if g.ID == gid {
-			owned = true
-			break
-		}
-	}
-	if !owned {
-		writeError(w, http.StatusNotFound, "grant not found for this application")
 		return
 	}
 	var in struct {

@@ -241,4 +241,19 @@ func TestAliasSetIsScopedToTheNamedApp(t *testing.T) {
 	if status, _ := appGet(t, f.srv, "/v1/app-secrets/by-alias/planted", otherToken); status != http.StatusNotFound {
 		t.Fatalf("the bystander application gained the name anyway: %d", status)
 	}
+
+	// Revoking goes through the same scope check (ownedAppGrant): the second
+	// app's grant, addressed under the first, is refused and stays granted.
+	status, data = do(t, f.srv, http.MethodDelete,
+		"/v1/apps/"+itoa(f.appID)+"/grants/"+itoa(otherGrant), testAPIKey, nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("revoking another app's grant: %d %s, want 404", status, data)
+	}
+	status, data = do(t, f.srv, http.MethodGet, "/v1/apps/"+itoa(otherID)+"/grants", testAPIKey, nil)
+	if status != http.StatusOK {
+		t.Fatalf("list the bystander's grants: %d %s", status, data)
+	}
+	if grants := jsonArray(t, data); len(grants) != 1 || int64(grants[0]["id"].(float64)) != otherGrant {
+		t.Fatalf("the bystander's grant after a mis-scoped revoke: %s", data)
+	}
 }
