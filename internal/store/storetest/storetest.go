@@ -4604,6 +4604,18 @@ func aliasContract(t *testing.T, st store.Store, grants []store.AppSecretGrant) 
 	if err != nil || len(list) == 0 || list[0].Alias != "shared-name" {
 		t.Fatalf("ListAppSecretGrants did not carry the alias: %+v, %v", list, err)
 	}
+	// Within one app an alias names one grant: a second grant of the same app
+	// asking for a name the app already uses is ErrConflict, and stays unnamed.
+	a2 := &store.AppSecretGrant{AppID: a.AppID, CredentialID: b.CredentialID}
+	if err := st.GrantAppSecret(ctx, a2); err != nil {
+		t.Fatalf("GrantAppSecret(second grant for app a): %v", err)
+	}
+	if err := st.SetAppGrantAlias(ctx, a2.ID, "shared-name"); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("an alias the app already uses for another grant: %v, want ErrConflict", err)
+	}
+	if got, err := st.AppCredentialByAlias(ctx, a.AppID, "shared-name"); err != nil || got != a.CredentialID {
+		t.Fatalf("after a refused duplicate the alias resolves to %d, %v; want %d", got, err, a.CredentialID)
+	}
 	// Cleared means unaddressable, and an empty alias never resolves.
 	if err := st.SetAppGrantAlias(ctx, a.ID, ""); err != nil {
 		t.Fatalf("clearing an alias: %v", err)
