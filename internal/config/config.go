@@ -764,9 +764,6 @@ type Config struct {
 	SAMLRoleApprover    string
 }
 
-// Load reads configuration from the PAM_* environment variables, applying
-// defaults, and returns an error if a required variable (API key, database URL,
-// or the master key when the local KEK provider is used) is missing.
 // commaList splits a comma-separated setting into trimmed, non-empty entries.
 func commaList(v string) []string {
 	var out []string
@@ -811,17 +808,19 @@ func ValidateBootstrapAPIKey(key, databaseURL string) error {
 	return nil
 }
 
-// Load reads the full configuration from PAM_* environment variables into a
-// Config, validating as it goes. It accumulates every problem rather than
-// stopping at the first, so a misconfigured deployment surfaces all of its
-// errors in one startup failure. A security toggle with a garbage value fails
-// loud here rather than defaulting to a fail-open state.
 // maxCallsPerToken bounds what PAM_BROKER_MAX_CALLS_PER_TOKEN may be set to. A
 // ceiling far above any real task is indistinguishable from none while still
 // reading to an operator as a control, which is the shape this validator refuses
 // elsewhere too.
 const maxCallsPerToken = 100_000
 
+// Load reads the full configuration from PAM_* environment variables into a
+// Config, applying defaults and validating as it goes. A required variable
+// (API key, database URL, or the master key when the local KEK provider is
+// used) that is missing is an error. It accumulates every problem rather than
+// stopping at the first, so a misconfigured deployment surfaces all of its
+// errors in one startup failure. A security toggle with a garbage value fails
+// loud here rather than defaulting to a fail-open state.
 func Load() (*Config, error) {
 	var errs []string
 	// boolean parses a strict bool (true/false/1/0/t/f/…) and records an error for
@@ -1127,6 +1126,19 @@ func Load() (*Config, error) {
 		cfg.MSSQLAddr = "off"
 	}
 
+	errs = append(errs, validate(cfg)...)
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("config: %s", strings.Join(errs, "; "))
+	}
+	return cfg, nil
+}
+
+// validate checks a loaded Config as a whole — required settings, ranges, and
+// combinations that are only wrong together — and returns every problem it
+// finds. Load runs it after parsing, so a deployment sees its parse errors
+// first and its validation errors after, in one startup failure.
+func validate(cfg *Config) []string {
+	var errs []string
 	// MasterKey is required only for the local KEK provider; a KMS-backed
 	// provider (e.g. vault-transit) holds the key material instead. The KEK
 	// factory validates provider-specific settings at startup.
@@ -1498,10 +1510,7 @@ func Load() (*Config, error) {
 			errs = append(errs, fmt.Sprintf("PAM_RADIUS_ROLE: %q must be admin, user, auditor or approver", cfg.RADIUSRole))
 		}
 	}
-	if len(errs) > 0 {
-		return nil, fmt.Errorf("config: %s", strings.Join(errs, "; "))
-	}
-	return cfg, nil
+	return errs
 }
 
 // airGapConflicts reports the integrations that would still reach the network
