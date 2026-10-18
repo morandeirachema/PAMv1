@@ -139,8 +139,6 @@ func (m *Memstore) id() int64 {
 	return m.nextID
 }
 
-// window applies the shared list-cursor semantics to an id-ascending slice:
-// rows with id > afterID, capped at limit rows when limit > 0 (Phase 44).
 // getRow is the shared body of every by-id lookup that returns a copy of the
 // stored value or ErrNotFound. It takes the receiver so it can hold the one
 // mutex (Go does not allow type parameters on methods). Returning &v yields a
@@ -169,6 +167,26 @@ func deleteRow[K comparable, V any](m *Memstore, rows map[K]V, k K) error {
 	return nil
 }
 
+// listRows is the shared body of every list over a value map that copies
+// rows out as they are: under the one mutex, every value keep accepts (all of
+// them for a nil keep), id-ascending. The slice is never nil, so an empty
+// result serializes as [] rather than null. Values are shallow copies, so a
+// list that must deep-copy a slice or pointer field keeps its own body.
+func listRows[K comparable, V any](m *Memstore, rows map[K]V, id func(V) int64, keep func(V) bool) []V {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]V, 0, len(rows))
+	for _, v := range rows {
+		if keep == nil || keep(v) {
+			out = append(out, v)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return id(out[i]) < id(out[j]) })
+	return out
+}
+
+// window applies the shared list-cursor semantics to an id-ascending slice:
+// rows with id > afterID, capped at limit rows when limit > 0 (Phase 44).
 func window[T any](rows []T, id func(T) int64, limit int, afterID int64) []T {
 	if afterID > 0 {
 		i := sort.Search(len(rows), func(i int) bool { return id(rows[i]) > afterID })
@@ -197,14 +215,8 @@ func (m *Memstore) CreateTarget(_ context.Context, t *store.Target) error {
 
 // ListTargets returns targets in the (limit, afterID) window, ordered by ID.
 func (m *Memstore) ListTargets(_ context.Context, limit int, afterID int64) ([]store.Target, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.Target, 0, len(m.targets))
-	for _, t := range m.targets {
-		out = append(out, t)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return window(out, func(t store.Target) int64 { return t.ID }, limit, afterID), nil
+	id := func(t store.Target) int64 { return t.ID }
+	return window(listRows(m, m.targets, id, nil), id, limit, afterID), nil
 }
 
 // GetTarget returns the target with the given ID, or ErrNotFound.
@@ -323,16 +335,8 @@ func (m *Memstore) CreateTargetGrant(_ context.Context, g *store.TargetGrant) er
 
 // ListTargetGrants returns the grants for a target, ordered by ID.
 func (m *Memstore) ListTargetGrants(_ context.Context, targetID int64) ([]store.TargetGrant, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.TargetGrant, 0)
-	for _, g := range m.grants {
-		if g.TargetID == targetID {
-			out = append(out, g)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return listRows(m, m.grants, func(g store.TargetGrant) int64 { return g.ID },
+		func(g store.TargetGrant) bool { return g.TargetID == targetID }), nil
 }
 
 // DeleteTargetGrant removes a grant by ID; ErrNotFound if absent.
@@ -410,13 +414,7 @@ func (m *Memstore) ListLabelRules(_ context.Context) ([]store.LabelRule, error) 
 
 // DeleteLabelRule removes a label rule by id.
 func (m *Memstore) DeleteLabelRule(_ context.Context, id int64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.labelRules[id]; !ok {
-		return store.ErrNotFound
-	}
-	delete(m.labelRules, id)
-	return nil
+	return deleteRow(m, m.labelRules, id)
 }
 
 // SweepExpiredGrants deletes every expired grant and safe membership (Phase
@@ -601,14 +599,8 @@ func (m *Memstore) CreateSafe(_ context.Context, sf *store.Safe) error {
 // ListSafes returns safes in the (limit, afterID) window, ordered by ID
 // (creation order — the stable order a cursor needs).
 func (m *Memstore) ListSafes(_ context.Context, limit int, afterID int64) ([]store.Safe, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.Safe, 0, len(m.safes))
-	for _, sf := range m.safes {
-		out = append(out, sf)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return window(out, func(sf store.Safe) int64 { return sf.ID }, limit, afterID), nil
+	id := func(sf store.Safe) int64 { return sf.ID }
+	return window(listRows(m, m.safes, id, nil), id, limit, afterID), nil
 }
 
 // UpdateSafe replaces a safe's name, description and approval policy;
@@ -683,16 +675,8 @@ func (m *Memstore) AddSafeMember(_ context.Context, mem *store.SafeMember) error
 
 // ListSafeMembers returns a safe's members ordered by id.
 func (m *Memstore) ListSafeMembers(_ context.Context, safeID int64) ([]store.SafeMember, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.SafeMember, 0)
-	for _, sm := range m.safeMembers {
-		if sm.SafeID == safeID {
-			out = append(out, sm)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return listRows(m, m.safeMembers, func(sm store.SafeMember) int64 { return sm.ID },
+		func(sm store.SafeMember) bool { return sm.SafeID == safeID }), nil
 }
 
 // DeleteSafeMember removes a safe member by ID, or ErrNotFound.
@@ -735,16 +719,8 @@ func (m *Memstore) CreateCredentialDependency(_ context.Context, d *store.Creden
 
 // ListCredentialDependencies returns a credential's declared consumers.
 func (m *Memstore) ListCredentialDependencies(_ context.Context, credentialID int64) ([]store.CredentialDependency, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.CredentialDependency, 0)
-	for _, d := range m.credDeps {
-		if d.CredentialID == credentialID {
-			out = append(out, d)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return listRows(m, m.credDeps, func(d store.CredentialDependency) int64 { return d.ID },
+		func(d store.CredentialDependency) bool { return d.CredentialID == credentialID }), nil
 }
 
 // DeleteCredentialDependency removes a dependency by ID, or ErrNotFound.
@@ -920,16 +896,8 @@ func (m *Memstore) AddCampaignItem(_ context.Context, item *store.CampaignItem) 
 
 // ListCampaignItems returns a campaign's items ordered by id.
 func (m *Memstore) ListCampaignItems(_ context.Context, campaignID int64) ([]store.CampaignItem, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.CampaignItem, 0)
-	for _, it := range m.campaignItems {
-		if it.CampaignID == campaignID {
-			out = append(out, it)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return listRows(m, m.campaignItems, func(it store.CampaignItem) int64 { return it.ID },
+		func(it store.CampaignItem) bool { return it.CampaignID == campaignID }), nil
 }
 
 // GetCampaignItem returns one item by ID, or ErrNotFound.
@@ -1789,14 +1757,8 @@ func (m *Memstore) CreateUser(_ context.Context, u *store.User) error {
 
 // ListUsers returns users in the (limit, afterID) window, ordered by ID.
 func (m *Memstore) ListUsers(_ context.Context, limit int, afterID int64) ([]store.User, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.User, 0, len(m.users))
-	for _, u := range m.users {
-		out = append(out, u)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return window(out, func(u store.User) int64 { return u.ID }, limit, afterID), nil
+	id := func(u store.User) int64 { return u.ID }
+	return window(listRows(m, m.users, id, nil), id, limit, afterID), nil
 }
 
 // GetUser returns the user with the given ID, or ErrNotFound.
@@ -2054,29 +2016,14 @@ func (m *Memstore) GetAgentKeyByTokenHash(_ context.Context, tokenHashHex string
 
 // ListAgentKeys returns all agent keys ordered by ID.
 func (m *Memstore) ListAgentKeys(_ context.Context) ([]store.AgentKey, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.AgentKey, 0, len(m.agentKeys))
-	for _, k := range m.agentKeys {
-		out = append(out, k)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return listRows(m, m.agentKeys, func(k store.AgentKey) int64 { return k.ID }, nil), nil
 }
 
 // ListAgentKeysByOwner returns one owner's agent keys ordered by ID (empty, not
 // nil, when the owner has none).
 func (m *Memstore) ListAgentKeysByOwner(_ context.Context, owner string) ([]store.AgentKey, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.AgentKey, 0, len(m.agentKeys))
-	for _, k := range m.agentKeys {
-		if k.Owner == owner {
-			out = append(out, k)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return listRows(m, m.agentKeys, func(k store.AgentKey) int64 { return k.ID },
+		func(k store.AgentKey) bool { return k.Owner == owner }), nil
 }
 
 // DeleteAgentKey removes an agent key by ID; ErrNotFound if absent.
@@ -2242,13 +2189,7 @@ func (m *Memstore) ReserveAgentCall(_ context.Context, agent, jti string, at, si
 // ReleaseAgentCallReservation deletes a reservation whose call did no work, or
 // ErrNotFound.
 func (m *Memstore) ReleaseAgentCallReservation(_ context.Context, id int64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.callReservations[id]; !ok {
-		return store.ErrNotFound
-	}
-	delete(m.callReservations, id)
-	return nil
+	return deleteRow(m, m.callReservations, id)
 }
 
 // QuarantineAgent stops one agent by subject, assigning ID and CreatedAt;
@@ -2281,14 +2222,7 @@ func (m *Memstore) IsAgentQuarantined(_ context.Context, subject string) (bool, 
 
 // ListAgentQuarantine returns every quarantine entry ordered by ID.
 func (m *Memstore) ListAgentQuarantine(_ context.Context) ([]store.AgentQuarantine, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.AgentQuarantine, 0, len(m.agentQuarantine))
-	for _, q := range m.agentQuarantine {
-		out = append(out, q)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return listRows(m, m.agentQuarantine, func(q store.AgentQuarantine) int64 { return q.ID }, nil), nil
 }
 
 // ReleaseAgentQuarantine lifts one quarantine by ID; ErrNotFound if absent.
@@ -2356,29 +2290,14 @@ func (m *Memstore) GetAgentIdentity(_ context.Context, spiffeID string) (*store.
 
 // ListAgentIdentities returns every registration ordered by ID.
 func (m *Memstore) ListAgentIdentities(_ context.Context) ([]store.AgentIdentity, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.AgentIdentity, 0, len(m.agentIdentities))
-	for _, a := range m.agentIdentities {
-		out = append(out, a)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return listRows(m, m.agentIdentities, func(a store.AgentIdentity) int64 { return a.ID }, nil), nil
 }
 
 // ListAgentIdentitiesByOwner returns one owner's registrations ordered by ID
 // (empty, not nil, when they own none).
 func (m *Memstore) ListAgentIdentitiesByOwner(_ context.Context, owner string) ([]store.AgentIdentity, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.AgentIdentity, 0, len(m.agentIdentities))
-	for _, a := range m.agentIdentities {
-		if a.Owner == owner {
-			out = append(out, a)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return listRows(m, m.agentIdentities, func(a store.AgentIdentity) int64 { return a.ID },
+		func(a store.AgentIdentity) bool { return a.Owner == owner }), nil
 }
 
 // EnrollAgentIdentity claims a discovered identity: owner, note, enrolled.
@@ -2512,14 +2431,8 @@ func (m *Memstore) GetVendorByUsername(_ context.Context, username string) (*sto
 
 // ListVendors returns vendors in the (limit, afterID) window, ordered by ID.
 func (m *Memstore) ListVendors(_ context.Context, limit int, afterID int64) ([]store.Vendor, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.Vendor, 0, len(m.vendors))
-	for _, v := range m.vendors {
-		out = append(out, v)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return window(out, func(v store.Vendor) int64 { return v.ID }, limit, afterID), nil
+	id := func(v store.Vendor) int64 { return v.ID }
+	return window(listRows(m, m.vendors, id, nil), id, limit, afterID), nil
 }
 
 // UpdateVendorOrg changes a vendor's organization label; ErrNotFound if absent.
@@ -2701,14 +2614,7 @@ func (m *Memstore) CreateSessionShareInvite(_ context.Context, inv *store.Sessio
 
 // GetSessionShareInvite returns one invite by id, or ErrNotFound.
 func (m *Memstore) GetSessionShareInvite(_ context.Context, id int64) (*store.SessionShareInvite, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	inv, ok := m.shareInvites[id]
-	if !ok {
-		return nil, store.ErrNotFound
-	}
-	out := inv
-	return &out, nil
+	return getRow(m, m.shareInvites, id)
 }
 
 // ListSessionShareInvites lists a session's invites, newest first.
@@ -2819,14 +2725,7 @@ func (m *Memstore) CreateApprovalInvite(_ context.Context, inv *store.ApprovalIn
 
 // GetApprovalInvite returns one invite by id, or ErrNotFound.
 func (m *Memstore) GetApprovalInvite(_ context.Context, id int64) (*store.ApprovalInvite, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	inv, ok := m.approvalInvites[id]
-	if !ok {
-		return nil, store.ErrNotFound
-	}
-	out := inv
-	return &out, nil
+	return getRow(m, m.approvalInvites, id)
 }
 
 // ListApprovalInvitesForRequest lists an access request's invites, newest first.
@@ -2954,14 +2853,7 @@ func (m *Memstore) GetAppKeyByTokenHash(_ context.Context, tokenHashHex string) 
 
 // ListAppKeys returns all application keys ordered by ID.
 func (m *Memstore) ListAppKeys(_ context.Context) ([]store.AppKey, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.AppKey, 0, len(m.appKeys))
-	for _, k := range m.appKeys {
-		out = append(out, k)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return listRows(m, m.appKeys, func(k store.AppKey) int64 { return k.ID }, nil), nil
 }
 
 // DeleteAppKey removes an app key by ID (cascading its secret grants), or ErrNotFound.
@@ -3013,25 +2905,12 @@ func (m *Memstore) GetScimKeyByTokenHash(_ context.Context, tokenHashHex string)
 
 // ListScimKeys returns all SCIM client keys ordered by ID.
 func (m *Memstore) ListScimKeys(_ context.Context) ([]store.ScimKey, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.ScimKey, 0, len(m.scimKeys))
-	for _, k := range m.scimKeys {
-		out = append(out, k)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return listRows(m, m.scimKeys, func(k store.ScimKey) int64 { return k.ID }, nil), nil
 }
 
 // DeleteScimKey removes a SCIM key by ID, or ErrNotFound.
 func (m *Memstore) DeleteScimKey(_ context.Context, id int64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.scimKeys[id]; !ok {
-		return store.ErrNotFound
-	}
-	delete(m.scimKeys, id)
-	return nil
+	return deleteRow(m, m.scimKeys, id)
 }
 
 // CreateEndpointAgent inserts an endpoint agent, assigning ID and CreatedAt;
@@ -3087,14 +2966,7 @@ func (m *Memstore) GetEndpointAgentForTarget(_ context.Context, targetID int64) 
 
 // ListEndpointAgents returns every endpoint agent ordered by ID.
 func (m *Memstore) ListEndpointAgents(_ context.Context) ([]store.EndpointAgent, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.EndpointAgent, 0, len(m.endpointAgents))
-	for _, a := range m.endpointAgents {
-		out = append(out, a)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return listRows(m, m.endpointAgents, func(a store.EndpointAgent) int64 { return a.ID }, nil), nil
 }
 
 // RevokeEndpointAgent stamps RevokedAt (left alone if already set); ErrNotFound if absent.
@@ -3148,25 +3020,12 @@ func (m *Memstore) CreateProbeRule(_ context.Context, r *store.ProbeRule) error 
 
 // ListProbeRules returns every probe block rule ordered by ID.
 func (m *Memstore) ListProbeRules(_ context.Context) ([]store.ProbeRule, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.ProbeRule, 0, len(m.probeRules))
-	for _, r := range m.probeRules {
-		out = append(out, r)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return listRows(m, m.probeRules, func(r store.ProbeRule) int64 { return r.ID }, nil), nil
 }
 
 // DeleteProbeRule removes a probe block rule; ErrNotFound if absent.
 func (m *Memstore) DeleteProbeRule(_ context.Context, id int64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.probeRules[id]; !ok {
-		return store.ErrNotFound
-	}
-	delete(m.probeRules, id)
-	return nil
+	return deleteRow(m, m.probeRules, id)
 }
 
 // CreateRestrictionRule inserts a rule, assigning ID and CreatedAt.
@@ -3181,37 +3040,17 @@ func (m *Memstore) CreateRestrictionRule(_ context.Context, r *store.Restriction
 
 // ListRestrictionRules returns every rule ordered by ID.
 func (m *Memstore) ListRestrictionRules(_ context.Context) ([]store.RestrictionRule, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.RestrictionRule, 0, len(m.restrictions))
-	for _, r := range m.restrictions {
-		out = append(out, r)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return listRows(m, m.restrictions, func(r store.RestrictionRule) int64 { return r.ID }, nil), nil
 }
 
 // DeleteRestrictionRule removes a rule; ErrNotFound if absent.
 func (m *Memstore) DeleteRestrictionRule(_ context.Context, id int64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.restrictions[id]; !ok {
-		return store.ErrNotFound
-	}
-	delete(m.restrictions, id)
-	return nil
+	return deleteRow(m, m.restrictions, id)
 }
 
 // GetTargetHostKey returns the target's host-key pin, or ErrNotFound.
 func (m *Memstore) GetTargetHostKey(_ context.Context, targetID int64) (*store.TargetHostKey, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	k, ok := m.hostKeys[targetID]
-	if !ok {
-		return nil, store.ErrNotFound
-	}
-	out := k
-	return &out, nil
+	return getRow(m, m.hostKeys, targetID)
 }
 
 // PutTargetHostKey stores or replaces the pin; ErrNotFound if the target is gone.
@@ -3234,13 +3073,7 @@ func (m *Memstore) PutTargetHostKey(_ context.Context, k *store.TargetHostKey) e
 
 // DeleteTargetHostKey removes the pin, or ErrNotFound.
 func (m *Memstore) DeleteTargetHostKey(_ context.Context, targetID int64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.hostKeys[targetID]; !ok {
-		return store.ErrNotFound
-	}
-	delete(m.hostKeys, targetID)
-	return nil
+	return deleteRow(m, m.hostKeys, targetID)
 }
 
 // GrantAppSecret authorizes an app to retrieve a credential's secret (ErrConflict
@@ -3267,16 +3100,8 @@ func (m *Memstore) GrantAppSecret(_ context.Context, g *store.AppSecretGrant) er
 
 // ListAppSecretGrants returns an app's secret grants ordered by id.
 func (m *Memstore) ListAppSecretGrants(_ context.Context, appID int64) ([]store.AppSecretGrant, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := make([]store.AppSecretGrant, 0)
-	for _, g := range m.appGrants {
-		if g.AppID == appID {
-			out = append(out, g)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return listRows(m, m.appGrants, func(g store.AppSecretGrant) int64 { return g.ID },
+		func(g store.AppSecretGrant) bool { return g.AppID == appID }), nil
 }
 
 // DeleteAppSecretGrant removes a grant by ID, or ErrNotFound.
@@ -3439,13 +3264,7 @@ func (m *Memstore) PutSetting(_ context.Context, s *store.Setting) error {
 
 // GetSetting returns the override for key, or ErrNotFound.
 func (m *Memstore) GetSetting(_ context.Context, key string) (*store.Setting, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if s, ok := m.settings[key]; ok {
-		out := s
-		return &out, nil
-	}
-	return nil, store.ErrNotFound
+	return getRow(m, m.settings, key)
 }
 
 // ListSettings returns all configuration overrides ordered by key.
