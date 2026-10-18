@@ -306,7 +306,7 @@ func (s *Server) sendShareInviteEmail(ctx context.Context, inv store.SessionShar
 // --- external/vendor guest redemption (unauthenticated until a token is
 // presented) — reached from the emailed link/QR's guest page, NOT from the
 // authenticated portal. Registered without the s.authz(...) wrapper (see
-// server.go), the same way the RDP/VNC viewer's query-token-authed WebSocket
+// routes.go), the same way the RDP/VNC viewer's query-token-authed WebSocket
 // routes are — see viewer_handlers.go. ---
 
 type shareRedeemOut struct {

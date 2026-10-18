@@ -4,7 +4,7 @@
 //
 //   - a package dependency graph (from each package's intra-module imports),
 //   - the domain data model as an ER diagram (from the structs in internal/store),
-//   - the REST route → capability map (from internal/api/server.go's mux wiring).
+//   - the REST route → capability map (from internal/api/routes.go's mux wiring).
 //
 // Output is deterministic (everything is sorted, no timestamps), so CI can run
 // `go run ./cmd/archgen` and fail on any diff — that is what keeps the diagrams
@@ -512,10 +512,10 @@ func routeGuard(method, path, registration string) (string, error) {
 		method, path, strings.TrimSpace(registration))
 }
 
-// writeRouteMap parses the mux wiring in internal/api/server.go into a table of
+// writeRouteMap parses the mux wiring in internal/api/routes.go into a table of
 // method, path, and the capability (or guard) each route enforces.
 func writeRouteMap(b *strings.Builder, root string) error {
-	data, err := os.ReadFile(filepath.Join(root, "internal", "api", "server.go")) // #nosec G304 -- build-time doc generator reading a fixed repo source path
+	data, err := os.ReadFile(filepath.Join(root, "internal", "api", "routes.go")) // #nosec G304 -- build-time doc generator reading a fixed repo source path
 	if err != nil {
 		return err
 	}

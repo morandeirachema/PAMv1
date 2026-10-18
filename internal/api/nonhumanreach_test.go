@@ -12,7 +12,7 @@ import (
 // Every credential PAMv1 issues to something that is not a person, and the exact
 // set of routes a bearer of it reaches. Adding a route here WIDENS what one of
 // these credentials can do, which is a decision worth writing down rather than a
-// line somebody adds to server.go on the way past.
+// line somebody adds to routes.go on the way past.
 //
 // The operator API is deliberately absent: those routes are gated per capability
 // by auth.Capability, and TestConsoleCanReachEveryOperatorRoute already holds
@@ -142,7 +142,7 @@ func TestNonHumanCredentialReach(t *testing.T) {
 // TestExtensionTokenReachIsOneRoute pins a claim that was living in a trailing
 // comment.
 //
-// server.go says of the reveal route: "browser-extension tokens (Phase 147) reach
+// routes.go says of the reveal route: "browser-extension tokens (Phase 147) reach
 // only this route". That is the entire scoping of a credential deliberately
 // issued to a browser extension — a thing running in a page, on a machine PAMv1
 // does not control.
@@ -154,9 +154,9 @@ func TestNonHumanCredentialReach(t *testing.T) {
 // false. This one asserts the set instead of a sample — the two together are
 // "these routes refuse it" plus "and there are no others".
 func TestExtensionTokenReachIsOneRoute(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join("server.go")) // #nosec G304 -- test-only read of this package's own source
+	src, err := os.ReadFile(filepath.Join("routes.go")) // #nosec G304 -- test-only read of this package's own source
 	if err != nil {
-		t.Fatalf("reading server.go: %v", err)
+		t.Fatalf("reading routes.go: %v", err)
 	}
 	routeRE := regexp.MustCompile(`mux\.Handle(?:Func)?\("([A-Z]+ [^"]+)",\s*s\.authzExtOK\(`)
 	var got []string

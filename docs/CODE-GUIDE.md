@@ -461,7 +461,7 @@ dropped from the composition fails loudly rather than compiling away.
 
 ### 4.2 The two auth middlewares
 
-Every route is registered in `routes()` (`server.go`) wrapped in one of:
+Every route is registered in `routes()` (`routes.go`) wrapped in one of:
 
 - **`authz(cap, handler)`** — resolves the `X-API-Key` into a Principal, emits the
   loud `breakglass.access` audit + alert if applicable (`noteBreakGlass`), blocks
