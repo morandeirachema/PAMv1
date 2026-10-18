@@ -31,6 +31,30 @@ func TestObserverSessionRefusesExec(t *testing.T) {
 	}
 }
 
+// TestObserverSessionRefusesSubsystem is exec's sibling: a read-only session
+// cannot open a subsystem either, so an observer cannot move files over SFTP.
+func TestObserverSessionRefusesSubsystem(t *testing.T) {
+	host, port := startUpstream(t, upstreamUser, upstreamSecret, targetOutput)
+	st := memstore.New()
+	v := mustVault(t)
+	seedTarget(t, st, v, host, port)
+	addr := startProxy(t, st, v, t.TempDir())
+
+	client, err := dialProxy(t, addr, "web-01+observe", proxyAPIKey)
+	if err != nil {
+		t.Fatalf("auth should pass: %v", err)
+	}
+	defer client.Close()
+	sess, err := client.NewSession()
+	if err != nil {
+		t.Fatalf("open channel: %v", err)
+	}
+	defer sess.Close()
+	if err := sess.RequestSubsystem("sftp"); err == nil {
+		t.Fatal("observer must not be able to open a subsystem")
+	}
+}
+
 // TestInteractiveSessionStillRuns is the contrast: without the +observe suffix,
 // the same target executes normally.
 func TestInteractiveSessionStillRuns(t *testing.T) {

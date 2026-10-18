@@ -1610,7 +1610,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	go func() {
 		defer clientReqPump.Done()
 		if observe {
-			pumpRequestsObserver(clientReqs, upChan, clientReqDone)
+			pumpRequests(clientReqs, upChan, clientReqDone, observerHooks)
 		} else {
 			pumpRequests(clientReqs, upChan, clientReqDone, reqHooks{onExec: onExec, onSubsystem: onSubsystem, onRequest: onRequest})
 		}
@@ -2017,7 +2017,7 @@ func (p *Proxy) handleJoinSession(ctx context.Context, nc ssh.NewChannel, joinAc
 }
 
 // answerJoinRequests replies success to every channel request from in EXCEPT
-// exec/subsystem (refused, matching pumpRequestsObserver's restriction — a
+// exec/subsystem (refused, matching observerHooks' restriction — a
 // join is never allowed to run a discrete command or open SFTP), without
 // forwarding anything anywhere: a join has no upstream channel of its own, it
 // is attached to the primary's already-open PTY, so pty-req/shell/
@@ -2429,6 +2429,14 @@ type reqHooks struct {
 	onRequest func(reqType string) bool
 }
 
+// observerHooks are a read-only session's: anything that would run a command
+// (exec, subsystem) is refused, so the operator may open a shell/pty and
+// watch, nothing more.
+var observerHooks = reqHooks{
+	onExec:      func([]byte) bool { return false },
+	onSubsystem: func([]byte) bool { return false },
+}
+
 // pumpRequests forwards SSH channel requests from in to dst, relaying replies,
 // until in closes or done fires.
 //
@@ -2465,32 +2473,6 @@ func pumpRequests(in <-chan *ssh.Request, dst ssh.Channel, done <-chan struct{},
 				continue
 			}
 			if h.onSubsystem != nil && req.Type == "subsystem" && !h.onSubsystem(req.Payload) {
-				if req.WantReply {
-					req.Reply(false, nil)
-				}
-				continue
-			}
-			okr, err := dst.SendRequest(req.Type, req.WantReply, req.Payload)
-			if req.WantReply {
-				req.Reply(okr && err == nil, nil)
-			}
-		case <-done:
-			return
-		}
-	}
-}
-
-// pumpRequestsObserver forwards channel requests like pumpRequests but refuses
-// anything that would run a command (exec, subsystem), so a read-only session
-// cannot execute — the operator may open a shell/pty and watch, nothing more.
-func pumpRequestsObserver(in <-chan *ssh.Request, dst ssh.Channel, done <-chan struct{}) {
-	for {
-		select {
-		case req, ok := <-in:
-			if !ok {
-				return
-			}
-			if req.Type == "exec" || req.Type == "subsystem" {
 				if req.WantReply {
 					req.Reply(false, nil)
 				}
