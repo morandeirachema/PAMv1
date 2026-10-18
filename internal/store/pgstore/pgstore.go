@@ -422,21 +422,20 @@ func (s *PGStore) CreateLabelRule(ctx context.Context, r *store.LabelRule) error
 	return err
 }
 
+const labelRuleCols = `id, selector, subject_type, subject, effect, permissions, expires_at, time_frame, created_by, created_at`
+
+// scanLabelRule scans one label_rules row (labelRuleCols).
+func scanLabelRule(row pgx.CollectableRow) (store.LabelRule, error) {
+	var r store.LabelRule
+	var perms string
+	err := row.Scan(&r.ID, &r.Selector, &r.SubjectType, &r.Subject, &r.Effect, &perms, &r.ExpiresAt, &r.TimeFrame, &r.CreatedBy, &r.CreatedAt)
+	r.Permissions = store.ParseSafePermissions(perms)
+	return r, err
+}
+
 // ListLabelRules returns every label rule, ordered by id.
 func (s *PGStore) ListLabelRules(ctx context.Context) ([]store.LabelRule, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT id, selector, subject_type, subject, effect, permissions, expires_at, time_frame, created_by, created_at
-		   FROM label_rules ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.LabelRule, error) {
-		var r store.LabelRule
-		var perms string
-		err := row.Scan(&r.ID, &r.Selector, &r.SubjectType, &r.Subject, &r.Effect, &perms, &r.ExpiresAt, &r.TimeFrame, &r.CreatedBy, &r.CreatedAt)
-		r.Permissions = store.ParseSafePermissions(perms)
-		return r, err
-	})
+	return labelRulesFor(ctx, s.pool, nil, nil)
 }
 
 // DeleteLabelRule removes a label rule by id.
@@ -472,17 +471,11 @@ func (s *PGStore) SweepExpiredGrants(ctx context.Context, now time.Time) ([]stor
 	}
 	rows, err = tx.Query(ctx,
 		`DELETE FROM safe_members WHERE expires_at IS NOT NULL AND expires_at <= $1
-		 RETURNING id, safe_id, subject_type, subject, can_manage, created_by, expires_at, time_frame, permissions`, now)
+		 RETURNING `+safeMemberCols, now)
 	if err != nil {
 		return nil, nil, err
 	}
-	ms, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.SafeMember, error) {
-		var m store.SafeMember
-		var perms string
-		err := row.Scan(&m.ID, &m.SafeID, &m.SubjectType, &m.Subject, &m.CanManage, &m.CreatedBy, &m.ExpiresAt, &m.TimeFrame, &perms)
-		m.Permissions = store.ParseSafePermissions(perms)
-		return m, err
-	})
+	ms, err := pgx.CollectRows(rows, scanSafeMember)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -633,12 +626,11 @@ func labelledTargets(ctx context.Context, q reachQuerier) ([]labelledTarget, err
 // nil subject arrays it returns every rule, which is what the gated-set read
 // needs (that question is about the target, not a subject).
 func labelRulesFor(ctx context.Context, q reachQuerier, types, names []string) ([]store.LabelRule, error) {
-	sql := `SELECT id, selector, subject_type, subject, effect, permissions, expires_at, time_frame, created_by, created_at
-	          FROM label_rules ORDER BY id`
+	sql := `SELECT ` + labelRuleCols + ` FROM label_rules ORDER BY id`
 	args := []any{}
 	if types != nil {
 		sql = `WITH subs AS (SELECT * FROM unnest($1::text[], $2::text[]) AS s(subject_type, subject))
-		       SELECT r.id, r.selector, r.subject_type, r.subject, r.effect, r.permissions, r.expires_at, r.time_frame, r.created_by, r.created_at
+		       SELECT ` + prefixed(labelRuleCols, "r.") + `
 		         FROM label_rules r
 		         JOIN subs ON subs.subject_type = r.subject_type AND subs.subject = r.subject
 		        ORDER BY r.id`
@@ -648,13 +640,7 @@ func labelRulesFor(ctx context.Context, q reachQuerier, types, names []string) (
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.LabelRule, error) {
-		var r store.LabelRule
-		var perms string
-		err := row.Scan(&r.ID, &r.Selector, &r.SubjectType, &r.Subject, &r.Effect, &perms, &r.ExpiresAt, &r.TimeFrame, &r.CreatedBy, &r.CreatedAt)
-		r.Permissions = store.ParseSafePermissions(perms)
-		return r, err
-	})
+	return pgx.CollectRows(rows, scanLabelRule)
 }
 
 // GatedTargetIDs returns the ids of targets holding at least one effective
@@ -802,20 +788,25 @@ func (s *PGStore) AddSafeMember(ctx context.Context, m *store.SafeMember) error 
 	return err
 }
 
+const safeMemberCols = `id, safe_id, subject_type, subject, can_manage, created_by, expires_at, time_frame, permissions`
+
+// scanSafeMember scans one safe_members row (safeMemberCols).
+func scanSafeMember(row pgx.CollectableRow) (store.SafeMember, error) {
+	var m store.SafeMember
+	var perms string
+	err := row.Scan(&m.ID, &m.SafeID, &m.SubjectType, &m.Subject, &m.CanManage, &m.CreatedBy, &m.ExpiresAt, &m.TimeFrame, &perms)
+	m.Permissions = store.ParseSafePermissions(perms)
+	return m, err
+}
+
 // ListSafeMembers returns a safe's members ordered by id.
 func (s *PGStore) ListSafeMembers(ctx context.Context, safeID int64) ([]store.SafeMember, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, safe_id, subject_type, subject, can_manage, created_by, expires_at, time_frame, permissions FROM safe_members WHERE safe_id = $1 ORDER BY id`, safeID)
+		`SELECT `+safeMemberCols+` FROM safe_members WHERE safe_id = $1 ORDER BY id`, safeID)
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.SafeMember, error) {
-		var m store.SafeMember
-		var perms string
-		err := row.Scan(&m.ID, &m.SafeID, &m.SubjectType, &m.Subject, &m.CanManage, &m.CreatedBy, &m.ExpiresAt, &m.TimeFrame, &perms)
-		m.Permissions = store.ParseSafePermissions(perms)
-		return m, err
-	})
+	return pgx.CollectRows(rows, scanSafeMember)
 }
 
 // DeleteSafeMember removes a safe member by ID, or ErrNotFound.
@@ -2223,28 +2214,29 @@ func (s *PGStore) CreateVendor(ctx context.Context, v *store.Vendor) error {
 	return err
 }
 
+const vendorCols = `id, username, org, email, disabled, created_at`
+
+// scanVendor scans one vendors row (vendorCols).
+func scanVendor(row pgx.CollectableRow) (store.Vendor, error) {
+	var v store.Vendor
+	err := row.Scan(&v.ID, &v.Username, &v.Org, &v.Email, &v.Disabled, &v.CreatedAt)
+	return v, err
+}
+
 // GetVendorByUsername returns the vendor for a login, or ErrNotFound.
 func (s *PGStore) GetVendorByUsername(ctx context.Context, username string) (*store.Vendor, error) {
-	return getOne(ctx, s.pool, func(row pgx.CollectableRow) (store.Vendor, error) {
-		var v store.Vendor
-		err := row.Scan(&v.ID, &v.Username, &v.Org, &v.Email, &v.Disabled, &v.CreatedAt)
-		return v, err
-	}, `SELECT id, username, org, email, disabled, created_at FROM vendors WHERE username = $1`, username)
+	return getOne(ctx, s.pool, scanVendor, `SELECT `+vendorCols+` FROM vendors WHERE username = $1`, username)
 }
 
 // ListVendors returns vendors in the (limit, afterID) window, ordered by ID.
 func (s *PGStore) ListVendors(ctx context.Context, limit int, afterID int64) ([]store.Vendor, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, username, org, email, disabled, created_at FROM vendors WHERE id > $1 ORDER BY id LIMIT $2`,
+		`SELECT `+vendorCols+` FROM vendors WHERE id > $1 ORDER BY id LIMIT $2`,
 		afterID, limitArg(limit))
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.Vendor, error) {
-		var v store.Vendor
-		err := row.Scan(&v.ID, &v.Username, &v.Org, &v.Email, &v.Disabled, &v.CreatedAt)
-		return v, err
-	})
+	return pgx.CollectRows(rows, scanVendor)
 }
 
 // UpdateVendorOrg changes a vendor's organization label; ErrNotFound if absent.
@@ -2643,17 +2635,11 @@ func (s *PGStore) SetAppGrantAlias(ctx context.Context, grantID int64, alias str
 	if alias != "" {
 		stored = &alias
 	}
-	tag, err := s.pool.Exec(ctx, `UPDATE app_secret_grants SET alias = $2 WHERE id = $1`, grantID, stored)
+	err := execExpectingRow(ctx, s.pool, `UPDATE app_secret_grants SET alias = $2 WHERE id = $1`, grantID, stored)
 	if pgCode(err) == pgUniqueViolation {
 		return store.ErrConflict
 	}
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return store.ErrNotFound
-	}
-	return nil
+	return err
 }
 
 // AppCredentialByAlias resolves an alias within ONE app's grants — resolution and
@@ -2982,25 +2968,24 @@ func (s *PGStore) UpsertMFAEnrollment(ctx context.Context, e *store.MFAEnrollmen
 	).Scan(&e.CreatedAt)
 }
 
+const mfaEnrollmentCols = `username, secret_enc, confirmed, created_at, last_totp_step`
+
+// scanMFAEnrollment scans one mfa_enrollments row (mfaEnrollmentCols).
+//
+// last_totp_step must be selected and scanned on every read: a caller that
+// re-Upserts an enrollment it read (KEK rotation) would otherwise reset the
+// TOTP anti-replay high-water mark to 0 and reopen replay. Until Phase 286 the
+// Get and the List each scanned it, and only the List said so.
+func scanMFAEnrollment(row pgx.CollectableRow) (store.MFAEnrollment, error) {
+	var m store.MFAEnrollment
+	err := row.Scan(&m.Username, &m.SecretEnc, &m.Confirmed, &m.CreatedAt, &m.LastTOTPStep)
+	return m, err
+}
+
 // GetMFAEnrollment returns a user's TOTP enrollment, or ErrNotFound.
 func (s *PGStore) GetMFAEnrollment(ctx context.Context, username string) (*store.MFAEnrollment, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT username, secret_enc, confirmed, created_at, last_totp_step FROM mfa_enrollments WHERE username = $1`, username)
-	if err != nil {
-		return nil, err
-	}
-	e, err := pgx.CollectExactlyOneRow(rows, func(row pgx.CollectableRow) (store.MFAEnrollment, error) {
-		var m store.MFAEnrollment
-		err := row.Scan(&m.Username, &m.SecretEnc, &m.Confirmed, &m.CreatedAt, &m.LastTOTPStep)
-		return m, err
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, store.ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &e, nil
+	return getOne(ctx, s.pool, scanMFAEnrollment,
+		`SELECT `+mfaEnrollmentCols+` FROM mfa_enrollments WHERE username = $1`, username)
 }
 
 // ConsumeTOTPStep atomically advances the user's last-used TOTP step: the UPDATE
@@ -3019,18 +3004,11 @@ func (s *PGStore) ConsumeTOTPStep(ctx context.Context, username string, step int
 // ListMFAEnrollments returns all enrollments ordered by username.
 func (s *PGStore) ListMFAEnrollments(ctx context.Context) ([]store.MFAEnrollment, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT username, secret_enc, confirmed, created_at, last_totp_step FROM mfa_enrollments ORDER BY username`)
+		`SELECT `+mfaEnrollmentCols+` FROM mfa_enrollments ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (store.MFAEnrollment, error) {
-		var m store.MFAEnrollment
-		// last_totp_step must be selected/scanned: a caller that re-Upserts a listed
-		// enrollment (KEK rotation) would otherwise reset the TOTP anti-replay
-		// high-water mark to 0 and reopen replay.
-		err := row.Scan(&m.Username, &m.SecretEnc, &m.Confirmed, &m.CreatedAt, &m.LastTOTPStep)
-		return m, err
-	})
+	return pgx.CollectRows(rows, scanMFAEnrollment)
 }
 
 // DeleteMFAEnrollment removes a user's enrollment and their recovery codes;
@@ -3129,47 +3107,22 @@ func (s *PGStore) ListWebAuthnCredentials(ctx context.Context, username string) 
 
 // GetWebAuthnCredentialByCredentialID looks up an authenticator by the credential ID an assertion presents, or ErrNotFound.
 func (s *PGStore) GetWebAuthnCredentialByCredentialID(ctx context.Context, credentialID []byte) (*store.WebAuthnCredential, error) {
-	rows, err := s.pool.Query(ctx,
+	return getOne(ctx, s.pool, scanWebAuthnCredential,
 		`SELECT `+webauthnCredentialCols+` FROM webauthn_credentials WHERE credential_id = $1`, credentialID)
-	if err != nil {
-		return nil, err
-	}
-	c, err := pgx.CollectExactlyOneRow(rows, scanWebAuthnCredential)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, store.ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &c, nil
 }
 
 // UpdateWebAuthnSignCount writes back the sign counter, clone-warning flag and
 // last-used time after a successful login.
 func (s *PGStore) UpdateWebAuthnSignCount(ctx context.Context, id int64, signCount uint32, cloneWarning bool, usedAt time.Time) error {
-	tag, err := s.pool.Exec(ctx,
+	return execExpectingRow(ctx, s.pool,
 		`UPDATE webauthn_credentials SET sign_count = $2, clone_warning = $3, last_used_at = $4 WHERE id = $1`,
 		id, signCount, cloneWarning, usedAt.UTC())
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return store.ErrNotFound
-	}
-	return nil
 }
 
 // DeleteWebAuthnCredential removes one authenticator by ID, scoped to username, or ErrNotFound.
 func (s *PGStore) DeleteWebAuthnCredential(ctx context.Context, id int64, username string) error {
-	tag, err := s.pool.Exec(ctx,
+	return execExpectingRow(ctx, s.pool,
 		`DELETE FROM webauthn_credentials WHERE id = $1 AND username = $2`, id, username)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return store.ErrNotFound
-	}
-	return nil
 }
 
 // PutWebAuthnChallenge stores (or replaces) the in-flight ceremony state for a
@@ -3297,23 +3250,12 @@ func (s *PGStore) RevokeSessionShareInvite(ctx context.Context, id int64, at tim
 // UPDATE...RETURNING is the single statement that makes this a genuine
 // single-use check-and-set rather than a read-then-write race.
 func (s *PGStore) ConsumeSessionShareInviteByTokenHash(ctx context.Context, tokenHash string, now time.Time) (*store.SessionShareInvite, error) {
-	rows, err := s.pool.Query(ctx,
+	return getOne(ctx, s.pool, scanSessionShareInvite,
 		`UPDATE session_share_invites SET consumed_at = $2
 		 WHERE token_hash = $1 AND status = 'approved' AND revoked_at IS NULL
 		   AND consumed_at IS NULL AND expires_at > $2
 		 RETURNING `+sessionShareInviteCols,
 		tokenHash, now.UTC())
-	if err != nil {
-		return nil, err
-	}
-	inv, err := pgx.CollectExactlyOneRow(rows, scanSessionShareInvite)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, store.ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &inv, nil
 }
 
 // scanApprovalInvite maps one approval_invites row into a store.ApprovalInvite.
@@ -3383,22 +3325,11 @@ func (s *PGStore) GetApprovalInviteByTokenHash(ctx context.Context, tokenHash st
 // UPDATE...RETURNING is the single statement that makes this a genuine
 // single-use check-and-set rather than a read-then-write race.
 func (s *PGStore) ConsumeApprovalInviteByTokenHash(ctx context.Context, tokenHash string, now time.Time) (*store.ApprovalInvite, error) {
-	rows, err := s.pool.Query(ctx,
+	return getOne(ctx, s.pool, scanApprovalInvite,
 		`UPDATE approval_invites SET consumed_at = $2
 		 WHERE token_hash = $1 AND revoked_at IS NULL AND consumed_at IS NULL AND expires_at > $2
 		 RETURNING `+approvalInviteCols,
 		tokenHash, now.UTC())
-	if err != nil {
-		return nil, err
-	}
-	inv, err := pgx.CollectExactlyOneRow(rows, scanApprovalInvite)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, store.ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &inv, nil
 }
 
 // RecordApprovalInviteDecision stamps the outcome on an already-consumed
