@@ -172,23 +172,6 @@ func (s *Server) setAgentIdentityOwner(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// deleteAgentIdentity removes a registration. It is audited as loudly as
-// creating one: after this, that SPIFFE identity has no recorded owner again,
-// and its parked calls can no longer be approved by anyone until one is
-// recorded — a fail-closed consequence an operator should be able to trace.
-func (s *Server) deleteAgentIdentity(w http.ResponseWriter, r *http.Request) {
-	id, ok := idParam(w, r)
-	if !ok {
-		return
-	}
-	if err := s.store.DeleteAgentIdentity(r.Context(), id); err != nil {
-		storeError(w, err)
-		return
-	}
-	s.audit(r.Context(), "agent.identity_remove", fmt.Sprintf("identity:%d", id))
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // knownUsernames returns the set of usernames PAMv1 has a user row for, so a
 // listing can flag an agent whose owner is not one of them.
 //

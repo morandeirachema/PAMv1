@@ -47,17 +47,3 @@ func (s *Server) createProfile(w http.ResponseWriter, r *http.Request) {
 	s.audit(r.Context(), "profile.create", fmt.Sprintf("%s caps:%d", p.Name, len(p.Capabilities)))
 	writeJSON(w, http.StatusCreated, p)
 }
-
-// deleteProfile removes a custom profile by ID.
-func (s *Server) deleteProfile(w http.ResponseWriter, r *http.Request) {
-	id, ok := idParam(w, r)
-	if !ok {
-		return
-	}
-	if err := s.store.DeleteProfile(r.Context(), id); err != nil {
-		storeError(w, err)
-		return
-	}
-	s.audit(r.Context(), "profile.delete", fmt.Sprintf("profile:%d", id))
-	w.WriteHeader(http.StatusNoContent)
-}

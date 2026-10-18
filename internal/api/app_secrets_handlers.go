@@ -202,21 +202,6 @@ func (s *Server) createAppKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// deleteAppKey revokes an application so its bearer token stops resolving (its
-// secret grants cascade away).
-func (s *Server) deleteAppKey(w http.ResponseWriter, r *http.Request) {
-	id, ok := idParam(w, r)
-	if !ok {
-		return
-	}
-	if err := s.store.DeleteAppKey(r.Context(), id); err != nil {
-		storeError(w, err)
-		return
-	}
-	s.audit(r.Context(), "app.revoke", fmt.Sprintf("app:%d", id))
-	w.WriteHeader(http.StatusNoContent)
-}
-
 type appGrantIn struct {
 	CredentialID int64 `json:"credential_id"`
 }

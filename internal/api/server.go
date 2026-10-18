@@ -1366,7 +1366,9 @@ func (s *Server) routes() {
 		s.mux.Handle("POST /v1/apps/{id}/grants/{gid}/alias", s.authz(auth.CapRevealSecret, s.setAppGrantAlias))
 		s.mux.Handle("POST /v1/apps", s.authz(auth.CapManageUsers, s.createAppKey))
 		s.mux.Handle("GET /v1/apps", s.authz(auth.CapManageUsers, listAll(s.store.ListAppKeys)))
-		s.mux.Handle("DELETE /v1/apps/{id}", s.authz(auth.CapManageUsers, s.deleteAppKey))
+		// Revoking an application stops its bearer token resolving; its secret
+		// grants cascade away.
+		s.mux.Handle("DELETE /v1/apps/{id}", s.authz(auth.CapManageUsers, s.deleteByID(s.store.DeleteAppKey, "app.revoke", "app")))
 		s.mux.Handle("GET /v1/apps/{id}/grants", s.authz(auth.CapManageUsers, listByParent(s.store.ListAppSecretGrants)))
 		s.mux.Handle("POST /v1/apps/{id}/grants", s.authz(auth.CapRevealSecret, s.grantAppSecret))
 		s.mux.Handle("DELETE /v1/apps/{id}/grants/{gid}", s.authz(auth.CapRevealSecret, s.deleteAppSecretGrant))
@@ -1391,7 +1393,8 @@ func (s *Server) routes() {
 	// them could simply avoid them.
 	s.mux.Handle("GET /api/restriction-rules", s.authz(auth.CapReadAudit, s.listRestrictionRules))
 	s.mux.Handle("POST /api/restriction-rules", s.authz(auth.CapManageUsers, s.createRestrictionRule))
-	s.mux.Handle("DELETE /api/restriction-rules/{id}", s.authz(auth.CapManageUsers, s.deleteRestrictionRule))
+	// Deleting a rule does not reach sessions already admitted: they keep it.
+	s.mux.Handle("DELETE /api/restriction-rules/{id}", s.authz(auth.CapManageUsers, s.deleteByID(s.store.DeleteRestrictionRule, "restriction.delete", "rule")))
 	// Per-target SSH host-key pins (Phase 272): reading one is inventory,
 	// resetting one — telling the proxy to trust the next key it sees — is
 	// target management and is audited.
@@ -1412,7 +1415,7 @@ func (s *Server) routes() {
 	if s.scimEnabled {
 		s.mux.Handle("POST /v1/scim-keys", s.authz(auth.CapManageUsers, s.createScimKey))
 		s.mux.Handle("GET /v1/scim-keys", s.authz(auth.CapManageUsers, listAll(s.store.ListScimKeys)))
-		s.mux.Handle("DELETE /v1/scim-keys/{id}", s.authz(auth.CapManageUsers, s.deleteScimKey))
+		s.mux.Handle("DELETE /v1/scim-keys/{id}", s.authz(auth.CapManageUsers, s.deleteByID(s.store.DeleteScimKey, "scim.key_revoke", "scim_key")))
 		s.mux.HandleFunc("GET /scim/v2/ServiceProviderConfig", s.scimAuth(s.scimServiceProviderConfig))
 		s.mux.HandleFunc("GET /scim/v2/Users", s.scimAuth(s.listScimUsers))
 		s.mux.HandleFunc("POST /scim/v2/Users", s.scimAuth(s.createScimUser))
@@ -1468,7 +1471,7 @@ func (s *Server) routes() {
 	// Custom permission profiles (Phase 12): named capability sets for users.
 	s.mux.Handle("POST /api/profiles", s.authz(auth.CapManageUsers, s.createProfile))
 	s.mux.Handle("GET /api/profiles", s.authz(auth.CapManageUsers, listAll(s.store.ListProfiles)))
-	s.mux.Handle("DELETE /api/profiles/{id}", s.authz(auth.CapManageUsers, s.deleteProfile))
+	s.mux.Handle("DELETE /api/profiles/{id}", s.authz(auth.CapManageUsers, s.deleteByID(s.store.DeleteProfile, "profile.delete", "profile")))
 
 	// System configuration overrides (Phase 12): DB-persisted PAM_* settings.
 	s.mux.Handle("GET /api/config", s.authz(auth.CapManageUsers, s.listConfig))
@@ -1490,7 +1493,7 @@ func (s *Server) routes() {
 		s.mux.Handle("POST /v1/approvals/{id}/decision", s.authz(auth.CapApprove, s.decideBrokerApproval))
 		s.mux.Handle("POST /v1/agents", s.authz(auth.CapManageUsers, s.createAgentKey))
 		s.mux.Handle("GET /v1/agents", s.authz(auth.CapManageUsers, s.listAgentKeys))
-		s.mux.Handle("DELETE /v1/agents/{id}", s.authz(auth.CapManageUsers, s.deleteAgentKey))
+		s.mux.Handle("DELETE /v1/agents/{id}", s.authz(auth.CapManageUsers, s.deleteByID(s.store.DeleteAgentKey, "agent.revoke", "agent")))
 		// Containment (Phase 159): suspend/resume one key, and the subject-keyed
 		// quarantine that also covers an SVID agent with no key row. The literal
 		// "quarantine" segment is registered before "{id}" only for readability —
@@ -1506,7 +1509,11 @@ func (s *Server) routes() {
 		s.mux.Handle("POST /v1/agents/identities", s.authz(auth.CapManageUsers, s.createAgentIdentity))
 		s.mux.Handle("GET /v1/agents/identities", s.authz(auth.CapManageUsers, s.listAgentIdentities))
 		s.mux.Handle("POST /v1/agents/identities/{id}/owner", s.authz(auth.CapManageUsers, s.setAgentIdentityOwner))
-		s.mux.Handle("DELETE /v1/agents/identities/{id}", s.authz(auth.CapManageUsers, s.deleteAgentIdentity))
+		// Removing a registration is audited as loudly as creating one: that SPIFFE
+		// identity has no recorded owner again, and its parked calls can no longer
+		// be approved by anyone until one is recorded — a fail-closed consequence an
+		// operator should be able to trace.
+		s.mux.Handle("DELETE /v1/agents/identities/{id}", s.authz(auth.CapManageUsers, s.deleteByID(s.store.DeleteAgentIdentity, "agent.identity_remove", "identity")))
 		s.mux.Handle("POST /v1/agents/{id}/disable", s.authz(auth.CapManageUsers, s.disableAgentKey))
 		s.mux.Handle("POST /v1/agents/{id}/enable", s.authz(auth.CapManageUsers, s.enableAgentKey))
 		s.mux.Handle("POST /v1/agents/{id}/budget", s.authz(auth.CapManageUsers, s.setAgentBudget))

@@ -76,20 +76,6 @@ func (s *Server) createScimKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// deleteScimKey revokes a SCIM client so its bearer token stops resolving.
-func (s *Server) deleteScimKey(w http.ResponseWriter, r *http.Request) {
-	id, ok := idParam(w, r)
-	if !ok {
-		return
-	}
-	if err := s.store.DeleteScimKey(r.Context(), id); err != nil {
-		storeError(w, err)
-		return
-	}
-	s.audit(r.Context(), "scim.key_revoke", fmt.Sprintf("scim_key:%d", id))
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // --- SCIM 2.0 wire schema (RFC 7643/7644) ---
 
 const scimUserSchema = "urn:ietf:params:scim:schemas:core:2.0:User"

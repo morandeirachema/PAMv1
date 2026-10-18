@@ -267,6 +267,27 @@ func listByParent[T any](list func(context.Context, int64) ([]T, error)) http.Ha
 	}
 }
 
+// deleteByID builds a DELETE handler for a resource with nothing to check
+// beyond its {id}: validate it, delete, audit action with the detail
+// "<field>:<id>", answer 204. The audit is best-effort and follows the store
+// call, as each of these handlers did when hand-typed. A delete with more to
+// it — a personal-safe guard, a child scoped to its parent, a policy refresh
+// after the audit — keeps its own body.
+func (s *Server) deleteByID(del func(context.Context, int64) error, action, field string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := idParam(w, r)
+		if !ok {
+			return
+		}
+		if err := del(r.Context(), id); err != nil {
+			storeError(w, err)
+			return
+		}
+		s.audit(r.Context(), action, fmt.Sprintf("%s:%d", field, id))
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 // maxAuditResponsePage bounds how many audit events one HTTP response may carry.
 // Deliberately far below store.MaxAuditPage: an internal job like the retention
 // archiver may legitimately read thousands of rows, an API client should page.

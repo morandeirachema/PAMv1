@@ -84,20 +84,6 @@ func (s *Server) createRestrictionRule(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, rule)
 }
 
-// deleteRestrictionRule removes a rule; sessions already admitted keep it.
-func (s *Server) deleteRestrictionRule(w http.ResponseWriter, r *http.Request) {
-	id, ok := idParam(w, r)
-	if !ok {
-		return
-	}
-	if err := s.store.DeleteRestrictionRule(r.Context(), id); err != nil {
-		storeError(w, err)
-		return
-	}
-	s.audit(r.Context(), "restriction.delete", fmt.Sprintf("rule:%d", id))
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // checkRestriction evaluates the caller's restriction set against a command
 // on a REST-brokered path (Phase 275): a notify match is audited and let
 // through; a kill match refuses the call (there is no session to end on this

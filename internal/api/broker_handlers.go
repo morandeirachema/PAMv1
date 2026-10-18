@@ -783,20 +783,6 @@ func (s *Server) listAgentKeys(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// deleteAgentKey revokes an agent identity so its bearer token stops resolving.
-func (s *Server) deleteAgentKey(w http.ResponseWriter, r *http.Request) {
-	id, ok := idParam(w, r)
-	if !ok {
-		return
-	}
-	if err := s.store.DeleteAgentKey(r.Context(), id); err != nil {
-		storeError(w, err)
-		return
-	}
-	s.audit(r.Context(), "agent.revoke", fmt.Sprintf("agent:%d", id))
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // disableAgentKey suspends an agent identity: its bearer token stops
 // authenticating immediately, but the row — and therefore the agent's name, its
 // owner and every audit event that resolves through it — survives.
