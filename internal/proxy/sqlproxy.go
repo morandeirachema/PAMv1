@@ -200,16 +200,125 @@ func sqlBlockedStatement(ctx context.Context, l *listener, pol *sqlPolicy, cl sq
 	return true, false
 }
 
-// sqlDeny audits a refused session (db.session.denied) and reports it to the
-// client via the fail closure, which writes the protocol-specific login-failure
-// token with the "PAMv1: <reason>" text. The caller logs the refusal itself, so
-// each proxy's log line stays exactly as it was.
 // auditValueDB renders an untrusted database name (unauthenticated wire input on
 // both DB proxies) for a key:value audit detail, colon-escaped so it cannot
 // forge a neighbouring field. See auditfmt.Value and the 2026-08-26 audit's M-1.
 func auditValueDB(database string) string { return auditfmt.Value(database, 128) }
 
+// sqlDeny audits a refused session (db.session.denied) and reports it to the
+// client via the fail closure, which writes the protocol-specific login-failure
+// token with the "PAMv1: <reason>" text. The caller logs the refusal itself, so
+// each proxy's log line stays exactly as it was.
 func sqlDeny(ctx context.Context, l *listener, pol *sqlPolicy, actor, login, reason string, fail func(msg string)) {
 	l.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+pol.queryTag()+" reason:"+reason)
 	fail("PAMv1: " + reason)
+}
+
+// sqlFailKind is the class of a SQL listener's wire refusal. PostgreSQL gives
+// each its own SQLSTATE (sqlstate); SQL Server sends the one login-failed
+// error for all three.
+type sqlFailKind int
+
+const (
+	sqlFailAuth  sqlFailKind = iota // refused: invalid authorization
+	sqlFailCheck                    // a check could not run: fail closed
+	sqlFailLimit                    // the concurrent-session cap
+)
+
+// sqlstate is the PostgreSQL error code for a kind of refusal.
+func (k sqlFailKind) sqlstate() string {
+	switch k {
+	case sqlFailCheck:
+		return "58000" // system_error
+	case sqlFailLimit:
+		return "53300" // too_many_connections
+	default:
+		return "28000" // invalid_authorization_specification
+	}
+}
+
+// sqlRefuse maps an admit() refusal to a SQL listener's audit and wire
+// refusal: the one table the PostgreSQL and SQL Server listeners share, so a
+// gate's message and audit row cannot drift between them (until Phase 285
+// each kept its own copy). proto is the target protocol the listener brokers,
+// named in the wrong-protocol refusal; name labels the error log of a gate
+// the table does not map. deny refuses through the listener's own deny, which
+// logs, audits db.session.denied and fails with "PAMv1: <reason>"; fail writes
+// the listener's wire refusal.
+//
+// admit already emitted the audits identical across all three proxies
+// (access.denied for the approval and vendor denials, and
+// credential.decrypt_failed) and the shared check-failed error logs; this adds
+// only what is specific to the SQL listeners. gateProtocolProxyable is an
+// SSH-only gate and gateTerminalTarget needs a terminal token, which a SQL
+// listener refuses earlier as narrow-scoped; both fall to the default.
+// TestSQLRefusalContract pins every row on both listeners.
+func sqlRefuse(ctx context.Context, l *listener, res admitResult, actor, login, proto, name string, deny func(reason string), fail func(kind sqlFailKind, msg string)) {
+	// audited refuses with a db.session.denied row of its own, for the gates
+	// whose detail is not deny's.
+	audited := func(detail string, kind sqlFailKind, msg string) {
+		l.audit(ctx, actor, "db.session.denied", detail)
+		fail(kind, msg)
+	}
+	switch res.gate {
+	case gateTunnelOnly:
+		// Audited here (with the short reason slug shared by the SSH proxy and the
+		// HTTP authz middleware) and failed directly — NOT via deny(), which would
+		// audit a second, differently-worded db.session.denied row for the same
+		// refusal.
+		audited("login:"+auditField(login, 64)+" reason:tunnel-only-token", sqlFailAuth, "PAMv1: this token may only be used by the in-portal viewer")
+	case gateEnrollOnly:
+		audited("login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete", sqlFailAuth, "PAMv1: complete MFA enrollment first")
+	case gateExtensionOnly:
+		audited("login:"+auditField(login, 64)+" reason:extension-scoped-token", sqlFailAuth, "PAMv1: a browser-extension token cannot open a database session")
+	case gateMFAPending:
+		audited("login:"+auditField(login, 64)+" reason:mfa-webauthn-pending", sqlFailAuth, "PAMv1: complete WebAuthn sign-in first")
+	case gateRoleConnect:
+		deny("your role may not open sessions")
+	case gateIPAllowlist:
+		deny("this account may not connect from this network")
+	case gatePosture:
+		deny("your device failed its posture check")
+	case gateOnCall:
+		deny("you are not currently on call")
+	case gateResolve:
+		deny(res.reason)
+	case gateProtocolMatch:
+		deny("target is not a " + proto + " target")
+	case gateProtocolAllowed:
+		deny("protocol not allowed by policy")
+	case gateTargetGrants:
+		// admit logged "target grants lookup failed"; fail closed on the wire.
+		fail(sqlFailCheck, "PAMv1: authorization check failed")
+	case gateTargetPolicy:
+		deny("not authorized for this target")
+	case gateSessionMFACheck:
+		// admit logged the policy-lookup or ticket-spend error; fail closed.
+		fail(sqlFailCheck, "PAMv1: authorization check failed")
+	case gateSessionMFA:
+		audited("target:"+res.target.Name+" reason:"+res.reason, sqlFailAuth, sessionMFARefusal(res.reason, false))
+	case gateApprovalPolicy, gateApprovalClaim:
+		// admit logged the specific approval error; fail closed on the wire.
+		fail(sqlFailCheck, "PAMv1: approval check failed")
+	case gateApproval:
+		// admit already audited access.denied with the reason.
+		fail(sqlFailAuth, "PAMv1: connection requires an approved access request")
+	case gateVendorCheck:
+		// admit logged "vendor gate check failed"; fail closed on the wire.
+		fail(sqlFailCheck, "PAMv1: authorization check failed")
+	case gateVendor:
+		// admit already audited access.denied reason:vendor-contract.
+		fail(sqlFailAuth, "PAMv1: vendor access requires an approved, in-window contract grant")
+	case gateSessionLimit:
+		audited("target:"+res.target.Name+" reason:session-limit", sqlFailLimit, "PAMv1: too many concurrent sessions")
+	case gateAudit:
+		// admit's fail-closed db.session.start write did not land; refuse.
+		fail(sqlFailCheck, "PAMv1: audit log unavailable; session refused")
+	case gateDecrypt:
+		// admit already audited credential.decrypt_failed and logged the error.
+		fail(sqlFailCheck, "PAMv1: credential unavailable")
+	default:
+		l.log.Error("unhandled admit refusal on the "+name+" proxy", "gate", int(res.gate), "actor", actor)
+		fail(sqlFailCheck, "PAMv1: authorization check failed")
+	}
 }

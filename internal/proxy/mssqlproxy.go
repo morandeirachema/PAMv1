@@ -812,82 +812,14 @@ func (m *MSSQLProxy) deny(ctx context.Context, c *tds.Conn, actor, login, reason
 	sqlDeny(ctx, &m.listener, &m.pol, actor, login, reason, func(msg string) { m.fail(c, mssqlErrLoginFailed, 14, msg, tds72) })
 }
 
-// refuse maps an admit() refusal to SQL Server's wire refusal and audit,
-// preserving the exact error numbers/classes, audit action names and details
-// each gate has always used — the transport twin of the PostgreSQL proxy's
-// refuse. admit already emitted the audits identical across all three proxies
-// (access.denied for the approval and vendor denials, and
-// credential.decrypt_failed) and the shared check-failed error logs; this adds
-// only what is specific to the TDS transport. gateProtocolProxyable is an
-// SSH-only gate and never occurs here (this proxy sets no proxyable hook).
+// refuse writes an admit() refusal the SQL Server way: sqlRefuse holds the
+// table both SQL listeners share, and every kind of failure is the same
+// login-failed error (18456, class 14) — the error a SQL Server client
+// expects from a refused login.
 func (m *MSSQLProxy) refuse(ctx context.Context, c *tds.Conn, res admitResult, actor, login string, tds72 bool) {
-	switch res.gate {
-	case gateTunnelOnly:
-		// Audited here (with the short reason slug shared by the SSH proxy and the
-		// HTTP authz middleware) and failed directly — NOT via deny(), which would
-		// audit a second, differently-worded db.session.denied row for the same
-		// refusal.
-		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:tunnel-only-token")
-		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: this token may only be used by the in-portal viewer", tds72)
-	case gateEnrollOnly:
-		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
-		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: complete MFA enrollment first", tds72)
-	case gateExtensionOnly:
-		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:extension-scoped-token")
-		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: a browser-extension token cannot open a database session", tds72)
-	case gateMFAPending:
-		m.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-webauthn-pending")
-		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: complete WebAuthn sign-in first", tds72)
-	case gateRoleConnect:
-		m.deny(ctx, c, actor, login, "your role may not open sessions", tds72)
-	case gateIPAllowlist:
-		m.deny(ctx, c, actor, login, "this account may not connect from this network", tds72)
-	case gatePosture:
-		m.deny(ctx, c, actor, login, "your device failed its posture check", tds72)
-	case gateOnCall:
-		m.deny(ctx, c, actor, login, "you are not currently on call", tds72)
-	case gateResolve:
-		m.deny(ctx, c, actor, login, res.reason, tds72)
-	case gateProtocolMatch:
-		m.deny(ctx, c, actor, login, "target is not a mssql target", tds72)
-	case gateProtocolAllowed:
-		m.deny(ctx, c, actor, login, "protocol not allowed by policy", tds72)
-	case gateTargetGrants:
-		// admit logged "target grants lookup failed"; fail closed on the wire.
-		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: authorization check failed", tds72)
-	case gateTargetPolicy:
-		m.deny(ctx, c, actor, login, "not authorized for this target", tds72)
-	case gateSessionMFACheck:
-		// admit logged the policy-lookup or ticket-spend error; fail closed.
-		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: authorization check failed", tds72)
-	case gateSessionMFA:
-		m.audit(ctx, actor, "db.session.denied", "target:"+res.target.Name+" reason:"+res.reason)
-		m.fail(c, mssqlErrLoginFailed, 14, sessionMFARefusal(res.reason, false), tds72)
-	case gateApprovalPolicy, gateApprovalClaim:
-		// admit logged the specific approval error; fail closed on the wire.
-		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: approval check failed", tds72)
-	case gateApproval:
-		// admit already audited access.denied with the reason.
-		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: connection requires an approved access request", tds72)
-	case gateVendorCheck:
-		// admit logged "vendor gate check failed"; fail closed on the wire.
-		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: authorization check failed", tds72)
-	case gateVendor:
-		// admit already audited access.denied reason:vendor-contract.
-		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: vendor access requires an approved, in-window contract grant", tds72)
-	case gateSessionLimit:
-		m.audit(ctx, actor, "db.session.denied", "target:"+res.target.Name+" reason:session-limit")
-		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: too many concurrent sessions", tds72)
-	case gateAudit:
-		// admit's fail-closed db.session.start write did not land; refuse.
-		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: audit log unavailable; session refused", tds72)
-	case gateDecrypt:
-		// admit already audited credential.decrypt_failed and logged the error.
-		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: credential unavailable", tds72)
-	default:
-		m.log.Error("unhandled admit refusal on the SQL Server proxy", "gate", int(res.gate), "actor", actor)
-		m.fail(c, mssqlErrLoginFailed, 14, "PAMv1: authorization check failed", tds72)
-	}
+	sqlRefuse(ctx, &m.listener, res, actor, login, "mssql", "SQL Server",
+		func(reason string) { m.deny(ctx, c, actor, login, reason, tds72) },
+		func(_ sqlFailKind, msg string) { m.fail(c, mssqlErrLoginFailed, 14, msg, tds72) })
 }
 
 // noteBreakGlass raises the emergency-access signal for this listener; see the

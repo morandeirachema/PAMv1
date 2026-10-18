@@ -707,81 +707,14 @@ func (d *DBProxy) deny(ctx context.Context, backend *pgproto3.Backend, actor, lo
 	sqlDeny(ctx, &d.listener, &d.pol, actor, login, reason, func(msg string) { d.fail(backend, "28000", msg) })
 }
 
-// refuse maps an admit() refusal to PostgreSQL's wire refusal and audit,
-// preserving the exact SQLSTATE codes, audit action names and details each gate
-// has always used. admit already emitted the audits identical across all three
-// proxies (access.denied for the approval and vendor denials, and
-// credential.decrypt_failed) and the shared check-failed error logs; this adds
-// only what is specific to the PostgreSQL transport. gateProtocolProxyable is
-// an SSH-only gate and never occurs here (this proxy sets no proxyable hook).
+// refuse writes an admit() refusal the PostgreSQL way: sqlRefuse holds the
+// table both SQL listeners share, and this supplies the SQLSTATE for each
+// kind of failure (28000 invalid authorization, 58000 a check that could not
+// run, 53300 too many connections).
 func (d *DBProxy) refuse(ctx context.Context, backend *pgproto3.Backend, res admitResult, actor, login string) {
-	switch res.gate {
-	case gateTunnelOnly:
-		// Audited here (with the short reason slug shared by the SSH proxy and the
-		// HTTP authz middleware) and failed directly — NOT via deny(), which would
-		// audit a second, differently-worded db.session.denied row for the same
-		// refusal.
-		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:tunnel-only-token")
-		d.fail(backend, "28000", "PAMv1: this token may only be used by the in-portal viewer")
-	case gateEnrollOnly:
-		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-enrollment-incomplete")
-		d.fail(backend, "28000", "PAMv1: complete MFA enrollment first")
-	case gateExtensionOnly:
-		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:extension-scoped-token")
-		d.fail(backend, "28000", "PAMv1: a browser-extension token cannot open a database session")
-	case gateMFAPending:
-		d.audit(ctx, actor, "db.session.denied", "login:"+auditField(login, 64)+" reason:mfa-webauthn-pending")
-		d.fail(backend, "28000", "PAMv1: complete WebAuthn sign-in first")
-	case gateRoleConnect:
-		d.deny(ctx, backend, actor, login, "your role may not open sessions")
-	case gateIPAllowlist:
-		d.deny(ctx, backend, actor, login, "this account may not connect from this network")
-	case gatePosture:
-		d.deny(ctx, backend, actor, login, "your device failed its posture check")
-	case gateOnCall:
-		d.deny(ctx, backend, actor, login, "you are not currently on call")
-	case gateResolve:
-		d.deny(ctx, backend, actor, login, res.reason)
-	case gateProtocolMatch:
-		d.deny(ctx, backend, actor, login, "target is not a postgres target")
-	case gateProtocolAllowed:
-		d.deny(ctx, backend, actor, login, "protocol not allowed by policy")
-	case gateTargetGrants:
-		// admit logged "target grants lookup failed"; fail closed on the wire.
-		d.fail(backend, "58000", "PAMv1: authorization check failed")
-	case gateTargetPolicy:
-		d.deny(ctx, backend, actor, login, "not authorized for this target")
-	case gateSessionMFACheck:
-		// admit logged the policy-lookup or ticket-spend error; fail closed.
-		d.fail(backend, "58000", "PAMv1: authorization check failed")
-	case gateSessionMFA:
-		d.audit(ctx, actor, "db.session.denied", "target:"+res.target.Name+" reason:"+res.reason)
-		d.fail(backend, "28000", sessionMFARefusal(res.reason, false))
-	case gateApprovalPolicy, gateApprovalClaim:
-		// admit logged the specific approval error; fail closed on the wire.
-		d.fail(backend, "58000", "PAMv1: approval check failed")
-	case gateApproval:
-		// admit already audited access.denied with the reason.
-		d.fail(backend, "28000", "PAMv1: connection requires an approved access request")
-	case gateVendorCheck:
-		// admit logged "vendor gate check failed"; fail closed on the wire.
-		d.fail(backend, "58000", "PAMv1: authorization check failed")
-	case gateVendor:
-		// admit already audited access.denied reason:vendor-contract.
-		d.fail(backend, "28000", "PAMv1: vendor access requires an approved, in-window contract grant")
-	case gateSessionLimit:
-		d.audit(ctx, actor, "db.session.denied", "target:"+res.target.Name+" reason:session-limit")
-		d.fail(backend, "53300", "PAMv1: too many concurrent sessions")
-	case gateAudit:
-		// admit's fail-closed db.session.start write did not land; refuse.
-		d.fail(backend, "58000", "PAMv1: audit log unavailable; session refused")
-	case gateDecrypt:
-		// admit already audited credential.decrypt_failed and logged the error.
-		d.fail(backend, "58000", "PAMv1: credential unavailable")
-	default:
-		d.log.Error("unhandled admit refusal on the PostgreSQL proxy", "gate", int(res.gate), "actor", actor)
-		d.fail(backend, "58000", "PAMv1: authorization check failed")
-	}
+	sqlRefuse(ctx, &d.listener, res, actor, login, "postgres", "PostgreSQL",
+		func(reason string) { d.deny(ctx, backend, actor, login, reason) },
+		func(kind sqlFailKind, msg string) { d.fail(backend, kind.sqlstate(), msg) })
 }
 
 // maybeUpstreamTLS offers SSL to the upstream PostgreSQL. If the server accepts
