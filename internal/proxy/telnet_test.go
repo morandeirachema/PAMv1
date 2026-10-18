@@ -3,6 +3,7 @@ package proxy_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -14,7 +15,9 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
+	"github.com/morandeirachema/pamv1/internal/banner"
 	"github.com/morandeirachema/pamv1/internal/proxy"
+	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/store/memstore"
 	"github.com/morandeirachema/pamv1/internal/vault"
@@ -97,17 +100,38 @@ func telnetDevice(c net.Conn) {
 
 func telnetProxy(t *testing.T, st store.Store, v *vault.Vault, enabled bool) (string, string) {
 	t.Helper()
+	return telnetProxyWith(t, st, v, func(c *proxy.Config) { c.TelnetEnabled = enabled })
+}
+
+// telnetProxyWith is telnetProxy with telnet enabled and opt applied to the
+// proxy's configuration before it starts.
+func telnetProxyWith(t *testing.T, st store.Store, v *vault.Vault, opt func(*proxy.Config)) (string, string) {
+	t.Helper()
 	resolver, err := auth.NewResolver(st, proxyAPIKey, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	recDir := t.TempDir()
-	px, err := proxy.New(st, v, resolver, proxy.Config{HostKey: mustSigner(t), RecordingDir: recDir,
-		DialTimeout: 5 * time.Second, TelnetEnabled: enabled, ScenarioStepTimeout: 2 * time.Second})
+	cfg := proxy.Config{HostKey: mustSigner(t), RecordingDir: recDir,
+		DialTimeout: 5 * time.Second, TelnetEnabled: true, ScenarioStepTimeout: 2 * time.Second}
+	opt(&cfg)
+	px, err := proxy.New(st, v, resolver, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return serveProxy(t, px), recDir
+}
+
+// seedTelnetDevice starts the in-process telnet router and seeds it as
+// target sw-01.
+func seedTelnetDevice(t *testing.T, st store.Store, v *vault.Vault) {
+	t.Helper()
+	host, port := startTelnetDevice(t)
+	target := seedTarget(t, st, v, host, port)
+	target.Name, target.Protocol = "sw-01", "telnet"
+	if err := st.UpdateTarget(context.Background(), target); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // shellUntil opens a PTY shell through the proxy and returns its stdin and
@@ -282,4 +306,60 @@ func TestTelnetShellRight(t *testing.T) {
 	if hasAuditReason(t, st, "session.scenario", "target:sw-01") {
 		t.Fatal("the scenario ran for a refused shell")
 	}
+}
+
+// TestTelnetSessionNotice proves a telnet operator gets the session notice
+// the SSH path prints (printSessionNotice): shown to the operator, kept in the
+// recording, and audited session.consent with its digest, in the same row
+// shape as SSH's.
+func TestTelnetSessionNotice(t *testing.T) {
+	st := memstore.New()
+	v := mustVault(t)
+	seedTelnetDevice(t, st, v)
+	const notice = "This session is recorded."
+	addr, recDir := telnetProxyWith(t, st, v, func(c *proxy.Config) {
+		c.Banners = banner.New(map[string]string{"session": notice})
+	})
+
+	in, until, sess, client := shellUntil(t, addr)
+	until(notice)
+	until("router# ")
+	_, _ = io.WriteString(in, "exit\r")
+	_ = sess.Wait()
+	client.Close()
+
+	waitForAuditDetail(t, st, "session.consent", "target:sw-01 cred_user:"+upstreamUser+" mode:printed banner_sha256:"+banner.Digest(notice))
+	waitForAuditDetail(t, st, "session.record", "target:sw-01")
+	entries, _ := os.ReadDir(recDir)
+	for _, e := range entries {
+		if b, err := os.ReadFile(filepath.Join(recDir, e.Name())); err == nil && strings.Contains(string(b), notice) {
+			return
+		}
+	}
+	t.Fatal("the session notice is not in the recording")
+}
+
+// TestTelnetLiveSupervisionRefuses proves a telnet session is held to
+// mandatory live supervision like an SSH shell (the supervised gate): with
+// nobody watching, it is refused before the device is dialled, the operator
+// is told why and gets exit status 1, and session.unsupervised is audited.
+func TestTelnetLiveSupervisionRefuses(t *testing.T) {
+	st := memstore.New()
+	v := mustVault(t)
+	seedTelnetDevice(t, st, v)
+	addr, _ := telnetProxyWith(t, st, v, func(c *proxy.Config) {
+		c.Sessions, c.Live = session.NewRegistry(), session.NewHub()
+		c.RequireSupervision, c.SupervisionTimeout = true, 300*time.Millisecond
+	})
+
+	_, until, sess, client := shellUntil(t, addr)
+	defer client.Close()
+	if out := until("no supervisor attached"); strings.Contains(out, "router# ") {
+		t.Fatalf("the device was reached without a supervisor: %q", out)
+	}
+	var exit *ssh.ExitError
+	if err := sess.Wait(); !errors.As(err, &exit) || exit.ExitStatus() != 1 {
+		t.Fatalf("refused session: %v, want exit status 1", err)
+	}
+	waitForAuditDetail(t, st, "session.unsupervised", "target:sw-01 cred_user:"+upstreamUser+" timeout:300ms")
 }

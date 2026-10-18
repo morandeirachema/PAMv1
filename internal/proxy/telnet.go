@@ -11,7 +11,6 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/morandeirachema/pamv1/internal/banner"
 	"github.com/morandeirachema/pamv1/internal/expect"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -130,9 +129,7 @@ func (p *Proxy) handleTelnetSession(ctx context.Context, nc ssh.NewChannel, targ
 		close(winCh)
 	}()
 
-	if p.requireSup && !observe && !breakGlass && !p.awaitSupervision(ctx, sid) {
-		p.audit(ctx, actor, "session.unsupervised", fmt.Sprintf("target:%s cred_user:%s timeout:%s", target.Name, cred.Username, p.supTimeout))
-		fmt.Fprintln(ch.Stderr(), "PAMv1: no supervisor attached to watch this session; refused")
+	if !p.supervised(ctx, ch.Stderr(), sid, observe, breakGlass, actor, target, cred) {
 		exitStatus(ch, 1)
 		return
 	}
@@ -175,15 +172,8 @@ func (p *Proxy) handleTelnetSession(ctx context.Context, nc ssh.NewChannel, targ
 	defer p.closeSessionRecording(ctx, actor, target, cred, "telnet", rec)
 
 	// The session notice, before anything is typed into the target — as the
-	// SSH path prints it before the target is reached (review of 274-280) —
-	// on stderr, into the recording, audited with its digest.
-	if notice := p.banners.Get(banner.Session, ""); notice != "" {
-		_, _ = io.WriteString(ch.Stderr(), notice+"\r\n")
-		if rec != nil {
-			_, _ = io.WriteString(rec, notice+"\r\n")
-		}
-		p.audit(ctx, actor, "session.consent", fmt.Sprintf("target:%s cred_user:%s mode:printed banner_sha256:%s", target.Name, cred.Username, banner.Digest(notice)))
-	}
+	// SSH path prints it before the target is reached (review of 274-280).
+	p.printSessionNotice(ctx, ch.Stderr(), rec, actor, target, cred)
 
 	// The login. Nothing the target prints during it reaches the operator.
 	stream := expect.NewStream(tc)
@@ -230,19 +220,9 @@ func (p *Proxy) handleTelnetSession(ctx context.Context, nc ssh.NewChannel, targ
 	}
 	_, cerr := io.Copy(out, stream)
 	if errors.Is(cerr, errRecordingLimit) || cw.capped {
-		p.audit(ctx, actor, "session.record_limit", "target:"+target.Name+" cred_user:"+cred.Username+" reason:recording-size-cap")
+		p.auditRecordLimit(ctx, actor, target, cred)
 	}
 	exitStatus(ch, 0)
-}
-
-func reply(req *ssh.Request, ok bool) {
-	if req.WantReply {
-		_ = req.Reply(ok, nil)
-	}
-}
-
-func exitStatus(ch ssh.Channel, code uint32) {
-	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{code}))
 }
 
 // clampDim fits a terminal dimension into telnet's 16 bits; 0 (unknown)

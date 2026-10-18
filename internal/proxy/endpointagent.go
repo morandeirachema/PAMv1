@@ -249,9 +249,7 @@ func (p *Proxy) serveEndpointAgent(ctx context.Context, sconn *ssh.ServerConn, c
 		case "keepalive@openssh.com":
 			_ = req.Reply(true, nil)
 		default:
-			if req.WantReply {
-				_ = req.Reply(false, nil)
-			}
+			reply(req, false)
 		}
 	}
 	if registered {

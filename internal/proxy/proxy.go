@@ -1419,10 +1419,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	// common case (a supervisor attached before or immediately after this
 	// channel opens, including cross-replica via Phase 55's relay), so this
 	// only actually waits the first time a session goes unwatched.
-	if p.requireSup && !observe && !breakGlass && !p.awaitSupervision(ctx, sid) {
-		p.audit(ctx, actor, "session.unsupervised",
-			fmt.Sprintf("target:%s cred_user:%s timeout:%s", target.Name, cred.Username, p.supTimeout))
-		fmt.Fprintln(clientChan.Stderr(), "PAMv1: no supervisor attached to watch this session; refused")
+	if !p.supervised(ctx, clientChan.Stderr(), sid, observe, breakGlass, actor, target, cred) {
 		return
 	}
 
@@ -1443,22 +1440,8 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		}
 	}
 
-	// The session notice (Phase 276): printed to the operator before anything
-	// from the target, into the recording too, so the record shows the
-	// acknowledgement it opened with; audited with the notice's digest. On
-	// STDERR (review of 274–280): this runs before the channel says whether
-	// it is a shell, an exec or a subsystem, and text on stdout corrupted an
-	// SFTP or scp stream (the client read "This" as a packet length) and the
-	// output of `ssh target cmd > file`. An interactive terminal shows stderr
-	// all the same.
-	if notice := p.banners.Get(banner.Session, ""); notice != "" {
-		line := notice + "\r\n"
-		_, _ = io.WriteString(clientChan.Stderr(), line)
-		if rec != nil {
-			_, _ = io.WriteString(rec, line)
-		}
-		p.audit(ctx, actor, "session.consent", fmt.Sprintf("target:%s cred_user:%s mode:printed banner_sha256:%s", target.Name, cred.Username, banner.Digest(notice)))
-	}
+	// The session notice (Phase 276), before anything from the target.
+	p.printSessionNotice(ctx, clientChan.Stderr(), rec, actor, target, cred)
 
 	// Forward channel requests both directions (pty-req, shell, exec,
 	// window-change from the client; exit-status from upstream). In observer mode
@@ -1715,7 +1698,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		_, cerr = io.Copy(out, src)
 	}
 	if errors.Is(cerr, errRecordingLimit) {
-		p.audit(ctx, actor, "session.record_limit", "target:"+target.Name+" cred_user:"+cred.Username+" reason:recording-size-cap")
+		p.auditRecordLimit(ctx, actor, target, cred)
 	}
 	if errors.Is(cerr, errSFTPCaptureAbort) {
 		upChan.Close() // fail closed: unwind the whole session (audited by the watcher)
@@ -2019,10 +2002,7 @@ func answerJoinRequests(in <-chan *ssh.Request, done <-chan struct{}) {
 			if !ok {
 				return
 			}
-			ok2 := req.Type != "exec" && req.Type != "subsystem"
-			if req.WantReply {
-				req.Reply(ok2, nil)
-			}
+			reply(req, req.Type != "exec" && req.Type != "subsystem")
 		case <-done:
 			return
 		}
@@ -2129,6 +2109,51 @@ func protocolField(proto string) string {
 	return " protocol:" + proto
 }
 
+// auditRecordLimit records that a session's recording reached its byte cap,
+// which ends the session rather than letting it run unrecorded.
+func (p *Proxy) auditRecordLimit(ctx context.Context, actor string, target *store.Target, cred *store.Credential) {
+	p.audit(ctx, actor, "session.record_limit", "target:"+target.Name+" cred_user:"+cred.Username+" reason:recording-size-cap")
+}
+
+// supervised is the mandatory live-supervision gate (Phase 112) an
+// interactive SSH or telnet session passes before anything is relayed to the
+// target. It reports whether the session may proceed: always without
+// PAM_REQUIRE_LIVE_SUPERVISION, for an observer (who already IS the watching
+// role) and for break-glass (which exists for when no supervisor is
+// reachable); otherwise once a supervisor is watching sid. A refusal is
+// audited session.unsupervised and told to the operator on stderr; what else
+// the refusal does (telnet's exit status) is the caller's.
+func (p *Proxy) supervised(ctx context.Context, stderr io.Writer, sid string, observe, breakGlass bool, actor string, target *store.Target, cred *store.Credential) bool {
+	if !p.requireSup || observe || breakGlass || p.awaitSupervision(ctx, sid) {
+		return true
+	}
+	p.audit(ctx, actor, "session.unsupervised",
+		fmt.Sprintf("target:%s cred_user:%s timeout:%s", target.Name, cred.Username, p.supTimeout))
+	fmt.Fprintln(stderr, "PAMv1: no supervisor attached to watch this session; refused")
+	return false
+}
+
+// printSessionNotice prints the session notice (Phase 276), when one is set,
+// to the operator and into the recording, so the record shows the
+// acknowledgement the session opened with, and audits session.consent with
+// the notice's digest. stderr is where it goes, on every path (review of
+// 274–280): on SSH it runs before the channel says whether it is a shell, an
+// exec or a subsystem, and text on stdout corrupted an SFTP or scp stream (the
+// client read "This" as a packet length) and the output of
+// `ssh target cmd > file`. An interactive terminal shows stderr all the same.
+func (p *Proxy) printSessionNotice(ctx context.Context, stderr io.Writer, rec *Recording, actor string, target *store.Target, cred *store.Credential) {
+	notice := p.banners.Get(banner.Session, "")
+	if notice == "" {
+		return
+	}
+	line := notice + "\r\n"
+	_, _ = io.WriteString(stderr, line)
+	if rec != nil {
+		_, _ = io.WriteString(rec, line)
+	}
+	p.audit(ctx, actor, "session.consent", fmt.Sprintf("target:%s cred_user:%s mode:printed banner_sha256:%s", target.Name, cred.Username, banner.Digest(notice)))
+}
+
 // handleWinRMSession answers channel requests for one WinRM session channel: it
 // runs a "shell" as an interactive command loop and an "exec" as a single
 // command, tee'ing output into an asciicast recording and — under sid — into
@@ -2165,30 +2190,22 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 	for req := range reqs {
 		switch req.Type {
 		case "pty-req", "env", "window-change":
-			if req.WantReply {
-				req.Reply(true, nil)
-			}
+			reply(req, true)
 		case "shell":
-			if req.WantReply {
-				req.Reply(true, nil)
-			}
+			reply(req, true)
 			p.winrmShellLoop(ctx, ch, out, cw, target, cred, secret, actor, observe, sid, rs)
-			ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{0}))
+			exitStatus(ch, 0)
 			return
 		case "exec":
-			if req.WantReply {
-				req.Reply(true, nil)
-			}
+			reply(req, true)
 			var m struct{ Command string }
 			_ = ssh.Unmarshal(req.Payload, &m)
 			code := p.winrmRun(ctx, out, target, cred, secret, actor, observe, m.Command, rs, func() { p.killRegistered(sid) })
 			p.winrmCapStop(ctx, cw, ch, sid, actor, target, cred)
-			ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{uint32(code)}))
+			exitStatus(ch, uint32(code))
 			return
 		default:
-			if req.WantReply {
-				req.Reply(false, nil)
-			}
+			reply(req, false)
 		}
 	}
 }
@@ -2374,7 +2391,7 @@ func (p *Proxy) winrmCapStop(ctx context.Context, cw *capWriter, ch io.Writer, s
 	}
 	if !cw.audited {
 		cw.audited = true
-		p.audit(ctx, actor, "session.record_limit", "target:"+target.Name+" cred_user:"+cred.Username+" reason:recording-size-cap")
+		p.auditRecordLimit(ctx, actor, target, cred)
 		const notice = "PAMv1: recording size limit reached; session closed\r\n"
 		io.WriteString(ch, notice)
 		p.live.Publish(sid, []byte(notice))
@@ -2448,6 +2465,19 @@ func crlf(s string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\n", "\r\n")
 }
 
+// reply answers a channel request when its sender asked for an answer.
+func reply(req *ssh.Request, ok bool) {
+	if req.WantReply {
+		_ = req.Reply(ok, nil)
+	}
+}
+
+// exitStatus sends the RFC 4254 §6.10 exit-status of a brokered command or
+// shell, which is how an ssh client learns the code to exit with.
+func exitStatus(ch ssh.Channel, code uint32) {
+	_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Code uint32 }{code}))
+}
+
 // reqHooks intercepts specific channel requests on the client→upstream leg. A nil
 // hook forwards that request type unchanged; a hook returning false refuses the
 // request (it is not sent upstream and the client is replied to with failure).
@@ -2496,27 +2526,19 @@ func pumpRequests(in <-chan *ssh.Request, dst ssh.Channel, done <-chan struct{},
 			// A hook captures the request and reports whether to forward it; one
 			// refused by policy is not sent upstream (reply false).
 			if h.onRequest != nil && !h.onRequest(req.Type) {
-				if req.WantReply {
-					req.Reply(false, nil)
-				}
+				reply(req, false)
 				continue
 			}
 			if h.onExec != nil && req.Type == "exec" && !h.onExec(req.Payload) {
-				if req.WantReply {
-					req.Reply(false, nil)
-				}
+				reply(req, false)
 				continue
 			}
 			if h.onSubsystem != nil && req.Type == "subsystem" && !h.onSubsystem(req.Payload) {
-				if req.WantReply {
-					req.Reply(false, nil)
-				}
+				reply(req, false)
 				continue
 			}
 			okr, err := dst.SendRequest(req.Type, req.WantReply, req.Payload)
-			if req.WantReply {
-				req.Reply(okr && err == nil, nil)
-			}
+			reply(req, okr && err == nil)
 		case <-done:
 			return
 		}
