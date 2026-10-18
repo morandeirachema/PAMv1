@@ -194,6 +194,12 @@ func TestTelnetTarget(t *testing.T) {
 	if !hasAuditReason(t, st, "session.start", "protocol:telnet") {
 		t.Fatal("session.start must name the telnet protocol")
 	}
+	// The rows telnet shares with WinRM (serveSessionChannels and the session
+	// recording helpers), in their exact shape, protocol token included.
+	waitForAuditDetail(t, st, "session.end", "target:sw-01 protocol:telnet")
+	if _, rec := waitForAudit(t, st, "session.record"); !strings.HasPrefix(rec, "target:sw-01 cred_user:"+upstreamUser+" file:") || !strings.HasSuffix(rec, " protocol:telnet") {
+		t.Fatalf("session.record detail = %q", rec)
+	}
 	entries, _ := os.ReadDir(recDir)
 	var cast string
 	for _, e := range entries {

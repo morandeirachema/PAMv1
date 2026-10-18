@@ -100,6 +100,15 @@ func TestWinRMShellThroughProxy(t *testing.T) {
 	if runner.lastCmd != "whoami" {
 		t.Fatalf("winrm ran %q, want whoami", runner.lastCmd)
 	}
+
+	// The rows WinRM shares with telnet (serveSessionChannels and the session
+	// recording helpers), in their exact shape, protocol token included.
+	// session.end lands when the connection, not the channel, closes.
+	client.Close()
+	waitForAuditDetail(t, st, "session.end", "target:win-01 protocol:winrm")
+	if _, rec := waitForAudit(t, st, "session.record"); !strings.HasPrefix(rec, "target:win-01 cred_user:Administrator file:") || !strings.HasSuffix(rec, " protocol:winrm") {
+		t.Fatalf("session.record detail = %q", rec)
+	}
 }
 
 // TestWinRMShellLiveMonitor proves a WinRM session through the proxy streams to

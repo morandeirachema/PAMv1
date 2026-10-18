@@ -1433,13 +1433,8 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 	}
 	defer upChan.Close()
 
-	now := time.Now()
-	title := recording.Title(p.opaqueNames, now, target.Name, actor)
-	rec, err := newRecording(context.Background(), p.recordingDir, title, now, p.maxRecBytes, p.recKey)
+	rec, title, err := p.openSessionRecording(ctx, actor, target, cred, "")
 	if err != nil {
-		p.log.Error("recording setup failed", "actor", actor, "target", target.Name, "err", err)
-		p.audit(ctx, actor, "session.record_failed",
-			fmt.Sprintf("target:%s cred_user:%s error:%v", target.Name, cred.Username, err))
 		if p.requireRec {
 			// Through the live tee, not just stderr: a supervisor already watching
 			// this registered session must see why it ends, not an empty stream.
@@ -1744,13 +1739,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		capState.finalizeAll()
 	}
 
-	if rec != nil {
-		path, sum, n := rec.Close()
-		chain := p.chain.append(sum)
-		p.auditClosing(ctx, actor, "session.record",
-			fmt.Sprintf("target:%s cred_user:%s file:%s bytes:%d sha256:%s chain:%s",
-				target.Name, cred.Username, path, n, sum, chain))
-	}
+	p.closeSessionRecording(ctx, actor, target, cred, "", rec)
 }
 
 // directTCPIPExtra is the RFC 4254 §7.2 direct-tcpip channel-open payload a
@@ -2057,20 +2046,39 @@ func (p *Proxy) serveWinRM(ctx context.Context, sconn *ssh.ServerConn, chans <-c
 		mode = "observer"
 	}
 	p.log.Info("winrm session started", "actor", actor, "target", target.Name, "mode", mode)
-	// sid is hoisted out of the if so the command loop can tee output to the
-	// live-monitoring hub under it — for a long time it was scoped inside,
-	// which is why WinRM sessions were listable and killable but not watchable.
+	info := session.Info{
+		Actor: actor, Target: target.Name, Protocol: "winrm", Remote: remote,
+		Deadline: bounds.deadline, DeadlineReason: bounds.reason,
+	}
+	ended := func() { p.log.Info("winrm session ended", "actor", actor, "target", target.Name) }
+	// The command loop tees output to the live-monitoring hub under sid — for a
+	// long time sid did not reach it, which is why WinRM sessions were listable
+	// and killable but not watchable.
+	p.serveSessionChannels(ctx, sconn, chans, info, cred, ended, func(nc ssh.NewChannel, sid string) {
+		p.handleWinRMSession(ctx, nc, target, cred, secret, actor, observe, sid, rs)
+	})
+}
+
+// serveSessionChannels is the connection-level plumbing a brokered telnet or
+// WinRM session shares (the review of 274-280 found it typed twice). It
+// registers the connection in the live-session registry, so the session is
+// listed, watchable and killable; hands each session channel to handle under
+// that registration (any other channel type is refused); and, once the
+// connection is done, audits session.end and rotates a checked-out
+// credential — before the registry entry is removed. ended, when non-nil, runs
+// first. info.Started is stamped here, as the session enters the registry.
+func (p *Proxy) serveSessionChannels(ctx context.Context, sconn *ssh.ServerConn, chans <-chan ssh.NewChannel, info session.Info, cred *store.Credential, ended func(), handle func(nc ssh.NewChannel, sid string)) {
 	var sid string
 	if p.sessions != nil {
-		sid = p.sessions.Register(session.Info{
-			Actor: actor, Target: target.Name, Protocol: "winrm", Remote: remote, Started: time.Now(),
-			Deadline: bounds.deadline, DeadlineReason: bounds.reason,
-		}, func() { sconn.Close() })
+		info.Started = time.Now()
+		sid = p.sessions.Register(info, func() { sconn.Close() })
 		defer p.sessions.Remove(sid)
 	}
 	defer func() {
-		p.log.Info("winrm session ended", "actor", actor, "target", target.Name)
-		p.auditClosing(ctx, actor, "session.end", "target:"+target.Name+" protocol:winrm")
+		if ended != nil {
+			ended()
+		}
+		p.auditClosing(ctx, info.Actor, "session.end", "target:"+info.Target+" protocol:"+info.Protocol)
 		p.fireSessionEnd(cred.ID)
 	}()
 
@@ -2079,8 +2087,46 @@ func (p *Proxy) serveWinRM(ctx context.Context, sconn *ssh.ServerConn, chans <-c
 			nc.Reject(ssh.UnknownChannelType, "PAMv1: only session channels are proxied")
 			continue
 		}
-		p.handleWinRMSession(ctx, nc, target, cred, secret, actor, observe, sid, rs)
+		handle(nc, sid)
 	}
+}
+
+// openSessionRecording starts the asciicast recording of one SSH, WinRM or
+// telnet session channel, logging and auditing session.record_failed when it
+// cannot. proto is the protocol token the recording's audit rows carry (""
+// on the SSH path, whose rows name none). What a failure means is the
+// caller's: under PAM_REQUIRE_RECORDING each path refuses on its own stream.
+func (p *Proxy) openSessionRecording(ctx context.Context, actor string, target *store.Target, cred *store.Credential, proto string) (rec *Recording, title string, err error) {
+	now := time.Now()
+	title = recording.Title(p.opaqueNames, now, target.Name, actor)
+	rec, err = newRecording(context.Background(), p.recordingDir, title, now, p.maxRecBytes, p.recKey)
+	if err != nil {
+		p.log.Error("recording setup failed", "actor", actor, "target", target.Name, "err", err)
+		p.audit(ctx, actor, "session.record_failed",
+			fmt.Sprintf("target:%s cred_user:%s%s error:%v", target.Name, cred.Username, protocolField(proto), err))
+	}
+	return rec, title, err
+}
+
+// closeSessionRecording closes a session's recording, links its SHA-256 into
+// the tamper-evident chain and audits session.record with both. A nil rec (a
+// recording that failed and was not required) is nothing to close.
+func (p *Proxy) closeSessionRecording(ctx context.Context, actor string, target *store.Target, cred *store.Credential, proto string, rec *Recording) {
+	if rec == nil {
+		return
+	}
+	path, sum, n := rec.Close()
+	chain := p.chain.append(sum)
+	p.auditClosing(ctx, actor, "session.record",
+		fmt.Sprintf("target:%s cred_user:%s file:%s bytes:%d sha256:%s chain:%s%s", target.Name, cred.Username, path, n, sum, chain, protocolField(proto)))
+}
+
+// protocolField is the " protocol:<proto>" audit field, or nothing for "".
+func protocolField(proto string) string {
+	if proto == "" {
+		return ""
+	}
+	return " protocol:" + proto
 }
 
 // handleWinRMSession answers channel requests for one WinRM session channel: it
@@ -2095,12 +2141,8 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 	}
 	defer ch.Close()
 
-	now := time.Now()
-	rec, err := newRecording(context.Background(), p.recordingDir, recording.Title(p.opaqueNames, now, target.Name, actor), now, p.maxRecBytes, p.recKey)
+	rec, _, err := p.openSessionRecording(ctx, actor, target, cred, "winrm")
 	if err != nil {
-		p.log.Error("recording setup failed", "actor", actor, "target", target.Name, "err", err)
-		p.audit(ctx, actor, "session.record_failed",
-			fmt.Sprintf("target:%s cred_user:%s protocol:winrm error:%v", target.Name, cred.Username, err))
 		if p.requireRec {
 			// Through the live tee, not just the channel: a supervisor already
 			// subscribed to this registered session must see why it ends, not an
@@ -2109,14 +2151,7 @@ func (p *Proxy) handleWinRMSession(ctx context.Context, nc ssh.NewChannel, targe
 			return
 		}
 	}
-	defer func() {
-		if rec != nil {
-			path, sum, n := rec.Close()
-			chain := p.chain.append(sum)
-			p.auditClosing(ctx, actor, "session.record",
-				fmt.Sprintf("target:%s cred_user:%s file:%s bytes:%d sha256:%s chain:%s protocol:winrm", target.Name, cred.Username, path, n, sum, chain))
-		}
-	}()
+	defer p.closeSessionRecording(ctx, actor, target, cred, "winrm", rec)
 
 	// One writer chain for the whole session, built here so the shell loop and
 	// the per-command runner cannot drift apart: client channel + recording,

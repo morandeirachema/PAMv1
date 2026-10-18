@@ -8,13 +8,11 @@ import (
 	"io"
 	"net"
 	"strconv"
-	"time"
 
 	"golang.org/x/crypto/ssh"
 
 	"github.com/morandeirachema/pamv1/internal/banner"
 	"github.com/morandeirachema/pamv1/internal/expect"
-	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
 	"github.com/morandeirachema/pamv1/internal/telnet"
@@ -57,29 +55,16 @@ func (p *Proxy) serveTelnet(ctx context.Context, sconn *ssh.ServerConn, chans <-
 		sc = expect.DefaultLogin
 	}
 
-	var sid string
-	if p.sessions != nil {
-		sid = p.sessions.Register(session.Info{
-			Actor: actor, Target: target.Name, Protocol: "telnet", Remote: remote, Started: time.Now(),
-			Deadline: bounds.deadline, DeadlineReason: bounds.reason,
-		}, func() { sconn.Close() })
-		defer p.sessions.Remove(sid)
+	info := session.Info{
+		Actor: actor, Target: target.Name, Protocol: "telnet", Remote: remote,
+		Deadline: bounds.deadline, DeadlineReason: bounds.reason,
 	}
-	defer func() {
-		p.auditClosing(ctx, actor, "session.end", "target:"+target.Name+" protocol:telnet")
-		p.fireSessionEnd(cred.ID)
-	}()
-
-	for nc := range chans {
-		if nc.ChannelType() != "session" {
-			nc.Reject(ssh.UnknownChannelType, "PAMv1: only session channels are proxied")
-			continue
-		}
+	p.serveSessionChannels(ctx, sconn, chans, info, cred, nil, func(nc ssh.NewChannel, sid string) {
 		p.handleTelnetSession(ctx, nc, target, cred, secret, actor, observe, breakGlass, sid, sc, rights)
 		// One telnet connection per SSH connection: the target has one
 		// login, and a second channel would need a second one.
 		sconn.Close()
-	}
+	})
 }
 
 // ptyReq is the RFC 4254 §6.2 pty-req payload; windowChange is §6.7.
@@ -179,25 +164,15 @@ func (p *Proxy) handleTelnetSession(ctx context.Context, nc ssh.NewChannel, targ
 		}
 	}()
 
-	now := time.Now()
-	rec, err := newRecording(context.Background(), p.recordingDir, recording.Title(p.opaqueNames, now, target.Name, actor), now, p.maxRecBytes, p.recKey)
+	rec, _, err := p.openSessionRecording(ctx, actor, target, cred, "telnet")
 	if err != nil {
-		p.log.Error("recording setup failed", "actor", actor, "target", target.Name, "err", err)
-		p.audit(ctx, actor, "session.record_failed", fmt.Sprintf("target:%s cred_user:%s protocol:telnet error:%v", target.Name, cred.Username, err))
 		if p.requireRec {
 			fmt.Fprintln(p.teeLive(ch.Stderr(), sid), "PAMv1: session recording is unavailable; session refused")
 			exitStatus(ch, 1)
 			return
 		}
 	}
-	defer func() {
-		if rec != nil {
-			path, sum, n := rec.Close()
-			chain := p.chain.append(sum)
-			p.auditClosing(ctx, actor, "session.record",
-				fmt.Sprintf("target:%s cred_user:%s file:%s bytes:%d sha256:%s chain:%s protocol:telnet", target.Name, cred.Username, path, n, sum, chain))
-		}
-	}()
+	defer p.closeSessionRecording(ctx, actor, target, cred, "telnet", rec)
 
 	// The session notice, before anything is typed into the target — as the
 	// SSH path prints it before the target is reached (review of 274-280) —
