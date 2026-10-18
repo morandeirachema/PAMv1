@@ -1521,10 +1521,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		}
 		var m struct{ Command string }
 		_ = ssh.Unmarshal(payload, &m)
-		pat, blocked := p.guard.Blocked(m.Command)
-		if !blocked && p.allowGuard != nil && !p.allowGuard.Allowed(m.Command) {
-			pat, blocked = "not-allowed", true
-		}
+		pat, blocked := cmdguard.Check(p.guard, p.allowGuard, m.Command)
 		if blocked {
 			if rec != nil {
 				_, _ = io.WriteString(rec, "$ "+m.Command+"\r\npamv1: command blocked by policy\r\n")
@@ -2212,10 +2209,7 @@ func (p *Proxy) winrmRun(ctx context.Context, out io.Writer, target *store.Targe
 		p.audit(ctx, actor, "access.denied", "target:"+target.Name+" reason:observer-winrm cmd:"+auditCmd(command))
 		return 1
 	}
-	pat, blocked := p.guard.Blocked(command)
-	if !blocked && p.allowGuard != nil && !p.allowGuard.Allowed(command) {
-		pat, blocked = "not-allowed", true
-	}
+	pat, blocked := cmdguard.Check(p.guard, p.allowGuard, command)
 	if blocked {
 		fmt.Fprint(out, "PAMv1: command blocked by policy\r\n")
 		p.audit(ctx, actor, "command.blocked", fmt.Sprintf("target:%s via:proxy pattern:%s cmd:%s", target.Name, pat, auditCmd(command)))

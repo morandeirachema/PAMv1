@@ -100,6 +100,41 @@ func TestGuardAllowed(t *testing.T) {
 	}
 }
 
+// TestCheck pins the decision every command path shares: deny wins over allow,
+// an allow-list refusal reports NotAllowed, and a nil allow guard leaves the
+// path deny-only rather than refusing everything.
+func TestCheck(t *testing.T) {
+	deny, err := New([]string{"^rm\\b"})
+	if err != nil {
+		t.Fatalf("New deny: %v", err)
+	}
+	allow, err := New([]string{"^rm\\b", "^df\\s+-h$"})
+	if err != nil {
+		t.Fatalf("New allow: %v", err)
+	}
+	cases := []struct {
+		name        string
+		deny, allow *Guard
+		cmd         string
+		pattern     string
+		blocked     bool
+	}{
+		{"deny matches", deny, nil, "rm -rf /", "^rm\\b", true},
+		{"deny wins over allow", deny, allow, "rm -rf /", "^rm\\b", true},
+		{"allow-list holds it", deny, allow, "df -h", "", false},
+		{"allow-list refuses it", deny, allow, "uptime", NotAllowed, true},
+		{"nil allow is deny-only", deny, nil, "uptime", "", false},
+		{"nil deny, allow-list refuses", nil, allow, "uptime", NotAllowed, true},
+		{"no guards at all", nil, nil, "rm -rf /", "", false},
+	}
+	for _, c := range cases {
+		pattern, blocked := Check(c.deny, c.allow, c.cmd)
+		if pattern != c.pattern || blocked != c.blocked {
+			t.Errorf("%s: Check(%q) = (%q, %v), want (%q, %v)", c.name, c.cmd, pattern, blocked, c.pattern, c.blocked)
+		}
+	}
+}
+
 // TestParseDeny proves the deny-file loader keeps every line verbatim (New is
 // where comments/blank handling and compilation happen) and round-trips into a
 // working guard — the PAM_COMMAND_DENY_FILE path main.go uses.

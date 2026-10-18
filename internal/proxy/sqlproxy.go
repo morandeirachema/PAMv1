@@ -174,10 +174,7 @@ func sqlStepUpRefused(ctx context.Context, l *listener, pol *sqlPolicy, cl sqlCl
 // 274-280 both relay loops treated it as an ordinary refusal and relayed the
 // client's next statement, so a kill rule on SQL only ever refused.
 func sqlBlockedStatement(ctx context.Context, l *listener, pol *sqlPolicy, cl sqlClient, actor string, target *store.Target, sql string, extended bool, rs *restrict.Set) (blocked, kill bool) {
-	pat, blocked := pol.guard.Blocked(sql)
-	if !blocked && pol.allowGuard != nil && !pol.allowGuard.Allowed(sql) {
-		pat, blocked = "not-allowed", true
-	}
+	pat, blocked := cmdguard.Check(pol.guard, pol.allowGuard, sql)
 	if !blocked {
 		// The operator's own restriction set (Phase 275): a notify match is
 		// on the record and runs; a kill match refuses the statement fatally,

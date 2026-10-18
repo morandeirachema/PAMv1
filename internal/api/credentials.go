@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/auth"
+	"github.com/morandeirachema/pamv1/internal/cmdguard"
 	"github.com/morandeirachema/pamv1/internal/recording"
 	"github.com/morandeirachema/pamv1/internal/session"
 	"github.com/morandeirachema/pamv1/internal/store"
@@ -445,15 +446,12 @@ var errAuditUnavailable = errors.New("audit log unavailable")
 // reaches the target and before the credential is decrypted, so a blocked
 // command never causes a secret to exist in memory. Deny always wins when
 // both would match. The block is audited `command.blocked` with the matched
-// deny pattern (or "not-allowed" when refused by the allow-list), the same
+// deny pattern (or cmdguard.NotAllowed when refused by the allow-list), the same
 // vocabulary the session proxies use, so one query finds every refusal
 // whatever path it came in on. A nil deny guard blocks nothing; a nil allow
 // guard leaves this path deny-only, unchanged from before Phase 131.
 func (s *Server) guardCommand(ctx context.Context, actor, targetName, path, command string) error {
-	pattern, blocked := s.cmdGuard.Blocked(command)
-	if !blocked && s.cmdAllowGuard != nil && !s.cmdAllowGuard.Allowed(command) {
-		pattern, blocked = "not-allowed", true
-	}
+	pattern, blocked := cmdguard.Check(s.cmdGuard, s.cmdAllowGuard, command)
 	if !blocked {
 		// The deployment's guard passed; the caller's own restriction set
 		// (Phase 275) has the second word.

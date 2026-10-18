@@ -132,6 +132,29 @@ func (g *Guard) Allowed(cmd string) bool {
 	return false
 }
 
+// NotAllowed is the pattern Check reports for a command the allow-list refused.
+// It is what a `command.blocked` audit row carries in its `pattern:` field, so
+// one query finds every allow-list refusal whatever path it came in on.
+const NotAllowed = "not-allowed"
+
+// Check is the one command-control decision every path makes: the deny guard
+// first (deny always wins), then — only when an allow-list is configured — the
+// allow guard. It reports the matched deny pattern, or NotAllowed for a command
+// the allow-list does not hold.
+//
+// A nil allow guard leaves the path deny-only. That nil check is the point of
+// this function: Allowed on a nil Guard is false, so a caller that dropped it
+// would refuse every command on a deployment with no PAM_COMMAND_ALLOW_FILE.
+func Check(deny, allow *Guard, cmd string) (pattern string, blocked bool) {
+	if pattern, blocked = deny.Blocked(cmd); blocked {
+		return pattern, true
+	}
+	if allow != nil && !allow.Allowed(cmd) {
+		return NotAllowed, true
+	}
+	return "", false
+}
+
 // Size reports how many patterns the Guard holds (0 for a nil Guard).
 func (g *Guard) Size() int {
 	if g == nil {
