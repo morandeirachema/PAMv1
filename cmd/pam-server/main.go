@@ -993,19 +993,8 @@ func run() error {
 	// pattern.
 	var cmdGuard *cmdguard.Guard
 	if cfg.CommandDenyFile != "" {
-		denyBytes, derr := os.ReadFile(cfg.CommandDenyFile)
-		if derr != nil {
-			return fmt.Errorf("command deny file %q: %w", cfg.CommandDenyFile, derr)
-		}
-		cmdGuard, derr = cmdguard.New(cmdguard.ParseDeny(string(denyBytes)))
-		if errors.Is(derr, cmdguard.ErrNoPatterns) {
-			// Fail closed: the operator asked for this control, so silently
-			// running without it is the one outcome that must not happen. An
-			// empty file usually means an unmounted ConfigMap or a bad path.
-			return fmt.Errorf("command deny file %q yielded no usable patterns; PAM_COMMAND_DENY_FILE is set, so refusing to start without the control it asks for", cfg.CommandDenyFile)
-		}
-		if derr != nil {
-			return fmt.Errorf("command deny file %q: %w", cfg.CommandDenyFile, derr)
+		if cmdGuard, err = loadGuardFile(cfg.CommandDenyFile, "command deny file", "PAM_COMMAND_DENY_FILE"); err != nil {
+			return err
 		}
 		log.Info("command control enabled", "patterns", cmdGuard.Size())
 	}
@@ -1018,16 +1007,8 @@ func run() error {
 	// deny-only.
 	var cmdAllowGuard *cmdguard.Guard
 	if cfg.CommandAllowFile != "" {
-		allowBytes, aerr := os.ReadFile(cfg.CommandAllowFile)
-		if aerr != nil {
-			return fmt.Errorf("command allow file %q: %w", cfg.CommandAllowFile, aerr)
-		}
-		cmdAllowGuard, aerr = cmdguard.New(cmdguard.ParseDeny(string(allowBytes)))
-		if errors.Is(aerr, cmdguard.ErrNoPatterns) {
-			return fmt.Errorf("command allow file %q yielded no usable patterns; PAM_COMMAND_ALLOW_FILE is set, so refusing to start without the control it asks for", cfg.CommandAllowFile)
-		}
-		if aerr != nil {
-			return fmt.Errorf("command allow file %q: %w", cfg.CommandAllowFile, aerr)
+		if cmdAllowGuard, err = loadGuardFile(cfg.CommandAllowFile, "command allow file", "PAM_COMMAND_ALLOW_FILE"); err != nil {
+			return err
 		}
 		log.Info("command allow-list enabled", "patterns", cmdAllowGuard.Size())
 	}
@@ -1038,19 +1019,8 @@ func run() error {
 	// find out until a file left the building.
 	var sftpPathGuard *cmdguard.Guard
 	if cfg.SSHSFTPDenyFile != "" {
-		pathBytes, derr := os.ReadFile(cfg.SSHSFTPDenyFile)
-		if derr != nil {
-			return fmt.Errorf("sftp path deny file %q: %w", cfg.SSHSFTPDenyFile, derr)
-		}
-		sftpPathGuard, derr = cmdguard.New(cmdguard.ParseDeny(string(pathBytes)))
-		if errors.Is(derr, cmdguard.ErrNoPatterns) {
-			// Fail closed: the operator asked for this control, so silently
-			// running without it is the one outcome that must not happen. An
-			// empty file usually means an unmounted ConfigMap or a bad path.
-			return fmt.Errorf("sftp path deny file %q yielded no usable patterns; PAM_SSH_SFTP_DENY_FILE is set, so refusing to start without the control it asks for", cfg.SSHSFTPDenyFile)
-		}
-		if derr != nil {
-			return fmt.Errorf("sftp path deny file %q: %w", cfg.SSHSFTPDenyFile, derr)
+		if sftpPathGuard, err = loadGuardFile(cfg.SSHSFTPDenyFile, "sftp path deny file", "PAM_SSH_SFTP_DENY_FILE"); err != nil {
+			return err
 		}
 		log.Info("sftp path control enabled", "patterns", sftpPathGuard.Size())
 	}
@@ -1083,20 +1053,10 @@ func run() error {
 	// (which decides).
 	var stepupGuard *cmdguard.Guard
 	if cfg.DBStepUpFile != "" {
-		suBytes, derr := os.ReadFile(cfg.DBStepUpFile)
-		if derr != nil {
-			return fmt.Errorf("db step-up file %q: %w", cfg.DBStepUpFile, derr)
+		if stepupGuard, err = loadGuardFile(cfg.DBStepUpFile, "db step-up file", "PAM_DB_STEPUP_FILE"); err != nil {
+			return err
 		}
-		stepupGuard, derr = cmdguard.New(cmdguard.ParseDeny(string(suBytes)))
-		if errors.Is(derr, cmdguard.ErrNoPatterns) {
-			return fmt.Errorf("db step-up file %q yielded no usable patterns; PAM_DB_STEPUP_FILE is set, so refusing to start without the control it asks for", cfg.DBStepUpFile)
-		}
-		if derr != nil {
-			return fmt.Errorf("db step-up file %q: %w", cfg.DBStepUpFile, derr)
-		}
-		if stepupGuard != nil {
-			log.Info("database in-session step-up enabled", "patterns", stepupGuard.Size())
-		}
+		log.Info("database in-session step-up enabled", "patterns", stepupGuard.Size())
 	}
 
 	winrmClient := winrm.Client{HTTPS: cfg.WinRMHTTPS, Insecure: cfg.WinRMInsecure, NTLM: cfg.WinRMNTLM, Timeout: 30 * time.Second}
@@ -1926,6 +1886,29 @@ func buildAlerter(cfg *config.Config, log *slog.Logger) alert.Notifier {
 	default:
 		return alert.Multi(ns)
 	}
+}
+
+// loadGuardFile compiles a pattern file — one regular expression per line,
+// blank lines and # comments ignored — into a guard, for the four controls
+// that take one: the command deny and allow lists, the SFTP path deny list and
+// the database step-up list. label names the file in errors, env the variable
+// that set it. A bad pattern is fatal, and so is a file with no usable pattern:
+// the operator asked for the control, so silently running without it is the
+// one outcome that must not happen (an empty file usually means an unmounted
+// ConfigMap or a bad path).
+func loadGuardFile(path, label, env string) (*cmdguard.Guard, error) {
+	data, err := os.ReadFile(path) // #nosec G304 -- an operator-supplied PAM_*_FILE path, read once at startup
+	if err != nil {
+		return nil, fmt.Errorf("%s %q: %w", label, path, err)
+	}
+	g, err := cmdguard.New(cmdguard.ParseDeny(string(data)))
+	if errors.Is(err, cmdguard.ErrNoPatterns) {
+		return nil, fmt.Errorf("%s %q yielded no usable patterns; %s is set, so refusing to start without the control it asks for", label, path, env)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s %q: %w", label, path, err)
+	}
+	return g, nil
 }
 
 // splitAndTrim splits a comma-separated list, dropping empty/whitespace entries.

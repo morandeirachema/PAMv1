@@ -21,7 +21,10 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"math/big"
 	"net"
@@ -162,6 +165,36 @@ func heldAddr(t *testing.T) string {
 }
 
 // writeTemp writes content to name under a fresh temp dir and returns its path.
+// TestLoadGuardFile pins the four pattern-file controls' shared loader to the
+// exact messages each control printed when it loaded its own file: the label
+// and path on a read or compile error, and the variable that asked for the
+// control when the file holds no usable pattern.
+func TestLoadGuardFile(t *testing.T) {
+	good := writeTemp(t, "good.txt", "# comment\n^rm\\b\n\n^shutdown\n")
+	g, err := loadGuardFile(good, "command deny file", "PAM_COMMAND_DENY_FILE")
+	if err != nil || g.Size() != 2 {
+		t.Fatalf("good file: guard %v (size %d), err %v", g, g.Size(), err)
+	}
+
+	empty := writeTemp(t, "empty.txt", "# only a comment\n")
+	_, err = loadGuardFile(empty, "db step-up file", "PAM_DB_STEPUP_FILE")
+	want := fmt.Sprintf("db step-up file %q yielded no usable patterns; PAM_DB_STEPUP_FILE is set, so refusing to start without the control it asks for", empty)
+	if err == nil || err.Error() != want {
+		t.Fatalf("empty file: %v\nwant: %s", err, want)
+	}
+
+	bad := writeTemp(t, "bad.txt", "(\n")
+	_, err = loadGuardFile(bad, "sftp path deny file", "PAM_SSH_SFTP_DENY_FILE")
+	if err == nil || !strings.HasPrefix(err.Error(), fmt.Sprintf("sftp path deny file %q: command-deny pattern", bad)) {
+		t.Fatalf("bad pattern: %v", err)
+	}
+
+	_, err = loadGuardFile("/nonexistent/allow.txt", "command allow file", "PAM_COMMAND_ALLOW_FILE")
+	if err == nil || !strings.HasPrefix(err.Error(), `command allow file "/nonexistent/allow.txt": `) || !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("missing file: %v", err)
+	}
+}
+
 func writeTemp(t *testing.T, name, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)
@@ -1234,6 +1267,18 @@ func TestRunErrors(t *testing.T) {
 				return map[string]string{"PAM_COMMAND_DENY_FILE": writeTemp(t, "deny.txt", "(\n")}
 			},
 			want: "command deny file",
+		},
+		{
+			name: "command allow file missing",
+			env:  map[string]string{"PAM_COMMAND_ALLOW_FILE": "/nonexistent/allow.txt"},
+			want: "command allow file",
+		},
+		{
+			name: "command allow file without patterns fails closed",
+			setup: func(t *testing.T) map[string]string {
+				return map[string]string{"PAM_COMMAND_ALLOW_FILE": writeTemp(t, "allow.txt", "# none\n")}
+			},
+			want: "yielded no usable patterns; PAM_COMMAND_ALLOW_FILE is set",
 		},
 		{
 			name: "sftp path deny file missing",
