@@ -1484,6 +1484,13 @@ func run() error {
 	// aborts startup loudly instead of running half a control plane.
 	errc := make(chan error, 1)
 
+	// Post-session rotation (PAM_ROTATE_AFTER_SESSION) is one hook, shared by
+	// every session proxy; nil leaves rotation off.
+	var onSessionEnd func(int64)
+	if cfg.RotateAfterSession {
+		onSessionEnd = func(credID int64) { handler.RotateCredentialByID(context.Background(), credID) }
+	}
+
 	// proxyDone closes when the SSH proxy has fully drained; shutdown waits on it
 	// so in-flight sessions' closing audit events and recordings are flushed
 	// before the process (and the store) exits. Closed immediately when the proxy
@@ -1520,9 +1527,7 @@ func run() error {
 		if adopted {
 			log.Info("adopted the cluster's SSH host key from shared custody")
 		}
-		var onSessionEnd func(int64)
-		if cfg.RotateAfterSession {
-			onSessionEnd = func(credID int64) { handler.RotateCredentialByID(context.Background(), credID) }
+		if onSessionEnd != nil {
 			log.Info("post-session credential rotation enabled")
 		}
 		// Post-session forensic reconstruction (Phase 157). Wired only when
@@ -1608,18 +1613,7 @@ func run() error {
 		} else {
 			log.Warn("in-portal terminal disabled: PAM_SSH_ADDR is not reachable on loopback", "addr", cfg.SSHAddr)
 		}
-		go func() {
-			defer close(proxyDone)
-			if err := px.ListenAndServe(ctx, cfg.SSHAddr); err != nil && ctx.Err() == nil {
-				// A bind/listener failure (not graceful shutdown) is fatal: the PAM
-				// must not run without its session broker.
-				log.Error("ssh proxy stopped", "err", err)
-				select {
-				case errc <- fmt.Errorf("ssh proxy: %w", err):
-				default:
-				}
-			}
-		}()
+		serveProxy(ctx, "ssh proxy", func(ctx context.Context) error { return px.ListenAndServe(ctx, cfg.SSHAddr) }, proxyDone, errc, log)
 	}
 
 	// Database session proxies (Phase 15 PostgreSQL, Phase 53 SQL Server). Both
@@ -1656,103 +1650,56 @@ func run() error {
 		}
 	}
 
+	// The PostgreSQL and SQL Server listeners take one configuration: the same
+	// gates, guards, recording and live hub. MSSQLConfig is a conversion of the
+	// same value, so a setting cannot reach one listener and not the other.
+	sqlProxyCfg := proxy.DBConfig{
+		RecordingDir:         cfg.RecordingDir,
+		Alerter:              alerter,
+		Sessions:             sessions,
+		RequireApproval:      cfg.RequireApproval,
+		SessionMFA:           cfg.SessionMFA,
+		RequireTargetGrant:   cfg.RequireTargetGrant,
+		TicketCheck:          ticketRecheck,
+		PostureAttestor:      postureAttestor,
+		OnCallAttestor:       oncallAttestor,
+		AllowedProtocols:     splitAndTrim(cfg.AllowedProtocols),
+		RequireRecording:     cfg.RequireRecording,
+		ClientTLS:            dbClientTLS,
+		OnSessionEnd:         onSessionEnd,
+		OnBreakGlass:         handler.NoteBreakGlassSignal,
+		CommandGuard:         cmdGuard,
+		CommandAllowGuard:    cmdAllowGuard,
+		Live:                 liveHub,
+		AuthRatePerMin:       cfg.ProxyAuthRatePerMin,
+		MaxRecordingBytes:    maxRecBytes,
+		EncryptRecordings:    cfg.EncryptRecordings,
+		OpaqueRecordingNames: cfg.OpaqueRecordingNames,
+		UpstreamTLS:          dbUpstreamTLS,
+		StepUpGuard:          stepupGuard,
+		StepUp:               stepUp,
+		StepUpTTL:            cfg.DBStepUpTTL,
+	}
+
 	// PostgreSQL session proxy (Phase 15): brokers postgres targets with JIT
 	// credential injection and per-statement query audit, on its own listener.
 	if cfg.DBAddr != "off" {
-		var dbOnSessionEnd func(int64)
-		if cfg.RotateAfterSession {
-			dbOnSessionEnd = func(credID int64) { handler.RotateCredentialByID(context.Background(), credID) }
-		}
-		dbx, err := proxy.NewDB(st, v, resolver, proxy.DBConfig{
-			RecordingDir:         cfg.RecordingDir,
-			Alerter:              alerter,
-			Sessions:             sessions,
-			RequireApproval:      cfg.RequireApproval,
-			SessionMFA:           cfg.SessionMFA,
-			RequireTargetGrant:   cfg.RequireTargetGrant,
-			TicketCheck:          ticketRecheck,
-			PostureAttestor:      postureAttestor,
-			OnCallAttestor:       oncallAttestor,
-			AllowedProtocols:     splitAndTrim(cfg.AllowedProtocols),
-			RequireRecording:     cfg.RequireRecording,
-			ClientTLS:            dbClientTLS,
-			OnSessionEnd:         dbOnSessionEnd,
-			OnBreakGlass:         handler.NoteBreakGlassSignal,
-			CommandGuard:         cmdGuard,
-			CommandAllowGuard:    cmdAllowGuard,
-			Live:                 liveHub,
-			AuthRatePerMin:       cfg.ProxyAuthRatePerMin,
-			MaxRecordingBytes:    maxRecBytes,
-			EncryptRecordings:    cfg.EncryptRecordings,
-			OpaqueRecordingNames: cfg.OpaqueRecordingNames,
-			UpstreamTLS:          dbUpstreamTLS,
-			StepUpGuard:          stepupGuard,
-			StepUp:               stepUp,
-			StepUpTTL:            cfg.DBStepUpTTL,
-		})
+		dbx, err := proxy.NewDB(st, v, resolver, sqlProxyCfg)
 		if err != nil {
 			return err
 		}
-		go func() {
-			defer close(dbProxyDone)
-			if err := dbx.ListenAndServe(ctx, cfg.DBAddr); err != nil && ctx.Err() == nil {
-				log.Error("database proxy stopped", "err", err)
-				select {
-				case errc <- fmt.Errorf("database proxy: %w", err):
-				default:
-				}
-			}
-		}()
+		serveProxy(ctx, "database proxy", func(ctx context.Context) error { return dbx.ListenAndServe(ctx, cfg.DBAddr) }, dbProxyDone, errc, log)
 	}
 
 	// SQL Server session proxy (Phase 53): the TDS sibling of the PostgreSQL
 	// listener above — same gates, same guards, same recording and live hub, a
 	// different wire protocol.
 	if cfg.MSSQLAddr != "off" {
-		var msOnSessionEnd func(int64)
-		if cfg.RotateAfterSession {
-			msOnSessionEnd = func(credID int64) { handler.RotateCredentialByID(context.Background(), credID) }
-		}
-		mx, err := proxy.NewMSSQL(st, v, resolver, proxy.MSSQLConfig{
-			RecordingDir:         cfg.RecordingDir,
-			Alerter:              alerter,
-			Sessions:             sessions,
-			RequireApproval:      cfg.RequireApproval,
-			SessionMFA:           cfg.SessionMFA,
-			RequireTargetGrant:   cfg.RequireTargetGrant,
-			TicketCheck:          ticketRecheck,
-			PostureAttestor:      postureAttestor,
-			OnCallAttestor:       oncallAttestor,
-			AllowedProtocols:     splitAndTrim(cfg.AllowedProtocols),
-			RequireRecording:     cfg.RequireRecording,
-			ClientTLS:            dbClientTLS,
-			OnSessionEnd:         msOnSessionEnd,
-			OnBreakGlass:         handler.NoteBreakGlassSignal,
-			CommandGuard:         cmdGuard,
-			CommandAllowGuard:    cmdAllowGuard,
-			Live:                 liveHub,
-			AuthRatePerMin:       cfg.ProxyAuthRatePerMin,
-			MaxRecordingBytes:    maxRecBytes,
-			EncryptRecordings:    cfg.EncryptRecordings,
-			OpaqueRecordingNames: cfg.OpaqueRecordingNames,
-			UpstreamTLS:          dbUpstreamTLS,
-			StepUpGuard:          stepupGuard,
-			StepUp:               stepUp,
-			StepUpTTL:            cfg.DBStepUpTTL,
-		})
+		mx, err := proxy.NewMSSQL(st, v, resolver, proxy.MSSQLConfig(sqlProxyCfg))
 		if err != nil {
 			return err
 		}
-		go func() {
-			defer close(mssqlProxyDone)
-			if err := mx.ListenAndServe(ctx, cfg.MSSQLAddr); err != nil && ctx.Err() == nil {
-				log.Error("sql server proxy stopped", "err", err)
-				select {
-				case errc <- fmt.Errorf("sql server proxy: %w", err):
-				default:
-				}
-			}
-		}()
+		serveProxy(ctx, "sql server proxy", func(ctx context.Context) error { return mx.ListenAndServe(ctx, cfg.MSSQLAddr) }, mssqlProxyDone, errc, log)
 	}
 
 	return serveAndShutDown(ctx, stop, cfg, handler, log, errc, []proxyDrain{
@@ -1760,6 +1707,24 @@ func run() error {
 		{"database proxy", dbProxyDone},
 		{"sql server proxy", mssqlProxyDone},
 	})
+}
+
+// serveProxy runs one session listener until ctx ends, closing done when it
+// returns. A listener that stops for any other reason — a bind failure, say,
+// rather than a graceful shutdown — is fatal: it is logged as "<name>
+// stopped" and reported on errc as "<name>: <err>", because the PAM must not
+// run without a session broker it was configured to have.
+func serveProxy(ctx context.Context, name string, listen func(context.Context) error, done chan<- struct{}, errc chan<- error, log *slog.Logger) {
+	go func() {
+		defer close(done)
+		if err := listen(ctx); err != nil && ctx.Err() == nil {
+			log.Error(name+" stopped", "err", err)
+			select {
+			case errc <- fmt.Errorf("%s: %w", name, err):
+			default:
+			}
+		}
+	}()
 }
 
 // proxyDrain names one session listener whose graceful stop must finish before

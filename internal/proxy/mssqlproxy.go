@@ -60,7 +60,9 @@ const (
 // MSSQLConfig configures the SQL Server session proxy. It mirrors DBConfig
 // field for field — the two listeners share every policy knob, so an operator
 // never has to reason about one database proxy being configured differently
-// from the other.
+// from the other. pam-server builds one DBConfig and converts it
+// (MSSQLConfig(cfg)), which compiles only while the fields stay identical in
+// name, type and order: a knob added to one must be added to the other.
 type MSSQLConfig struct {
 	// Alerter (optional) is told of every session opened to a critical
 	// target (Phase 277).
