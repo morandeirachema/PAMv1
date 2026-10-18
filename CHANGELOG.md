@@ -20,7 +20,7 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 Since v0.0.79: Phase 283 (portable recording archives), Phase 284 (an
 internal refactor with no user-visible change), Phase 285 (the SQL
-refusal contract), the dependency and
+refusal contract), Phase 286 (internal: pgstore helpers), the dependency and
 base-image updates of 2026-10-14 and 2026-10-17, the fixes from a review of
 the Conjur deploy docs, and the fixes from a repository-wide audit of
 versions and documentation. Two changes need an operator step on upgrade:

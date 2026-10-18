@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-10-18 · Reflects: Phases 0–227 and 229–285 + the 2026-07 hardening passes.
+> Last updated: 2026-10-18 · Reflects: Phases 0–227 and 229–286 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -352,6 +352,13 @@ Sentinel errors `ErrNotFound` / `ErrConflict` map to HTTP/SSH errors upstream.
     `ErrConflict`, `23503` (foreign-key violation) → `ErrNotFound`, and
     `pgx.ErrNoRows` → `ErrNotFound`. So memstore and pgstore raise the *same*
     errors for the same situations.
+  - **One helper per shape.** A single-row read goes through `getOne` (no row
+    → `ErrNotFound`), a single-row write or delete through `execExpectingRow`
+    (no row affected → `ErrNotFound`), and a row shape read in more than one
+    place has one `xCols` column list and one `scanX`, so a column added to one
+    read reaches every read. The MFA enrollment's `last_totp_step` is why: a
+    read that dropped it would reset the TOTP anti-replay mark on the next
+    re-Upsert.
   - **The query tracer never logs arguments.** SQL text + rows + duration are
     traced at debug, but arguments are omitted because they carry ciphertext and
     token hashes.
@@ -1259,6 +1266,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-10-18 | Phase 286: §3.3 states pgstore's one-helper-per-shape convention (`getOne`, `execExpectingRow`, `xCols` + `scanX`). |
 | 2026-10-18 | Phase 285: §5.4 names `sqlRefuse`, the refusal table both SQL listeners share. |
 | 2026-10-18 | Phase 284 (refactor pass): §4.5 names the route-table handler builders (`pagedList`, `listAll`, `listByParent`, `deleteByID`); §4.2 says `routes()` is in `routes.go`; §5.2 the shared recording open/close; §5.5 `cmdguard.Check`. |
 | 2026-10-17 | §1: the package map gains the ten packages that were only in this change log (`accountscan`, `timeframe`, `restrict`, `banner`, `report`, `inventorycsv`, `csvcell`, `telnet`, `expect`, `recarchive`); the listeners include the SQL Server proxy; §2's flag list includes `-version`. |

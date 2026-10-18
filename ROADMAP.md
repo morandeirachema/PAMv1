@@ -8,7 +8,7 @@ Phases are listed **newest first**, from the latest release down to Phase 0; wha
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–285 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–286 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -148,6 +148,34 @@ the headline deferrals are:
 - **The remaining three Tier-3 gaps** — connector/plugin breadth, cloud CIEM, and web/SaaS session proxying — each need a real device, cloud account, or browser/SaaS console to build honestly.
 
 ---
+
+## Phase 286 — pgstore: the shared helpers where they were missed ✅
+
+*Phase 284's other finding left for later: pgstore re-typed its own
+helpers and scanned four row shapes twice by hand. That work needed a live
+PostgreSQL to verify, which only CI had. A local PostgreSQL 18, running
+the CI job's own command on a fresh database, closed that gap. The first
+mutation tried then turned up a promise nothing tested.*
+
+- [x] **A promise the contract never checked.** `SetAppGrantAlias`
+  returns `ErrConflict` when the app already uses the alias for another
+  grant. The contract checked that a second app may reuse a name, never
+  that the same app may not, so dropping pgstore's unique-violation
+  mapping left the live suite green. Both backends are now held to it.
+- [x] **The helpers.** `getOne` replaces four hand-typed copies,
+  including the two token-consuming `UPDATE … RETURNING` reads, and
+  `execExpectingRow` replaces three.
+- [x] **Named scanners** for the row shapes read twice by hand:
+  `labelRuleCols` / `scanLabelRule` (`ListLabelRules` is now
+  `labelRulesFor(nil, nil)`, the same SQL), `safeMemberCols` /
+  `scanSafeMember`, `vendorCols` / `scanVendor`, and
+  `mfaEnrollmentCols` / `scanMFAEnrollment`. The last is the one that
+  matters: only the List copy said `last_totp_step` must be scanned, or
+  a re-Upsert after a KEK rotation resets the TOTP anti-replay mark. The
+  shared scanner says it for every read, and a scanner that drops the
+  field fails the contract.
+- [x] **Living docs**: CODE-GUIDE §3.3 (one helper per shape),
+  low-level change log, and every `Reflects:` header.
 
 ## Phase 285 — The SQL refusal contract, and one table for it ✅
 
