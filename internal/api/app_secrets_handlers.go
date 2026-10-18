@@ -185,6 +185,12 @@ func (s *Server) createAppKey(w http.ResponseWriter, r *http.Request) {
 	if !checkName(w, "name", in.Name) {
 		return
 	}
+	// The owner is optional, but it is written into the audit detail
+	// ("<name> owner:<owner>"), so a present one is held to the name rule: a
+	// colon or a newline in it would forge fields in the record.
+	if !checkOptionalName(w, "owner", in.Owner) {
+		return
+	}
 	token, err := generateToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token generation failed")

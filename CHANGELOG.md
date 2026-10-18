@@ -176,6 +176,14 @@ Kubernetes provider 3 move (both under **Changed**).
   so the binary runs on the glibc it was linked against. Dependabot raises
   digests within a tag but never the Debian release, which is how the
   pin went stale.
+- **Application and SCIM key owners can no longer forge audit fields.**
+  `POST /v1/apps` and `POST /v1/scim-keys` checked a key's name but wrote
+  its optional `owner` raw into the `app.create` / `scim.key_create` audit
+  detail, so a caller holding `CapManageUsers` could add `key:value` fields
+  or a second line to the record. A present owner is now held to the rule
+  every other name follows (no colon, no control character, at most 128
+  bytes) and is refused with 422 otherwise; an empty owner is still
+  accepted. Owners already stored are not touched.
 
 **Repository history.** On 2026-10-14 the git history was rewritten to
 normalize commit authorship. No file changed: every tag points at a tree
