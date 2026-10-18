@@ -1460,7 +1460,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 			return false
 		}
 		if rec != nil {
-			_, _ = io.WriteString(rec, "pamv1: "+right+" is not granted for this target\r\n")
+			_, _ = io.WriteString(rec, "PAMv1: "+right+" is not granted for this target\r\n")
 		}
 		p.audit(ctx, actor, "session.right_denied", fmt.Sprintf("target:%s cred_user:%s right:%s", target.Name, cred.Username, right))
 		return true
@@ -1502,7 +1502,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		pat, blocked := cmdguard.Check(p.guard, p.allowGuard, m.Command)
 		if blocked {
 			if rec != nil {
-				_, _ = io.WriteString(rec, "$ "+m.Command+"\r\npamv1: command blocked by policy\r\n")
+				_, _ = io.WriteString(rec, "$ "+m.Command+"\r\nPAMv1: command blocked by policy\r\n")
 			}
 			p.audit(ctx, actor, "command.blocked", fmt.Sprintf("target:%s via:proxy pattern:%s cmd:%s", target.Name, pat, auditCmd(m.Command)))
 			return false // do not forward the exec request upstream
@@ -1512,7 +1512,7 @@ func (p *Proxy) handleSession(ctx context.Context, nc ssh.NewChannel, upstream *
 		if rm, ok := rs.Check("ssh_exec", m.Command); ok {
 			detail := fmt.Sprintf("target:%s via:proxy rule:%d pattern:%s cmd:%s", target.Name, rm.RuleID, auditValue(rm.Pattern, 128), auditCmd(m.Command))
 			if rm.Action != restrict.ActionNotify && rec != nil {
-				_, _ = io.WriteString(rec, "$ "+m.Command+"\r\npamv1: session ended by a restriction rule\r\n")
+				_, _ = io.WriteString(rec, "$ "+m.Command+"\r\nPAMv1: session ended by a restriction rule\r\n")
 			}
 			p.audit(ctx, actor, rm.AuditAction(), detail)
 			if rm.Action != restrict.ActionNotify {

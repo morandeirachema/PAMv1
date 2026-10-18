@@ -61,7 +61,7 @@ func (p *Proxy) runSSHScenario(ctx context.Context, stream *expect.Stream, upCha
 		return false
 	}
 	if rec != nil {
-		_, _ = fmt.Fprintf(rec, "pamv1: startup scenario ran in the shell (%d steps)\r\n", len(sc))
+		_, _ = fmt.Fprintf(rec, "PAMv1: startup scenario ran in the shell (%d steps)\r\n", len(sc))
 	}
 	return true
 }

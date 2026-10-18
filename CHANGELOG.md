@@ -88,6 +88,10 @@ Kubernetes provider 3 move (both under **Changed**).
 
 **Fixed.**
 
+- **Recordings say PAMv1.** Five lines the session proxy writes into a
+  recording (a refused sub-protocol right, a command blocked by policy, a
+  session ended by a restriction rule, and the two startup-scenario notes)
+  began `pamv1:`, while every message an operator sees says `PAMv1:`.
 - **Conjur values are trimmed at startup too.** The refresher trimmed what
   Conjur returned, but startup did not, so a value stored with a trailing
   newline booted as part of the key: `pamv1/api-key` set from a file left

@@ -196,7 +196,7 @@ func TestSSHStartupScenario(t *testing.T) {
 			cast += string(b)
 		}
 	}
-	if !strings.Contains(cast, "ran:id") || !strings.Contains(cast, "startup scenario ran in the shell (5 steps)") {
+	if !strings.Contains(cast, "ran:id") || !strings.Contains(cast, "PAMv1: startup scenario ran in the shell (5 steps)") {
 		t.Fatalf("recording lacks the session: %q", cast)
 	}
 	if strings.Contains(cast, upstreamSecret) || strings.Contains(cast, "[sudo]") {

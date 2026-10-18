@@ -2285,7 +2285,7 @@ sub-protocol lists do. Nine names:
   `PAM_RDP_AUDIO_IN` (`false`) — cannot be turned on by a row. A right only
   narrows.
 
-A refused request answers the client with failure, writes `pamv1: <right> is
+A refused request answers the client with failure, writes `PAMv1: <right> is
 not granted for this target` into the recording, and audits
 `session.right_denied target:… cred_user:… right:…`. The desktop viewer
 sends every guacd redirection switch explicitly from the same decision.

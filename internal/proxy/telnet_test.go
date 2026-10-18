@@ -232,7 +232,7 @@ func TestTelnetTarget(t *testing.T) {
 			cast += string(b)
 		}
 	}
-	if !strings.Contains(cast, "ran:show version") || !strings.Contains(cast, "by its startup scenario (4 steps)") {
+	if !strings.Contains(cast, "ran:show version") || !strings.Contains(cast, "PAMv1: logged in to sw-01 by its startup scenario (4 steps)") {
 		t.Fatalf("recording lacks the session: %q", cast)
 	}
 	if strings.Contains(cast, upstreamSecret) || strings.Contains(cast, "Router\\r\\n") || strings.Contains(cast, "Password") {

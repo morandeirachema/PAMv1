@@ -199,7 +199,7 @@ func (p *Proxy) handleTelnetSession(ctx context.Context, nc ssh.NewChannel, targ
 	cw := &capWriter{w: recWriter(ch, rec)}
 	out := p.teeLive(cw, sid)
 	if rec != nil {
-		_, _ = io.WriteString(rec, fmt.Sprintf("pamv1: logged in to %s by its startup scenario (%d steps)\r\n", target.Name, len(sc)))
+		_, _ = io.WriteString(rec, fmt.Sprintf("PAMv1: logged in to %s by its startup scenario (%d steps)\r\n", target.Name, len(sc)))
 	}
 
 	go func() {
