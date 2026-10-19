@@ -12894,7 +12894,7 @@ The first [Tier-2 competitive-coverage gap](README.md#coverage-vs-commercial-pam
 
 ## Phase 18 — Conjur secret sourcing (alternative to SOPS) ✅
 
-Let PAMv1 source its **own** bootstrap secrets from [CyberArk Conjur](https://www.conjur.org/) at runtime — the runtime-broker counterpart to the SOPS GitOps sealing (Phase 14). **Both ship; SOPS stays the zero-dependency default**, Conjur is opt-in (`PAM_CONJUR_URL`). This is the same philosophy PAMv1 already applies to its KEK (Vault-Transit / AWS-KMS / PKCS#11) — externalize the root of trust — now applied to the secret *values*.
+Let PAMv1 source its **own** bootstrap secrets from [CyberArk Conjur](https://github.com/cyberark/conjur) at runtime — the runtime-broker counterpart to the SOPS GitOps sealing (Phase 14). **Both ship; SOPS stays the zero-dependency default**, Conjur is opt-in (`PAM_CONJUR_URL`). This is the same philosophy PAMv1 already applies to its KEK (Vault-Transit / AWS-KMS / PKCS#11) — externalize the root of trust — now applied to the secret *values*.
 
 - [x] **Hand-rolled Conjur client** (`internal/conjur`, no new dependency — the two REST endpoints PAMv1 needs, like the MCP/SPIFFE hand-rolls): authenticate + read secret, over TLS with an optional CA bundle
 - [x] **Two authenticators**: `authn-api-key` (host login + API key) and **`authn-jwt`** — the pod presents a Kubernetes projected service-account token, so **no bootstrap secret lives in Git at all** (reuses the JWT posture from `oidc`/`agentid`)
