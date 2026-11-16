@@ -10,6 +10,7 @@ package samltest
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -27,6 +28,7 @@ import (
 	"github.com/beevik/etree"
 	crewjam "github.com/crewjam/saml"
 	"github.com/crewjam/saml/logger"
+	dsig "github.com/russellhaering/goxmldsig"
 )
 
 // IdP is a running in-process identity provider.
@@ -38,6 +40,12 @@ type IdP struct {
 	// Key/Cert are the IdP's signing key pair (self-signed).
 	Key  *rsa.PrivateKey
 	Cert *x509.Certificate
+	// Reshape, when set, edits the assertion's XML before the IdP signs it, so
+	// a test can send a shape that is malformed yet carries a valid IdP
+	// signature: what a buggy or compromised IdP could send, and what Tamper
+	// (which edits after signing) cannot produce. Set it before Login. A
+	// reshaped assertion is never encrypted.
+	Reshape func(assertion *etree.Element)
 
 	mu      sync.Mutex
 	session *crewjam.Session
@@ -150,11 +158,34 @@ func (i *IdP) Login(t *testing.T, redirectURL string) Response {
 	if err := (crewjam.DefaultAssertionMaker{}).MakeAssertion(req, session); err != nil {
 		t.Fatalf("samltest: make assertion: %v", err)
 	}
+	if i.Reshape != nil {
+		req.AssertionEl = i.signReshaped(t, req.Assertion.Element())
+	}
 	form, err := req.PostBinding()
 	if err != nil {
 		t.Fatalf("samltest: post binding: %v", err)
 	}
 	return Response{URL: form.URL, SAMLResponse: form.SAMLResponse, RelayState: form.RelayState}
+}
+
+// signReshaped applies Reshape to an assertion element and signs the result
+// the way IdpAuthnRequest.MakeAssertionEl does: an enveloped signature with
+// the IdP's key, under exclusive canonicalization with an empty prefix list.
+func (i *IdP) signReshaped(t *testing.T, el *etree.Element) *etree.Element {
+	t.Helper()
+	i.Reshape(el)
+	ctx := dsig.NewDefaultSigningContext(dsig.TLSCertKeyStore(tls.Certificate{
+		Certificate: [][]byte{i.Cert.Raw}, PrivateKey: i.Key, Leaf: i.Cert,
+	}))
+	ctx.Canonicalizer = dsig.MakeC14N10ExclusiveCanonicalizerWithPrefixList("")
+	if err := ctx.SetSignatureMethod(dsig.RSASHA256SignatureMethod); err != nil {
+		t.Fatalf("samltest: signature method: %v", err)
+	}
+	signed, err := ctx.SignEnveloped(el)
+	if err != nil {
+		t.Fatalf("samltest: sign reshaped assertion: %v", err)
+	}
+	return signed
 }
 
 // Tamper decodes a SAMLResponse form value, lets fn edit the XML document, and

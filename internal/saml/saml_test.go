@@ -374,3 +374,67 @@ func TestSignatureWrappingClassic(t *testing.T) {
 		t.Fatalf("forged assertion's claims were used: %+v", claims)
 	}
 }
+
+// TestAdvisoryGO20266909 pins the two flaws of GO-2026-6909 as fixed in the
+// crewjam/saml release PAMv1 builds against (v0.5.2), on assertions the IdP
+// has validly signed, so nothing is refused for a broken signature. A signed
+// assertion missing an optional element the checks need must be refused, not
+// panic the handler; and a NameID from a foreign XML namespace must never
+// become the authenticated subject. On v0.5.1 the Subject, Conditions and
+// SubjectConfirmationData cases panic and the NameID is spoofed; the Issuer
+// case never was vulnerable (the advisory's wording; Issuer is a value field)
+// but is the precondition it names, so it stays. The vulnerability database
+// lists no fixed version yet, so govulncheck still reports the advisory; this
+// test is why CI accepts it (.github/govulncheck-accepted.txt, Phase 287).
+func TestAdvisoryGO20266909(t *testing.T) {
+	remove := func(path string) func(*etree.Element) {
+		return func(a *etree.Element) {
+			el := a.FindElement(path)
+			if el == nil {
+				t.Fatalf("assertion has no %s to remove", path)
+			}
+			el.Parent().RemoveChild(el)
+		}
+	}
+	run := func(t *testing.T, reshape func(*etree.Element)) (*saml.Claims, error) {
+		t.Helper()
+		sp, idp := newSP(t, nil)
+		idp.Reshape = reshape
+		requestID, resp := login(t, sp, idp)
+		return sp.ParseResponse(resp.SAMLResponse, requestID)
+	}
+	// Sanity: a reshape that changes nothing still validates, so the refusals
+	// below come from the shape and not from how the harness signs.
+	if claims, err := run(t, func(*etree.Element) {}); err != nil || claims.NameID != "alice@corp.test" {
+		t.Fatalf("unchanged signed assertion should validate: %+v, %v", claims, err)
+	}
+	for name, reshape := range map[string]func(*etree.Element){
+		"no Issuer":                  remove("./Issuer"),
+		"no Subject":                 remove("./Subject"),
+		"no Conditions":              remove("./Conditions"),
+		"no SubjectConfirmationData": remove(".//SubjectConfirmationData"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if claims, err := run(t, reshape); err == nil {
+				t.Fatalf("signed assertion with %s accepted: %+v", name, claims)
+			}
+		})
+	}
+	t.Run("foreign-namespace NameID", func(t *testing.T) {
+		claims, err := run(t, func(a *etree.Element) {
+			subject := a.FindElement("./Subject")
+			nameID := subject.FindElement("./NameID")
+			foreign := etree.NewElement("x:NameID")
+			foreign.CreateAttr("xmlns:x", "urn:example:foreign")
+			foreign.SetText("admin@corp.test")
+			subject.InsertChildAt(nameID.Index(), foreign)
+			subject.RemoveChild(nameID)
+		})
+		if err != nil {
+			return // refused outright: fine
+		}
+		if claims.NameID == "admin@corp.test" || claims.Name == "admin@corp.test" {
+			t.Fatalf("foreign-namespace NameID became the subject: %+v", claims)
+		}
+	})
+}
