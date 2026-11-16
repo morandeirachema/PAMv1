@@ -32,7 +32,7 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
 # Debian 13: distroless updates only its debian13 images, and stopped updating
 # the debian12 tags this used to pin. Dependabot raises the digest within a tag,
 # never the Debian release, so moving to the next one is a deliberate edit here.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
 COPY --from=build /out/pam-server /pam-server
 # Every listener the server can open, at its default address: the portal/API,
 # the SSH session proxy, the PostgreSQL proxy and the SQL Server proxy. EXPOSE is
