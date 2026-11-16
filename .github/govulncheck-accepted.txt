@@ -1,0 +1,10 @@
+# Advisories govulncheck reports as reachable that the CI gate accepts.
+#
+# One entry per line: the advisory ID, then why PAMv1 is not affected and
+# where the proof lives (a test that fails on the vulnerable code, or the
+# reasoning). An entry is a claim, not a snooze: it must be true of the
+# dependency version go.mod pins today. CI warns once an entry is no longer
+# reported (the database caught up, or the code no longer reaches it), and the
+# entry is then removed. Every other reachable advisory still fails the build.
+
+GO-2026-6909  crewjam/saml v0.5.2 fixes both flaws (crewjam/saml#679, #675); the record lists no fixed version yet (golang/vulndb#6909, CL 861981). Proof: internal/saml TestAdvisoryGO20266909, which fails on v0.5.1. Phase 287.

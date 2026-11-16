@@ -29,10 +29,33 @@ jobs:
           "$(go env GOPATH)/bin/staticcheck" ./...
       - name: govulncheck
         # Fails the build on a KNOWN vulnerability that our code actually reaches
-        # (in a dependency or the Go stdlib).
+        # (in a dependency or the Go stdlib), unless the advisory is listed in
+        # .github/govulncheck-accepted.txt with the proof that PAMv1 is not
+        # affected. "Reached" is what the text report calls "your code is
+        # affected": a finding whose trace starts at a function. An accepted
+        # entry that is no longer reported is a warning, so it gets removed.
+        # shell: bash adds pipefail, so a jq failure cannot read as "nothing reached".
+        shell: bash
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          "$(go env GOPATH)/bin/govulncheck" ./...
+          gv="$(go env GOPATH)/bin/govulncheck"
+          "$gv" -format json ./... > "$RUNNER_TEMP/govulncheck.json"
+          jq -r 'select(.finding.trace[0].function != null) | .finding.osv' \
+            "$RUNNER_TEMP/govulncheck.json" | sort -u > "$RUNNER_TEMP/reached"
+          { grep -oE '^GO-[0-9]{4}-[0-9]+' .github/govulncheck-accepted.txt || true; } \
+            | sort -u > "$RUNNER_TEMP/accepted"
+          for id in $(comm -13 "$RUNNER_TEMP/reached" "$RUNNER_TEMP/accepted"); do
+            echo "::warning::$id is accepted in .github/govulncheck-accepted.txt but no longer reported; remove the entry"
+          done
+          for id in $(comm -12 "$RUNNER_TEMP/reached" "$RUNNER_TEMP/accepted"); do
+            echo "$id reached, accepted: $(grep "^$id " .github/govulncheck-accepted.txt)"
+          done
+          blocking=$(comm -23 "$RUNNER_TEMP/reached" "$RUNNER_TEMP/accepted")
+          if [ -n "$blocking" ]; then
+            "$gv" ./... || true
+            for id in $blocking; do echo "::error::$id is reached and not accepted"; done
+            exit 1
+          fi
       - name: gosec
         # Security static analysis. Deliberate findings are recorded inline with
         # `#nosec Gxxx -- reason`. Excluded rules are pervasively-deliberate or noisy
