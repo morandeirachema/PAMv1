@@ -8,7 +8,7 @@ Phases are listed **newest first**, from the latest release down to Phase 0; wha
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–286 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–287 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -148,6 +148,35 @@ the headline deferrals are:
 - **The remaining three Tier-3 gaps** — connector/plugin breadth, cloud CIEM, and web/SaaS session proxying — each need a real device, cloud account, or browser/SaaS console to build honestly.
 
 ---
+
+## Phase 287 — GO-2026-6909: proved fixed, and govulncheck's accepted list ✅
+
+*`govulncheck` started failing every run on GO-2026-6909, two flaws in
+`crewjam/saml` (a nil-pointer panic in `validateAssertion`, a
+namespace-blind `Subject.NameID`), reached from `saml.Provider.ParseResponse`.
+The release PAMv1 had just moved to, v0.5.2, fixes both; the advisory's
+record lists no fixed version, so every release reads as affected. The
+correction is pending upstream (golang/vulndb#6909, CL 861981).*
+
+- [x] **Proof, not a snooze.** `TestAdvisoryGO20266909` sends assertions
+  the IdP has validly signed but shaped as the advisory describes: no
+  `Subject`, no `Conditions`, no `SubjectConfirmationData`, no `Issuer`,
+  and a `<NameID>` in a foreign namespace. v0.5.2 refuses each and never
+  takes the foreign NameID as the subject. Swapped back to v0.5.1, the
+  same test panics on the three missing elements and authenticates the
+  spoofed NameID. (The `Issuer` case was never vulnerable: the field is a
+  value, as the reporter later agreed. It stays as the advisory's stated
+  precondition.)
+- [x] **A malformed shape with a real signature.** `samltest.IdP.Reshape`
+  edits an assertion before the IdP signs it: what a buggy or compromised
+  IdP could send, which `Tamper` (editing after signing) cannot produce.
+- [x] **The gate reads a list.** The `govulncheck` step takes the reached
+  advisories from its JSON output and fails only on those not in
+  `.github/govulncheck-accepted.txt`, where each entry says why PAMv1 is
+  not affected and where the proof is. An entry no longer reported is a
+  warning, so it is removed once the record is corrected.
+- [x] **Living docs**: CODE-GUIDE (CI gates), ARCHITECTURE-LOW-LEVEL,
+  CONTRIBUTING, SECURITY, CHANGELOG, and every `Reflects:` header.
 
 ## Phase 286 — pgstore: the shared helpers where they were missed ✅
 

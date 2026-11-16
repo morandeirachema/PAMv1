@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-10-18 · Reflects: Phases 0–227 and 229–286 + the 2026-07 hardening passes.
+> Last updated: 2026-11-16 · Reflects: Phases 0–227 and 229–287 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -1206,7 +1206,9 @@ Tests exercise **real behavior on the security-critical path**, not mocks of it:
   memstore and, in CI, a live PostgreSQL.
 - The analytics engine is a pure function, so its tests are deterministic.
 - CI (`.github/workflows/ci.yml`) gates on `gofmt -l`, `go vet`, `staticcheck`,
-  `govulncheck`, `gosec` (with `G304`/`G101` enforced — deliberate exceptions
+  `govulncheck` (a reached advisory fails unless
+  `.github/govulncheck-accepted.txt` lists it with the proof PAMv1 is not
+  affected; a stale entry warns), `gosec` (with `G304`/`G101` enforced — deliberate exceptions
   carry a `#nosec Gxxx -- reason`), `go build`, a **`fuzz smoke`** step that
   fuzzes the TDS and SFTP wire parsers ~20s each (their seed corpus also runs as
   a normal test), `go test -race`, a Docker image build, the live-Postgres store
@@ -1266,6 +1268,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-11-16 | Phase 287: the CI-gate list states `govulncheck`'s accepted-advisory list. |
 | 2026-10-18 | Phase 286: §3.3 states pgstore's one-helper-per-shape convention (`getOne`, `execExpectingRow`, `xCols` + `scanX`). |
 | 2026-10-18 | Phase 285: §5.4 names `sqlRefuse`, the refusal table both SQL listeners share. |
 | 2026-10-18 | Phase 284 (refactor pass): §4.5 names the route-table handler builders (`pagedList`, `listAll`, `listByParent`, `deleteByID`); §4.2 says `routes()` is in `routes.go`; §5.2 the shared recording open/close; §5.5 `cmdguard.Check`. |

@@ -80,7 +80,9 @@ already been swept:
 - CI gates every change on `gofmt`, `go vet`, `staticcheck`, `govulncheck`,
   `gosec`, `go test -race`, a live-PostgreSQL store contract, a PKCS#11 build
   against SoftHSM2, and a check that the committed SOPS example really is
-  encrypted.
+  encrypted. A reachable advisory that does not apply is accepted only in
+  [.github/govulncheck-accepted.txt](.github/govulncheck-accepted.txt),
+  each entry with its proof.
 - [docs/AGENT-THREAT-MODEL.md](docs/AGENT-THREAT-MODEL.md) maps the AI-agent
   broker against the OWASP LLM Top 10, and records which test proves each control.
 

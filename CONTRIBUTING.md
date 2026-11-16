@@ -36,7 +36,8 @@ go test -race ./...           # what CI runs
 gofmt -l .                    # must print nothing
 go vet ./...
 staticcheck ./...             # go install honnef.co/go/tools/cmd/staticcheck@latest
-govulncheck ./...             # go install golang.org/x/vuln/cmd/govulncheck@latest
+govulncheck ./...             # go install golang.org/x/vuln/cmd/govulncheck@latest; CI accepts
+                              #   the advisories in .github/govulncheck-accepted.txt
 gosec -confidence high -exclude=G104,G115,G304,G306,G101 ./...
 go run ./cmd/archgen          # regenerates docs/ARCHITECTURE-DIAGRAMS.md; CI diffs it
 ```
