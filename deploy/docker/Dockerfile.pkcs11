@@ -14,7 +14,7 @@
 # the comment there. Both stages are Debian 13 (trixie): the cgo binary links
 # against the build stage's glibc and must run on the same one.
 
-FROM golang:1.27-trixie@sha256:47667934874913a449b96faa7ef4777fa285d9ec29126ee80ed61c45b7cccf0e AS build
+FROM golang:1.27-trixie@sha256:c65ecfe613b539ac74c62a4c3b2c27e8f8a6076384c8f27e8a3c0f3be17cc385 AS build
 # Stamped exactly as the default image stamps them. Without these the PKCS#11
 # build reported `pam-server dev (none)` from `-version`, from the startup log
 # and from the pam_build_info metric — so the one deployment flavour used with an
