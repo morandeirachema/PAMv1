@@ -8,7 +8,7 @@ Phases are listed **newest first**, from the latest release down to Phase 0; wha
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–287 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–288 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -148,6 +148,54 @@ the headline deferrals are:
 - **The remaining three Tier-3 gaps** — connector/plugin breadth, cloud CIEM, and web/SaaS session proxying — each need a real device, cloud account, or browser/SaaS console to build honestly.
 
 ---
+
+## Phase 288 — crewjam/saml 0.6.3, and what it decides about an assertion ✅
+
+*Dependabot's weekly PR (#479) carried `crewjam/saml` 0.5.2 -> 0.6.3 beside
+five routine updates. It is 219 upstream commits, and the Service Provider
+file doubled in size: not a patch to land on a green check. The other five
+landed on their own; this one was read, and each difference PAMv1 inherits
+was measured on both versions before it was pinned.*
+
+- [x] **Measured, then pinned.** `TestAssertionShape` sends assertions the
+  in-process IdP has validly signed, so each verdict is the library's
+  reading of the Web Browser SSO profile and not a broken signature.
+  **Stricter:** a login needs an `AuthnStatement`, a Subject identifier,
+  `Version="2.0"` and an `IssueInstant` that is not in the future.
+  **Looser, as the profile reads:** one valid bearer `SubjectConfirmation`
+  is enough (0.5.2 required every confirmation to pass, bearer or not), and
+  an omitted `Conditions` `NotOnOrAfter` is no expiry. That last one stays
+  bounded: the bearer confirmation's own `NotOnOrAfter` still refuses, and
+  the test proves it. Seven of the nine cases fail on 0.5.2.
+- [x] **What PAMv1 sends is unchanged**, except one thing. The
+  `AuthnRequest` and the keyless SP metadata are identical on both versions
+  apart from IDs and timestamps. With an SP key pair, the metadata now lists AES-GCM ahead of
+  AES-CBC, and an IdP that follows the order encrypts with authenticated
+  encryption (`TestMetadata`, `TestEncryptedAssertion`). An IdP that
+  imported the old metadata keeps its choice until it is re-imported.
+- [x] **Key transport, proven.** `TestEncryptedAssertionKeyTransport`
+  reads the algorithm off the wire: RSA-OAEP is decrypted in both
+  namespaces (SHA-1 and SHA-256 digests), RSA PKCS#1 v1.5 (`rsa-1_5`) is
+  refused. That was already true on 0.5.2, and PROTOCOLS-AND-CRYPTO said
+  the opposite; the doc is corrected.
+- [x] **One dependency fewer.** `mattermost/xml-roundtrip-validator`
+  leaves `go.mod`: the library carries its own round-trip check, still run
+  before a Response is parsed.
+- [x] **GO-2026-6909 is still reported** for 0.6.3, since the record still
+  lists no fixed version. The accepted entry stays and names the pinned
+  release; `TestAdvisoryGO20266909` passes unchanged.
+- [x] **Offered by 0.6, deliberately not turned on.** Each would refuse
+  logins that work today, so each is a decision for a deployment, not a
+  default to slip in with a version bump: `RejectSHA1Signatures`,
+  `RejectUnknownConditions`, `RequireSignedResponseForCBC` (the library's
+  own note: many IdPs sign only the assertion and encrypt it with AES-CBC),
+  `RejectExpiredIDPMetadata`, and `ReplayCache`. On the last: PAMv1 takes
+  only SP-initiated responses, each bound to a single-use request ID in the
+  browser's state cookie, so the cache would add a second check rather than
+  the first.
+- [x] **Living docs**: PROTOCOLS-AND-CRYPTO (§2.8's row, the primitives
+  table), ADMIN-GUIDE (SAML notes), ARCHITECTURE-LOW-LEVEL, docs/README,
+  CHANGELOG, and every `Reflects:` header.
 
 ## Phase 287 — GO-2026-6909: proved fixed, and govulncheck's accepted list ✅
 

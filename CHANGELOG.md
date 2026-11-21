@@ -21,12 +21,14 @@ file records **releases**: the tagged, signed points you can actually deploy.
 Since v0.0.79: Phase 283 (portable recording archives), Phase 284 (an
 internal refactor with no user-visible change), Phase 285 (the SQL
 refusal contract), Phase 286 (internal: pgstore helpers), Phase 287
-(govulncheck's accepted-advisory list), the dependency and base-image
-updates of 2026-10-14, 2026-10-17 and 2026-11-16, the fixes from a review of
-the Conjur deploy docs, and the fixes from a repository-wide audit of
+(govulncheck's accepted-advisory list), Phase 288 (the SAML library at
+0.6.3), the dependency and base-image
+updates of 2026-10-14, 2026-10-17, 2026-11-16 and 2026-11-21, the fixes from
+a review of the Conjur deploy docs, and the fixes from a repository-wide audit of
 versions and documentation. Two changes need an operator step on upgrade:
 PostgreSQL 18 under docker-compose, and Terraform state from before the
-Kubernetes provider 3 move (both under **Changed**).
+Kubernetes provider 3 move (both under **Changed**). SAML deployments
+should read the first entry under **Changed**.
 
 **Added.**
 
@@ -42,6 +44,26 @@ Kubernetes provider 3 move (both under **Changed**).
 
 **Changed.**
 
+- **SAML: `crewjam/saml` 0.5.2 → 0.6.3** (#479, Phase 288). The library
+  decides more about a signed assertion than it did. Now refused: an
+  assertion with no `AuthnStatement`, with no Subject identifier, with a
+  `Version` other than 2.0, or with an `IssueInstant` in the future.
+  Now accepted: an assertion whose `Conditions` omits `NotOnOrAfter` (the
+  bearer confirmation's `NotOnOrAfter` still bounds it), and one carrying
+  extra `SubjectConfirmation` elements beside a valid bearer one. An IdP
+  that issues a normal login assertion is unaffected. With an SP key pair,
+  the SP metadata lists AES-GCM ahead of AES-CBC; re-import it at the IdP
+  to have assertions encrypted with AES-GCM. `rsa-1_5` key transport is
+  refused, as before. `mattermost/xml-roundtrip-validator` is no longer a
+  dependency.
+- **Go modules** (#480, five of the six updates in #479). `aws-sdk-go-v2`
+  1.47.8 → 1.48.0 (`config` 1.33.16 → 1.33.18, `service/kms` 1.62.5 →
+  1.62.6), `jackc/pgx/v5` 5.12.0 → 5.13.0 and `golang.org/x/crypto`
+  0.58.0 → 0.59.0.
+- **Base images** (#480). Refreshed digests for `golang:1.27-alpine` and
+  `golang:1.27-trixie` (both now the Go 1.27.4 builds, under
+  **Security**), `distroless/static-debian13` and
+  `distroless/base-debian13`.
 - **Go modules** (#477). `aws-sdk-go-v2` 1.47.3 → 1.47.8 (`config` 1.33.9 →
   1.33.16, `service/kms` 1.61.4 → 1.62.5), `fxamacker/cbor/v2` 2.9.6 →
   2.10.0, `jackc/pgx/v5` 5.11.0 → 5.12.0, `golang.org/x/sys` 0.49.0 →
@@ -203,6 +225,13 @@ Kubernetes provider 3 move (both under **Changed**).
 
 **Security.**
 
+- **Images built with Go 1.27.4** (#480). The v0.0.79 image was built
+  with Go 1.27.1 (its SBOM records it), which predates two standard-library
+  fixes PAMv1's code reaches: GO-2026-6809 (`crypto/x509` did not distrust
+  compromised intermediate certificates; fixed in 1.27.3) and GO-2026-6859
+  (an HTTP/1 server crash from a `MaxBytesReader` header race in
+  `net/http`; fixed in 1.27.4). Both builder images are now pinned to
+  their 1.27.4 builds.
 - **SAML: GO-2026-6909 closed** (#477, Phase 287). `crewjam/saml` 0.5.1
   panicked on a signed assertion missing `Subject`, `Conditions` or
   `SubjectConfirmationData`, and took a `<NameID>` from any XML namespace

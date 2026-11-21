@@ -4,7 +4,7 @@
 # describes what the other shipped. Dependabot watches this directory weekly and
 # raises the digest, so the pin is maintained rather than merely frozen — which is
 # the same bargain the deployment manifests make with the PAMv1 image tag itself.
-FROM golang:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS build
+FROM golang:1.27-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS build
 # VERSION and COMMIT are stamped into the binary so a running container can say
 # what it is (`pam-server -version`, the startup log, and the pam_build_info
 # metric). They default to a local-build marker; the release workflow passes the
@@ -32,7 +32,7 @@ RUN --mount=type=cache,target=/go/pkg/mod,sharing=locked \
 # Debian 13: distroless updates only its debian13 images, and stopped updating
 # the debian12 tags this used to pin. Dependabot raises the digest within a tag,
 # never the Debian release, so moving to the next one is a deliberate edit here.
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
 COPY --from=build /out/pam-server /pam-server
 # Every listener the server can open, at its default address: the portal/API,
 # the SSH session proxy, the PostgreSQL proxy and the SQL Server proxy. EXPOSE is
