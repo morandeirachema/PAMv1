@@ -4,7 +4,7 @@
 # describes what the other shipped. Dependabot watches this directory weekly and
 # raises the digest, so the pin is maintained rather than merely frozen — which is
 # the same bargain the deployment manifests make with the PAMv1 image tag itself.
-FROM golang:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS build
+FROM golang:1.27-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS build
 # VERSION and COMMIT are stamped into the binary so a running container can say
 # what it is (`pam-server -version`, the startup log, and the pam_build_info
 # metric). They default to a local-build marker; the release workflow passes the
