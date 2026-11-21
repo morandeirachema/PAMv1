@@ -8,7 +8,7 @@ Phases are listed **newest first**, from the latest release down to Phase 0; wha
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–287 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–289 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -148,6 +148,84 @@ the headline deferrals are:
 - **The remaining three Tier-3 gaps** — connector/plugin breadth, cloud CIEM, and web/SaaS session proxying — each need a real device, cloud account, or browser/SaaS console to build honestly.
 
 ---
+
+## Phase 289 — v0.0.80 ✅
+
+Releases **283–288**: portable recording archives, the refactor pass and
+the SQL refusal contract, the pgstore helpers, the `govulncheck` accepted
+list, and the SAML library at 0.6.3. **No migration** (high-water stays
+`0068`), routes **237 -> 240**, `store.Store` unchanged at **243**, no new
+environment variable.
+
+*Why now.* v0.0.79's image was built with Go 1.27.1 (its SBOM records it)
+and `crewjam/saml` 0.5.1. That is two standard-library advisories PAMv1's
+code reaches (GO-2026-6809, GO-2026-6859) and GO-2026-6909 in the form
+that is actually vulnerable. `main` had all three fixed, on no tag.
+
+- [ ] **v0.0.80** through the test-gated pipeline; image
+  `ghcr.io/morandeirachema/pamv1:0.0.80`, digest `TBD` until the digest PR
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm
+  chart `version` 0.0.79 -> **0.0.80**, tracking the app version
+- [x] Both builder images pinned to their Go 1.27.4 builds, both runtime
+  images to their current digests (#480), so the release is built with the
+  toolchain CI tests with
+- [x] Both READMEs restated; every `Reflects:` header, both READMEs' ranges,
+  `docs/README.md`'s release token, the NIS2 evidence row, this banner and
+  CHANGELOG's `[Unreleased]` link — `TestDocHeadersAgree` and
+  `TestReleaseDigestsAgree` enforced; README's status digest reads `TBD`
+- [x] `CHANGELOG.md` `[0.0.80]` carries the two upgrade steps (PostgreSQL 18
+  under docker-compose, Terraform state from before the Kubernetes provider
+  3 move) and what changes for a SAML deployment
+- [ ] The tag is pushed only **after** this PR is merged, with the
+  operator's go-ahead
+
+## Phase 288 — crewjam/saml 0.6.3, and what it decides about an assertion ✅
+
+*Dependabot's weekly PR (#479) carried `crewjam/saml` 0.5.2 -> 0.6.3 beside
+five routine updates. It is 219 upstream commits, and the Service Provider
+file doubled in size: not a patch to land on a green check. The other five
+landed on their own; this one was read, and each difference PAMv1 inherits
+was measured on both versions before it was pinned.*
+
+- [x] **Measured, then pinned.** `TestAssertionShape` sends assertions the
+  in-process IdP has validly signed, so each verdict is the library's
+  reading of the Web Browser SSO profile and not a broken signature.
+  **Stricter:** a login needs an `AuthnStatement`, a Subject identifier,
+  `Version="2.0"` and an `IssueInstant` that is not in the future.
+  **Looser, as the profile reads:** one valid bearer `SubjectConfirmation`
+  is enough (0.5.2 required every confirmation to pass, bearer or not), and
+  an omitted `Conditions` `NotOnOrAfter` is no expiry. That last one stays
+  bounded: the bearer confirmation's own `NotOnOrAfter` still refuses, and
+  the test proves it. Seven of the nine cases fail on 0.5.2.
+- [x] **What PAMv1 sends is unchanged**, except one thing. The
+  `AuthnRequest` and the keyless SP metadata are identical on both versions
+  apart from IDs and timestamps. With an SP key pair, the metadata now lists AES-GCM ahead of
+  AES-CBC, and an IdP that follows the order encrypts with authenticated
+  encryption (`TestMetadata`, `TestEncryptedAssertion`). An IdP that
+  imported the old metadata keeps its choice until it is re-imported.
+- [x] **Key transport, proven.** `TestEncryptedAssertionKeyTransport`
+  reads the algorithm off the wire: RSA-OAEP is decrypted in both
+  namespaces (SHA-1 and SHA-256 digests), RSA PKCS#1 v1.5 (`rsa-1_5`) is
+  refused. That was already true on 0.5.2, and PROTOCOLS-AND-CRYPTO said
+  the opposite; the doc is corrected.
+- [x] **One dependency fewer.** `mattermost/xml-roundtrip-validator`
+  leaves `go.mod`: the library carries its own round-trip check, still run
+  before a Response is parsed.
+- [x] **GO-2026-6909 is still reported** for 0.6.3, since the record still
+  lists no fixed version. The accepted entry stays and names the pinned
+  release; `TestAdvisoryGO20266909` passes unchanged.
+- [x] **Offered by 0.6, deliberately not turned on.** Each would refuse
+  logins that work today, so each is a decision for a deployment, not a
+  default to slip in with a version bump: `RejectSHA1Signatures`,
+  `RejectUnknownConditions`, `RequireSignedResponseForCBC` (the library's
+  own note: many IdPs sign only the assertion and encrypt it with AES-CBC),
+  `RejectExpiredIDPMetadata`, and `ReplayCache`. On the last: PAMv1 takes
+  only SP-initiated responses, each bound to a single-use request ID in the
+  browser's state cookie, so the cache would add a second check rather than
+  the first.
+- [x] **Living docs**: PROTOCOLS-AND-CRYPTO (§2.8's row, the primitives
+  table), ADMIN-GUIDE (SAML notes), ARCHITECTURE-LOW-LEVEL, docs/README,
+  CHANGELOG, and every `Reflects:` header.
 
 ## Phase 287 — GO-2026-6909: proved fixed, and govulncheck's accepted list ✅
 
@@ -5337,10 +5415,13 @@ default-off, and **three upgrade notes** — more than any release so far, becau
 two of the five phases change what an operator sees rather than only what PAMv1
 enforces.
 
-- [ ] **v0.49.0** through the test-gated pipeline, rehearsed on `main` first.
-  Published as `ghcr.io/morandeirachema/pamv1:0.49.0` (also `latest`), digest
-  recorded here once the publish workflow runs, verified **public** by anonymous
-  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] **v0.49.0** through the test-gated pipeline. Published 2026-08-18 (UTC)
+  as `ghcr.io/morandeirachema/pamv1:0.49.0`, digest
+  `sha256:ae3747d2a49b08afda930715ab72a98b00d913fbec21029de8132782a4190d3a`,
+  **public** by anonymous pull, with the `pam-agent` binaries, the SPDX SBOM
+  and `SHA256SUMS` attached. (The box stayed unticked and the digest
+  unrecorded until 2026-11-21, when both were read back from the registry
+  and the GitHub Release.)
 - [x] All five pins via the sweep; Helm chart `version` 0.39.0 -> **0.40.0**
 - [x] Both READMEs restated; `docs/README.md`, `docs/NIS2-COMPLIANCE.md` (whose
   control-mapping note absorbs 173–177: two new action families counted by the
@@ -13573,12 +13654,18 @@ closed too, by Phase 189** — the subject-indexed answer
 to "what can this agent reach?" was its last item, after SVID enrollment and
 inventory, recertification for non-human identities, posture on the agent path,
 `may_act` emission and the approver's view of a delegation chain. What is left
-there is named, deliberate and small: no proof-of-possession on a minted
-delegated token, a trust bundle read once at startup, MCP pinned at protocol
-`2024-11-05`, `tools/list` showing every agent the whole toolset, 60 seconds of
-clock leeway past `exp`, no ceiling on a single run, and `CanConnectTarget`
-returning open for an ungated target — an estate-wide default, not an
-agent-specific one. The infra-bound catalogue stays separate
+there is named, deliberate and small: policy cannot read the registry owner of
+an attested identity (deferred by Phase 173), the MCP server does not offer the
+Streamable HTTP transport, the SVID verifier allows 60 seconds of clock leeway
+past `exp`, a run that spans several tokens is bounded only token by token, the
+approver sees one call rather than the run it belongs to, and
+`CanConnectTarget` returns open for an ungated target — an estate-wide default,
+not an agent-specific one. Five items this paragraph listed until 2026-11-21
+were already closed in §3b: proof of possession on a minted delegated token
+(Phase 206), the trust bundle re-read when its file changes (224), MCP protocol
+negotiation (226), `tools/list` limited to what policy allows (204) and a
+ceiling on a single run (209). One flaky test stays open with its cause
+narrowed (§3d). The infra-bound catalogue stays separate
 in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md), and the console is
 at **full parity** — every shipped capability is operable from the portal,
 keyboard-first.

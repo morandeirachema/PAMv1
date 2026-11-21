@@ -10,6 +10,7 @@ import (
 
 	"github.com/beevik/etree"
 	crewjam "github.com/crewjam/saml"
+	"github.com/crewjam/saml/xmlenc"
 
 	"github.com/morandeirachema/pamv1/internal/saml"
 	"github.com/morandeirachema/pamv1/internal/saml/samltest"
@@ -117,6 +118,12 @@ func TestMetadata(t *testing.T) {
 	if !strings.Contains(string(md2), "<KeyDescriptor") || !strings.Contains(string(md2), `use="encryption"`) {
 		t.Fatalf("metadata should publish the SP certificate for encryption:\n%s", md2)
 	}
+	// Authenticated encryption is offered ahead of AES-CBC, so an IdP that
+	// follows the SP's order encrypts the assertion with AES-GCM (Phase 288).
+	gcm, cbc := strings.Index(string(md2), "xmlenc11#aes256-gcm"), strings.Index(string(md2), "xmlenc#aes128-cbc")
+	if gcm < 0 || cbc < 0 || gcm > cbc {
+		t.Fatalf("metadata should list AES-GCM before AES-CBC:\n%s", md2)
+	}
 	redirect, _, err := sp2.StartURL()
 	if err != nil {
 		t.Fatal(err)
@@ -205,6 +212,11 @@ func TestEncryptedAssertion(t *testing.T) {
 		if doc.FindElement("//EncryptedAssertion") == nil {
 			t.Fatal("idp should have encrypted the assertion to the SP certificate")
 		}
+		// The IdP follows the order the SP metadata lists, which puts
+		// authenticated encryption first (Phase 288).
+		if alg := encryptionAlgorithms(doc); len(alg) == 0 || !strings.HasSuffix(alg[0], "#aes256-gcm") {
+			t.Fatalf("assertion should be encrypted with AES-256-GCM, got %v", alg)
+		}
 	})
 	claims, err := sp.ParseResponse(raw, requestID)
 	if err != nil {
@@ -212,6 +224,58 @@ func TestEncryptedAssertion(t *testing.T) {
 	}
 	if claims.NameID != "alice@corp.test" {
 		t.Fatalf("claims = %+v", claims)
+	}
+}
+
+// encryptionAlgorithms lists the EncryptionMethod algorithms of an encrypted
+// assertion in document order: the data cipher, then the key transport.
+func encryptionAlgorithms(doc *etree.Document) []string {
+	var out []string
+	for _, el := range doc.FindElements("//EncryptedAssertion//EncryptionMethod") {
+		out = append(out, el.SelectAttrValue("Algorithm", ""))
+	}
+	return out
+}
+
+// TestEncryptedAssertionKeyTransport pins which key transports the SP
+// decrypts. RSA-OAEP is accepted with either digest an IdP is likely to use.
+// RSA PKCS#1 v1.5 (rsa-1_5) is refused: it is open to Bleichenbacher padding
+// oracles, the library does not register it for decryption, and PAMv1 does
+// not opt back in. The assertion is validly signed and encrypted to the SP's
+// own certificate in every case, so the refusal is the algorithm's.
+func TestEncryptedAssertionKeyTransport(t *testing.T) {
+	key, cert := samltest.SelfSigned(t, "sp")
+	k, c := samltest.PEM(key, cert)
+	for name, tc := range map[string]struct {
+		enc  xmlenc.Encrypter
+		want string
+		ok   bool
+	}{
+		"rsa-oaep-mgf1p, sha-1": {xmlenc.OAEP(), "xmlenc#rsa-oaep-mgf1p", true},
+		"rsa-oaep, sha-256":     {xmlenc.OAEP_SHA256(), "xmlenc11#rsa-oaep", true},
+		"rsa-1_5":               {xmlenc.PKCS1v15(), "xmlenc#rsa-1_5", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			sp, idp := newSP(t, func(cfg *saml.Config) { cfg.SPKeyPEM, cfg.SPCertPEM = k, c })
+			idp.IDP.AssertionEncrypter = tc.enc
+			requestID, resp := login(t, sp, idp)
+			raw := samltest.Tamper(t, resp.SAMLResponse, func(doc *etree.Document) {
+				alg := encryptionAlgorithms(doc)
+				if len(alg) < 2 || !strings.HasSuffix(alg[1], tc.want) {
+					t.Fatalf("key transport should be %s, got %v", tc.want, alg)
+				}
+			})
+			claims, err := sp.ParseResponse(raw, requestID)
+			if tc.ok && (err != nil || claims.NameID != "alice@corp.test") {
+				t.Fatalf("refused: %+v, %v", claims, err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatalf("accepted: %+v", claims)
+			}
+			if !tc.ok && !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("refused, but not for the key transport: %v", err)
+			}
+		})
 	}
 }
 
@@ -376,8 +440,9 @@ func TestSignatureWrappingClassic(t *testing.T) {
 }
 
 // TestAdvisoryGO20266909 pins the two flaws of GO-2026-6909 as fixed in the
-// crewjam/saml release PAMv1 builds against (v0.5.2), on assertions the IdP
-// has validly signed, so nothing is refused for a broken signature. A signed
+// crewjam/saml release PAMv1 builds against (fixed in v0.5.2; go.mod pins
+// v0.6.3 since Phase 288), on assertions the IdP has validly signed, so
+// nothing is refused for a broken signature. A signed
 // assertion missing an optional element the checks need must be refused, not
 // panic the handler; and a NameID from a foreign XML namespace must never
 // become the authenticated subject. On v0.5.1 the Subject, Conditions and
@@ -437,4 +502,92 @@ func TestAdvisoryGO20266909(t *testing.T) {
 			t.Fatalf("foreign-namespace NameID became the subject: %+v", claims)
 		}
 	})
+}
+
+// TestAssertionShape pins what crewjam/saml v0.6.3 decides about the shape of
+// an assertion the IdP has validly signed, where it differs from v0.5.2
+// (Phase 288). The signature is good in every case, so each verdict is the
+// library's reading of the Web Browser SSO profile and nothing else. Stricter
+// than before: a login needs an AuthnStatement, a Subject identifier, SAML
+// 2.0, and an IssueInstant that is not in the future. Looser than before, and
+// what the profile says: one valid bearer SubjectConfirmation is enough, and
+// an omitted Conditions NotOnOrAfter is no expiry — bounded by the bearer
+// confirmation's own NotOnOrAfter, which the last refusals prove still binds.
+func TestAssertionShape(t *testing.T) {
+	stamp := func(d time.Duration) string { return time.Now().Add(d).UTC().Format(time.RFC3339) }
+	remove := func(path string) func(*etree.Element) {
+		return func(a *etree.Element) {
+			el := a.FindElement(path)
+			if el == nil {
+				t.Fatalf("assertion has no %s to remove", path)
+			}
+			el.Parent().RemoveChild(el)
+		}
+	}
+	noConditionsExpiry := func(a *etree.Element) {
+		if a.FindElement("./Conditions").RemoveAttr("NotOnOrAfter") == nil {
+			t.Fatal("Conditions has no NotOnOrAfter to remove")
+		}
+	}
+	// otherRecipient copies the bearer confirmation and addresses the copy to
+	// another service provider; the original stays unless replace is set.
+	otherRecipient := func(replace bool) func(*etree.Element) {
+		return func(a *etree.Element) {
+			subject := a.FindElement("./Subject")
+			orig := subject.FindElement("./SubjectConfirmation")
+			other := orig.Copy()
+			other.FindElement("./SubjectConfirmationData").CreateAttr("Recipient", "https://other.example.com/acs")
+			subject.AddChild(other)
+			if replace {
+				subject.RemoveChild(orig)
+			}
+		}
+	}
+	run := func(t *testing.T, reshape func(*etree.Element)) (*saml.Claims, error) {
+		t.Helper()
+		sp, idp := newSP(t, nil)
+		idp.Reshape = reshape
+		requestID, resp := login(t, sp, idp)
+		return sp.ParseResponse(resp.SAMLResponse, requestID)
+	}
+
+	for name, reshape := range map[string]func(*etree.Element){
+		"no AuthnStatement":       remove("./AuthnStatement"),
+		"no Subject identifier":   remove("./Subject/NameID"),
+		"SAML 1.1":                func(a *etree.Element) { a.CreateAttr("Version", "1.1") },
+		"IssueInstant in an hour": func(a *etree.Element) { a.CreateAttr("IssueInstant", stamp(time.Hour)) },
+		"the only bearer confirmation is for another recipient": otherRecipient(true),
+		"no Conditions expiry, bearer confirmation expired": func(a *etree.Element) {
+			noConditionsExpiry(a)
+			a.FindElement(".//SubjectConfirmationData").CreateAttr("NotOnOrAfter", stamp(-time.Hour))
+		},
+	} {
+		t.Run("refused/"+name, func(t *testing.T) {
+			if claims, err := run(t, reshape); err == nil {
+				t.Fatalf("accepted: %+v", claims)
+			}
+		})
+	}
+
+	for name, reshape := range map[string]func(*etree.Element){
+		"no Conditions expiry":                               noConditionsExpiry,
+		"a second bearer confirmation for another recipient": otherRecipient(false),
+		"a holder-of-key confirmation beside the bearer one": func(a *etree.Element) {
+			subject := a.FindElement("./Subject")
+			hok := subject.FindElement("./SubjectConfirmation").Copy()
+			hok.CreateAttr("Method", "urn:oasis:names:tc:SAML:2.0:cm:holder-of-key")
+			hok.RemoveChild(hok.FindElement("./SubjectConfirmationData"))
+			subject.AddChild(hok)
+		},
+	} {
+		t.Run("accepted/"+name, func(t *testing.T) {
+			claims, err := run(t, reshape)
+			if err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+			if claims.NameID != "alice@corp.test" {
+				t.Fatalf("claims = %+v", claims)
+			}
+		})
+	}
 }
