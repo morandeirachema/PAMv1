@@ -318,8 +318,9 @@ func (p *Provider) StartURL() (redirect string, requestID string, err error) {
 // Assertion (or the decrypted Assertion when the SP holds a key) against the
 // IdP's metadata certificate, Destination == ACS URL, Issuer == IdP entity ID,
 // InResponseTo == requestID, IssueInstant/NotBefore/NotOnOrAfter within
-// tolerance, and AudienceRestriction == SP entity ID — and returns the claims
-// PAMv1 reads from it. On failure the returned error is safe to log: it carries
+// tolerance, AudienceRestriction == SP entity ID, and the shape a login needs
+// (an AuthnStatement, a Subject identifier, one bearer SubjectConfirmation
+// addressed to the ACS) — and returns the claims PAMv1 reads from it. On failure the returned error is safe to log: it carries
 // the library's private diagnostic, never the assertion contents.
 func (p *Provider) ParseResponse(samlResponse string, requestID string) (*Claims, error) {
 	if len(samlResponse) > MaxResponseBytes {

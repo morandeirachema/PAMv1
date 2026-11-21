@@ -1,6 +1,6 @@
 # PAMv1 — documentation
 
-> Last updated: 2026-11-16 · Reflects: Phases 0–227 and 229–287, and release v0.0.79 (see [CHANGELOG.md](../CHANGELOG.md)).
+> Last updated: 2026-11-21 · Reflects: Phases 0–227 and 229–288, and release v0.0.79 (see [CHANGELOG.md](../CHANGELOG.md)).
 
 > **Living docs, kept in step with the code.** Nearly every doc here carries a
 > `Last updated · Reflects Phases 0–N` line and, where it tracks change, a
@@ -108,6 +108,7 @@ linked to them until now:
 
 | Date | Change |
 |---|---|
+| 2026-11-21 | Phase 288 (`crewjam/saml` 0.6.3) documented: PROTOCOLS-AND-CRYPTO (§2.8 and the primitives table, with the RSA-1.5 claim corrected), ADMIN-GUIDE (SAML notes), ARCHITECTURE-LOW-LEVEL; every `Reflects:` header and both READMEs' ranges to 288. |
 | 2026-11-16 | Phase 287 (GO-2026-6909, govulncheck's accepted list) documented: CODE-GUIDE CI gates, ARCHITECTURE-LOW-LEVEL, CONTRIBUTING, SECURITY; every `Reflects:` header and both READMEs' ranges to 287. |
 | 2026-10-18 | Phase 286 (pgstore helpers) documented: CODE-GUIDE §3.3, ARCHITECTURE-LOW-LEVEL change log; every `Reflects:` header and both READMEs' ranges to 286. |
 | 2026-10-18 | Phase 285 (SQL refusal contract) documented: ARCHITECTURE-LOW-LEVEL §5 and change log, ARCHITECTURE-HIGH-LEVEL, CODE-GUIDE §5.4; every `Reflects:` header and both READMEs' ranges to 285. |
