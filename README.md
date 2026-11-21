@@ -806,7 +806,8 @@ curl -s http://pamv1:8080/metrics | grep pam_build_info      # same, for monitor
 **Status:** **[v0.0.80](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.80)
 was released on 2026-11-21**, and every manifest here pins its tag, `0.0.80` — image
 digest
-`TBD` (recorded by the digest PR once the release pipeline has published it). A tag can be pushed again; a digest cannot, so for
+`sha256:771f3321f219db57062b9ca3f88273a7b0c7dd67a77d449cabbee124f880561c`, public
+(anonymous pull verified). A tag can be pushed again; a digest cannot, so for
 production pin the digest instead: `image.digest` in the Helm chart, or
 `ghcr.io/morandeirachema/pamv1@sha256:…` in a manifest. Every release's digest is
 in [CHANGELOG.md](CHANGELOG.md) and at the top of its release notes, with the

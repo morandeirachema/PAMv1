@@ -162,8 +162,14 @@ and `crewjam/saml` 0.5.1. That is two standard-library advisories PAMv1's
 code reaches (GO-2026-6809, GO-2026-6859) and GO-2026-6909 in the form
 that is actually vulnerable. `main` had all three fixed, on no tag.
 
-- [ ] **v0.0.80** through the test-gated pipeline; image
-  `ghcr.io/morandeirachema/pamv1:0.0.80`, digest `TBD` until the digest PR
+- [x] **v0.0.80** through the test-gated pipeline. Published 2026-11-21 (UTC)
+  as `ghcr.io/morandeirachema/pamv1:0.0.80` (also `latest`), digest
+  `sha256:771f3321f219db57062b9ca3f88273a7b0c7dd67a77d449cabbee124f880561c`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
+  digest), signed and attested — every publishing step's own conclusion
+  `success` — with the `pam-agent` binaries (Linux and Windows), the SPDX SBOM
+  and `SHA256SUMS` attached. The SBOM records Go 1.27.4 and `crewjam/saml`
+  0.6.3
 - [x] All pins via the sweep — exactly one release under `deploy/`. Helm
   chart `version` 0.0.79 -> **0.0.80**, tracking the app version
 - [x] Both builder images pinned to their Go 1.27.4 builds, both runtime
@@ -176,8 +182,8 @@ that is actually vulnerable. `main` had all three fixed, on no tag.
 - [x] `CHANGELOG.md` `[0.0.80]` carries the two upgrade steps (PostgreSQL 18
   under docker-compose, Terraform state from before the Kubernetes provider
   3 move) and what changes for a SAML deployment
-- [ ] The tag is pushed only **after** this PR is merged, with the
-  operator's go-ahead
+- [x] The tag was pushed only **after** the release PR was merged and CI on
+  `main` was green, with the operator's go-ahead
 
 ## Phase 288 — crewjam/saml 0.6.3, and what it decides about an assertion ✅
 

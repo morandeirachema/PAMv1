@@ -280,7 +280,8 @@ Identify a release by its tag or its image digest, not its commit ID.
 **What has not changed.** No default changed and nothing new needs
 configuring: apart from the two upgrade steps above, a deployment behaves as
 it did on v0.0.79. The image is `ghcr.io/morandeirachema/pamv1:0.0.80`,
-digest `TBD` until the digest PR
+digest
+`sha256:771f3321f219db57062b9ca3f88273a7b0c7dd67a77d449cabbee124f880561c`
 ([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.80)).
 
 ## [0.0.79] — 2026-10-08
