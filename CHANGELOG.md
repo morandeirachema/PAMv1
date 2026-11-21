@@ -18,17 +18,26 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
-Since v0.0.79: Phase 283 (portable recording archives), Phase 284 (an
-internal refactor with no user-visible change), Phase 285 (the SQL
-refusal contract), Phase 286 (internal: pgstore helpers), Phase 287
-(govulncheck's accepted-advisory list), Phase 288 (the SAML library at
-0.6.3), the dependency and base-image
-updates of 2026-10-14, 2026-10-17, 2026-11-16 and 2026-11-21, the fixes from
-a review of the Conjur deploy docs, and the fixes from a repository-wide audit of
-versions and documentation. Two changes need an operator step on upgrade:
-PostgreSQL 18 under docker-compose, and Terraform state from before the
-Kubernetes provider 3 move (both under **Changed**). SAML deployments
-should read the first entry under **Changed**.
+## [0.0.80] — 2026-11-21
+
+Ships **Phases 283–288**: portable recording archives (283), an internal
+refactor with no user-visible change (284), the SQL refusal contract (285),
+the pgstore helpers (286, internal), `govulncheck`'s accepted-advisory list
+(287) and the SAML library at 0.6.3 (288). With them: the dependency and
+base-image updates of 2026-10-14, 2026-10-17, 2026-11-16 and 2026-11-21, the
+fixes from a review of the Conjur deploy docs, and the fixes from a
+repository-wide audit of versions and documentation. **No migration is
+new** (the high-water mark stays `0068`); routes 237 → 240; no new
+environment variable.
+
+**Upgrade for the fixes alone.** The v0.0.79 image was built with Go 1.27.1
+and `crewjam/saml` 0.5.1; this one is built with Go 1.27.4 and 0.6.3. See
+**Security**.
+
+**Two changes need an operator step on upgrade:** PostgreSQL 18 under
+docker-compose, and Terraform state from before the Kubernetes provider 3
+move (both under **Changed**). SAML deployments should read the first entry
+under **Changed**.
 
 **Added.**
 
@@ -267,6 +276,12 @@ those releases *report*, however — `pam-server -version`, `pam_build_info`,
 the SLSA provenance — is the pre-rewrite one, which is no longer in the
 history: v0.0.79 reports `e133449`, while the tag now points at `6721cb9`.
 Identify a release by its tag or its image digest, not its commit ID.
+
+**What has not changed.** No default changed and nothing new needs
+configuring: apart from the two upgrade steps above, a deployment behaves as
+it did on v0.0.79. The image is `ghcr.io/morandeirachema/pamv1:0.0.80`,
+digest `TBD` until the digest PR
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.80)).
 
 ## [0.0.79] — 2026-10-08
 
@@ -3945,7 +3960,8 @@ The image is `ghcr.io/morandeirachema/pamv1:0.10.0`, digest
 `sha256:ab2a5fa5db27fae805f9096dfdf526497ddff4cc3774b33469ab108b98637b39`
 ([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.10.0)).
 
-[Unreleased]: https://github.com/morandeirachema/PAMv1/compare/v0.0.79...HEAD
+[Unreleased]: https://github.com/morandeirachema/PAMv1/compare/v0.0.80...HEAD
+[0.0.80]: https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.80
 [0.0.79]: https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.79
 [0.0.78]: https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.78
 [0.0.77]: https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.77

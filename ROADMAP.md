@@ -8,7 +8,7 @@ Phases are listed **newest first**, from the latest release down to Phase 0; wha
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–288 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–289 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -148,6 +148,36 @@ the headline deferrals are:
 - **The remaining three Tier-3 gaps** — connector/plugin breadth, cloud CIEM, and web/SaaS session proxying — each need a real device, cloud account, or browser/SaaS console to build honestly.
 
 ---
+
+## Phase 289 — v0.0.80 ✅
+
+Releases **283–288**: portable recording archives, the refactor pass and
+the SQL refusal contract, the pgstore helpers, the `govulncheck` accepted
+list, and the SAML library at 0.6.3. **No migration** (high-water stays
+`0068`), routes **237 -> 240**, `store.Store` unchanged at **243**, no new
+environment variable.
+
+*Why now.* v0.0.79's image was built with Go 1.27.1 (its SBOM records it)
+and `crewjam/saml` 0.5.1. That is two standard-library advisories PAMv1's
+code reaches (GO-2026-6809, GO-2026-6859) and GO-2026-6909 in the form
+that is actually vulnerable. `main` had all three fixed, on no tag.
+
+- [ ] **v0.0.80** through the test-gated pipeline; image
+  `ghcr.io/morandeirachema/pamv1:0.0.80`, digest `TBD` until the digest PR
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm
+  chart `version` 0.0.79 -> **0.0.80**, tracking the app version
+- [x] Both builder images pinned to their Go 1.27.4 builds, both runtime
+  images to their current digests (#480), so the release is built with the
+  toolchain CI tests with
+- [x] Both READMEs restated; every `Reflects:` header, both READMEs' ranges,
+  `docs/README.md`'s release token, the NIS2 evidence row, this banner and
+  CHANGELOG's `[Unreleased]` link — `TestDocHeadersAgree` and
+  `TestReleaseDigestsAgree` enforced; README's status digest reads `TBD`
+- [x] `CHANGELOG.md` `[0.0.80]` carries the two upgrade steps (PostgreSQL 18
+  under docker-compose, Terraform state from before the Kubernetes provider
+  3 move) and what changes for a SAML deployment
+- [ ] The tag is pushed only **after** this PR is merged, with the
+  operator's go-ahead
 
 ## Phase 288 — crewjam/saml 0.6.3, and what it decides about an assertion ✅
 
