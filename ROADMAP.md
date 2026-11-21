@@ -5385,10 +5385,13 @@ default-off, and **three upgrade notes** — more than any release so far, becau
 two of the five phases change what an operator sees rather than only what PAMv1
 enforces.
 
-- [ ] **v0.49.0** through the test-gated pipeline, rehearsed on `main` first.
-  Published as `ghcr.io/morandeirachema/pamv1:0.49.0` (also `latest`), digest
-  recorded here once the publish workflow runs, verified **public** by anonymous
-  pull, with the `pam-agent` binaries attached as since v0.40.0
+- [x] **v0.49.0** through the test-gated pipeline. Published 2026-08-18 (UTC)
+  as `ghcr.io/morandeirachema/pamv1:0.49.0`, digest
+  `sha256:ae3747d2a49b08afda930715ab72a98b00d913fbec21029de8132782a4190d3a`,
+  **public** by anonymous pull, with the `pam-agent` binaries, the SPDX SBOM
+  and `SHA256SUMS` attached. (The box stayed unticked and the digest
+  unrecorded until 2026-11-21, when both were read back from the registry
+  and the GitHub Release.)
 - [x] All five pins via the sweep; Helm chart `version` 0.39.0 -> **0.40.0**
 - [x] Both READMEs restated; `docs/README.md`, `docs/NIS2-COMPLIANCE.md` (whose
   control-mapping note absorbs 173–177: two new action families counted by the
@@ -13621,12 +13624,18 @@ closed too, by Phase 189** — the subject-indexed answer
 to "what can this agent reach?" was its last item, after SVID enrollment and
 inventory, recertification for non-human identities, posture on the agent path,
 `may_act` emission and the approver's view of a delegation chain. What is left
-there is named, deliberate and small: no proof-of-possession on a minted
-delegated token, a trust bundle read once at startup, MCP pinned at protocol
-`2024-11-05`, `tools/list` showing every agent the whole toolset, 60 seconds of
-clock leeway past `exp`, no ceiling on a single run, and `CanConnectTarget`
-returning open for an ungated target — an estate-wide default, not an
-agent-specific one. The infra-bound catalogue stays separate
+there is named, deliberate and small: policy cannot read the registry owner of
+an attested identity (deferred by Phase 173), the MCP server does not offer the
+Streamable HTTP transport, the SVID verifier allows 60 seconds of clock leeway
+past `exp`, a run that spans several tokens is bounded only token by token, the
+approver sees one call rather than the run it belongs to, and
+`CanConnectTarget` returns open for an ungated target — an estate-wide default,
+not an agent-specific one. Five items this paragraph listed until 2026-11-21
+were already closed in §3b: proof of possession on a minted delegated token
+(Phase 206), the trust bundle re-read when its file changes (224), MCP protocol
+negotiation (226), `tools/list` limited to what policy allows (204) and a
+ceiling on a single run (209). One flaky test stays open with its cause
+narrowed (§3d). The infra-bound catalogue stays separate
 in [docs/EXTERNAL-INFRA-GAPS.md](docs/EXTERNAL-INFRA-GAPS.md), and the console is
 at **full parity** — every shipped capability is operable from the portal,
 keyboard-first.
