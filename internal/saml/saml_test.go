@@ -10,6 +10,7 @@ import (
 
 	"github.com/beevik/etree"
 	crewjam "github.com/crewjam/saml"
+	"github.com/crewjam/saml/xmlenc"
 
 	"github.com/morandeirachema/pamv1/internal/saml"
 	"github.com/morandeirachema/pamv1/internal/saml/samltest"
@@ -211,6 +212,11 @@ func TestEncryptedAssertion(t *testing.T) {
 		if doc.FindElement("//EncryptedAssertion") == nil {
 			t.Fatal("idp should have encrypted the assertion to the SP certificate")
 		}
+		// The IdP follows the order the SP metadata lists, which puts
+		// authenticated encryption first (Phase 288).
+		if alg := encryptionAlgorithms(doc); len(alg) == 0 || !strings.HasSuffix(alg[0], "#aes256-gcm") {
+			t.Fatalf("assertion should be encrypted with AES-256-GCM, got %v", alg)
+		}
 	})
 	claims, err := sp.ParseResponse(raw, requestID)
 	if err != nil {
@@ -218,6 +224,58 @@ func TestEncryptedAssertion(t *testing.T) {
 	}
 	if claims.NameID != "alice@corp.test" {
 		t.Fatalf("claims = %+v", claims)
+	}
+}
+
+// encryptionAlgorithms lists the EncryptionMethod algorithms of an encrypted
+// assertion in document order: the data cipher, then the key transport.
+func encryptionAlgorithms(doc *etree.Document) []string {
+	var out []string
+	for _, el := range doc.FindElements("//EncryptedAssertion//EncryptionMethod") {
+		out = append(out, el.SelectAttrValue("Algorithm", ""))
+	}
+	return out
+}
+
+// TestEncryptedAssertionKeyTransport pins which key transports the SP
+// decrypts. RSA-OAEP is accepted with either digest an IdP is likely to use.
+// RSA PKCS#1 v1.5 (rsa-1_5) is refused: it is open to Bleichenbacher padding
+// oracles, the library does not register it for decryption, and PAMv1 does
+// not opt back in. The assertion is validly signed and encrypted to the SP's
+// own certificate in every case, so the refusal is the algorithm's.
+func TestEncryptedAssertionKeyTransport(t *testing.T) {
+	key, cert := samltest.SelfSigned(t, "sp")
+	k, c := samltest.PEM(key, cert)
+	for name, tc := range map[string]struct {
+		enc  xmlenc.Encrypter
+		want string
+		ok   bool
+	}{
+		"rsa-oaep-mgf1p, sha-1": {xmlenc.OAEP(), "xmlenc#rsa-oaep-mgf1p", true},
+		"rsa-oaep, sha-256":     {xmlenc.OAEP_SHA256(), "xmlenc11#rsa-oaep", true},
+		"rsa-1_5":               {xmlenc.PKCS1v15(), "xmlenc#rsa-1_5", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			sp, idp := newSP(t, func(cfg *saml.Config) { cfg.SPKeyPEM, cfg.SPCertPEM = k, c })
+			idp.IDP.AssertionEncrypter = tc.enc
+			requestID, resp := login(t, sp, idp)
+			raw := samltest.Tamper(t, resp.SAMLResponse, func(doc *etree.Document) {
+				alg := encryptionAlgorithms(doc)
+				if len(alg) < 2 || !strings.HasSuffix(alg[1], tc.want) {
+					t.Fatalf("key transport should be %s, got %v", tc.want, alg)
+				}
+			})
+			claims, err := sp.ParseResponse(raw, requestID)
+			if tc.ok && (err != nil || claims.NameID != "alice@corp.test") {
+				t.Fatalf("refused: %+v, %v", claims, err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatalf("accepted: %+v", claims)
+			}
+			if !tc.ok && !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("refused, but not for the key transport: %v", err)
+			}
+		})
 	}
 }
 
