@@ -18,8 +18,22 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
-Phase 290, an audit of the whole repository. Six defects fixed, each with
-a regression test. No migration, no new route, no new environment variable.
+## [0.0.81] — 2026-11-22
+
+Ships **Phase 290**, an audit of the whole repository: six defects fixed,
+each with a regression test. **No migration is new** (the high-water mark
+stays `0068`); routes unchanged at 240; no new environment variable.
+
+**Upgrade for the fixes.** Five of the six are security fixes; see
+**Security**. Two things to know before upgrading: a deployment running
+`PAM_REQUIRE_TARGET_GRANT=true` was not enforcing it on the API paths until
+its first runtime configuration write, and purging a recording archive now
+reads the whole upload.
+
+**What has not changed.** No default changed and nothing new needs
+configuring. The image is `ghcr.io/morandeirachema/pamv1:0.0.81`,
+digest `TBD` until the digest PR
+([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.81)).
 
 ### Security
 
@@ -3998,7 +4012,8 @@ The image is `ghcr.io/morandeirachema/pamv1:0.10.0`, digest
 `sha256:ab2a5fa5db27fae805f9096dfdf526497ddff4cc3774b33469ab108b98637b39`
 ([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.10.0)).
 
-[Unreleased]: https://github.com/morandeirachema/PAMv1/compare/v0.0.80...HEAD
+[Unreleased]: https://github.com/morandeirachema/PAMv1/compare/v0.0.81...HEAD
+[0.0.81]: https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.81
 [0.0.80]: https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.80
 [0.0.79]: https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.79
 [0.0.78]: https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.78

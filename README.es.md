@@ -18,6 +18,22 @@
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8.svg?logo=go&logoColor=white)](https://go.dev/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-endurecida-336791.svg?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 
+## TL;DR
+
+- **Qué es.** Un sistema de Gestión de Acceso Privilegiado en Go y PostgreSQL, hecho para aprender cómo funciona uno de principio a fin. Beta, no listo para producción.
+- **La idea.** Las credenciales viven en una bóveda. Un bróker se sitúa entre la persona (o el agente de IA) y la máquina, inyecta el secreto en la conexión justo a tiempo y graba la sesión. Quien pide el acceso nunca ve la contraseña.
+- **Qué intermedia.** SSH, PostgreSQL, SQL Server, WinRM, telnet, operaciones de Kubernetes, y RDP/VNC y SSH en el navegador, además de llamadas a herramientas de agentes de IA bajo política.
+- **Qué lo rodea.** Roles y perfiles a medida, inicio de sesión con AD/Entra/OIDC/SAML y MFA, aprobaciones, cajas fuertes, break-glass, una traza de auditoría a prueba de manipulación y grabación de sesiones.
+- **Pruébalo en un minuto, sin base de datos:**
+
+  ```bash
+  go build ./cmd/pam-server
+  export PAM_MASTER_KEY=$(./pam-server -genkey) PAM_API_KEY=demo-key PAM_DATABASE_URL=memory
+  ./pam-server      # consola y API en :8080, proxy SSH en :2222
+  ```
+
+- **Siguiente paso.** La [documentación](docs/README.md), la [hoja de ruta](ROADMAP.md) y el [registro de cambios](CHANGELOG.md).
+
 **Gestión de Acceso Privilegiado** (PAM) de código abierto en Go. PAMv1 guarda las
 credenciales privilegiadas en un vault endurecido y luego coloca un **intermediario** entre
 el solicitante y la máquina: lo autentica, descifra el secreto **just-in-time**, lo inyecta
@@ -38,9 +54,9 @@ de fósforo verde** sin concesiones, porque tocar un PAM debe *sentirse* serio.
 
 Construido fase a fase con una regla: **cada fase es funcional de principio a fin** — arranca,
 pasa los tests y se despliega como Infraestructura-como-Código. El **[roadmap](ROADMAP.md)**
-abarca de la 0 a la 227 y de la 229 a la 290, **se han entregado todas las fases**, y la release etiquetada y
+abarca de la 0 a la 227 y de la 229 a la 291, **se han entregado todas las fases**, y la release etiquetada y
 firmada con cosign vigente es la
-**[v0.0.80](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.80)** (2026-11-21;
+**[v0.0.81](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.81)** (2026-11-22;
 la primera fue la v0.10.0, el 2026-07-28). Lo que eso suma:
 **intermediación de sesiones JIT** para SSH, PostgreSQL, WinRM y RDP y SSH en el portal;
 **RBAC + perfiles a medida** con login AD/Entra/OIDC y MFA TOTP; **break-glass** con quórum
@@ -151,7 +167,7 @@ resultado.
 
 ## Qué funciona hoy
 
-Fases 0–227 y 229–290, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
+Fases 0–227 y 229–291, agrupadas por área. Cada capacidad está cubierta por tests y se despliega como código.
 
 ### Identidad y acceso
 
@@ -224,7 +240,7 @@ Opcional vía `PAM_BROKER_POLICY_FILE`.
 
 - **Almacenamiento PostgreSQL** con [pgx](https://github.com/jackc/pgx) y migraciones embebidas y versionadas; un almacén en memoria para tests y demos; **alta disponibilidad con [CloudNativePG](https://cloudnative-pg.io/)** opcional.
 - **Observabilidad** — un endpoint [Prometheus](https://prometheus.io/) `/metrics` sin dependencias (conteos por estado, volumen de auditoría, uso de break-glass, rotaciones, gauge de sesiones activas), más una separación liveness/readiness (`/healthz`, `/readyz` que comprueba la BD).
-- **Despliegue como código** — [Docker](https://docs.docker.com/) (distroless, sin root), [docker-compose](https://docs.docker.com/compose/) con Postgres endurecida, manifiestos [Kubernetes](https://kubernetes.io/) bajo el PSS restringido, un **[chart de Helm](deploy/helm/pamv1)** y un módulo de [Terraform](https://developer.hashicorp.com/terraform). El pipeline de release construye por digest con **[SBOM](https://www.cisa.gov/sbom), firma keyless [cosign](https://docs.sigstore.dev/) y procedencia SLSA**. *Release vigente: **[v0.0.80](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.80)** (2026-11-21; la primera fue la v0.10.0) — la imagen firmada es pública en `ghcr.io/morandeirachema/pamv1:0.0.80`, que es la que fijan todos los manifiestos, así que las rutas de instalación por artefacto publicado ya funcionan.*
+- **Despliegue como código** — [Docker](https://docs.docker.com/) (distroless, sin root), [docker-compose](https://docs.docker.com/compose/) con Postgres endurecida, manifiestos [Kubernetes](https://kubernetes.io/) bajo el PSS restringido, un **[chart de Helm](deploy/helm/pamv1)** y un módulo de [Terraform](https://developer.hashicorp.com/terraform). El pipeline de release construye por digest con **[SBOM](https://www.cisa.gov/sbom), firma keyless [cosign](https://docs.sigstore.dev/) y procedencia SLSA**. *Release vigente: **[v0.0.81](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.81)** (2026-11-22; la primera fue la v0.10.0) — la imagen firmada es pública en `ghcr.io/morandeirachema/pamv1:0.0.81`, que es la que fijan todos los manifiestos, así que las rutas de instalación por artefacto publicado ya funcionan.*
 - **Secretos cifrados en git** — el manifiesto de Secret de Kubernetes puede sellarse con **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: los valores se cifran mientras `kind`/`metadata` quedan legibles, y se descifra al desplegar (`sops -d | kubectl apply -f -`, el texto plano nunca toca el disco) o de forma nativa con Flux / Argo / helm-secrets — así los secretos viven en el **mismo repo de IaC** sin filtrarse. Ver **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **O aprovisiona los secretos desde CyberArk Conjur** — como alternativa en tiempo de ejecución a SOPS, define `PAM_CONJUR_URL` y PAMv1 obtiene sus secretos de arranque (clave maestra, clave de API, URL de la BD, …) de **[Conjur](https://github.com/cyberark/conjur)** al arrancar, autenticándose con una clave de API de host o un token proyectado de Kubernetes (**`authn-jwt`**) — de modo que ningún secreto de arranque vive en Git. Con `PAM_CONJUR_REFRESH_MIN` (Fase 78), los secretos que honestamente pueden cambiar con el servidor en marcha (`PAM_API_KEY`, `PAM_BREAK_GLASS_KEY_HASH`) se **releen periódicamente sin reiniciar**; la KEK, la URL de la base de datos y las claves de la cadena de auditoría quedan ancladas a un reinicio por diseño. Ambos mecanismos se entregan; SOPS sigue siendo el predeterminado sin dependencias. Ver **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
 
@@ -381,7 +397,7 @@ cuatro ojos del bróker; después, un arco de refactorización y endurecimiento
 (96–108), las pasadas de funcionalidad de los Niveles 5–10 (de las grabaciones
 buscables por contenido, 110, a los archivos portables de grabaciones, 283) y
 sus revisiones — publicado de forma continua como **v0.10.0 →
-v0.0.80** (la numeración pasó a 0.0.x en la v0.0.77). Las releases quedan registradas en **[CHANGELOG.md](CHANGELOG.md)**;
+v0.0.81** (la numeración pasó a 0.0.x en la v0.0.77). Las releases quedan registradas en **[CHANGELOG.md](CHANGELOG.md)**;
 el resto honesto vive en
 **[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**.
 
@@ -574,7 +590,7 @@ semana todos los manifiestos fijaron una build anterior a ellas— y la
 **todas las releases posteriores** la han mantenido ahí, cada una cortada sin
 dejar que las correcciones se acumularan indefinidamente en un `main` sin
 etiquetar — la última, la
-**[v0.0.80](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.80)**. La lista completa está en
+**[v0.0.81](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.81)**. La lista completa está en
 [CHANGELOG.md](CHANGELOG.md).
 
 Lo que queda está consolidado en
@@ -651,7 +667,7 @@ docker compose up --build
 > PostgreSQL. Usa **`-k`**, no `-f`: `-f` sobre el directorio arrastra
 > `secret.example.yaml`, que declara `pam-secrets` con valores `CHANGE_ME` y
 > sobrescribiría el secreto que acabas de crear. (La imagen que fijan los
-> manifiestos, `ghcr.io/morandeirachema/pamv1:0.0.80`, está publicada y es
+> manifiestos, `ghcr.io/morandeirachema/pamv1:0.0.81`, está publicada y es
 > pública.)
 
 ```bash

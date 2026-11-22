@@ -17,6 +17,22 @@
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8.svg?logo=go&logoColor=white)](https://go.dev/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-hardened-336791.svg?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 
+## TL;DR
+
+- **What it is.** A Privileged Access Management system in Go and PostgreSQL, built to learn how one works end to end. Beta, not production-ready.
+- **The idea.** Credentials live in a vault. A broker sits between the person (or AI agent) and the machine, injects the secret into the connection just-in-time, and records the session. The requester never sees the password.
+- **What it brokers.** SSH, PostgreSQL, SQL Server, WinRM, telnet, Kubernetes operations, and RDP/VNC and SSH in the browser, plus tool calls from AI agents under policy.
+- **What surrounds it.** Roles and custom profiles, AD/Entra/OIDC/SAML login with MFA, approvals, safes, break-glass, a tamper-evident audit trail and session recordings.
+- **Try it in a minute, no database:**
+
+  ```bash
+  go build ./cmd/pam-server
+  export PAM_MASTER_KEY=$(./pam-server -genkey) PAM_API_KEY=demo-key PAM_DATABASE_URL=memory
+  ./pam-server      # console and API on :8080, SSH proxy on :2222
+  ```
+
+- **Where next.** [Quickstart](#quickstart) for the full stack, the [documentation hub](docs/README.md), the [roadmap](ROADMAP.md) and the [changelog](CHANGELOG.md).
+
 Open-source **Privileged Access Management** (PAM) in Go. PAMv1 keeps privileged
 credentials in a hardened vault and then puts a **broker** between the requester and the
 machine: it authenticates the requester, decrypts the secret **just-in-time**, injects it
@@ -37,9 +53,9 @@ unapologetically **AS/400 / IBM 5250 green-screen console**, because touching a 
 
 Built phase by phase with a single rule: **every phase is functional end to end** — it
 runs, passes tests, and deploys as Infrastructure-as-Code. The **[roadmap](ROADMAP.md)**
-runs 0–227 and 229–290, and **every phase has shipped**, and the current
+runs 0–227 and 229–291, and **every phase has shipped**, and the current
 tagged, cosign-signed release is
-**[v0.0.80](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.80)** (2026-11-21;
+**[v0.0.81](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.81)** (2026-11-22;
 the first was v0.10.0 on 2026-07-28). What that adds up to: **JIT session
 brokering** for SSH, PostgreSQL, WinRM and in-portal RDP and SSH; **RBAC + custom profiles** with
 AD/Entra/OIDC login and TOTP MFA; **break-glass** with M-of-N quorum unseal; **safes** and
@@ -147,7 +163,7 @@ JIT credential, and the agent receives only the result.
 
 ## What works today
 
-Phases 0–227 and 229–290, grouped by area. Every capability is exercised by tests and deploys as code.
+Phases 0–227 and 229–291, grouped by area. Every capability is exercised by tests and deploys as code.
 
 ### Identity & access
 
@@ -221,7 +237,7 @@ PAM for AI agents — the same chokepoint, extended to autonomous tools. Opt-in 
 
 - **PostgreSQL storage** via [pgx](https://github.com/jackc/pgx) with embedded, versioned migrations; an in-memory store for tests and demos; optional **[CloudNativePG](https://cloudnative-pg.io/) HA**.
 - **Observability** — a dependency-free [Prometheus](https://prometheus.io/) `/metrics` endpoint (request counts by status, audit volume, break-glass use, rotations, active-sessions gauge), plus a health/readiness split (`/healthz` liveness, `/readyz` checks the database).
-- **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. The release pipeline builds by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance** — see [Verifying a release](#verifying-a-release). *Current release: **[v0.0.80](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.80)** (2026-11-21; first was v0.10.0) — the signed image is public at `ghcr.io/morandeirachema/pamv1:0.0.80`, which is what every manifest here pins, so the published-artifact paths below work.*
+- **IaC deployment** — [Docker](https://docs.docker.com/) (distroless, non-root), [docker-compose](https://docs.docker.com/compose/) with hardened Postgres, [Kubernetes](https://kubernetes.io/) manifests under the restricted Pod Security Standard, a **[Helm chart](deploy/helm/pamv1)**, and a [Terraform](https://developer.hashicorp.com/terraform) module. The release pipeline builds by digest with an **[SBOM](https://www.cisa.gov/sbom), [cosign](https://docs.sigstore.dev/) keyless signature and SLSA provenance** — see [Verifying a release](#verifying-a-release). *Current release: **[v0.0.81](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.81)** (2026-11-22; first was v0.10.0) — the signed image is public at `ghcr.io/morandeirachema/pamv1:0.0.81`, which is what every manifest here pins, so the published-artifact paths below work.*
 - **Encrypted secrets in git** — the Kubernetes secret manifest can be sealed with **[SOPS](https://github.com/getsops/sops) + [age](https://age-encryption.org/)**: values are encrypted while `kind`/`metadata` stay reviewable, decrypted at deploy time (`sops -d | kubectl apply -f -`, plaintext never on disk) or natively by Flux / Argo / helm-secrets — so secrets live in the **same IaC repo** without leaking. See **[deploy/k8s/sops/](deploy/k8s/sops/)**.
 - **Or source secrets from CyberArk Conjur** — as a runtime alternative to SOPS, set `PAM_CONJUR_URL` and PAMv1 fetches its own bootstrap secrets (master key, API key, DB URL, …) from **[Conjur](https://github.com/cyberark/conjur)** at startup, authenticating with a host API key or a **Kubernetes `authn-jwt`** projected token — so no bootstrap secret lives in Git at all. With `PAM_CONJUR_REFRESH_MIN` (Phase 78), the secrets that can honestly change on a running server (`PAM_API_KEY`, `PAM_BREAK_GLASS_KEY_HASH`) are **re-read periodically without a restart**; the KEK, database URL and audit-chain keys stay pinned to a restart by design. Both mechanisms ship; SOPS stays the zero-dependency default. See **[deploy/k8s/conjur/](deploy/k8s/conjur/)**.
 
@@ -372,7 +388,7 @@ with a revoke-logins response rung (86–87), the open-findings backlog closed
 SFTP read-only containment gap and confirmed the vault, database proxies and
 broker four-eyes sound; then a refactor and hardening arc (96–108), the
 feature passes of Tiers 5–10 (from content-searchable recordings, 110, to
-portable recording archives, 283) and their reviews — released steadily as **v0.10.0 → v0.0.80** (the numbering moved to 0.0.x at v0.0.77). Releases
+portable recording archives, 283) and their reviews — released steadily as **v0.10.0 → v0.0.81** (the numbering moved to 0.0.x at v0.0.77). Releases
 are recorded in **[CHANGELOG.md](CHANGELOG.md)**; the honest remainder lives in
 **[ROADMAP.md → What is left](ROADMAP.md#what-is-left-)**.
 
@@ -624,7 +640,7 @@ pinned a build that predated them — and
 **[v0.11.2](https://github.com/morandeirachema/PAMv1/releases/tag/v0.11.2)** and
 **every release since** has kept it there — each cut without letting fixes bank
 indefinitely on an unpinned `main`, most recently
-**[v0.0.80](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.80)**. The full list is in
+**[v0.0.81](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.81)**. The full list is in
 [CHANGELOG.md](CHANGELOG.md).
 
 What is left is consolidated in
@@ -697,7 +713,7 @@ docker compose up --build
 > PostgreSQL. Use **`-k`**, not `-f`: `-f` on the directory sweeps up
 > `secret.example.yaml`, which declares `pam-secrets` with `CHANGE_ME` values and
 > would overwrite the secret you just created. (The image the manifests pin,
-> `ghcr.io/morandeirachema/pamv1:0.0.80`, is published and public.)
+> `ghcr.io/morandeirachema/pamv1:0.0.81`, is published and public.)
 
 ```bash
 kubectl apply -f deploy/k8s/namespace.yaml
@@ -772,7 +788,7 @@ Once a release exists, every artifact is verifiable — and these are the comman
 to do it, because a signature nobody can check is decoration.
 
 ```bash
-TAG=v0.0.80                       # the released version
+TAG=v0.0.81                       # the released version
 IMAGE=ghcr.io/morandeirachema/pamv1
 
 # (If your ~/.docker/config.json names a credential helper you do not have,
@@ -799,15 +815,14 @@ gh attestation verify "oci://$IMAGE:${TAG#v}" --repo morandeirachema/PAMv1
 And to confirm what you are actually running:
 
 ```bash
-kubectl -n pamv1 exec deploy/pamv1 -- /pam-server -version   # → pam-server 0.0.80 (<full commit sha>)
+kubectl -n pamv1 exec deploy/pamv1 -- /pam-server -version   # → pam-server 0.0.81 (<full commit sha>)
 curl -s http://pamv1:8080/metrics | grep pam_build_info      # same, for monitoring
 ```
 
-**Status:** **[v0.0.80](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.80)
-was released on 2026-11-21**, and every manifest here pins its tag, `0.0.80` — image
+**Status:** **[v0.0.81](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.81)
+was released on 2026-11-22**, and every manifest here pins its tag, `0.0.81` — image
 digest
-`sha256:771f3321f219db57062b9ca3f88273a7b0c7dd67a77d449cabbee124f880561c`, public
-(anonymous pull verified). A tag can be pushed again; a digest cannot, so for
+`TBD` (recorded by the digest PR once the release pipeline has published it). A tag can be pushed again; a digest cannot, so for
 production pin the digest instead: `image.digest` in the Helm chart, or
 `ghcr.io/morandeirachema/pamv1@sha256:…` in a manifest. Every release's digest is
 in [CHANGELOG.md](CHANGELOG.md) and at the top of its release notes, with the

@@ -8,7 +8,7 @@ Phases are listed **newest first**, from the latest release down to Phase 0; wha
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–290 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–291 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -148,6 +148,34 @@ the headline deferrals are:
 - **The remaining three Tier-3 gaps** — connector/plugin breadth, cloud CIEM, and web/SaaS session proxying — each need a real device, cloud account, or browser/SaaS console to build honestly.
 
 ---
+
+## Phase 291 — v0.0.81 ✅
+
+Releases **Phase 290**, the audit of the whole repository: five security
+fixes and the recording-archive fix. **No migration** (high-water stays
+`0068`), routes unchanged at **240**, `store.Store` **243 -> 244**, no new
+environment variable.
+
+*Why now.* Each of the five is a control that did less than it said: a
+two-approver requirement one approver could meet, a grant requirement the
+API paths did not apply, an IP allowlist a header could pass, an audited
+verdict a typed command could forge, a user-admin who could remove an
+administrator. `main` had them fixed, on no tag.
+
+- [ ] **v0.0.81** through the test-gated pipeline; image
+  `ghcr.io/morandeirachema/pamv1:0.0.81`, digest `TBD` until the digest PR
+- [x] All pins via the sweep — exactly one release under `deploy/`. Helm
+  chart `version` 0.0.80 -> **0.0.81**, tracking the app version
+- [x] Both READMEs restated, and each gains a **TL;DR** at the top; every
+  `Reflects:` header, both READMEs' ranges, `docs/README.md`'s release
+  token, the NIS2 evidence row, this banner and CHANGELOG's `[Unreleased]`
+  link — `TestDocHeadersAgree` and `TestReleaseDigestsAgree` enforced;
+  README's status digest reads `TBD`
+- [x] `CHANGELOG.md` `[0.0.81]` carries the two things to know on upgrade:
+  `PAM_REQUIRE_TARGET_GRANT` on the API paths, and purge reading the whole
+  upload
+- [ ] The tag is pushed only **after** this PR is merged, with the
+  operator's go-ahead
 
 ## Phase 290 — an audit of the whole repository, and what it found ✅
 
