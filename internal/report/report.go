@@ -76,13 +76,38 @@ type Connection struct {
 	Protocol string    `json:"protocol"`
 }
 
-// Field returns the value of the first "key:value" token in an audit detail,
-// or "" when absent. Audit details are space-separated tokens and the values
-// read here (target names, protocols) are validated identifiers, so a token
-// split is exact for them.
+// Field returns the value of one `key:value` field of an audit detail, or ""
+// when absent. Audit details are space-separated fields, and an untrusted
+// value is written quoted (auditfmt.Field) — so a quoted value is ONE field
+// however many spaces and colons it holds, and nothing inside it is a field.
+//
+// It used to split on whitespace alone, which read the inside of a quoted
+// value as structure: an operator who typed `x file:a.cast sha256:…` as a
+// command put a `file:` and a `sha256:` field into that row for every reader
+// here (Phase 290). A quoted value is returned as written, quotes included.
 func Field(detail, key string) string {
-	for _, tok := range strings.Fields(detail) {
-		if v, ok := strings.CutPrefix(tok, key+":"); ok {
+	for i := 0; i < len(detail); {
+		if detail[i] == ' ' || detail[i] == '\t' || detail[i] == '\n' || detail[i] == '\r' {
+			i++
+			continue
+		}
+		start := i
+		for i < len(detail) && detail[i] != ' ' && detail[i] != '\t' && detail[i] != '\n' && detail[i] != '\r' {
+			if detail[i] == '"' {
+				// Skip to the closing quote, honouring backslash escapes
+				// (the value was written by strconv.Quote).
+				for i++; i < len(detail) && detail[i] != '"'; i++ {
+					if detail[i] == '\\' {
+						i++
+					}
+				}
+			}
+			i++
+		}
+		if i > len(detail) {
+			i = len(detail)
+		}
+		if v, ok := strings.CutPrefix(detail[start:i], key+":"); ok {
 			return v
 		}
 	}
