@@ -128,3 +128,50 @@ func TestAuthzRefusesOutsideIPAllowlist(t *testing.T) {
 		t.Fatal("no authz.denied reason:source-ip-not-allowed audit event")
 	}
 }
+
+// TestIPAllowlistReadsEveryForwardedLine is the Phase 290 regression: behind
+// a proxy that ADDS its own X-Forwarded-For line instead of appending to the
+// client's (HAProxy's `option forwardfor`), the client's line arrives first
+// and the proxy's last. clientIP read only the first line, so a spoofed
+// header passed the allowlist it was written to enforce.
+func TestIPAllowlistReadsEveryForwardedLine(t *testing.T) {
+	srv, _ := newTestServerOpts(t, nil, api.Options{TrustedProxyHops: 1})
+	code, data := do(t, srv, http.MethodPost, "/api/users", testAPIKey,
+		map[string]any{"username": "walled", "role": "user", "ip_allowlist": "10.0.0.0/8"})
+	if code != http.StatusCreated {
+		t.Fatalf("create user: %d %s", code, data)
+	}
+	tok := jsonMap(t, data)["token"].(string)
+	me := func(lines ...string) int {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/me", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("X-API-Key", tok)
+		for _, l := range lines {
+			req.Header.Add("X-Forwarded-For", l)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		want  int
+	}{
+		{"the proxy's line alone, outside the allowlist", []string{"203.0.113.9"}, http.StatusForbidden},
+		{"a spoofed line, then the proxy's own line", []string{"10.1.2.3", "203.0.113.9"}, http.StatusForbidden},
+		{"a spoofed entry the proxy appended to", []string{"10.1.2.3, 203.0.113.9"}, http.StatusForbidden},
+		{"an honest client inside the allowlist, on its own line", []string{"198.51.100.7", "10.1.2.3"}, http.StatusOK},
+		{"an honest client inside the allowlist, appended", []string{"198.51.100.7, 10.1.2.3"}, http.StatusOK},
+	} {
+		if got := me(tc.lines...); got != tc.want {
+			t.Errorf("%s: status %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
