@@ -193,3 +193,73 @@ func extractApprovalToken(t *testing.T, emailBody string) string {
 	}
 	return rest[:end]
 }
+
+// TestApprovalInviteCountsAsItsCreator is the Phase 290 regression: a magic
+// link is its creator's approval handed to someone else, not a second
+// approver. Before it, one approver satisfied a two-approver requirement
+// alone — approve, mail yourself a link, redeem it — because the link's
+// "magiclink:<email>" actor was a distinct string. Both orders are refused,
+// a second link from the same creator is refused, and a link from a
+// DIFFERENT approver still counts, so delegation keeps working.
+func TestApprovalInviteCountsAsItsCreator(t *testing.T) {
+	smtpAddr, gotEmail := fakeSMTP(t)
+	srv, _ := newTestServerOpts(t, nil, api.Options{
+		ShareSMTPAddr: smtpAddr, ShareSMTPFrom: "pam@example.com", PortalURL: "https://pam.example.com",
+		ApprovalInviteTTL: time.Hour, ApprovalsRequired: 2,
+	})
+	alice := seedUser(t, srv, "alice", "user")
+	bob := seedUser(t, srv, "bob", "approver")
+	dave := seedUser(t, srv, "dave", "approver")
+
+	invite := func(reqID int64, key, email string) string {
+		t.Helper()
+		code, data := do(t, srv, http.MethodPost, fmt.Sprintf("/api/access-requests/%d/invite", reqID), key, map[string]any{"email": email})
+		if code != http.StatusCreated {
+			t.Fatalf("invite: %d %s", code, data)
+		}
+		return extractApprovalToken(t, string(<-gotEmail))
+	}
+	redeem := func(token string) (int, map[string]any) {
+		t.Helper()
+		code, data := do(t, srv, http.MethodPost, "/api/approval/redeem/"+token, "", map[string]any{"decision": "approved"})
+		return code, jsonMap(t, data)
+	}
+	approve := func(reqID int64, key string) (int, map[string]any) {
+		t.Helper()
+		code, data := do(t, srv, http.MethodPost, fmt.Sprintf("/api/access-requests/%d/approve", reqID), key, nil)
+		return code, jsonMap(t, data)
+	}
+
+	// Order 1: approve, then redeem your own link.
+	targetID, req1 := seedPendingRequest(t, srv, alice)
+	if code, m := approve(req1, bob); code != http.StatusOK || m["status"] != "pending" {
+		t.Fatalf("bob's first approval: %d %v", code, m)
+	}
+	if code, m := redeem(invite(req1, bob, "bob@example.com")); code != http.StatusConflict {
+		t.Fatalf("bob redeeming his own link after approving: %d %v, want 409", code, m)
+	}
+	// A different approver's link is a second voice and completes the chain.
+	if code, m := redeem(invite(req1, dave, "oncall@example.com")); code != http.StatusOK || m["status"] != "approved" {
+		t.Fatalf("dave's link: %d %v, want approved", code, m)
+	}
+
+	// Order 2: redeem your own link, then approve — and a second link.
+	erin := seedUser(t, srv, "erin", "user")
+	code, data := do(t, srv, http.MethodPost, "/api/access-requests", erin, map[string]any{"target_id": targetID, "reason": "second window"})
+	if code != http.StatusCreated {
+		t.Fatalf("file second request: %d %s", code, data)
+	}
+	req2 := int64(jsonMap(t, data)["id"].(float64))
+	if code, m := redeem(invite(req2, bob, "bob@example.com")); code != http.StatusOK || m["status"] != "pending" {
+		t.Fatalf("bob's link as the first approval: %d %v", code, m)
+	}
+	if code, m := approve(req2, bob); code != http.StatusConflict {
+		t.Fatalf("bob approving after his own link: %d %v, want 409", code, m)
+	}
+	if code, m := redeem(invite(req2, bob, "bob-other@example.com")); code != http.StatusConflict {
+		t.Fatalf("bob's second link: %d %v, want 409", code, m)
+	}
+	if code, m := approve(req2, dave); code != http.StatusOK || m["status"] != "approved" {
+		t.Fatalf("dave's direct approval: %d %v, want approved", code, m)
+	}
+}

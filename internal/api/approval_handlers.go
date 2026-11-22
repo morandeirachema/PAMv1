@@ -345,6 +345,10 @@ func (s *Server) approveAccessRequest(w http.ResponseWriter, r *http.Request) {
 type approvalDecisionIn struct {
 	Comment     string `json:"comment"`
 	DurationMin int    `json:"duration_min"`
+	// onBehalfOf is the PAMv1 identity whose approval this decision spends
+	// when the approver string is not one: the creator of the magic link
+	// being redeemed (Phase 290). Never read from a request body.
+	onBehalfOf string
 }
 
 // readDecision reads the optional decision body: absent is the zero value
@@ -549,6 +553,25 @@ func (s *Server) decideAccessRequestWith(w http.ResponseWriter, r *http.Request,
 			writeError(w, http.StatusConflict, "you have already approved this request")
 			return false
 		}
+	}
+	// A magic link is its creator's approval, handed to someone else to
+	// give (Phase 290). Counted as a voice of its own it let ONE approver
+	// satisfy a two-approver requirement alone: approve, mail yourself a
+	// link, redeem it. So the distinct-approver rule is applied to the
+	// identity behind each approval, in both orders.
+	voice := approver
+	if in.onBehalfOf != "" {
+		voice = in.onBehalfOf
+	}
+	voices, verr := s.approvalVoices(r.Context(), ar.ID, approvers, in.onBehalfOf != "")
+	if verr != nil {
+		storeError(w, verr)
+		return false
+	}
+	if voices[strings.ToLower(voice)] {
+		s.audit(r.Context(), "access.decision_denied", fmt.Sprintf("request:%d approver:%s reason:delegated-double-approval", ar.ID, auditField(approver, 128)))
+		writeError(w, http.StatusConflict, "this approval is already counted: a magic link counts as the approval of the approver who created it")
+		return false
 	}
 	// An ordered chain (Phase 256): this approval counts only if the approver
 	// qualifies for the CURRENT tier — the first unsatisfied level. Refused
@@ -794,6 +817,45 @@ func (s *Server) decorateTiers(ctx context.Context, reqs []store.AccessRequest) 
 		}
 		reqs[i].Tiers, _, _ = store.TierProgress(tiers, splitApprovers(reqs[i].ApprovedBy), s.tierQualifier(ctx, &reqs[i]))
 	}
+}
+
+// magicLinkPrefix marks the synthetic approver a redeemed magic link records.
+const magicLinkPrefix = "magiclink:"
+
+// approvalVoices returns, lower-cased, the PAMv1 identity behind every
+// approval already recorded on a request: the approver itself, or — for a
+// "magiclink:<email>" approver — whoever created the redeemed invite(s) to
+// that address. The invites are read only when a link is involved (one is
+// being redeemed now, or one already approved), so the ordinary approve path
+// pays no extra query.
+func (s *Server) approvalVoices(ctx context.Context, requestID int64, approvers []string, redeeming bool) (map[string]bool, error) {
+	voices := make(map[string]bool, len(approvers))
+	linked := redeeming
+	for _, a := range approvers {
+		voices[strings.ToLower(a)] = true
+		if strings.HasPrefix(a, magicLinkPrefix) {
+			linked = true
+		}
+	}
+	if !linked {
+		return voices, nil
+	}
+	invites, err := s.store.ListApprovalInvitesForRequest(ctx, requestID)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range approvers {
+		email, ok := strings.CutPrefix(a, magicLinkPrefix)
+		if !ok {
+			continue
+		}
+		for _, inv := range invites {
+			if inv.ConsumedAt != nil && inv.Decision != "denied" && strings.EqualFold(inv.Email, email) {
+				voices[strings.ToLower(inv.CreatedBy)] = true
+			}
+		}
+	}
+	return voices, nil
 }
 
 // splitApprovers parses a comma-joined approver set into a trimmed, non-empty

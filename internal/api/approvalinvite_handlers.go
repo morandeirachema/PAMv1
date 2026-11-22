@@ -207,8 +207,10 @@ func (s *Server) redeemApprovalInvite(w http.ResponseWriter, r *http.Request) {
 		s.authFailed(w, r, "approval-link", "invalid, expired, revoked, or already-used invite link")
 		return
 	}
-	actor := "magiclink:" + inv.Email
-	ok := s.decideAccessRequest(w, r, inv.AccessRequestID, in.Decision, actor)
+	actor := magicLinkPrefix + inv.Email
+	// Decided as the creator's delegate (Phase 290): the link spends the
+	// creator's approval, it does not add a second approver.
+	ok := s.decideAccessRequestWith(w, r, inv.AccessRequestID, in.Decision, actor, approvalDecisionIn{onBehalfOf: inv.CreatedBy})
 	if ok {
 		// Best-effort: the invite is already consumed either way, and the
 		// underlying decision has already been written and responded to —
