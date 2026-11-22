@@ -191,7 +191,7 @@ func TestShareInviteExternalRefusedUnderAirGap(t *testing.T) {
 	}
 }
 
-// fakeSMTP starts a minimal, single-connection SMTP server (no STARTTLS/AUTH
+// fakeSMTP starts a minimal SMTP server, one message per connection (no STARTTLS/AUTH
 // extensions offered) that captures the DATA payload — a local copy of
 // internal/alert's own test helper (unexported there, and this is a
 // different package), used here to prove the full external-invite path
@@ -202,55 +202,62 @@ func fakeSMTP(t *testing.T) (addr string, got chan []byte) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got = make(chan []byte, 1)
+	got = make(chan []byte, 8)
 	t.Cleanup(func() { ln.Close() })
 	go func() {
-		conn, err := ln.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		reply := func(s string) { conn.Write([]byte(s + "\r\n")) }
-		reply("220 fake.smtp ready")
-		buf := make([]byte, 65536)
-		var data strings.Builder
-		inData := false
 		for {
-			n, err := conn.Read(buf)
+			conn, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			chunk := string(buf[:n])
-			if inData {
-				data.WriteString(chunk)
-				if strings.HasSuffix(data.String(), "\r\n.\r\n") {
-					got <- []byte(strings.TrimSuffix(data.String(), "\r\n.\r\n"))
-					reply("250 OK")
-					inData = false
-				}
-				continue
-			}
-			for _, line := range strings.Split(strings.TrimRight(chunk, "\r\n"), "\r\n") {
-				up := strings.ToUpper(line)
-				switch {
-				case strings.HasPrefix(up, "EHLO"), strings.HasPrefix(up, "HELO"):
-					reply("250 fake.smtp")
-				case strings.HasPrefix(up, "MAIL FROM"):
-					reply("250 OK")
-				case strings.HasPrefix(up, "RCPT TO"):
-					reply("250 OK")
-				case strings.HasPrefix(up, "DATA"):
-					reply("354 go ahead")
-					inData = true
-					data.Reset()
-				case strings.HasPrefix(up, "QUIT"):
-					reply("221 bye")
-					return
-				}
-			}
+			go serveFakeSMTP(conn, got)
 		}
 	}()
 	return ln.Addr().String(), got
+}
+
+// serveFakeSMTP speaks just enough SMTP to accept one message on conn.
+func serveFakeSMTP(conn net.Conn, got chan []byte) {
+	defer conn.Close()
+	reply := func(s string) { conn.Write([]byte(s + "\r\n")) }
+	reply("220 fake.smtp ready")
+	buf := make([]byte, 65536)
+	var data strings.Builder
+	inData := false
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			return
+		}
+		chunk := string(buf[:n])
+		if inData {
+			data.WriteString(chunk)
+			if strings.HasSuffix(data.String(), "\r\n.\r\n") {
+				got <- []byte(strings.TrimSuffix(data.String(), "\r\n.\r\n"))
+				reply("250 OK")
+				inData = false
+			}
+			continue
+		}
+		for _, line := range strings.Split(strings.TrimRight(chunk, "\r\n"), "\r\n") {
+			up := strings.ToUpper(line)
+			switch {
+			case strings.HasPrefix(up, "EHLO"), strings.HasPrefix(up, "HELO"):
+				reply("250 fake.smtp")
+			case strings.HasPrefix(up, "MAIL FROM"):
+				reply("250 OK")
+			case strings.HasPrefix(up, "RCPT TO"):
+				reply("250 OK")
+			case strings.HasPrefix(up, "DATA"):
+				reply("354 go ahead")
+				inData = true
+				data.Reset()
+			case strings.HasPrefix(up, "QUIT"):
+				reply("221 bye")
+				return
+			}
+		}
+	}
 }
 
 // extractShareToken pulls the invite token back out of the emailed link
