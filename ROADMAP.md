@@ -162,8 +162,13 @@ API paths did not apply, an IP allowlist a header could pass, an audited
 verdict a typed command could forge, a user-admin who could remove an
 administrator. `main` had them fixed, on no tag.
 
-- [ ] **v0.0.81** through the test-gated pipeline; image
-  `ghcr.io/morandeirachema/pamv1:0.0.81`, digest `TBD` until the digest PR
+- [x] **v0.0.81** through the test-gated pipeline. Published 2026-11-22 (UTC)
+  as `ghcr.io/morandeirachema/pamv1:0.0.81` (also `latest`), digest
+  `sha256:309e0a1d0b3f67d9ab48301df4a091fa3c3009219005c11de5c1fca7b8b81443`,
+  **public** (anonymous pull 200 on both tags, both resolving to the same
+  digest). The release workflow's test and release jobs both concluded
+  `success`, with the `pam-agent` binaries (Linux and Windows), the SPDX SBOM
+  and `SHA256SUMS` attached
 - [x] All pins via the sweep — exactly one release under `deploy/`. Helm
   chart `version` 0.0.80 -> **0.0.81**, tracking the app version
 - [x] Both READMEs restated, and each gains a **TL;DR** at the top; every
@@ -174,8 +179,8 @@ administrator. `main` had them fixed, on no tag.
 - [x] `CHANGELOG.md` `[0.0.81]` carries the two things to know on upgrade:
   `PAM_REQUIRE_TARGET_GRANT` on the API paths, and purge reading the whole
   upload
-- [ ] The tag is pushed only **after** this PR is merged, with the
-  operator's go-ahead
+- [x] The tag was pushed only **after** the release PR was merged and CI on
+  `main` was green, with the operator's go-ahead
 
 ## Phase 290 — an audit of the whole repository, and what it found ✅
 

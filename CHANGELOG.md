@@ -32,7 +32,8 @@ reads the whole upload.
 
 **What has not changed.** No default changed and nothing new needs
 configuring. The image is `ghcr.io/morandeirachema/pamv1:0.0.81`,
-digest `TBD` until the digest PR
+digest
+`sha256:309e0a1d0b3f67d9ab48301df4a091fa3c3009219005c11de5c1fca7b8b81443`
 ([release page](https://github.com/morandeirachema/PAMv1/releases/tag/v0.0.81)).
 
 ### Security
