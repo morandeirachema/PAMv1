@@ -8,7 +8,7 @@
 > map) — by explaining *how the code actually runs*. Keep it current: when you
 > change a subsystem, update its section here in the same change.
 >
-> Last updated: 2026-11-21 · Reflects: Phases 0–227 and 229–289 + the 2026-07 hardening passes.
+> Last updated: 2026-11-22 · Reflects: Phases 0–227 and 229–290 + the 2026-07 hardening passes.
 >
 > New here and more comfortable in Python than Go? Read
 > [§0.1 Reading Go when you write Python](#01-reading-go-when-you-write-python)
@@ -380,7 +380,7 @@ Sentinel errors `ErrNotFound` / `ErrConflict` map to HTTP/SSH errors upstream.
     `hashtext` collision with either of the others is not possible.
 
 The shared conformance suite `storetest.RunStoreContract` exercises the whole
-interface — every one of its methods (243 today), which
+interface — every one of its methods (244 today), which
 `store.TestContractCallsEveryStoreMethod` keeps true — against both
 implementations (and, in CI, against a live PostgreSQL via
 `PAM_TEST_DATABASE_URL`), so the pgstore SQL is verified, not just assumed. Its
@@ -1268,6 +1268,7 @@ phase-by-phase status.
 
 | Date | Change |
 |---|---|
+| 2026-11-22 | Phase 290: §3.3 store surface 243 → 244 (`AuditStore.FindAuditEvents`). |
 | 2026-11-16 | Phase 287: the CI-gate list states `govulncheck`'s accepted-advisory list. |
 | 2026-10-18 | Phase 286: §3.3 states pgstore's one-helper-per-shape convention (`getOne`, `execExpectingRow`, `xCols` + `scanX`). |
 | 2026-10-18 | Phase 285: §5.4 names `sqlRefuse`, the refusal table both SQL listeners share. |
