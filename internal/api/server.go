@@ -960,6 +960,7 @@ func New(st store.Store, v *vault.Vault, resolver *auth.Resolver, authn auth.Aut
 		RADIUS:             opts.RADIUS,
 		RADIUSSecondFactor: opts.RADIUSSecondFactor,
 		RevealDisabled:     opts.RevealDisabled,
+		RequireTargetGrant: opts.RequireTargetGrant,
 		ApprovalRequired:   opts.RequireApproval,
 		ApprovalWindow:     opts.ApprovalWindow,
 		CheckoutTTL:        opts.CheckoutTTL,
