@@ -8,9 +8,12 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/morandeirachema/pamv1/internal/api"
 	"github.com/morandeirachema/pamv1/internal/recarchive"
@@ -239,4 +242,137 @@ func TestRecordingArchivePurge(t *testing.T) {
 		t.Fatal("a foreign archive deleted a recording")
 	}
 	auditHas(t, st, "recording.purge_refused", "reason:not-exported-here")
+}
+
+// slowServer serves srv's handler again behind an http.Server whose read and
+// write timeouts are short, standing in for the 30 seconds production runs
+// with.
+func slowServer(t *testing.T, srv *httptest.Server, timeout time.Duration) *httptest.Server {
+	t.Helper()
+	slow := httptest.NewUnstartedServer(srv.Config.Handler)
+	slow.Config.ReadTimeout, slow.Config.WriteTimeout = timeout, timeout
+	slow.Start()
+	t.Cleanup(slow.Close)
+	return slow
+}
+
+// TestRecordingTransfersOutliveTheServerTimeouts is the Phase 290 regression
+// for the three recording transfers. The API server's ReadTimeout and
+// WriteTimeout (30s) cut an archive export, an archive import and a large
+// playback off mid-transfer; each now carries its own deadline. The server
+// here times out after 150ms and every transfer deliberately takes longer.
+func TestRecordingTransfersOutliveTheServerTimeouts(t *testing.T) {
+	const timeout = 150 * time.Millisecond
+	dir := t.TempDir()
+	srv, st := newTestServerOpts(t, nil, api.Options{RecordingDir: dir})
+	slow := slowServer(t, srv, timeout)
+	// Larger than the socket buffers on both ends, so the server's writes
+	// block until the client reads.
+	big := strings.Repeat("0123456789abcdef", 2<<20) // 32 MiB
+	sum := seedRecording(t, st, dir, "100_web-01_alice.cast", big, "alice", "session.record", "target:web-01 cred_user:root")
+
+	// slowGet reads the body only after the server's write timeout has passed.
+	slowGet := func(url string) (int, []byte, error) {
+		req, _ := http.NewRequest(http.MethodGet, url, nil)
+		req.Header.Set("X-API-Key", testAPIKey)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return 0, nil, err
+		}
+		defer res.Body.Close()
+		time.Sleep(3 * timeout)
+		b, err := io.ReadAll(res.Body)
+		return res.StatusCode, b, err
+	}
+
+	code, body, err := slowGet(slow.URL + "/api/recordings/100_web-01_alice.cast")
+	if err != nil || code != http.StatusOK || len(body) != len(big) {
+		t.Fatalf("playback past the write timeout: %d, %d of %d bytes, err %v", code, len(body), len(big), err)
+	}
+
+	code, archive, err := slowGet(slow.URL + "/api/recordings/archive")
+	if err != nil || code != http.StatusOK {
+		t.Fatalf("export past the write timeout: %d, %d bytes, err %v", code, len(archive), err)
+	}
+	if m, _, files := readArchive(t, archive); len(m.Files) != 1 || m.Files[0].SHA256 != sum || files["100_web-01_alice.cast"] != big {
+		t.Fatalf("the archive did not arrive whole: %d files", len(m.Files))
+	}
+
+	// Import on a second deployment, the upload paused past the read timeout.
+	otherDir := t.TempDir()
+	other, _ := newTestServerOpts(t, nil, api.Options{RecordingDir: otherDir})
+	slowOther := slowServer(t, other, timeout)
+	pr, pw := io.Pipe()
+	go func() {
+		half := len(archive) / 2
+		_, _ = pw.Write(archive[:half])
+		time.Sleep(3 * timeout)
+		_, _ = pw.Write(archive[half:])
+		pw.Close()
+	}()
+	req, _ := http.NewRequest(http.MethodPost, slowOther.URL+"/api/recordings/archive", pr)
+	req.Header.Set("X-API-Key", testAPIKey)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("import past the read timeout: %v", err)
+	}
+	defer res.Body.Close()
+	var out map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&out)
+	if res.StatusCode != http.StatusOK || out["imported"] != float64(1) {
+		t.Fatalf("import past the read timeout: %d %v", res.StatusCode, out)
+	}
+	if got, err := os.ReadFile(filepath.Join(otherDir, "100_web-01_alice.cast")); err != nil || string(got) != big {
+		t.Fatalf("the imported recording is not the exported one (err %v)", err)
+	}
+}
+
+// TestRecordingArchivePurgeNeedsACompleteExport is the Phase 290 regression
+// for purge. It read only the manifest — the FIRST entry of the tar — so an
+// archive cut off anywhere after it still purged every recording it listed,
+// and an export the server itself had audited as failed purged too. Purge
+// now needs the whole archive, verified, and no recording.archive_failed row.
+func TestRecordingArchivePurgeNeedsACompleteExport(t *testing.T) {
+	dir := t.TempDir()
+	srv, st := newTestServerOpts(t, nil, api.Options{RecordingDir: dir})
+	seedRecording(t, st, dir, "100_web-01_alice.cast", strings.Repeat("one", 4096), "alice", "session.record", "target:web-01 cred_user:root")
+	seedRecording(t, st, dir, "110_web-01_alice.cast", strings.Repeat("two", 4096), "alice", "session.record", "target:web-01 cred_user:root")
+	kept := func(why string) {
+		t.Helper()
+		for _, name := range []string{"100_web-01_alice.cast", "110_web-01_alice.cast"} {
+			if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+				t.Fatalf("%s: %s was deleted", why, name)
+			}
+		}
+	}
+
+	// A truncated download: the manifest and the first file, then nothing.
+	code, hdr, archive := getRaw(t, srv.URL+"/api/recordings/archive", testAPIKey)
+	if code != http.StatusOK {
+		t.Fatalf("export: %d", code)
+	}
+	if code, res := postTar(t, srv.URL+"/api/recordings/purge", testAPIKey, archive[:len(archive)/2]); code != http.StatusUnprocessableEntity {
+		t.Fatalf("a truncated archive purged: %d %v", code, res)
+	}
+	kept("truncated archive")
+	auditHas(t, st, "recording.purge_refused", "reason:archive-unverified")
+
+	// An export the server recorded as failed mid-stream: the archive in
+	// hand is complete here, but the trail says that export did not finish.
+	digest := hdr.Get("X-PAM-Archive-Manifest-SHA256")
+	if err := st.AppendAudit(context.Background(), &store.AuditEvent{Actor: "bootstrap-admin", Action: "recording.archive_failed",
+		Detail: "manifest_sha256:" + digest + ` error:"write: broken pipe"`}); err != nil {
+		t.Fatal(err)
+	}
+	if code, res := postTar(t, srv.URL+"/api/recordings/purge", testAPIKey, archive); code != http.StatusUnprocessableEntity {
+		t.Fatalf("a failed export purged: %d %v", code, res)
+	}
+	kept("failed export")
+	auditHas(t, st, "recording.purge_refused", "reason:export-failed")
+
+	// A fresh, complete export still purges.
+	_, _, again := getRaw(t, srv.URL+"/api/recordings/archive", testAPIKey)
+	if code, res := postTar(t, srv.URL+"/api/recordings/purge", testAPIKey, again); code != http.StatusOK || res["purged"] != float64(2) {
+		t.Fatalf("a complete export: %d %v, want 2 purged", code, res)
+	}
 }

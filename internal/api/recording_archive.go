@@ -141,6 +141,7 @@ func (s *Server) exportRecordingArchive(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "recordings are not configured")
 		return
 	}
+	s.longTransfer(w) // before the hashing below, which the write deadline also covers
 	files, err := s.selectRecordings(r.Context(), since, until, actor, target, protocol)
 	if err != nil {
 		storeError(w, err)
@@ -184,6 +185,32 @@ func (s *Server) exportRecordingArchive(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// longTransferLimit bounds one recording transfer — an archive in either
+// direction, or one recording's playback.
+const longTransferLimit = 2 * time.Hour
+
+// longTransfer replaces this connection's read and write deadlines with one
+// generous enough for a recording transfer (Phase 290). The API server runs
+// with a 30-second ReadTimeout and WriteTimeout, right for a request/response
+// API and wrong here: an archive export hashes every file and then streams
+// them, an import accepts up to maxArchiveImport, and both were simply cut
+// off at thirty seconds — as was the playback of any recording too large to
+// send in that time. Bounded rather than cleared, unlike an SSE stream: a
+// transfer ends, and a stalled peer must not hold a connection for ever.
+//
+// A failure is logged and the transfer carries on under the server's own
+// timeouts, which is what it did before.
+func (s *Server) longTransfer(w http.ResponseWriter) {
+	rc := http.NewResponseController(w)
+	deadline := time.Now().Add(longTransferLimit)
+	if err := rc.SetWriteDeadline(deadline); err != nil {
+		s.log.Warn("recording transfer: cannot extend the write deadline", "err", err)
+	}
+	if err := rc.SetReadDeadline(deadline); err != nil {
+		s.log.Warn("recording transfer: cannot extend the read deadline", "err", err)
+	}
+}
+
 func orDash(v string) string {
 	if v == "" {
 		return "-"
@@ -216,6 +243,7 @@ func (s *Server) importRecordingArchive(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "recordings are not configured")
 		return
 	}
+	s.longTransfer(w)
 	ctx := r.Context()
 	temps := map[string]string{} // name -> temp path
 	cleanup := func() {
@@ -285,10 +313,12 @@ func (s *Server) importRecordingArchive(w http.ResponseWriter, r *http.Request) 
 
 // purgeRecordingArchive is POST /api/recordings/purge: the recordings an
 // archive lists are deleted from disk — "export, then purge", the archive
-// being where they now live. Only the manifest is read. The archive must
-// have been exported HERE: its manifest digest must appear on a
-// recording.archive row, so a hand-made manifest cannot name recordings to
-// delete. A listed file is deleted only if its stored bytes still match the
+// being where they now live. The whole archive is read and verified, so the
+// caller shows it holds every listed file. The archive must have been
+// exported HERE, and the export must have finished: its manifest digest must
+// be on a recording.archive row and on no recording.archive_failed row, so a
+// hand-made manifest cannot name recordings to delete and a truncated export
+// cannot either. A listed file is deleted only if its stored bytes still match the
 // manifest — one that changed since the export is kept and reported, since
 // the archive does not hold what is on disk. Each deletion is audited
 // before it happens. Requires CapManageUsers.
@@ -297,18 +327,46 @@ func (s *Server) purgeRecordingArchive(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "recordings are not configured")
 		return
 	}
+	s.longTransfer(w)
 	ctx := r.Context()
-	m, digest, err := recarchive.ReadManifest(http.MaxBytesReader(w, r.Body, maxArchiveImport))
+	// The WHOLE archive is read and verified, not just its manifest (Phase
+	// 290). The manifest is the first entry of the tar, so a download cut
+	// off anywhere after it still carried a manifest this route would have
+	// purged by — deleting recordings whose only other copy was never
+	// written. Purging is "the archive is where they now live", so the
+	// caller must show it holds every listed file, intact.
+	m, digest, err := recarchive.Read(http.MaxBytesReader(w, r.Body, maxArchiveImport), recordingNameRe.MatchString,
+		func(_ recarchive.Entry, body io.Reader) error {
+			_, cerr := io.Copy(io.Discard, body)
+			return cerr
+		})
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "archive: "+err.Error())
+		s.audit(ctx, "recording.purge_refused", "reason:archive-unverified error:"+auditField(err.Error(), 200))
+		writeError(w, http.StatusUnprocessableEntity, "archive: "+err.Error()+"; nothing was purged")
 		return
 	}
-	if ok, ferr := s.store.FindAuditDetail(ctx, "recording.archive", "manifest_sha256:"+digest); ferr != nil {
+	// Exported HERE: a recording.archive row whose own manifest_sha256 field
+	// is this digest. Read as a field, not searched for as a substring — the
+	// row also carries the export's caller-supplied filter values.
+	exported, ferr := s.archiveRowFor(ctx, "recording.archive", digest)
+	if ferr != nil {
 		storeError(w, ferr)
 		return
-	} else if !ok {
+	}
+	if !exported {
 		s.audit(ctx, "recording.purge_refused", "manifest_sha256:"+digest+" reason:not-exported-here")
 		writeError(w, http.StatusUnprocessableEntity, "this archive was not exported by this deployment (no recording.archive row for its manifest); nothing was purged")
+		return
+	}
+	// And the export FINISHED. The export is audited before a byte leaves, so
+	// a stream that then failed left both rows; the server knew the archive
+	// was incomplete and purged by it anyway.
+	if failed, ferr := s.archiveRowFor(ctx, "recording.archive_failed", digest); ferr != nil {
+		storeError(w, ferr)
+		return
+	} else if failed {
+		s.audit(ctx, "recording.purge_refused", "manifest_sha256:"+digest+" reason:export-failed")
+		writeError(w, http.StatusUnprocessableEntity, "this export failed while it was being sent (recording.archive_failed); export again and purge with that archive. Nothing was purged")
 		return
 	}
 	if !s.mustAudit(w, ctx, "recording.purge", fmt.Sprintf("manifest_sha256:%s files:%d", digest, len(m.Files))) {
@@ -347,4 +405,19 @@ func (s *Server) purgeRecordingArchive(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"manifest_sha256": digest, "purged": counts["purged"], "absent": counts["absent"], "changed": counts["changed"], "errors": counts["error"], "files": out,
 	})
+}
+
+// archiveRowFor reports whether an audit row with the given action carries
+// manifest_sha256:<digest> as its own field.
+func (s *Server) archiveRowFor(ctx context.Context, action, digest string) (bool, error) {
+	events, err := s.store.FindAuditEvents(ctx, action, "manifest_sha256:"+digest, recordingStampScan)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range events {
+		if report.Field(e.Detail, "manifest_sha256") == digest {
+			return true, nil
+		}
+	}
+	return false, nil
 }
