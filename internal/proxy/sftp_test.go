@@ -117,13 +117,18 @@ type sftpUpstream struct {
 	port      int
 	got       chan string // "open:<name>", "write:<data>", "remove:<path>"
 	deferData atomic.Bool
+	// holdExt makes the responder withhold its reply to an EXTENDED request
+	// until releaseExt is closed, so a test can keep a request id genuinely in
+	// flight instead of hoping the reply loses a race.
+	holdExt    atomic.Bool
+	releaseExt chan struct{}
 }
 
 // startUpstreamSFTP launches an sshd that accepts (upstreamUser/upstreamSecret)
 // and serves the SFTP subsystem with a genuine (if minimal) v3 responder.
 func startUpstreamSFTP(t *testing.T) *sftpUpstream {
 	t.Helper()
-	up := &sftpUpstream{got: make(chan string, 32)}
+	up := &sftpUpstream{got: make(chan string, 32), releaseExt: make(chan struct{})}
 	cfg := &ssh.ServerConfig{
 		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
 			if c.User() == upstreamUser && string(pass) == upstreamSecret {
@@ -234,6 +239,9 @@ func (up *sftpUpstream) serveSFTP(ch ssh.Channel) {
 			ext, rest, _ := readStr(body[4:])
 			arg, _, _ := readStr(rest)
 			up.got <- "ext:" + ext + ":" + arg
+			if up.holdExt.Load() {
+				<-up.releaseExt
+			}
 			ch.Write(sftpPacket(tStatus, be32(id), be32(0), sftpStr("ok"), sftpStr("")))
 		case tClose:
 			id := binary.BigEndian.Uint32(body[:4])

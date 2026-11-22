@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -514,6 +515,16 @@ func TestSFTPCaptureNoAccessFlagsIsStillCaptured(t *testing.T) {
 // posture forbids.
 func TestSFTPCaptureRefusesReusedRequestID(t *testing.T) {
 	st, addr, up, recDir, _ := startProxySFTPCapture(t, proxy.SFTPCaptureAll, 0, false)
+	// The upstream withholds its reply to the extended request until released,
+	// so id 7 is in flight for certain when the OPEN arrives. The test used to
+	// rely on the OPEN reaching the proxy before that reply came back; on a
+	// slow runner the reply won, the id was free again, the OPEN was then
+	// legitimate, and the test failed on a HANDLE the proxy was right to
+	// allow.
+	up.holdExt.Store(true)
+	var once sync.Once
+	release := func() { once.Do(func() { close(up.releaseExt) }) }
+	t.Cleanup(release)
 	client, ch, ok := openSFTPChannel(t, addr)
 	if !ok {
 		t.Fatal("sftp subsystem refused")
@@ -521,14 +532,15 @@ func TestSFTPCaptureRefusesReusedRequestID(t *testing.T) {
 	defer client.Close()
 	initSFTP(t, ch)
 
-	// An extended request the upstream will answer with a STATUS, deliberately
-	// left in flight, then an OPEN reusing its id.
+	// An extended request the upstream will answer with a STATUS, held in
+	// flight, then an OPEN reusing its id.
 	ch.Write(sftpPacket(tExtended, be32(7), sftpStr("statvfs@openssh.com"), sftpStr("/srv")))
 	ch.Write(sftpPacket(tOpen, be32(7), sftpStr("/srv/exfil.tar"), be32(pWrite|pCreat), be32(0)))
 
-	// One of the two replies is the proxy's refusal of the reused id; neither
-	// may be a HANDLE, because a handle the capture cannot track is exactly
-	// what must not exist.
+	// The first reply can only be the proxy's own refusal of the reused id:
+	// the upstream is still holding its answer. The second is that answer,
+	// once released. Neither may be a HANDLE, because a handle the capture
+	// cannot track is exactly what must not exist.
 	for i := 0; i < 2; i++ {
 		typ, _, err := readPacket(ch)
 		if err != nil {
@@ -537,6 +549,7 @@ func TestSFTPCaptureRefusesReusedRequestID(t *testing.T) {
 		if typ == tHandle {
 			t.Fatal("an OPEN reusing an in-flight request id must not yield a handle")
 		}
+		release()
 	}
 	client.Close()
 
