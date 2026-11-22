@@ -86,8 +86,16 @@ func (s *Server) clientIP(r *http.Request) string {
 	if s.trustedProxyHops <= 0 {
 		return direct
 	}
-	xff := r.Header.Get("X-Forwarded-For")
-	if xff == "" {
+	// Every X-Forwarded-For LINE, joined in order (Phase 290). A header may
+	// arrive as several lines, and a proxy that adds its own line rather than
+	// appending to the client's (HAProxy's `option forwardfor`) puts the
+	// address it saw on the LAST one. Header.Get returns only the first line —
+	// the one the client wrote — so reading it trusted exactly the entry this
+	// function exists to skip: a spoofed line passed a user's IP allowlist and
+	// bought a fresh rate-limit window per request. RFC 9110 §5.3 makes the
+	// lines equivalent to one comma-joined value, which is what is walked.
+	xff := strings.Join(r.Header.Values("X-Forwarded-For"), ",")
+	if strings.TrimSpace(xff) == "" {
 		return direct
 	}
 	parts := strings.Split(xff, ",")
