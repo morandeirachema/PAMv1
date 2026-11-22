@@ -18,6 +18,18 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+### Changed
+
+- **Go modules, 2026-11-22** (#484): `aws-sdk-go-v2/config` 1.33.18 →
+  1.33.20 and `aws-sdk-go-v2/service/kms` 1.62.6 → 1.63.0, with the
+  indirect `credentials` 1.21.2 and `service/signin` 1.14.0. Only the
+  AWS-KMS key-encryption-key provider uses them.
+
+### Fixed
+
+- **A flaky proxy test** (`TestSFTPCaptureRefusesReusedRequestID`) no
+  longer depends on timing. The proxy is unchanged.
+
 ## [0.0.81] — 2026-11-22
 
 Ships **Phase 290**, an audit of the whole repository: six defects fixed,
