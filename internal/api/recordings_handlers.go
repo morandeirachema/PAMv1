@@ -305,6 +305,7 @@ func (s *Server) playRecording(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.longTransfer(w) // a large recording does not fit the server's 30s write timeout
 	contentType := "application/x-asciicast; charset=utf-8"
 	switch recordingKind(name) {
 	case "transcript":
