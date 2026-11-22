@@ -1631,12 +1631,38 @@ func (s *PGStore) PruneAuditBefore(ctx context.Context, cutoff time.Time) (int, 
 // detail containing substr. The substring is matched literally: LIKE wildcards
 // in substr are escaped so a caller-supplied value cannot widen the match.
 func (s *PGStore) FindAuditDetail(ctx context.Context, action, substr string) (bool, error) {
-	quoted := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(substr)
+	quoted := likeLiteral(substr)
 	var exists bool
 	err := s.pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM audit_events WHERE action = $1 AND detail LIKE '%' || $2 || '%')`,
 		action, quoted).Scan(&exists)
 	return exists, err
+}
+
+// likeLiteral escapes LIKE's wildcards and its escape character, so a
+// caller-supplied substring matches itself and nothing wider.
+func likeLiteral(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// FindAuditEvents returns up to limit audit events with the given action whose
+// detail contains substr (matched literally, as FindAuditDetail does), oldest
+// first.
+func (s *PGStore) FindAuditEvents(ctx context.Context, action, substr string, limit int) ([]store.AuditEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	quoted := likeLiteral(substr)
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, ts, actor, action, detail
+		 FROM audit_events
+		 WHERE action = $1 AND detail LIKE '%' || $2 || '%'
+		 ORDER BY id ASC
+		 LIMIT $3`, action, quoted, limit)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, scanAuditEvent)
 }
 
 // nullableTime maps the zero time to a SQL NULL (used as "no lower bound").

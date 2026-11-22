@@ -1737,6 +1737,27 @@ func (m *Memstore) FindAuditDetail(_ context.Context, action, substr string) (bo
 	return false, nil
 }
 
+// FindAuditEvents returns up to limit audit events with the given action whose
+// detail contains substr, matched literally, oldest first.
+func (m *Memstore) FindAuditEvents(_ context.Context, action, substr string, limit int) ([]store.AuditEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []store.AuditEvent
+	for _, e := range m.audit {
+		if e.Action == action && strings.Contains(e.Detail, substr) {
+			out = append(out, e)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // CreateUser inserts a user, assigning its ID and CreatedAt; ErrConflict if the username is taken.
 // CreateUser always creates an active user — Active on the input struct is
 // ignored, matching pgstore: a bare Go bool cannot tell "wants an inactive

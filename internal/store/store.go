@@ -1871,6 +1871,15 @@ type AuditStore interface {
 	// path uses it to verify a served session recording's SHA-256 against the
 	// value audited when the recording was written.
 	FindAuditDetail(ctx context.Context, action, substr string) (bool, error)
+	// FindAuditEvents returns up to limit audit events with the given action
+	// whose detail contains substr, matched literally, OLDEST first (Phase
+	// 290). It is FindAuditDetail for a caller that must read the row rather
+	// than trust that one exists: a substring can also sit inside a quoted,
+	// operator-typed value, so "some row mentions this hash" is not "a row
+	// attests this file". Oldest first, because the row that stamped an
+	// artifact is written when it closes and anything planted later sorts
+	// after it — a flood of later matches cannot push it out of the limit.
+	FindAuditEvents(ctx context.Context, action, substr string, limit int) ([]AuditEvent, error)
 }
 
 // UserStore is local users and the custom permission profiles assignable to

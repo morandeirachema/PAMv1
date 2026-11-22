@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/morandeirachema/pamv1/internal/recording"
+	"github.com/morandeirachema/pamv1/internal/report"
 )
 
 // --- session-recording playback (Phase 26) ---
@@ -209,6 +210,43 @@ func (s *Server) listRecordings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// recordingStampScan bounds how many rows mentioning a hash are read per
+// action. The stamping row is the oldest of them (FindAuditEvents is oldest
+// first), so the bound only limits how many identical-content files one
+// verdict will look through.
+const recordingStampScan = 200
+
+// recordingStamped reports whether an audit row with one of actions attests
+// that the stored file `name` has SHA-256 `sum`: its own `file:` field names
+// the file and its own `sha256:` field carries the hash.
+//
+// Until Phase 290 playback asked the store whether `sha256:<sum>` appeared
+// anywhere in such a row's detail. That was two holes. The proxy's winrm.run
+// row carries the operator's command, quoted but with its colons intact, so
+// typing `sha256:<hash>` as a WinRM command planted a row that vouched for
+// any file with that hash; and because no file name was compared, two
+// genuinely audited recordings could be swapped on disk and each still
+// replayed as audited. Both needed write access to the recording directory —
+// which is exactly the attacker tamper evidence exists for.
+//
+// The fields are read with report.Field, which does not look inside a quoted
+// value, and the file is compared by base name: the SSH proxy audits a full
+// path, the other recorders a bare name.
+func (s *Server) recordingStamped(ctx context.Context, actions []string, name, sum string) bool {
+	for _, action := range actions {
+		events, err := s.store.FindAuditEvents(ctx, action, "sha256:"+sum, recordingStampScan)
+		if err != nil {
+			continue // unverifiable is reported as not audited, never as audited
+		}
+		for _, e := range events {
+			if report.Field(e.Detail, "sha256") == sum && filepath.Base(report.Field(e.Detail, "file")) == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // playRecording serves one stored recording for replay. Before any byte leaves,
 // the file's SHA-256 is recomputed and checked against the audit trail (the
 // value stamped by session.record / winrm.run when the recording was written) —
@@ -242,26 +280,16 @@ func (s *Server) playRecording(w http.ResponseWriter, r *http.Request) {
 	}
 	sum := hex.EncodeToString(hasher.Sum(nil))
 
-	// Tamper evidence: does this exact hash appear in the audit trail? Proxied
-	// sessions audit session.record; WinRM run transcripts audit winrm.run; SFTP
-	// content capture audits sftp.file_recorded.
-	audited := false
-	for _, action := range recordingAuditActionList {
-		if ok, ferr := s.store.FindAuditDetail(r.Context(), action, "sha256:"+sum); ferr == nil && ok {
-			audited = true
-			break
-		}
-	}
+	// Tamper evidence: did a row STAMP this file with this hash? Proxied
+	// sessions audit session.record; WinRM run transcripts audit winrm.run;
+	// SFTP content capture audits sftp.file_recorded. See recordingStamped
+	// for why "the hash appears somewhere in the trail" was not that question.
+	audited := s.recordingStamped(r.Context(), recordingAuditActionList, name, sum)
 	// Provenance (Phase 283): a recording put back from an archive is
 	// vouched for by its import row, not by a row written when it was
 	// recorded — on another deployment, there is none. It replays as
 	// imported, and is never reported as audited on that strength alone.
-	imported := false
-	if !audited {
-		if ok, ferr := s.store.FindAuditDetail(r.Context(), "recording.imported", "sha256:"+sum); ferr == nil && ok {
-			imported = true
-		}
-	}
+	imported := !audited && s.recordingStamped(r.Context(), []string{"recording.imported"}, name, sum)
 
 	// Fail CLOSED, before a byte leaves. This is a read of KEK-protected material
 	// — a sealed recording is everything the operator typed and saw, and since

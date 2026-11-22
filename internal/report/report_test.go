@@ -192,3 +192,30 @@ func TestAccessWithoutASession(t *testing.T) {
 		}
 	}
 }
+
+// TestFieldIgnoresQuotedValues is the Phase 290 regression: a quoted value is
+// one field, and nothing inside it is structure. Field split on whitespace
+// alone, so a command an operator typed could plant a `file:` or `sha256:`
+// field in the row that recorded it.
+func TestFieldIgnoresQuotedValues(t *testing.T) {
+	for _, tc := range []struct{ detail, key, want string }{
+		{`target:web-01 file:a.cast sha256:abcd chain:ff`, "sha256", "abcd"},
+		{`target:web-01 file:a.cast sha256:abcd chain:ff`, "file", "a.cast"},
+		{`target:win1 via:proxy exit:1 cmd:"x file:v.cast sha256:dead y"`, "sha256", ""},
+		{`target:win1 via:proxy exit:1 cmd:"x file:v.cast sha256:dead y"`, "file", ""},
+		{`target:win1 cmd:"sha256:dead"`, "sha256", ""},
+		// An escaped quote does not end the value early.
+		{`cmd:"echo \" sha256:dead" file:real.cast sha256:beef`, "sha256", "beef"},
+		{`cmd:"echo \\" sha256:beef`, "sha256", "beef"},
+		// A quoted value is returned as written.
+		{`subject:"poc bob" kind:user`, "subject", `"poc bob"`},
+		{`subject:"poc bob" kind:user`, "kind", "user"},
+		// An unterminated quote swallows the rest rather than exposing it.
+		{`cmd:"never closed sha256:dead`, "sha256", ""},
+		{``, "sha256", ""},
+	} {
+		if got := Field(tc.detail, tc.key); got != tc.want {
+			t.Errorf("Field(%q, %q) = %q, want %q", tc.detail, tc.key, got, tc.want)
+		}
+	}
+}

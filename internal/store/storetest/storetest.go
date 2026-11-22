@@ -1995,6 +1995,27 @@ func RunStoreContract(t *testing.T, st store.Store) {
 		t.Fatal("FindAuditDetail must treat % literally, not as a wildcard")
 	}
 
+	// --- FindAuditEvents (Phase 290): the matching rows, oldest first ---
+	if err := st.AppendAudit(ctx, &store.AuditEvent{Actor: "mallory", Action: "session.record", Detail: `target:t cmd:"x sha256:abcd1234"`}); err != nil {
+		t.Fatalf("AppendAudit(second match): %v", err)
+	}
+	found, err := st.FindAuditEvents(ctx, "session.record", "sha256:abcd1234", 10)
+	if err != nil || len(found) != 2 {
+		t.Fatalf("FindAuditEvents: %d rows, err %v; want 2", len(found), err)
+	}
+	if found[0].Actor != "proxy" || found[1].Actor != "mallory" || found[0].ID >= found[1].ID {
+		t.Fatalf("FindAuditEvents must return oldest first: %+v", found)
+	}
+	if one, err := st.FindAuditEvents(ctx, "session.record", "sha256:abcd1234", 1); err != nil || len(one) != 1 || one[0].Actor != "proxy" {
+		t.Fatalf("FindAuditEvents(limit 1) must keep the OLDEST row: %+v err %v", one, err)
+	}
+	if none, err := st.FindAuditEvents(ctx, "winrm.run", "sha256:abcd1234", 10); err != nil || len(none) != 0 {
+		t.Fatalf("FindAuditEvents must match the action: %d rows, err %v", len(none), err)
+	}
+	if none, err := st.FindAuditEvents(ctx, "session.record", "sha256:a_cd1234", 10); err != nil || len(none) != 0 {
+		t.Fatalf("FindAuditEvents must treat _ literally: %d rows, err %v", len(none), err)
+	}
+
 	// --- users ---
 	u := &store.User{Username: "u1", Role: "admin", TokenHash: "tokhash1"}
 	if err := st.CreateUser(ctx, u); err != nil {

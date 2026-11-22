@@ -92,9 +92,11 @@ import (
 // RestrictionStore (3) — per-subject restriction rules. Phase 281 (the
 // review of 274-280) added AuditStore.ExportAuditActions (1) — the reports'
 // trail read filtered to the actions they count, so a year-long report no
-// longer loads every per-statement row of the year.
+// longer loads every per-statement row of the year. Phase 290 added
+// AuditStore.FindAuditEvents (1) — FindAuditDetail for a caller that must
+// read the matching row rather than trust that one exists.
 func TestStoreMethodSetIsUnchanged(t *testing.T) {
-	const want = 243
+	const want = 244
 	got := reflect.TypeOf((*store.Store)(nil)).Elem().NumMethod()
 	if got != want {
 		t.Fatalf("store.Store exposes %d methods, want %d — a role interface was dropped from or added to the composition", got, want)
