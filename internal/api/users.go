@@ -202,6 +202,9 @@ func (s *Server) lockUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "you cannot lock your own identity")
 		return
 	}
+	if !s.mayManageUser(w, r, u, "lock", "lock") {
+		return
+	}
 	if err := s.store.SetUserLock(r.Context(), id, in.Reason, in.Until); err != nil {
 		storeError(w, err)
 		return
@@ -235,6 +238,9 @@ func (s *Server) unlockUser(w http.ResponseWriter, r *http.Request) {
 	u, err := s.store.GetUser(r.Context(), id)
 	if err != nil {
 		storeError(w, err)
+		return
+	}
+	if !s.mayManageUser(w, r, u, "unlock", "unlock") {
 		return
 	}
 	if err := s.store.SetUserLock(r.Context(), id, "", nil); err != nil {
@@ -281,10 +287,7 @@ func (s *Server) rotateUserToken(w http.ResponseWriter, r *http.Request) {
 	// administrator's token and present it as its own key. Checked before
 	// anything is written, so a refused rotation leaves the victim's token
 	// working.
-	grantCaps, err := s.capsForGrant(r.Context(), u.Role)
-	if err != nil || !principalFrom(r.Context()).Covers(grantCaps) {
-		s.audit(r.Context(), "authz.denied", "user:"+u.Username+" reason:rotate-beyond-caps")
-		writeError(w, http.StatusForbidden, "cannot rotate the token of an identity whose capabilities you do not hold")
+	if !s.mayManageUser(w, r, u, "rotate", "rotate the token of") {
 		return
 	}
 	token, err := generateToken()
@@ -366,6 +369,11 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
+	// The identity as it is NOW must be within the caller's reach too, not
+	// only the role being assigned (Phase 290).
+	if !s.mayManageUser(w, r, u, "update", "update") {
+		return
+	}
 	// The Slack link goes FIRST because it is the one field whose store
 	// write can fail for a reason the caller caused (409: another user
 	// already claims that member id). Writing the role before it meant a
@@ -438,6 +446,9 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	u, err := s.store.GetUser(r.Context(), id)
 	if err != nil {
 		storeError(w, err)
+		return
+	}
+	if !s.mayManageUser(w, r, u, "delete", "delete") {
 		return
 	}
 	if err := s.store.DeleteUser(r.Context(), id); err != nil {
@@ -556,6 +567,34 @@ func (s *Server) killUserSessions(ctx context.Context, username, reason string) 
 	// replica records session.kill via:bus; this is the intent half.
 	s.audit(ctx, "session.killed", fmt.Sprintf("user:%s killed_here:%d reason:%s", username, killed, reason))
 	return killed
+}
+
+// mayManageUser reports whether the caller may act on an existing identity:
+// it must hold every capability that identity holds. verb names the action in
+// the audit row (reason:<verb>-beyond-caps) and phrase in the refusal. A built-in administrator always may — also
+// when the identity's profile no longer resolves, which nobody else can judge
+// and which must not leave the row unmanageable.
+//
+// rotateUserToken has applied this rule since Phase 248, because a rotation
+// hands the caller a working token. The other writes did not (Phase 290): a
+// delegated user-admin — a custom profile carrying manage_users and little
+// else — could demote an administrator to a role it did cover (updateUser
+// checked only the NEW role), lock one out, lift a lock another administrator
+// had placed, or delete one. None of those is an escalation, and the
+// bootstrap key recovers from each; they are still a lesser identity
+// overruling a greater one, which is what the guard at mint time exists to
+// prevent. Writes the 403 and audits authz.denied itself.
+func (s *Server) mayManageUser(w http.ResponseWriter, r *http.Request, u *store.User, verb, phrase string) bool {
+	p := principalFrom(r.Context())
+	if p.IsAdmin() {
+		return true
+	}
+	if caps, err := s.capsForGrant(r.Context(), u.Role); err == nil && p.Covers(caps) {
+		return true
+	}
+	s.audit(r.Context(), "authz.denied", "user:"+u.Username+" reason:"+verb+"-beyond-caps")
+	writeError(w, http.StatusForbidden, "cannot "+phrase+" an identity whose capabilities you do not hold")
+	return false
 }
 
 // capsForGrant resolves a built-in role name or an existing custom profile name
