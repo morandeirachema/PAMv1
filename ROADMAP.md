@@ -8,7 +8,7 @@ Phases are listed **newest first**, from the latest release down to Phase 0; wha
 
 > 🟢 **Living document** — updated in the same change as the code, without a separate ask (see the [docs hub](docs/README.md)).
 
-**Phases 0–227 and 229–289 are shipped** (Phase 228 recorded an open flake
+**Phases 0–227 and 229–290 are shipped** (Phase 228 recorded an open flake
 investigation with no code change — see §3d below — so it does not count
 toward "shipped" per this doc's own guiding principle above; it is
 superseded by whichever phase actually closes that flake). Phases 96–108 are a refactor, security-hardening
@@ -148,6 +148,72 @@ the headline deferrals are:
 - **The remaining three Tier-3 gaps** — connector/plugin breadth, cloud CIEM, and web/SaaS session proxying — each need a real device, cloud account, or browser/SaaS console to build honestly.
 
 ---
+
+## Phase 290 — an audit of the whole repository, and what it found ✅
+
+*A read of the code as it stands, not of a diff: the auth resolver and
+RBAC, the API middleware and route table, login, users, approvals, magic
+links, Slack decisions, recordings and archives, the proxies' admission
+gates, the vault envelope and the rate limiter. Six defects, each
+reproduced by a failing test before it was fixed, and one flake found on
+the way. **No migration** (high-water stays `0068`), routes unchanged at
+**240**, `store.Store` **243 -> 244**, no new environment variable. Not
+read, and so not vouched for by this phase: most of `proxy.go`, the
+database proxies, the broker, SAML/OIDC, the stores, the console's
+JavaScript and the deploy manifests.*
+
+- [x] **A magic link is its creator's approval.** A redeemed approval
+  invite recorded the approver `magiclink:<email>`, a string distinct from
+  every identity, and the distinct-approver rule compared strings. One
+  approver satisfied a two-approver requirement alone: approve, mail
+  yourself a link, redeem it. The rule now applies to the identity behind
+  each approval, in both orders; a second link from the same creator is
+  refused too (`access.decision_denied reason:delegated-double-approval`).
+  A link from a different approver is still a second voice
+  (`TestApprovalInviteCountsAsItsCreator`).
+- [x] **`PAM_REQUIRE_TARGET_GRANT` applies from startup.** `api.New` built
+  its first runtime snapshot without the flag, so the session proxies
+  refused a target nobody had granted while the desktop viewer, REST WinRM,
+  kubectl and the broker's tools left it open, until the first
+  `PUT /api/config` rebuilt the snapshot. No test built a server with the
+  option set (`TestRequireTargetGrantAppliesFromStartup`).
+- [x] **The client address is read from every `X-Forwarded-For` line.**
+  `Header.Get` returns the first line only. Behind a proxy that adds its own
+  line instead of appending (HAProxy's `option forwardfor`) that is the
+  client's line, so with `PAM_TRUSTED_PROXY_HOPS` set a spoofed header
+  passed a user's IP allowlist and reset the rate limiter
+  (`TestIPAllowlistReadsEveryForwardedLine`).
+- [x] **A recording replays as audited only on the row that stamped it.**
+  Playback searched for `sha256:<hash>` as a substring of any stamping row.
+  The proxy's `winrm.run` row carries the operator's command, so a hash
+  typed as a WinRM command vouched for any file with that hash; and with no
+  file name compared, two audited recordings could be swapped on disk
+  unnoticed. The verdict now needs one row whose own `file:` and `sha256:`
+  fields match (`AuditStore.FindAuditEvents`, oldest first), and
+  `report.Field` no longer reads inside a quoted value
+  (`TestPlaybackAuditedNeedsTheStampingRow`, `TestFieldIgnoresQuotedValues`).
+- [x] **Recording transfers outlive the 30-second timeouts, and purge needs
+  a finished export.** An archive export, an archive import and a large
+  playback were cut off by the API server's `ReadTimeout`/`WriteTimeout`;
+  each now carries a two-hour deadline of its own. Purge read only the
+  manifest, the first entry of the tar, so a truncated archive purged
+  everything it listed, as did an export audited as
+  `recording.archive_failed`. Purge now verifies the whole archive and
+  refuses a failed export (`recording.purge_refused
+  reason:archive-unverified` / `export-failed`).
+- [x] **A delegated user-admin cannot overrule an identity above it.**
+  Token rotation checked the identity being rotated (Phase 248); update,
+  lock, unlock and delete did not, so a profile with `manage_users` could
+  demote, lock or delete an administrator. One rule, `mayManageUser`, for
+  all five (`authz.denied reason:<verb>-beyond-caps`).
+- [x] **The flake found on the way.** `memstore.AppendAudit` stamped events
+  with the platform clock, a microsecond on macOS; two appends in one tick
+  tied, and the store contract's budget-window test failed about half the
+  time on a Mac. Audit timestamps now strictly increase.
+- [x] **Living docs**: ADMIN-GUIDE (magic links, the proxy-hops variable,
+  the identity guard, purge), ARCHITECTURE-LOW-LEVEL and -HIGH-LEVEL,
+  CODE-GUIDE (store 244), docs/README, CHANGELOG, and every `Reflects:`
+  header.
 
 ## Phase 289 — v0.0.80 ✅
 

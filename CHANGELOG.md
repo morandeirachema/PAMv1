@@ -18,6 +18,43 @@ file records **releases**: the tagged, signed points you can actually deploy.
 
 ## [Unreleased]
 
+Phase 290, an audit of the whole repository. Six defects fixed, each with
+a regression test. No migration, no new route, no new environment variable.
+
+### Security
+
+- **A magic link no longer counts as a second approver.** One approver
+  could satisfy a two-approver requirement (`PAM_APPROVALS_REQUIRED`, or a
+  safe's dual-control floor) alone by approving and then redeeming a link
+  mailed to themselves. A link now spends its creator's approval.
+- **`PAM_REQUIRE_TARGET_GRANT=true` is honoured by the API server from
+  startup.** Until the first `PUT`/`DELETE /api/config` it was ignored by
+  the desktop viewer, REST WinRM, kubectl and the agent broker's tools; the
+  SSH and database proxies always honoured it. If you run with this flag
+  and have never changed a setting at runtime, ungranted targets were
+  reachable over those paths.
+- **`PAM_TRUSTED_PROXY_HOPS`: the client address is read from every
+  `X-Forwarded-For` line.** Behind a proxy that adds its own header line
+  (HAProxy's `option forwardfor`), a client-supplied line was trusted,
+  which bypassed a user's IP allowlist and the authentication rate limit.
+- **Recording playback's `audited` verdict needs the row that stamped that
+  file.** A hash typed as a WinRM command could vouch for a tampered
+  recording, and two audited recordings swapped on disk both replayed as
+  audited.
+- **A delegated user-admin can no longer demote, lock, unlock or delete an
+  identity whose capabilities it does not hold** (`authz.denied
+  reason:<verb>-beyond-caps`), the rule token rotation already had.
+
+### Fixed
+
+- **Recording archives and large playbacks are no longer cut off after 30
+  seconds.** Export, import and playback carry their own two-hour deadline.
+- **Purge needs the whole archive, from an export that finished.** It read
+  only the manifest, so a truncated download could purge every recording it
+  listed. An archive that does not verify, or whose export was audited
+  `recording.archive_failed`, purges nothing (`recording.purge_refused`).
+  **Purge now reads the entire upload**, so it takes as long as an import.
+
 ## [0.0.80] — 2026-11-21
 
 Ships **Phases 283–288**: portable recording archives (283), an internal
