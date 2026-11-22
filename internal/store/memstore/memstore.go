@@ -1552,6 +1552,16 @@ func (m *Memstore) AppendAudit(_ context.Context, e *store.AuditEvent) error {
 	defer m.mu.Unlock()
 	e.ID = m.id()
 	e.TS = time.Now().UTC()
+	// Strictly after the previous event (Phase 290). The clock's resolution
+	// is the platform's — a microsecond on macOS — and two appends inside
+	// one tick got the SAME timestamp, so a window that starts at one event
+	// could not exclude the one before it. The contract test for the
+	// broker's budget window failed on that about half the time on a Mac;
+	// Postgres has the same microsecond resolution but a round trip between
+	// rows, so only this store could produce the tie.
+	if n := len(m.audit); n > 0 && !e.TS.After(m.audit[n-1].TS) {
+		e.TS = m.audit[n-1].TS.Add(time.Microsecond)
+	}
 	if len(m.auditKey) > 0 {
 		var prev []byte
 		for i := len(m.audit) - 1; i >= 0; i-- {
